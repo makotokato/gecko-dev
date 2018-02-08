@@ -265,6 +265,12 @@ case "$target" in
         x86_64-*)
             MIDL_FLAGS="${MIDL_FLAGS} -env x64"
             ;;
+        arm-*)
+            MIDL_FLAGS="${MIDL_FLAGS} -env arm32"
+            ;;
+        aarch64-*)
+            MIDL_FLAGS="${MIDL_FLAGS} -env arm64"
+            ;;
         esac
 
         unset _MSVC_VER_FILTER
@@ -1061,6 +1067,12 @@ case "$target" in
             DSO_LDOPTS="$DSO_LDOPTS -MACHINE:X64"
         fi
         AC_DEFINE(_AMD64_)
+        ;;
+    aarch64-*)
+        if test -n "$_WIN32_MSVC"; then
+            DSO_LDOPTS="$DSO_LDOPTS -MACHINE:ARM64"
+        fi
+        AC_DEFINE(_ARM64_)
         ;;
     *)
         AC_DEFINE(_CPU_ARCH_NOT_DEFINED)
