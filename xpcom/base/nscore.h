@@ -79,7 +79,7 @@
 #if defined(__i386__) && defined(__GNUC__)
 #define NS_FASTCALL __attribute__ ((regparm (3), stdcall))
 #define NS_CONSTRUCTOR_FASTCALL __attribute__ ((regparm (3), stdcall))
-#elif defined(XP_WIN) && !defined(_WIN64)
+#elif defined(_MSC_VER) && defined(_M_IX86)
 #define NS_FASTCALL __fastcall
 #define NS_CONSTRUCTOR_FASTCALL
 #else
@@ -106,8 +106,8 @@
 #define NS_IMETHODIMP_(type) type __stdcall
 #define NS_METHOD_(type) type __stdcall
 #define NS_CALLBACK_(_type, _name) _type (__stdcall * _name)
-#ifndef _WIN64
-// Win64 has only one calling convention.  __stdcall will be ignored by the compiler.
+#if defined(_M_IX86) || defined(__i386__) 
+// non-x86 has only one calling convention.  __stdcall will be ignored by the compiler.
 #define NS_STDCALL __stdcall
 #define NS_HAVE_STDCALL
 #else
