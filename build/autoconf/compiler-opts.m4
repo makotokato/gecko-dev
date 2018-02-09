@@ -21,6 +21,12 @@ case "$target" in
         x86_64)
             AS=ml64;
             ;;
+        arm)
+            AS=armasm;
+            ;;
+        aarch64)
+            AS=armasm64;
+            ;;
         esac
     fi
     if test -z "$MIDL"; then MIDL=midl; fi
