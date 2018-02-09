@@ -31,6 +31,9 @@ elif CONFIG['CPU_ARCH'] == 'aarch64':
 elif CONFIG['CPU_ARCH'] == 'arm':
     SOURCES += [
         'xptcinvoke_arm.cpp',
+        'xptcinvoke_asm_arm.asm',
+        'xptcstubs_arm.cpp',
+        'xptcstubs_asm_arm.asm',
     ]
 else:
     if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
