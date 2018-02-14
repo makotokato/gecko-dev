@@ -108,6 +108,8 @@ else:
             asm.script = 'preprocess_libffi_asm.py'
             asm.flags = ['$(DEFINES)', '$(LOCAL_INCLUDES)']
             SOURCES += ['!win64.asm']
+    elif CONFIG['FFI_TARGET'] == 'AARCH64_WIN64':
+        ffi_srcs = ['ffi.c', 'win64.asm']
     elif CONFIG['FFI_TARGET'] == 'X86_DARWIN':
         DEFINES['FFI_MMAP_EXEC_WRIT'] = True
         if CONFIG['OS_TEST'] != 'x86_64':

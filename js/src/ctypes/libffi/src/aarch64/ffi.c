@@ -19,6 +19,10 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.  */
 
+#if defined (AARCH64_WIN64)
+#include <windows.h>
+#endif
+
 #include <stdio.h>
 
 #include <ffi.h>
@@ -63,6 +67,8 @@ ffi_clear_cache (void *start, void *end)
 {
 #if defined (__clang__) && defined (__APPLE__)
 	sys_icache_invalidate (start, (char *)end - (char *)start);
+#elif defined (AARCH64_WIN64)
+        FlushInstructionCache(GetCurrentProcess(), start, end - start);
 #elif defined (__GNUC__)
 	__builtin___clear_cache (start, end);
 #else
