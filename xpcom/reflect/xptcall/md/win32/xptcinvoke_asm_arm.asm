@@ -17,8 +17,10 @@
 
 |XPTC__InvokebyIndex| PROC
     push    {r4-r7,r11,lr}
+    FRAME PUSH {r4-r7, r11, lr}
 
     sub     r11, sp, #16 ; stack frame
+    FRAME ADDRESS r11, 40
 
     mov     r7, r1 ; methodIndex
     cbz     r2, noparam

@@ -15,8 +15,10 @@
     ; d0-d7: param on register (floating)
 
     push    {r11, lr}
+    FRAME PUSH {r11, lr}
     mov     r11, sp ; add stack frame since no unwind support on assembler
     sub     sp, sp, #4 ; alignment
+    FRAME ADDRESS r11, 8
     ; make room for generic register
     push    {r1-r3}
     mov     r2, sp
