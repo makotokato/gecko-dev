@@ -23,7 +23,7 @@
 #define ARCH_CPU_X86_32 1
 #define ARCH_CPU_X86 1
 #define ARCH_CPU_32_BITS 1
-#elif defined(__ARMEL__)
+#elif defined(_M_ARM) || defined(__ARMEL__)
 #define ARCH_CPU_ARM_FAMILY 1
 #define ARCH_CPU_ARMEL 1
 #define ARCH_CPU_32_BITS 1
@@ -39,7 +39,7 @@
 #define ARCH_CPU_SPARC_FAMILY 1
 #define ARCH_CPU_SPARC 1
 #define ARCH_CPU_64_BITS 1
-#elif defined(__aarch64__)
+#elif defined(_M_ARM64) || defined(__aarch64__)
 #define ARCH_CPU_AARCH64_FAMILY 1
 #define ARCH_CPU_AARCH64 1
 #define ARCH_CPU_64_BITS 1

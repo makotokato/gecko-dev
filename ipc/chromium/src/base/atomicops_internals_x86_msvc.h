@@ -11,6 +11,11 @@
 
 #include <windows.h>
 
+#if defined(_M_ARM) || defined(_M_ARM64)
+// Windows SDK for arm/arm64 conflicts MemoryBarrier define
+#undef MemoryBarrier
+#endif
+
 namespace base {
 namespace subtle {
 
