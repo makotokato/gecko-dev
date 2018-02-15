@@ -81,6 +81,12 @@ RendererOGL::GetExternalImageHandler()
   };
 }
 
+void
+RendererOGL::Update()
+{
+  wr_renderer_update(mRenderer);
+}
+
 bool
 RendererOGL::UpdateAndRender()
 {
@@ -173,10 +179,10 @@ RendererOGL::SetFrameStartTime(const TimeStamp& aTime)
   mFrameStartTime = aTime;
 }
 
-wr::WrRenderedEpochs*
-RendererOGL::FlushRenderedEpochs()
+wr::WrPipelineInfo*
+RendererOGL::FlushPipelineInfo()
 {
-  return wr_renderer_flush_rendered_epochs(mRenderer);
+  return wr_renderer_flush_pipeline_info(mRenderer);
 }
 
 RenderTextureHost*

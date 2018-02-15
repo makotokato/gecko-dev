@@ -23,7 +23,6 @@
 #include <string.h>
 
 #include "jsapi.h"
-#include "jsatom.h"
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsfun.h"
@@ -1760,6 +1759,7 @@ ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex)
       case JSOP_CALLPROP: {
         bool hasDelete = op == JSOP_DELPROP || op == JSOP_STRICTDELPROP;
         RootedAtom prop(cx, (op == JSOP_LENGTH) ? cx->names().length : loadAtom(pc));
+        MOZ_ASSERT(prop);
         return (hasDelete ? write("(delete ") : true) &&
                decompilePCForStackOperand(pc, -1) &&
                (IsIdentifier(prop)
@@ -2134,7 +2134,7 @@ ExpressionDecompiler::quote(JSString* s, uint32_t quote)
 JSAtom*
 ExpressionDecompiler::loadAtom(jsbytecode* pc)
 {
-    return script->getAtom(GET_UINT32_INDEX(pc));
+    return script->getAtom(pc);
 }
 
 JSAtom*

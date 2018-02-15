@@ -206,7 +206,6 @@
 #endif
 
 #include "jsapi.h"
-#include "jsatom.h"
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsfriendapi.h"
@@ -285,16 +284,16 @@ namespace TuningDefaults {
     static const size_t MaxMallocBytes = 128 * 1024 * 1024;
 
     /* JSGC_ALLOCATION_THRESHOLD_FACTOR */
-    static const float AllocThresholdFactor = 0.9f;
+    static const double AllocThresholdFactor = 0.9;
 
     /* JSGC_ALLOCATION_THRESHOLD_FACTOR_AVOID_INTERRUPT */
-    static const float AllocThresholdFactorAvoidInterrupt = 0.9f;
+    static const double AllocThresholdFactorAvoidInterrupt = 0.9;
 
     /* no parameter */
-    static const float MallocThresholdGrowFactor = 1.5f;
+    static const double MallocThresholdGrowFactor = 1.5;
 
     /* no parameter */
-    static const float MallocThresholdShrinkFactor = 0.9f;
+    static const double MallocThresholdShrinkFactor = 0.9;
 
     /* no parameter */
     static const size_t MallocThresholdLimit = 1024 * 1024 * 1024;
@@ -342,6 +341,31 @@ namespace TuningDefaults {
     static const bool CompactingEnabled = true;
 
 }}} // namespace js::gc::TuningDefaults
+
+/*
+ * We start to incremental collection for a zone when a proportion of its
+ * threshold is reached. This is configured by the
+ * JSGC_ALLOCATION_THRESHOLD_FACTOR and
+ * JSGC_ALLOCATION_THRESHOLD_FACTOR_AVOID_INTERRUPT parameters.
+ */
+static const double MinAllocationThresholdFactor = 0.9;
+
+/*
+ * We may start to collect a zone before its trigger threshold is reached if
+ * GCRuntime::maybeGC() is called for that zone or we start collecting other
+ * zones. These eager threshold factors are not configurable.
+ */
+static const double HighFrequencyEagerAllocTriggerFactor = 0.85;
+static const double LowFrequencyEagerAllocTriggerFactor = 0.9;
+
+/*
+ * Don't allow heap growth factors to be set so low that collections could
+ * reduce the trigger threshold.
+ */
+static const double MinHighFrequencyHeapGrowthFactor =
+    1.0 / Min(HighFrequencyEagerAllocTriggerFactor, MinAllocationThresholdFactor);
+static const double MinLowFrequencyHeapGrowthFactor =
+    1.0 / Min(LowFrequencyEagerAllocTriggerFactor, MinAllocationThresholdFactor);
 
 /* Increase the IGC marking slice time if we are in highFrequencyGC mode. */
 static const int IGC_MARK_SLICE_MULTIPLIER = 2;
@@ -1322,26 +1346,23 @@ GCSchedulingTunables::setParameter(JSGCParamKey key, uint32_t value, const AutoL
       }
       case JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX: {
         double newGrowth = value / 100.0;
-        if (newGrowth <= 0.85 || newGrowth > MaxHeapGrowthFactor)
+        if (newGrowth < MinHighFrequencyHeapGrowthFactor || newGrowth > MaxHeapGrowthFactor)
             return false;
-        highFrequencyHeapGrowthMax_ = newGrowth;
-        MOZ_ASSERT(highFrequencyHeapGrowthMax_ / 0.85 > 1.0);
+        setHighFrequencyHeapGrowthMax(newGrowth);
         break;
       }
       case JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MIN: {
         double newGrowth = value / 100.0;
-        if (newGrowth <= 0.85 || newGrowth > MaxHeapGrowthFactor)
+        if (newGrowth < MinHighFrequencyHeapGrowthFactor || newGrowth > MaxHeapGrowthFactor)
             return false;
-        highFrequencyHeapGrowthMin_ = newGrowth;
-        MOZ_ASSERT(highFrequencyHeapGrowthMin_ / 0.85 > 1.0);
+        setHighFrequencyHeapGrowthMin(newGrowth);
         break;
       }
       case JSGC_LOW_FREQUENCY_HEAP_GROWTH: {
         double newGrowth = value / 100.0;
-        if (newGrowth <= 0.9 || newGrowth > MaxHeapGrowthFactor)
+        if (newGrowth < MinLowFrequencyHeapGrowthFactor || newGrowth > MaxHeapGrowthFactor)
             return false;
-        lowFrequencyHeapGrowth_ = newGrowth;
-        MOZ_ASSERT(lowFrequencyHeapGrowth_ / 0.9 > 1.0);
+        setLowFrequencyHeapGrowth(newGrowth);
         break;
       }
       case JSGC_DYNAMIC_HEAP_GROWTH:
@@ -1354,16 +1375,20 @@ GCSchedulingTunables::setParameter(JSGCParamKey key, uint32_t value, const AutoL
         gcZoneAllocThresholdBase_ = value * 1024 * 1024;
         break;
       case JSGC_ALLOCATION_THRESHOLD_FACTOR: {
-        float newFactor = value / 100.0;
-        if (newFactor <= 0.1 || newFactor > 1.0)
+        double newFactor = value / 100.0;
+        if (newFactor < MinAllocationThresholdFactor || newFactor > 1.0) {
+            fprintf(stderr, "alloc factor %f %f\n", newFactor, MinAllocationThresholdFactor);
             return false;
+        }
         allocThresholdFactor_ = newFactor;
         break;
       }
       case JSGC_ALLOCATION_THRESHOLD_FACTOR_AVOID_INTERRUPT: {
-        float newFactor = value / 100.0;
-        if (newFactor <= 0.1 || newFactor > 1.0)
+        double newFactor = value / 100.0;
+        if (newFactor < MinAllocationThresholdFactor || newFactor > 1.0) {
+            fprintf(stderr, "alloc factor %f %f\n", newFactor, MinAllocationThresholdFactor);
             return false;
+        }
         allocThresholdFactorAvoidInterrupt_ = newFactor;
         break;
       }
@@ -1402,6 +1427,33 @@ GCSchedulingTunables::setHighFrequencyHighLimit(uint64_t newLimit)
     if (highFrequencyHighLimitBytes_ <= highFrequencyLowLimitBytes_)
         highFrequencyLowLimitBytes_ = highFrequencyHighLimitBytes_ - 1;
     MOZ_ASSERT(highFrequencyHighLimitBytes_ > highFrequencyLowLimitBytes_);
+}
+
+void
+GCSchedulingTunables::setHighFrequencyHeapGrowthMin(double value)
+{
+    highFrequencyHeapGrowthMin_ = value;
+    if (highFrequencyHeapGrowthMin_ > highFrequencyHeapGrowthMax_)
+        highFrequencyHeapGrowthMax_ = highFrequencyHeapGrowthMin_;
+    MOZ_ASSERT(highFrequencyHeapGrowthMin_ >= MinHighFrequencyHeapGrowthFactor);
+    MOZ_ASSERT(highFrequencyHeapGrowthMin_ <= highFrequencyHeapGrowthMax_);
+}
+
+void
+GCSchedulingTunables::setHighFrequencyHeapGrowthMax(double value)
+{
+    highFrequencyHeapGrowthMax_ = value;
+    if (highFrequencyHeapGrowthMax_ < highFrequencyHeapGrowthMin_)
+        highFrequencyHeapGrowthMin_ = highFrequencyHeapGrowthMax_;
+    MOZ_ASSERT(highFrequencyHeapGrowthMin_ >= MinHighFrequencyHeapGrowthFactor);
+    MOZ_ASSERT(highFrequencyHeapGrowthMin_ <= highFrequencyHeapGrowthMax_);
+}
+
+void
+GCSchedulingTunables::setLowFrequencyHeapGrowth(double value)
+{
+    lowFrequencyHeapGrowth_ = value;
+    MOZ_ASSERT(lowFrequencyHeapGrowth_ >= MinLowFrequencyHeapGrowthFactor);
 }
 
 void
@@ -1491,18 +1543,13 @@ GCSchedulingTunables::resetParameter(JSGCParamKey key, const AutoLockGC& lock)
         setHighFrequencyHighLimit(TuningDefaults::HighFrequencyHighLimitBytes);
         break;
       case JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX:
-        highFrequencyHeapGrowthMax_ =
-            TuningDefaults::HighFrequencyHeapGrowthMax;
-        MOZ_ASSERT(highFrequencyHeapGrowthMax_ / 0.85 > 1.0);
+        setHighFrequencyHeapGrowthMax(TuningDefaults::HighFrequencyHeapGrowthMax);
         break;
       case JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MIN:
-        highFrequencyHeapGrowthMin_ =
-            TuningDefaults::HighFrequencyHeapGrowthMin;
-        MOZ_ASSERT(highFrequencyHeapGrowthMin_ / 0.85 > 1.0);
+        setHighFrequencyHeapGrowthMin(TuningDefaults::HighFrequencyHeapGrowthMin);
         break;
       case JSGC_LOW_FREQUENCY_HEAP_GROWTH:
-        lowFrequencyHeapGrowth_ = TuningDefaults::LowFrequencyHeapGrowth;
-        MOZ_ASSERT(lowFrequencyHeapGrowth_ / 0.9 > 1.0);
+        setLowFrequencyHeapGrowth(TuningDefaults::LowFrequencyHeapGrowth);
         break;
       case JSGC_DYNAMIC_HEAP_GROWTH:
         dynamicHeapGrowthEnabled_ = TuningDefaults::DynamicHeapGrowthEnabled;
@@ -1807,9 +1854,11 @@ GCRuntime::setMaxMallocBytes(size_t value, const AutoLockGC& lock)
 }
 
 double
-ZoneHeapThreshold::allocTrigger(bool highFrequencyGC) const
+ZoneHeapThreshold::eagerAllocTrigger(bool highFrequencyGC) const
 {
-    return (highFrequencyGC ? 0.85 : 0.9) * gcTriggerBytes();
+    double eagerTriggerFactor = highFrequencyGC ? HighFrequencyEagerAllocTriggerFactor
+                                                : LowFrequencyEagerAllocTriggerFactor;
+    return eagerTriggerFactor * gcTriggerBytes();
 }
 
 /* static */ double
@@ -1838,11 +1887,13 @@ ZoneHeapThreshold::computeZoneHeapGrowthFactorForHeapSize(size_t lastBytes,
     //   lastBytes > highFrequencyHighLimit: 150%
     //   otherwise: linear interpolation between 300% and 150% based on lastBytes
 
-    // Use shorter names to make the operation comprehensible.
     double minRatio = tunables.highFrequencyHeapGrowthMin();
     double maxRatio = tunables.highFrequencyHeapGrowthMax();
     double lowLimit = tunables.highFrequencyLowLimitBytes();
     double highLimit = tunables.highFrequencyHighLimitBytes();
+
+    MOZ_ASSERT(minRatio <= maxRatio);
+    MOZ_ASSERT(lowLimit < highLimit);
 
     if (lastBytes <= lowLimit)
         return maxRatio;
@@ -1852,6 +1903,7 @@ ZoneHeapThreshold::computeZoneHeapGrowthFactorForHeapSize(size_t lastBytes,
 
     double factor = maxRatio - ((maxRatio - minRatio) * ((lastBytes - lowLimit) /
                                                          (highLimit - lowLimit)));
+
     MOZ_ASSERT(factor >= minRatio);
     MOZ_ASSERT(factor <= maxRatio);
     return factor;
@@ -2768,7 +2820,7 @@ GCRuntime::updateAllCellPointers(MovingTracer* trc, Zone* zone)
  * part of the traversal.
  */
 void
-GCRuntime::updateZonePointersToRelocatedCells(Zone* zone, AutoLockForExclusiveAccess& lock)
+GCRuntime::updateZonePointersToRelocatedCells(Zone* zone)
 {
     MOZ_ASSERT(!rt->isBeingDestroyed());
     MOZ_ASSERT(zone->isGCCompacting());
@@ -2809,7 +2861,7 @@ GCRuntime::updateZonePointersToRelocatedCells(Zone* zone, AutoLockForExclusiveAc
  * Update runtime-wide pointers to relocated cells.
  */
 void
-GCRuntime::updateRuntimePointersToRelocatedCells(AutoLockForExclusiveAccess& lock)
+GCRuntime::updateRuntimePointersToRelocatedCells(AutoTraceSession& session)
 {
     MOZ_ASSERT(!rt->isBeingDestroyed());
 
@@ -2820,7 +2872,7 @@ GCRuntime::updateRuntimePointersToRelocatedCells(AutoLockForExclusiveAccess& loc
 
     rt->geckoProfiler().fixupStringsMapAfterMovingGC();
 
-    traceRuntimeForMajorGC(&trc, lock);
+    traceRuntimeForMajorGC(&trc, session);
 
     // Mark roots to update them.
     {
@@ -3207,7 +3259,7 @@ GCRuntime::maybeAllocTriggerZoneGC(Zone* zone, const AutoLockGC& lock)
     }
 
     bool wouldInterruptCollection = isIncrementalGCInProgress() && !zone->isCollecting();
-    float zoneGCThresholdFactor =
+    double zoneGCThresholdFactor =
         wouldInterruptCollection ? tunables.allocThresholdFactorAvoidInterrupt()
                                  : tunables.allocThresholdFactor();
 
@@ -3286,7 +3338,7 @@ GCRuntime::maybeGC(Zone* zone)
     if (gcIfRequested())
         return;
 
-    double threshold = zone->threshold.allocTrigger(schedulingState.inHighFrequencyGCMode());
+    double threshold = zone->threshold.eagerAllocTrigger(schedulingState.inHighFrequencyGCMode());
     double usedBytes = zone->usage.gcBytes();
     if (usedBytes > 1024 * 1024 && usedBytes >= threshold &&
         !isIncrementalGCInProgress() && !isBackgroundSweeping())
@@ -3876,7 +3928,7 @@ class MOZ_RAII js::gc::AutoRunParallelTask : public GCParallelTask
 };
 
 void
-GCRuntime::purgeRuntime(AutoLockForExclusiveAccess& lock)
+GCRuntime::purgeRuntime()
 {
     gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::PURGE);
 
@@ -4195,15 +4247,21 @@ BufferGrayRoots(JSRuntime* rt)
 }
 
 bool
-GCRuntime::beginMarkPhase(JS::gcreason::Reason reason, AutoLockForExclusiveAccess& lock)
+GCRuntime::beginMarkPhase(JS::gcreason::Reason reason, AutoTraceSession& session)
 {
+    MOZ_ASSERT(session.maybeLock.isSome());
+
 #ifdef DEBUG
     if (fullCompartmentChecks)
         checkForCompartmentMismatches();
 #endif
 
-    if (!prepareZonesForCollection(reason, &isFull.ref(), lock))
+    if (!prepareZonesForCollection(reason, &isFull.ref(), session.lock()))
         return false;
+
+    /* If we're not collecting the atoms zone we can release the lock now. */
+    if (!atomsZone->isCollecting())
+        session.maybeLock.reset();
 
     /*
      * Ensure that after the start of a collection we don't allocate into any
@@ -4268,14 +4326,14 @@ GCRuntime::beginMarkPhase(JS::gcreason::Reason reason, AutoLockForExclusiveAcces
          * the mutator could obtain a pointer to the object and start using
          * it. This object might never be marked, so a GC hazard would exist.
          */
-        purgeRuntime(lock);
+        purgeRuntime();
     }
 
     /*
      * Mark phase.
      */
     gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK);
-    traceRuntimeForMajorGC(gcmarker, lock);
+    traceRuntimeForMajorGC(gcmarker, session);
 
     if (isIncremental)
         markCompartments();
@@ -4475,7 +4533,7 @@ class js::gc::MarkingValidator
   public:
     explicit MarkingValidator(GCRuntime* gc);
     ~MarkingValidator();
-    void nonIncrementalMark(AutoLockForExclusiveAccess& lock);
+    void nonIncrementalMark(AutoTraceSession& session);
     void validate();
 
   private:
@@ -4501,7 +4559,7 @@ js::gc::MarkingValidator::~MarkingValidator()
 }
 
 void
-js::gc::MarkingValidator::nonIncrementalMark(AutoLockForExclusiveAccess& lock)
+js::gc::MarkingValidator::nonIncrementalMark(AutoTraceSession& session)
 {
     /*
      * Perform a non-incremental mark for all collecting zones and record
@@ -4595,7 +4653,7 @@ js::gc::MarkingValidator::nonIncrementalMark(AutoLockForExclusiveAccess& lock)
     {
         gcstats::AutoPhase ap(gc->stats(), gcstats::PhaseKind::MARK);
 
-        gc->traceRuntimeForMajorGC(gcmarker, lock);
+        gc->traceRuntimeForMajorGC(gcmarker, session);
 
         gc->incrementalState = State::Mark;
         auto unlimited = SliceBudget::unlimited();
@@ -4716,14 +4774,14 @@ js::gc::MarkingValidator::validate()
 #endif // JS_GC_ZEAL
 
 void
-GCRuntime::computeNonIncrementalMarkingForValidation(AutoLockForExclusiveAccess& lock)
+GCRuntime::computeNonIncrementalMarkingForValidation(AutoTraceSession& session)
 {
 #ifdef JS_GC_ZEAL
     MOZ_ASSERT(!markingValidator);
     if (isIncremental && hasZealMode(ZealMode::IncrementalMarkingValidator))
         markingValidator = js_new<MarkingValidator>(this);
     if (markingValidator)
-        markingValidator->nonIncrementalMark(lock);
+        markingValidator->nonIncrementalMark(session);
 #endif
 }
 
@@ -4824,10 +4882,10 @@ Zone::findOutgoingEdges(ZoneComponentFinder& finder)
      * Any compartment may have a pointer to an atom in the atoms
      * compartment, and these aren't in the cross compartment map.
      */
-    JSRuntime* rt = runtimeFromActiveCooperatingThread();
-    Zone* atomsZone = rt->atomsCompartment(finder.lock)->zone();
-    if (atomsZone->isGCMarking())
-        finder.addEdgeTo(atomsZone);
+    if (Zone* zone = finder.maybeAtomsZone) {
+        MOZ_ASSERT(zone->isCollecting());
+        finder.addEdgeTo(zone);
+    }
 
     for (CompartmentsInZoneIter comp(this); !comp.done(); comp.next())
         comp->findOutgoingEdges(finder);
@@ -4862,7 +4920,7 @@ GCRuntime::findInterZoneEdges()
 }
 
 void
-GCRuntime::groupZonesForSweeping(JS::gcreason::Reason reason, AutoLockForExclusiveAccess& lock)
+GCRuntime::groupZonesForSweeping(JS::gcreason::Reason reason)
 {
 #ifdef DEBUG
     for (ZonesIter zone(rt, WithAtoms); !zone.done(); zone.next())
@@ -4870,7 +4928,8 @@ GCRuntime::groupZonesForSweeping(JS::gcreason::Reason reason, AutoLockForExclusi
 #endif
 
     JSContext* cx = TlsContext.get();
-    ZoneComponentFinder finder(cx->nativeStackLimit[JS::StackForSystemCode], lock);
+    Zone* maybeAtomsZone = atomsZone->wasGCStarted() ? atomsZone.ref() : nullptr;
+    ZoneComponentFinder finder(cx->nativeStackLimit[JS::StackForSystemCode], maybeAtomsZone);
     if (!isIncremental || !findInterZoneEdges())
         finder.useOneComponent();
 
@@ -5682,7 +5741,7 @@ GCRuntime::endSweepingSweepGroup(FreeOp* fop, SliceBudget& budget)
 }
 
 void
-GCRuntime::beginSweepPhase(JS::gcreason::Reason reason, AutoLockForExclusiveAccess& lock)
+GCRuntime::beginSweepPhase(JS::gcreason::Reason reason, AutoTraceSession& session)
 {
     /*
      * Sweep phase.
@@ -5698,7 +5757,7 @@ GCRuntime::beginSweepPhase(JS::gcreason::Reason reason, AutoLockForExclusiveAcce
 
     releaseHeldRelocatedArenas();
 
-    computeNonIncrementalMarkingForValidation(lock);
+    computeNonIncrementalMarkingForValidation(session);
 
     gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::SWEEP);
 
@@ -5710,7 +5769,7 @@ GCRuntime::beginSweepPhase(JS::gcreason::Reason reason, AutoLockForExclusiveAcce
     AssertNoWrappersInGrayList(rt);
     DropStringWrappers(rt);
 
-    groupZonesForSweeping(reason, lock);
+    groupZonesForSweeping(reason);
 
     sweepActions->assertFinished();
 
@@ -5887,14 +5946,7 @@ GCRuntime::sweepAtomsTable(FreeOp* fop, SliceBudget& budget)
         atomsToSweep.popFront();
     }
 
-    // Add any new atoms from the secondary table.
-    AutoEnterOOMUnsafeRegion oomUnsafe;
-    AtomSet* atomsTable = rt->atomsForSweeping();
-    MOZ_ASSERT(atomsTable);
-    for (auto r = rt->atomsAddedWhileSweeping()->all(); !r.empty(); r.popFront()) {
-        if (!atomsTable->putNew(AtomHasher::Lookup(r.front().asPtrUnbarriered()), r.front()))
-            oomUnsafe.crash("Adding atom from secondary table after sweep");
-    }
+    MergeAtomsAddedWhileSweeping(rt);
     rt->destroyAtomsAddedWhileSweepingTable();
 
     maybeAtoms.reset();
@@ -6392,7 +6444,7 @@ GCRuntime::initSweepActions()
 }
 
 IncrementalProgress
-GCRuntime::performSweepActions(SliceBudget& budget, AutoLockForExclusiveAccess& lock)
+GCRuntime::performSweepActions(SliceBudget& budget)
 {
     AutoSetThreadIsSweeping threadIsSweeping;
 
@@ -6440,7 +6492,7 @@ GCRuntime::allCCVisibleZonesWereCollected() const
 }
 
 void
-GCRuntime::endSweepPhase(bool destroyingRuntime, AutoLockForExclusiveAccess& lock)
+GCRuntime::endSweepPhase(bool destroyingRuntime)
 {
     sweepActions->assertFinished();
 
@@ -6517,7 +6569,7 @@ GCRuntime::beginCompactPhase()
 
 IncrementalProgress
 GCRuntime::compactPhase(JS::gcreason::Reason reason, SliceBudget& sliceBudget,
-                        AutoLockForExclusiveAccess& lock)
+                        AutoTraceSession& session)
 {
     assertBackgroundSweepingFinished();
     MOZ_ASSERT(startedCompacting);
@@ -6541,7 +6593,7 @@ GCRuntime::compactPhase(JS::gcreason::Reason reason, SliceBudget& sliceBudget,
         zone->changeGCState(Zone::Finished, Zone::Compact);
 
         if (relocateArenas(zone, reason, relocatedArenas, sliceBudget)) {
-            updateZonePointersToRelocatedCells(zone, lock);
+            updateZonePointersToRelocatedCells(zone);
             relocatedZones.append(zone);
         } else {
             zone->changeGCState(Zone::Compact, Zone::Finished);
@@ -6552,7 +6604,7 @@ GCRuntime::compactPhase(JS::gcreason::Reason reason, SliceBudget& sliceBudget,
     }
 
     if (!relocatedZones.isEmpty()) {
-        updateRuntimePointersToRelocatedCells(lock);
+        updateRuntimePointersToRelocatedCells(session);
 
         do {
             Zone* zone = relocatedZones.front();
@@ -6643,14 +6695,17 @@ AllNurseriesAreEmpty(JSRuntime* rt)
 
 /* Start a new heap session. */
 AutoTraceSession::AutoTraceSession(JSRuntime* rt, JS::HeapState heapState)
-  : lock(rt),
-    runtime(rt),
+  : runtime(rt),
     prevState(TlsContext.get()->heapState),
     pseudoFrame(TlsContext.get(), HeapStateToLabel(heapState), ProfileEntry::Category::GC)
 {
     MOZ_ASSERT(prevState == JS::HeapState::Idle);
     MOZ_ASSERT(heapState != JS::HeapState::Idle);
     MOZ_ASSERT_IF(heapState == JS::HeapState::MajorCollecting, AllNurseriesAreEmpty(rt));
+
+    // Session always begins with lock held, see comment in class definition.
+    maybeLock.emplace(rt);
+
     TlsContext.get()->heapState = heapState;
 }
 
@@ -6681,7 +6736,7 @@ GCRuntime::canChangeActiveContext(JSContext* cx)
 }
 
 GCRuntime::IncrementalResult
-GCRuntime::resetIncrementalGC(gc::AbortReason reason, AutoLockForExclusiveAccess& lock)
+GCRuntime::resetIncrementalGC(gc::AbortReason reason, AutoTraceSession& session)
 {
     MOZ_ASSERT(reason != gc::AbortReason::None);
 
@@ -6730,7 +6785,7 @@ GCRuntime::resetIncrementalGC(gc::AbortReason reason, AutoLockForExclusiveAccess
         isCompacting = false;
 
         auto unlimited = SliceBudget::unlimited();
-        incrementalCollectSlice(unlimited, JS::gcreason::RESET, lock);
+        incrementalCollectSlice(unlimited, JS::gcreason::RESET, session);
 
         isCompacting = wasCompacting;
 
@@ -6751,7 +6806,7 @@ GCRuntime::resetIncrementalGC(gc::AbortReason reason, AutoLockForExclusiveAccess
         isCompacting = false;
 
         auto unlimited = SliceBudget::unlimited();
-        incrementalCollectSlice(unlimited, JS::gcreason::RESET, lock);
+        incrementalCollectSlice(unlimited, JS::gcreason::RESET, session);
 
         isCompacting = wasCompacting;
 
@@ -6766,7 +6821,7 @@ GCRuntime::resetIncrementalGC(gc::AbortReason reason, AutoLockForExclusiveAccess
         zonesToMaybeCompact.ref().clear();
 
         auto unlimited = SliceBudget::unlimited();
-        incrementalCollectSlice(unlimited, JS::gcreason::RESET, lock);
+        incrementalCollectSlice(unlimited, JS::gcreason::RESET, session);
 
         isCompacting = wasCompacting;
         break;
@@ -6774,7 +6829,7 @@ GCRuntime::resetIncrementalGC(gc::AbortReason reason, AutoLockForExclusiveAccess
 
       case State::Decommit: {
         auto unlimited = SliceBudget::unlimited();
-        incrementalCollectSlice(unlimited, JS::gcreason::RESET, lock);
+        incrementalCollectSlice(unlimited, JS::gcreason::RESET, session);
         break;
       }
     }
@@ -6866,8 +6921,15 @@ ShouldCleanUpEverything(JS::gcreason::Reason reason, JSGCInvocationKind gckind)
 
 void
 GCRuntime::incrementalCollectSlice(SliceBudget& budget, JS::gcreason::Reason reason,
-                                   AutoLockForExclusiveAccess& lock)
+                                   AutoTraceSession& session)
 {
+    /*
+     * Drop the exclusive access lock if we are in an incremental collection
+     * that does not touch the atoms zone.
+     */
+    if (isIncrementalGCInProgress() && !atomsZone->isCollecting())
+        session.maybeLock.reset();
+
     AutoGCSlice slice(rt);
 
     bool destroyingRuntime = (reason == JS::gcreason::DESTROY_RUNTIME);
@@ -6912,7 +6974,7 @@ GCRuntime::incrementalCollectSlice(SliceBudget& budget, JS::gcreason::Reason rea
         MOZ_FALLTHROUGH;
 
       case State::MarkRoots:
-        if (!beginMarkPhase(reason, lock)) {
+        if (!beginMarkPhase(reason, session)) {
             incrementalState = State::NotActive;
             return;
         }
@@ -6966,15 +7028,15 @@ GCRuntime::incrementalCollectSlice(SliceBudget& budget, JS::gcreason::Reason rea
 
         incrementalState = State::Sweep;
 
-        beginSweepPhase(reason, lock);
+        beginSweepPhase(reason, session);
 
         MOZ_FALLTHROUGH;
 
       case State::Sweep:
-        if (performSweepActions(budget, lock) == NotFinished)
+        if (performSweepActions(budget) == NotFinished)
             break;
 
-        endSweepPhase(destroyingRuntime, lock);
+        endSweepPhase(destroyingRuntime);
 
         incrementalState = State::Finalize;
 
@@ -7019,7 +7081,7 @@ GCRuntime::incrementalCollectSlice(SliceBudget& budget, JS::gcreason::Reason rea
             if (!startedCompacting)
                 beginCompactPhase();
 
-            if (compactPhase(reason, budget, lock) == NotFinished)
+            if (compactPhase(reason, budget, session) == NotFinished)
                 break;
 
             endCompactPhase(reason);
@@ -7087,7 +7149,7 @@ CheckZoneIsScheduled(Zone* zone, JS::gcreason::Reason reason, const char* trigge
 
 GCRuntime::IncrementalResult
 GCRuntime::budgetIncrementalGC(bool nonincrementalByAPI, JS::gcreason::Reason reason,
-                               SliceBudget& budget, AutoLockForExclusiveAccess& lock)
+                               SliceBudget& budget, AutoTraceSession& session)
 {
     if (nonincrementalByAPI) {
         stats().nonincremental(gc::AbortReason::NonIncrementalRequested);
@@ -7098,7 +7160,7 @@ GCRuntime::budgetIncrementalGC(bool nonincrementalByAPI, JS::gcreason::Reason re
         // the caller expects this GC to collect certain objects, and we need
         // to make sure to collect everything possible.
         if (reason != JS::gcreason::ALLOC_TRIGGER)
-            return resetIncrementalGC(gc::AbortReason::NonIncrementalRequested, lock);
+            return resetIncrementalGC(gc::AbortReason::NonIncrementalRequested, session);
 
         return IncrementalResult::Ok;
     }
@@ -7106,7 +7168,7 @@ GCRuntime::budgetIncrementalGC(bool nonincrementalByAPI, JS::gcreason::Reason re
     if (reason == JS::gcreason::ABORT_GC) {
         budget.makeUnlimited();
         stats().nonincremental(gc::AbortReason::AbortRequested);
-        return resetIncrementalGC(gc::AbortReason::AbortRequested, lock);
+        return resetIncrementalGC(gc::AbortReason::AbortRequested, session);
     }
 
     AbortReason unsafeReason = IsIncrementalGCUnsafe(rt);
@@ -7120,7 +7182,7 @@ GCRuntime::budgetIncrementalGC(bool nonincrementalByAPI, JS::gcreason::Reason re
     if (unsafeReason != AbortReason::None) {
         budget.makeUnlimited();
         stats().nonincremental(unsafeReason);
-        return resetIncrementalGC(unsafeReason, lock);
+        return resetIncrementalGC(unsafeReason, session);
     }
 
     if (mallocCounter.shouldTriggerGC(tunables) == NonIncrementalTrigger) {
@@ -7150,7 +7212,7 @@ GCRuntime::budgetIncrementalGC(bool nonincrementalByAPI, JS::gcreason::Reason re
     }
 
     if (reset)
-        return resetIncrementalGC(AbortReason::ZoneChange, lock);
+        return resetIncrementalGC(AbortReason::ZoneChange, session);
 
     return IncrementalResult::Ok;
 }
@@ -7176,11 +7238,9 @@ class AutoScheduleZonesForGC
                 zone->scheduleGC();
 
             // This is a heuristic to reduce the total number of collections.
-            if (zone->usage.gcBytes() >=
-                zone->threshold.allocTrigger(rt->gc.schedulingState.inHighFrequencyGCMode()))
-            {
+            bool inHighFrequencyMode = rt->gc.schedulingState.inHighFrequencyGCMode();
+            if (zone->usage.gcBytes() >= zone->threshold.eagerAllocTrigger(inHighFrequencyMode))
                 zone->scheduleGC();
-            }
 
             // This ensures we collect zones that have reached the malloc limit.
             if (zone->shouldTriggerGCForTooMuchMalloc())
@@ -7298,7 +7358,7 @@ GCRuntime::gcCycle(bool nonincrementalByAPI, SliceBudget& budget, JS::gcreason::
     // incremental GC.
     MOZ_ASSERT_IF(rt->activeGCInAtomsZone(), !rt->hasHelperThreadZones());
 
-    auto result = budgetIncrementalGC(nonincrementalByAPI, reason, budget, session.lock);
+    auto result = budgetIncrementalGC(nonincrementalByAPI, reason, budget, session);
 
     // If an ongoing incremental GC was reset, we may need to restart.
     if (result == IncrementalResult::Reset) {
@@ -7308,7 +7368,7 @@ GCRuntime::gcCycle(bool nonincrementalByAPI, SliceBudget& budget, JS::gcreason::
 
     TraceMajorGCStart();
 
-    incrementalCollectSlice(budget, reason, session.lock);
+    incrementalCollectSlice(budget, reason, session);
 
     chunkAllocationSinceLastGC = false;
 
@@ -8735,7 +8795,7 @@ ZoneGCAllocTriggerGetter(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     bool highFrequency = cx->runtime()->gc.schedulingState.inHighFrequencyGCMode();
-    args.rval().setNumber(double(cx->zone()->threshold.allocTrigger(highFrequency)));
+    args.rval().setNumber(double(cx->zone()->threshold.eagerAllocTrigger(highFrequency)));
     return true;
 }
 

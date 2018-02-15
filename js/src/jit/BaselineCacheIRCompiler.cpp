@@ -478,6 +478,14 @@ BaselineCacheIRCompiler::emitGuardFunctionPrototype()
 }
 
 bool
+BaselineCacheIRCompiler::emitLoadValueResult()
+{
+    AutoOutputRegister output(*this);
+    masm.loadValue(stubAddress(reader.stubOffset()), output.valueReg());
+    return true;
+}
+
+bool
 BaselineCacheIRCompiler::emitLoadFixedSlotResult()
 {
     AutoOutputRegister output(*this);
@@ -651,7 +659,7 @@ BaselineCacheIRCompiler::emitCallScriptedGetterResult()
             return false;
 
         masm.loadPtr(getterAddr, callee);
-        masm.branchIfFunctionHasNoScript(callee, failure->label());
+        masm.branchIfFunctionHasNoJitEntry(callee, /* constructing */ false, failure->label());
         masm.loadJitCodeRaw(callee, code);
     }
 
@@ -1751,7 +1759,7 @@ BaselineCacheIRCompiler::emitCallScriptedSetter()
             return false;
 
         masm.loadPtr(setterAddr, scratch1);
-        masm.branchIfFunctionHasNoScript(scratch1, failure->label());
+        masm.branchIfFunctionHasNoJitEntry(scratch1, /* constructing */ false, failure->label());
     }
 
     allocator.discardStack(masm);
@@ -2092,6 +2100,9 @@ BaselineCacheIRCompiler::init(CacheKind kind)
     AllocatableGeneralRegisterSet available(ICStubCompiler::availableGeneralRegs(numInputsInRegs));
 
     switch (kind) {
+      case CacheKind::GetIntrinsic:
+        MOZ_ASSERT(numInputs == 0);
+        break;
       case CacheKind::GetProp:
       case CacheKind::TypeOf:
       case CacheKind::GetIterator:
@@ -2331,6 +2342,24 @@ ICCacheIR_Updated::stubDataStart()
 {
     return reinterpret_cast<uint8_t*>(this) + stubInfo_->stubDataOffset();
 }
+
+/* static */ ICCacheIR_Regular*
+ICCacheIR_Regular::Clone(JSContext* cx, ICStubSpace* space, ICStub* firstMonitorStub,
+                         ICCacheIR_Regular& other)
+{
+    const CacheIRStubInfo* stubInfo = other.stubInfo();
+    MOZ_ASSERT(stubInfo->makesGCCalls());
+
+    size_t bytesNeeded = stubInfo->stubDataOffset() + stubInfo->stubDataSize();
+    void* newStub = space->alloc(bytesNeeded);
+    if (!newStub)
+        return nullptr;
+
+    ICCacheIR_Regular* res = new(newStub) ICCacheIR_Regular(other.jitCode(), stubInfo);
+    stubInfo->copyStubData(&other, res);
+    return res;
+}
+
 
 /* static */ ICCacheIR_Monitored*
 ICCacheIR_Monitored::Clone(JSContext* cx, ICStubSpace* space, ICStub* firstMonitorStub,

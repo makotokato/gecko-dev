@@ -628,6 +628,7 @@ public:
     , mIsPrimaryFrame(false)
     , mMayHaveTransformAnimation(false)
     , mMayHaveOpacityAnimation(false)
+    , mAllDescendantsAreInvisible(false)
   {
     mozilla::PodZero(&mOverflow);
   }
@@ -1249,8 +1250,6 @@ public:
   // Temporary override for a flex item's main-size property (either width
   // or height), imposed by its flex container.
   NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(FlexItemMainSizeOverride, nscoord)
-
-  NS_DECLARE_FRAME_PROPERTY_RELEASABLE(CachedBackgroundImageDT, DrawTarget)
 
   NS_DECLARE_FRAME_PROPERTY_DELETABLE(InvalidationRect, nsRect)
 
@@ -2070,7 +2069,7 @@ public:
    * @param aNameSpaceID the namespace of the attribute
    * @param aAttribute the atom name of the attribute
    * @param aModType Whether or not the attribute was added, changed, or removed.
-   *   The constants are defined in nsIDOMMutationEvent.h.
+   *   The constants are defined in MutationEvent.webidl.
    */
   virtual nsresult  AttributeChanged(int32_t         aNameSpaceID,
                                      nsAtom*        aAttribute,
@@ -4089,6 +4088,13 @@ public:
     mMayHaveOpacityAnimation = true;
   }
 
+  // Returns true if this frame is visible or may have visible descendants.
+  bool IsVisibleOrMayHaveVisibleDescendants() const {
+    return !mAllDescendantsAreInvisible || StyleVisibility()->IsVisible();
+  }
+  // Update mAllDescendantsAreInvisible flag for this frame and ancestors.
+  void UpdateVisibleDescendantsState();
+
   /**
    * If this returns true, the frame it's called on should get the
    * NS_FRAME_HAS_DIRTY_CHILDREN bit set on it by the caller; either directly
@@ -4348,9 +4354,19 @@ private:
   bool mMayHaveTransformAnimation : 1;
   bool mMayHaveOpacityAnimation : 1;
 
+  /**
+   * True if we are certain that all descendants are not visible.
+   *
+   * This flag is conservative in that it might sometimes be false even if, in
+   * fact, all descendants are invisible.
+   * For example; an element is visibility:visible and has a visibility:hidden
+   * child. This flag is stil false in such case.
+   */
+  bool mAllDescendantsAreInvisible : 1;
+
 protected:
 
-  // There is a 1-bit gap left here.
+  // There is no gap left here.
 
   // Helpers
   /**

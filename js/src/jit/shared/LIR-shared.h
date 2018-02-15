@@ -405,7 +405,9 @@ class LSimdSwizzleF : public LSimdSwizzleBase
 class LSimdGeneralShuffleBase : public LVariadicInstruction<1, 1>
 {
   public:
-    explicit LSimdGeneralShuffleBase(const LDefinition& temp) {
+    LSimdGeneralShuffleBase(const LDefinition& temp, uint32_t numOperands)
+      : LVariadicInstruction<1, 1>(numOperands)
+    {
         setTemp(0, temp);
     }
     const LAllocation* vector(unsigned i) {
@@ -428,8 +430,9 @@ class LSimdGeneralShuffleI : public LSimdGeneralShuffleBase
 {
   public:
     LIR_HEADER(SimdGeneralShuffleI);
-    explicit LSimdGeneralShuffleI(const LDefinition& temp)
-      : LSimdGeneralShuffleBase(temp)
+
+    LSimdGeneralShuffleI(const LDefinition& temp, uint32_t numOperands)
+      : LSimdGeneralShuffleBase(temp, numOperands)
     {}
 };
 
@@ -437,8 +440,9 @@ class LSimdGeneralShuffleF : public LSimdGeneralShuffleBase
 {
   public:
     LIR_HEADER(SimdGeneralShuffleF);
-    explicit LSimdGeneralShuffleF(const LDefinition& temp)
-      : LSimdGeneralShuffleBase(temp)
+
+    LSimdGeneralShuffleF(const LDefinition& temp, uint32_t numOperands)
+      : LSimdGeneralShuffleBase(temp, numOperands)
     {}
 };
 
@@ -979,7 +983,7 @@ class LControlInstructionHelper : public LInstructionHelper<0, Operands, Temps> 
         return successors_[i];
     }
 
-    virtual void setSuccessor(size_t i, MBasicBlock* successor) final override {
+    void setSuccessor(size_t i, MBasicBlock* successor) {
         successors_[i] = successor;
     }
 };
@@ -3938,7 +3942,7 @@ class LAddI : public LBinaryMath<0>
         return snapshot() ? "OverflowCheck" : nullptr;
     }
 
-    virtual bool recoversInput() const override {
+    bool recoversInput() const {
         return recoversInput_;
     }
     void setRecoversInput() {
@@ -3975,7 +3979,7 @@ class LSubI : public LBinaryMath<0>
         return snapshot() ? "OverflowCheck" : nullptr;
     }
 
-    virtual bool recoversInput() const override {
+    bool recoversInput() const {
         return recoversInput_;
     }
     void setRecoversInput() {
@@ -3985,6 +3989,19 @@ class LSubI : public LBinaryMath<0>
         return mir_->toSub();
     }
 };
+
+inline bool
+LNode::recoversInput() const
+{
+    switch (op()) {
+      case LOp_AddI:
+        return toAddI()->recoversInput();
+      case LOp_SubI:
+        return toSubI()->recoversInput();
+      default:
+        return false;
+    }
+}
 
 class LSubI64 : public LInstructionHelper<INT64_PIECES, 2 * INT64_PIECES, 0>
 {
@@ -5824,7 +5841,8 @@ class LLoadElementFromStateV : public LVariadicInstruction<BOX_PIECES, 3>
     LIR_HEADER(LoadElementFromStateV)
 
     LLoadElementFromStateV(const LDefinition& temp0, const LDefinition& temp1,
-                           const LDefinition& tempD)
+                           const LDefinition& tempD, uint32_t numOperands)
+      : LVariadicInstruction<BOX_PIECES, 3>(numOperands)
     {
         setTemp(0, temp0);
         setTemp(1, temp1);
@@ -8992,29 +9010,28 @@ class LWasmStackArgI64 : public LInstructionHelper<0, INT64_PIECES, 0>
     }
 };
 
-class LWasmCallBase : public LInstruction
+template <size_t Defs>
+class LWasmCallBase : public details::LInstructionFixedDefsTempsHelper<Defs, 0>
 {
+    using Base = details::LInstructionFixedDefsTempsHelper<Defs, 0>;
+
     LAllocation* operands_;
-    uint32_t numOperands_;
     uint32_t needsBoundsCheck_;
 
   public:
-
-    LWasmCallBase(LAllocation* operands, uint32_t numOperands, uint32_t numDefs,
-                  bool needsBoundsCheck)
-      : LInstruction(numDefs, /* numTemps = */ 0),
+    LWasmCallBase(LAllocation* operands, uint32_t numOperands, bool needsBoundsCheck)
+      : Base(numOperands),
         operands_(operands),
-        numOperands_(numOperands),
         needsBoundsCheck_(needsBoundsCheck)
     {
-        setIsCall();
+        this->setIsCall();
     }
 
     MWasmCall* mir() const {
-        return mir_->toWasmCall();
+        return this->mir_->toWasmCall();
     }
 
-    bool isCallPreserved(AnyRegister reg) const override {
+    static bool isCallPreserved(AnyRegister reg) {
         // All MWasmCalls preserve the TLS register:
         //  - internal/indirect calls do by the internal wasm ABI
         //  - import calls do by explicitly saving/restoring at the callsite
@@ -9024,85 +9041,64 @@ class LWasmCallBase : public LInstruction
     }
 
     // LInstruction interface
-    size_t numOperands() const override {
-        return numOperands_;
-    }
     LAllocation* getOperand(size_t index) override {
-        MOZ_ASSERT(index < numOperands_);
+        MOZ_ASSERT(index < this->numOperands());
         return &operands_[index];
     }
     void setOperand(size_t index, const LAllocation& a) override {
-        MOZ_ASSERT(index < numOperands_);
+        MOZ_ASSERT(index < this->numOperands());
         operands_[index] = a;
-    }
-    LDefinition* getTemp(size_t index) override {
-        MOZ_CRASH("no temps");
-    }
-    void setTemp(size_t index, const LDefinition& a) override {
-        MOZ_CRASH("no temps");
-    }
-    size_t numSuccessors() const override {
-        return 0;
-    }
-    MBasicBlock* getSuccessor(size_t i) const override {
-        MOZ_CRASH("no successors");
-    }
-    void setSuccessor(size_t i, MBasicBlock*) override {
-        MOZ_CRASH("no successors");
     }
     bool needsBoundsCheck() const {
         return needsBoundsCheck_;
     }
 };
 
-class LWasmCall : public LWasmCallBase
+class LWasmCall : public LWasmCallBase<1>
 {
-     LDefinition def_;
-
   public:
     LIR_HEADER(WasmCall);
 
-    LWasmCall(LAllocation* operands, uint32_t numOperands, uint32_t numDefs, bool needsBoundsCheck)
-      : LWasmCallBase(operands, numOperands, numDefs, needsBoundsCheck),
-        def_(LDefinition::BogusTemp())
-    {}
-
-    // LInstruction interface
-    LDefinition* getDef(size_t index) override {
-        MOZ_ASSERT(numDefs() == 1);
-        MOZ_ASSERT(index == 0);
-        return &def_;
-    }
-    void setDef(size_t index, const LDefinition& def) override {
-        MOZ_ASSERT(index == 0);
-        def_ = def;
+    LWasmCall(LAllocation* operands, uint32_t numOperands, bool needsBoundsCheck)
+      : LWasmCallBase(operands, numOperands, needsBoundsCheck)
+    {
     }
 };
 
-class LWasmCallI64 : public LWasmCallBase
+class LWasmCallVoid : public LWasmCallBase<0>
 {
-    LDefinition defs_[INT64_PIECES];
+  public:
+    LIR_HEADER(WasmCallVoid);
 
+    LWasmCallVoid(LAllocation* operands, uint32_t numOperands, bool needsBoundsCheck)
+      : LWasmCallBase(operands, numOperands, needsBoundsCheck)
+    {
+    }
+};
+
+class LWasmCallI64 : public LWasmCallBase<INT64_PIECES>
+{
   public:
     LIR_HEADER(WasmCallI64);
 
     LWasmCallI64(LAllocation* operands, uint32_t numOperands, bool needsBoundsCheck)
-      : LWasmCallBase(operands, numOperands, INT64_PIECES, needsBoundsCheck)
+      : LWasmCallBase(operands, numOperands, needsBoundsCheck)
     {
-        for (size_t i = 0; i < numDefs(); i++)
-            defs_[i] = LDefinition::BogusTemp();
-    }
-
-    // LInstruction interface
-    LDefinition* getDef(size_t index) override {
-        MOZ_ASSERT(index < numDefs());
-        return &defs_[index];
-    }
-    void setDef(size_t index, const LDefinition& def) override {
-        MOZ_ASSERT(index < numDefs());
-        defs_[index] = def;
     }
 };
+
+inline bool
+LNode::isCallPreserved(AnyRegister reg) const
+{
+    switch (op()) {
+      case LOp_WasmCall:
+      case LOp_WasmCallVoid:
+      case LOp_WasmCallI64:
+        return LWasmCallBase<0>::isCallPreserved(reg);
+      default:
+        return false;
+    }
+}
 
 class LAssertRangeI : public LInstructionHelper<0, 1, 0>
 {

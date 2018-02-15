@@ -1121,6 +1121,10 @@ nsTextEditorState::GetPreviewNode()
 void
 nsTextEditorState::Clear()
 {
+  if (mTextEditor) {
+    mTextEditor->SetTextInputListener(nullptr);
+  }
+
   if (mBoundFrame) {
     // Oops, we still have a frame!
     // This should happen when the type of a text input control is being changed
@@ -1387,9 +1391,10 @@ nsTextEditorState::PrepareEditor(const nsAString *aValue)
     //       editor's Init() call.
 
     // Get the DOM document
-    nsCOMPtr<nsIDOMDocument> domdoc = do_QueryInterface(shell->GetDocument());
-    if (!domdoc)
+    nsCOMPtr<nsIDocument> doc = shell->GetDocument();
+    if (NS_WARN_IF(!doc)) {
       return NS_ERROR_FAILURE;
+    }
 
     // What follows is a bit of a hack.  The editor uses the public DOM APIs
     // for its content manipulations, and it causes it to fail some security
@@ -1400,7 +1405,7 @@ nsTextEditorState::PrepareEditor(const nsAString *aValue)
     // already does the relevant security checks.
     AutoNoJSAPI nojsapi;
 
-    rv = newTextEditor->Init(domdoc, GetRootNode(), mSelCon, editorFlags,
+    rv = newTextEditor->Init(*doc, GetRootNode(), mSelCon, editorFlags,
                              defaultValue);
     NS_ENSURE_SUCCESS(rv, rv);
   }

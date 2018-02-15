@@ -50,8 +50,6 @@
 #include "wasm/WasmSignalHandlers.h"
 #include "wasm/WasmTypes.h"
 
-#include "jsatominlines.h"
-
 #include "gc/Marking-inl.h"
 #include "gc/Nursery-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -859,7 +857,7 @@ js::CreateWasmBuffer(JSContext* cx, const wasm::Limits& memory,
     }
 
 #ifndef WASM_HUGE_MEMORY
-    if (sizeof(void*) == 8 && maxSize && maxSize.value() == UINT32_MAX) {
+    if (sizeof(void*) == 8 && maxSize && maxSize.value() >= (UINT32_MAX - wasm::PageSize)) {
         // On 64-bit platforms that don't define WASM_HUGE_MEMORY
         // clamp maxSize to smaller value that satisfies the 32-bit invariants
         // maxSize + wasm::PageSize < UINT32_MAX and maxSize % wasm::PageSize == 0

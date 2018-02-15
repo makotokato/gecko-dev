@@ -176,6 +176,33 @@ RenderThread::NewFrameReady(wr::WindowId aWindowId)
 }
 
 void
+RenderThread::WakeUp(wr::WindowId aWindowId)
+{
+  if (mHasShutdown) {
+    return;
+  }
+
+  if (!IsInRenderThread()) {
+    Loop()->PostTask(
+      NewRunnableMethod<wr::WindowId>("wr::RenderThread::WakeUp",
+                                      this,
+                                      &RenderThread::WakeUp,
+                                      aWindowId));
+    return;
+  }
+
+  if (IsDestroyed(aWindowId)) {
+    return;
+  }
+
+  auto it = mRenderers.find(aWindowId);
+  MOZ_ASSERT(it != mRenderers.end());
+  if (it != mRenderers.end()) {
+    it->second->Update();
+  }
+}
+
+void
 RenderThread::RunEvent(wr::WindowId aWindowId, UniquePtr<RendererEvent> aEvent)
 {
   if (!IsInRenderThread()) {
@@ -195,16 +222,20 @@ RenderThread::RunEvent(wr::WindowId aWindowId, UniquePtr<RendererEvent> aEvent)
 
 static void
 NotifyDidRender(layers::CompositorBridgeParentBase* aBridge,
-                wr::WrRenderedEpochs* aEpochs,
+                wr::WrPipelineInfo* aInfo,
                 TimeStamp aStart,
                 TimeStamp aEnd)
 {
   wr::WrPipelineId pipeline;
   wr::WrEpoch epoch;
-  while (wr_rendered_epochs_next(aEpochs, &pipeline, &epoch)) {
+  while (wr_pipeline_info_next_epoch(aInfo, &pipeline, &epoch)) {
     aBridge->NotifyDidCompositeToPipeline(pipeline, epoch, aStart, aEnd);
   }
-  wr_rendered_epochs_delete(aEpochs);
+  while (wr_pipeline_info_next_removed_pipeline(aInfo, &pipeline)) {
+    aBridge->NotifyPipelineRemoved(pipeline);
+  }
+
+  wr_pipeline_info_delete(aInfo);
 }
 
 void
@@ -230,12 +261,12 @@ RenderThread::UpdateAndRender(wr::WindowId aWindowId)
 
   TimeStamp end = TimeStamp::Now();
 
-  auto epochs = renderer->FlushRenderedEpochs();
+  auto info = renderer->FlushPipelineInfo();
   layers::CompositorThreadHolder::Loop()->PostTask(NewRunnableFunction(
     "NotifyDidRenderRunnable",
     &NotifyDidRender,
     renderer->GetCompositorBridge(),
-    epochs,
+    info,
     start, end
   ));
 }
@@ -461,6 +492,11 @@ static void NewFrameReady(mozilla::wr::WrWindowId aWindowId)
 {
   mozilla::wr::RenderThread::Get()->IncRenderingFrameCount(aWindowId);
   mozilla::wr::RenderThread::Get()->NewFrameReady(mozilla::wr::WindowId(aWindowId));
+}
+
+void wr_notifier_wake_up(mozilla::wr::WrWindowId aWindowId)
+{
+  mozilla::wr::RenderThread::Get()->WakeUp(mozilla::wr::WindowId(aWindowId));
 }
 
 void wr_notifier_new_frame_ready(mozilla::wr::WrWindowId aWindowId)

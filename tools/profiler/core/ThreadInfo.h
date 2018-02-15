@@ -163,6 +163,23 @@ private:
   mozilla::Atomic<int> mSleep;
 };
 
+// Contains data for partial profiles that get saved when
+// ThreadInfo::FlushSamplesAndMarkers gets called.
+struct PartialThreadProfile final
+{
+  PartialThreadProfile(mozilla::UniquePtr<char[]>&& aSamplesJSON,
+                       mozilla::UniquePtr<char[]>&& aMarkersJSON,
+                       mozilla::UniquePtr<UniqueStacks>&& aUniqueStacks)
+    : mSamplesJSON(mozilla::Move(aSamplesJSON))
+    , mMarkersJSON(mozilla::Move(aMarkersJSON))
+    , mUniqueStacks(mozilla::Move(aUniqueStacks))
+  {}
+
+  mozilla::UniquePtr<char[]> mSamplesJSON;
+  mozilla::UniquePtr<char[]> mMarkersJSON;
+  mozilla::UniquePtr<UniqueStacks> mUniqueStacks;
+};
+
 // This class contains the info for a single thread.
 //
 // Note: A thread's ThreadInfo can be held onto after the thread itself exits,
@@ -193,7 +210,12 @@ public:
   void StopProfiling();
   bool IsBeingProfiled() { return mIsBeingProfiled; }
 
-  void NotifyUnregistered() { mUnregisterTime = TimeStamp::Now(); }
+  void NotifyUnregistered(uint64_t aBufferPosition)
+  {
+    mUnregisterTime = TimeStamp::Now();
+    mBufferPositionWhenUnregistered = mozilla::Some(aBufferPosition);
+  }
+  mozilla::Maybe<uint64_t> BufferPositionWhenUnregistered() { return mBufferPositionWhenUnregistered; }
 
   PlatformData* GetPlatformData() const { return mPlatformData.get(); }
   void* StackTop() const { return mStackTop; }
@@ -206,6 +228,7 @@ private:
   mozilla::UniqueFreePtr<char> mName;
   mozilla::TimeStamp mRegisterTime;
   mozilla::TimeStamp mUnregisterTime;
+  mozilla::Maybe<uint64_t> mBufferPositionWhenUnregistered;
   const bool mIsMainThread;
   nsCOMPtr<nsIEventTarget> mThread;
 
@@ -318,9 +341,7 @@ private:
   // stringifying JIT frames). In the case of JSRuntime destruction,
   // FlushSamplesAndMarkers should be called to save them. These are spliced
   // into the final stream.
-  mozilla::UniquePtr<char[]> mSavedStreamedSamples;
-  mozilla::UniquePtr<char[]> mSavedStreamedMarkers;
-  mozilla::Maybe<UniqueStacks> mUniqueStacks;
+  UniquePtr<PartialThreadProfile> mPartialProfile;
 
   // This is used only for nsIThreads.
   mozilla::Maybe<ThreadResponsiveness> mResponsiveness;
@@ -393,8 +414,8 @@ StreamSamplesAndMarkers(const char* aName, int aThreadId,
                         const TimeStamp& aUnregisterTime,
                         double aSinceTime,
                         JSContext* aContext,
-                        char* aSavedStreamedSamples,
-                        char* aSavedStreamedMarkers,
+                        UniquePtr<char[]>&& aPartialSamplesJSON,
+                        UniquePtr<char[]>&& aPartialMarkersJSON,
                         UniqueStacks& aUniqueStacks);
 
 #endif  // ThreadInfo_h

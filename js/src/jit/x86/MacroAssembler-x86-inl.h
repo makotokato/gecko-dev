@@ -970,7 +970,7 @@ void
 MacroAssembler::branchTest64(Condition cond, Register64 lhs, Register64 rhs, Register temp,
                              L label)
 {
-    if (cond == Assembler::Zero) {
+    if (cond == Assembler::Zero || cond == Assembler::NonZero) {
         MOZ_ASSERT(lhs.low == rhs.low);
         MOZ_ASSERT(lhs.high == rhs.high);
         movl(lhs.low, temp);
@@ -1007,6 +1007,32 @@ void
 MacroAssembler::branchToComputedAddress(const BaseIndex& addr)
 {
     jmp(Operand(addr));
+}
+
+void
+MacroAssembler::cmp32MovePtr(Condition cond, Register lhs, Imm32 rhs, Register src,
+                             Register dest)
+{
+    cmp32(lhs, rhs);
+    cmovCCl(cond, Operand(src), dest);
+}
+
+void
+MacroAssembler::test32LoadPtr(Condition cond, const Address& addr, Imm32 mask, const Address& src,
+                              Register dest)
+{
+    MOZ_ASSERT(cond == Assembler::Zero || cond == Assembler::NonZero);
+    test32(addr, mask);
+    cmovCCl(cond, Operand(src), dest);
+}
+
+void
+MacroAssembler::test32MovePtr(Condition cond, const Address& addr, Imm32 mask, Register src,
+                              Register dest)
+{
+    MOZ_ASSERT(cond == Assembler::Zero || cond == Assembler::NonZero);
+    test32(addr, mask);
+    cmovCCl(cond, Operand(src), dest);
 }
 
 // ========================================================================

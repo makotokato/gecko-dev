@@ -76,9 +76,9 @@ use layout::incremental::{LayoutDamageComputation, RelayoutMode, SpecialRestyleD
 use layout::layout_debug;
 use layout::parallel;
 use layout::query::{LayoutRPCImpl, LayoutThreadData, process_content_box_request, process_content_boxes_request};
-use layout::query::{process_node_geometry_request, process_node_scroll_area_request};
-use layout::query::{process_node_scroll_id_request, process_offset_parent_query, process_resolved_style_request};
-use layout::query::process_style_query;
+use layout::query::{process_element_inner_text_query, process_node_geometry_request};
+use layout::query::{process_node_scroll_area_request, process_node_scroll_id_request};
+use layout::query::{process_offset_parent_query, process_resolved_style_request, process_style_query};
 use layout::sequential;
 use layout::traversal::{ComputeStackingRelativePositions, PreorderFlowTraversal, RecalcStyleAndConstructFlows};
 use layout::wrapper::LayoutNodeLayoutData;
@@ -526,6 +526,7 @@ impl LayoutThread {
                     scroll_offsets: HashMap::new(),
                     text_index_response: TextIndexResponse(None),
                     nodes_from_point_response: vec![],
+                    element_inner_text_response: String::new(),
                 })),
             webrender_image_cache:
                 Arc::new(RwLock::new(FnvHashMap::default())),
@@ -707,7 +708,7 @@ impl LayoutThread {
                 let mut txn = webrender_api::Transaction::new();
                 txn.scroll_node_with_id(
                     webrender_api::LayoutPoint::from_untyped(&point),
-                    webrender_api::IdType::ExternalScrollId(state.scroll_id),
+                    webrender_api::ScrollNodeIdType::ExternalScrollId(state.scroll_id),
                     webrender_api::ScrollClamping::ToContentBounds
                 );
                 self.webrender_api.send_transaction(self.webrender_document, txn);
@@ -1107,6 +1108,9 @@ impl LayoutThread {
                     ReflowGoal::TextIndexQuery(..) => {
                         rw_data.text_index_response = TextIndexResponse(None);
                     }
+                    ReflowGoal::ElementInnerTextQuery(_) => {
+                        rw_data.element_inner_text_response = String::new();
+                    },
                     ReflowGoal::Full | ReflowGoal:: TickAnimations => {}
                 }
                 return;
@@ -1419,7 +1423,11 @@ impl LayoutThread {
                    .map(|item| UntrustedNodeAddress(item.tag.0 as *const c_void))
                    .collect()
             },
-
+            ReflowGoal::ElementInnerTextQuery(node) => {
+                let node = unsafe { ServoLayoutNode::new(&node) };
+                rw_data.element_inner_text_response =
+                    process_element_inner_text_query(node, &rw_data.display_list);
+            },
             ReflowGoal::Full | ReflowGoal::TickAnimations => {}
         }
     }

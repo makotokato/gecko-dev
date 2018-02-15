@@ -165,9 +165,10 @@ impl From<LengthOrPercentage> for FontSize {
 }
 
 /// Specifies a prioritized list of font family names or generic family names.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, ToCss)]
 pub enum FontFamily {
     /// List of `font-family`
+    #[css(iterable, comma)]
     Values(FontFamilyList),
     /// System font
     System(SystemFont),
@@ -241,26 +242,6 @@ impl MallocSizeOf for FontFamily {
                 }
             }
             FontFamily::System(_) => 0,
-        }
-    }
-}
-
-impl ToCss for FontFamily {
-    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
-    where
-        W: Write,
-    {
-        match *self {
-            FontFamily::Values(ref v) => {
-                let mut iter = v.iter();
-                iter.next().unwrap().to_css(dest)?;
-                for family in iter {
-                    dest.write_str(", ")?;
-                    family.to_css(dest)?;
-                }
-                Ok(())
-            }
-            FontFamily::System(sys) => sys.to_css(dest),
         }
     }
 }
@@ -1776,7 +1757,7 @@ impl Parse for FontFeatureSettings {
     }
 }
 
-#[derive(Clone, Debug, MallocSizeOf, PartialEq, ToComputedValue)]
+#[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, ToComputedValue)]
 /// Whether user agents are allowed to synthesize bold or oblique font faces
 /// when a font family lacks bold or italic faces
 pub struct FontSynthesis {
@@ -2054,7 +2035,7 @@ impl Parse for VariationValue<Number> {
 }
 
 
-#[derive(Clone, Debug, MallocSizeOf, PartialEq, ToComputedValue)]
+#[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, ToComputedValue)]
 /// text-zoom. Enable if true, disable if false
 pub struct XTextZoom(pub bool);
 
@@ -2106,7 +2087,7 @@ impl ToCss for XLang {
 }
 
 #[cfg_attr(feature = "gecko", derive(MallocSizeOf))]
-#[derive(Clone, Debug, PartialEq, ToCss)]
+#[derive(Clone, Copy, Debug, PartialEq, ToCss)]
 /// Specifies the minimum font size allowed due to changes in scriptlevel.
 /// Ref: https://wiki.mozilla.org/MathML:mstyle
 pub struct MozScriptMinSize(pub NoCalcLength);

@@ -794,8 +794,7 @@ decorate_task(
   withMockExperiments,
   withMockPreferences,
   withStub(PreferenceExperiments, "stop"),
-  withStub(TelemetryEvents, "sendEvent"),
-  async function testInitChanges(experiments, mockPreferences, stopStub, sendEventStub) {
+  async function testInitChanges(experiments, mockPreferences, stopStub) {
     mockPreferences.set("fake.preference", "experiment value", "default");
     experiments.test = experimentFactory({
       name: "test",
@@ -804,8 +803,17 @@ decorate_task(
     });
     mockPreferences.set("fake.preference", "changed value");
     await PreferenceExperiments.init();
-    ok(stopStub.calledWith("test"), "Experiment is stopped because value changed");
+
     is(Preferences.get("fake.preference"), "changed value", "Preference value was not changed");
+
+    Assert.deepEqual(
+      stopStub.getCall(0).args,
+      ["test", {
+        resetValue: false,
+        reason: "user-preference-changed-sideload",
+      }],
+      "Experiment is stopped correctly because value changed"
+    );
   },
 );
 
@@ -1005,4 +1013,68 @@ decorate_task(
       "PreferenceExperiments.stop() should use unknown as the default reason",
     );
   }
+);
+
+// stop should pass along the value for resetValue to Telemetry Events as didResetValue
+decorate_task(
+  withMockExperiments,
+  withMockPreferences,
+  withStub(PreferenceExperiments, "stopObserver"),
+  withStub(TelemetryEvents, "sendEvent"),
+  async function testStopResetValue(experiments, mockPreferences, stopObserverStub, sendEventStub) {
+    mockPreferences.set("fake.preference1", "default value", "default");
+    experiments.test1 = experimentFactory({ name: "test1", preferenceName: "fake.preference1" });
+    await PreferenceExperiments.stop("test1", {resetValue: true});
+    is(sendEventStub.callCount, 1);
+    is(
+      sendEventStub.getCall(0).args[3].didResetValue,
+      "true",
+      "PreferenceExperiments.stop() should pass true values of resetValue as didResetValue",
+    );
+
+    mockPreferences.set("fake.preference2", "default value", "default");
+    experiments.test2 = experimentFactory({ name: "test2", preferenceName: "fake.preference2" });
+    await PreferenceExperiments.stop("test2", {resetValue: false});
+    is(sendEventStub.callCount, 2);
+    is(
+      sendEventStub.getCall(1).args[3].didResetValue,
+      "false",
+      "PreferenceExperiments.stop() should pass false values of resetValue as didResetValue",
+    );
+  }
+);
+
+// Should send the correct event telemetry when a study ends because
+// the user changed preferences during a browser run.
+decorate_task(
+  withMockPreferences,
+  withStub(TelemetryEvents, "sendEvent"),
+  async function testPrefChangeEventTelemetry(mockPreferences, sendEventStub) {
+    is(Preferences.get("fake.preference"), null, "preference should start unset");
+
+    await PreferenceExperiments.start({
+      name: "test",
+      branch: "branch",
+      preferenceName: "fake.preference",
+      preferenceValue: "experimentvalue",
+      preferenceBranchType: "default",
+      preferenceType: "string",
+    });
+
+    // setting the preference on the user branch should trigger the observer to stop the experiment
+    mockPreferences.set("fake.preference", "uservalue", "user");
+
+    // let the event loop tick to run the observer
+    await Promise.resolve();
+
+    is(sendEventStub.getCall(0).args[0], "enroll", "There is an enrollment event from start()");
+    Assert.deepEqual(
+      sendEventStub.getCall(1).args,
+      ["unenroll", "preference_study", "test", {
+        didResetValue: "false",
+        reason: "user-preference-changed",
+      }],
+      "stop should send a telemetry event indicating the user unenrolled manually",
+    );
+  },
 );

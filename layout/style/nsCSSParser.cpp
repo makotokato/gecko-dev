@@ -3626,6 +3626,9 @@ CSSParserImpl::ParseMediaQueryExpression(nsMediaQuery* aQuery)
       break;
     case nsMediaFeature::eIdent:
       rv = ParseSingleTokenVariant(expr->mValue, VARIANT_IDENTIFIER, nullptr);
+      if (rv) {
+        expr->mValue.AtomizeIdentValue();
+      }
       break;
   }
   if (!rv || !ExpectSymbol(')', true)) {
@@ -12052,6 +12055,12 @@ CSSParserImpl::ParseFontDescriptorValue(nsCSSFontDesc aDescID,
 
   case eCSSFontDesc_FontFeatureSettings:
     return ParseFontFeatureSettings(aValue);
+
+  case eCSSFontDesc_FontVariationSettings:
+    if (StylePrefs::sFontVariationsEnabled) {
+      return ParseFontVariationSettings(aValue);
+    }
+    return false;
 
   case eCSSFontDesc_FontLanguageOverride:
     return ParseSingleTokenVariant(aValue, VARIANT_NORMAL | VARIANT_STRING,

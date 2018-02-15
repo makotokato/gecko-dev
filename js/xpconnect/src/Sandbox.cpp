@@ -234,8 +234,7 @@ SandboxCreateCrypto(JSContext* cx, JS::HandleObject obj)
     nsIGlobalObject* native = xpc::NativeGlobal(obj);
     MOZ_ASSERT(native);
 
-    dom::Crypto* crypto = new dom::Crypto();
-    crypto->Init(native);
+    dom::Crypto* crypto = new dom::Crypto(native);
     JS::RootedObject wrapped(cx, crypto->WrapObject(cx, nullptr));
     return JS_DefineProperty(cx, obj, "crypto", wrapped, JSPROP_ENUMERATE);
 }
@@ -315,12 +314,11 @@ SandboxFetch(JSContext* cx, JS::HandleObject scope, const CallArgs& args)
 static bool SandboxFetchPromise(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    RootedObject callee(cx, &args.callee());
     RootedObject scope(cx, JS::CurrentGlobalOrNull(cx));
     if (SandboxFetch(cx, scope, args)) {
         return true;
     }
-    return ConvertExceptionToPromise(cx, scope, args.rval());
+    return ConvertExceptionToPromise(cx, args.rval());
 }
 
 
@@ -624,11 +622,9 @@ nsXPCComponents_utils_Sandbox::~nsXPCComponents_utils_Sandbox()
 {
 }
 
-NS_INTERFACE_MAP_BEGIN(nsXPCComponents_utils_Sandbox)
-  NS_INTERFACE_MAP_ENTRY(nsIXPCComponents_utils_Sandbox)
-  NS_INTERFACE_MAP_ENTRY(nsIXPCScriptable)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIXPCComponents_utils_Sandbox)
-NS_INTERFACE_MAP_END
+NS_IMPL_QUERY_INTERFACE(nsXPCComponents_utils_Sandbox,
+                        nsIXPCComponents_utils_Sandbox,
+                        nsIXPCScriptable)
 
 NS_IMPL_ADDREF(nsXPCComponents_utils_Sandbox)
 NS_IMPL_RELEASE(nsXPCComponents_utils_Sandbox)

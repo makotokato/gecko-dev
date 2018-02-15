@@ -359,6 +359,7 @@ CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool)
       case CacheKind::Compare:
       case CacheKind::TypeOf:
       case CacheKind::ToBool:
+      case CacheKind::GetIntrinsic:
         MOZ_CRASH("Unsupported IC");
     }
     MOZ_CRASH();
@@ -1337,7 +1338,7 @@ PrepareAndExecuteRegExp(JSContext* cx, MacroAssembler& masm, Register regexp, Re
         masm.branch32(Assembler::AboveOrEqual, lastIndex, temp2, &done);
 
         // Check if input[lastIndex] is trail surrogate.
-        masm.loadStringChars(input, temp2);
+        masm.loadStringChars(input, temp2, CharEncoding::TwoByte);
         masm.computeEffectiveAddress(BaseIndex(temp2, lastIndex, TimesTwo), temp3);
         masm.load16ZeroExtend(Address(temp3, 0), temp3);
 
@@ -1373,20 +1374,22 @@ PrepareAndExecuteRegExp(JSContext* cx, MacroAssembler& masm, Register regexp, Re
     // the input start/end pointers in the InputOutputData.
     Register codePointer = temp1;
     {
-        masm.loadStringChars(input, temp2);
-        masm.storePtr(temp2, inputStartAddress);
         masm.loadStringLength(input, temp3);
 
         Label isLatin1, done;
         masm.branchLatin1String(input, &isLatin1);
         {
+            masm.loadStringChars(input, temp2, CharEncoding::TwoByte);
+            masm.storePtr(temp2, inputStartAddress);
             masm.lshiftPtr(Imm32(1), temp3);
             masm.loadPtr(Address(temp1, RegExpShared::offsetOfTwoByteJitCode(mode)),
                          codePointer);
+            masm.jump(&done);
         }
-        masm.jump(&done);
+        masm.bind(&isLatin1);
         {
-            masm.bind(&isLatin1);
+            masm.loadStringChars(input, temp2, CharEncoding::Latin1);
+            masm.storePtr(temp2, inputStartAddress);
             masm.loadPtr(Address(temp1, RegExpShared::offsetOfLatin1JitCode(mode)),
                          codePointer);
         }
@@ -1579,15 +1582,16 @@ CreateDependentString::generate(MacroAssembler& masm, const JSAtomState& names,
         newStartIndexAddress.offset += 2 * sizeof(void*);
 
         // Load chars pointer for the new string.
-        masm.addPtr(ImmWord(JSInlineString::offsetOfInlineStorage()), string);
+        masm.loadInlineStringCharsForStore(string, string);
 
         // Load the source characters pointer.
-        masm.loadStringChars(base, base);
-        masm.load32(newStartIndexAddress, temp2);
+        masm.loadStringChars(base, temp2,
+                             latin1 ? CharEncoding::Latin1 : CharEncoding::TwoByte);
+        masm.load32(newStartIndexAddress, base);
         if (latin1)
             masm.addPtr(temp2, base);
         else
-            masm.computeEffectiveAddress(BaseIndex(base, temp2, TimesTwo), base);
+            masm.computeEffectiveAddress(BaseIndex(temp2, base, TimesTwo), base);
 
         CopyStringChars(masm, string, base, temp1, temp2, latin1 ? 1 : 2, latin1 ? 1 : 2);
 
@@ -1613,14 +1617,15 @@ CreateDependentString::generate(MacroAssembler& masm, const JSAtomState& names,
         masm.store32(Imm32(flags), Address(string, JSString::offsetOfFlags()));
         masm.store32(temp1, Address(string, JSString::offsetOfLength()));
 
-        masm.loadPtr(Address(base, JSString::offsetOfNonInlineChars()), temp1);
+        masm.loadNonInlineStringChars(base, temp1,
+                                      latin1 ? CharEncoding::Latin1 : CharEncoding::TwoByte);
         masm.load32(startIndexAddress, temp2);
         if (latin1)
             masm.addPtr(temp2, temp1);
         else
             masm.computeEffectiveAddress(BaseIndex(temp1, temp2, TimesTwo), temp1);
-        masm.storePtr(temp1, Address(string, JSString::offsetOfNonInlineChars()));
-        masm.storePtr(base, Address(string, JSDependentString::offsetOfBase()));
+        masm.storeNonInlineStringChars(temp1, string);
+        masm.storeDependentStringBase(base, string);
 
         // Follow any base pointer if the input is itself a dependent string.
         // Watch for undepended strings, which have a base pointer but don't
@@ -1629,8 +1634,8 @@ CreateDependentString::generate(MacroAssembler& masm, const JSAtomState& names,
         masm.load32(Address(base, JSString::offsetOfFlags()), temp1);
         masm.and32(Imm32(JSString::TYPE_FLAGS_MASK), temp1);
         masm.branch32(Assembler::NotEqual, temp1, Imm32(JSString::DEPENDENT_FLAGS), &noBase);
-        masm.loadPtr(Address(base, JSDependentString::offsetOfBase()), temp1);
-        masm.storePtr(temp1, Address(string, JSDependentString::offsetOfBase()));
+        masm.loadDependentStringBase(base, temp1);
+        masm.storeDependentStringBase(temp1, string);
         masm.bind(&noBase);
     }
 
@@ -2450,8 +2455,6 @@ static void
 FindFirstDollarIndex(MacroAssembler& masm, Register str, Register len, Register chars,
                      Register temp, Register output, bool isLatin1)
 {
-    masm.loadStringChars(str, chars);
-
     masm.move32(Imm32(0), output);
 
     Label start, done;
@@ -2493,11 +2496,13 @@ CodeGenerator::visitGetFirstDollarIndex(LGetFirstDollarIndex* ins)
     Label isLatin1, done;
     masm.branchLatin1String(str, &isLatin1);
     {
+        masm.loadStringChars(str, temp0, CharEncoding::TwoByte);
         FindFirstDollarIndex(masm, str, len, temp0, temp1, output, /* isLatin1 = */ false);
+        masm.jump(&done);
     }
-    masm.jump(&done);
+    masm.bind(&isLatin1);
     {
-        masm.bind(&isLatin1);
+        masm.loadStringChars(str, temp0, CharEncoding::Latin1);
         FindFirstDollarIndex(masm, str, len, temp0, temp1, output, /* isLatin1 = */ true);
     }
     masm.bind(&done);
@@ -4030,7 +4035,7 @@ CodeGenerator::visitCallNative(LCallNative* call)
 {
     WrappedFunction* target = call->getSingleTarget();
     MOZ_ASSERT(target);
-    MOZ_ASSERT(target->isNative());
+    MOZ_ASSERT(target->isNativeWithCppEntry());
 
     int callargslot = call->argslot();
     int unusedStack = StackOffsetOfPassedArg(callargslot);
@@ -4055,8 +4060,9 @@ CodeGenerator::visitCallNative(LCallNative* call)
     // Allocate space for the outparam, moving the StackPointer to what will be &vp[1].
     masm.adjustStack(unusedStack);
 
-    // Push a Value containing the callee object: natives are allowed to access their callee before
-    // setitng the return value. The StackPointer is moved to &vp[0].
+    // Push a Value containing the callee object: natives are allowed to access
+    // their callee before setting the return value. The StackPointer is moved
+    // to &vp[0].
     masm.Push(ObjectValue(*target->rawJSFunction()));
 
     // Preload arguments into registers.
@@ -4305,16 +4311,17 @@ CodeGenerator::visitCallGeneric(LCallGeneric* call)
     // Guard that calleereg is actually a function object.
     masm.branchTestObjClass(Assembler::NotEqual, calleereg, nargsreg, &JSFunction::class_, &invoke);
 
-    // Guard that calleereg is an interpreted function with a JSScript.
+    // Guard that calleereg is an interpreted function with a JSScript or a
+    // wasm function.
     // If we are constructing, also ensure the callee is a constructor.
     if (call->mir()->isConstructing()) {
         masm.branchIfNotInterpretedConstructor(calleereg, nargsreg, &invoke);
     } else {
-        masm.branchIfFunctionHasNoScript(calleereg, &invoke);
-        masm.branchFunctionKind(Assembler::Equal, JSFunction::ClassConstructor, calleereg, objreg, &invoke);
+        masm.branchIfFunctionHasNoJitEntry(calleereg, /* isConstructing */ false, &invoke);
+        masm.branchFunctionKind(Assembler::Equal, JSFunction::ClassConstructor, calleereg, objreg,
+                                &invoke);
     }
 
-    // Knowing that calleereg is a non-native function, load the jit code.
     masm.loadJitCodeRaw(calleereg, objreg);
 
     // Nestle the StackPointer up to the argument vector.
@@ -4399,10 +4406,9 @@ CodeGenerator::visitCallKnown(LCallKnown* call)
     Register objreg    = ToRegister(call->getTempObject());
     uint32_t unusedStack = StackOffsetOfPassedArg(call->argslot());
     WrappedFunction* target = call->getSingleTarget();
-    Label end, uncompiled;
 
-    // Native single targets are handled by LCallNative.
-    MOZ_ASSERT(!target->isNative());
+    // Native single targets (except wasm) are handled by LCallNative.
+    MOZ_ASSERT(!target->isNativeWithCppEntry());
     // Missing arguments must have been explicitly appended by the IonBuilder.
     DebugOnly<unsigned> numNonArgsOnStack = 1 + call->isConstructing();
     MOZ_ASSERT(target->nargs() <= call->mir()->numStackArgs() - numNonArgsOnStack);
@@ -4419,11 +4425,13 @@ CodeGenerator::visitCallKnown(LCallKnown* call)
 
     MOZ_ASSERT_IF(target->isClassConstructor(), call->isConstructing());
 
-    // The calleereg is known to be a non-native function, but might point to
-    // a LazyScript instead of a JSScript.
-    masm.branchIfFunctionHasNoScript(calleereg, &uncompiled);
+    Label uncompiled;
+    if (!target->isNativeWithJitEntry()) {
+        // The calleereg is known to be a non-native function, but might point
+        // to a LazyScript instead of a JSScript.
+        masm.branchIfFunctionHasNoJitEntry(calleereg, call->isConstructing(), &uncompiled);
+    }
 
-    // Load non-native jitcode from the script.
     if (call->mir()->needsArgCheck())
         masm.loadJitCodeRaw(calleereg, objreg);
     else
@@ -4447,17 +4455,22 @@ CodeGenerator::visitCallKnown(LCallKnown* call)
     // The return address has already been removed from the Ion frame.
     int prefixGarbage = sizeof(JitFrameLayout) - sizeof(void*);
     masm.adjustStack(prefixGarbage - unusedStack);
-    masm.jump(&end);
 
-    // Handle uncompiled functions.
-    masm.bind(&uncompiled);
-    if (call->isConstructing() && target->nargs() > call->numActualArgs())
-        emitCallInvokeFunctionShuffleNewTarget(call, calleereg, target->nargs(), unusedStack);
-    else
-        emitCallInvokeFunction(call, calleereg, call->isConstructing(), call->ignoresReturnValue(),
-                               call->numActualArgs(), unusedStack);
+    if (uncompiled.used()) {
+        Label end;
+        masm.jump(&end);
 
-    masm.bind(&end);
+        // Handle uncompiled functions.
+        masm.bind(&uncompiled);
+        if (call->isConstructing() && target->nargs() > call->numActualArgs()) {
+            emitCallInvokeFunctionShuffleNewTarget(call, calleereg, target->nargs(), unusedStack);
+        } else {
+            emitCallInvokeFunction(call, calleereg, call->isConstructing(),
+                                   call->ignoresReturnValue(), call->numActualArgs(), unusedStack);
+        }
+
+        masm.bind(&end);
+    }
 
     // If the return value of the constructing function is Primitive,
     // replace the return value with the Object from CreateThis.
@@ -4711,7 +4724,7 @@ CodeGenerator::emitApplyGeneric(T* apply)
     masm.checkStackAlignment();
 
     // If the function is native, only emit the call to InvokeFunction.
-    if (apply->hasSingleTarget() && apply->getSingleTarget()->isNative()) {
+    if (apply->hasSingleTarget() && apply->getSingleTarget()->isNativeWithCppEntry()) {
         emitCallInvokeFunction(apply, extraStackSpace);
         emitPopArguments(extraStackSpace);
         return;
@@ -4720,13 +4733,13 @@ CodeGenerator::emitApplyGeneric(T* apply)
     Label end, invoke;
 
     // Guard that calleereg is an interpreted function with a JSScript.
-    masm.branchIfFunctionHasNoScript(calleereg, &invoke);
+    masm.branchIfFunctionHasNoJitEntry(calleereg, /* constructing */ false, &invoke);
 
     // Guard that calleereg is not a class constrcuctor
     masm.branchFunctionKind(Assembler::Equal, JSFunction::ClassConstructor,
                             calleereg, objreg, &invoke);
 
-    // Knowing that calleereg is a non-native function, load script's jitcode.
+    // Knowing that calleereg is a non-native function, load jitcode.
     masm.loadJitCodeRaw(calleereg, objreg);
 
     // Call with an Ion frame or a rectifier frame.
@@ -7773,13 +7786,15 @@ CopyStringCharsMaybeInflate(MacroAssembler& masm, Register input, Register destC
     masm.loadStringLength(input, temp1);
     masm.branchLatin1String(input, &isLatin1);
     {
-        masm.loadStringChars(input, input);
+        masm.loadStringChars(input, temp2, CharEncoding::TwoByte);
+        masm.movePtr(temp2, input);
         CopyStringChars(masm, destChars, input, temp1, temp2, sizeof(char16_t), sizeof(char16_t));
         masm.jump(&done);
     }
     masm.bind(&isLatin1);
     {
-        masm.loadStringChars(input, input);
+        masm.loadStringChars(input, temp2, CharEncoding::Latin1);
+        masm.movePtr(temp2, input);
         CopyStringChars(masm, destChars, input, temp1, temp2, sizeof(char), sizeof(char16_t));
     }
     masm.bind(&done);
@@ -7827,7 +7842,7 @@ ConcatInlineString(MacroAssembler& masm, Register lhs, Register rhs, Register ou
     masm.store32(temp2, Address(output, JSString::offsetOfLength()));
 
     // Load chars pointer in temp2.
-    masm.computeEffectiveAddress(Address(output, JSInlineString::offsetOfInlineStorage()), temp2);
+    masm.loadInlineStringCharsForStore(output, temp2);
 
     {
         // Copy lhs chars. Note that this advances temp2 to point to the next
@@ -7836,7 +7851,8 @@ ConcatInlineString(MacroAssembler& masm, Register lhs, Register rhs, Register ou
             CopyStringCharsMaybeInflate(masm, lhs, temp2, temp1, temp3);
         } else {
             masm.loadStringLength(lhs, temp3);
-            masm.loadStringChars(lhs, lhs);
+            masm.loadStringChars(lhs, temp1, CharEncoding::Latin1);
+            masm.movePtr(temp1, lhs);
             CopyStringChars(masm, temp2, lhs, temp3, temp1, sizeof(char), sizeof(char));
         }
 
@@ -7845,7 +7861,8 @@ ConcatInlineString(MacroAssembler& masm, Register lhs, Register rhs, Register ou
             CopyStringCharsMaybeInflate(masm, rhs, temp2, temp1, temp3);
         } else {
             masm.loadStringLength(rhs, temp3);
-            masm.loadStringChars(rhs, rhs);
+            masm.loadStringChars(rhs, temp1, CharEncoding::Latin1);
+            masm.movePtr(temp1, rhs);
             CopyStringChars(masm, temp2, rhs, temp3, temp1, sizeof(char), sizeof(char));
         }
 
@@ -7906,19 +7923,17 @@ CodeGenerator::visitSubstr(LSubstr* lir)
     masm.branchTest32(Assembler::Zero, stringFlags, Imm32(JSString::INLINE_CHARS_BIT), &notInline);
     masm.newGCFatInlineString(output, temp, slowPath);
     masm.store32(length, Address(output, JSString::offsetOfLength()));
-    Address stringStorage(string, JSInlineString::offsetOfInlineStorage());
-    Address outputStorage(output, JSInlineString::offsetOfInlineStorage());
 
     masm.branchLatin1String(string, &isInlinedLatin1);
     {
         masm.store32(Imm32(JSString::INIT_FAT_INLINE_FLAGS),
                      Address(output, JSString::offsetOfFlags()));
-        masm.computeEffectiveAddress(stringStorage, temp);
+        masm.loadInlineStringChars(string, temp, CharEncoding::TwoByte);
         if (temp2 == string)
             masm.push(string);
         BaseIndex chars(temp, begin, ScaleFromElemWidth(sizeof(char16_t)));
         masm.computeEffectiveAddress(chars, temp2);
-        masm.computeEffectiveAddress(outputStorage, temp);
+        masm.loadInlineStringCharsForStore(output, temp);
         CopyStringChars(masm, temp, temp2, length, temp3, sizeof(char16_t), sizeof(char16_t));
         masm.load32(Address(output, JSString::offsetOfLength()), length);
         masm.store16(Imm32(0), Address(temp, 0));
@@ -7930,12 +7945,16 @@ CodeGenerator::visitSubstr(LSubstr* lir)
     {
         masm.store32(Imm32(JSString::INIT_FAT_INLINE_FLAGS | JSString::LATIN1_CHARS_BIT),
                      Address(output, JSString::offsetOfFlags()));
-        if (temp2 == string)
+        if (temp2 == string) {
             masm.push(string);
-        masm.computeEffectiveAddress(stringStorage, temp2);
+            masm.loadInlineStringChars(string, temp, CharEncoding::Latin1);
+            masm.movePtr(temp, temp2);
+        } else {
+            masm.loadInlineStringChars(string, temp2, CharEncoding::Latin1);
+        }
         static_assert(sizeof(char) == 1, "begin index shouldn't need scaling");
         masm.addPtr(begin, temp2);
-        masm.computeEffectiveAddress(outputStorage, temp);
+        masm.loadInlineStringCharsForStore(output, temp);
         CopyStringChars(masm, temp, temp2, length, temp3, sizeof(char), sizeof(char));
         masm.load32(Address(output, JSString::offsetOfLength()), length);
         masm.store8(Imm32(0), Address(temp, 0));
@@ -7948,25 +7967,25 @@ CodeGenerator::visitSubstr(LSubstr* lir)
     masm.bind(&notInline);
     masm.newGCString(output, temp, slowPath);
     masm.store32(length, Address(output, JSString::offsetOfLength()));
-    masm.storePtr(string, Address(output, JSDependentString::offsetOfBase()));
+    masm.storeDependentStringBase(string, output);
 
     masm.branchLatin1String(string, &isLatin1);
     {
         masm.store32(Imm32(JSString::DEPENDENT_FLAGS), Address(output, JSString::offsetOfFlags()));
-        masm.loadPtr(Address(string, JSString::offsetOfNonInlineChars()), temp);
+        masm.loadNonInlineStringChars(string, temp, CharEncoding::TwoByte);
         BaseIndex chars(temp, begin, ScaleFromElemWidth(sizeof(char16_t)));
         masm.computeEffectiveAddress(chars, temp);
-        masm.storePtr(temp, Address(output, JSString::offsetOfNonInlineChars()));
+        masm.storeNonInlineStringChars(temp, output);
         masm.jump(done);
     }
     masm.bind(&isLatin1);
     {
         masm.store32(Imm32(JSString::DEPENDENT_FLAGS | JSString::LATIN1_CHARS_BIT),
                      Address(output, JSString::offsetOfFlags()));
-        masm.loadPtr(Address(string, JSString::offsetOfNonInlineChars()), temp);
+        masm.loadNonInlineStringChars(string, temp, CharEncoding::Latin1);
         static_assert(sizeof(char) == 1, "begin index shouldn't need scaling");
         masm.addPtr(begin, temp);
-        masm.storePtr(temp, Address(output, JSString::offsetOfNonInlineChars()));
+        masm.storeNonInlineStringChars(temp, output);
         masm.jump(done);
     }
 
@@ -8038,8 +8057,7 @@ JitCompartment::generateStringConcatStub(JSContext* cx)
     masm.store32(temp2, Address(output, JSString::offsetOfLength()));
 
     // Store left and right nodes.
-    masm.storePtr(lhs, Address(output, JSRope::offsetOfLeft()));
-    masm.storePtr(rhs, Address(output, JSRope::offsetOfRight()));
+    masm.storeRopeChildren(lhs, rhs, output);
     masm.ret();
 
     masm.bind(&leftEmpty);
@@ -8336,8 +8354,7 @@ CodeGenerator::visitFromCodePoint(LFromCodePoint* lir)
             masm.store32(Imm32(1), Address(output, JSString::offsetOfLength()));
 
             // Load chars pointer in temp1.
-            masm.computeEffectiveAddress(Address(output, JSInlineString::offsetOfInlineStorage()),
-                                         temp1);
+            masm.loadInlineStringCharsForStore(output, temp1);
 
             masm.store16(codePoint, Address(temp1, 0));
 
@@ -8352,8 +8369,7 @@ CodeGenerator::visitFromCodePoint(LFromCodePoint* lir)
             masm.store32(Imm32(2), Address(output, JSString::offsetOfLength()));
 
             // Load chars pointer in temp1.
-            masm.computeEffectiveAddress(Address(output, JSInlineString::offsetOfInlineStorage()),
-                                         temp1);
+            masm.loadInlineStringCharsForStore(output, temp1);
 
             // Inlined unicode::LeadSurrogate(uint32_t).
             masm.move32(codePoint, temp2);
@@ -9615,34 +9631,15 @@ CodeGenerator::generateWasm(wasm::SigIdDesc sigId, wasm::BytecodeOffset trapOffs
 {
     JitSpew(JitSpew_Codegen, "# Emitting wasm code");
 
-    wasm::GenerateFunctionPrologue(masm, frameSize(), sigId, offsets);
+    wasm::IsLeaf isLeaf = !gen->needsOverrecursedCheck();
 
-    // Overflow checks are omitted by CodeGenerator in some cases (leaf
-    // functions with small framePushed). Perform overflow-checking after
-    // pushing framePushed to catch cases with really large frames.
-    Label onOverflow;
-    if (!omitOverRecursedCheck())
-        masm.wasmEmitStackCheck(masm.getStackPointer(), ABINonArgReg0, &onOverflow);
+    wasm::GenerateFunctionPrologue(masm, frameSize(), isLeaf, sigId, trapOffset, offsets);
 
     if (!generateBody())
         return false;
 
     masm.bind(&returnLabel_);
     wasm::GenerateFunctionEpilogue(masm, frameSize(), offsets);
-
-    if (!omitOverRecursedCheck()) {
-        // Since we just overflowed the stack, to be on the safe side, pop the
-        // stack so that, when the trap exit stub executes, it is a safe
-        // distance away from the end of the native stack.
-        wasm::OldTrapDesc trap(trapOffset, wasm::Trap::StackOverflow, /* framePushed = */ 0);
-        if (frameSize() > 0) {
-            masm.bind(&onOverflow);
-            masm.addToStackPtr(Imm32(frameSize()));
-            masm.jump(trap);
-        } else {
-            masm.bindLater(&onOverflow, trap);
-        }
-    }
 
 #if defined(JS_ION_PERF)
     // Note the end of the inline code and start of the OOL code.
@@ -9822,6 +9819,11 @@ CodeGenerator::linkSharedStubs(JSContext* cx)
 bool
 CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints)
 {
+    // We cancel off-thread Ion compilations in a few places during GC, but if
+    // this compilation was performed off-thread it will already have been
+    // removed from the relevant lists by this point. Don't allow GC here.
+    JS::AutoAssertNoGC nogc(cx);
+
     RootedScript script(cx, gen->info().script());
     OptimizationLevel optimizationLevel = gen->optimizationInfo().level();
 
@@ -9902,7 +9904,7 @@ CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints)
     // read barriers which were skipped while compiling the script off thread.
     Linker linker(masm);
     AutoFlushICache afc("IonLink");
-    JitCode* code = linker.newCode<CanGC>(cx, ION_CODE, !patchableBackedges_.empty());
+    JitCode* code = linker.newCode<NoGC>(cx, ION_CODE, !patchableBackedges_.empty());
     if (!code)
         return false;
 

@@ -151,6 +151,7 @@
 #endif
 
 using namespace mozilla;
+using mozilla::profiler::detail::RacyFeatures;
 
 LazyLogModule gProfilerLog("prof");
 
@@ -283,6 +284,22 @@ public:
 
   PS_GET(ThreadVector&, LiveThreads)
   PS_GET(ThreadVector&, DeadThreads)
+
+  static void DiscardExpiredDeadThreads(PSLockRef, uint64_t aBufferRangeStart)
+  {
+    // Discard any dead threads that were unregistered before aBufferRangeStart.
+    ThreadVector& deadThreads = sInstance->mDeadThreads;
+    for (size_t i = 0; i < deadThreads.size(); i++) {
+      Maybe<uint64_t> bufferPosition =
+        deadThreads.at(i)->BufferPositionWhenUnregistered();
+      MOZ_RELEASE_ASSERT(bufferPosition, "should have unregistered this thread");
+      if (*bufferPosition < aBufferRangeStart) {
+        delete deadThreads.at(i);
+        deadThreads.erase(deadThreads.begin() + i);
+        i--;
+      }
+    }
+  }
 
 #ifdef USE_LUL_STACKWALK
   static lul::LUL* Lul(PSLockRef) { return sInstance->mLul.get(); }
@@ -583,50 +600,6 @@ uint32_t ActivePS::sNextGeneration = 0;
 
 // The mutex that guards accesses to CorePS and ActivePS.
 static PSMutex gPSMutex;
-
-// The preferred way to check profiler activeness and features is via
-// ActivePS(). However, that requires locking gPSMutex. There are some hot
-// operations where absolute precision isn't required, so we duplicate the
-// activeness/feature state in a lock-free manner in this class.
-class RacyFeatures
-{
-public:
-  static void SetActive(uint32_t aFeatures)
-  {
-    sActiveAndFeatures = Active | aFeatures;
-  }
-
-  static void SetInactive() { sActiveAndFeatures = 0; }
-
-  static bool IsActive() { return uint32_t(sActiveAndFeatures) & Active; }
-
-  static bool IsActiveWithFeature(uint32_t aFeature)
-  {
-    uint32_t af = sActiveAndFeatures;  // copy it first
-    return (af & Active) && (af & aFeature);
-  }
-
-  static bool IsActiveWithoutPrivacy()
-  {
-    uint32_t af = sActiveAndFeatures;  // copy it first
-    return (af & Active) && !(af & ProfilerFeature::Privacy);
-  }
-
-private:
-  static const uint32_t Active = 1u << 31;
-
-  // Ensure Active doesn't overlap with any of the feature bits.
-  #define NO_OVERLAP(n_, str_, Name_) \
-    static_assert(ProfilerFeature::Name_ != Active, "bad Active value");
-
-  PROFILER_FOR_EACH_FEATURE(NO_OVERLAP);
-
-  #undef NO_OVERLAP
-
-  // We combine the active bit with the feature bits so they can be read or
-  // written in a single atomic operation.
-  static Atomic<uint32_t> sActiveAndFeatures;
-};
 
 Atomic<uint32_t> RacyFeatures::sActiveAndFeatures(0);
 
@@ -1443,6 +1416,7 @@ StreamTaskTracer(PSLockRef aLock, SpliceableJSONWriter& aWriter)
       StreamNameAndThreadId(aWriter, info->Name(), info->ThreadId());
     }
 
+    CorePS::DiscardExpiredDeadThreads(aLock, ActivePS::Buffer(aLock).mRangeStart);
     const CorePS::ThreadVector& deadThreads = CorePS::DeadThreads(aLock);
     for (size_t i = 0; i < deadThreads.size(); i++) {
       ThreadInfo* info = deadThreads.at(i);
@@ -1688,6 +1662,7 @@ locked_profiler_stream_json_for_this_process(PSLockRef aLock,
       info->StreamJSON(buffer, aWriter, CorePS::ProcessStartTime(), aSinceTime);
     }
 
+    CorePS::DiscardExpiredDeadThreads(aLock, ActivePS::Buffer(aLock).mRangeStart);
     const CorePS::ThreadVector& deadThreads = CorePS::DeadThreads(aLock);
     for (size_t i = 0; i < deadThreads.size(); i++) {
       ThreadInfo* info = deadThreads.at(i);
@@ -3053,17 +3028,6 @@ profiler_feature_active(uint32_t aFeature)
   return RacyFeatures::IsActiveWithFeature(aFeature);
 }
 
-bool
-profiler_is_active()
-{
-  // This function runs both on and off the main thread.
-
-  MOZ_RELEASE_ASSERT(CorePS::Exists());
-
-  // This function is hot enough that we use RacyFeatures, notActivePS.
-  return RacyFeatures::IsActive();
-}
-
 void
 profiler_register_thread(const char* aName, void* aGuessStackTop)
 {
@@ -3095,8 +3059,9 @@ profiler_unregister_thread()
   if (info) {
     DEBUG_LOG("profiler_unregister_thread: %s", info->Name());
     if (ActivePS::Exists(lock) && info->IsBeingProfiled()) {
-      info->NotifyUnregistered();
+      info->NotifyUnregistered(ActivePS::Buffer(lock).mRangeEnd);
       CorePS::DeadThreads(lock).push_back(info);
+      CorePS::DiscardExpiredDeadThreads(lock, ActivePS::Buffer(lock).mRangeStart);
     } else {
       delete info;
     }
@@ -3362,6 +3327,10 @@ profiler_set_js_context(JSContext* aCx)
   }
 
   info->SetJSContext(aCx);
+
+  // This call is on-thread, so we can call PollJSSampling() to start JS
+  // sampling immediately.
+  info->PollJSSampling();
 }
 
 void
@@ -3384,11 +3353,23 @@ profiler_clear_js_context()
     if (info->IsBeingProfiled()) {
       info->FlushSamplesAndMarkers(CorePS::ProcessStartTime(),
                                    ActivePS::Buffer(lock));
+
+      if (ActivePS::FeatureJS(lock)) {
+        // Notify the JS context that profiling for this context has stopped.
+        // Do this by calling StopJSSampling and PollJSSampling before
+        // nulling out the JSContext.
+        info->StopJSSampling();
+        info->PollJSSampling();
+
+        info->mContext = nullptr;
+
+        // Tell the ThreadInfo that we'd like to have JS sampling on this
+        // thread again, once it gets a new JSContext (if ever).
+        info->StartJSSampling();
+        return;
+      }
     }
   }
-
-  // We don't call info->StopJSSampling() here; there's no point doing that for
-  // a JS thread that is in the process of disappearing.
 
   info->mContext = nullptr;
 }

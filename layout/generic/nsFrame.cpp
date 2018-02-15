@@ -23,10 +23,13 @@
 #include "nsFrameList.h"
 #include "nsPlaceholderFrame.h"
 #include "nsPluginFrame.h"
+#include "nsIBaseWindow.h"
 #include "nsIContent.h"
 #include "nsIContentInlines.h"
 #include "nsContentUtils.h"
+#include "nsCSSFrameConstructor.h"
 #include "nsCSSPseudoElements.h"
+#include "nsCSSRendering.h"
 #include "nsAtom.h"
 #include "nsString.h"
 #include "nsReadableUtils.h"
@@ -89,6 +92,7 @@
 #include "RetainedDisplayListBuilder.h"
 
 #include "gfxContext.h"
+#include "gfxPrefs.h"
 #include "nsAbsoluteContainingBlock.h"
 #include "StickyScrollContainer.h"
 #include "nsFontInflationData.h"
@@ -734,6 +738,12 @@ nsFrame::Init(nsIContent*       aContent,
 
   if (::IsXULBoxWrapped(this))
     ::InitBoxMetrics(this, false);
+
+  // For a newly created frame, we need to update this frame's visibility state.
+  // Usually we update the state when the frame is restyled and has a
+  // VisibilityChange change hint but we don't generate any change hints for
+  // newly created frames.
+  UpdateVisibleDescendantsState();
 }
 
 void
@@ -1896,7 +1906,6 @@ nsIFrame::GetShapeBoxBorderRadii(nscoord aRadii[8]) const
       MOZ_ASSERT_UNREACHABLE("Unexpected box value");
       return false;
   }
-  return false;
 }
 
 nsStyleContext*
@@ -3027,6 +3036,9 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
       aBuilder->SetLayerEventRegions(eventRegions);
     }
 
+    aBuilder->BuildCompositorHitTestInfoIfNeeded(this, set.BorderBackground(),
+                                                 false);
+
     MarkAbsoluteFramesForDisplayList(aBuilder);
     BuildDisplayList(aBuilder, set);
 
@@ -3065,6 +3077,10 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
           aBuilder->SetLayerEventRegions(eventRegions);
         }
 
+        aBuilder->BuildCompositorHitTestInfoIfNeeded(this,
+                                                     set.BorderBackground(),
+                                                     false);
+
         // If this is the root frame, then the previous call to
         // MarkAbsoluteFramesForDisplayList might have stored some fixed
         // background data. Clear that now.
@@ -3086,13 +3102,6 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
         aBuilder->SetLayerEventRegions(nullptr);
         eventRegions->Destroy(aBuilder);
         eventRegions = nullptr;
-      }
-    }
-    if (aBuilder->BuildCompositorHitTestInfo()) {
-      CompositorHitTestInfo info = GetCompositorHitTestInfo(aBuilder);
-      if (info != CompositorHitTestInfo::eInvisibleToHitTest) {
-        set.BorderBackground()->AppendToBottom(
-            new (aBuilder) nsDisplayCompositorHitTestInfo(aBuilder, this, info));
       }
     }
   }
@@ -3497,14 +3506,22 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
 
   aBuilder->ClearWillChangeBudget(child);
 
-  const bool doingShortcut =
+  const bool shortcutPossible = aBuilder->IsPaintingToWindow() &&
+    (aBuilder->IsBuildingLayerEventRegions() ||
+     aBuilder->BuildCompositorHitTestInfo());
+
+  const bool doingShortcut = shortcutPossible &&
     (child->GetStateBits() & NS_FRAME_SIMPLE_DISPLAYLIST) &&
-    aBuilder->IsPaintingToWindow() &&
-    // This would be changed by the change of preference.
-    aBuilder->IsBuildingLayerEventRegions() &&
     // Animations may change the value of |HasOpacity()|.
     !(child->GetContent() &&
       child->GetContent()->MayHaveAnimations());
+
+  // dirty rect in child-relative coordinates
+  NS_ASSERTION(aBuilder->GetCurrentFrame() == this, "Wrong coord space!");
+  const nsPoint offset = child->GetOffsetTo(this);
+  nsRect visible = aBuilder->GetVisibleRect() - offset;
+  nsRect dirty = aBuilder->GetDirtyRect() - offset;
+
   if (doingShortcut) {
     // This is the shortcut for frames been handled along the common
     // path, the most common one of THE COMMON CASE mentioned later.
@@ -3519,10 +3536,6 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
       aBuilder->AllocatePerspectiveItemIndex();
     }
 
-    // dirty rect in child-relative coordinates
-    nsRect dirty = aBuilder->GetDirtyRect() - child->GetOffsetTo(this);
-    nsRect visible = aBuilder->GetVisibleRect() - child->GetOffsetTo(this);
-
     if (!DescendIntoChild(aBuilder, child, visible, dirty)) {
       return;
     }
@@ -3532,13 +3545,10 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
 
     CheckForApzAwareEventHandlers(aBuilder, child);
 
-    if (aBuilder->BuildCompositorHitTestInfo()) {
-      CompositorHitTestInfo info = child->GetCompositorHitTestInfo(aBuilder);
-      if (info != CompositorHitTestInfo::eInvisibleToHitTest) {
-        aLists.BorderBackground()->AppendToTop(
-            new (aBuilder) nsDisplayCompositorHitTestInfo(aBuilder, child, info));
-      }
-    }
+    aBuilder->BuildCompositorHitTestInfoIfNeeded(child,
+                                                 aLists.BorderBackground(),
+                                                 false);
+
     nsDisplayLayerEventRegions* eventRegions = aBuilder->GetLayerEventRegions();
     if (eventRegions) {
       eventRegions->AddFrame(aBuilder, child);
@@ -3574,12 +3584,6 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     pseudoStackingContext = true;
     awayFromCommonPath = true;
   }
-
-  // dirty rect in child-relative coordinates
-  NS_ASSERTION(aBuilder->GetCurrentFrame() == this, "Wrong coord space!");
-  nsPoint offset = child->GetOffsetTo(this);
-  nsRect visible = aBuilder->GetVisibleRect() - offset;
-  nsRect dirty = aBuilder->GetDirtyRect() - offset;
 
   nsDisplayListBuilder::OutOfFlowDisplayData* savedOutOfFlowData = nullptr;
   bool isPlaceholder = false;
@@ -3621,7 +3625,9 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     awayFromCommonPath = true;
   }
 
-  if (child->HasPerspective()) {
+  const nsStyleDisplay* disp = child->StyleDisplay();
+
+  if (child->HasPerspective(disp)) {
     // We need to allocate a perspective index before a potential early
     // return below.
     aBuilder->AllocatePerspectiveItemIndex();
@@ -3666,7 +3672,6 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
   // Child is composited if it's transformed, partially transparent, or has
   // SVG effects or a blend mode..
   EffectSet* effectSet = EffectSet::GetEffectSet(child);
-  const nsStyleDisplay* disp = child->StyleDisplay();
   const nsStyleEffects* effects = child->StyleEffects();
   const nsStylePosition* pos = child->StylePosition();
   bool isVisuallyAtomic = child->IsVisuallyAtomic(effectSet, disp, effects);
@@ -3761,18 +3766,12 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
 
     child->MarkAbsoluteFramesForDisplayList(aBuilder);
 
-    if (aBuilder->BuildCompositorHitTestInfo()) {
-      CompositorHitTestInfo info = child->GetCompositorHitTestInfo(aBuilder);
-      if (info != CompositorHitTestInfo::eInvisibleToHitTest) {
-        nsDisplayItem* item =
-            new (aBuilder) nsDisplayCompositorHitTestInfo(aBuilder, child, info);
-        if (isPositioned) {
-          list.AppendToTop(item);
-        } else {
-          aLists.BorderBackground()->AppendToTop(item);
-        }
-      }
-    }
+    const bool differentAGR =
+      buildingForChild.IsAnimatedGeometryRoot() || isPositioned;
+    nsDisplayList* toList = isPositioned ? &list : aLists.BorderBackground();
+
+    aBuilder->BuildCompositorHitTestInfoIfNeeded(child, toList, differentAGR);
+
     if (aBuilder->IsBuildingLayerEventRegions()) {
       // If this frame has a different animated geometry root than its parent,
       // make sure we accumulate event regions for its layer.
@@ -3794,13 +3793,13 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
         if (eventRegions) {
           eventRegions->AddFrame(aBuilder, child);
         }
-        if (!awayFromCommonPath &&
-            aBuilder->IsPaintingToWindow() &&
-            !buildingForChild.MaybeAnimatedGeometryRoot()) {
-          // The shortcut is available for the child for next time.
-          child->AddStateBits(NS_FRAME_SIMPLE_DISPLAYLIST);
-        }
       }
+    }
+
+    if (!awayFromCommonPath && shortcutPossible &&
+        !differentAGR && !buildingForChild.MaybeAnimatedGeometryRoot()) {
+      // The shortcut is available for the child for next time.
+      child->AddStateBits(NS_FRAME_SIMPLE_DISPLAYLIST);
     }
 
     if (!pseudoStackingContext) {
@@ -5635,41 +5634,56 @@ nsFrame::ComputeSize(gfxContext*         aRenderingContext,
   bool isFlexItem = parentFrame && parentFrame->IsFlexContainerFrame() &&
     !parentFrame->HasAnyStateBits(NS_STATE_FLEX_IS_EMULATING_LEGACY_BOX) &&
     !HasAnyStateBits(NS_FRAME_OUT_OF_FLOW);
-  bool isInlineFlexItem = false;
+  // This bool only gets set (and used) if isFlexItem is true.
+  // It indicates (for flex items) whether we're using their flex-basis for the
+  // item's own ISize property vs. for its BSize property.
+  bool usingFlexBasisForISize;
   if (isFlexItem) {
     // Flex items use their "flex-basis" property in place of their main-size
     // property (e.g. "width") for sizing purposes, *unless* they have
     // "flex-basis:auto", in which case they use their main-size property after
     // all.
     uint32_t flexDirection = GetParent()->StylePosition()->mFlexDirection;
-    isInlineFlexItem =
+    const bool flexContainerIsRowOriented =
       flexDirection == NS_STYLE_FLEX_DIRECTION_ROW ||
       flexDirection == NS_STYLE_FLEX_DIRECTION_ROW_REVERSE;
+    const bool inlineAxisSameAsParent =
+      !aWM.IsOrthogonalTo(parentFrame->GetWritingMode());
+
+    // If parent is row-oriented, its main axis (i.e. the flex-basis axis) is
+    // its own inline axis. So if it's row oriented and our own inline axis
+    // is the same as our parent's, then we'll be using flex-basis in place
+    // of our _ISize_ sizing property.
+    // Otherwise, we'll be using flex-basis for our _BSize_ sizing property
+    // (unless both conditions are false, in which case we flip back around to
+    // using our ISize sizing property).
+    usingFlexBasisForISize =
+      (flexContainerIsRowOriented == inlineAxisSameAsParent);
 
     // NOTE: The logic here should match the similar chunk for determining
     // inlineStyleCoord and blockStyleCoord in
     // nsFrame::ComputeSizeWithIntrinsicDimensions().
     const nsStyleCoord* flexBasis = &(stylePos->mFlexBasis);
     if (flexBasis->GetUnit() != eStyleUnit_Auto) {
-      if (isInlineFlexItem) {
-        inlineStyleCoord = flexBasis;
-      } else {
-        // One caveat for vertical flex items: We don't support enumerated
-        // values (e.g. "max-content") for height properties yet. So, if our
-        // computed flex-basis is an enumerated value, we'll just behave as if
-        // it were "auto", which means "use the main-size property after all"
-        // (which is "height", in this case).
-        // NOTE: Once we support intrinsic sizing keywords for "height",
-        // we should remove this check.
-        if (flexBasis->GetUnit() != eStyleUnit_Enumerated) {
-          blockStyleCoord = flexBasis;
-        }
+      // One caveat for when flex-basis is stomping on 'height': We don't
+      // support enumerated values (e.g. "max-content") for height yet (that's
+      // bug 567039). So, if our computed flex-basis is an enumerated value,
+      // we'll just behave as if it were "auto", which means "use the main-size
+      // property after all" (which is "height", in this case).  NOTE: Once we
+      // support intrinsic sizing keywords for "height", we should remove this
+      // check.
+      bool usingFlexBasisForHeight =
+        (usingFlexBasisForISize != aWM.IsVertical());
+      if (!usingFlexBasisForHeight ||
+          flexBasis->GetUnit() != eStyleUnit_Enumerated) {
+        // Override whichever coord we're overriding:
+        (usingFlexBasisForISize ? inlineStyleCoord : blockStyleCoord) =
+          flexBasis;
       }
     }
   }
 
   // Compute inline-axis size
-
   if (inlineStyleCoord->GetUnit() != eStyleUnit_Auto) {
     result.ISize(aWM) =
       ComputeISizeValue(aRenderingContext, aCBSize.ISize(aWM),
@@ -5706,7 +5720,7 @@ nsFrame::ComputeSize(gfxContext*         aRenderingContext,
   const nsStyleCoord& maxISizeCoord = stylePos->MaxISize(aWM);
   nscoord maxISize = NS_UNCONSTRAINEDSIZE;
   if (maxISizeCoord.GetUnit() != eStyleUnit_None &&
-      !(isFlexItem && isInlineFlexItem)) {
+      !(isFlexItem && usingFlexBasisForISize)) {
     maxISize =
       ComputeISizeValue(aRenderingContext, aCBSize.ISize(aWM),
                         boxSizingAdjust.ISize(aWM), boxSizingToMarginEdgeISize,
@@ -5717,7 +5731,7 @@ nsFrame::ComputeSize(gfxContext*         aRenderingContext,
   const nsStyleCoord& minISizeCoord = stylePos->MinISize(aWM);
   nscoord minISize;
   if (minISizeCoord.GetUnit() != eStyleUnit_Auto &&
-      !(isFlexItem && isInlineFlexItem)) {
+      !(isFlexItem && usingFlexBasisForISize)) {
     minISize =
       ComputeISizeValue(aRenderingContext, aCBSize.ISize(aWM),
                         boxSizingAdjust.ISize(aWM), boxSizingToMarginEdgeISize,
@@ -5794,7 +5808,7 @@ nsFrame::ComputeSize(gfxContext*         aRenderingContext,
 
   if (result.BSize(aWM) != NS_UNCONSTRAINEDSIZE) {
     if (!nsLayoutUtils::IsAutoBSize(maxBSizeCoord, aCBSize.BSize(aWM)) &&
-        !(isFlexItem && !isInlineFlexItem)) {
+        !(isFlexItem && !usingFlexBasisForISize)) {
       nscoord maxBSize =
         nsLayoutUtils::ComputeBSizeValue(aCBSize.BSize(aWM),
                                          boxSizingAdjust.BSize(aWM),
@@ -5805,7 +5819,7 @@ nsFrame::ComputeSize(gfxContext*         aRenderingContext,
     const nsStyleCoord& minBSizeCoord = stylePos->MinBSize(aWM);
 
     if (!nsLayoutUtils::IsAutoBSize(minBSizeCoord, aCBSize.BSize(aWM)) &&
-        !(isFlexItem && !isInlineFlexItem)) {
+        !(isFlexItem && !usingFlexBasisForISize)) {
       nscoord minBSize =
         nsLayoutUtils::ComputeBSizeValue(aCBSize.BSize(aWM),
                                          boxSizingAdjust.BSize(aWM),
@@ -5866,7 +5880,10 @@ nsFrame::ComputeSizeWithIntrinsicDimensions(gfxContext*          aRenderingConte
   const bool isFlexItem = parentFrame && parentFrame->IsFlexContainerFrame() &&
     !parentFrame->HasAnyStateBits(NS_STATE_FLEX_IS_EMULATING_LEGACY_BOX) &&
     !HasAnyStateBits(NS_FRAME_OUT_OF_FLOW);
-  bool isInlineFlexItem = false;
+  // This bool only gets set (and used) if isFlexItem is true.
+  // It indicates (for flex items) whether we're using their flex-basis for the
+  // item's own ISize property vs. for its BSize property.
+  bool usingFlexBasisForISize;
   Maybe<nsStyleCoord> imposedMainSizeStyleCoord;
 
   // If this is a flex item, and we're measuring its cross size after flexing
@@ -5877,9 +5894,15 @@ nsFrame::ComputeSizeWithIntrinsicDimensions(gfxContext*          aRenderingConte
   if (isFlexItem) {
     uint32_t flexDirection =
       GetParent()->StylePosition()->mFlexDirection;
-    isInlineFlexItem =
+    const bool flexContainerIsRowOriented =
       flexDirection == NS_STYLE_FLEX_DIRECTION_ROW ||
       flexDirection == NS_STYLE_FLEX_DIRECTION_ROW_REVERSE;
+    const bool inlineAxisSameAsParent =
+      !aWM.IsOrthogonalTo(parentFrame->GetWritingMode());
+
+    // (See explanatory comment in similar code within ComputeSize.)
+    usingFlexBasisForISize =
+      (flexContainerIsRowOriented == inlineAxisSameAsParent);
 
     // If FlexItemMainSizeOverride frame-property is set, then that means the
     // flex container is imposing a main-size on this flex item for it to use
@@ -5890,7 +5913,7 @@ nsFrame::ComputeSizeWithIntrinsicDimensions(gfxContext*          aRenderingConte
     if (didImposeMainSize) {
       imposedMainSizeStyleCoord.emplace(imposedMainSize,
                                         nsStyleCoord::CoordConstructor);
-      if (isInlineFlexItem) {
+      if (usingFlexBasisForISize) {
         inlineStyleCoord = imposedMainSizeStyleCoord.ptr();
       } else {
         blockStyleCoord = imposedMainSizeStyleCoord.ptr();
@@ -5905,19 +5928,20 @@ nsFrame::ComputeSizeWithIntrinsicDimensions(gfxContext*          aRenderingConte
       // inlineStyleCoord and blockStyleCoord in nsFrame::ComputeSize().
       const nsStyleCoord* flexBasis = &(stylePos->mFlexBasis);
       if (flexBasis->GetUnit() != eStyleUnit_Auto) {
-        if (isInlineFlexItem) {
-          inlineStyleCoord = flexBasis;
-        } else {
-          // One caveat for vertical flex items: We don't support enumerated
-          // values (e.g. "max-content") for height properties yet. So, if our
-          // computed flex-basis is an enumerated value, we'll just behave as if
-          // it were "auto", which means "use the main-size property after all"
-          // (which is "height", in this case).
-          // NOTE: Once we support intrinsic sizing keywords for "height",
-          // we should remove this check.
-          if (flexBasis->GetUnit() != eStyleUnit_Enumerated) {
-            blockStyleCoord = flexBasis;
-          }
+        // One caveat for when flex-basis is stomping on 'height': We don't
+        // support enumerated values (e.g. "max-content") for height yet
+        // (that's bug 567039). So, if our computed flex-basis is an enumerated
+        // value, we'll just behave as if it were "auto", which means "use the
+        // main-size property after all" (which is "height", in this case).
+        // NOTE: Once we support intrinsic sizing keywords for "height", we
+        // should remove this check.
+        bool usingFlexBasisForHeight =
+          (usingFlexBasisForISize != aWM.IsVertical());
+        if (!usingFlexBasisForHeight ||
+            flexBasis->GetUnit() != eStyleUnit_Enumerated) {
+          // Override whichever coord we're overriding:
+          (usingFlexBasisForISize ? inlineStyleCoord : blockStyleCoord) =
+            flexBasis;
         }
       }
     }
@@ -6030,7 +6054,7 @@ nsFrame::ComputeSizeWithIntrinsicDimensions(gfxContext*          aRenderingConte
   const nsStyleCoord& maxISizeCoord = stylePos->MaxISize(aWM);
 
   if (maxISizeCoord.GetUnit() != eStyleUnit_None &&
-      !(isFlexItem && isInlineFlexItem)) {
+      !(isFlexItem && usingFlexBasisForISize)) {
     maxISize = ComputeISizeValue(aRenderingContext,
                  aCBSize.ISize(aWM), boxSizingAdjust.ISize(aWM),
                  boxSizingToMarginEdgeISize, maxISizeCoord, aFlags);
@@ -6045,7 +6069,7 @@ nsFrame::ComputeSizeWithIntrinsicDimensions(gfxContext*          aRenderingConte
   const nsStyleCoord& minISizeCoord = stylePos->MinISize(aWM);
 
   if (minISizeCoord.GetUnit() != eStyleUnit_Auto &&
-      !(isFlexItem && isInlineFlexItem)) {
+      !(isFlexItem && usingFlexBasisForISize)) {
     minISize = ComputeISizeValue(aRenderingContext,
                  aCBSize.ISize(aWM), boxSizingAdjust.ISize(aWM),
                  boxSizingToMarginEdgeISize, minISizeCoord, aFlags);
@@ -6099,7 +6123,7 @@ nsFrame::ComputeSizeWithIntrinsicDimensions(gfxContext*          aRenderingConte
   const nsStyleCoord& maxBSizeCoord = stylePos->MaxBSize(aWM);
 
   if (!nsLayoutUtils::IsAutoBSize(maxBSizeCoord, aCBSize.BSize(aWM)) &&
-      !(isFlexItem && !isInlineFlexItem)) {
+      !(isFlexItem && !usingFlexBasisForISize)) {
     maxBSize = nsLayoutUtils::ComputeBSizeValue(aCBSize.BSize(aWM),
                   boxSizingAdjust.BSize(aWM), maxBSizeCoord);
   } else {
@@ -6109,7 +6133,7 @@ nsFrame::ComputeSizeWithIntrinsicDimensions(gfxContext*          aRenderingConte
   const nsStyleCoord& minBSizeCoord = stylePos->MinBSize(aWM);
 
   if (!nsLayoutUtils::IsAutoBSize(minBSizeCoord, aCBSize.BSize(aWM)) &&
-      !(isFlexItem && !isInlineFlexItem)) {
+      !(isFlexItem && !usingFlexBasisForISize)) {
     minBSize = nsLayoutUtils::ComputeBSizeValue(aCBSize.BSize(aWM),
                   boxSizingAdjust.BSize(aWM), minBSizeCoord);
   } else {
@@ -11339,6 +11363,39 @@ nsIFrame::GetCompositorHitTestInfo(nsDisplayListBuilder* aBuilder)
   }
 
   return result;
+}
+
+// Returns true if we can guarantee there is no visible descendants.
+static bool
+HasNoVisibleDescendants(const nsIFrame* aFrame)
+{
+  for (nsIFrame::ChildListIterator lists(aFrame);
+       !lists.IsDone();
+       lists.Next()) {
+    for (nsIFrame* f : lists.CurrentList()) {
+      if (nsPlaceholderFrame::GetRealFrameFor(f)->
+            IsVisibleOrMayHaveVisibleDescendants()) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+void
+nsIFrame::UpdateVisibleDescendantsState()
+{
+  if (StyleVisibility()->IsVisible()) {
+    // Notify invisible ancestors that a visible descendant exists now.
+    nsIFrame* ancestor;
+    for (ancestor = GetInFlowParent();
+         ancestor && !ancestor->StyleVisibility()->IsVisible();
+         ancestor = ancestor->GetInFlowParent()) {
+      ancestor->mAllDescendantsAreInvisible = false;
+    }
+  } else {
+    mAllDescendantsAreInvisible = HasNoVisibleDescendants(this);
+  }
 }
 
 // Box layout debugging

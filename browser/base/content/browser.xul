@@ -51,7 +51,6 @@
         tabsintitlebar="true"
 #endif
         titlemenuseparator="&mainWindow.titlemodifiermenuseparator;"
-        lightweightthemes="true"
         windowtype="navigator:browser"
         macanimationtype="document"
         screenX="4" screenY="4"
@@ -136,6 +135,7 @@
 
     <panel type="autocomplete-richlistbox"
            id="PopupAutoComplete"
+           role="group"
            noautofocus="true"
            hidden="true"
            overflowpadding="4"
@@ -145,12 +145,14 @@
     <!-- for search with one-off buttons -->
     <panel type="autocomplete-richlistbox"
            id="PopupSearchAutoComplete"
+           role="group"
            noautofocus="true"
            hidden="true" />
 
     <!-- for url bar autocomplete -->
     <panel type="autocomplete-richlistbox"
            id="PopupAutoCompleteRichResult"
+           role="group"
            noautofocus="true"
            hidden="true"
            flip="none"
@@ -779,8 +781,6 @@
                      completeselectedindex="true"
                      shrinkdelay="250"
                      tabscrolling="true"
-                     showcommentcolumn="true"
-                     showimagecolumn="true"
                      newlines="stripsurroundingwhitespace"
                      ontextentered="this.handleCommand(param);"
                      ontextreverted="return this.handleRevert();"

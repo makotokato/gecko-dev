@@ -25,7 +25,6 @@
 #include "jit/RangeAnalysis.h"
 #include "js/Conversions.h"
 
-#include "jsatominlines.h"
 #include "jsboolinlines.h"
 #include "jsobjinlines.h"
 #include "jsscriptinlines.h"
@@ -2041,6 +2040,7 @@ WrappedFunction::WrappedFunction(JSFunction* fun)
   : fun_(fun),
     nargs_(fun->nargs()),
     isNative_(fun->isNative()),
+    isNativeWithJitEntry_(fun->isNativeWithJitEntry()),
     isConstructor_(fun->isConstructor()),
     isClassConstructor_(fun->isClassConstructor()),
     isSelfHostedBuiltin_(fun->isSelfHostedBuiltin())

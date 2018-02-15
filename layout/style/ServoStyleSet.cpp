@@ -355,23 +355,26 @@ ServoStyleSet::AddSizeOfIncludingThis(nsWindowSizes& aSizes) const
   // - mDocument, because it a non-owning pointer
 }
 
-bool
-ServoStyleSet::GetAuthorStyleDisabled() const
-{
-  return mAuthorStyleDisabled;
-}
-
-nsresult
+void
 ServoStyleSet::SetAuthorStyleDisabled(bool aStyleDisabled)
 {
   if (mAuthorStyleDisabled == aStyleDisabled) {
-    return NS_OK;
+    return;
   }
 
   mAuthorStyleDisabled = aStyleDisabled;
-  MarkOriginsDirty(OriginFlags::Author);
-
-  return NS_OK;
+  if (Element* root = mDocument->GetRootElement()) {
+    if (nsPresContext* pc = GetPresContext()) {
+      pc->RestyleManager()->PostRestyleEvent(root, eRestyle_Subtree, nsChangeHint(0));
+    }
+  }
+  Servo_StyleSet_SetAuthorStyleDisabled(mRawSet.get(), mAuthorStyleDisabled);
+  // XXX Workaround for the assertion in InvalidateStyleForDocumentStateChanges
+  // which is called by nsIPresShell::SetAuthorStyleDisabled via nsIPresShell::
+  // RestyleForCSSRuleChanges. It is not really necessary because we don't need
+  // to rebuild stylist for this change. But we have bug around this, and we
+  // may want to rethink how things should work. See bug 1437785.
+  SetStylistStyleSheetsDirty();
 }
 
 void
@@ -459,7 +462,7 @@ ServoStyleSet::PreTraverseSync()
     }
   }
 
-  UpdateStylistIfNeeded();
+  MOZ_ASSERT(!StylistNeedsUpdate());
   presContext->CacheAllLangs();
 }
 
@@ -575,8 +578,9 @@ ServoStyleSet::ResolvePseudoElementStyle(Element* aOriginatingElement,
                                          ServoStyleContext* aParentContext,
                                          Element* aPseudoElement)
 {
+  // Runs from frame construction, this should have clean styles already, except
+  // with non-lazy FC...
   UpdateStylistIfNeeded();
-
   MOZ_ASSERT(aType < CSSPseudoElementType::Count);
 
   RefPtr<ServoStyleContext> computedValues;
@@ -932,6 +936,8 @@ ServoStyleSet::ProbePseudoElementStyle(Element* aOriginatingElement,
                                        CSSPseudoElementType aType,
                                        ServoStyleContext* aParentContext)
 {
+  // Runs from frame construction, this should have clean styles already, except
+  // with non-lazy FC...
   UpdateStylistIfNeeded();
 
   // NB: We ignore aParentContext, because in some cases
@@ -1099,9 +1105,7 @@ ServoStyleSet::MarkOriginsDirty(OriginFlags aChangedOrigins)
   }
 
   SetStylistStyleSheetsDirty();
-  Servo_StyleSet_NoteStyleSheetsChanged(mRawSet.get(),
-                                        mAuthorStyleDisabled,
-                                        aChangedOrigins);
+  Servo_StyleSet_NoteStyleSheetsChanged(mRawSet.get(), aChangedOrigins);
 }
 
 void
@@ -1181,8 +1185,9 @@ ServoStyleSet::GetKeyframesForName(nsAtom* aName,
                                    const nsTimingFunction& aTimingFunction,
                                    nsTArray<Keyframe>& aKeyframes)
 {
-  UpdateStylistIfNeeded();
-
+  // TODO(emilio): This may need to look at the element itself for handling
+  // @keyframes properly in Shadow DOM.
+  MOZ_ASSERT(!StylistNeedsUpdate());
   return Servo_StyleSet_GetKeyframesForName(mRawSet.get(),
                                             aName,
                                             &aTimingFunction,
@@ -1319,6 +1324,7 @@ void
 ServoStyleSet::CompatibilityModeChanged()
 {
   Servo_StyleSet_CompatModeChanged(mRawSet.get());
+  SetStylistStyleSheetsDirty();
 }
 
 already_AddRefed<ServoStyleContext>
@@ -1409,14 +1415,15 @@ ServoStyleSet::AppendFontFaceRules(nsTArray<nsFontFaceRuleContainer>& aArray)
 nsCSSCounterStyleRule*
 ServoStyleSet::CounterStyleRuleForName(nsAtom* aName)
 {
-  // FIXME(emilio): This should probably call UpdateStylistIfNeeded, or
-  // otherwise assert?
+  MOZ_ASSERT(!StylistNeedsUpdate());
   return Servo_StyleSet_GetCounterStyleRule(mRawSet.get(), aName);
 }
 
 already_AddRefed<gfxFontFeatureValueSet>
 ServoStyleSet::BuildFontFeatureValueSet()
 {
+  // FIXME(emilio): This should assert once we update the stylist from
+  // FlushPendingNotifications explicitly.
   UpdateStylistIfNeeded();
   RefPtr<gfxFontFeatureValueSet> set =
     Servo_StyleSet_BuildFontFeatureValueSet(mRawSet.get());
@@ -1428,7 +1435,7 @@ ServoStyleSet::ResolveForDeclarations(
   const ServoStyleContext* aParentOrNull,
   RawServoDeclarationBlockBorrowed aDeclarations)
 {
-  UpdateStylistIfNeeded();
+  // No need to update the stylist, we're only cascading aDeclarations.
   return Servo_StyleSet_ResolveForDeclarations(mRawSet.get(),
                                                aParentOrNull,
                                                aDeclarations).Consume();

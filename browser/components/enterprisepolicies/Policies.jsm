@@ -37,6 +37,14 @@ this.Policies = {
     }
   },
 
+  "DisableAppUpdate": {
+    onBeforeAddons(manager, param) {
+      if (param == true) {
+        manager.disallowFeature("appUpdate");
+      }
+    }
+  },
+
   "display_menu_bar": {
     onBeforeUIStartup(manager, param) {
       if (param == true) {
@@ -91,6 +99,14 @@ this.Policies = {
     onBeforeAddons(manager, param) {
       if (param == true) {
         manager.disallowFeature("Shield");
+      }
+    }
+  },
+
+  "DisableFormHistory": {
+    onBeforeUIStartup(manager, param) {
+      if (param == true) {
+        setAndLockPref("browser.formfill.enable", false);
       }
     }
   },

@@ -305,7 +305,8 @@ class LogForwarderEvent : public Runnable
 {
   ~LogForwarderEvent() override = default;
 
-  NS_DECL_ISUPPORTS_INHERITED
+public:
+  NS_INLINE_DECL_REFCOUNTING_INHERITED(LogForwarderEvent, Runnable)
 
   explicit LogForwarderEvent(const nsCString& aMessage)
     : mozilla::Runnable("LogForwarderEvent")
@@ -330,8 +331,6 @@ class LogForwarderEvent : public Runnable
 protected:
   nsCString mMessage;
 };
-
-NS_IMPL_ISUPPORTS_INHERITED0(LogForwarderEvent, Runnable);
 
 void CrashStatsLogForwarder::Log(const std::string& aString)
 {
@@ -363,7 +362,8 @@ class CrashTelemetryEvent : public Runnable
 {
   ~CrashTelemetryEvent() override = default;
 
-  NS_DECL_ISUPPORTS_INHERITED
+public:
+  NS_INLINE_DECL_REFCOUNTING_INHERITED(CrashTelemetryEvent, Runnable)
 
   explicit CrashTelemetryEvent(uint32_t aReason)
     : mozilla::Runnable("CrashTelemetryEvent")
@@ -380,8 +380,6 @@ class CrashTelemetryEvent : public Runnable
 protected:
   uint32_t mReason;
 };
-
-NS_IMPL_ISUPPORTS_INHERITED0(CrashTelemetryEvent, Runnable);
 
 void
 CrashStatsLogForwarder::CrashAction(LogReason aReason)
@@ -607,12 +605,11 @@ WebRenderDebugPrefChangeCallback(const char* aPrefName, void*)
   GFX_WEBRENDER_DEBUG(".profiler",           1 << 0)
   GFX_WEBRENDER_DEBUG(".render-targets",     1 << 1)
   GFX_WEBRENDER_DEBUG(".texture-cache",      1 << 2)
-  GFX_WEBRENDER_DEBUG(".alpha-primitives",   1 << 3)
-  GFX_WEBRENDER_DEBUG(".gpu-time-queries",   1 << 4)
-  GFX_WEBRENDER_DEBUG(".gpu-sample-queries", 1 << 5)
-  GFX_WEBRENDER_DEBUG(".disable-batching",   1 << 6)
-  GFX_WEBRENDER_DEBUG(".epochs",             1 << 7)
-  GFX_WEBRENDER_DEBUG(".compact-profiler",   1 << 8)
+  GFX_WEBRENDER_DEBUG(".gpu-time-queries",   1 << 3)
+  GFX_WEBRENDER_DEBUG(".gpu-sample-queries", 1 << 4)
+  GFX_WEBRENDER_DEBUG(".disable-batching",   1 << 5)
+  GFX_WEBRENDER_DEBUG(".epochs",             1 << 6)
+  GFX_WEBRENDER_DEBUG(".compact-profiler",   1 << 7)
 #undef GFX_WEBRENDER_DEBUG
 
   gfx::gfxVars::SetWebRenderDebugFlags(flags);

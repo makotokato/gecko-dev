@@ -3,9 +3,6 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<!-- This file is imported into the browser window. -->
-<!-- eslint-env mozilla/browser-window -->
-
 <!-- XULCommandEvent is a specialised global. -->
 <!-- global XULCommandEvent -->
 
@@ -744,9 +741,6 @@
             popup.mInput = this;
             // clear any previous selection, see bugs 400671 and 488357
             popup.selectedIndex = -1;
-
-            popup.showCommentColumn = this.showCommentColumn;
-            popup.showImageColumn = this.showImageColumn;
 
             document.popupNode = null;
 
@@ -2032,7 +2026,7 @@
             return !!this.selectedButton;
           }
 
-          if (event.keyCode == Ci.nsIDOMKeyEvent.DOM_VK_UP) {
+          if (event.keyCode == KeyboardEvent.DOM_VK_UP) {
             if (event.altKey) {
               // Keep the currently selected result in the list (if any) as a
               // secondary "alt" selection and move the selection up within the
@@ -2080,7 +2074,7 @@
             return true;
           }
 
-          if (event.keyCode == Ci.nsIDOMKeyEvent.DOM_VK_DOWN) {
+          if (event.keyCode == KeyboardEvent.DOM_VK_DOWN) {
             if (event.altKey) {
               // Keep the currently selected result in the list (if any) as a
               // secondary "alt" selection and move the selection down within
@@ -2134,7 +2128,7 @@
             return false;
           }
 
-          if (event.keyCode == Ci.nsIDOMKeyEvent.DOM_VK_LEFT) {
+          if (event.keyCode == KeyboardEvent.DOM_VK_LEFT) {
             if (this.selectedButton &&
                 (this.compact || this.selectedButton.engine)) {
               // Moving left within the buttons.
@@ -2144,7 +2138,7 @@
             return false;
           }
 
-          if (event.keyCode == Ci.nsIDOMKeyEvent.DOM_VK_RIGHT) {
+          if (event.keyCode == KeyboardEvent.DOM_VK_RIGHT) {
             if (this.selectedButton &&
                 (this.compact || this.selectedButton.engine)) {
               // Moving right within the buttons.

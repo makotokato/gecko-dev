@@ -30,8 +30,6 @@
 #include "wasm/WasmJS.h"
 #include "wasm/WasmSerialize.h"
 
-#include "jsatominlines.h"
-
 #include "vm/ArrayBufferObject-inl.h"
 #include "vm/Debugger-inl.h"
 
@@ -279,7 +277,7 @@ Module::notifyCompilationListeners()
 
 void
 Module::finishTier2(UniqueLinkDataTier linkData2, UniqueMetadataTier metadata2,
-                    UniqueCodeSegment code2, ModuleEnvironment* env2)
+                    UniqueModuleSegment code2, ModuleEnvironment* env2)
 {
     // Install the data in the data structures. They will not be visible yet.
 
@@ -297,18 +295,16 @@ Module::finishTier2(UniqueLinkDataTier linkData2, UniqueMetadataTier metadata2,
 
     // And we update the jump vector.
 
-    void** jumpTable = code().jumpTable();
     uint8_t* base = code().segment(Tier::Ion).base();
-
     for (auto cr : metadata(Tier::Ion).codeRanges) {
-        if (!cr.isFunction())
-            continue;
-
-        // This is a racy write that we just want to be visible, atomically,
+        // These are racy writes that we just want to be visible, atomically,
         // eventually.  All hardware we care about will do this right.  But
-        // we depend on the compiler not splitting the store.
-
-        jumpTable[cr.funcIndex()] = base + cr.funcTierEntry();
+        // we depend on the compiler not splitting the stores hidden inside the
+        // set*Entry functions.
+        if (cr.isFunction())
+            code().setTieringEntry(cr.funcIndex(), base + cr.funcTierEntry());
+        else if (cr.isJitEntry())
+            code().setJitEntry(cr.funcIndex(), base + cr.begin());
     }
 }
 
@@ -650,12 +646,12 @@ Module::extractCode(JSContext* cx, Tier tier, MutableHandleValue vp) const
         return true;
     }
 
-    const CodeSegment& codeSegment = code_->segment(tier);
-    RootedObject code(cx, JS_NewUint8Array(cx, codeSegment.length()));
+    const ModuleSegment& moduleSegment = code_->segment(tier);
+    RootedObject code(cx, JS_NewUint8Array(cx, moduleSegment.length()));
     if (!code)
         return false;
 
-    memcpy(code->as<TypedArrayObject>().viewDataUnshared(), codeSegment.base(), codeSegment.length());
+    memcpy(code->as<TypedArrayObject>().viewDataUnshared(), moduleSegment.base(), moduleSegment.length());
 
     RootedValue value(cx, ObjectValue(*code));
     if (!JS_DefineProperty(cx, result, "code", value, JSPROP_ENUMERATE))
@@ -1169,18 +1165,21 @@ Module::instantiate(JSContext* cx,
         // bytes that we keep around for debugging instead, because the debugger
         // may patch the pre-linked code at any time.
         if (!codeIsBusy_.compareExchange(false, true)) {
-            auto codeSegment = CodeSegment::create(Tier::Baseline,
-                                                   *unlinkedCodeForDebugging_,
-                                                   *bytecode_,
-                                                   linkData_.linkData(Tier::Baseline),
-                                                   metadata());
-            if (!codeSegment) {
+            auto moduleSegment = ModuleSegment::create(Tier::Baseline,
+                                                       *unlinkedCodeForDebugging_,
+                                                       *bytecode_,
+                                                       linkData_.linkData(Tier::Baseline),
+                                                       metadata());
+            if (!moduleSegment) {
                 ReportOutOfMemory(cx);
                 return false;
             }
 
-            UniqueJumpTable maybeJumpTable;
-            code = js_new<Code>(Move(codeSegment), metadata(), Move(maybeJumpTable));
+            JumpTables jumpTables;
+            if (!jumpTables.init(CompileMode::Once, *moduleSegment, metadata(Tier::Baseline).codeRanges))
+                return false;
+
+            code = js_new<Code>(Move(moduleSegment), metadata(), Move(jumpTables));
             if (!code) {
                 ReportOutOfMemory(cx);
                 return false;

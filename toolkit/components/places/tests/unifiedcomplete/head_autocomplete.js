@@ -36,7 +36,7 @@ async function cleanup() {
   }
   Services.prefs.clearUserPref("browser.search.suggest.enabled");
   await PlacesUtils.bookmarks.eraseEverything();
-  await PlacesTestUtils.clearHistory();
+  await PlacesUtils.history.clear();
 }
 registerCleanupFunction(cleanup);
 
@@ -61,9 +61,6 @@ AutoCompleteInput.prototype = {
 
   minResultsForPopup: 0,
   maxRows: 0,
-
-  showCommentColumn: false,
-  showImageColumn: false,
 
   timeout: 10,
   searchParam: "",

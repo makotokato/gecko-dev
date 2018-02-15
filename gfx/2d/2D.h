@@ -369,6 +369,9 @@ public:
 
   virtual SurfaceType GetType() const = 0;
   virtual IntSize GetSize() const = 0;
+  virtual IntRect GetRect() const {
+    return IntRect(IntPoint(0, 0), GetSize());
+  }
   virtual SurfaceFormat GetFormat() const = 0;
 
   /** This returns false if some event has made this source surface invalid for
@@ -937,7 +940,10 @@ public:
   // based on the RGB values.
   virtual already_AddRefed<SourceSurface> IntoLuminanceSource(LuminanceType aLuminanceType,
                                                               float aOpacity);
-  virtual IntSize GetSize() = 0;
+  virtual IntSize GetSize() const = 0;
+  virtual IntRect GetRect() const {
+    return IntRect(IntPoint(0, 0), GetSize());
+  }
 
   /**
    * If possible returns the bits to this DrawTarget for direct manipulation. While
@@ -1282,6 +1288,17 @@ public:
   }
 
   /**
+   * Create a similar DrawTarget whose requested size may be clipped based
+   * on this DrawTarget's rect transformed to the new target's space.
+   */
+  virtual RefPtr<DrawTarget> CreateClippedDrawTarget(const IntSize& aMaxSize,
+                                                     const Matrix& aTransform,
+                                                     SurfaceFormat aFormat) const
+  {
+    return CreateSimilarDrawTarget(aMaxSize, aFormat);
+  }
+
+  /**
    * Create a similar draw target, but if the draw target is not backed by a
    * raster backend (for example, it is capturing or recording), force it to
    * create a raster target instead. This is intended for code that wants to
@@ -1446,6 +1463,8 @@ class DrawTargetCapture : public DrawTarget
 {
 public:
   virtual bool IsCaptureDT() const override { return true; }
+
+  virtual void Dump() = 0;
 
   /**
    * Returns true if the recording only contains FillGlyph calls with

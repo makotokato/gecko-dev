@@ -19,7 +19,6 @@
 
 #include "jsapi.h"
 #include "jsarray.h"
-#include "jsatom.h"
 #include "jscntxt.h"
 #include "jsexn.h"
 #include "jsfriendapi.h"
@@ -52,7 +51,6 @@
 #include "vm/Shape.h"
 #include "vm/TypedArrayObject.h"
 
-#include "jsatominlines.h"
 #include "jsboolinlines.h"
 #include "jscntxtinlines.h"
 #include "jscompartmentinlines.h"
@@ -2966,6 +2964,11 @@ DefineFunctionFromSpec(JSContext* cx, HandleObject obj, const JSFunctionSpec* fs
     RootedId id(cx);
     if (!PropertySpecNameToId(cx, fs->name, &id))
         return false;
+
+    if (StandardProtoKeyOrNull(obj) == JSProto_Array && id == NameToId(cx->names().values)) {
+        if (!cx->options().arrayProtoValues())
+            return true;
+    }
 
     JSFunction* fun = NewFunctionFromSpec(cx, fs, id);
     if (!fun)

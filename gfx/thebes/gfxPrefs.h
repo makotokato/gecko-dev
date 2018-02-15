@@ -615,6 +615,7 @@ private:
   DECL_GFX_PREF(Once, "layers.mlgpu.enable-container-resizing", AdvancedLayersEnableContainerResizing, bool, true);
   DECL_GFX_PREF(Once, "layers.offmainthreadcomposition.force-disabled", LayersOffMainThreadCompositionForceDisabled, bool, false);
   DECL_GFX_PREF(Live, "layers.offmainthreadcomposition.frame-rate", LayersCompositionFrameRate, int32_t,-1);
+  DECL_GFX_PREF(Live, "layers.omtp.dump-capture",              LayersOMTPDumpCapture, bool, false);
   DECL_GFX_PREF(Live, "layers.omtp.paint-workers",             LayersOMTPPaintWorkers, int32_t, 1);
   DECL_GFX_PREF(Live, "layers.omtp.release-capture-on-main-thread", LayersOMTPReleaseCaptureOnMainThread, bool, false);
   DECL_GFX_PREF(Live, "layers.orientation.sync.timeout",       OrientationSyncMillis, uint32_t, (uint32_t)0);
@@ -671,6 +672,9 @@ private:
   DECL_GFX_PREF(Live, "layout.display-list.dump-content",      LayoutDumpDisplayListContent, bool, false);
   DECL_GFX_PREF(Live, "layout.display-list.dump-parent",       LayoutDumpDisplayListParent, bool, false);
   DECL_GFX_PREF(Live, "layout.display-list.show-rebuild-area", LayoutDisplayListShowArea, bool, false);
+
+  DECL_GFX_PREF(Once, "layout.simple-event-region-items",      SimpleEventRegionItems, bool, true);
+  DECL_GFX_PREF(Once, "layout.less-event-region-items",        LessEventRegionItems, bool, true);
 
   DECL_GFX_PREF(Live, "layout.event-regions.enabled",          LayoutEventRegionsEnabledDoNotUseDirectly, bool, false);
   DECL_GFX_PREF(Once, "layout.frame_rate",                     LayoutFrameRate, int32_t, -1);

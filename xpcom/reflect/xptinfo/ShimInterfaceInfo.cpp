@@ -7,15 +7,11 @@
 
 #include "ShimInterfaceInfo.h"
 
-#include "nsIContainerBoxObject.h"
-#include "nsIDOMAnimationEvent.h"
-#include "nsIDOMBeforeUnloadEvent.h"
 #include "nsIDOMCanvasRenderingContext2D.h"
 #include "nsIDOMCharacterData.h"
 #include "nsIDOMClientRect.h"
 #include "nsIDOMClientRectList.h"
 #include "nsIDOMClipboardEvent.h"
-#include "nsIDOMCommandEvent.h"
 #include "nsIDOMComment.h"
 #include "nsIDOMCustomEvent.h"
 #ifdef MOZ_WEBRTC
@@ -37,55 +33,42 @@
 #include "nsIDOMFocusEvent.h"
 #include "nsIDOMFormData.h"
 #include "nsIDOMGeoPositionError.h"
-#include "nsIDOMHistory.h"
 #include "nsIDOMHTMLFormElement.h"
 #include "nsIDOMHTMLInputElement.h"
 #include "nsIDOMHTMLMediaElement.h"
-#include "nsIDOMKeyEvent.h"
 #include "nsIDOMMouseEvent.h"
 #include "nsIDOMMouseScrollEvent.h"
-#include "nsIDOMMutationEvent.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMNotifyPaintEvent.h"
 #include "nsIDOMNSEvent.h"
 #include "nsIDOMOfflineResourceList.h"
-#include "nsIDOMPaintRequest.h"
 #include "nsIDOMParser.h"
 #include "nsIDOMProcessingInstruction.h"
 #include "nsIDOMRange.h"
 #include "nsIDOMScreen.h"
 #include "nsIDOMScrollAreaEvent.h"
 #include "nsIDOMSerializer.h"
-#include "nsIDOMSimpleGestureEvent.h"
 #include "nsIDOMText.h"
 #include "nsIDOMTimeRanges.h"
-#include "nsIDOMTransitionEvent.h"
 #include "nsIDOMUIEvent.h"
-#include "nsIDOMValidityState.h"
 #include "nsIDOMWheelEvent.h"
 #include "nsIDOMXMLDocument.h"
 #include "nsIDOMXULCommandEvent.h"
 #include "nsIDOMXULElement.h"
 #include "nsIFrameLoader.h"
 #include "nsIListBoxObject.h"
-#include "nsIMenuBoxObject.h"
-#include "nsIScrollBoxObject.h"
 #include "nsISelection.h"
 #include "nsITreeBoxObject.h"
 #include "nsIWebBrowserPersistable.h"
 #include "nsIXMLHttpRequest.h"
 
-#include "mozilla/dom/AnimationEventBinding.h"
-#include "mozilla/dom/BeforeUnloadEventBinding.h"
 #include "mozilla/dom/CanvasRenderingContext2DBinding.h"
 #include "mozilla/dom/CharacterDataBinding.h"
 #include "mozilla/dom/DOMRectBinding.h"
 #include "mozilla/dom/DOMRectListBinding.h"
 #include "mozilla/dom/ClipboardEventBinding.h"
-#include "mozilla/dom/CommandEventBinding.h"
 #include "mozilla/dom/CommentBinding.h"
-#include "mozilla/dom/ContainerBoxObjectBinding.h"
 #include "mozilla/dom/CSSPrimitiveValueBinding.h"
 #include "mozilla/dom/CSSStyleDeclarationBinding.h"
 #include "mozilla/dom/CSSStyleSheetBinding.h"
@@ -112,7 +95,6 @@
 #include "mozilla/dom/FocusEventBinding.h"
 #include "mozilla/dom/FormDataBinding.h"
 #include "mozilla/dom/FrameLoaderBinding.h"
-#include "mozilla/dom/HistoryBinding.h"
 #include "mozilla/dom/HTMLAnchorElementBinding.h"
 #include "mozilla/dom/HTMLAreaElementBinding.h"
 #include "mozilla/dom/HTMLButtonElementBinding.h"
@@ -121,29 +103,23 @@
 #include "mozilla/dom/HTMLHtmlElementBinding.h"
 #include "mozilla/dom/HTMLInputElementBinding.h"
 #include "mozilla/dom/HTMLMediaElementBinding.h"
-#include "mozilla/dom/KeyEventBinding.h"
 #include "mozilla/dom/ListBoxObjectBinding.h"
 #include "mozilla/dom/MediaListBinding.h"
 #include "mozilla/dom/MessageEventBinding.h"
-#include "mozilla/dom/MenuBoxObjectBinding.h"
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/MouseScrollEventBinding.h"
-#include "mozilla/dom/MutationEventBinding.h"
 #include "mozilla/dom/NodeListBinding.h"
 #include "mozilla/dom/NodeBinding.h"
 #include "mozilla/dom/NotifyPaintEventBinding.h"
 #include "mozilla/dom/EventBinding.h"
 #include "mozilla/dom/OfflineResourceListBinding.h"
-#include "mozilla/dom/PaintRequestBinding.h"
 #include "mozilla/dom/PositionErrorBinding.h"
 #include "mozilla/dom/ProcessingInstructionBinding.h"
 #include "mozilla/dom/RangeBinding.h"
 #include "mozilla/dom/RectBinding.h"
 #include "mozilla/dom/ScreenBinding.h"
-#include "mozilla/dom/ScrollBoxObjectBinding.h"
 #include "mozilla/dom/SelectionBinding.h"
 #include "mozilla/dom/ScrollAreaEventBinding.h"
-#include "mozilla/dom/SimpleGestureEventBinding.h"
 #include "mozilla/dom/StorageEventBinding.h"
 #include "mozilla/dom/StyleSheetBinding.h"
 #include "mozilla/dom/StyleSheetListBinding.h"
@@ -151,10 +127,8 @@
 #include "mozilla/dom/TextBinding.h"
 #include "mozilla/dom/TimeEventBinding.h"
 #include "mozilla/dom/TimeRangesBinding.h"
-#include "mozilla/dom/TransitionEventBinding.h"
 #include "mozilla/dom/TreeBoxObjectBinding.h"
 #include "mozilla/dom/UIEventBinding.h"
-#include "mozilla/dom/ValidityStateBinding.h"
 #include "mozilla/dom/WheelEventBinding.h"
 #include "mozilla/dom/XMLDocumentBinding.h"
 #include "mozilla/dom/XMLHttpRequestEventTargetBinding.h"
@@ -219,16 +193,12 @@ struct ComponentsInterfaceShimEntry {
 
 const ComponentsInterfaceShimEntry kComponentsInterfaceShimMap[] =
 {
-  DEFINE_SHIM(AnimationEvent),
-  DEFINE_SHIM(BeforeUnloadEvent),
   DEFINE_SHIM(CanvasRenderingContext2D),
   DEFINE_SHIM(CharacterData),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMClientRect, DOMRectReadOnly),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMClientRectList, DOMRectList),
   DEFINE_SHIM(ClipboardEvent),
-  DEFINE_SHIM(CommandEvent),
   DEFINE_SHIM(Comment),
-  DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIContainerBoxObject, ContainerBoxObject),
   DEFINE_SHIM(CustomEvent),
 #ifdef MOZ_WEBRTC
   DEFINE_SHIM(DataChannel),
@@ -250,36 +220,27 @@ const ComponentsInterfaceShimEntry kComponentsInterfaceShimMap[] =
   DEFINE_SHIM(FormData),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIFrameLoader, FrameLoader),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMGeoPositionError, PositionError),
-  DEFINE_SHIM(History),
   DEFINE_SHIM(HTMLFormElement),
   DEFINE_SHIM(HTMLInputElement),
   DEFINE_SHIM(HTMLMediaElement),
-  DEFINE_SHIM(KeyEvent),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIListBoxObject, ListBoxObject),
-  DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIMenuBoxObject, MenuBoxObject),
   DEFINE_SHIM(MouseEvent),
   DEFINE_SHIM(MouseScrollEvent),
-  DEFINE_SHIM(MutationEvent),
   DEFINE_SHIM(NodeList),
   DEFINE_SHIM(Node),
   DEFINE_SHIM(NotifyPaintEvent),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMNSEvent, Event),
   DEFINE_SHIM(OfflineResourceList),
-  DEFINE_SHIM(PaintRequest),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMParser, DOMParser),
   DEFINE_SHIM(ProcessingInstruction),
   DEFINE_SHIM(Range),
   DEFINE_SHIM(Screen),
   DEFINE_SHIM(ScrollAreaEvent),
-  DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIScrollBoxObject, ScrollBoxObject),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMSerializer, XMLSerializer),
-  DEFINE_SHIM(SimpleGestureEvent),
   DEFINE_SHIM(Text),
   DEFINE_SHIM(TimeRanges),
-  DEFINE_SHIM(TransitionEvent),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsITreeBoxObject, TreeBoxObject),
   DEFINE_SHIM(UIEvent),
-  DEFINE_SHIM(ValidityState),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIWebBrowserPersistable, FrameLoader),
   DEFINE_SHIM(WheelEvent),
   DEFINE_SHIM(XMLDocument),

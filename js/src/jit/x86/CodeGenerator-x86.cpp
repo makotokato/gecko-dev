@@ -121,20 +121,28 @@ CodeGeneratorX86::visitUnbox(LUnbox* unbox)
 {
     // Note that for unbox, the type and payload indexes are switched on the
     // inputs.
+    Operand type = ToOperand(unbox->type());
+    Operand payload = ToOperand(unbox->payload());
+    Register output = ToRegister(unbox->output());
     MUnbox* mir = unbox->mir();
 
     JSValueTag tag = MIRTypeToTag(mir->type());
     if (mir->fallible()) {
-        masm.cmp32(ToOperand(unbox->type()), Imm32(tag));
+        masm.cmp32(type, Imm32(tag));
         bailoutIf(Assembler::NotEqual, unbox->snapshot());
     } else {
 #ifdef DEBUG
         Label ok;
-        masm.branch32(Assembler::Equal, ToOperand(unbox->type()), Imm32(tag), &ok);
+        masm.branch32(Assembler::Equal, type, Imm32(tag), &ok);
         masm.assumeUnreachable("Infallible unbox type mismatch");
         masm.bind(&ok);
 #endif
     }
+
+    // Note: If spectreValueMasking is disabled, then this instruction will
+    // default to a no-op as long as the lowering allocate the same register for
+    // the output and the payload.
+    masm.unboxNonDouble(type, payload, output, ValueTypeFromMIRType(mir->type()));
 }
 
 void
@@ -1030,22 +1038,26 @@ CodeGeneratorX86::visitDivOrModI64(LDivOrModI64* lir)
     Label done;
 
     // Handle divide by zero.
-    if (lir->canBeDivideByZero())
-        masm.branchTest64(Assembler::Zero, rhs, rhs, temp, oldTrap(lir, wasm::Trap::IntegerDivideByZero));
+    if (lir->canBeDivideByZero()) {
+        Label nonZero;
+        masm.branchTest64(Assembler::NonZero, rhs, rhs, temp, &nonZero);
+        masm.wasmTrap(wasm::Trap::IntegerDivideByZero, lir->bytecodeOffset());
+        masm.bind(&nonZero);
+    }
 
     MDefinition* mir = lir->mir();
 
     // Handle an integer overflow exception from INT64_MIN / -1.
     if (lir->canBeNegativeOverflow()) {
-        Label notmin;
-        masm.branch64(Assembler::NotEqual, lhs, Imm64(INT64_MIN), &notmin);
-        masm.branch64(Assembler::NotEqual, rhs, Imm64(-1), &notmin);
+        Label notOverflow;
+        masm.branch64(Assembler::NotEqual, lhs, Imm64(INT64_MIN), &notOverflow);
+        masm.branch64(Assembler::NotEqual, rhs, Imm64(-1), &notOverflow);
         if (mir->isMod())
             masm.xor64(output, output);
         else
-            masm.jump(oldTrap(lir, wasm::Trap::IntegerOverflow));
+            masm.wasmTrap(wasm::Trap::IntegerOverflow, lir->bytecodeOffset());
         masm.jump(&done);
-        masm.bind(&notmin);
+        masm.bind(&notOverflow);
     }
 
     masm.setupWasmABICall();
@@ -1078,8 +1090,12 @@ CodeGeneratorX86::visitUDivOrModI64(LUDivOrModI64* lir)
     MOZ_ASSERT(output == ReturnReg64);
 
     // Prevent divide by zero.
-    if (lir->canBeDivideByZero())
-        masm.branchTest64(Assembler::Zero, rhs, rhs, temp, oldTrap(lir, wasm::Trap::IntegerDivideByZero));
+    if (lir->canBeDivideByZero()) {
+        Label nonZero;
+        masm.branchTest64(Assembler::NonZero, rhs, rhs, temp, &nonZero);
+        masm.wasmTrap(wasm::Trap::IntegerDivideByZero, lir->bytecodeOffset());
+        masm.bind(&nonZero);
+    }
 
     masm.setupWasmABICall();
     masm.passABIArg(lhs.high);

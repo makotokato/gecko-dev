@@ -547,16 +547,6 @@ extern "C" {
     pub fn Servo_SourceSizeList_Drop(ptr: RawServoSourceSizeListOwned);
 }
 extern "C" {
-    pub fn Gecko_RecordTraversalStatistics(
-        total: u32,
-        parallel: u32,
-        total_t: u32,
-        parallel_t: u32,
-        total_s: u32,
-        parallel_s: u32,
-    );
-}
-extern "C" {
     pub fn Gecko_IsSignificantChild(
         node: RawGeckoNodeBorrowed,
         text_is_significant: bool,
@@ -1482,6 +1472,9 @@ extern "C" {
     pub fn Gecko_CSSValue_SetInt(css_value: nsCSSValueBorrowedMut, integer: i32, unit: nsCSSUnit);
 }
 extern "C" {
+    pub fn Gecko_CSSValue_SetFloat(css_value: nsCSSValueBorrowedMut, value: f32, unit: nsCSSUnit);
+}
+extern "C" {
     pub fn Gecko_CSSValue_SetPair(
         css_value: nsCSSValueBorrowedMut,
         xvalue: nsCSSValueBorrowed,
@@ -2140,9 +2133,14 @@ extern "C" {
     );
 }
 extern "C" {
-    pub fn Servo_StyleSet_NoteStyleSheetsChanged(
+    pub fn Servo_StyleSet_SetAuthorStyleDisabled(
         set: RawServoStyleSetBorrowed,
         author_style_disabled: bool,
+    );
+}
+extern "C" {
+    pub fn Servo_StyleSet_NoteStyleSheetsChanged(
+        set: RawServoStyleSetBorrowed,
         changed_origins: OriginFlags,
     );
 }
@@ -2845,7 +2843,7 @@ extern "C" {
     pub fn Servo_DeclarationBlock_RemoveProperty(
         declarations: RawServoDeclarationBlockBorrowed,
         property: *const nsACString,
-    );
+    ) -> bool;
 }
 extern "C" {
     pub fn Servo_DeclarationBlock_RemovePropertyById(

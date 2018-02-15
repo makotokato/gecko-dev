@@ -22,7 +22,6 @@
 #include "vm/Xdr.h"
 #include "wasm/WasmInstance.h"
 
-#include "jsatominlines.h"
 #include "jsscriptinlines.h"
 
 #include "gc/Marking-inl.h"
@@ -2715,7 +2714,8 @@ DebugEnvironments::takeFrameSnapshot(JSContext* cx, Handle<DebugEnvironmentProxy
      */
     RootedArrayObject snapshot(cx, NewDenseCopiedArray(cx, vec.length(), vec.begin()));
     if (!snapshot) {
-        cx->recoverFromOutOfMemory();
+        MOZ_ASSERT(cx->isThrowingOutOfMemory() || cx->isThrowingOverRecursed());
+        cx->clearPendingException();
         return;
     }
 

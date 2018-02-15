@@ -4,14 +4,13 @@
    runNextTest */
 "use strict";
 
-const {require} = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const {require} = ChromeUtils.import("resource://devtools/shared/Loader.jsm", {});
 const {DebuggerClient} = require("devtools/shared/client/debugger-client");
 const {DebuggerServer} = require("devtools/server/main");
 const { Task } = require("devtools/shared/task");
 
 const Services = require("Services");
 // promise is still used in tests using this helper
-const promise = require("promise"); // eslint-disable-line no-unused-vars
 const defer = require("devtools/shared/defer");
 const {DocumentWalker: _documentWalker} = require("devtools/server/actors/inspector/document-walker");
 

@@ -46,6 +46,7 @@ class Instance
     JSCompartment* const            compartment_;
     ReadBarrieredWasmInstanceObject object_;
     jit::TrampolinePtr              jsJitArgsRectifier_;
+    jit::TrampolinePtr              jsJitExceptionHandler_;
     const SharedCode                code_;
     const UniqueDebugState          debug_;
     const UniqueTlsData             tlsData_;
@@ -83,7 +84,7 @@ class Instance
     const Code& code() const { return *code_; }
     DebugState& debug() { return *debug_; }
     const DebugState& debug() const { return *debug_; }
-    const CodeSegment& codeSegment(Tier t) const { return code_->segment(t); }
+    const ModuleSegment& moduleSegment(Tier t) const { return code_->segment(t); }
     TlsData* tlsData() const { return tlsData_.get(); }
     uint8_t* globalData() const { return (uint8_t*)&tlsData_->globalArea; }
     uint8_t* codeBase(Tier t) const { return code_->segment(t).base(); }
@@ -99,7 +100,12 @@ class Instance
     bool memoryAccessInGuardRegion(uint8_t* addr, unsigned numBytes) const;
 #endif
 
-    static size_t offsetOfJSJitArgsRectifier() { return offsetof(Instance, jsJitArgsRectifier_); }
+    static constexpr size_t offsetOfJSJitArgsRectifier() {
+        return offsetof(Instance, jsJitArgsRectifier_);
+    }
+    static constexpr size_t offsetOfJSJitExceptionHandler() {
+        return offsetof(Instance, jsJitExceptionHandler_);
+    }
 
     // This method returns a pointer to the GC object that owns this Instance.
     // Instances may be reached via weak edges (e.g., Compartment::instances_)

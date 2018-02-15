@@ -42,7 +42,6 @@ use dom::errorevent::ErrorEvent;
 use dom::event::{Event, EventBubbles, EventCancelable, EventDefault, EventStatus};
 use dom::eventtarget::EventTarget;
 use dom::focusevent::FocusEvent;
-use dom::forcetouchevent::ForceTouchEvent;
 use dom::globalscope::GlobalScope;
 use dom::hashchangeevent::HashChangeEvent;
 use dom::htmlanchorelement::HTMLAnchorElement;
@@ -98,7 +97,8 @@ use ipc_channel::ipc::{self, IpcSender};
 use js::jsapi::{JSContext, JSObject, JSRuntime};
 use js::jsapi::JS_GetRuntime;
 use metrics::{InteractiveFlag, InteractiveMetrics, InteractiveWindow, ProfilerMetadataFactory, ProgressiveWebMetric};
-use msg::constellation_msg::{BrowsingContextId, Key, KeyModifiers, KeyState, TopLevelBrowsingContextId};
+use mime::{Mime, TopLevel, SubLevel};
+use msg::constellation_msg::{BrowsingContextId, Key, KeyModifiers, KeyState};
 use net_traits::{FetchResponseMsg, IpcSend, ReferrerPolicy};
 use net_traits::CookieSource::NonHTTP;
 use net_traits::CoreResourceMsg::{GetCookiesForUrl, SetCookiesForUrl};
@@ -111,8 +111,7 @@ use script_layout_interface::message::{Msg, NodesFromPointQueryType, ReflowGoal}
 use script_runtime::{CommonScriptMsg, ScriptThreadEventCategory};
 use script_thread::{MainThreadScriptMsg, ScriptThread};
 use script_traits::{AnimationState, DocumentActivity, MouseButton, MouseEventType};
-use script_traits::{MozBrowserEvent, MsDuration, ScriptMsg, TouchEventType, TouchId};
-use script_traits::{TouchpadPressurePhase, UntrustedNodeAddress};
+use script_traits::{MsDuration, ScriptMsg, TouchEventType, TouchId, UntrustedNodeAddress};
 use servo_arc::Arc;
 use servo_atoms::Atom;
 use servo_config::prefs::PREFS;
@@ -134,7 +133,7 @@ use style::media_queries::{Device, MediaList, MediaType};
 use style::selector_parser::{RestyleDamage, Snapshot};
 use style::shared_lock::{SharedRwLock as StyleSharedRwLock, SharedRwLockReadGuard};
 use style::str::{HTML_SPACE_CHARACTERS, split_html_space_chars, str_join};
-use style::stylesheet_set::StylesheetSet;
+use style::stylesheet_set::DocumentStylesheetSet;
 use style::stylesheets::{Stylesheet, StylesheetContents, Origin, OriginSet};
 use task_source::TaskSource;
 use time;
@@ -235,7 +234,8 @@ pub struct Document {
     node: Node,
     window: Dom<Window>,
     implementation: MutNullableDom<DOMImplementation>,
-    content_type: DOMString,
+    #[ignore_malloc_size_of = "type from external crate"]
+    content_type: Mime,
     last_modified: Option<String>,
     encoding: Cell<&'static Encoding>,
     has_browsing_context: bool,
@@ -260,7 +260,7 @@ pub struct Document {
     /// Can be acquired once for accessing many objects.
     style_shared_lock: StyleSharedRwLock,
     /// List of stylesheets associated with nodes in this document. |None| if the list needs to be refreshed.
-    stylesheets: DomRefCell<StylesheetSet<StyleSheetInDocument>>,
+    stylesheets: DomRefCell<DocumentStylesheetSet<StyleSheetInDocument>>,
     stylesheet_list: MutNullableDom<StyleSheetList>,
     ready_state: Cell<DocumentReadyState>,
     /// Whether the DOMContentLoaded event has already been dispatched.
@@ -326,7 +326,6 @@ pub struct Document {
     load_event_end: Cell<u64>,
     /// <https://html.spec.whatwg.org/multipage/#concept-document-https-state>
     https_state: Cell<HttpsState>,
-    touchpad_pressure_phase: Cell<TouchpadPressurePhase>,
     /// The document's origin.
     origin: MutableOrigin,
     ///  https://w3c.github.io/webappsec-referrer-policy/#referrer-policy-states
@@ -452,7 +451,6 @@ impl Document {
 
     pub fn set_https_state(&self, https_state: HttpsState) {
         self.https_state.set(https_state);
-        self.trigger_mozbrowser_event(MozBrowserEvent::SecurityChange(https_state));
     }
 
     pub fn is_fully_active(&self) -> bool {
@@ -755,13 +753,9 @@ impl Document {
     pub fn set_ready_state(&self, state: DocumentReadyState) {
         match state {
             DocumentReadyState::Loading => {
-                // https://developer.mozilla.org/en-US/docs/Web/Events/mozbrowserconnected
-                self.trigger_mozbrowser_event(MozBrowserEvent::Connected);
                 update_with_current_time_ms(&self.dom_loading);
             },
             DocumentReadyState::Complete => {
-                // https://developer.mozilla.org/en-US/docs/Web/Events/mozbrowserloadend
-                self.trigger_mozbrowser_event(MozBrowserEvent::LoadEnd);
                 update_with_current_time_ms(&self.dom_complete);
             },
             DocumentReadyState::Interactive => update_with_current_time_ms(&self.dom_interactive),
@@ -827,9 +821,6 @@ impl Document {
     /// Handles any updates when the document's title has changed.
     pub fn title_changed(&self) {
         if self.browsing_context().is_some() {
-            // https://developer.mozilla.org/en-US/docs/Web/Events/mozbrowsertitlechange
-            self.trigger_mozbrowser_event(MozBrowserEvent::TitleChange(String::from(self.Title())));
-
             self.send_title_to_constellation();
         }
     }
@@ -994,65 +985,6 @@ impl Document {
 
         // Update last_click_info with the time and position of the click.
         *self.last_click_info.borrow_mut() = Some((now, click_pos));
-    }
-
-    #[allow(unsafe_code)]
-    pub fn handle_touchpad_pressure_event(
-        &self,
-        js_runtime: *mut JSRuntime,
-        pressure: f32,
-        phase_now: TouchpadPressurePhase,
-        node_address: Option<UntrustedNodeAddress>
-    ) {
-        let el = node_address.and_then(|address| {
-            let node = unsafe { node::from_untrusted_node_address(js_runtime, address) };
-            node.inclusive_ancestors()
-                .filter_map(DomRoot::downcast::<Element>)
-                .next()
-        });
-        let el = match el {
-            Some(el) => el,
-            None => return,
-        };
-
-        let phase_before = self.touchpad_pressure_phase.get();
-        self.touchpad_pressure_phase.set(phase_now);
-
-        if phase_before == TouchpadPressurePhase::BeforeClick &&
-           phase_now == TouchpadPressurePhase::BeforeClick {
-            return;
-        }
-
-        let node = el.upcast::<Node>();
-        let target = node.upcast();
-
-        let force = match phase_now {
-            TouchpadPressurePhase::BeforeClick => pressure,
-            TouchpadPressurePhase::AfterFirstClick => 1. + pressure,
-            TouchpadPressurePhase::AfterSecondClick => 2. + pressure,
-        };
-
-        if phase_now != TouchpadPressurePhase::BeforeClick {
-            self.fire_forcetouch_event("servomouseforcechanged".to_owned(), target, force);
-        }
-
-        if phase_before != TouchpadPressurePhase::AfterSecondClick &&
-           phase_now == TouchpadPressurePhase::AfterSecondClick {
-            self.fire_forcetouch_event("servomouseforcedown".to_owned(), target, force);
-        }
-
-        if phase_before == TouchpadPressurePhase::AfterSecondClick &&
-           phase_now != TouchpadPressurePhase::AfterSecondClick {
-            self.fire_forcetouch_event("servomouseforceup".to_owned(), target, force);
-        }
-    }
-
-    fn fire_forcetouch_event(&self, event_name: String, target: &EventTarget, force: f32) {
-        let force_event = ForceTouchEvent::new(&self.window,
-                                               DOMString::from(event_name),
-                                               force);
-        let event = force_event.upcast::<Event>();
-        event.fire(target);
     }
 
     pub fn fire_mouse_event(&self, client_point: Point2D<f32>, target: &EventTarget, event_name: FireMouseEventType) {
@@ -1464,18 +1396,9 @@ impl Document {
 
         // Mark the document element dirty so a reflow will be performed.
         //
-        // FIXME(emilio): Use the StylesheetSet invalidation stuff.
+        // FIXME(emilio): Use the DocumentStylesheetSet invalidation stuff.
         if let Some(element) = self.GetDocumentElement() {
             element.upcast::<Node>().dirty(NodeDamage::NodeStyleDamaged);
-        }
-    }
-
-    pub fn trigger_mozbrowser_event(&self, event: MozBrowserEvent) {
-        if PREFS.is_mozbrowser_enabled() {
-            if let Some((parent_pipeline_id, _)) = self.window.parent_info() {
-                let event = ScriptMsg::MozBrowserEvent(parent_pipeline_id, event);
-                self.send_to_constellation(event);
-            }
         }
     }
 
@@ -1917,20 +1840,6 @@ impl Document {
             .find(|node| node.browsing_context_id() == Some(browsing_context_id))
     }
 
-    /// Find a mozbrowser iframe element in the document.
-    pub fn find_mozbrowser_iframe(&self,
-                                  top_level_browsing_context_id: TopLevelBrowsingContextId)
-                                  -> Option<DomRoot<HTMLIFrameElement>>
-    {
-        match self.find_iframe(BrowsingContextId::from(top_level_browsing_context_id)) {
-            None => None,
-            Some(iframe) => {
-                assert!(iframe.Mozbrowser());
-                Some(iframe)
-            },
-        }
-    }
-
     pub fn get_dom_loading(&self) -> u64 {
         self.dom_loading.get()
     }
@@ -2195,7 +2104,7 @@ impl Document {
                          url: Option<ServoUrl>,
                          origin: MutableOrigin,
                          is_html_document: IsHTMLDocument,
-                         content_type: Option<DOMString>,
+                         content_type: Option<Mime>,
                          last_modified: Option<String>,
                          activity: DocumentActivity,
                          source: DocumentSource,
@@ -2220,12 +2129,12 @@ impl Document {
             has_browsing_context: has_browsing_context == HasBrowsingContext::Yes,
             implementation: Default::default(),
             content_type: match content_type {
-                Some(string) => string,
-                None => DOMString::from(match is_html_document {
+                Some(mime_data) => mime_data,
+                None => Mime::from(match is_html_document {
                     // https://dom.spec.whatwg.org/#dom-domimplementation-createhtmldocument
-                    IsHTMLDocument::HTMLDocument => "text/html",
+                    IsHTMLDocument::HTMLDocument => Mime(TopLevel::Text, SubLevel::Html, vec![]),
                     // https://dom.spec.whatwg.org/#concept-document-content-type
-                    IsHTMLDocument::NonHTMLDocument => "application/xml",
+                    IsHTMLDocument::NonHTMLDocument => Mime(TopLevel::Application, SubLevel::Xml, vec![]),
                 }),
             },
             last_modified: last_modified,
@@ -2262,7 +2171,7 @@ impl Document {
                 PER_PROCESS_AUTHOR_SHARED_LOCK.clone()
                 //StyleSharedRwLock::new()
             },
-            stylesheets: DomRefCell::new(StylesheetSet::new()),
+            stylesheets: DomRefCell::new(DocumentStylesheetSet::new()),
             stylesheet_list: MutNullableDom::new(None),
             ready_state: Cell::new(ready_state),
             domcontentloaded_dispatched: Cell::new(domcontentloaded_dispatched),
@@ -2295,7 +2204,6 @@ impl Document {
             load_event_start: Cell::new(Default::default()),
             load_event_end: Cell::new(Default::default()),
             https_state: Cell::new(HttpsState::None),
-            touchpad_pressure_phase: Cell::new(TouchpadPressurePhase::BeforeClick),
             origin: origin,
             referrer: referrer,
             referrer_policy: Cell::new(referrer_policy),
@@ -2337,7 +2245,7 @@ impl Document {
                url: Option<ServoUrl>,
                origin: MutableOrigin,
                doctype: IsHTMLDocument,
-               content_type: Option<DOMString>,
+               content_type: Option<Mime>,
                last_modified: Option<String>,
                activity: DocumentActivity,
                source: DocumentSource,
@@ -2887,7 +2795,7 @@ impl DocumentMethods for Document {
 
     // https://dom.spec.whatwg.org/#dom-document-content_type
     fn ContentType(&self) -> DOMString {
-        self.content_type.clone()
+        DOMString::from(self.content_type.to_string())
     }
 
     // https://dom.spec.whatwg.org/#dom-document-doctype
@@ -2967,7 +2875,8 @@ impl DocumentMethods for Document {
             local_name.make_ascii_lowercase();
         }
 
-        let ns = if self.is_html_document || self.content_type == "application/xhtml+xml" {
+        let is_xhtml = self.content_type.0 == TopLevel::Application && self.content_type.1.as_str() == "xhtml+xml";
+        let ns = if self.is_html_document || is_xhtml {
             ns!(html)
         } else {
             ns!()
@@ -3804,7 +3713,7 @@ impl DocumentMethods for Document {
         self.scripts.set(None);
         self.anchors.set(None);
         self.applets.set(None);
-        *self.stylesheets.borrow_mut() = StylesheetSet::new();
+        *self.stylesheets.borrow_mut() = DocumentStylesheetSet::new();
         self.animation_frame_ident.set(0);
         self.animation_frame_list.borrow_mut().clear();
         self.pending_restyles.borrow_mut().clear();

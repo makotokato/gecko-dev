@@ -536,7 +536,7 @@ LIRGenerator::visitCall(MCall* call)
                                           tempFixed(privReg), tempFixed(argsReg));
     } else if (target) {
         // Call known functions.
-        if (target->isNative()) {
+        if (target->isNativeWithCppEntry()) {
             Register cxReg, numReg, vpReg, tmpReg;
             GetTempRegForIntArg(0, 0, &cxReg);
             GetTempRegForIntArg(1, 0, &numReg);
@@ -3293,16 +3293,18 @@ LIRGenerator::visitLoadElementFromState(MLoadElementFromState* ins)
 #ifdef JS_NUNBOX32
     temp1 = temp();
 #endif
-    LLoadElementFromStateV* lir = new(alloc()) LLoadElementFromStateV(temp(), temp1, tempDouble());
     MOZ_ASSERT(ins->array()->isArgumentState(),
                "LIRGenerator::visitLoadElementFromState: Unsupported state object");
     MArgumentState* array = ins->array()->toArgumentState();
 
+    size_t numOperands = 1 + BOX_PIECES * array->numElements();
+    LLoadElementFromStateV* lir = new(alloc()) LLoadElementFromStateV(temp(), temp1, tempDouble(),
+                                                                      numOperands);
+
     //   1                                 -- for the index as a register
     //   BOX_PIECES * array->numElements() -- for using as operand all the
     //                                        elements of the inlined array.
-    size_t numOperands = 1 + BOX_PIECES * array->numElements();
-    if (!lir->init(alloc(), numOperands)) {
+    if (!lir->init(alloc())) {
         abort(AbortReason::Alloc, "OOM: LIRGenerator::visitLoadElementFromState");
         return;
     }
@@ -4657,12 +4659,12 @@ LIRGenerator::visitWasmCall(MWasmCall* ins)
     }
 
     LInstruction* lir;
-    if (ins->type() == MIRType::Int64) {
+    if (ins->type() == MIRType::Int64)
         lir = new(alloc()) LWasmCallI64(args, ins->numOperands(), needsBoundsCheck);
-    } else {
-        uint32_t numDefs = (ins->type() != MIRType::None) ? 1 : 0;
-        lir = new(alloc()) LWasmCall(args, ins->numOperands(), numDefs, needsBoundsCheck);
-    }
+    else if (ins->type() == MIRType::None)
+        lir = new(alloc()) LWasmCallVoid(args, ins->numOperands(), needsBoundsCheck);
+    else
+        lir = new(alloc()) LWasmCall(args, ins->numOperands(), needsBoundsCheck);
 
     if (ins->type() == MIRType::None)
         add(lir, ins);

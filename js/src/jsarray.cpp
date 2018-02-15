@@ -15,7 +15,6 @@
 #include <algorithm>
 
 #include "jsapi.h"
-#include "jsatom.h"
 #include "jscntxt.h"
 #include "jsfriendapi.h"
 #include "jsfun.h"
@@ -37,8 +36,6 @@
 #include "vm/StringBuffer.h"
 #include "vm/TypedArrayObject.h"
 #include "vm/WrapperObject.h"
-
-#include "jsatominlines.h"
 
 #include "vm/ArgumentsObject-inl.h"
 #include "vm/ArrayObject-inl.h"
@@ -3543,9 +3540,7 @@ static const JSFunctionSpec array_methods[] = {
     JS_SELF_HOSTED_SYM_FN(iterator,  "ArrayValues",      0,0),
     JS_SELF_HOSTED_FN("entries",     "ArrayEntries",     0,0),
     JS_SELF_HOSTED_FN("keys",        "ArrayKeys",        0,0),
-#ifdef NIGHTLY_BUILD
     JS_SELF_HOSTED_FN("values",      "ArrayValues",      0,0),
-#endif
 
     /* ES7 additions */
     JS_SELF_HOSTED_FN("includes",    "ArrayIncludes",    2,0),

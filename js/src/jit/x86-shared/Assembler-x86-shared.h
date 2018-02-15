@@ -301,6 +301,7 @@ class AssemblerX86Shared : public AssemblerShared
         LessThan = X86Encoding::ConditionL,
         LessThanOrEqual = X86Encoding::ConditionLE,
         Overflow = X86Encoding::ConditionO,
+        NoOverflow = X86Encoding::ConditionNO,
         CarrySet = X86Encoding::ConditionC,
         CarryClear = X86Encoding::ConditionNC,
         Signed = X86Encoding::ConditionS,
@@ -1343,6 +1344,9 @@ class AssemblerX86Shared : public AssemblerShared
             MOZ_CRASH("unexpected operand kind");
         }
     }
+    void sbbl(Register src, Register dest) {
+        masm.sbbl_rr(src.encoding(), dest.encoding());
+    }
     void subl(Register src, Register dest) {
         masm.subl_rr(src.encoding(), dest.encoding());
     }
@@ -1629,6 +1633,9 @@ class AssemblerX86Shared : public AssemblerShared
             break;
           case Operand::MEM_REG_DISP:
             masm.andl_mr(src.disp(), src.base(), dest.encoding());
+            break;
+          case Operand::MEM_SCALE:
+            masm.andl_mr(src.disp(), src.base(), src.index(), src.scale(), dest.encoding());
             break;
           default:
             MOZ_CRASH("unexpected operand kind");
@@ -2113,6 +2120,9 @@ class AssemblerX86Shared : public AssemblerShared
             break;
           case Operand::MEM_REG_DISP:
             masm.push_m(src.disp(), src.base());
+            break;
+          case Operand::MEM_SCALE:
+            masm.push_m(src.disp(), src.base(), src.index(), src.scale());
             break;
           default:
             MOZ_CRASH("unexpected operand kind");

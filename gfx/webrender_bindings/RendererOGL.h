@@ -50,6 +50,9 @@ public:
   wr::WrExternalImageHandler GetExternalImageHandler();
 
   /// This can be called on the render thread only.
+  void Update();
+
+  /// This can be called on the render thread only.
   bool UpdateAndRender();
 
   /// This can be called on the render thread only.
@@ -81,7 +84,7 @@ public:
 
   layers::CompositorBridgeParentBase* GetCompositorBridge() { return mBridge; }
 
-  wr::WrRenderedEpochs* FlushRenderedEpochs();
+  wr::WrPipelineInfo* FlushPipelineInfo();
 
   RenderTextureHost* GetRenderTexture(wr::WrExternalImageId aExternalImageId);
 

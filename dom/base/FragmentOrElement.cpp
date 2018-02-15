@@ -59,7 +59,6 @@
 #include "nsError.h"
 #include "nsDOMString.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsIDOMMutationEvent.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/MouseEvents.h"
 #include "nsNodeUtils.h"
@@ -1934,7 +1933,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(FragmentOrElement)
     }
 
     nsAutoCString orphan;
-    if (!tmp->IsInUncomposedDoc() &&
+    if (!tmp->IsInComposedDoc() &&
         // Ignore xbl:content, which is never in the document and hence always
         // appears to be orphaned.
         !tmp->NodeInfo()->Equals(nsGkAtoms::content, kNameSpaceID_XBL)) {

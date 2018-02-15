@@ -565,7 +565,8 @@ public class GeckoSession extends LayerSession
         ThreadUtils.assertOnUiThread();
 
         if (!isOpen()) {
-            throw new IllegalStateException("Session is not open");
+            Log.w(LOGTAG, "Attempted to close a GeckoSession that was already closed.");
+            return;
         }
 
         if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
@@ -1802,6 +1803,7 @@ public class GeckoSession extends LayerSession
          *
          * @param session GeckoSession instance requesting the permissions.
          * @param permissions List of permissions to request; possible values are,
+         *                    android.Manifest.permission.ACCESS_COARSE_LOCATION
          *                    android.Manifest.permission.ACCESS_FINE_LOCATION
          *                    android.Manifest.permission.CAMERA
          *                    android.Manifest.permission.RECORD_AUDIO

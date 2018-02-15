@@ -566,6 +566,9 @@ pref("media.navigator.mediadatadecoder_enabled", false);
 
 pref("dom.webaudio.enabled", true);
 
+// Exposes the navigator.webdriver attribute.
+pref("dom.webdriver.enabled", true);
+
 #if !defined(ANDROID)
 pref("media.getusermedia.screensharing.enabled", true);
 #endif
@@ -1409,7 +1412,7 @@ pref("privacy.resistFingerprinting", false);
 //   File.lastModified, audioContext.currentTime, canvas.captureStream.currentTime
 pref("privacy.reduceTimerPrecision", true);
 // Dynamically tune the resolution of the timer reduction for both of the two above prefs
-pref("privacy.resistFingerprinting.reduceTimerPrecision.microseconds", 20);
+pref("privacy.resistFingerprinting.reduceTimerPrecision.microseconds", 2000);
 // Lower the priority of network loads for resources on the tracking protection list.
 // Note that this requires the privacy.trackingprotection.annotate_channels pref to be on in order to have any effect.
 #ifdef NIGHTLY_BUILD
@@ -1431,6 +1434,8 @@ pref("dom.webcomponents.customelements.enabled", false);
 #endif
 
 pref("javascript.enabled",                  true);
+// Enable Array.prototype.values
+pref("javascript.options.array_prototype_values", true);
 pref("javascript.options.strict",           false);
 #ifdef DEBUG
 pref("javascript.options.strict.debug",     false);
@@ -1550,6 +1555,8 @@ pref("javascript.options.dump_stack_on_debuggee_would_run", false);
 
 // Spectre security vulnerability mitigations.
 pref("javascript.options.spectre.index_masking", true);
+pref("javascript.options.spectre.string_mitigations", true);
+pref("javascript.options.spectre.value_masking", true);
 
 // Streams API
 pref("javascript.options.streams", false);
@@ -3027,7 +3034,7 @@ pref("layout.css.emulate-moz-box-with-flex", false);
 
 // Is the paint-order property supported for HTML text? (It is always supported
 // for SVG, provided it is enabled at all; see "svg.paint-order.enabled".)
-pref("layout.css.paint-order.enabled", false);
+pref("layout.css.paint-order.enabled", true);
 
 // Are sets of prefixed properties supported?
 pref("layout.css.prefixes.border-image", true);
@@ -5951,3 +5958,4 @@ pref("layers.omtp.paint-workers", -1);
 pref("layers.omtp.paint-workers", 1);
 #endif
 pref("layers.omtp.release-capture-on-main-thread", false);
+pref("layers.omtp.dump-capture", false);

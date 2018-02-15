@@ -1,6 +1,8 @@
 ChromeUtils.import("resource://gre/modules/ObjectUtils.jsm");
 ChromeUtils.import("resource://gre/modules/PlacesSyncUtils.jsm");
 ChromeUtils.import("resource://testing-common/httpd.js");
+ChromeUtils.defineModuleGetter(this, "Preferences",
+                               "resource://gre/modules/Preferences.jsm");
 Cu.importGlobalProperties(["URLSearchParams"]);
 
 const DESCRIPTION_ANNO = "bookmarkProperties/description";
@@ -181,7 +183,7 @@ add_task(async function test_fetchURLFrecency() {
   }
 
   // Remove the visits added during this test.
- await PlacesTestUtils.clearHistory();
+ await PlacesUtils.history.clear();
 });
 
 add_task(async function test_determineNonSyncableGuids() {
@@ -215,7 +217,7 @@ add_task(async function test_determineNonSyncableGuids() {
   }
 
   // Remove the visits added during this test.
-  await PlacesTestUtils.clearHistory();
+  await PlacesUtils.history.clear();
 });
 
 add_task(async function test_changeGuid() {
@@ -241,7 +243,7 @@ add_task(async function test_changeGuid() {
   }
 
   // Remove the visits added during this test.
-  await PlacesTestUtils.clearHistory();
+  await PlacesUtils.history.clear();
 });
 
 add_task(async function test_fetchVisitsForURL() {
@@ -272,7 +274,7 @@ add_task(async function test_fetchVisitsForURL() {
   }
 
   // Remove the visits added during this test.
-  await PlacesTestUtils.clearHistory();
+  await PlacesUtils.history.clear();
 });
 
 add_task(async function test_fetchGuidForURL() {
@@ -299,7 +301,7 @@ add_task(async function test_fetchGuidForURL() {
   }
 
   // Remove the visits added during this test.
-  await PlacesTestUtils.clearHistory();
+  await PlacesUtils.history.clear();
 });
 
 add_task(async function test_fetchURLInfoForGuid() {
@@ -330,7 +332,7 @@ add_task(async function test_fetchURLInfoForGuid() {
   equal(info, null, "The information object of a non-existent guid should be null.");
 
   // Remove the visits added during this test.
-  await PlacesTestUtils.clearHistory();
+  await PlacesUtils.history.clear();
 });
 
 add_task(async function test_getAllURLs() {
@@ -352,7 +354,7 @@ add_task(async function test_getAllURLs() {
   }
 
   // Remove the visits added during this test.
-  await PlacesTestUtils.clearHistory();
+  await PlacesUtils.history.clear();
 });
 
 add_task(async function test_order() {
@@ -646,9 +648,13 @@ add_task(async function test_pullChanges_tags() {
 
   info("Create tag");
   PlacesUtils.tagging.tagURI(uri("https://example.org"), ["taggy"]);
-  let tagFolderId = PlacesUtils.bookmarks.getIdForItemAt(
-    PlacesUtils.tagsFolderId, 0);
-  let tagFolderGuid = await PlacesUtils.promiseItemGuid(tagFolderId);
+
+  let tagBm = await PlacesUtils.bookmarks.fetch({
+    parentGuid: PlacesUtils.bookmarks.tagsGuid,
+    index: 0
+  });
+  let tagFolderGuid = tagBm.guid;
+  let tagFolderId = await PlacesUtils.promiseItemId(tagFolderGuid);
 
   info("Tagged bookmarks should be in changeset");
   {
@@ -705,12 +711,12 @@ add_task(async function test_pullChanges_tags() {
 
   info("Change tag entry URL using Bookmarks.update");
   {
-    let tagGuid = await PlacesUtils.promiseItemGuid(
-      PlacesUtils.bookmarks.getIdForItemAt(tagFolderId, 0));
-    await PlacesUtils.bookmarks.update({
-      guid: tagGuid,
-      url: "https://bugzilla.org",
+    let bm = await PlacesUtils.bookmarks.fetch({
+      parentGuid: tagFolderGuid,
+      index: 0
     });
+    bm.url = "https://bugzilla.org/";
+    await PlacesUtils.bookmarks.update(bm);
     let changes = await PlacesSyncUtils.bookmarks.pullChanges();
     deepEqual(Object.keys(changes).sort(),
       [firstItem.recordId, secondItem.recordId, untaggedItem.recordId].sort(),
@@ -719,10 +725,8 @@ add_task(async function test_pullChanges_tags() {
       "Should remove tag entry for old URI");
     await setChangesSynced(changes);
 
-    await PlacesUtils.bookmarks.update({
-      guid: tagGuid,
-      url: "https://example.com",
-    });
+    bm.url = "https://example.com/";
+    await PlacesUtils.bookmarks.update(bm);
     changes = await PlacesSyncUtils.bookmarks.pullChanges();
     deepEqual(Object.keys(changes).sort(),
       [untaggedItem.recordId].sort(),
@@ -1784,21 +1788,6 @@ add_task(async function test_set_orphan_indices() {
       "Orphaned bookmarks should match before changing indices");
   }
 
-  info("Set synced orphan indices");
-  {
-    let fxId = await recordIdToId(fxBmk.recordId);
-    let tbId = await recordIdToId(tbBmk.recordId);
-    PlacesUtils.bookmarks.runInBatchMode(_ => {
-      PlacesUtils.bookmarks.setItemIndex(fxId, 1);
-      PlacesUtils.bookmarks.setItemIndex(tbId, 0);
-    }, null);
-    await PlacesTestUtils.promiseAsyncUpdates();
-    let orphanGuids = await PlacesSyncUtils.bookmarks.fetchGuidsWithAnno(
-      SYNC_PARENT_ANNO, nonexistentRecordId);
-    deepEqual(orphanGuids, [],
-      "Should remove orphan annos after updating indices");
-  }
-
   await PlacesUtils.bookmarks.eraseEverything();
   await PlacesSyncUtils.bookmarks.reset();
 });
@@ -2822,6 +2811,13 @@ add_task(async function test_remove_partial() {
 });
 
 add_task(async function test_migrateOldTrackerEntries() {
+  let timerPrecision = Preferences.get("privacy.reduceTimerPrecision");
+  Preferences.set("privacy.reduceTimerPrecision", false);
+
+  registerCleanupFunction(function() {
+    Preferences.set("privacy.reduceTimerPrecision", timerPrecision);
+  });
+
   let unknownBmk = await PlacesUtils.bookmarks.insert({
     parentGuid: PlacesUtils.bookmarks.menuGuid,
     url: "http://getfirefox.com",
