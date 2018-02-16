@@ -45,8 +45,8 @@
 #define BROTLI_LITTLE_ENDIAN
 #endif
 
-/* Enable little-endian optimization for x64 architecture on Windows. */
-#if (defined(_WIN32) || defined(_WIN64)) && defined(_M_X64)
+/* Enable little-endian optimization for Windows. */
+#if defined(_WIN32) || defined(_WIN64)
 #define BROTLI_LITTLE_ENDIAN
 #endif
 

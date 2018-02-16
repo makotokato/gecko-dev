@@ -39,7 +39,7 @@
     (defined(M_ARM) && (M_ARM == 7))
 #define BROTLI_TARGET_ARMV7
 #endif  /* ARMv7 */
-#if defined(__aarch64__) || defined(__ARM64_ARCH_8__)
+#if defined(__aarch64__) || defined(__ARM64_ARCH_8__) || defined(_M_ARM64)
 #define BROTLI_TARGET_ARMV8
 #endif  /* ARMv8 */
 #endif  /* ARM */
