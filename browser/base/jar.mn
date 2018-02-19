@@ -3,8 +3,6 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 browser.jar:
 %  content browser %content/browser/ contentaccessible=yes
-%  overlay chrome://global/content/viewSource.xul chrome://browser/content/viewSourceOverlay.xul
-%  overlay chrome://global/content/viewPartialSource.xul chrome://browser/content/viewSourceOverlay.xul
 
         content/browser/aboutDialog-appUpdater.js     (content/aboutDialog-appUpdater.js)
 *       content/browser/aboutDialog.xul               (content/aboutDialog.xul)
@@ -96,7 +94,6 @@ browser.jar:
         content/browser/defaultthemes/5.header.png    (content/defaultthemes/5.header.png)
         content/browser/defaultthemes/5.icon.jpg      (content/defaultthemes/5.icon.jpg)
         content/browser/defaultthemes/5.preview.jpg   (content/defaultthemes/5.preview.jpg)
-        content/browser/defaultthemes/compact.header.png    (content/defaultthemes/compact.header.png)
         content/browser/defaultthemes/dark.icon.svg  (content/defaultthemes/dark.icon.svg)
         content/browser/defaultthemes/light.icon.svg (content/defaultthemes/light.icon.svg)
         content/browser/newtab/newTab.xhtml           (content/newtab/newTab.xhtml)
@@ -135,7 +132,6 @@ browser.jar:
 #ifdef XP_MACOSX
 *       content/browser/macBrowserOverlay.xul         (content/macBrowserOverlay.xul)
 #endif
-*       content/browser/viewSourceOverlay.xul         (content/viewSourceOverlay.xul)
 #ifndef XP_MACOSX
 *       content/browser/webrtcIndicator.xul           (content/webrtcIndicator.xul)
         content/browser/webrtcIndicator.js            (content/webrtcIndicator.js)

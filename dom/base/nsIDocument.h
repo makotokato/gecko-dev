@@ -2091,33 +2091,10 @@ public:
     return mHaveFiredTitleChange;
   }
 
-  /**
-   * See GetAnonymousElementByAttribute on nsIDOMDocumentXBL.
-   */
   virtual Element*
     GetAnonymousElementByAttribute(nsIContent* aElement,
                                    nsAtom* aAttrName,
                                    const nsAString& aAttrValue) const = 0;
-
-  /**
-   * Helper for nsIDOMDocument::elementFromPoint implementation that allows
-   * ignoring the scroll frame and/or avoiding layout flushes.
-   *
-   * @see nsIDOMWindowUtils::elementFromPoint
-   */
-  virtual Element* ElementFromPointHelper(float aX, float aY,
-                                          bool aIgnoreRootScrollFrame,
-                                          bool aFlushLayout) = 0;
-
-  enum ElementsFromPointFlags {
-    IGNORE_ROOT_SCROLL_FRAME = 1,
-    FLUSH_LAYOUT = 2,
-    IS_ELEMENT_FROM_POINT = 4
-  };
-
-  virtual void ElementsFromPointHelper(float aX, float aY,
-                                       uint32_t aFlags,
-                                       nsTArray<RefPtr<mozilla::dom::Element>>& aElements) = 0;
 
   virtual nsresult NodesFromRectHelper(float aX, float aY,
                                        float aTopSize, float aRightSize,
@@ -2640,6 +2617,9 @@ public:
 
   virtual nsISupports* GetCurrentContentSink() = 0;
 
+  virtual void SetAutoFocusElement(Element* aAutoFocusElement) = 0;
+  virtual void TriggerAutoFocus() = 0;
+
   virtual void SetScrollToRef(nsIURI *aDocumentURI) = 0;
   virtual void ScrollToRef() = 0;
   virtual void ResetScrolledToRefAlready() = 0;
@@ -2955,10 +2935,6 @@ public:
   void GetPreferredStyleSheetSet(nsAString& aSheetSet);
   virtual mozilla::dom::DOMStringList* StyleSheetSets() = 0;
   virtual void EnableStyleSheetsForSet(const nsAString& aSheetSet) = 0;
-  Element* ElementFromPoint(float aX, float aY);
-  void ElementsFromPoint(float aX,
-                         float aY,
-                         nsTArray<RefPtr<mozilla::dom::Element>>& aElements);
 
   /**
    * Retrieve the location of the caret position (DOM node and character
@@ -2987,9 +2963,6 @@ public:
   Element* GetBindingParent(nsINode& aNode);
   void LoadBindingDocument(const nsAString& aURI,
                            nsIPrincipal& aSubjectPrincipal,
-                           mozilla::ErrorResult& rv);
-  void LoadBindingDocument(const nsAString& aURI,
-                           const mozilla::Maybe<nsIPrincipal*>& aSubjectPrincipal,
                            mozilla::ErrorResult& rv);
   mozilla::dom::XPathExpression*
     CreateExpression(const nsAString& aExpression,
@@ -3212,6 +3185,16 @@ public:
   }
 
   bool ModuleScriptsEnabled();
+
+  /**
+   * Find the (non-anonymous) content in this document for aFrame. It will
+   * be aFrame's content node if that content is in this document and not
+   * anonymous. Otherwise, when aFrame is in a subdocument, we use the frame
+   * element containing the subdocument containing aFrame, and/or find the
+   * nearest non-anonymous ancestor in this document.
+   * Returns null if there is no such element.
+   */
+  nsIContent* GetContentInThisDocument(nsIFrame* aFrame) const;
 
 protected:
   bool GetUseCounter(mozilla::UseCounter aUseCounter)

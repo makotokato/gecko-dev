@@ -9,22 +9,21 @@
 #include "mozilla/PodOperations.h"
 #include "mozilla/ScopeExit.h"
 
-#include "jscompartment.h"
-#include "jsiter.h"
-
 #include "builtin/ModuleObject.h"
 #include "gc/Policy.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/AsyncFunction.h"
 #include "vm/GlobalObject.h"
+#include "vm/Iteration.h"
+#include "vm/JSCompartment.h"
 #include "vm/ProxyObject.h"
 #include "vm/Shape.h"
 #include "vm/Xdr.h"
 #include "wasm/WasmInstance.h"
 
-#include "jsscriptinlines.h"
-
 #include "gc/Marking-inl.h"
+#include "vm/JSAtom-inl.h"
+#include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
 #include "vm/Stack-inl.h"
 #include "vm/TypeInference-inl.h"

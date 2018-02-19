@@ -7,15 +7,16 @@
 #include "gc/Zone.h"
 
 #include "gc/Policy.h"
+#include "gc/PublicIterators.h"
 #include "jit/BaselineJIT.h"
 #include "jit/Ion.h"
 #include "jit/JitCompartment.h"
 #include "vm/Debugger.h"
 #include "vm/Runtime.h"
 
-#include "jscompartmentinlines.h"
-#include "jsgcinlines.h"
+#include "gc/GC-inl.h"
 #include "gc/Marking-inl.h"
+#include "vm/JSCompartment-inl.h"
 
 using namespace js;
 using namespace js::gc;

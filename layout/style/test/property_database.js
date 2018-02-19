@@ -2632,7 +2632,7 @@ var gCSSProperties = {
     inherited: true,
     type: CSS_TYPE_LONGHAND,
     initial_values: [ "auto" ],
-    other_values: [ "none", "enabled", "disabled" ],
+    other_values: [ "none" ],
     invalid_values: []
   },
   "-moz-user-modify": {
@@ -4333,6 +4333,14 @@ var gCSSProperties = {
     initial_values: [ "auto" ],
     other_values: [ "avoid" ],
     invalid_values: [ "left", "right" ]
+  },
+  "paint-order": {
+    domProp: "paintOrder",
+    inherited: true,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: [ "normal" ],
+    other_values: [ "fill", "fill stroke", "fill stroke markers", "stroke markers fill" ],
+    invalid_values: [ "fill stroke markers fill", "fill normal" ]
   },
   "pointer-events": {
     domProp: "pointerEvents",
@@ -6425,17 +6433,6 @@ if (IsCSSPropertyPrefEnabled("layout.css.frames-timing.enabled")) {
   gCSSProperties["animation-timing-function"].invalid_values.push(
     "frames(1)", "frames(-2)", "frames", "frames()", "frames(,)",
     "frames(a)", "frames(2.0)", "frames(2.5)", "frames(2 3)");
-}
-
-if (IsCSSPropertyPrefEnabled("svg.paint-order.enabled")) {
-  gCSSProperties["paint-order"] = {
-    domProp: "paintOrder",
-    inherited: true,
-    type: CSS_TYPE_LONGHAND,
-    initial_values: [ "normal" ],
-    other_values: [ "fill", "fill stroke", "fill stroke markers", "stroke markers fill" ],
-    invalid_values: [ "fill stroke markers fill", "fill normal" ]
-  };
 }
 
 if (IsCSSPropertyPrefEnabled("svg.transform-box.enabled")) {

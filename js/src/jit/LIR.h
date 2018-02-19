@@ -671,6 +671,7 @@ class LNode
     uint32_t nonPhiNumOperands_ : 6;
     uint32_t numDefs_ : 4;
     uint32_t numTemps_ : 4;
+    uint32_t numSuccessors_ : 2;
 
   public:
     LNode(uint32_t nonPhiNumOperands, uint32_t numDefs, uint32_t numTemps)
@@ -680,7 +681,8 @@ class LNode
         isCall_(false),
         nonPhiNumOperands_(nonPhiNumOperands),
         numDefs_(numDefs),
-        numTemps_(numTemps)
+        numTemps_(numTemps),
+        numSuccessors_(0)
     {
         MOZ_ASSERT(nonPhiNumOperands_ == nonPhiNumOperands,
                    "nonPhiNumOperands must fit in bitfield");
@@ -708,9 +710,13 @@ class LNode
 
     // Hook for opcodes to add extra high level detail about what code will be
     // emitted for the op.
-    virtual const char* extraName() const {
+  private:
+    const char* extraName() const {
         return nullptr;
     }
+
+  public:
+    const char* getExtraName() const;
 
     virtual Opcode op() const = 0;
 
@@ -729,11 +735,6 @@ class LNode
     // Returns information about operands.
     virtual LAllocation* getOperand(size_t index) = 0;
     virtual void setOperand(size_t index, const LAllocation& a) = 0;
-
-    // Returns the number of successors of this instruction, if it is a control
-    // transfer instruction, or zero otherwise.
-    virtual size_t numSuccessors() const = 0;
-    virtual MBasicBlock* getSuccessor(size_t i) const = 0;
 
     bool isCall() const {
         return isCall_;
@@ -769,11 +770,11 @@ class LNode
     // output register will be restored to its original value when bailing out.
     inline bool recoversInput() const;
 
-    virtual void dump(GenericPrinter& out);
+    void dump(GenericPrinter& out);
     void dump();
     static void printName(GenericPrinter& out, Opcode op);
-    virtual void printName(GenericPrinter& out);
-    virtual void printOperands(GenericPrinter& out);
+    void printName(GenericPrinter& out);
+    void printOperands(GenericPrinter& out);
 
   public:
     // Opcode testing and casts.
@@ -786,15 +787,9 @@ class LNode
     LIR_OPCODE_LIST(LIROP)
 #   undef LIROP
 
-    virtual void accept(LElementVisitor* visitor) = 0;
-
 #define LIR_HEADER(opcode)                                                  \
     Opcode op() const override {                                            \
         return LInstruction::LOp_##opcode;                                  \
-    }                                                                       \
-    void accept(LElementVisitor* visitor) override {                        \
-        visitor->setElement(this);                                          \
-        visitor->visit##opcode(this);                                       \
     }
 };
 
@@ -843,6 +838,16 @@ class LInstruction
         return numTemps_;
     }
     inline LDefinition* getTemp(size_t index);
+
+    // Returns the number of successors of this instruction, if it is a control
+    // transfer instruction, or zero otherwise.
+    size_t numSuccessors() const {
+        return numSuccessors_;
+    }
+    void setNumSuccessors(size_t succ) {
+        numSuccessors_ = succ;
+        MOZ_ASSERT(numSuccessors_ == succ, "Number of successors must fit in bitfield");
+    }
 
     LSnapshot* snapshot() const {
         return snapshot_;
@@ -903,7 +908,6 @@ class LElementVisitor
         return ins_;
     }
 
-  public:
     void setElement(LNode* ins) {
         ins_ = ins;
         if (ins->mirRaw()) {
@@ -919,8 +923,7 @@ class LElementVisitor
         lastNotInlinedPC_(nullptr)
     {}
 
-  public:
-#define VISIT_INS(op) virtual void visit##op(L##op*) { MOZ_CRASH("NYI: " #op); }
+#define VISIT_INS(op) void visit##op(L##op*) { MOZ_CRASH("NYI: " #op); }
     LIR_OPCODE_LIST(VISIT_INS)
 #undef VISIT_INS
 };
@@ -974,13 +977,6 @@ class LPhi final : public LNode
     // Phis don't have temps, so calling numTemps/getTemp is pointless.
     size_t numTemps() const = delete;
     LDefinition* getTemp(size_t index) = delete;
-
-    size_t numSuccessors() const override {
-        return 0;
-    }
-    MBasicBlock* getSuccessor(size_t i) const override {
-        MOZ_CRASH("no successors");
-    }
 };
 
 class LMoveGroup;
@@ -1118,13 +1114,6 @@ namespace details {
 #endif
         }
 
-        size_t numSuccessors() const override {
-            return 0;
-        }
-        MBasicBlock* getSuccessor(size_t i) const override {
-            MOZ_CRASH("no successors");
-        }
-
         // Default accessors, assuming a single input and output, respectively.
         const LAllocation* input() {
             MOZ_ASSERT(numOperands() == 1);
@@ -1174,10 +1163,10 @@ class LInstructionHelper : public details::LInstructionFixedDefsTempsHelper<Defs
     {}
 
   public:
-    LAllocation* getOperand(size_t index) final override {
+    LAllocation* getOperand(size_t index) final {
         return &operands_[index];
     }
-    void setOperand(size_t index, const LAllocation& a) final override {
+    void setOperand(size_t index, const LAllocation& a) final {
         operands_[index] = a;
     }
     void setBoxOperand(size_t index, const LBoxAllocation& alloc) {
@@ -1220,10 +1209,10 @@ class LVariadicInstruction : public details::LInstructionFixedDefsTempsHelper<De
     MOZ_MUST_USE bool init(TempAllocator& alloc) {
         return operands_.init(alloc, this->nonPhiNumOperands_);
     }
-    LAllocation* getOperand(size_t index) final override {
+    LAllocation* getOperand(size_t index) final {
         return &operands_[index];
     }
-    void setOperand(size_t index, const LAllocation& a) final override {
+    void setOperand(size_t index, const LAllocation& a) final {
         operands_[index] = a;
     }
     void setBoxOperand(size_t index, const LBoxAllocation& a) {

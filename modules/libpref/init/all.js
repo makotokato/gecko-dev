@@ -124,6 +124,14 @@ pref("dom.registerContentHandler.enabled", false);
 pref("dom.registerContentHandler.enabled", true);
 #endif
 
+// Nightly will have insecure registerProtocolHandler disabled by default
+// Beta and Stable will remain enabled until Firefox 62 providing deprecation stats.
+#ifdef NIGHTLY_BUILD
+pref("dom.registerProtocolHandler.insecure.enabled", false);
+#else
+pref("dom.registerProtocolHandler.insecure.enabled", true);
+#endif
+
 // Whether or not testing features are enabled.
 pref("dom.quotaManager.testing", false);
 
@@ -1188,11 +1196,8 @@ pref("browser.fixup.hide_user_pass", true);
 
 // Location Bar AutoComplete
 pref("browser.urlbar.autocomplete.enabled", true);
-#ifdef NIGHTLY_BUILD
-pref("browser.urlbar.usepreloadedtopurls.enabled", true);
-#else
+// This is disabled until Bug 1340663 figures out the remaining requirements.
 pref("browser.urlbar.usepreloadedtopurls.enabled", false);
-#endif
 pref("browser.urlbar.usepreloadedtopurls.expire_days", 14);
 
 // Print header customization
@@ -1263,11 +1268,7 @@ pref("editor.use_css",                       false);
 pref("editor.css.default_length_unit",       "px");
 pref("editor.resizing.preserve_ratio",       true);
 pref("editor.positioning.offset",            0);
-#ifdef EARLY_BETA_OR_EARLIER
 pref("editor.use_div_for_default_newlines",  true);
-#else
-pref("editor.use_div_for_default_newlines",  false);
-#endif
 
 // Scripts & Windows prefs
 pref("dom.disable_beforeunload",            false);
@@ -2094,6 +2095,10 @@ pref("network.dnsCacheExpiration", 60);
 
 // Get TTL; not supported on all platforms; nop on the unsupported ones.
 pref("network.dns.get-ttl", true);
+
+// For testing purposes! Makes the native resolver resolve IPv4 "localhost"
+// instead of the actual given name.
+pref("network.dns.native-is-localhost", false);
 
 // The grace period allows the DNS cache to use expired entries, while kicking off
 // a revalidation in the background.
@@ -3032,8 +3037,8 @@ pref("layout.css.frames-timing.enabled", true);
 pref("layout.css.emulate-moz-box-with-flex", false);
 #endif
 
-// Is the paint-order property supported for HTML text? (It is always supported
-// for SVG, provided it is enabled at all; see "svg.paint-order.enabled".)
+// Is the paint-order property supported for HTML text?
+// (It is always supported for SVG.)
 pref("layout.css.paint-order.enabled", true);
 
 // Are sets of prefixed properties supported?
@@ -3412,9 +3417,6 @@ pref("svg.path-caching.enabled", true);
 // Enable the use of display-lists for SVG hit-testing and painting.
 pref("svg.display-lists.hit-testing.enabled", true);
 pref("svg.display-lists.painting.enabled", true);
-
-// Is support for the SVG 2 paint-order property enabled?
-pref("svg.paint-order.enabled", true);
 
 // Is support for the <marker orient="auto-start-reverse"> feature enabled?
 pref("svg.marker-improvements.enabled", true);
@@ -4761,6 +4763,9 @@ pref("image.mem.surfacecache.discard_factor", 1);
 // automatically determined based on the system's number of cores.
 pref("image.multithreaded_decoding.limit", -1);
 
+// How long in ms before we should start shutting down idle decoder threads.
+pref("image.multithreaded_decoding.idle_timeout", 600000);
+
 // Limit for the canvas image cache. 0 means we don't limit the size of the
 // cache.
 pref("canvas.image.cache.limit", 0);
@@ -5411,6 +5416,30 @@ pref("network.captive-portal-service.maxInterval", 1500000); // 25 minutes
 pref("network.captive-portal-service.backoffFactor", "5.0");
 pref("network.captive-portal-service.enabled", false);
 
+// DNS Trusted Recursive Resolver
+// 0 - off, 1 - race, 2 TRR first, 3 TRR only, 4 shadow
+pref("network.trr.mode", 0);
+// DNS-over-HTTP service to use, must be HTTPS://
+pref("network.trr.uri", "");
+// credentials to pass to DOH end-point
+pref("network.trr.credentials", "");
+// Wait for captive portal confirmation before enabling TRR
+pref("network.trr.wait-for-portal", true);
+// Allow RFC1918 address in responses?
+pref("network.trr.allow-rfc1918", false);
+// Use GET (rather than POST)
+pref("network.trr.useGET", false);
+// Before TRR is widely used the NS record for this host is fetched
+// from the DOH end point to ensure proper configuration
+pref("network.trr.confirmationNS", "example.com");
+// hardcode the resolution of the hostname in network.trr.uri instead of
+// relying on the system resolver to do it for you
+pref("network.trr.bootstrapAddress", "");
+// TRR blacklist entry expire time (in seconds). Default is 72 hours.
+pref("network.trr.blacklist-duration", 259200);
+// Single TRR request timeout, in milliseconds
+pref("network.trr.request-timeout", 3000);
+
 pref("captivedetect.canonicalURL", "http://detectportal.firefox.com/success.txt");
 pref("captivedetect.canonicalContent", "success\n");
 pref("captivedetect.maxWaitingTime", 5000);
@@ -5877,11 +5906,7 @@ pref("prompts.authentication_dialog_abuse_limit", 3);
 pref("dom.IntersectionObserver.enabled", true);
 
 // Whether module scripts (<script type="module">) are enabled for content.
-#ifdef NIGHTLY_BUILD
 pref("dom.moduleScripts.enabled", true);
-#else
-pref("dom.moduleScripts.enabled", false);
-#endif
 
 // Maximum amount of time in milliseconds consecutive setTimeout()/setInterval()
 // callback are allowed to run before yielding the event loop.

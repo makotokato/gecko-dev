@@ -38,9 +38,8 @@
 #include "wasm/WasmStubs.h"
 #include "wasm/WasmValidate.h"
 
-#include "jsobjinlines.h"
-
 #include "vm/ArrayBufferObject-inl.h"
+#include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
 
 using namespace js;
@@ -1279,7 +1278,7 @@ wasm::ExportedFunctionToFuncIndex(JSFunction* fun)
 {
     MOZ_ASSERT(IsExportedFunction(fun));
     Instance& instance = ExportedFunctionToInstanceObject(fun)->instance();
-    return instance.code().lookupFuncIndex(fun);
+    return instance.code().getFuncIndex(fun);
 }
 
 // ============================================================================
@@ -1811,8 +1810,7 @@ WasmTableObject::getImpl(JSContext* cx, const CallArgs& args)
     }
 
     Instance& instance = *elem.tls->instance;
-    const CodeRange& codeRange = *instance.code().lookupRange(elem.code);
-    MOZ_ASSERT(codeRange.isFunction());
+    const CodeRange& codeRange = *instance.code().lookupFuncRange(elem.code);
 
     RootedWasmInstanceObject instanceObj(cx, instance.object());
     RootedFunction fun(cx);

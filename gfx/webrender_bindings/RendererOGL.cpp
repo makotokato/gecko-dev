@@ -84,13 +84,19 @@ RendererOGL::GetExternalImageHandler()
 void
 RendererOGL::Update()
 {
-  wr_renderer_update(mRenderer);
+  if (gl()->MakeCurrent()) {
+    wr_renderer_update(mRenderer);
+  }
 }
 
 bool
-RendererOGL::UpdateAndRender()
+RendererOGL::UpdateAndRender(bool aReadback)
 {
   uint32_t flags = gfx::gfxVars::WebRenderDebugFlags();
+  // Disable debug flags during readback
+  if (aReadback) {
+    flags = 0;
+  }
 
   if (mDebugFlags.mBits != flags) {
     mDebugFlags.mBits = flags;

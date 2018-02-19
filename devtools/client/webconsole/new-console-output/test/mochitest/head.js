@@ -139,6 +139,31 @@ function waitForMessages({ hud, messages }) {
 }
 
 /**
+ * Wait for a message with the provided text and showing the provided repeat count.
+ *
+ * @param {Object} hud : the webconsole
+ * @param {String} text : text included in .message-body
+ * @param {Number} repeat : expected repeat count in .message-repeats
+ */
+function waitForRepeatedMessage(hud, text, repeat) {
+  return waitFor(() => {
+    // Wait for a message matching the provided text.
+    let node = findMessage(hud, text);
+    if (!node) {
+      return false;
+    }
+
+    // Check if there is a repeat node with the expected count.
+    let repeatNode = node.querySelector(".message-repeats");
+    if (repeatNode && parseInt(repeatNode.textContent, 10) === repeat) {
+      return node;
+    }
+
+    return false;
+  });
+}
+
+/**
  * Wait for a single message in the web console output, resolving once it is received.
  *
  * @param {Object} hud : the webconsole
@@ -177,6 +202,7 @@ async function waitFor(condition, message = "waitFor", interval = 10, maxTries =
  *        A substring that can be found in the message.
  * @param selector [optional]
  *        The selector to use in finding the message.
+ * @return {Node} the node corresponding the found message
  */
 function findMessage(hud, text, selector = ".message") {
   const elements = findMessages(hud, text, selector);
@@ -564,4 +590,19 @@ function selectNode(hud, node) {
   selection.addRange(range);
 
   return selection;
+}
+
+async function waitForBrowserConsole() {
+  return new Promise(resolve => {
+    Services.obs.addObserver(function observer(subject) {
+      Services.obs.removeObserver(observer, "web-console-created");
+      subject.QueryInterface(Ci.nsISupportsString);
+
+      let hud = HUDService.getBrowserConsole();
+      ok(hud, "browser console is open");
+      is(subject.data, hud.hudId, "notification hudId is correct");
+
+      executeSoon(() => resolve(hud));
+    }, "web-console-created");
+  });
 }

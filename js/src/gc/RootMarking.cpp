@@ -10,7 +10,6 @@
 # include <valgrind/memcheck.h>
 #endif
 
-#include "jscntxt.h"
 #include "jsprf.h"
 #include "jstypes.h"
 
@@ -21,13 +20,12 @@
 #include "jit/MacroAssembler.h"
 #include "js/HashTable.h"
 #include "vm/Debugger.h"
+#include "vm/JSContext.h"
 #include "vm/JSONParser.h"
 
-#include "jsgcinlines.h"
-#include "jsobjinlines.h"
-
-#include "gc/Iteration-inl.h"
 #include "gc/Nursery-inl.h"
+#include "gc/PrivateIterators-inl.h"
+#include "vm/JSObject-inl.h"
 
 using namespace js;
 using namespace js::gc;
@@ -297,7 +295,7 @@ js::TraceRuntime(JSTracer* trc)
 
     JSRuntime* rt = trc->runtime();
     EvictAllNurseries(rt);
-    AutoPrepareForTracing prep(TlsContext.get(), WithAtoms);
+    AutoPrepareForTracing prep(TlsContext.get());
     gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::TRACE_HEAP);
     rt->gc.traceRuntime(trc, prep.session());
 }
@@ -433,7 +431,7 @@ js::gc::GCRuntime::finishRoots()
     grayRootTracer = Callback<JSTraceDataOp>(nullptr, nullptr);
 
     AssertNoRootsTracer trc(rt, TraceWeakMapKeysValues);
-    AutoPrepareForTracing prep(TlsContext.get(), WithAtoms);
+    AutoPrepareForTracing prep(TlsContext.get());
     gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::TRACE_HEAP);
     traceRuntime(&trc, prep.session());
 

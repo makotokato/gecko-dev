@@ -59,7 +59,6 @@
 
 #include "mozilla/dom/Attr.h"
 #include "mozilla/dom/BindingDeclarations.h"
-#include "nsIDOMDocumentXBL.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/FramingChecker.h"
 #include "nsGenericHTMLElement.h"
@@ -1583,6 +1582,7 @@ nsDocument::nsDocument(const char* aContentType)
   , mDOMLoadingSet(false)
   , mDOMInteractiveSet(false)
   , mDOMCompleteSet(false)
+  , mAutoFocusFired(false)
 {
   SetContentTypeInternal(nsDependentCString(aContentType));
 
@@ -1802,7 +1802,6 @@ NS_INTERFACE_TABLE_HEAD(nsDocument)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, nsIDocument)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, nsIDOMDocument)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, nsIDOMNode)
-    NS_INTERFACE_TABLE_ENTRY(nsDocument, nsIDOMDocumentXBL)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, nsIScriptObjectPrincipal)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, nsIDOMEventTarget)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, mozilla::dom::EventTarget)
@@ -2239,6 +2238,17 @@ nsDocument::Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup)
     // nsScriptSecurityManager::GetChannelResultPrincipal.
     // Note: this should match nsDocShell::OnLoadingSite
     NS_GetFinalChannelURI(aChannel, getter_AddRefs(uri));
+
+    bool isWyciwyg = false;
+    uri->SchemeIs("wyciwyg", &isWyciwyg);
+    if (isWyciwyg) {
+      nsCOMPtr<nsIURI> cleanURI;
+      nsresult rv =
+        nsContentUtils::RemoveWyciwygScheme(uri, getter_AddRefs(cleanURI));
+      if (NS_SUCCEEDED(rv)) {
+        uri = cleanURI;
+      }
+    }
 
     nsIScriptSecurityManager *securityManager =
       nsContentUtils::GetSecurityManager();
@@ -2924,6 +2934,13 @@ nsDocument::InitCSP(nsIChannel* aChannel)
     return NS_OK;
   }
 
+  // In case this channel was instrument to discard the CSP, then
+  // there is nothing for us to do here.
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->GetLoadInfo();
+  if (loadInfo->GetAllowDocumentToBeAgnosticToCSP()) {
+    return NS_OK;
+  }
+
   nsAutoCString tCspHeaderValue, tCspROHeaderValue;
 
   nsCOMPtr<nsIHttpChannel> httpChannel;
@@ -2950,7 +2967,6 @@ nsDocument::InitCSP(nsIChannel* aChannel)
 
   // Check if this is a signed content to apply default CSP.
   bool applySignedContentCSP = false;
-  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->GetLoadInfo();
   if (loadInfo && loadInfo->GetVerifySignedContent()) {
     applySignedContentCSP = true;
   }
@@ -3533,110 +3549,6 @@ nsIDocument::GetCurrentScript()
 {
   nsCOMPtr<Element> el(do_QueryInterface(ScriptLoader()->GetCurrentScript()));
   return el;
-}
-
-Element*
-nsIDocument::ElementFromPoint(float aX, float aY)
-{
-  return ElementFromPointHelper(aX, aY, false, true);
-}
-
-void
-nsIDocument::ElementsFromPoint(float aX, float aY,
-                               nsTArray<RefPtr<Element>>& aElements)
-{
-  ElementsFromPointHelper(aX, aY, nsIDocument::FLUSH_LAYOUT, aElements);
-}
-
-Element*
-nsDocument::ElementFromPointHelper(float aX, float aY,
-                                   bool aIgnoreRootScrollFrame,
-                                   bool aFlushLayout)
-{
-  AutoTArray<RefPtr<Element>, 1> elementArray;
-  ElementsFromPointHelper(aX, aY,
-                          ((aIgnoreRootScrollFrame ? nsIDocument::IGNORE_ROOT_SCROLL_FRAME : 0) |
-                           (aFlushLayout ? nsIDocument::FLUSH_LAYOUT : 0) |
-                           nsIDocument::IS_ELEMENT_FROM_POINT),
-                          elementArray);
-  if (elementArray.IsEmpty()) {
-    return nullptr;
-  }
-  return elementArray[0];
-}
-
-void
-nsDocument::ElementsFromPointHelper(float aX, float aY,
-                                    uint32_t aFlags,
-                                    nsTArray<RefPtr<mozilla::dom::Element>>& aElements)
-{
-  // As per the the spec, we return null if either coord is negative
-  if (!(aFlags & nsIDocument::IGNORE_ROOT_SCROLL_FRAME) && (aX < 0 || aY < 0)) {
-    return;
-  }
-
-  nscoord x = nsPresContext::CSSPixelsToAppUnits(aX);
-  nscoord y = nsPresContext::CSSPixelsToAppUnits(aY);
-  nsPoint pt(x, y);
-
-  // Make sure the layout information we get is up-to-date, and
-  // ensure we get a root frame (for everything but XUL)
-  if (aFlags & nsIDocument::FLUSH_LAYOUT) {
-    FlushPendingNotifications(FlushType::Layout);
-  }
-
-  nsIPresShell *ps = GetShell();
-  if (!ps) {
-    return;
-  }
-  nsIFrame *rootFrame = ps->GetRootFrame();
-
-  // XUL docs, unlike HTML, have no frame tree until everything's done loading
-  if (!rootFrame) {
-    return; // return null to premature XUL callers as a reminder to wait
-  }
-
-  nsTArray<nsIFrame*> outFrames;
-  // Emulate what GetFrameAtPoint does, since we want all the frames under our
-  // point.
-  nsLayoutUtils::GetFramesForArea(rootFrame, nsRect(pt, nsSize(1, 1)), outFrames,
-    nsLayoutUtils::IGNORE_PAINT_SUPPRESSION | nsLayoutUtils::IGNORE_CROSS_DOC |
-    ((aFlags & nsIDocument::IGNORE_ROOT_SCROLL_FRAME) ? nsLayoutUtils::IGNORE_ROOT_SCROLL_FRAME : 0));
-
-  // Dunno when this would ever happen, as we should at least have a root frame under us?
-  if (outFrames.IsEmpty()) {
-    return;
-  }
-
-  // Used to filter out repeated elements in sequence.
-  nsIContent* lastAdded = nullptr;
-
-  for (uint32_t i = 0; i < outFrames.Length(); i++) {
-    nsIContent* node = GetContentInThisDocument(outFrames[i]);
-
-    if (!node || !node->IsElement()) {
-      // If this helper is called via ElementsFromPoint, we need to make sure
-      // our frame is an element. Otherwise return whatever the top frame is
-      // even if it isn't the top-painted element.
-      // SVG 'text' element's SVGTextFrame doesn't respond to hit-testing, so
-      // if 'node' is a child of such an element then we need to manually defer
-      // to the parent here.
-      if (!(aFlags & nsIDocument::IS_ELEMENT_FROM_POINT) &&
-          !nsSVGUtils::IsInSVGTextSubtree(outFrames[i])) {
-        continue;
-      }
-      node = node->GetParent();
-    }
-    if (node && node != lastAdded) {
-      aElements.AppendElement(node->AsElement());
-      lastAdded = node;
-      // If this helper is called via ElementFromPoint, just return the first
-      // element we find.
-      if (aFlags & nsIDocument::IS_ELEMENT_FROM_POINT) {
-        return;
-      }
-    }
-  }
 }
 
 nsresult
@@ -4814,11 +4726,8 @@ nsDocument::SetScopeObject(nsIGlobalObject* aGlobal)
 static void
 CheckIfContainsEMEContent(nsISupports* aSupports, void* aContainsEME)
 {
-  nsCOMPtr<nsIDOMHTMLMediaElement> domMediaElem(do_QueryInterface(aSupports));
-  if (domMediaElem) {
-    nsCOMPtr<nsIContent> content(do_QueryInterface(domMediaElem));
-    MOZ_ASSERT(content, "aSupports is not a content");
-    HTMLMediaElement* mediaElem = static_cast<HTMLMediaElement*>(content.get());
+  nsCOMPtr<nsIContent> content(do_QueryInterface(aSupports));
+  if (auto mediaElem = HTMLMediaElement::FromContentOrNull(content)) {
     bool* contains = static_cast<bool*>(aContainsEME);
     if (mediaElem->GetMediaKeys()) {
       *contains = true;
@@ -4838,11 +4747,8 @@ nsDocument::ContainsEMEContent()
 static void
 CheckIfContainsMSEContent(nsISupports* aSupports, void* aContainsMSE)
 {
-  nsCOMPtr<nsIDOMHTMLMediaElement> domMediaElem(do_QueryInterface(aSupports));
-  if (domMediaElem) {
-    nsCOMPtr<nsIContent> content(do_QueryInterface(domMediaElem));
-    MOZ_ASSERT(content, "aSupports is not a content");
-    HTMLMediaElement* mediaElem = static_cast<HTMLMediaElement*>(content.get());
+  nsCOMPtr<nsIContent> content(do_QueryInterface(aSupports));
+  if (auto mediaElem = HTMLMediaElement::FromContentOrNull(content)) {
     bool* contains = static_cast<bool*>(aContainsMSE);
     RefPtr<MediaSource> ms = mediaElem->GetMozMediaSourceObject();
     if (ms) {
@@ -4863,11 +4769,8 @@ nsDocument::ContainsMSEContent()
 static void
 NotifyActivityChanged(nsISupports *aSupports, void *aUnused)
 {
-  nsCOMPtr<nsIDOMHTMLMediaElement> domMediaElem(do_QueryInterface(aSupports));
-  if (domMediaElem) {
-    nsCOMPtr<nsIContent> content(do_QueryInterface(domMediaElem));
-    MOZ_ASSERT(content, "aSupports is not a content");
-    HTMLMediaElement* mediaElem = static_cast<HTMLMediaElement*>(content.get());
+  nsCOMPtr<nsIContent> content(do_QueryInterface(aSupports));
+  if (auto mediaElem = HTMLMediaElement::FromContentOrNull(content)) {
     mediaElem->NotifyOwnerDocumentActivityChanged();
   }
   nsCOMPtr<nsIObjectLoadingContent> objectLoadingContent(do_QueryInterface(aSupports));
@@ -6214,29 +6117,9 @@ nsIDocument::ImportNode(nsINode& aNode, bool aDeep, ErrorResult& rv) const
   return nullptr;
 }
 
-NS_IMETHODIMP
-nsDocument::LoadBindingDocument(const nsAString& aURI)
-{
-  ErrorResult rv;
-  nsIDocument::LoadBindingDocument(aURI,
-                                   nsContentUtils::GetCurrentJSContext()
-                                     ? Some(nsContentUtils::SubjectPrincipal())
-                                     : Nothing(),
-                                   rv);
-  return rv.StealNSResult();
-}
-
 void
 nsIDocument::LoadBindingDocument(const nsAString& aURI,
                                  nsIPrincipal& aSubjectPrincipal,
-                                 ErrorResult& rv)
-{
-  LoadBindingDocument(aURI, Some(&aSubjectPrincipal), rv);
-}
-
-void
-nsIDocument::LoadBindingDocument(const nsAString& aURI,
-                                 const Maybe<nsIPrincipal*>& aSubjectPrincipal,
                                  ErrorResult& rv)
 {
   nsCOMPtr<nsIURI> uri;
@@ -6245,24 +6128,7 @@ nsIDocument::LoadBindingDocument(const nsAString& aURI,
     return;
   }
 
-  // Note - This computation of subjectPrincipal isn't necessarily sensical.
-  // It's just designed to preserve the old semantics during a mass-conversion
-  // patch.
-  nsCOMPtr<nsIPrincipal> subjectPrincipal =
-    aSubjectPrincipal.isSome() ? aSubjectPrincipal.value() : NodePrincipal();
-  BindingManager()->LoadBindingDocument(this, uri, subjectPrincipal);
-}
-
-NS_IMETHODIMP
-nsDocument::GetBindingParent(nsIDOMNode* aNode, nsIDOMElement** aResult)
-{
-  nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
-  NS_ENSURE_ARG_POINTER(node);
-
-  Element* bindingParent = nsIDocument::GetBindingParent(*node);
-  nsCOMPtr<nsIDOMElement> retval = do_QueryInterface(bindingParent);
-  retval.forget(aResult);
-  return NS_OK;
+  BindingManager()->LoadBindingDocument(this, uri, &aSubjectPrincipal);
 }
 
 Element*
@@ -6333,23 +6199,6 @@ nsDocument::GetAnonymousElementByAttribute(nsIContent* aElement,
   return nullptr;
 }
 
-NS_IMETHODIMP
-nsDocument::GetAnonymousElementByAttribute(nsIDOMElement* aElement,
-                                           const nsAString& aAttrName,
-                                           const nsAString& aAttrValue,
-                                           nsIDOMElement** aResult)
-{
-  nsCOMPtr<Element> element = do_QueryInterface(aElement);
-  NS_ENSURE_ARG_POINTER(element);
-
-  Element* anonEl =
-    nsIDocument::GetAnonymousElementByAttribute(*element, aAttrName,
-                                                aAttrValue);
-  nsCOMPtr<nsIDOMElement> retval = do_QueryInterface(anonEl);
-  retval.forget(aResult);
-  return NS_OK;
-}
-
 Element*
 nsIDocument::GetAnonymousElementByAttribute(Element& aElement,
                                             const nsAString& aAttrName,
@@ -6358,17 +6207,6 @@ nsIDocument::GetAnonymousElementByAttribute(Element& aElement,
   RefPtr<nsAtom> attribute = NS_Atomize(aAttrName);
 
   return GetAnonymousElementByAttribute(&aElement, attribute, aAttrValue);
-}
-
-
-NS_IMETHODIMP
-nsDocument::GetAnonymousNodes(nsIDOMElement* aElement,
-                              nsIDOMNodeList** aResult)
-{
-  *aResult = nullptr;
-
-  nsCOMPtr<nsIContent> content(do_QueryInterface(aElement));
-  return BindingManager()->GetAnonymousNodesFor(content, aResult);
 }
 
 nsINodeList*
@@ -8604,7 +8442,7 @@ nsDocument::DoUnblockOnload()
 }
 
 nsIContent*
-nsDocument::GetContentInThisDocument(nsIFrame* aFrame) const
+nsIDocument::GetContentInThisDocument(nsIFrame* aFrame) const
 {
   for (nsIFrame* f = aFrame; f;
        f = nsLayoutUtils::GetParentOrPlaceholderForCrossDoc(f)) {
@@ -9509,6 +9347,120 @@ nsDocument::GetTemplateContentsOwner()
   }
 
   return mTemplateContentsOwner;
+}
+
+static already_AddRefed<nsPIDOMWindowOuter>
+FindTopWindowForElement(Element* element)
+{
+  nsIDocument* document = element->OwnerDoc();
+  if (!document) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsPIDOMWindowOuter> window = document->GetWindow();
+  if (!window) {
+    return nullptr;
+  }
+
+  // Trying to find the top window (equivalent to window.top).
+  if (nsCOMPtr<nsPIDOMWindowOuter> top = window->GetTop()) {
+    window = top.forget();
+  }
+  return window.forget();
+}
+
+/**
+ * nsAutoFocusEvent is used to dispatch a focus event for an
+ * nsGenericHTMLFormElement with the autofocus attribute enabled.
+ */
+class nsAutoFocusEvent : public Runnable
+{
+public:
+  explicit nsAutoFocusEvent(already_AddRefed<Element>&& aElement,
+                            already_AddRefed<nsPIDOMWindowOuter>&& aTopWindow)
+    : mozilla::Runnable("nsAutoFocusEvent")
+    , mElement(aElement)
+    , mTopWindow(aTopWindow)
+  {
+  }
+
+  NS_IMETHOD Run() override
+  {
+    nsCOMPtr<nsPIDOMWindowOuter> currentTopWindow =
+      FindTopWindowForElement(mElement);
+    if (currentTopWindow != mTopWindow) {
+      // The element's top window changed from when the event was queued.
+      // Don't take away focus from an unrelated window.
+      return NS_OK;
+    }
+
+    // Don't steal focus from the user.
+    if (mTopWindow->GetFocusedNode()) {
+      return NS_OK;
+    }
+
+    mozilla::ErrorResult rv;
+    mElement->Focus(rv);
+    return rv.StealNSResult();
+  }
+private:
+  nsCOMPtr<Element> mElement;
+  nsCOMPtr<nsPIDOMWindowOuter> mTopWindow;
+};
+
+void
+nsDocument::SetAutoFocusElement(Element* aAutoFocusElement)
+{
+  if (mAutoFocusFired) {
+    // Too late.
+    return;
+  }
+
+  if (mAutoFocusElement) {
+    // The spec disallows multiple autofocus elements, so we consider only the
+    // first one to preserve the old behavior.
+    return;
+  }
+
+  mAutoFocusElement = do_GetWeakReference(aAutoFocusElement);
+  TriggerAutoFocus();
+}
+
+void
+nsDocument::TriggerAutoFocus()
+{
+  if (mAutoFocusFired) {
+    return;
+  }
+
+  if (!mPresShell || !mPresShell->DidInitialize()) {
+    // Delay autofocus until frames are constructed so that we don't thrash
+    // style and layout calculations.
+    return;
+  }
+
+  nsCOMPtr<Element> autoFocusElement = do_QueryReferent(mAutoFocusElement);
+  if (autoFocusElement && autoFocusElement->OwnerDoc() == this) {
+    mAutoFocusFired = true;
+
+    nsCOMPtr<nsPIDOMWindowOuter> topWindow =
+      FindTopWindowForElement(autoFocusElement);
+    if (!topWindow) {
+      return;
+    }
+
+    // NOTE: This may be removed in the future since the spec technically
+    // allows autofocus after load.
+    nsCOMPtr<nsIDocument> topDoc = topWindow->GetExtantDoc();
+    if (topDoc && topDoc->GetReadyStateEnum() == nsIDocument::READYSTATE_COMPLETE) {
+      return;
+    }
+
+    nsCOMPtr<nsIRunnable> event =
+      new nsAutoFocusEvent(autoFocusElement.forget(), topWindow.forget());
+    nsresult rv = NS_DispatchToCurrentThread(event.forget());
+    NS_ENSURE_SUCCESS_VOID(rv);
+  }
 }
 
 void
@@ -10590,7 +10542,7 @@ public:
   {
   }
 
-  NS_IMETHOD Run() override final
+  NS_IMETHOD Run() final
   {
     if (!mDoc) {
       FullscreenRoots::ForEach(&AskWindowToExitFullscreen);
@@ -11597,7 +11549,7 @@ public:
     , mUserInputOrChromeCaller(aUserInputOrChromeCaller)
   {}
 
-  NS_IMETHOD Run() final override;
+  NS_IMETHOD Run() final;
 
 private:
   nsWeakPtr mElement;
@@ -11839,10 +11791,11 @@ nsDocument::UnlockPointer(nsIDocument* aDoc)
     do_QueryReferent(EventStateManager::sPointerLockedElement);
   ChangePointerLockedElement(nullptr, doc, pointerLockedElement);
 
-  nsContentUtils::DispatchEventOnlyToChrome(
-    doc, ToSupports(pointerLockedElement),
-    NS_LITERAL_STRING("MozDOMPointerLock:Exited"),
-    /* Bubbles */ true, /* Cancelable */ false, /* DefaultAction */ nullptr);
+  RefPtr<AsyncEventDispatcher> asyncDispatcher =
+    new AsyncEventDispatcher(pointerLockedElement,
+                             NS_LITERAL_STRING("MozDOMPointerLock:Exited"),
+                             true, true);
+  asyncDispatcher->RunDOMEventWhenSafe();
 }
 
 void

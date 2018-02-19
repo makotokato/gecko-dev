@@ -172,7 +172,6 @@
 #include <stddef.h>
 #include <stdio.h>
 
-#include "jscntxt.h"
 #include "jspubtd.h"
 
 #include "frontend/ErrorReporter.h"
@@ -180,6 +179,7 @@
 #include "js/UniquePtr.h"
 #include "js/Vector.h"
 #include "vm/ErrorReporting.h"
+#include "vm/JSContext.h"
 #include "vm/RegExpShared.h"
 #include "vm/String.h"
 #include "vm/Unicode.h"
@@ -774,19 +774,19 @@ class TokenStreamAnyChars
   public:
     // ErrorReporter API.
 
-    virtual const JS::ReadOnlyCompileOptions& options() const override final {
+    const JS::ReadOnlyCompileOptions& options() const final {
         return options_;
     }
 
-    virtual void
-    lineAndColumnAt(size_t offset, uint32_t* line, uint32_t* column) const override final;
+    void
+    lineAndColumnAt(size_t offset, uint32_t* line, uint32_t* column) const final;
 
-    virtual void currentLineAndColumn(uint32_t* line, uint32_t* column) const override final;
+    void currentLineAndColumn(uint32_t* line, uint32_t* column) const final;
 
-    virtual bool hasTokenizationStarted() const override final;
-    virtual void reportErrorNoOffsetVA(unsigned errorNumber, va_list args) override final;
+    bool hasTokenizationStarted() const final;
+    void reportErrorNoOffsetVA(unsigned errorNumber, va_list args) final;
 
-    virtual const char* getFilename() const override final {
+    const char* getFilename() const final {
         return filename_;
     }
 

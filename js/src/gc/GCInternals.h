@@ -23,8 +23,6 @@
 namespace js {
 namespace gc {
 
-void FinishGC(JSContext* cx);
-
 /*
  * This class should be used by any code that needs to exclusive access to the
  * heap in order to trace through it...
@@ -60,7 +58,7 @@ class MOZ_RAII AutoPrepareForTracing
     mozilla::Maybe<AutoTraceSession> session_;
 
   public:
-    AutoPrepareForTracing(JSContext* cx, ZoneSelector selector);
+    explicit AutoPrepareForTracing(JSContext* cx);
     AutoTraceSession& session() { return session_.ref(); }
 };
 
@@ -188,6 +186,23 @@ struct MOZ_RAII AutoAssertNoNurseryAlloc
 #endif
 };
 
+// Note that this class does not suppress buffer allocation/reallocation in the
+// nursery, only Cells themselves.
+class MOZ_RAII AutoSuppressNurseryCellAlloc
+{
+    JSContext* cx_;
+
+  public:
+
+    explicit AutoSuppressNurseryCellAlloc(JSContext* cx) : cx_(cx) {
+        cx_->nurserySuppressions_++;
+    }
+    ~AutoSuppressNurseryCellAlloc() {
+        cx_->nurserySuppressions_--;
+    }
+};
+
+
 /*
  * There are a couple of classes here that serve mostly as "tokens" indicating
  * that a condition holds. Some functions force the caller to possess such a
@@ -248,20 +263,6 @@ IsOOMReason(JS::gcreason::Reason reason)
 {
     return reason == JS::gcreason::LAST_DITCH ||
            reason == JS::gcreason::MEM_PRESSURE;
-}
-
-inline void
-RelocationOverlay::forwardTo(Cell* cell)
-{
-    MOZ_ASSERT(!isForwarded());
-    // The location of magic_ is important because it must never be valid to see
-    // the value Relocated there in a GC thing that has not been moved.
-    static_assert(offsetof(RelocationOverlay, magic_) == offsetof(JSObject, group_) &&
-                  offsetof(RelocationOverlay, magic_) == offsetof(js::Shape, base_) &&
-                  offsetof(RelocationOverlay, magic_) == offsetof(JSString, d.u1.flags),
-                  "RelocationOverlay::magic_ is in the wrong location");
-    magic_ = Relocated;
-    newLocation_ = cell;
 }
 
 } /* namespace gc */
