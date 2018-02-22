@@ -93,6 +93,8 @@ elif CONFIG['OS_TARGET'] == 'WINNT':
       DEFINES['DO_NOT_WAIT_FOR_CONNECT_OVERLAPPED_OPERATIONS'] = True
     if CONFIG['CPU_ARCH'] == 'x86_64':
         DEFINES['_AMD64_'] = True
+    elif CONFIG['CPU_ARCH'] == 'aarch64':
+        DEFINES['_ARM64_'] = True
     else:
         DEFINES['_X86_'] = True
 else:
