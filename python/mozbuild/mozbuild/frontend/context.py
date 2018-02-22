@@ -373,6 +373,9 @@ class AsmFlags(BaseCompileFlags):
                     debug_flags += ['-g', 'cv8']
                 elif self._context.config.substs.get('OS_ARCH') != 'Darwin':
                     debug_flags += ['-g', 'dwarf2']
+            elif (self._context.config.substs.get('CC_TYPE') == 'msvc' and
+                  self._context.config.substs.get('CPU_ARCH') in ('arm', 'aarch64')):
+                    debug_flags += ['-g']
             else:
                 debug_flags += self._context.config.substs.get('MOZ_DEBUG_FLAGS', '').split()
         return debug_flags
