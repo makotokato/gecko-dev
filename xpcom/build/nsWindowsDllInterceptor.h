@@ -386,6 +386,7 @@ public:
 
   ~WindowsDllDetourPatcher()
   {
+#if defined(_M_IX86) || defined(_M_X64)
     int i;
     byteptr_t p;
     for (i = 0, p = mHookPage; i < mCurHooks; i++, p += kHookSize) {
@@ -393,8 +394,6 @@ public:
       size_t nBytes = 1 + sizeof(intptr_t);
 #elif defined(_M_X64)
       size_t nBytes = 2 + sizeof(intptr_t);
-#else
-#error "Unknown processor type"
 #endif
       byteptr_t origBytes = (byteptr_t)DecodePointer(*((byteptr_t*)p));
 
@@ -418,10 +417,9 @@ public:
       if (origBytes[0] != 0x49 || origBytes[1] != 0xBB)
         continue;
       *((intptr_t*)(origBytes + 2)) = dest;
-#else
-#error "Unknown processor type"
 #endif
     }
+#endif
   }
 
   void Init(const char* aModuleName, int aNumHooks = 0)
@@ -728,7 +726,7 @@ protected:
   void CreateTrampoline(void* aOrigFunction, intptr_t aDest, void** aOutTramp)
   {
     *aOutTramp = nullptr;
-
+#if defined(_M_IX86) || defiend(_M_X64)
     AutoVirtualProtect protectHookPage(mHookPage, mMaxHooks * kHookSize,
                                        PAGE_EXECUTE_READWRITE);
     if (!protectHookPage.Protect()) {
@@ -1276,8 +1274,6 @@ protected:
         return;
       }
     }
-#else
-#error "Unknown processor type"
 #endif
 
     if (nOrigBytes > 100) {
@@ -1334,6 +1330,7 @@ protected:
     origBytes[10] = 0x41;
     origBytes[11] = 0xff;
     origBytes[12] = 0xe3;
+#endif
 #endif
   }
 
