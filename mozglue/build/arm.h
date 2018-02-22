@@ -82,6 +82,10 @@
 #  define MOZILLA_PRESUME_NEON 1
 #endif
 
+#if defined(_MSC_VER) && defined(_M_ARM64)
+#  define MOZILLA_PRESUME_NEON 1
+#endif
+
 namespace mozilla {
 
   namespace arm_private {
