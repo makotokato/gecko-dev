@@ -39,6 +39,12 @@ uint64_t inline rdtsc() {
     return ReadTimestampCounter();
 }
 
+#elif defined(_MSC_VER)
+
+uint64_t inline rdtsc() {
+    return 0;
+}
+
 #elif defined(__powerpc__)
 static __inline__ uint64_t
 rdtsc(void)

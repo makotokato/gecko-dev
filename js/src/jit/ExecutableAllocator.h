@@ -77,6 +77,10 @@ extern  "C" void sync_instruction_memory(caddr_t v, u_int len);
 #include <libkern/OSCacheControl.h>
 #endif
 
+#if defined(_MSC_VER) && defined(_M_ARM64)
+#include <windows.h>
+#endif
+
 namespace JS {
     struct CodeSizes;
 } // namespace JS
