@@ -8,7 +8,15 @@
 #include "nsAlgorithm.h"
 #include "nsUTF8Utils.h"
 
+#ifdef _M_ARM64
+#include <arm64_neon.h>
+#else
 #include <arm_neon.h>
+#endif
+
+#ifdef _MSC_VER
+#define __builtin_assume_aligned(x, y) (x)
+#endif
 
 void
 LossyConvertEncoding16to8::write_neon(const char16_t* aSource,
