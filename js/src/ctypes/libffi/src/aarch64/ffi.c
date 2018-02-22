@@ -68,7 +68,7 @@ ffi_clear_cache (void *start, void *end)
 #if defined (__clang__) && defined (__APPLE__)
 	sys_icache_invalidate (start, (char *)end - (char *)start);
 #elif defined (AARCH64_WIN64)
-        FlushInstructionCache(GetCurrentProcess(), start, end - start);
+  FlushInstructionCache(GetCurrentProcess(), start, (char *)end - (char *)start);
 #elif defined (__GNUC__)
 	__builtin___clear_cache (start, end);
 #else
@@ -497,7 +497,7 @@ allocate_to_stack (struct arg_state *state, void *stack, size_t alignment,
   state->nsaa = ALIGN (state->nsaa, 8);
 #endif
 
-  allocation = stack + state->nsaa;
+  allocation = (uint64_t*)stack + state->nsaa;
 
   state->nsaa += size;
   return allocation;
@@ -581,7 +581,7 @@ copy_hfa_to_reg_or_stack (void *memory,
 	{
 	  void *reg = allocate_to_v (context, state);
 	  copy_basic_type (reg, memory, type);
-	  memory += get_basic_type_size (type);
+	  memory = (uint64_t *)memory + get_basic_type_size (type);
 	}
     }
 }
@@ -865,7 +865,7 @@ ffi_call (ffi_cif *cif, void (*fn)(void), void *rvalue, void **avalue)
 		      {
 			void *reg = get_basic_type_addr (type, &context, j);
 			copy_basic_type (rvalue, reg, type);
-			rvalue += get_basic_type_size (type);
+			rvalue = (uint64_t *)rvalue + get_basic_type_size (type);
 		      }
 		  }
                 else if ((cif->rtype->size + 7) / 8 < N_X_ARG_REG)
@@ -907,6 +907,20 @@ static unsigned char trampoline [] =
 
 /* Build a trampoline.  */
 
+#ifdef _MSC_VER
+#define FFI_INIT_TRAMPOLINE(TRAMP,FUN,CTX,FLAGS)      \
+  { \
+    unsigned char *__tramp = (unsigned char*)(TRAMP); \
+    UINT64  __fun = (UINT64)(FUN);          \
+    UINT64  __ctx = (UINT64)(CTX);          \
+    UINT64  __flags = (UINT64)(FLAGS);          \
+    memcpy (__tramp, trampoline, sizeof (trampoline));      \
+    memcpy (__tramp + 12, &__fun, sizeof (__fun));      \
+    memcpy (__tramp + 20, &__ctx, sizeof (__ctx));      \
+    memcpy (__tramp + 28, &__flags, sizeof (__flags));      \
+    ffi_clear_cache(__tramp, __tramp + FFI_TRAMPOLINE_SIZE);    \
+  }
+#else
 #define FFI_INIT_TRAMPOLINE(TRAMP,FUN,CTX,FLAGS)			\
   ({unsigned char *__tramp = (unsigned char*)(TRAMP);			\
     UINT64  __fun = (UINT64)(FUN);					\
@@ -918,6 +932,7 @@ static unsigned char trampoline [] =
     memcpy (__tramp + 28, &__flags, sizeof (__flags));			\
     ffi_clear_cache(__tramp, __tramp + FFI_TRAMPOLINE_SIZE);		\
   })
+#endif
 
 ffi_status
 ffi_prep_closure_loc (ffi_closure* closure,
@@ -1147,7 +1162,7 @@ ffi_closure_SYSV_inner (ffi_closure *closure, struct call_context *context,
 		{
 		  void *reg = get_basic_type_addr (type, context, j);
 		  copy_basic_type (reg, rvalue, type);
-		  rvalue += get_basic_type_size (type);
+		  rvalue = (uintptr_t *)rvalue + get_basic_type_size (type);
 		}
 	    }
           else if ((cif->rtype->size + 7) / 8 < N_X_ARG_REG)
