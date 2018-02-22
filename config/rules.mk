@@ -396,11 +396,7 @@ else
 ASOUTOPTION = -o # eol
 endif
 
-ifeq (,$(CROSS_COMPILE))
 HOST_OUTOPTION = $(OUTOPTION)
-else
-HOST_OUTOPTION = -o # eol
-endif
 ################################################################################
 
 # Ensure the build config is up to date. This is done automatically when builds
