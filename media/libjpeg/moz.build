@@ -79,10 +79,15 @@ if CONFIG['LIBJPEG_TURBO_ASFLAGS']:
             'simd/jsimd_arm_neon.S',
         ]
     elif CONFIG['CPU_ARCH'] == 'aarch64':
-        SOURCES += [
-            'simd/jsimd_arm64.c',
-            'simd/jsimd_arm64_neon.S',
-        ]
+        if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
+            SOURCES += [
+                'simd/jsimd_arm64.c',
+                'simd/jsimd_arm64_neon.S',
+            ]
+        else:
+            SOURCES += [
+                'jsimd_none.c',
+            ]
     elif CONFIG['CPU_ARCH'] == 'mips':
         SOURCES += [
             'simd/jsimd_mips.c',
