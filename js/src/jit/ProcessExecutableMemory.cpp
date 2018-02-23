@@ -132,7 +132,9 @@ RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize)
     // access to protect against accidental clobbering.
 
     r->runtimeFunction.BeginAddress = pageSize;
+#if !defined(_M_ARM64)
     r->runtimeFunction.EndAddress = (DWORD)bytes;
+#endif
     r->runtimeFunction.UnwindData = offsetof(ExceptionHandlerRecord, unwindInfo);
 
     r->unwindInfo.version = 1;
@@ -143,6 +145,7 @@ RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize)
     r->unwindInfo.frameOffset = 0;
     r->unwindInfo.exceptionHandler = offsetof(ExceptionHandlerRecord, thunk);
 
+#if defined(_M_X64)
     // mov imm64, rax
     r->thunk[0]  = 0x48;
     r->thunk[1]  = 0xb8;
@@ -152,6 +155,7 @@ RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize)
     // jmp rax
     r->thunk[10] = 0xff;
     r->thunk[11] = 0xe0;
+#endif
 
     DWORD oldProtect;
     if (!VirtualProtect(p, pageSize, PAGE_EXECUTE_READ, &oldProtect))
@@ -160,7 +164,9 @@ RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize)
     // XXX NB: The profiler believes this function is only called from the main
     // thread. If that ever becomes untrue, the profiler must be updated
     // immediately.
+#if 0
     AutoSuppressStackWalking suppress;
+#endif
     return RtlAddFunctionTable(&r->runtimeFunction, 1, reinterpret_cast<DWORD64>(p));
 }
 
@@ -172,7 +178,9 @@ UnregisterExecutableMemory(void* p, size_t bytes, size_t pageSize)
     // XXX NB: The profiler believes this function is only called from the main
     // thread. If that ever becomes untrue, the profiler must be updated
     // immediately.
+#if 0
     AutoSuppressStackWalking suppress;
+#endif
     RtlDeleteFunctionTable(&r->runtimeFunction);
 }
 # endif
@@ -201,7 +209,7 @@ ReserveProcessExecutableMemory(size_t bytes)
             return nullptr;
     }
 
-# ifdef HAVE_64BIT_BUILD
+# if defined(HAVE_64BIT_BUILD) && !defined(_M_ARM64)
     if (sJitExceptionHandler) {
         if (!RegisterExecutableMemory(p, bytes, pageSize)) {
             VirtualFree(p, 0, MEM_RELEASE);
@@ -221,7 +229,7 @@ ReserveProcessExecutableMemory(size_t bytes)
 static void
 DeallocateProcessExecutableMemory(void* addr, size_t bytes)
 {
-# ifdef HAVE_64BIT_BUILD
+# if defined(HAVE_64BIT_BUILD) && !defined(_M_ARM64)
     UnregisterJitCodeRegion((uint8_t*)addr, bytes);
 
     if (sJitExceptionHandler) {

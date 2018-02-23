@@ -15,6 +15,9 @@
 #include "jit/JitFrames.h"
 #include "jit/MoveResolver.h"
 
+// Workaround for conflicting of arm64_neon.h
+#undef move32
+
 namespace js {
 namespace jit {
 

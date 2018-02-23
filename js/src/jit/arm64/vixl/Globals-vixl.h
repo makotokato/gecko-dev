@@ -82,11 +82,16 @@ const int MBytes = 1024 * KBytes;
 // It assumes that the descriptions are unique. If this starts being a problem,
 // we can switch to a different implemention.
 #define VIXL_CONCAT(a, b) a##b
+#if defined(__GNUC__) || defined(__clang__)
 #define VIXL_STATIC_ASSERT_LINE(line, condition) \
   typedef char VIXL_CONCAT(STATIC_ASSERT_LINE_, line)[(condition) ? 1 : -1] \
   __attribute__((unused))
 #define VIXL_STATIC_ASSERT(condition) \
     VIXL_STATIC_ASSERT_LINE(__LINE__, condition)
+#else
+#define VIXL_STATIC_ASSERT_LINE(line, condition)
+#define VIXL_STATIC_ASSERT(condition)
+#endif
 
 template <typename T1>
 inline void USE(T1) {}

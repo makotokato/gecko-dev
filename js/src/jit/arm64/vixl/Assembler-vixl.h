@@ -38,6 +38,8 @@
 #include "jit/shared/Disassembler-shared.h"
 #include "jit/shared/IonAssemblerBufferWithConstantPools.h"
 
+#undef mvn
+
 namespace vixl {
 
 using js::jit::BufferOffset;

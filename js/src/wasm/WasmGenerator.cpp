@@ -801,6 +801,9 @@ ModuleGenerator::finishFuncDefs()
 bool
 ModuleGenerator::finishCode()
 {
+#if defined(_M_ARM64)
+    return false;
+#else
     // Now that all functions and stubs are generated and their CodeRanges
     // known, patch all calls (which can emit far jumps) and far jumps. Linking
     // can emit tiny far-jump stubs, so there is an ordering dependency here.
@@ -831,6 +834,7 @@ ModuleGenerator::finishCode()
 
     masm_.finish();
     return !masm_.oom();
+#endif
 }
 
 bool

@@ -39,6 +39,9 @@
 #include "vm/TypedArrayObject.h"
 #include "vm/UnboxedObject.h"
 
+// Microsoft compiler conflicts move64 on arm64_neon.h
+#undef move64
+
 using mozilla::FloatingPoint;
 
 // * How to read/write MacroAssembler method declarations:

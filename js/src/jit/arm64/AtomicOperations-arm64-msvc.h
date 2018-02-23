@@ -10,7 +10,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Types.h"
 
-#include <arm64intr.h>
+#include <intrin.h>
 
 #if !defined(_MSC_VER)
 # error "This file only for Microsoft Visual C++"
@@ -62,7 +62,7 @@ js::jit::AtomicOperations::isLockfree8()
 inline void
 js::jit::AtomicOperations::fenceSeqCst()
 {
-    __dmb(15); // DMB SY
+    __dmb(_ARM64_BARRIER_ISH);
 }
 
 template<typename T>
@@ -70,10 +70,19 @@ inline T
 js::jit::AtomicOperations::loadSeqCst(T* addr)
 {
     MOZ_ASSERT(tier1Constraints(addr));
-    __dmb(15); // DMB SY
-    T v = *addr;
-    __dmb(15); // DMB SY
-    return v;
+    // LDAR
+    T val;
+    if (sizeof(T) == 1) {
+        val = __iso_volatile_load8((const __int8*)addr);
+    } else if (sizeof(T) == 2) {
+        val = __iso_volatile_load16((const __int16*)addr);
+    } else if (sizeof(T) == 4) {
+        val = __iso_volatile_load32((const __int32*)addr);
+    } else if (sizeof(T) == 8) {
+        val = __iso_volatile_load64((const __int64*)addr);
+    }
+    fenceSeqCst();
+    return val;
 }
 
 template<typename T>
@@ -81,9 +90,18 @@ inline void
 js::jit::AtomicOperations::storeSeqCst(T* addr, T val)
 {
     MOZ_ASSERT(tier1Constraints(addr));
-    __dmb(15); // DMB ST
-    *addr = val;
-    __dmb(14); // DMB ST
+    // STLR
+    fenceSeqCst();
+    if (sizeof(T) == 1) {
+        __iso_volatile_store8((__int8*)addr, val);
+    } else if (sizeof(T) == 2) {
+        __iso_volatile_store16((__int16*)addr, val);
+    } else if (sizeof(T) == 4) {
+        __iso_volatile_store32((__int32*)addr, val);
+    } else if (sizeof(T) == 8) {
+        __iso_volatile_store64((__int64*)addr, val);
+    }
+    fenceSeqCst();
 }
 
 #define MSC_EXCHANGEOP(T, U, xchgop)                            \
