@@ -1,4 +1,5 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: set ts=8 sts=4 et sw=4 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,6 +9,7 @@
 #include "xpt_xdr.h"
 #include "xpt_struct.h"
 #include <string.h>
+#include <stdint.h>
 #include <stdio.h>
 
 using mozilla::WrapNotNull;
@@ -169,13 +171,12 @@ DoInterfaceDirectoryEntry(XPTArena *arena, NotNull<XPTCursor*> cursor,
 }
 
 static bool
-InterfaceDescriptorAddTypes(XPTArena *arena, XPTInterfaceDescriptor *id,
-                            uint16_t num)
+InterfaceDescriptorAddType(XPTArena *arena, XPTInterfaceDescriptor *id)
 {
     XPTTypeDescriptor *old = id->additional_types;
     XPTTypeDescriptor *new_;
     size_t old_size = id->num_additional_types * sizeof(XPTTypeDescriptor);
-    size_t new_size = (num * sizeof(XPTTypeDescriptor)) + old_size;
+    size_t new_size = old_size + sizeof(XPTTypeDescriptor);
 
     /* XXX should grow in chunks to minimize alloc overhead */
     new_ = static_cast<XPTTypeDescriptor*>(XPT_CALLOC8(arena, new_size));
@@ -186,10 +187,10 @@ InterfaceDescriptorAddTypes(XPTArena *arena, XPTInterfaceDescriptor *id,
     }
     id->additional_types = new_;
 
-    if (num + uint16_t(id->num_additional_types) > 256)
+    if (id->num_additional_types == UINT8_MAX)
         return false;
 
-    id->num_additional_types += num;
+    id->num_additional_types += 1;
     return true;
 }
 
@@ -272,20 +273,11 @@ DoConstDescriptor(XPTArena *arena, NotNull<XPTCursor*> cursor,
     }
 
     switch(XPT_TDP_TAG(cd->type.prefix)) {
-      case TD_INT8:
-        ok = XPT_Do8(cursor, (uint8_t*) &cd->value.i8);
-        break;
       case TD_INT16:
         ok = XPT_Do16(cursor, (uint16_t*) &cd->value.i16);
         break;
       case TD_INT32:
         ok = XPT_Do32(cursor, (uint32_t*) &cd->value.i32);
-        break;
-      case TD_INT64:
-        ok = XPT_Do64(cursor, &cd->value.i64);
-        break;
-      case TD_UINT8:
-        ok = XPT_Do8(cursor, &cd->value.ui8);
         break;
       case TD_UINT16:
         ok = XPT_Do16(cursor, &cd->value.ui16);
@@ -293,23 +285,12 @@ DoConstDescriptor(XPTArena *arena, NotNull<XPTCursor*> cursor,
       case TD_UINT32:
         ok = XPT_Do32(cursor, &cd->value.ui32);
         break;
-      case TD_UINT64:
-        ok = XPT_Do64(cursor, (int64_t *)&cd->value.ui64);
-        break;
-      case TD_CHAR:
-        ok = XPT_Do8(cursor, (uint8_t*) &cd->value.ch);
-        break;
-      case TD_WCHAR:
-        ok = XPT_Do16(cursor, &cd->value.wch);
-        break;
-        /* fall-through */
       default:
-        fprintf(stderr, "illegal type!\n");
+        MOZ_ASSERT(false, "illegal type");
         break;
     }
 
     return ok;
-
 }
 
 bool
@@ -386,7 +367,7 @@ DoTypeDescriptor(XPTArena *arena, NotNull<XPTCursor*> cursor,
             !XPT_Do8(cursor, &argnum2))
             return false;
 
-        if (!InterfaceDescriptorAddTypes(arena, id, 1))
+        if (!InterfaceDescriptorAddType(arena, id))
             return false;
         td->u.array.additional_type = id->num_additional_types - 1;
 

@@ -253,11 +253,14 @@ ProtectionSettingToFlags(ProtectionSetting protection)
     MOZ_CRASH();
 }
 
-static void
+static MOZ_MUST_USE bool
 CommitPages(void* addr, size_t bytes, ProtectionSetting protection)
 {
-    if (!VirtualAlloc(addr, bytes, MEM_COMMIT, ProtectionSettingToFlags(protection)))
-        MOZ_CRASH_UNSAFE_PRINTF("CommitPages failed! Error code: %lu", GetLastError());
+    void* p = VirtualAlloc(addr, bytes, MEM_COMMIT, ProtectionSettingToFlags(protection));
+    if (!p)
+        return false;
+    MOZ_RELEASE_ASSERT(p == addr);
+    return true;
 }
 
 static void
@@ -338,13 +341,16 @@ ProtectionSettingToFlags(ProtectionSetting protection)
     MOZ_CRASH();
 }
 
-static void
+static MOZ_MUST_USE bool
 CommitPages(void* addr, size_t bytes, ProtectionSetting protection)
 {
     void* p = MozTaggedAnonymousMmap(addr, bytes, ProtectionSettingToFlags(protection),
                                      MAP_FIXED | MAP_PRIVATE | MAP_ANON,
                                      -1, 0, "js-executable-memory");
-    MOZ_RELEASE_ASSERT(addr == p);
+    if (p == MAP_FAILED)
+        return false;
+    MOZ_RELEASE_ASSERT(p == addr);
+    return true;
 }
 
 static void
@@ -502,7 +508,7 @@ class ProcessExecutableMemory
     }
 
     void* allocate(size_t bytes, ProtectionSetting protection);
-    void deallocate(void* addr, size_t bytes);
+    void deallocate(void* addr, size_t bytes, bool decommit);
 };
 
 void*
@@ -567,12 +573,16 @@ ProcessExecutableMemory::allocate(size_t bytes, ProtectionSetting protection)
     }
 
     // Commit the pages after releasing the lock.
-    CommitPages(p, bytes, protection);
+    if (!CommitPages(p, bytes, protection)) {
+        deallocate(p, bytes, /* decommit = */ false);
+        return nullptr;
+    }
+
     return p;
 }
 
 void
-ProcessExecutableMemory::deallocate(void* addr, size_t bytes)
+ProcessExecutableMemory::deallocate(void* addr, size_t bytes, bool decommit)
 {
     MOZ_ASSERT(initialized());
     MOZ_ASSERT(addr);
@@ -586,7 +596,8 @@ ProcessExecutableMemory::deallocate(void* addr, size_t bytes)
     size_t numPages = bytes / ExecutableCodePageSize;
 
     // Decommit before taking the lock.
-    DecommitPages(addr, bytes);
+    if (decommit)
+        DecommitPages(addr, bytes);
 
     LockGuard<Mutex> guard(lock_);
     MOZ_ASSERT(numPages <= pagesAllocated_);
@@ -612,7 +623,7 @@ js::jit::AllocateExecutableMemory(size_t bytes, ProtectionSetting protection)
 void
 js::jit::DeallocateExecutableMemory(void* addr, size_t bytes)
 {
-    execMemory.deallocate(addr, bytes);
+    execMemory.deallocate(addr, bytes, /* decommit = */ true);
 }
 
 bool

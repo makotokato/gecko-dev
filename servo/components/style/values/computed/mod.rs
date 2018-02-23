@@ -50,6 +50,7 @@ pub use self::font::{MozScriptLevel, MozScriptMinSize, MozScriptSizeMultiplier, 
 pub use self::box_::{AnimationIterationCount, AnimationName, Display, OverscrollBehavior, Contain};
 pub use self::box_::{OverflowClipBox, ScrollSnapType, TouchAction, VerticalAlign, WillChange};
 pub use self::color::{Color, ColorPropertyValue, RGBAColor};
+pub use self::column::ColumnCount;
 pub use self::counters::{Content, ContentItem, CounterIncrement, CounterReset};
 pub use self::effects::{BoxShadow, Filter, SimpleShadow};
 pub use self::flex::FlexBasis;
@@ -68,7 +69,7 @@ pub use self::list::{ListStyleImage, Quotes};
 pub use self::list::ListStyleType;
 pub use self::outline::OutlineStyle;
 pub use self::percentage::Percentage;
-pub use self::position::{Position, GridAutoFlow, GridTemplateAreas};
+pub use self::position::{GridAutoFlow, GridTemplateAreas, Position, ZIndex};
 pub use self::pointing::Cursor;
 #[cfg(feature = "gecko")]
 pub use self::pointing::CursorImage;
@@ -91,6 +92,7 @@ pub mod border;
 #[path = "box.rs"]
 pub mod box_;
 pub mod color;
+pub mod column;
 pub mod counters;
 pub mod effects;
 pub mod flex;
@@ -524,20 +526,6 @@ pub type Opacity = CSSFloat;
 /// A `<integer>` value.
 pub type Integer = CSSInteger;
 
-/// <integer> | auto
-pub type IntegerOrAuto = Either<CSSInteger, Auto>;
-
-impl IntegerOrAuto {
-    /// Returns the integer value if it is an integer, otherwise return
-    /// the given value.
-    pub fn integer_or(&self, auto_value: CSSInteger) -> CSSInteger {
-        match *self {
-            Either::First(n) => n,
-            Either::Second(Auto) => auto_value,
-        }
-    }
-}
-
 /// A wrapper of Integer, but only accept a value >= 1.
 pub type PositiveInteger = GreaterThanOrEqualToOne<CSSInteger>;
 
@@ -561,9 +549,6 @@ impl From<CSSInteger> for PositiveInteger {
         GreaterThanOrEqualToOne::<CSSInteger>(int)
     }
 }
-
-/// PositiveInteger | auto
-pub type PositiveIntegerOrAuto = Either<PositiveInteger, Auto>;
 
 /// <length> | <percentage> | <number>
 pub type LengthOrPercentageOrNumber = Either<Number, LengthOrPercentage>;

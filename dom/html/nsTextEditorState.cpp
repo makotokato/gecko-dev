@@ -19,7 +19,6 @@
 #include "nsContentCreatorFunctions.h"
 #include "nsTextControlFrame.h"
 #include "nsIControllers.h"
-#include "nsIDOMHTMLInputElement.h"
 #include "nsITransactionManager.h"
 #include "nsIControllerContext.h"
 #include "nsAttrValue.h"
@@ -868,7 +867,7 @@ TextInputListener::OnSelectionChange(Selection& aSelection,
 
   mSelectionWasCollapsed = collapsed;
 
-  if (!weakFrame.IsAlive() ||
+  if (!weakFrame.IsAlive() || !mFrame ||
       !nsContentUtils::IsFocusedContent(mFrame->GetContent())) {
     return;
   }
@@ -884,7 +883,7 @@ DoCommandCallback(Command aCommand, void* aData)
   nsIContent *content = frame->GetContent();
 
   nsCOMPtr<nsIControllers> controllers;
-  nsCOMPtr<nsIDOMHTMLInputElement> input = do_QueryInterface(content);
+  HTMLInputElement* input = HTMLInputElement::FromContent(content);
   if (input) {
     input->GetControllers(getter_AddRefs(controllers));
   } else {
@@ -1414,12 +1413,12 @@ nsTextEditorState::PrepareEditor(const nsAString *aValue)
 
   if (!SuppressEventHandlers(presContext)) {
     nsCOMPtr<nsIControllers> controllers;
-    nsCOMPtr<nsIDOMHTMLInputElement> inputElement =
-      do_QueryInterface(mTextCtrlElement);
+    nsCOMPtr<nsIContent> content = do_QueryInterface(mTextCtrlElement);
+    HTMLInputElement* inputElement =
+      HTMLInputElement::FromContentOrNull(content);
     if (inputElement) {
       rv = inputElement->GetControllers(getter_AddRefs(controllers));
     } else {
-      nsCOMPtr<nsIContent> content = do_QueryInterface(mTextCtrlElement);
       HTMLTextAreaElement* textAreaElement =
         HTMLTextAreaElement::FromContentOrNull(content);
 
@@ -1712,8 +1711,9 @@ nsTextEditorState::SetSelectionRange(uint32_t aStart, uint32_t aEnd,
     props.SetEnd(aEnd);
     props.SetDirection(aDirection);
   } else {
+    WeakPtr<nsTextEditorState> self(this);
     aRv = mBoundFrame->SetSelectionRange(aStart, aEnd, aDirection);
-    if (aRv.Failed()) {
+    if (aRv.Failed() || !self.get()) {
       return;
     }
     rv = mBoundFrame->ScrollSelectionIntoView();
@@ -2072,13 +2072,13 @@ nsTextEditorState::UnbindFromFrame(nsTextControlFrame* aFrame)
   if (!SuppressEventHandlers(mBoundFrame->PresContext()))
   {
     nsCOMPtr<nsIControllers> controllers;
-    nsCOMPtr<nsIDOMHTMLInputElement> inputElement =
-      do_QueryInterface(mTextCtrlElement);
+    nsCOMPtr<nsIContent> content = do_QueryInterface(mTextCtrlElement);
+    HTMLInputElement* inputElement =
+      HTMLInputElement::FromContentOrNull(content);
     if (inputElement)
       inputElement->GetControllers(getter_AddRefs(controllers));
     else
     {
-      nsCOMPtr<nsIContent> content = do_QueryInterface(mTextCtrlElement);
       HTMLTextAreaElement* textAreaElement =
         HTMLTextAreaElement::FromContentOrNull(content);
       if (textAreaElement) {

@@ -734,11 +734,26 @@ TransceiverImpl::UpdateAudioConduit()
       MOZ_MTLOG(ML_DEBUG, "Calling EnableAudioLevelExtension");
       error = conduit->EnableAudioLevelExtension(true,
                                                  audioLevelExt->entry,
-                                                 true);
+                                                 false);
 
       if (error) {
         MOZ_MTLOG(ML_ERROR, mPCHandle << "[" << mMid << "]: " << __FUNCTION__ <<
                             " EnableAudioLevelExtension failed: " << error);
+        return NS_ERROR_FAILURE;
+      }
+    }
+
+    const SdpExtmapAttributeList::Extmap* csrcAudioLevelExt =
+        details.GetExt(webrtc::RtpExtension::kCsrcAudioLevelUri);
+    if (csrcAudioLevelExt) {
+      MOZ_MTLOG(ML_DEBUG, "Calling EnableAudioLevelExtension for CSRCs");
+      error = conduit->EnableAudioLevelExtension(true,
+                                                 csrcAudioLevelExt->entry,
+                                                 false,
+                                                 false);
+      if (error) {
+        MOZ_MTLOG(ML_ERROR, mPCHandle << "[" << mMid << "]: " << __FUNCTION__ <<
+                  " EnableAudioLevelExtension for CSRCs failed: " << error);
         return NS_ERROR_FAILURE;
       }
     }
@@ -781,7 +796,7 @@ TransceiverImpl::UpdateAudioConduit()
       MOZ_MTLOG(ML_DEBUG, "Calling EnableAudioLevelExtension");
       error = conduit->EnableAudioLevelExtension(true,
                                                  audioLevelExt->entry,
-                                                 false);
+                                                 true);
 
       if (error) {
         MOZ_MTLOG(ML_ERROR, mPCHandle << "[" << mMid << "]: " << __FUNCTION__ <<

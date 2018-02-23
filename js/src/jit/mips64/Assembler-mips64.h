@@ -77,8 +77,20 @@ static constexpr FloatRegister ReturnFloat32Reg = { FloatRegisters::f0, FloatReg
 static constexpr FloatRegister ReturnDoubleReg = { FloatRegisters::f0, FloatRegisters::Double };
 static constexpr FloatRegister ScratchFloat32Reg = { FloatRegisters::f23, FloatRegisters::Single };
 static constexpr FloatRegister ScratchDoubleReg = { FloatRegisters::f23, FloatRegisters::Double };
-static constexpr FloatRegister SecondScratchFloat32Reg = { FloatRegisters::f21, FloatRegisters::Single };
-static constexpr FloatRegister SecondScratchDoubleReg = { FloatRegisters::f21, FloatRegisters::Double };
+
+struct ScratchFloat32Scope : public AutoFloatRegisterScope
+{
+    explicit ScratchFloat32Scope(MacroAssembler& masm)
+      : AutoFloatRegisterScope(masm, ScratchFloat32Reg)
+    { }
+};
+
+struct ScratchDoubleScope : public AutoFloatRegisterScope
+{
+    explicit ScratchDoubleScope(MacroAssembler& masm)
+      : AutoFloatRegisterScope(masm, ScratchDoubleReg)
+    { }
+};
 
 // Registers used in the GenerateFFIIonExit Disable Activation block.
 // None of these may be the second scratch register (t8).

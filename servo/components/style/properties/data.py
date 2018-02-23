@@ -254,6 +254,7 @@ class Longhand(object):
                 "BackgroundRepeat",
                 "BorderImageRepeat",
                 "BorderStyle",
+                "ColumnCount",
                 "Contain",
                 "FontStyleAdjust",
                 "FontSynthesis",
@@ -262,7 +263,6 @@ class Longhand(object):
                 "ImageOrientation",
                 "InitialLetter",
                 "Integer",
-                "IntegerOrAuto",
                 "JustifyContent",
                 "JustifyItems",
                 "JustifySelf",
@@ -275,7 +275,6 @@ class Longhand(object):
                 "OutlineStyle",
                 "OverscrollBehavior",
                 "Percentage",
-                "PositiveIntegerOrAuto",
                 "SVGPaintOrder",
                 "ScrollSnapType",
                 "TextDecorationLine",
@@ -283,6 +282,7 @@ class Longhand(object):
                 "TransformStyle",
                 "XSpan",
                 "XTextZoom",
+                "ZIndex",
             }
         return bool(self.keyword)
 

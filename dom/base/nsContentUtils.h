@@ -73,7 +73,6 @@ class nsIDocumentLoaderFactory;
 class nsIDOMDocument;
 class nsIDOMDocumentFragment;
 class nsIDOMEvent;
-class nsIDOMHTMLInputElement;
 class nsIDOMNode;
 class nsIDragSession;
 class nsIEventTarget;
@@ -135,6 +134,7 @@ struct CustomElementDefinition;
 class DocumentFragment;
 class Element;
 class EventTarget;
+class HTMLInputElement;
 class IPCDataTransfer;
 class IPCDataTransferItem;
 struct LifecycleCallbackArgs;
@@ -1304,6 +1304,14 @@ public:
    *   * TYPE_INTERNAL_STYLESHEET_PRELOAD
    */
   static bool IsPreloadType(nsContentPolicyType aType);
+
+  /**
+   * Returns true if the pref "security.mixed_content.upgrade_display_content" is true
+   * and the content policy type is any of:
+   *   * TYPE_IMAGE
+   *   * TYPE_MEDIA
+   */
+  static bool IsUpgradableDisplayType(nsContentPolicyType aType);
 
   /**
    * Quick helper to determine whether there are any mutation listeners
@@ -2626,7 +2634,7 @@ public:
    * @param aInput the input element to check. NOTE: aInput can't be null.
    * @return whether the input element has autocomplete enabled.
    */
-  static bool IsAutocompleteEnabled(nsIDOMHTMLInputElement* aInput);
+  static bool IsAutocompleteEnabled(mozilla::dom::HTMLInputElement* aInput);
 
   enum AutocompleteAttrState : uint8_t
   {
@@ -3445,6 +3453,7 @@ private:
   static bool sIsPerformanceTimingEnabled;
   static bool sIsResourceTimingEnabled;
   static bool sIsPerformanceNavigationTimingEnabled;
+  static bool sIsUpgradableDisplayContentPrefEnabled;
   static bool sIsFrameTimingPrefEnabled;
   static bool sIsFormAutofillAutocompleteEnabled;
   static bool sIsShadowDOMEnabled;

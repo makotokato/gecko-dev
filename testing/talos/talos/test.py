@@ -829,6 +829,13 @@ class motionmark_htmlsuite(WebkitBenchmark):
 
 
 @register_test()
+class JetStream(WebkitBenchmark):
+    # JetStream benchmark used by many browser vendors (from webkit)
+    tpmanifest = '${talos}/tests/jetstream/jetstream.manifest'
+    tppagecycles = 1
+
+
+@register_test()
 class perf_reftest(PageloaderTest):
     """
     Style perf-reftest a set of tests where the result is the difference of base vs ref pages
@@ -996,3 +1003,22 @@ class rasterflood_gradient(PageloaderTest):
                    'dom.send_after_paint_to_content': False}
     lower_is_better = False
     unit = 'score'
+
+
+@register_test()
+class about_preferences_basic(PageloaderTest):
+    """
+    Base class for about_preferences test
+    """
+    tpmanifest = '${talos}/tests/about-preferences/about_preferences_basic.manifest'
+    # this test uses 'about:blank' as a dummy page (see manifest) so that the pages
+    # that just change url categories (i.e. about:preferences#search) will get a load event
+    # also any of the url category pages cannot have more than one tppagecycle
+    tpcycles = 25
+    tppagecycles = 1
+    gecko_profile_interval = 1
+    gecko_profile_entries = 2000000
+    filters = filter.ignore_first.prepare(5) + filter.median.prepare()
+    unit = 'ms'
+    lower_is_better = True
+    fnbpaint = True

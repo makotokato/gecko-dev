@@ -56,7 +56,7 @@ ServiceWorker::Create(nsIGlobalObject* aOwner,
     return ref.forget();
   }
 
-  RefPtr<ServiceWorkerInfo> info = reg->GetByID(aDescriptor.Id());
+  RefPtr<ServiceWorkerInfo> info = reg->GetByDescriptor(aDescriptor);
   if (!info) {
     return ref.forget();
   }
@@ -76,8 +76,6 @@ ServiceWorker::ServiceWorker(nsIGlobalObject* aGlobal,
   MOZ_DIAGNOSTIC_ASSERT(aGlobal);
   MOZ_DIAGNOSTIC_ASSERT(mInner);
 
-  aGlobal->AddServiceWorker(this);
-
   // This will update our state too.
   mInner->AddServiceWorker(this);
 }
@@ -86,16 +84,13 @@ ServiceWorker::~ServiceWorker()
 {
   MOZ_ASSERT(NS_IsMainThread());
   mInner->RemoveServiceWorker(this);
-  nsIGlobalObject* global = GetParentObject();
-  if (global) {
-    global->RemoveServiceWorker(this);
-  }
 }
 
 NS_IMPL_ADDREF_INHERITED(ServiceWorker, DOMEventTargetHelper)
 NS_IMPL_RELEASE_INHERITED(ServiceWorker, DOMEventTargetHelper)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ServiceWorker)
+  NS_INTERFACE_MAP_ENTRY(ServiceWorker)
 NS_INTERFACE_MAP_END_INHERITING(DOMEventTargetHelper)
 
 JSObject*
@@ -141,24 +136,16 @@ ServiceWorker::PostMessage(JSContext* aCx, JS::Handle<JS::Value> aMessage,
   mInner->PostMessage(GetParentObject(), aCx, aMessage, aTransferable, aRv);
 }
 
-bool
-ServiceWorker::MatchesDescriptor(const ServiceWorkerDescriptor& aDescriptor) const
+
+const ServiceWorkerDescriptor&
+ServiceWorker::Descriptor() const
 {
-  // Compare everything in the descriptor except the state.  That is mutable
-  // and may not exactly match.
-  return mDescriptor.PrincipalInfo() == aDescriptor.PrincipalInfo() &&
-         mDescriptor.Scope() == aDescriptor.Scope() &&
-         mDescriptor.ScriptURL() == aDescriptor.ScriptURL() &&
-         mDescriptor.Id() == aDescriptor.Id();
+  return mDescriptor;
 }
 
 void
 ServiceWorker::DisconnectFromOwner()
 {
-  nsIGlobalObject* global = GetParentObject();
-  if (global) {
-    global->RemoveServiceWorker(this);
-  }
   DOMEventTargetHelper::DisconnectFromOwner();
 }
 

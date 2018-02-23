@@ -2076,7 +2076,7 @@ JitCompartment::generateRegExpMatcherStub(JSContext* cx)
 
     Linker linker(masm);
     AutoFlushICache afc("RegExpMatcherStub");
-    JitCode* code = linker.newCode<CanGC>(cx, CodeKind::Other);
+    JitCode* code = linker.newCode(cx, CodeKind::Other);
     if (!code)
         return nullptr;
 
@@ -2233,7 +2233,7 @@ JitCompartment::generateRegExpSearcherStub(JSContext* cx)
 
     Linker linker(masm);
     AutoFlushICache afc("RegExpSearcherStub");
-    JitCode* code = linker.newCode<CanGC>(cx, CodeKind::Other);
+    JitCode* code = linker.newCode(cx, CodeKind::Other);
     if (!code)
         return nullptr;
 
@@ -2381,7 +2381,7 @@ JitCompartment::generateRegExpTesterStub(JSContext* cx)
 
     Linker linker(masm);
     AutoFlushICache afc("RegExpTesterStub");
-    JitCode* code = linker.newCode<CanGC>(cx, CodeKind::Other);
+    JitCode* code = linker.newCode(cx, CodeKind::Other);
     if (!code)
         return nullptr;
 
@@ -3833,10 +3833,12 @@ void
 CodeGenerator::visitTypeBarrierV(LTypeBarrierV* lir)
 {
     ValueOperand operand = ToValue(lir, LTypeBarrierV::Input);
-    Register scratch = ToTempRegisterOrInvalid(lir->temp());
+    Register unboxScratch = ToTempRegisterOrInvalid(lir->unboxTemp());
+    Register objScratch = ToTempRegisterOrInvalid(lir->objTemp());
 
     Label miss;
-    masm.guardTypeSet(operand, lir->mir()->resultTypeSet(), lir->mir()->barrierKind(), scratch, &miss);
+    masm.guardTypeSet(operand, lir->mir()->resultTypeSet(), lir->mir()->barrierKind(),
+                      unboxScratch, objScratch, &miss);
     bailoutFrom(&miss, lir->snapshot());
 }
 
@@ -3869,10 +3871,12 @@ void
 CodeGenerator::visitMonitorTypes(LMonitorTypes* lir)
 {
     ValueOperand operand = ToValue(lir, LMonitorTypes::Input);
-    Register scratch = ToTempUnboxRegister(lir->temp());
+    Register unboxScratch = ToTempRegisterOrInvalid(lir->unboxTemp());
+    Register objScratch = ToTempRegisterOrInvalid(lir->objTemp());
 
     Label matched, miss;
-    masm.guardTypeSet(operand, lir->mir()->typeSet(), lir->mir()->barrierKind(), scratch, &miss);
+    masm.guardTypeSet(operand, lir->mir()->typeSet(), lir->mir()->barrierKind(), unboxScratch,
+                      objScratch, &miss);
     bailoutFrom(&miss, lir->snapshot());
 }
 
@@ -5075,11 +5079,8 @@ CodeGenerator::visitCallDirectEval(LCallDirectEval* lir)
 }
 
 void
-CodeGenerator::generateArgumentsChecks(bool bailout)
+CodeGenerator::generateArgumentsChecks(bool assert)
 {
-    // Registers safe for use before generatePrologue().
-    static const uint32_t EntryTempMask = Registers::TempMask & ~(1 << OsrFrameReg.code());
-
     // This function can be used the normal way to check the argument types,
     // before entering the function and bailout when arguments don't match.
     // For debug purpose, this is can also be used to force/check that the
@@ -5089,7 +5090,9 @@ CodeGenerator::generateArgumentsChecks(bool bailout)
     MResumePoint* rp = mir.entryResumePoint();
 
     // No registers are allocated yet, so it's safe to grab anything.
-    Register temp = AllocatableGeneralRegisterSet(EntryTempMask).getAny();
+    AllocatableGeneralRegisterSet temps(GeneralRegisterSet::All());
+    Register temp1 = temps.takeAny();
+    Register temp2 = temps.takeAny();
 
     const CompileInfo& info = gen->info();
 
@@ -5106,13 +5109,13 @@ CodeGenerator::generateArgumentsChecks(bool bailout)
         // ... * sizeof(Value)          - Scale by value size.
         // ArgToStackOffset(...)        - Compute displacement within arg vector.
         int32_t offset = ArgToStackOffset((i - info.startArgSlot()) * sizeof(Value));
-        masm.guardTypeSet(Address(masm.getStackPointer(), offset), types, BarrierKind::TypeSet, temp, &miss);
+        Address argAddr(masm.getStackPointer(), offset);
+        masm.guardTypeSet(argAddr, types, BarrierKind::TypeSet, temp1, temp2, &miss);
     }
 
     if (miss.used()) {
-        if (bailout) {
-            bailoutFrom(&miss, graph.entrySnapshot());
-        } else {
+        if (assert) {
+#ifdef DEBUG
             Label success;
             masm.jump(&success);
             masm.bind(&miss);
@@ -5128,13 +5131,18 @@ CodeGenerator::generateArgumentsChecks(bool bailout)
                 Label skip;
                 Address addr(masm.getStackPointer(), ArgToStackOffset((i - info.startArgSlot()) * sizeof(Value)));
                 masm.branchTestObject(Assembler::NotEqual, addr, &skip);
-                Register obj = masm.extractObject(addr, temp);
-                masm.guardTypeSetMightBeIncomplete(types, obj, temp, &success);
+                Register obj = masm.extractObject(addr, temp1);
+                masm.guardTypeSetMightBeIncomplete(types, obj, temp1, &success);
                 masm.bind(&skip);
             }
 
             masm.assumeUnreachable("Argument check fail.");
             masm.bind(&success);
+#else
+            MOZ_CRASH("Shouldn't get here in opt builds");
+#endif
+        } else {
+            bailoutFrom(&miss, graph.entrySnapshot());
         }
     }
 }
@@ -5376,6 +5384,7 @@ CodeGenerator::branchIfInvalidated(Register temp, Label* invalidated)
                   invalidated);
 }
 
+#ifdef DEBUG
 void
 CodeGenerator::emitAssertObjectOrStringResult(Register input, MIRType type, const TemporaryTypeSet* typeset)
 {
@@ -5467,7 +5476,7 @@ CodeGenerator::emitAssertResultV(const ValueOperand input, const TemporaryTypeSe
     if (typeset && !typeset->unknown()) {
         // We have a result TypeSet, assert this value is in it.
         Label miss, ok;
-        masm.guardTypeSet(input, typeset, BarrierKind::TypeSet, temp1, &miss);
+        masm.guardTypeSet(input, typeset, BarrierKind::TypeSet, temp1, temp2, &miss);
         masm.jump(&ok);
 
         masm.bind(&miss);
@@ -5506,7 +5515,6 @@ CodeGenerator::emitAssertResultV(const ValueOperand input, const TemporaryTypeSe
     masm.pop(temp1);
 }
 
-#ifdef DEBUG
 void
 CodeGenerator::emitObjectOrStringResultChecks(LInstruction* lir, MDefinition* mir)
 {
@@ -8258,7 +8266,7 @@ JitCompartment::generateStringConcatStub(JSContext* cx)
 
     Linker linker(masm);
     AutoFlushICache afc("StringConcatStub");
-    JitCode* code = linker.newCode<CanGC>(cx, CodeKind::Other);
+    JitCode* code = linker.newCode(cx, CodeKind::Other);
 
 #ifdef JS_ION_PERF
     writePerfSpewerJitCodeProfile(code, "StringConcatStub");
@@ -9891,7 +9899,7 @@ CodeGenerator::generate()
 
 #ifdef DEBUG
     // Assert that the argument types are correct.
-    generateArgumentsChecks(/* bailout = */ false);
+    generateArgumentsChecks(/* assert = */ true);
 #endif
 
     // Reset native => bytecode map table with top-level script and startPc.
@@ -10074,9 +10082,9 @@ CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints)
     // Also, note that creating the code here during an incremental GC will
     // trace the code and mark all GC things it refers to. This captures any
     // read barriers which were skipped while compiling the script off thread.
-    Linker linker(masm);
+    Linker linker(masm, nogc);
     AutoFlushICache afc("IonLink");
-    JitCode* code = linker.newCode<NoGC>(cx, CodeKind::Ion, !patchableBackedges_.empty());
+    JitCode* code = linker.newCode(cx, CodeKind::Ion, !patchableBackedges_.empty());
     if (!code)
         return false;
 
@@ -12558,17 +12566,24 @@ CodeGenerator::emitAssertRangeD(const Range* r, FloatRegister input, FloatRegist
 void
 CodeGenerator::visitAssertResultV(LAssertResultV* ins)
 {
+#ifdef DEBUG
     const ValueOperand value = ToValue(ins, LAssertResultV::Input);
     emitAssertResultV(value, ins->mirRaw()->resultTypeSet());
+#else
+    MOZ_CRASH("LAssertResultV is debug only");
+#endif
 }
 
 void
 CodeGenerator::visitAssertResultT(LAssertResultT* ins)
 {
+#ifdef DEBUG
     Register input = ToRegister(ins->input());
     MDefinition* mir = ins->mirRaw();
-
     emitAssertObjectOrStringResult(input, mir->type(), mir->resultTypeSet());
+#else
+    MOZ_CRASH("LAssertResultT is debug only");
+#endif
 }
 
 void

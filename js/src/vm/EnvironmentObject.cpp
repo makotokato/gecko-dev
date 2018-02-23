@@ -6,9 +6,6 @@
 
 #include "vm/EnvironmentObject-inl.h"
 
-#include "mozilla/PodOperations.h"
-#include "mozilla/ScopeExit.h"
-
 #include "builtin/ModuleObject.h"
 #include "gc/Policy.h"
 #include "vm/ArgumentsObject.h"
@@ -30,12 +27,6 @@
 
 using namespace js;
 using namespace js::gc;
-
-using mozilla::PodZero;
-using mozilla::Maybe;
-using mozilla::Some;
-using mozilla::Nothing;
-using mozilla::MakeScopeExit;
 
 typedef Rooted<ArgumentsObject*> RootedArgumentsObject;
 typedef MutableHandle<ArgumentsObject*> MutableHandleArgumentsObject;
@@ -1036,7 +1027,7 @@ LexicalEnvironmentObject::clone(JSContext* cx, Handle<LexicalEnvironmentObject*>
         return nullptr;
 
     // We can't assert that the clone has the same shape, because it could
-    // have been reshaped by PurgeEnvironmentChain.
+    // have been reshaped by ReshapeForShadowedProp.
     MOZ_ASSERT(env->slotSpan() == copy->slotSpan());
     for (uint32_t i = JSSLOT_FREE(&class_); i < copy->slotSpan(); i++)
         copy->setSlot(i, env->getSlot(i));

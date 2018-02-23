@@ -316,15 +316,29 @@ class SyncedBookmarksMirror {
     // to merge again on the next sync.
     let { missingParents, missingChildren } = await this.fetchRemoteOrphans();
     if (missingParents.length) {
-      MirrorLog.debug("Temporarily reparenting remote items with missing " +
-                      "parents to unfiled", missingParents);
+      MirrorLog.warn("Temporarily reparenting remote items with missing " +
+                     "parents to unfiled", missingParents);
       this.recordTelemetryEvent("mirror", "orphans", "parents",
                                 { count: String(missingParents.length) });
     }
     if (missingChildren.length) {
-      MirrorLog.debug("Remote tree missing items", missingChildren);
+      MirrorLog.warn("Remote tree missing items", missingChildren);
       this.recordTelemetryEvent("mirror", "orphans", "children",
                                 { count: String(missingChildren.length) });
+    }
+
+    let { missingLocal, missingRemote } = await this.fetchInconsistencies();
+    if (missingLocal.length) {
+      MirrorLog.warn("Remote tree has merged items that don't exist locally",
+                     missingLocal);
+      this.recordTelemetryEvent("mirror", "inconsistencies", "local",
+                                { count: String(missingLocal.length) });
+    }
+    if (missingRemote.length) {
+      MirrorLog.error("Local tree has synced items that don't exist remotely",
+                      missingRemote);
+      this.recordTelemetryEvent("mirror", "inconsistencies", "remote",
+                                { count: String(missingRemote.length) });
     }
 
     // It's safe to build the remote tree outside the transaction because
@@ -411,7 +425,6 @@ class SyncedBookmarksMirror {
       await this.db.execute(`DELETE FROM itemsRemoved`);
       await this.db.execute(`DELETE FROM itemsMoved`);
       await this.db.execute(`DELETE FROM annosChanged`);
-      await this.db.execute(`DELETE FROM keywordsChanged`);
       await this.db.execute(`DELETE FROM itemsToWeaklyReupload`);
       await this.db.execute(`DELETE FROM itemsToUpload`);
 
@@ -728,6 +741,62 @@ class SyncedBookmarksMirror {
       let missingChild = row.getResultByName("missingChild");
       if (missingChild) {
         infos.missingChildren.push(guid);
+      }
+    }
+
+    return infos;
+  }
+
+  /**
+   * Checks the sync statuses of all items for consistency. All merged items in
+   * the remote tree should exist as either items or tombstones in the local
+   * tree, and all NORMAL items in the local tree should exist in the remote
+   * tree.
+   *
+   * @return {Object.<String, String[]>}
+   *         An object containing GUIDs for each problem type:
+   *           - `missingLocal`: Merged items in the remote tree that aren't
+   *             mentioned in the local tree.
+   *           - `missingRemote`: NORMAL items in the local tree that aren't
+   *             mentioned in the remote tree.
+   */
+  async fetchInconsistencies() {
+    let infos = {
+      missingLocal: [],
+      missingRemote: [],
+    };
+
+    let problemRows = await this.db.execute(`
+      SELECT v.guid, 1 AS missingLocal, 0 AS missingRemote
+      FROM items v
+      LEFT JOIN moz_bookmarks b ON b.guid = v.guid
+      LEFT JOIN moz_bookmarks_deleted d ON d.guid = v.guid
+      WHERE NOT v.needsMerge AND
+            NOT v.isDeleted AND
+            b.guid IS NULL AND
+            d.guid IS NULL
+      UNION ALL
+      SELECT b.guid, 0 AS missingLocal, 1 AS missingRemote
+      FROM moz_bookmarks b
+      LEFT JOIN items v ON v.guid = b.guid
+      WHERE b.syncStatus = :syncStatus AND
+            v.guid IS NULL
+      UNION ALL
+      SELECT d.guid, 0 AS missingLocal, 1 AS missingRemote
+      FROM moz_bookmarks_deleted d
+      LEFT JOIN items v ON v.guid = d.guid
+      WHERE v.guid IS NULL`,
+      { syncStatus: PlacesUtils.bookmarks.SYNC_STATUS.NORMAL });
+
+    for (let row of problemRows) {
+      let guid = row.getResultByName("guid");
+      let missingLocal = row.getResultByName("missingLocal");
+      if (missingLocal) {
+        infos.missingLocal.push(guid);
+      }
+      let missingRemote = row.getResultByName("missingRemote");
+      if (missingRemote) {
+        infos.missingRemote.push(guid);
       }
     }
 
@@ -1321,29 +1390,12 @@ class SyncedBookmarksMirror {
     }
 
     MirrorLog.debug("Recording notifications for changed keywords");
-    // `ORDER BY k.ROWID` replays additions and deletions for the same keyword
-    // or URL in order.
-    let changedKeywordRows = await this.db.execute(`
-      SELECT b.id, IFNULL(k.keyword, "") AS keyword, b.lastModified, b.type,
-             p.id AS parentId, b.guid, p.guid AS parentGuid, h.url
-      FROM keywordsChanged k
-      JOIN moz_bookmarks b ON b.id = k.itemId
-      JOIN moz_bookmarks p ON p.id = b.parent
-      JOIN moz_places h ON h.id = k.placeId
-      ORDER BY k.ROWID`);
-    for (let row of changedKeywordRows) {
-      let info = {
-        id: row.getResultByName("id"),
-        keyword: row.getResultByName("keyword"),
-        lastModified: row.getResultByName("lastModified"),
-        type: row.getResultByName("type"),
-        parentId: row.getResultByName("parentId"),
-        guid: row.getResultByName("guid"),
-        parentGuid: row.getResultByName("parentGuid"),
-        urlHref: row.getResultByName("url"),
-      };
-      observersToNotify.noteKeywordChanged(info);
-    }
+    let keywordsChangedRows = await this.db.execute(`
+      SELECT EXISTS(SELECT 1 FROM itemsAdded WHERE keywordChanged) OR
+             EXISTS(SELECT 1 FROM itemsChanged WHERE keywordChanged)
+             AS keywordsChanged`);
+    observersToNotify.shouldInvalidateKeywords =
+      !!keywordsChangedRows[0].getResultByName("keywordsChanged");
   }
 
   /**
@@ -1984,6 +2036,14 @@ async function initializeTempMirrorEntities(db) {
     CREATE TEMP TRIGGER insertNewLocalItems
     INSTEAD OF DELETE ON itemsToMerge WHEN OLD.localId IS NULL
     BEGIN
+      /* Record an item added notification for the new item. */
+      INSERT INTO itemsAdded(guid, keywordChanged, level)
+      VALUES(OLD.newGuid, OLD.newKeyword NOT NULL OR
+                          EXISTS(SELECT 1 FROM moz_keywords
+                                 WHERE place_id = OLD.newPlaceId OR
+                                       keyword = OLD.newKeyword),
+             OLD.newLevel);
+
       /* Sync associates keywords with bookmarks, and doesn't sync POST data;
          Places associates keywords with (URL, POST data) pairs, and multiple
          bookmarks may have the same URL. For simplicity, we bump the change
@@ -2000,14 +2060,6 @@ async function initializeTempMirrorEntities(db) {
         SELECT place_id FROM moz_keywords
         WHERE place_id = OLD.newPlaceId OR
               keyword = OLD.newKeyword);
-
-      /* Record item changed notifications for existing items with the new
-         keyword and URL. */
-      INSERT INTO keywordsChanged(itemId, placeId, keyword)
-      SELECT b.id, b.fk, NULL FROM moz_bookmarks b
-      JOIN moz_keywords k ON k.place_id = b.fk
-      WHERE k.place_id = OLD.newPlaceId OR
-            k.keyword = OLD.newKeyword;
 
       /* Remove the new keyword from existing items, and all keywords from the
          new URL. */
@@ -2028,23 +2080,12 @@ async function initializeTempMirrorEntities(db) {
              STRFTIME('%s', 'now', 'localtime', 'utc') * 1000000,
              ${PlacesUtils.bookmarks.SYNC_STATUS.NORMAL}, 0);
 
-      /* Record an item added notification for the new item. */
-      INSERT INTO itemsAdded(guid, level)
-      VALUES(OLD.newGuid, OLD.newLevel);
-
-      /* Insert new keywords after the item, so that "noteKeywordAdded" can find
-         the new item by Place ID. */
+      /* Insert a new keyword for the new URL, if one is set. */
       INSERT OR IGNORE INTO moz_keywords(keyword, place_id, post_data)
       SELECT OLD.newKeyword, OLD.newPlaceId, ''
       WHERE OLD.newKeyword NOT NULL;
 
-      /* Record item changed notifications for the new keyword. */
-      INSERT INTO keywordsChanged(itemId, placeId, keyword)
-      SELECT b.id, OLD.newPlaceId, OLD.newKeyword FROM moz_bookmarks b
-      WHERE b.guid = OLD.newGuid AND
-            OLD.newKeyword NOT NULL;
-
-      /* Insert new tags for the URL. */
+      /* Insert new tags for the new URL. */
       INSERT INTO localTags(tag, placeId)
       SELECT t.tag, OLD.newPlaceId FROM tags t
       WHERE t.itemId = OLD.remoteId;
@@ -2084,9 +2125,15 @@ async function initializeTempMirrorEntities(db) {
     INSTEAD OF DELETE ON itemsToMerge WHEN OLD.hasRemoteValue AND
                                            OLD.localId NOT NULL
     BEGIN
-      /* Record item changed notifications for the title and URL. */
-      INSERT INTO itemsChanged(itemId, oldTitle, oldPlaceId, level)
-      SELECT id, title, OLD.oldPlaceId, OLD.newLevel FROM moz_bookmarks
+      /* Record an item changed notification for the existing item. */
+      INSERT INTO itemsChanged(itemId, oldTitle, oldPlaceId, keywordChanged,
+                               level)
+      SELECT id, title, OLD.oldPlaceId, OLD.newKeyword NOT NULL OR
+               EXISTS(SELECT 1 FROM moz_keywords
+                      WHERE place_id IN (OLD.oldPlaceId, OLD.newPlaceId) OR
+                            keyword = OLD.newKeyword),
+             OLD.newLevel
+      FROM moz_bookmarks
       WHERE id = OLD.localId;
 
       UPDATE moz_bookmarks SET
@@ -2104,15 +2151,6 @@ async function initializeTempMirrorEntities(db) {
       WHERE fk IN (SELECT place_id FROM moz_keywords
                    WHERE place_id IN (OLD.oldPlaceId, OLD.newPlaceId) OR
                          keyword = OLD.newKeyword);
-
-      /* Record change observer notifications for items with the old URL, new
-         URL, and new keyword. This is identical to the subquery above; we just
-         query the item ID instead of updating by the Place ID. */
-      INSERT INTO keywordsChanged(itemId, placeId, keyword)
-      SELECT b.id, b.fk, NULL FROM moz_bookmarks b
-      JOIN moz_keywords k ON k.place_id = b.fk
-      WHERE k.place_id IN (OLD.oldPlaceId, OLD.newPlaceId) OR
-            k.keyword = OLD.newKeyword;
 
       /* Remove the new keyword from existing items, and all keywords from the
          old and new URLs. */
@@ -2139,11 +2177,6 @@ async function initializeTempMirrorEntities(db) {
       /* Insert a new keyword for the new URL, if one is set. */
       INSERT OR IGNORE INTO moz_keywords(keyword, place_id, post_data)
       SELECT OLD.newKeyword, OLD.newPlaceId, ''
-      WHERE OLD.newKeyword NOT NULL;
-
-      /* Record an item changed notification for the new keyword. */
-      INSERT INTO keywordsChanged(itemId, placeId, keyword)
-      SELECT OLD.localId, OLD.newPlaceId, OLD.newKeyword
       WHERE OLD.newKeyword NOT NULL;
 
       /* Insert new tags for the new URL. */
@@ -2359,6 +2392,7 @@ async function initializeTempMirrorEntities(db) {
   await db.execute(`CREATE TEMP TABLE itemsAdded(
     guid TEXT PRIMARY KEY,
     isTagging BOOLEAN NOT NULL DEFAULT 0,
+    keywordChanged BOOLEAN NOT NULL DEFAULT 0,
     level INTEGER NOT NULL DEFAULT -1
   ) WITHOUT ROWID`);
 
@@ -2373,6 +2407,7 @@ async function initializeTempMirrorEntities(db) {
     itemId INTEGER PRIMARY KEY,
     oldTitle TEXT,
     oldPlaceId INTEGER,
+    keywordChanged BOOLEAN NOT NULL DEFAULT 0,
     level INTEGER NOT NULL DEFAULT -1
   )`);
 
@@ -2406,16 +2441,6 @@ async function initializeTempMirrorEntities(db) {
     wasRemoved BOOLEAN NOT NULL,
     PRIMARY KEY(itemId, annoName, wasRemoved)
   ) WITHOUT ROWID`);
-
-  // Stores properties to pass to `onItemChanged` observers for new and removed
-  // keywords. A NULL keyword means we're removing all keywords from a Place.
-  // Note that an item may appear multiple times in this table, so `itemId` is
-  // not a primary key.
-  await db.execute(`CREATE TEMP TABLE keywordsChanged(
-    itemId INTEGER NOT NULL,
-    placeId INTEGER NOT NULL,
-    keyword TEXT
-  )`);
 
   await db.execute(`CREATE TEMP TABLE itemsToWeaklyReupload(
     id INTEGER PRIMARY KEY
@@ -4106,6 +4131,7 @@ class BookmarkObserverRecorder {
     this.db = db;
     this.bookmarkObserverNotifications = [];
     this.annoObserverNotifications = [];
+    this.shouldInvalidateKeywords = false;
     this.shouldInvalidateLivemarks = false;
   }
 
@@ -4115,6 +4141,9 @@ class BookmarkObserverRecorder {
    * outside the merge transaction.
    */
   async notifyAll() {
+    if (this.shouldInvalidateKeywords) {
+      await PlacesUtils.keywords.invalidateCachedKeywords();
+    }
     this.notifyBookmarkObservers();
     this.notifyAnnoObservers();
     if (this.shouldInvalidateLivemarks) {
@@ -4193,16 +4222,6 @@ class BookmarkObserverRecorder {
       isTagging: info.isUntagging,
       args: [info.id, info.parentId, info.position, info.type, uri, info.guid,
         info.parentGuid, PlacesUtils.bookmarks.SOURCES.SYNC],
-    });
-  }
-
-  noteKeywordChanged(info) {
-    this.bookmarkObserverNotifications.push({
-      name: "onItemChanged",
-      isTagging: false,
-      args: [info.id, "keyword", /* isAnnotationProperty */ false, info.keyword,
-        info.lastModified, info.type, info.parentId, info.guid, info.parentGuid,
-      /* oldValue */ info.urlHref, PlacesUtils.bookmarks.SOURCES.SYNC],
     });
   }
 

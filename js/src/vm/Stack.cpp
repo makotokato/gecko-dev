@@ -6,8 +6,6 @@
 
 #include "vm/Stack-inl.h"
 
-#include "mozilla/PodOperations.h"
-
 #include "gc/Marking.h"
 #include "jit/BaselineFrame.h"
 #include "jit/JitcodeMap.h"
@@ -26,7 +24,6 @@ using namespace js;
 using mozilla::ArrayLength;
 using mozilla::DebugOnly;
 using mozilla::Maybe;
-using mozilla::PodCopy;
 
 /*****************************************************************************/
 
@@ -1826,13 +1823,27 @@ jit::JitActivation::wasmInterruptResumePC() const
 }
 
 void
-jit::JitActivation::startWasmTrap(wasm::Trap trap, uint32_t bytecodeOffset, void* pc, void* fp)
+jit::JitActivation::startWasmTrap(wasm::Trap trap, uint32_t bytecodeOffset,
+                                  const wasm::RegisterState& state)
 {
-    MOZ_ASSERT(pc);
-    MOZ_ASSERT(fp);
+    bool unwound;
+    wasm::UnwindState unwindState;
+    MOZ_ALWAYS_TRUE(wasm::StartUnwinding(state, &unwindState, &unwound));
+    MOZ_ASSERT(unwound == (trap == wasm::Trap::IndirectCallBadSig));
+
+    void* pc = unwindState.pc;
+    wasm::Frame* fp = unwindState.fp;
+
+    const wasm::Code& code = fp->tls->instance->code();
+    MOZ_RELEASE_ASSERT(&code == wasm::LookupCode(pc));
+
+    // If the frame was unwound, the bytecodeOffset must be recovered from the
+    // callsite so that it is accurate.
+    if (unwound)
+        bytecodeOffset = code.lookupCallSite(pc)->lineOrBytecode();
 
     cx_->runtime()->wasmUnwindData.ref().construct<wasm::TrapData>(pc, trap, bytecodeOffset);
-    setWasmExitFP((wasm::Frame*)fp);
+    setWasmExitFP(fp);
 }
 
 void

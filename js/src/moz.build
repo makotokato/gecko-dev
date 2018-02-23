@@ -89,7 +89,6 @@ EXPORTS += [
     'jsalloc.h',
     'jsapi.h',
     'jsbytecode.h',
-    'jscpucfg.h',
     'jsfriendapi.h',
     'jsprf.h',
     'jsprototypes.h',
@@ -100,9 +99,6 @@ EXPORTS += [
     'perf/jsperf.h',
 ]
 
-# If you add a header here, add it to js/src/jsapi-tests/testIntTypesABI.cpp so
-# that we ensure we don't over-expose our internal integer typedefs.  Note that
-# LegacyIntTypes.h below is deliberately exempted from this requirement.
 EXPORTS.js += [
     '../public/CallArgs.h',
     '../public/CallNonGenericMethod.h',
@@ -121,7 +117,6 @@ EXPORTS.js += [
     '../public/HeapAPI.h',
     '../public/Id.h',
     '../public/Initialization.h',
-    '../public/LegacyIntTypes.h',
     '../public/MemoryMetrics.h',
     '../public/Principals.h',
     '../public/ProfilingFrameIterator.h',
@@ -675,6 +670,12 @@ if CONFIG['JS_BUILD_BINAST']:
         'frontend/BinSource.cpp',
         'frontend/BinToken.cpp'
     ]
+
+    # Instrument BinAST files for fuzzing as we have a fuzzing target for BinAST.
+    if CONFIG['FUZZING_INTERFACES'] and CONFIG['LIBFUZZER']:
+        SOURCES['frontend/BinSource.cpp'].flags += ['-fsanitize-coverage=trace-pc-guard']
+        SOURCES['frontend/BinToken.cpp'].flags += ['-fsanitize-coverage=trace-pc-guard']
+        SOURCES['frontend/BinTokenReaderTester.cpp'].flags += ['-fsanitize-coverage=trace-pc-guard']
 
 # Wasm code should use WASM_HUGE_MEMORY instead of JS_CODEGEN_X64
 # so that it is easy to use the huge-mapping optimization for other

@@ -108,7 +108,7 @@ public:
                                      int16_t aFlags) override;
   NS_IMETHOD RepaintSelection(RawSelectionType aRawSelectionType) override;
 
-  virtual nsresult Initialize(nscoord aWidth, nscoord aHeight) override;
+  virtual nsresult Initialize() override;
   virtual nsresult ResizeReflow(nscoord aWidth, nscoord aHeight,
                                 nscoord aOldWidth = 0, nscoord aOldHeight = 0,
                                 ResizeReflowOptions aOptions =
@@ -391,9 +391,6 @@ public:
   void RemoveFrameFromApproximatelyVisibleList(nsIFrame* aFrame) override;
 
   bool AssumeAllFramesVisible() override;
-
-
-  virtual void RecordShadowStyleChange(mozilla::dom::ShadowRoot* aShadowRoot) override;
 
   virtual bool CanDispatchEvent(
       const mozilla::WidgetGUIEvent* aEvent = nullptr) const override;

@@ -497,10 +497,13 @@ pref("media.getusermedia.browser.enabled", false);
 pref("media.getusermedia.channels", 0);
 #if defined(ANDROID)
 pref("media.getusermedia.camera.off_while_disabled.enabled", false);
+pref("media.getusermedia.microphone.off_while_disabled.enabled", false);
 #else
 pref("media.getusermedia.camera.off_while_disabled.enabled", true);
+pref("media.getusermedia.microphone.off_while_disabled.enabled", true);
 #endif
 pref("media.getusermedia.camera.off_while_disabled.delay_ms", 3000);
+pref("media.getusermedia.microphone.off_while_disabled.delay_ms", 3000);
 // Desktop is typically VGA capture or more; and qm_select will not drop resolution
 // below 1/2 in each dimension (or so), so QVGA (320x200) is the lowest here usually.
 pref("media.peerconnection.video.min_bitrate", 0);
@@ -2625,6 +2628,13 @@ pref("security.signed_content.CSP.default", "script-src 'self'; style-src 'self'
 pref("security.mixed_content.block_active_content", false);
 pref("security.mixed_content.block_display_content", false);
 
+// Upgrade mixed display content before it's blocked
+#ifdef NIGHTLY_BUILD
+pref("security.mixed_content.upgrade_display_content", true);
+#else
+pref("security.mixed_content.upgrade_display_content", false);
+#endif
+
 // Block sub requests that happen within an object
 #ifdef EARLY_BETA_OR_EARLIER
 pref("security.mixed_content.block_object_subrequest", true);
@@ -3179,7 +3189,7 @@ pref("layout.display-list.dump-content", false);
 pref("layout.display-list.dump-parent", false);
 
 // Toggle retaining display lists between paints
-#if !defined(ANDROID) && defined(NIGHTLY_BUILD)
+#if !defined(ANDROID)
 pref("layout.display-list.retain", true);
 #else
 pref("layout.display-list.retain", false);
@@ -3746,11 +3756,7 @@ pref("font.name-list.sans-serif.ja", "Meiryo, Yu Gothic, MS PGothic, MS Gothic, 
 pref("font.name-list.monospace.ja", "MS Gothic, MS Mincho, Meiryo, Yu Gothic, Yu Mincho, MS PGothic, MS PMincho");
 
 pref("font.name-list.serif.ko", "Batang, Gulim");
-#ifdef EARLY_BETA_OR_EARLIER
 pref("font.name-list.sans-serif.ko", "Malgun Gothic, Gulim");
-#else
-pref("font.name-list.sans-serif.ko", "Gulim, Malgun Gothic");
-#endif
 pref("font.name-list.monospace.ko", "GulimChe");
 pref("font.name-list.cursive.ko", "Gungsuh");
 
@@ -5863,11 +5869,7 @@ pref("layout.css.servo.enabled", false);
 // If Stylo is not enabled, this pref doesn't take any effect.
 // Note that this pref is only read once when requested. Changing it
 // at runtime may have no effect.
-#ifdef MOZ_OLD_STYLE
-pref("layout.css.servo.chrome.enabled", false);
-#else
 pref("layout.css.servo.chrome.enabled", true);
-#endif
 #endif
 
 // TODO: Bug 1324406: Treat 'data:' documents as unique, opaque origins

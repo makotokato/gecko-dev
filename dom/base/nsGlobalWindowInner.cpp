@@ -1102,29 +1102,6 @@ nsGlobalWindowInner::~nsGlobalWindowInner()
   nsLayoutStatics::Release();
 }
 
-void
-nsGlobalWindowInner::AddEventTargetObject(DOMEventTargetHelper* aObject)
-{
-  mEventTargetObjects.PutEntry(aObject);
-}
-
-void
-nsGlobalWindowInner::RemoveEventTargetObject(DOMEventTargetHelper* aObject)
-{
-  mEventTargetObjects.RemoveEntry(aObject);
-}
-
-void
-nsGlobalWindowInner::DisconnectEventTargetObjects()
-{
-  for (auto iter = mEventTargetObjects.ConstIter(); !iter.Done();
-       iter.Next()) {
-    RefPtr<DOMEventTargetHelper> target = iter.Get()->GetKey();
-    target->DisconnectFromOwner();
-  }
-  mEventTargetObjects.Clear();
-}
-
 // static
 void
 nsGlobalWindowInner::ShutDown()
@@ -4398,12 +4375,7 @@ nsGlobalWindowInner::DispatchEvent(nsIDOMEvent* aEvent, bool* aRetVal)
   }
 
   // Obtain a presentation shell
-  nsIPresShell *shell = mDoc->GetShell();
-  RefPtr<nsPresContext> presContext;
-  if (shell) {
-    // Retrieve the context
-    presContext = shell->GetPresContext();
-  }
+  RefPtr<nsPresContext> presContext = mDoc->GetPresContext();
 
   nsEventStatus status = nsEventStatus_eIgnore;
   nsresult rv = EventDispatcher::DispatchDOMEvent(ToSupports(this), nullptr,
@@ -4793,12 +4765,6 @@ nsGlobalWindowInner::FireHashchange(const nsAString &aOldURL,
   // Get a presentation shell for use in creating the hashchange event.
   NS_ENSURE_STATE(IsCurrentInnerWindow());
 
-  nsIPresShell *shell = mDoc->GetShell();
-  RefPtr<nsPresContext> presContext;
-  if (shell) {
-    presContext = shell->GetPresContext();
-  }
-
   HashChangeEventInit init;
   init.mBubbles = true;
   init.mCancelable = false;
@@ -4834,13 +4800,6 @@ nsGlobalWindowInner::DispatchSyncPopState()
   nsCOMPtr<nsIVariant> stateObj;
   rv = mDoc->GetStateObject(getter_AddRefs(stateObj));
   NS_ENSURE_SUCCESS(rv, rv);
-
-  // Obtain a presentation shell for use in creating a popstate event.
-  nsIPresShell *shell = mDoc->GetShell();
-  RefPtr<nsPresContext> presContext;
-  if (shell) {
-    presContext = shell->GetPresContext();
-  }
 
   bool result = true;
   AutoJSAPI jsapi;
@@ -6393,32 +6352,21 @@ nsGlobalWindowInner::GetOrCreateServiceWorker(const ServiceWorkerDescriptor& aDe
 {
   MOZ_ASSERT(NS_IsMainThread());
   RefPtr<ServiceWorker> ref;
-  for (auto sw : mServiceWorkerList) {
-    if (sw->MatchesDescriptor(aDescriptor)) {
-      ref = sw;
-      return ref.forget();
+  ForEachEventTargetObject([&] (DOMEventTargetHelper* aTarget, bool* aDoneOut) {
+    RefPtr<ServiceWorker> sw = do_QueryObject(aTarget);
+    if (!sw || !sw->Descriptor().Matches(aDescriptor)) {
+      return;
     }
+
+    ref = sw.forget();
+    *aDoneOut = true;
+  });
+
+  if (!ref) {
+    ref = ServiceWorker::Create(this, aDescriptor);
   }
-  ref = ServiceWorker::Create(this, aDescriptor);
+
   return ref.forget();
-}
-
-void
-nsGlobalWindowInner::AddServiceWorker(ServiceWorker* aServiceWorker)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_DIAGNOSTIC_ASSERT(aServiceWorker);
-  MOZ_ASSERT(!mServiceWorkerList.Contains(aServiceWorker));
-  mServiceWorkerList.AppendElement(aServiceWorker);
-}
-
-void
-nsGlobalWindowInner::RemoveServiceWorker(ServiceWorker* aServiceWorker)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_DIAGNOSTIC_ASSERT(aServiceWorker);
-  MOZ_ASSERT(mServiceWorkerList.Contains(aServiceWorker));
-  mServiceWorkerList.RemoveElement(aServiceWorker);
 }
 
 nsresult
@@ -6925,6 +6873,8 @@ void
 nsGlobalWindowInner::AddSizeOfIncludingThis(nsWindowSizes& aWindowSizes) const
 {
   aWindowSizes.mDOMOtherSize += aWindowSizes.mState.mMallocSizeOf(this);
+  aWindowSizes.mDOMOtherSize +=
+    nsIGlobalObject::ShallowSizeOfExcludingThis(aWindowSizes.mState.mMallocSizeOf);
 
   EventListenerManager* elm = GetExistingListenerManager();
   if (elm) {
@@ -6947,12 +6897,7 @@ nsGlobalWindowInner::AddSizeOfIncludingThis(nsWindowSizes& aWindowSizes) const
       mNavigator->SizeOfIncludingThis(aWindowSizes.mState.mMallocSizeOf);
   }
 
-  aWindowSizes.mDOMEventTargetsSize +=
-    mEventTargetObjects.ShallowSizeOfExcludingThis(
-      aWindowSizes.mState.mMallocSizeOf);
-
-  for (auto iter = mEventTargetObjects.ConstIter(); !iter.Done(); iter.Next()) {
-    DOMEventTargetHelper* et = iter.Get()->GetKey();
+  ForEachEventTargetObject([&] (DOMEventTargetHelper* et, bool* aDoneOut) {
     if (nsCOMPtr<nsISizeOfEventTarget> iSizeOf = do_QueryObject(et)) {
       aWindowSizes.mDOMEventTargetsSize +=
         iSizeOf->SizeOfEventTargetIncludingThis(
@@ -6962,7 +6907,7 @@ nsGlobalWindowInner::AddSizeOfIncludingThis(nsWindowSizes& aWindowSizes) const
       aWindowSizes.mDOMEventListenersCount += elm->ListenerCount();
     }
     ++aWindowSizes.mDOMEventTargetsCount;
-  }
+  });
 
   if (mPerformance) {
     aWindowSizes.mDOMPerformanceUserEntries =
@@ -7529,10 +7474,10 @@ nsGlobalWindowInner::Orientation(CallerType aCallerType) const
 #endif
 
 already_AddRefed<Console>
-nsGlobalWindowInner::GetConsole(ErrorResult& aRv)
+nsGlobalWindowInner::GetConsole(JSContext* aCx, ErrorResult& aRv)
 {
   if (!mConsole) {
-    mConsole = Console::Create(this, aRv);
+    mConsole = Console::Create(aCx, this, aRv);
     if (NS_WARN_IF(aRv.Failed())) {
       return nullptr;
     }

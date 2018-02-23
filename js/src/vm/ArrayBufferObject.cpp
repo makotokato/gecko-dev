@@ -24,7 +24,6 @@
 
 #include "jsapi.h"
 #include "jsarray.h"
-#include "jscpucfg.h"
 #include "jsfriendapi.h"
 #include "jsnum.h"
 #include "jstypes.h"
@@ -55,7 +54,6 @@
 
 using JS::ToInt32;
 
-using mozilla::DebugOnly;
 using mozilla::CheckedInt;
 using mozilla::Some;
 using mozilla::Maybe;

@@ -45,7 +45,6 @@ using mozilla::FloatingPoint;
 using mozilla::IsPowerOfTwo;
 using mozilla::Maybe;
 using mozilla::PositiveInfinity;
-using mozilla::SpecificNaN;
 
 /*****************************************************************************/
 // wasm text token stream
@@ -92,7 +91,9 @@ class WasmToken
         Equal,
         Error,
         Export,
+#ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
         ExtraConversionOpcode,
+#endif
         Float,
         Func,
         GetGlobal,
@@ -219,6 +220,7 @@ class WasmToken
                    kind_ == Load || kind_ == Store);
         u.op_ = op;
     }
+#ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
     explicit WasmToken(Kind kind, NumericOp op, const char16_t* begin, const char16_t* end)
       : kind_(kind),
         begin_(begin),
@@ -228,6 +230,7 @@ class WasmToken
         MOZ_ASSERT(kind_ == ExtraConversionOpcode);
         u.numericOp_ = op;
     }
+#endif
     explicit WasmToken(Kind kind, ThreadOp op, const char16_t* begin, const char16_t* end)
       : kind_(kind),
         begin_(begin),
@@ -289,10 +292,12 @@ class WasmToken
                    kind_ == Load || kind_ == Store);
         return u.op_;
     }
+#ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
     NumericOp numericOp() const {
         MOZ_ASSERT(kind_ == ExtraConversionOpcode);
         return u.numericOp_;
     }
+#endif
     ThreadOp threadOp() const {
         MOZ_ASSERT(kind_ == AtomicCmpXchg || kind_ == AtomicLoad || kind_ == AtomicRMW ||
                    kind_ == AtomicStore || kind_ == Wait || kind_ == Wake);

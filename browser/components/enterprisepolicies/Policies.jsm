@@ -29,6 +29,14 @@ XPCOMUtils.defineLazyGetter(this, "log", () => {
 this.EXPORTED_SYMBOLS = ["Policies"];
 
 this.Policies = {
+  "BlockAboutAddons": {
+    onBeforeUIStartup(manager, param) {
+      if (param) {
+        manager.disallowFeature("about:addons", true);
+      }
+    }
+  },
+
   "BlockAboutConfig": {
     onBeforeUIStartup(manager, param) {
       if (param) {
@@ -53,52 +61,32 @@ this.Policies = {
     }
   },
 
+  "BlockSetDesktopBackground": {
+    onBeforeUIStartup(manager, param) {
+      if (param) {
+        manager.disallowFeature("setDesktopBackground", true);
+      }
+    }
+  },
+
+  "Cookies": {
+    onBeforeUIStartup(manager, param) {
+      addAllowDenyPermissions("cookie", param.Allow, param.Block);
+    }
+  },
+
+  "CreateMasterPassword": {
+    onBeforeUIStartup(manager, param) {
+      if (!param) {
+        manager.disallowFeature("createMasterPassword");
+      }
+    }
+  },
+
   "DisableAppUpdate": {
     onBeforeAddons(manager, param) {
       if (param) {
         manager.disallowFeature("appUpdate");
-      }
-    }
-  },
-
-  "display_menu_bar": {
-    onBeforeUIStartup(manager, param) {
-      if (param) {
-        // This policy is meant to change the default behavior, not to force it.
-        // If this policy was alreay applied and the user chose to re-hide the
-        // menu bar, do not show it again.
-        if (!Services.prefs.getBoolPref(PREF_MENU_ALREADY_DISPLAYED, false)) {
-          log.debug("Showing the menu bar");
-          gXulStore.setValue(BROWSER_DOCUMENT_URL, "toolbar-menubar", "autohide", "false");
-          Services.prefs.setBoolPref(PREF_MENU_ALREADY_DISPLAYED, true);
-        } else {
-          log.debug("Not showing the menu bar because it has already been shown.");
-        }
-      }
-    }
-  },
-
-  "display_bookmarks_toolbar": {
-    onBeforeUIStartup(manager, param) {
-      if (param) {
-        // This policy is meant to change the default behavior, not to force it.
-        // If this policy was alreay applied and the user chose to re-hide the
-        // bookmarks toolbar, do not show it again.
-        if (!Services.prefs.getBoolPref(PREF_BOOKMARKS_ALREADY_DISPLAYED, false)) {
-          log.debug("Showing the bookmarks toolbar");
-          gXulStore.setValue(BROWSER_DOCUMENT_URL, "PersonalToolbar", "collapsed", "false");
-          Services.prefs.setBoolPref(PREF_BOOKMARKS_ALREADY_DISPLAYED, true);
-        } else {
-          log.debug("Not showing the bookmarks toolbar because it has already been shown.");
-        }
-      }
-    }
-  },
-
-  "block_set_desktop_background": {
-    onBeforeUIStartup(manager, param) {
-      if (param) {
-        manager.disallowFeature("setDesktopBackground", true);
       }
     }
   },
@@ -127,33 +115,75 @@ this.Policies = {
     }
   },
 
-  "dont_check_default_browser": {
+  "DisablePocket": {
+    onBeforeAddons(manager, param) {
+      if (param) {
+        setAndLockPref("extensions.pocket.enabled", false);
+      }
+    }
+  },
+
+  "DisplayBookmarksToolbar": {
+    onBeforeUIStartup(manager, param) {
+      if (param) {
+        // This policy is meant to change the default behavior, not to force it.
+        // If this policy was alreay applied and the user chose to re-hide the
+        // bookmarks toolbar, do not show it again.
+        if (!Services.prefs.getBoolPref(PREF_BOOKMARKS_ALREADY_DISPLAYED, false)) {
+          log.debug("Showing the bookmarks toolbar");
+          gXulStore.setValue(BROWSER_DOCUMENT_URL, "PersonalToolbar", "collapsed", "false");
+          Services.prefs.setBoolPref(PREF_BOOKMARKS_ALREADY_DISPLAYED, true);
+        } else {
+          log.debug("Not showing the bookmarks toolbar because it has already been shown.");
+        }
+      }
+    }
+  },
+
+  "DisplayMenuBar": {
+    onBeforeUIStartup(manager, param) {
+      if (param) {
+        // This policy is meant to change the default behavior, not to force it.
+        // If this policy was alreay applied and the user chose to re-hide the
+        // menu bar, do not show it again.
+        if (!Services.prefs.getBoolPref(PREF_MENU_ALREADY_DISPLAYED, false)) {
+          log.debug("Showing the menu bar");
+          gXulStore.setValue(BROWSER_DOCUMENT_URL, "toolbar-menubar", "autohide", "false");
+          Services.prefs.setBoolPref(PREF_MENU_ALREADY_DISPLAYED, true);
+        } else {
+          log.debug("Not showing the menu bar because it has already been shown.");
+        }
+      }
+    }
+  },
+
+  "DontCheckDefaultBrowser": {
     onBeforeUIStartup(manager, param) {
       setAndLockPref("browser.shell.checkDefaultBrowser", false);
     }
   },
 
-  "flash_plugin": {
+  "FlashPlugin": {
     onBeforeUIStartup(manager, param) {
-      addAllowDenyPermissions("plugin:flash", param.allow, param.block);
+      addAllowDenyPermissions("plugin:flash", param.Allow, param.Block);
     }
   },
 
-  "popups": {
+  "InstallAddons": {
     onBeforeUIStartup(manager, param) {
-      addAllowDenyPermissions("popup", param.allow, param.block);
+      addAllowDenyPermissions("install", param.Allow, param.Block);
     }
   },
 
-  "install_addons": {
+  "Popups": {
     onBeforeUIStartup(manager, param) {
-      addAllowDenyPermissions("install", param.allow, param.block);
+      addAllowDenyPermissions("popup", param.Allow, param.Block);
     }
   },
 
-  "cookies": {
+  "RememberPasswords": {
     onBeforeUIStartup(manager, param) {
-      addAllowDenyPermissions("cookie", param.allow, param.block);
+      setAndLockPref("signon.rememberSignons", param);
     }
   },
 };

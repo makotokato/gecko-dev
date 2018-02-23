@@ -1849,6 +1849,19 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
       }
       MOZ_ASSERT(parent);
     }
+
+    if (MayHaveAnimations() &&
+        (pseudoType == CSSPseudoElementType::NotPseudo ||
+         pseudoType == CSSPseudoElementType::before ||
+         pseudoType == CSSPseudoElementType::after) &&
+        EffectSet::GetEffectSet(this, pseudoType)) {
+      if (nsPresContext* presContext = aDocument->GetPresContext()) {
+        presContext->EffectCompositor()->
+          RequestRestyle(this, pseudoType,
+                         EffectCompositor::RestyleType::Standard,
+                         EffectCompositor::CascadeLevel::Animations);
+      }
+    }
   }
 
   // XXXbz script execution during binding can trigger some of these
@@ -1951,15 +1964,12 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
   // we're not leaving behind a pointer to ourselves as the PresContext's
   // cached provider of the viewport's scrollbar styles.
   if (document) {
-    nsIPresShell* presShell = document->GetShell();
-    if (presShell) {
-      nsPresContext* presContext = presShell->GetPresContext();
-      if (presContext) {
-        MOZ_ASSERT(this !=
-                   presContext->GetViewportScrollbarStylesOverrideElement(),
-                   "Leaving behind a raw pointer to this element (as having "
-                   "propagated scrollbar styles) - that's dangerous...");
-      }
+    nsPresContext* presContext = document->GetPresContext();
+    if (presContext) {
+      MOZ_ASSERT(this !=
+                 presContext->GetViewportScrollbarStylesOverrideElement(),
+                 "Leaving behind a raw pointer to this element (as having "
+                 "propagated scrollbar styles) - that's dangerous...");
     }
   }
 #endif
@@ -1979,6 +1989,14 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
     DeleteProperty(nsGkAtoms::animationsOfBeforeProperty);
     DeleteProperty(nsGkAtoms::animationsOfAfterProperty);
     DeleteProperty(nsGkAtoms::animationsProperty);
+    if (document) {
+      if (nsPresContext* presContext = document->GetPresContext()) {
+        // We have to clear all pending restyle requests for the animations on
+        // this element to avoid unnecessary restyles when we re-attached this
+        // element.
+        presContext->EffectCompositor()->ClearRestyleRequestsFor(this);
+      }
+    }
   }
 
   // Computed style data isn't useful for detached nodes, and we'll need to
@@ -3804,22 +3822,23 @@ Element::Animate(const Nullable<ElementOrCSSPseudoElement>& aTarget,
   GlobalObject global(aContext, ownerGlobal->GetGlobalJSObject());
   MOZ_ASSERT(!global.Failed());
 
-  // Wrap the aKeyframes object for the cross-compartment case.
-  JS::Rooted<JSObject*> keyframes(aContext);
-  keyframes = aKeyframes;
+  // KeyframeEffect constructor doesn't follow the standard Xray calling
+  // convention and needs to be called in caller's compartment.
+  // This should match to RunConstructorInCallerCompartment attribute in
+  // KeyframeEffect.webidl.
+  RefPtr<KeyframeEffect> effect =
+    KeyframeEffect::Constructor(global, aTarget, aKeyframes, aOptions,
+                                aError);
+  if (aError.Failed()) {
+    return nullptr;
+  }
+
+  // Animation constructor follows the standard Xray calling convention and
+  // needs to be called in the target element's compartment.
   Maybe<JSAutoCompartment> ac;
   if (js::GetContextCompartment(aContext) !=
       js::GetObjectCompartment(ownerGlobal->GetGlobalJSObject())) {
     ac.emplace(aContext, ownerGlobal->GetGlobalJSObject());
-    if (!JS_WrapObject(aContext, &keyframes)) {
-      return nullptr;
-    }
-  }
-
-  RefPtr<KeyframeEffect> effect =
-    KeyframeEffect::Constructor(global, aTarget, keyframes, aOptions, aError);
-  if (aError.Failed()) {
-    return nullptr;
   }
 
   AnimationTimeline* timeline = referenceElement->OwnerDoc()->Timeline();

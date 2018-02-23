@@ -180,7 +180,10 @@ U2FTokenManager::ClearTransaction()
 {
   mTransactionParent = nullptr;
   // Drop managers at the end of all transactions
-  mTokenManagerImpl = nullptr;
+  if (mTokenManagerImpl) {
+    mTokenManagerImpl->Drop();
+    mTokenManagerImpl = nullptr;
+  }
   // Forget promises, if necessary.
   mRegisterPromise.DisconnectIfExists();
   mSignPromise.DisconnectIfExists();
@@ -319,6 +322,7 @@ U2FTokenManager::Sign(PWebAuthnTransactionParent* aTransactionParent,
   mTokenManagerImpl->Sign(aTransactionInfo.AllowList(),
                           aTransactionInfo.RpIdHash(),
                           aTransactionInfo.ClientDataHash(),
+                          aTransactionInfo.Extensions(),
                           aTransactionInfo.RequireUserVerification(),
                           aTransactionInfo.TimeoutMS())
                    ->Then(GetCurrentThreadSerialEventTarget(), __func__,

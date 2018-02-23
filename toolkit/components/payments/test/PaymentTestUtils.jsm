@@ -22,10 +22,18 @@ this.PaymentTestUtils = {
       };
     },
 
-    addShippingChangeHandler: ({details}) => {
-      content.rq.onshippingaddresschange = ev => {
-        ev.updateWith(details);
-      };
+    promisePaymentRequestEvent: ({eventName}) => {
+      content[eventName + "Promise"] =
+        new Promise(resolve => {
+          content.rq.addEventListener(eventName, () => {
+            resolve();
+          });
+        });
+    },
+
+    awaitPaymentRequestEventPromise: async ({eventName}) => {
+      await content[eventName + "Promise"];
+      return true;
     },
 
     /**
@@ -57,6 +65,11 @@ this.PaymentTestUtils = {
   },
 
   DialogContentTasks: {
+    isElementVisible: selector => {
+      let element = content.document.querySelector(selector);
+      return !element.hidden;
+    },
+
     getShippingOptions: () => {
       let select = content.document.querySelector("shipping-option-picker > rich-select");
       let popupBox = Cu.waiveXrays(select).popupBox;
@@ -140,38 +153,12 @@ this.PaymentTestUtils = {
    */
   Details: {
     total60USD: {
-      shippingOptions: [
-        {
-          id: "standard",
-          label: "Ground Shipping (2 days)",
-          amount: { currency: "USD", value: "5.00" },
-          selected: true,
-        },
-        {
-          id: "drone",
-          label: "Drone Express (2 hours)",
-          amount: { currency: "USD", value: "25.00" },
-        },
-      ],
       total: {
         label: "Total due",
         amount: { currency: "USD", value: "60.00" },
       },
     },
     total60EUR: {
-      shippingOptions: [
-        {
-          id: "standard",
-          label: "Ground Shipping (4 days)",
-          amount: { currency: "EUR", value: "7.00" },
-          selected: true,
-        },
-        {
-          id: "drone",
-          label: "Drone Express (8 hours)",
-          amount: { currency: "EUR", value: "29.00" },
-        },
-      ],
       total: {
         label: "Total due",
         amount: { currency: "EUR", value: "75.00" },

@@ -198,7 +198,9 @@ enum class AstExprKind
     ConversionOperator,
     CurrentMemory,
     Drop,
+#ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
     ExtraConversionOperator,
+#endif
     First,
     GetGlobal,
     GetLocal,

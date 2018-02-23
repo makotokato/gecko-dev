@@ -31,43 +31,43 @@ MacroAssembler::move64(Imm64 imm, Register64 dest)
 void
 MacroAssembler::moveDoubleToGPR64(FloatRegister src, Register64 dest)
 {
-    MOZ_CRASH("NYI: moveDoubleToGPR64");
+    moveFromDouble(src, dest.reg);
 }
 
 void
 MacroAssembler::moveGPR64ToDouble(Register64 src, FloatRegister dest)
 {
-    MOZ_CRASH("NYI: moveGPR64ToDouble");
+    moveToDouble(src.reg, dest);
 }
 
 void
 MacroAssembler::move64To32(Register64 src, Register dest)
 {
-    MOZ_CRASH("NYI: move64To32");
+    ma_sll(dest, src.reg, Imm32(0));
 }
 
 void
 MacroAssembler::move32To64ZeroExtend(Register src, Register64 dest)
 {
-    MOZ_CRASH("NYI: move32To64ZeroExtend");
+    ma_dext(dest.reg, src, Imm32(0), Imm32(32));
 }
 
 void
 MacroAssembler::move8To64SignExtend(Register src, Register64 dest)
 {
-    MOZ_CRASH("NYI: move8To64SignExtend");
+    move8SignExtend(src, dest.reg);
 }
 
 void
 MacroAssembler::move16To64SignExtend(Register src, Register64 dest)
 {
-    MOZ_CRASH("NYI: move16To64SignExtend");
+    move16SignExtend(src, dest.reg);
 }
 
 void
 MacroAssembler::move32To64SignExtend(Register src, Register64 dest)
 {
-    MOZ_CRASH("NYI: move32To64SignExtend");
+    ma_sll(dest.reg, src, Imm32(0));
 }
 
 // ===============================================================
@@ -245,13 +245,20 @@ MacroAssembler::add64(Imm64 imm, Register64 dest)
 CodeOffset
 MacroAssembler::sub32FromStackPtrWithPatch(Register dest)
 {
-    MOZ_CRASH("NYI - sub32FromStackPtrWithPatch");
+    CodeOffset offset = CodeOffset(currentOffset());
+    MacroAssemblerMIPSShared::ma_liPatchable(dest, Imm32(0));
+    as_dsubu(dest, StackPointer, dest);
+    return offset;
 }
 
 void
 MacroAssembler::patchSub32FromStackPtr(CodeOffset offset, Imm32 imm)
 {
-    MOZ_CRASH("NYI - patchSub32FromStackPtr");
+    Instruction* lui = (Instruction*) m_buffer.getInst(BufferOffset(offset.offset()));
+    MOZ_ASSERT(lui->extractOpcode() == ((uint32_t)op_lui >> OpcodeShift));
+    MOZ_ASSERT(lui->next()->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
+
+    MacroAssemblerMIPSShared::UpdateLuiOriValue(lui, lui->next(), imm.value);
 }
 
 void
@@ -735,6 +742,30 @@ MacroAssembler::branchToComputedAddress(const BaseIndex& addr)
         asMasm().addPtr(Imm32(addr.offset), ScratchRegister);
     as_jr(ScratchRegister);
     as_nop();
+}
+
+void
+MacroAssembler::branchTruncateDoubleMaybeModUint32(FloatRegister src, Register dest, Label* fail)
+{
+    as_truncld(ScratchDoubleReg, src);
+    as_cfc1(ScratchRegister, Assembler::FCSR);
+    moveFromDouble(ScratchDoubleReg, dest);
+    ma_ext(ScratchRegister, ScratchRegister, Assembler::CauseV, 1);
+    ma_b(ScratchRegister, Imm32(0), fail, Assembler::NotEqual);
+
+    as_sll(dest, dest, 0);
+}
+
+void
+MacroAssembler::branchTruncateFloat32MaybeModUint32(FloatRegister src, Register dest, Label* fail)
+{
+    as_truncls(ScratchDoubleReg, src);
+    as_cfc1(ScratchRegister, Assembler::FCSR);
+    moveFromDouble(ScratchDoubleReg, dest);
+    ma_ext(ScratchRegister, ScratchRegister, Assembler::CauseV, 1);
+    ma_b(ScratchRegister, Imm32(0), fail, Assembler::NotEqual);
+
+    as_sll(dest, dest, 0);
 }
 
 // ========================================================================

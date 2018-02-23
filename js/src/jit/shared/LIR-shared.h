@@ -7788,14 +7788,16 @@ class LLoadUnboxedExpando : public LInstructionHelper<1, 1, 0>
 };
 
 // Guard that a value is in a TypeSet.
-class LTypeBarrierV : public LInstructionHelper<0, BOX_PIECES, 1>
+class LTypeBarrierV : public LInstructionHelper<0, BOX_PIECES, 2>
 {
   public:
     LIR_HEADER(TypeBarrierV)
 
-    LTypeBarrierV(const LBoxAllocation& input, const LDefinition& temp) {
+    LTypeBarrierV(const LBoxAllocation& input, const LDefinition& unboxTemp,
+                  const LDefinition& objTemp) {
         setBoxOperand(Input, input);
-        setTemp(0, temp);
+        setTemp(0, unboxTemp);
+        setTemp(1, objTemp);
     }
 
     static const size_t Input = 0;
@@ -7803,8 +7805,11 @@ class LTypeBarrierV : public LInstructionHelper<0, BOX_PIECES, 1>
     const MTypeBarrier* mir() const {
         return mir_->toTypeBarrier();
     }
-    const LDefinition* temp() {
+    const LDefinition* unboxTemp() {
         return getTemp(0);
+    }
+    const LDefinition* objTemp() {
+        return getTemp(1);
     }
 };
 
@@ -7830,14 +7835,16 @@ class LTypeBarrierO : public LInstructionHelper<0, 1, 1>
 };
 
 // Guard that a value is in a TypeSet.
-class LMonitorTypes : public LInstructionHelper<0, BOX_PIECES, 1>
+class LMonitorTypes : public LInstructionHelper<0, BOX_PIECES, 2>
 {
   public:
     LIR_HEADER(MonitorTypes)
 
-    LMonitorTypes(const LBoxAllocation& input, const LDefinition& temp) {
+    LMonitorTypes(const LBoxAllocation& input, const LDefinition& unboxTemp,
+                  const LDefinition& objTemp) {
         setBoxOperand(Input, input);
-        setTemp(0, temp);
+        setTemp(0, unboxTemp);
+        setTemp(1, objTemp);
     }
 
     static const size_t Input = 0;
@@ -7845,8 +7852,11 @@ class LMonitorTypes : public LInstructionHelper<0, BOX_PIECES, 1>
     const MMonitorTypes* mir() const {
         return mir_->toMonitorTypes();
     }
-    const LDefinition* temp() {
+    const LDefinition* unboxTemp() {
         return getTemp(0);
+    }
+    const LDefinition* objTemp() {
+        return getTemp(1);
     }
 };
 
@@ -9080,17 +9090,15 @@ class LWasmStackArgI64 : public LInstructionHelper<0, INT64_PIECES, 0>
 };
 
 template <size_t Defs>
-class LWasmCallBase : public details::LInstructionFixedDefsTempsHelper<Defs, 0>
+class LWasmCallBase : public LVariadicInstruction<Defs, 0>
 {
-    using Base = details::LInstructionFixedDefsTempsHelper<Defs, 0>;
+    using Base = LVariadicInstruction<Defs, 0>;
 
-    LAllocation* operands_;
-    uint32_t needsBoundsCheck_;
+    bool needsBoundsCheck_;
 
   public:
-    LWasmCallBase(LAllocation* operands, uint32_t numOperands, bool needsBoundsCheck)
+    LWasmCallBase(uint32_t numOperands, bool needsBoundsCheck)
       : Base(numOperands),
-        operands_(operands),
         needsBoundsCheck_(needsBoundsCheck)
     {
         this->setIsCall();
@@ -9109,15 +9117,6 @@ class LWasmCallBase : public details::LInstructionFixedDefsTempsHelper<Defs, 0>
         return !reg.isFloat() && reg.gpr() == WasmTlsReg;
     }
 
-    // LInstruction interface
-    LAllocation* getOperand(size_t index) override {
-        MOZ_ASSERT(index < this->numOperands());
-        return &operands_[index];
-    }
-    void setOperand(size_t index, const LAllocation& a) override {
-        MOZ_ASSERT(index < this->numOperands());
-        operands_[index] = a;
-    }
     bool needsBoundsCheck() const {
         return needsBoundsCheck_;
     }
@@ -9128,8 +9127,8 @@ class LWasmCall : public LWasmCallBase<1>
   public:
     LIR_HEADER(WasmCall);
 
-    LWasmCall(LAllocation* operands, uint32_t numOperands, bool needsBoundsCheck)
-      : LWasmCallBase(operands, numOperands, needsBoundsCheck)
+    LWasmCall(uint32_t numOperands, bool needsBoundsCheck)
+      : LWasmCallBase(numOperands, needsBoundsCheck)
     {
     }
 };
@@ -9139,8 +9138,8 @@ class LWasmCallVoid : public LWasmCallBase<0>
   public:
     LIR_HEADER(WasmCallVoid);
 
-    LWasmCallVoid(LAllocation* operands, uint32_t numOperands, bool needsBoundsCheck)
-      : LWasmCallBase(operands, numOperands, needsBoundsCheck)
+    LWasmCallVoid(uint32_t numOperands, bool needsBoundsCheck)
+      : LWasmCallBase(numOperands, needsBoundsCheck)
     {
     }
 };
@@ -9150,8 +9149,8 @@ class LWasmCallI64 : public LWasmCallBase<INT64_PIECES>
   public:
     LIR_HEADER(WasmCallI64);
 
-    LWasmCallI64(LAllocation* operands, uint32_t numOperands, bool needsBoundsCheck)
-      : LWasmCallBase(operands, numOperands, needsBoundsCheck)
+    LWasmCallI64(uint32_t numOperands, bool needsBoundsCheck)
+      : LWasmCallBase(numOperands, needsBoundsCheck)
     {
     }
 };

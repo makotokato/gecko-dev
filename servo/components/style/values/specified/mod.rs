@@ -34,6 +34,7 @@ pub use self::align::{AlignSelf, JustifySelf};
 pub use self::background::{BackgroundRepeat, BackgroundSize};
 pub use self::border::{BorderCornerRadius, BorderImageSlice, BorderImageWidth};
 pub use self::border::{BorderImageRepeat, BorderImageSideWidth, BorderRadius, BorderSideWidth, BorderSpacing};
+pub use self::column::ColumnCount;
 pub use self::font::{FontSize, FontSizeAdjust, FontSynthesis, FontWeight, FontVariantAlternates};
 pub use self::font::{FontFamily, FontLanguageOverride, FontVariationSettings, FontVariantEastAsian};
 pub use self::font::{FontVariantLigatures, FontVariantNumeric, FontFeatureSettings};
@@ -61,7 +62,8 @@ pub use self::list::ListStyleType;
 pub use self::outline::OutlineStyle;
 pub use self::rect::LengthOrNumberRect;
 pub use self::percentage::Percentage;
-pub use self::position::{Position, PositionComponent, GridAutoFlow, GridTemplateAreas};
+pub use self::position::{GridAutoFlow, GridTemplateAreas, Position};
+pub use self::position::{PositionComponent, ZIndex};
 pub use self::pointing::Cursor;
 #[cfg(feature = "gecko")]
 pub use self::pointing::CursorImage;
@@ -87,6 +89,7 @@ pub mod border;
 pub mod box_;
 pub mod calc;
 pub mod color;
+pub mod column;
 pub mod counters;
 pub mod effects;
 pub mod flex;
@@ -518,24 +521,6 @@ impl ToCss for Integer {
     }
 }
 
-/// <integer> | auto
-pub type IntegerOrAuto = Either<Integer, Auto>;
-
-impl IntegerOrAuto {
-    /// Parse `auto` or a positive integer.
-    pub fn parse_positive<'i, 't>(
-        context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<IntegerOrAuto, ParseError<'i>> {
-        match IntegerOrAuto::parse(context, input) {
-            Ok(Either::First(integer)) if integer.value() <= 0 => {
-                Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError))
-            }
-            result => result,
-        }
-    }
-}
-
 /// A wrapper of Integer, with value >= 1.
 pub type PositiveInteger = GreaterThanOrEqualToOne<Integer>;
 
@@ -545,9 +530,6 @@ impl Parse for PositiveInteger {
         Integer::parse_positive(context, input).map(GreaterThanOrEqualToOne::<Integer>)
     }
 }
-
-/// PositiveInteger | auto
-pub type PositiveIntegerOrAuto = Either<PositiveInteger, Auto>;
 
 #[allow(missing_docs)]
 pub type UrlOrNone = Either<SpecifiedUrl, None_>;

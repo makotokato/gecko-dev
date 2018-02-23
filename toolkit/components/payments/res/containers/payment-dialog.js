@@ -31,6 +31,7 @@ class PaymentDialog extends PaymentStateSubscriberMixin(HTMLElement) {
     this._viewAllButton.addEventListener("click", this);
 
     this._orderDetailsOverlay = contents.querySelector("#order-details-overlay");
+    this._shippingRequestedEls = contents.querySelectorAll(".shippingRequested");
 
     this.appendChild(contents);
 
@@ -80,6 +81,12 @@ class PaymentDialog extends PaymentStateSubscriberMixin(HTMLElement) {
     });
   }
 
+  changeShippingOption(optionID) {
+    paymentRequest.changeShippingOption({
+      optionID,
+    });
+  }
+
   /**
    * Set some state from the privileged parent process.
    * Other elements that need to set state should use their own `this.requestStore.setState`
@@ -120,7 +127,8 @@ class PaymentDialog extends PaymentStateSubscriberMixin(HTMLElement) {
 
     // Ensure `selectedShippingOption` never refers to a deleted shipping option and
     // refers to a shipping option if one exists.
-    if (!shippingOptions.find(option => option.id == selectedShippingOption)) {
+    if (shippingOptions &&
+        !shippingOptions.find(option => option.id == selectedShippingOption)) {
       // The shippingOption spec says to use the last specified selected: true item.
       for (let i = shippingOptions.length - 1; i >= 0; i--) {
         if (shippingOptions[i].selected) {
@@ -131,6 +139,7 @@ class PaymentDialog extends PaymentStateSubscriberMixin(HTMLElement) {
       if (!selectedShippingOption && shippingOptions.length) {
         selectedShippingOption = shippingOptions[0].id;
       }
+      this._cachedState.selectedShippingOption = selectedShippingOption;
       this.requestStore.setState({
         selectedShippingOption,
       });
@@ -144,7 +153,12 @@ class PaymentDialog extends PaymentStateSubscriberMixin(HTMLElement) {
       this.changeShippingAddress(state.selectedShippingAddress);
     }
 
+    if (state.selectedShippingOption != this._cachedState.selectedShippingOption) {
+      this.changeShippingOption(state.selectedShippingOption);
+    }
+
     this._cachedState.selectedShippingAddress = state.selectedShippingAddress;
+    this._cachedState.selectedShippingOption = state.selectedShippingOption;
   }
 
   render(state) {
@@ -157,6 +171,9 @@ class PaymentDialog extends PaymentStateSubscriberMixin(HTMLElement) {
     totalAmountEl.currency = totalItem.amount.currency;
 
     this._orderDetailsOverlay.hidden = !state.orderDetailsShowing;
+    for (let element of this._shippingRequestedEls) {
+      element.hidden = !request.paymentOptions.requestShipping;
+    }
   }
 }
 

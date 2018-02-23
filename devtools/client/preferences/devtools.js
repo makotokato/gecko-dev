@@ -255,7 +255,16 @@ pref("devtools.webconsole.filter.serverwarn", false);
 pref("devtools.webconsole.filter.serverinfo", false);
 pref("devtools.webconsole.filter.serverlog", false);
 
-// Remember the Browser Console filters
+// Browser console filters
+pref("devtools.browserconsole.filter.error", true);
+pref("devtools.browserconsole.filter.warn", true);
+pref("devtools.browserconsole.filter.info", true);
+pref("devtools.browserconsole.filter.log", true);
+pref("devtools.browserconsole.filter.debug", true);
+pref("devtools.browserconsole.filter.css", false);
+pref("devtools.browserconsole.filter.net", false);
+pref("devtools.browserconsole.filter.netxhr", false);
+// Remember the Browser Console filters (old frontend)
 pref("devtools.browserconsole.filter.network", true);
 pref("devtools.browserconsole.filter.networkinfo", false);
 pref("devtools.browserconsole.filter.netwarn", true);
@@ -280,8 +289,10 @@ pref("devtools.browserconsole.filter.serverwarn", false);
 pref("devtools.browserconsole.filter.serverinfo", false);
 pref("devtools.browserconsole.filter.serverlog", false);
 
-// Web console filter settings bar
+// Web console filter bar settings
 pref("devtools.webconsole.ui.filterbar", false);
+// Browser console filter bar settings
+pref("devtools.browserconsole.ui.filterbar", false);
 
 // Max number of inputs to store in web console history.
 pref("devtools.webconsole.inputHistoryCount", 50);
@@ -346,3 +357,10 @@ pref("devtools.editor.autocomplete", true);
 // opened developer tool. This allows us to ping telemetry just once per browser
 // version for each user.
 pref("devtools.telemetry.tools.opened.version", "{}");
+
+// Whether to reload when touch simulation is toggled
+pref("devtools.responsive.reloadConditions.touchSimulation", false);
+// Whether to reload when user agent is changed
+pref("devtools.responsive.reloadConditions.userAgent", false);
+// Whether to show the notification about reloading to apply emulation
+pref("devtools.responsive.reloadNotification.enabled", true);

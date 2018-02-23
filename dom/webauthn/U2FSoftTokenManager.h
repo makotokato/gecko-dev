@@ -23,21 +23,22 @@ class U2FSoftTokenManager final : public U2FTokenTransport
 public:
   explicit U2FSoftTokenManager(uint32_t aCounter);
 
-  virtual RefPtr<U2FRegisterPromise>
+  RefPtr<U2FRegisterPromise>
   Register(const nsTArray<WebAuthnScopedCredential>& aCredentials,
            const WebAuthnAuthenticatorSelection &aAuthenticatorSelection,
            const nsTArray<uint8_t>& aApplication,
            const nsTArray<uint8_t>& aChallenge,
            uint32_t aTimeoutMS) override;
 
-  virtual RefPtr<U2FSignPromise>
+  RefPtr<U2FSignPromise>
   Sign(const nsTArray<WebAuthnScopedCredential>& aCredentials,
        const nsTArray<uint8_t>& aApplication,
        const nsTArray<uint8_t>& aChallenge,
+       const nsTArray<WebAuthnExtension>& aExtensions,
        bool aRequireUserVerification,
        uint32_t aTimeoutMS) override;
 
-  virtual void Cancel() override;
+  void Cancel() override;
 
 private:
   ~U2FSoftTokenManager() {}
@@ -46,6 +47,12 @@ private:
   nsresult IsRegistered(const nsTArray<uint8_t>& aKeyHandle,
                         const nsTArray<uint8_t>& aAppParam,
                         bool& aResult);
+
+  bool
+  FindRegisteredKeyHandle(const nsTArray<nsTArray<uint8_t>>& aAppIds,
+                          const nsTArray<WebAuthnScopedCredential>& aCredentials,
+                          /*out*/ nsTArray<uint8_t>& aKeyHandle,
+                          /*out*/ nsTArray<uint8_t>& aAppId);
 
   bool mInitialized;
   mozilla::UniquePK11SymKey mWrappingKey;

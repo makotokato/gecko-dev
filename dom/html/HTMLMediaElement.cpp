@@ -1949,14 +1949,43 @@ static bool HasSourceChildren(nsIContent* aElement)
   return false;
 }
 
+static nsCString
+DocumentOrigin(nsIDocument* aDoc)
+{
+  if (!aDoc) {
+    return NS_LITERAL_CSTRING("null");
+  }
+  nsCOMPtr<nsIPrincipal> principal = aDoc->NodePrincipal();
+  if (!principal) {
+    return NS_LITERAL_CSTRING("null");
+  }
+  nsCString origin;
+  if (NS_FAILED(principal->GetOrigin(origin))) {
+    return NS_LITERAL_CSTRING("null");
+  }
+  return origin;
+}
+
 void
 HTMLMediaElement::Load()
 {
   LOG(LogLevel::Debug,
       ("%p Load() hasSrcAttrStream=%d hasSrcAttr=%d hasSourceChildren=%d "
-       "handlingInput=%d",
-       this, !!mSrcAttrStream, HasAttr(kNameSpaceID_None, nsGkAtoms::src),
-       HasSourceChildren(this), EventStateManager::IsHandlingUserInput()));
+       "handlingInput=%d hasAutoplayAttr=%d IsAllowedToPlay=%d "
+       "ownerDoc=%p (%s) ownerDocUserActivated=%d "
+       "muted=%d volume=%f",
+       this,
+       !!mSrcAttrStream,
+       HasAttr(kNameSpaceID_None, nsGkAtoms::src),
+       HasSourceChildren(this),
+       EventStateManager::IsHandlingUserInput(),
+       HasAttr(kNameSpaceID_None, nsGkAtoms::autoplay),
+       IsAllowedToPlay(),
+       OwnerDoc(),
+       DocumentOrigin(OwnerDoc()).get(),
+       OwnerDoc() ? OwnerDoc()->HasBeenUserActivated() : 0,
+       mMuted,
+       mVolume));
 
   if (mIsRunningLoadMethod) {
     return;
@@ -2657,6 +2686,7 @@ HTMLMediaElement::CurrentTime() const
 void
 HTMLMediaElement::FastSeek(double aTime, ErrorResult& aRv)
 {
+  LOG(LogLevel::Debug, ("%p FastSeek(%f) called by JS", this, aTime));
   LOG(LogLevel::Debug, ("Reporting telemetry VIDEO_FASTSEEK_USED"));
   Telemetry::Accumulate(Telemetry::VIDEO_FASTSEEK_USED, 1);
   RefPtr<Promise> tobeDropped = Seek(aTime, SeekTarget::PrevSyncPoint, aRv);
@@ -2689,45 +2719,39 @@ HTMLMediaElement::SeekToNextFrame(ErrorResult& aRv)
 void
 HTMLMediaElement::SetCurrentTime(double aCurrentTime, ErrorResult& aRv)
 {
+  LOG(LogLevel::Debug,
+      ("%p SetCurrentTime(%f) called by JS", this, aCurrentTime));
   RefPtr<Promise> tobeDropped = Seek(aCurrentTime, SeekTarget::Accurate, aRv);
 }
 
 /**
- * Check if aValue is inside a range of aRanges, and if so sets aIsInRanges
- * to true and put the range index in aIntervalIndex. If aValue is not
- * inside a range, aIsInRanges is set to false, and aIntervalIndex
- * is set to the index of the range which ends immediately before aValue
- * (and can be -1 if aValue is before aRanges.Start(0)). Returns NS_OK
- * on success, and NS_ERROR_FAILURE on failure.
+ * Check if aValue is inside a range of aRanges, and if so returns true
+ * and puts the range index in aIntervalIndex. If aValue is not
+ * inside a range, returns false, and aIntervalIndex
+ * is set to the index of the range which starts immediately after aValue
+ * (and can be aRanges.Length() if aValue is after the last range).
  */
-static nsresult
+static bool
 IsInRanges(TimeRanges& aRanges,
            double aValue,
-           bool& aIsInRanges,
-           int32_t& aIntervalIndex)
+           uint32_t& aIntervalIndex)
 {
-  aIsInRanges = false;
-  uint32_t length;
-  nsresult rv = aRanges.GetLength(&length);
-  NS_ENSURE_SUCCESS(rv, rv);
+  uint32_t length = aRanges.Length();
+
   for (uint32_t i = 0; i < length; i++) {
-    double start, end;
-    rv = aRanges.Start(i, &start);
-    NS_ENSURE_SUCCESS(rv, rv);
+    double start = aRanges.Start(i);
     if (start > aValue) {
-      aIntervalIndex = i - 1;
-      return NS_OK;
+      aIntervalIndex = i;
+      return false;
     }
-    rv = aRanges.End(i, &end);
-    NS_ENSURE_SUCCESS(rv, rv);
+    double end = aRanges.End(i);
     if (aValue <= end) {
       aIntervalIndex = i;
-      aIsInRanges = true;
-      return NS_OK;
+      return true;
     }
   }
-  aIntervalIndex = length - 1;
-  return NS_OK;
+  aIntervalIndex = length;
+  return false;
 }
 
 already_AddRefed<Promise>
@@ -2791,9 +2815,8 @@ HTMLMediaElement::Seek(double aTime,
   }
   RefPtr<TimeRanges> seekable =
     new TimeRanges(ToSupports(OwnerDoc()), seekableIntervals);
-  uint32_t length = 0;
-  seekable->GetLength(&length);
-  if (!length) {
+  uint32_t length = seekable->Length();
+  if (length == 0) {
     promise->MaybeReject(NS_ERROR_DOM_INVALID_STATE_ERR);
     return promise.forget();
   }
@@ -2803,46 +2826,28 @@ HTMLMediaElement::Seek(double aTime,
   // are equally close, we seek to the closest position from the currentTime.
   // See seeking spec, point 7 :
   // http://www.whatwg.org/specs/web-apps/current-work/multipage/the-video-element.html#seeking
-  int32_t range = 0;
-  bool isInRange = false;
-  if (NS_FAILED(IsInRanges(*seekable, aTime, isInRange, range))) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR); // This will reject the promise.
-    return promise.forget();
-  }
+  uint32_t range = 0;
+  bool isInRange = IsInRanges(*seekable, aTime, range);
   if (!isInRange) {
-    if (range != -1) {
-      // |range + 1| can't be negative, because the only possible negative value
-      // for |range| is -1.
-      if (uint32_t(range + 1) < length) {
-        double leftBound, rightBound;
-        if (NS_FAILED(seekable->End(range, &leftBound))) {
-          aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
-          return promise.forget();
-        }
-        if (NS_FAILED(seekable->Start(range + 1, &rightBound))) {
-          aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
-          return promise.forget();
-        }
-        double distanceLeft = Abs(leftBound - aTime);
-        double distanceRight = Abs(rightBound - aTime);
-        if (distanceLeft == distanceRight) {
-          double currentTime = CurrentTime();
-          distanceLeft = Abs(leftBound - currentTime);
-          distanceRight = Abs(rightBound - currentTime);
-        }
-        aTime = (distanceLeft < distanceRight) ? leftBound : rightBound;
-      } else {
-        // Seek target is after the end last range in seekable data.
-        // Clamp the seek target to the end of the last seekable range.
-        if (NS_FAILED(seekable->End(length - 1, &aTime))) {
-          aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
-          return promise.forget();
-        }
-      }
-    } else {
+    if (range == 0) {
       // aTime is before the first range in |seekable|, the closest point we can
       // seek to is the start of the first range.
-      seekable->Start(0, &aTime);
+      aTime = seekable->Start(0);
+    } else if (range == length) {
+      // Seek target is after the end last range in seekable data.
+      // Clamp the seek target to the end of the last seekable range.
+      aTime = seekable->End(length - 1);
+    } else {
+      double leftBound = seekable->End(range - 1);
+      double rightBound = seekable->Start(range);
+      double distanceLeft = Abs(leftBound - aTime);
+      double distanceRight = Abs(rightBound - aTime);
+      if (distanceLeft == distanceRight) {
+        double currentTime = CurrentTime();
+        distanceLeft = Abs(leftBound - currentTime);
+        distanceRight = Abs(rightBound - currentTime);
+      }
+      aTime = (distanceLeft < distanceRight) ? leftBound : rightBound;
     }
   }
 
@@ -2903,13 +2908,11 @@ HTMLMediaElement::Played()
 
   uint32_t timeRangeCount = 0;
   if (mPlayed) {
-    mPlayed->GetLength(&timeRangeCount);
+    timeRangeCount = mPlayed->Length();
   }
   for (uint32_t i = 0; i < timeRangeCount; i++) {
-    double begin;
-    double end;
-    mPlayed->Start(i, &begin);
-    mPlayed->End(i, &end);
+    double begin = mPlayed->Start(i);
+    double end = mPlayed->End(i);
     ranges->Add(begin, end);
   }
 
@@ -2927,6 +2930,7 @@ HTMLMediaElement::Played()
 void
 HTMLMediaElement::Pause(ErrorResult& aRv)
 {
+  LOG(LogLevel::Debug, ("%p Pause() called by JS", this));
   if (mNetworkState == NETWORK_EMPTY) {
     LOG(LogLevel::Debug, ("Loading due to Pause()"));
     DoLoad();
@@ -2954,6 +2958,8 @@ HTMLMediaElement::Pause(ErrorResult& aRv)
 void
 HTMLMediaElement::SetVolume(double aVolume, ErrorResult& aRv)
 {
+  LOG(LogLevel::Debug, ("%p SetVolume(%f) called by JS", this, aVolume));
+
   if (aVolume < 0.0 || aVolume > 1.0) {
     aRv.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
     return;
@@ -3036,6 +3042,7 @@ HTMLMediaElement::SetVolumeInternal()
 void
 HTMLMediaElement::SetMuted(bool aMuted)
 {
+  LOG(LogLevel::Debug, ("%p SetMuted(%d) called by JS", this, aMuted));
   if (aMuted == Muted()) {
     return;
   }
@@ -3981,6 +3988,8 @@ HTMLMediaElement::NotifyXPCOMShutdown()
 already_AddRefed<Promise>
 HTMLMediaElement::Play(ErrorResult& aRv)
 {
+  LOG(LogLevel::Debug, ("%p Play() called by JS", this));
+
   if (mAudioChannelWrapper && mAudioChannelWrapper->IsPlaybackBlocked()) {
     MaybeDoLoad();
 
@@ -3992,6 +4001,8 @@ HTMLMediaElement::Play(ErrorResult& aRv)
     if (NS_WARN_IF(aRv.Failed())) {
       return nullptr;
     }
+
+    LOG(LogLevel::Debug, ("%p Play() call delayed by AudioChannelAgent", this));
 
     mPendingPlayPromises.AppendElement(promise);
     return promise.forget();
@@ -4018,6 +4029,8 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
   // with a "NotAllowedError" DOMException and abort these steps.
   if (!IsAllowedToPlay()) {
     // NOTE: for promise-based-play, will return a rejected promise here.
+    LOG(LogLevel::Debug,
+        ("%p Play() promise rejected because not allowed to play.", this));
     aRv.Throw(NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR);
     return nullptr;
   }
@@ -4027,6 +4040,8 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
   // attribute has the value MEDIA_ERR_SRC_NOT_SUPPORTED, return a promise
   // rejected with a "NotSupportedError" DOMException and abort these steps.
   if (GetError() && GetError()->Code() == MEDIA_ERR_SRC_NOT_SUPPORTED) {
+    LOG(LogLevel::Debug,
+        ("%p Play() promise rejected because source not supported.", this));
     aRv.Throw(NS_ERROR_DOM_MEDIA_NOT_SUPPORTED_ERR);
     return nullptr;
   }
@@ -4078,6 +4093,9 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
         // the _promise_ won't be returned to JS at all, so just leave it in the
         // _mPendingPlayPromises_ and let it be resolved/rejected with the
         // following actions and the promise-resolution won't be observed at all.
+        LOG(LogLevel::Debug,
+            ("%p Play() promise rejected because failed to play MediaDecoder.",
+             this));
         aRv.Throw(rv);
         return nullptr;
       }
@@ -4513,9 +4531,8 @@ HTMLMediaElement::ReportTelemetry()
     const double errorMargin = 0.05;
     double t = CurrentTime();
     TimeRanges::index_type index = ranges->Find(t, errorMargin);
-    ErrorResult ignore;
     stalled = index != TimeRanges::NoIndex &&
-              (ranges->End(index, ignore) - t) < errorMargin;
+              (ranges->End(index) - t) < errorMargin;
     stalled |= mDecoder && NextFrameStatus() == MediaDecoderOwner::NEXT_FRAME_UNAVAILABLE_BUFFERING &&
                mReadyState == HAVE_CURRENT_DATA;
     if (stalled) {
@@ -6813,21 +6830,33 @@ HTMLMediaElement::IsAllowedToPlay()
                                          false,
                                          false);
 #endif
+    LOG(LogLevel::Debug,
+        ("%p %s AutoplayPolicy blocked autoplay.", this, __func__));
     return false;
   }
+
+  LOG(LogLevel::Debug,
+      ("%p %s AutoplayPolicy did not block autoplay.", this, __func__));
 
   // Check our custom playback policy.
   if (mAudioChannelWrapper) {
     // Note: SUSPENDED_PAUSE and SUSPENDED_BLOCK will be merged into one single state.
     if (mAudioChannelWrapper->GetSuspendType() == nsISuspendedTypes::SUSPENDED_PAUSE ||
         mAudioChannelWrapper->GetSuspendType() == nsISuspendedTypes::SUSPENDED_BLOCK) {
+      LOG(LogLevel::Debug,
+          ("%p IsAllowedToPlay() returning false due to AudioChannelAgent.",
+           this));
       return false;
     }
 
+    LOG(LogLevel::Debug, ("%p IsAllowedToPlay() returning true.", this));
     return true;
   }
 
   // If the mAudioChannelWrapper doesn't exist that means the CC happened.
+  LOG(LogLevel::Debug,
+      ("%p IsAllowedToPlay() returning false due to null AudioChannelAgent.",
+       this));
   return false;
 }
 

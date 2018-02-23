@@ -19,6 +19,7 @@
 #include "wasm/WasmJS.h"
 
 #include "mozilla/CheckedInt.h"
+#include "mozilla/EndianUtils.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/RangedPtr.h"
 
@@ -46,10 +47,7 @@ using namespace js;
 using namespace js::jit;
 using namespace js::wasm;
 
-using mozilla::BitwiseCast;
 using mozilla::CheckedInt;
-using mozilla::IsNaN;
-using mozilla::IsSame;
 using mozilla::Nothing;
 using mozilla::RangedPtr;
 

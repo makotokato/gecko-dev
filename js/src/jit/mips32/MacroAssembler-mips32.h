@@ -7,6 +7,8 @@
 #ifndef jit_mips32_MacroAssembler_mips32_h
 #define jit_mips32_MacroAssembler_mips32_h
 
+#include "mozilla/EndianUtils.h"
+
 #include "jit/JitFrames.h"
 #include "jit/mips-shared/MacroAssembler-mips-shared.h"
 #include "jit/MoveResolver.h"
@@ -713,11 +715,20 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
     // convert it to double. Else, branch to failure.
     void ensureDouble(const ValueOperand& source, FloatRegister dest, Label* failure);
 
+    void cmp64Set(Condition cond, Register64 lhs, Register64 rhs, Register dest);
+    void cmp64Set(Condition cond, Register64 lhs, Imm64 val, Register dest);
+
   protected:
     bool buildOOLFakeExitFrame(void* fakeReturnAddr);
 
     void enterAtomic64Region(Register addr, Register spinlock, Register tmp);
     void exitAtomic64Region(Register spinlock);
+    void wasmLoadI64Impl(const wasm::MemoryAccessDesc& access, Register memoryBase, Register ptr,
+                         Register ptrScratch, Register64 output, Register tmp);
+    void wasmStoreI64Impl(const wasm::MemoryAccessDesc& access, Register64 value, Register memoryBase,
+                          Register ptr, Register ptrScratch, Register tmp);
+    Condition ma_cmp64(Condition cond, Register64 lhs, Register64 rhs, Register dest);
+    Condition ma_cmp64(Condition cond, Register64 lhs, Imm64 val, Register dest);
 
   public:
     CodeOffset labelForPatch() {

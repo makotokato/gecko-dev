@@ -22,7 +22,6 @@
 #include "nsIControllers.h"
 #include "nsXULElement.h"
 #include "nsIURI.h"
-#include "nsIDOMHTMLInputElement.h"
 #include "nsFocusManager.h"
 #include "nsIFormControl.h"
 #include "nsIDOMEventListener.h"
@@ -48,6 +47,7 @@
 #include "mozilla/TextEvents.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/EventHandlerBinding.h"
+#include "mozilla/dom/HTMLInputElement.h"
 #include "mozilla/dom/HTMLTextAreaElement.h"
 #include "mozilla/dom/KeyboardEvent.h"
 #include "mozilla/dom/KeyboardEventBinding.h"
@@ -682,7 +682,7 @@ nsXBLPrototypeHandler::GetController(EventTarget* aTarget)
   }
 
   if (!controllers) {
-    nsCOMPtr<nsIDOMHTMLInputElement> htmlInputElement(do_QueryInterface(aTarget));
+    HTMLInputElement* htmlInputElement = HTMLInputElement::FromContent(targetContent);
     if (htmlInputElement)
       htmlInputElement->GetControllers(getter_AddRefs(controllers));
   }
@@ -1134,4 +1134,19 @@ nsXBLPrototypeHandler::Write(nsIObjectOutputStream* aStream)
   rv = aStream->Write32(mLineNumber);
   NS_ENSURE_SUCCESS(rv, rv);
   return aStream->WriteWStringZ(mHandlerText ? mHandlerText : u"");
+}
+
+size_t
+nsXBLPrototypeHandler::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
+{
+  size_t n = 0;
+  for (const nsXBLPrototypeHandler* handler = this;
+       handler; handler = handler->mNextHandler) {
+    n += aMallocSizeOf(handler);
+    if (!(mType & NS_HANDLER_TYPE_XUL)) {
+      n += aMallocSizeOf(handler->mHandlerText);
+    }
+    n += aMallocSizeOf(handler->mHandler);
+  }
+  return n;
 }

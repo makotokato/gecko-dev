@@ -571,10 +571,10 @@ Gecko_GetAnimationRule(RawGeckoElementBorrowed aElement,
   MOZ_ASSERT(aElement);
 
   nsIDocument* doc = aElement->GetComposedDoc();
-  if (!doc || !doc->GetShell()) {
+  if (!doc) {
     return false;
   }
-  nsPresContext* presContext = doc->GetShell()->GetPresContext();
+  nsPresContext* presContext = doc->GetPresContext();
   if (!presContext || !presContext->IsDynamic()) {
     // For print or print preview, ignore animations.
     return false;
@@ -674,6 +674,14 @@ Gecko_UpdateAnimations(RawGeckoElementBorrowed aElement,
     // This task will be scheduled if we detected any changes to !important
     // rules. We post a restyle here so that we can update the cascade
     // results in the pre-traversal of the next restyle.
+    presContext->EffectCompositor()
+               ->RequestRestyle(const_cast<Element*>(aElement),
+                                pseudoType,
+                                EffectCompositor::RestyleType::Standard,
+                                EffectCompositor::CascadeLevel::Animations);
+  }
+
+  if (aTasks & UpdateAnimationsTasks::DisplayChangedFromNone) {
     presContext->EffectCompositor()
                ->RequestRestyle(const_cast<Element*>(aElement),
                                 pseudoType,

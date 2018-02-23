@@ -32,6 +32,9 @@
 #include "nsXBLPrototypeBinding.h"
 #include "nsXBLDocumentInfo.h"
 #include "mozilla/dom/XBLChildrenElement.h"
+#ifdef MOZ_XUL
+#include "nsXULPrototypeCache.h"
+#endif
 
 #ifdef MOZ_OLD_STYLE
 #include "nsIStyleRuleProcessor.h"
@@ -1113,4 +1116,41 @@ nsBindingManager::FindNestedSingleInsertionPoint(nsIContent* aContainer,
   }
 
   return parent;
+}
+
+size_t
+nsBindingManager::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
+{
+  size_t n = aMallocSizeOf(this);
+
+#define SHALLOW_SIZE_INCLUDING(field_) \
+  n += field_ ? field_->ShallowSizeOfIncludingThis(aMallocSizeOf) : 0;
+  SHALLOW_SIZE_INCLUDING(mBoundContentSet);
+  SHALLOW_SIZE_INCLUDING(mWrapperTable);
+  SHALLOW_SIZE_INCLUDING(mLoadingDocTable);
+#undef SHALLOW_SIZE_INCLUDING
+  n += mAttachedStack.ShallowSizeOfExcludingThis(aMallocSizeOf);
+
+  if (mDocumentTable) {
+    n += mDocumentTable->ShallowSizeOfIncludingThis(aMallocSizeOf);
+#ifdef MOZ_XUL
+    nsXULPrototypeCache* cache = nsXULPrototypeCache::GetInstance();
+    StyleBackendType backendType = mDocument->GetStyleBackendType();
+#endif
+    for (auto iter = mDocumentTable->Iter(); !iter.Done(); iter.Next()) {
+      nsXBLDocumentInfo* docInfo = iter.UserData();
+#ifdef MOZ_XUL
+      nsXBLDocumentInfo* cachedInfo =
+        cache->GetXBLDocumentInfo(iter.Key(), backendType);
+      if (cachedInfo == docInfo) {
+        // If this binding has been cached, skip it since it can be
+        // reused by other documents.
+        continue;
+      }
+#endif
+      n += docInfo->SizeOfIncludingThis(aMallocSizeOf);
+    }
+  }
+
+  return n;
 }
