@@ -20,7 +20,6 @@
 #include "jsarray.h"
 #include "jslibmath.h"
 #include "jsnum.h"
-#include "jsprf.h"
 #include "jsstr.h"
 
 #include "builtin/Eval.h"
@@ -1684,11 +1683,11 @@ js::ReportInNotObjectError(JSContext* cx, HandleValue lref, int lindex,
                            HandleValue rref, int rindex)
 {
     auto uniqueCharsFromString = [](JSContext* cx, HandleValue ref) -> UniqueChars {
-        static const size_t MAX_STRING_LENGTH = 16;
+        static const size_t MaxStringLength = 16;
         RootedString str(cx, ref.toString());
-        if (str->length() > MAX_STRING_LENGTH) {
+        if (str->length() > MaxStringLength) {
             StringBuffer buf(cx);
-            if (!buf.appendSubstring(str, 0, MAX_STRING_LENGTH))
+            if (!buf.appendSubstring(str, 0, MaxStringLength))
                 return nullptr;
             if (!buf.append("..."))
                 return nullptr;
@@ -1699,18 +1698,20 @@ js::ReportInNotObjectError(JSContext* cx, HandleValue lref, int lindex,
         return UniqueChars(JS_EncodeString(cx, str));
     };
 
-    UniqueChars lbytes = lref.isString()
-                       ? uniqueCharsFromString(cx, lref)
-                       : DecompileValueGenerator(cx, lindex, lref, nullptr);
-    if (!lbytes)
+    if (lref.isString() && rref.isString()) {
+        UniqueChars lbytes = uniqueCharsFromString(cx, lref);
+        if (!lbytes)
+            return;
+        UniqueChars rbytes = uniqueCharsFromString(cx, rref);
+        if (!rbytes)
+            return;
+        JS_ReportErrorNumberLatin1(cx, GetErrorMessage, nullptr, JSMSG_IN_STRING,
+                                   lbytes.get(), rbytes.get());
         return;
-    UniqueChars rbytes = rref.isString()
-                       ? uniqueCharsFromString(cx, rref)
-                       : DecompileValueGenerator(cx, rindex, rref, nullptr);
-    if (!rbytes)
-        return;
+    }
+
     JS_ReportErrorNumberLatin1(cx, GetErrorMessage, nullptr, JSMSG_IN_NOT_OBJECT,
-                               lbytes.get(), rbytes.get());
+                               InformalValueTypeName(rref));
 }
 
 static MOZ_NEVER_INLINE bool

@@ -17,7 +17,10 @@ var Services = require("Services");
 var { DebuggerClient } = require("devtools/shared/client/debugger-client");
 var { PrefsHelper } = require("devtools/client/shared/prefs");
 
-const STATUS_REVEAL_TIME = 5000;
+// Timeout to wait before we assume that a connect() timed out without an error.
+// In milliseconds. (With the Debugger pane open, this has been reported to last
+// more than 10 seconds!)
+const STATUS_REVEAL_TIME = 15000;
 
 /**
  * Shortcuts for accessing various debugger preferences.
@@ -37,15 +40,23 @@ function appendStatusMessage(msg) {
   }
 }
 
-function revealStatusMessage() {
+function toggleStatusMessage(visible = true) {
   let statusMessageContainer = document.getElementById("status-message-container");
-  statusMessageContainer.hidden = false;
+  statusMessageContainer.hidden = !visible;
+}
+
+function revealStatusMessage() {
+  toggleStatusMessage(true);
+}
+
+function hideStatusMessage() {
+  toggleStatusMessage(false);
 }
 
 var connect = async function () {
   // Initiate the connection
-  let env = Components.classes["@mozilla.org/process/environment;1"]
-    .getService(Components.interfaces.nsIEnvironment);
+  let env = Cc["@mozilla.org/process/environment;1"]
+    .getService(Ci.nsIEnvironment);
   let port = env.get("MOZ_BROWSER_TOOLBOX_PORT");
   let addonID = env.get("MOZ_BROWSER_TOOLBOX_ADDONID");
 
@@ -99,14 +110,14 @@ window.addEventListener("load", async function () {
   let cmdClose = document.getElementById("toolbox-cmd-close");
   cmdClose.addEventListener("command", onCloseCommand);
   setPrefDefaults();
-  // Reveal status message if connecting is slow or if an error occurs
-  let delayedStatusReveal = setTimeout(() => {
-    revealStatusMessage();
-  }, STATUS_REVEAL_TIME);
+  // Reveal status message if connecting is slow or if an error occurs.
+  let delayedStatusReveal = setTimeout(revealStatusMessage, STATUS_REVEAL_TIME);
   try {
     await connect();
     clearTimeout(delayedStatusReveal);
+    hideStatusMessage();
   } catch (e) {
+    clearTimeout(delayedStatusReveal);
     appendStatusMessage(e);
     revealStatusMessage();
     console.error(e);
@@ -150,8 +161,8 @@ function onNewToolbox(toolbox) {
   gToolbox = toolbox;
   bindToolboxHandlers();
   raise();
-  let env = Components.classes["@mozilla.org/process/environment;1"]
-    .getService(Components.interfaces.nsIEnvironment);
+  let env = Cc["@mozilla.org/process/environment;1"]
+    .getService(Ci.nsIEnvironment);
   let testScript = env.get("MOZ_TOOLBOX_TEST_SCRIPT");
   if (testScript) {
     // Only allow executing random chrome scripts when a special

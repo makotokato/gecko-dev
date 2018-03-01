@@ -3072,9 +3072,9 @@ AppendToTop(nsDisplayListBuilder* aBuilder, const nsDisplayListSet& aLists,
       flags |= nsDisplayOwnLayerFlags::eScrollbarContainer;
     }
 
-    newItem = new (aBuilder) nsDisplayOwnLayer(aBuilder, aSourceFrame, aSource, asr, flags, scrollTarget);
+    newItem = MakeDisplayItem<nsDisplayOwnLayer>(aBuilder, aSourceFrame, aSource, asr, flags, scrollTarget);
   } else {
-    newItem = new (aBuilder) nsDisplayWrapList(aBuilder, aSourceFrame, aSource, asr);
+    newItem = MakeDisplayItem<nsDisplayWrapList>(aBuilder, aSourceFrame, aSource, asr);
   }
 
   if (aFlags & APPEND_POSITIONED) {
@@ -3618,9 +3618,9 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
       if (dirtyRectHasBeenOverriden && gfxPrefs::LayoutDisplayListShowArea()) {
         nsDisplaySolidColor* color =
-          new (aBuilder) nsDisplaySolidColor(aBuilder, mOuter,
-                                             dirtyRect + aBuilder->GetCurrentFrameOffsetToReferenceFrame(),
-                                             NS_RGBA(0, 0, 255, 64), false);
+          MakeDisplayItem<nsDisplaySolidColor>(aBuilder, mOuter,
+                                               dirtyRect + aBuilder->GetCurrentFrameOffsetToReferenceFrame(),
+                                               NS_RGBA(0, 0, 255, 64), false);
         color->SetOverrideZIndex(INT32_MAX);
         scrolledContent.PositionedDescendants()->AppendToTop(color);
       }
@@ -3695,13 +3695,13 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
           info |= CompositorHitTestInfo::eRequiresTargetConfirmation;
         }
         nsDisplayCompositorHitTestInfo* hitInfo =
-            new (aBuilder) nsDisplayCompositorHitTestInfo(aBuilder, mScrolledFrame, info, 1,
+            MakeDisplayItem<nsDisplayCompositorHitTestInfo>(aBuilder, mScrolledFrame, info, 1,
                 Some(mScrollPort + aBuilder->ToReferenceFrame(mOuter)));
         AppendInternalItemToTop(scrolledContent, hitInfo, zIndex);
       }
       if (aBuilder->IsBuildingLayerEventRegions()) {
         nsDisplayLayerEventRegions* inactiveRegionItem =
-            new (aBuilder) nsDisplayLayerEventRegions(aBuilder, mScrolledFrame, 1);
+            MakeDisplayItem<nsDisplayLayerEventRegions>(aBuilder, mScrolledFrame, 1);
         inactiveRegionItem->AddInactiveScrollPort(mScrolledFrame, mScrollPort + aBuilder->ToReferenceFrame(mOuter));
         AppendInternalItemToTop(scrolledContent, inactiveRegionItem, zIndex);
       }
@@ -3709,7 +3709,7 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
     if (aBuilder->ShouldBuildScrollInfoItemsForHoisting()) {
       aBuilder->AppendNewScrollInfoItemForHoisting(
-        new (aBuilder) nsDisplayScrollInfoLayer(aBuilder, mScrolledFrame,
+        MakeDisplayItem<nsDisplayScrollInfoLayer>(aBuilder, mScrolledFrame,
                                                 mOuter));
     }
   }
@@ -4612,12 +4612,11 @@ ScrollFrameHelper::CreateAnonymousContent(
     }
   }
 
-  nsNodeInfoManager *nodeInfoManager =
-    presContext->Document()->NodeInfoManager();
-  RefPtr<NodeInfo> nodeInfo;
-  nodeInfo = nodeInfoManager->GetNodeInfo(nsGkAtoms::scrollbar, nullptr,
-                                          kNameSpaceID_XUL,
-                                          nsINode::ELEMENT_NODE);
+  nsNodeInfoManager* nodeInfoManager = presContext->Document()->NodeInfoManager();
+  RefPtr<NodeInfo> nodeInfo =
+    nodeInfoManager->GetNodeInfo(nsGkAtoms::scrollbar, nullptr,
+                                 kNameSpaceID_XUL,
+                                 nsINode::ELEMENT_NODE);
   NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   if (canHaveHorizontal) {
@@ -4636,6 +4635,9 @@ ScrollFrameHelper::CreateAnonymousContent(
     mHScrollbarContent->SetAttr(kNameSpaceID_None, nsGkAtoms::clickthrough,
                                 NS_LITERAL_STRING("always"), false);
     if (mIsRoot) {
+      mHScrollbarContent->SetProperty(nsGkAtoms::docLevelNativeAnonymousContent,
+                                      reinterpret_cast<void*>(true));
+
       mHScrollbarContent->SetAttr(kNameSpaceID_None, nsGkAtoms::root_,
                                   NS_LITERAL_STRING("true"), false);
     }
@@ -4659,6 +4661,8 @@ ScrollFrameHelper::CreateAnonymousContent(
     mVScrollbarContent->SetAttr(kNameSpaceID_None, nsGkAtoms::clickthrough,
                                 NS_LITERAL_STRING("always"), false);
     if (mIsRoot) {
+      mVScrollbarContent->SetProperty(nsGkAtoms::docLevelNativeAnonymousContent,
+                                      reinterpret_cast<void*>(true));
       mVScrollbarContent->SetAttr(kNameSpaceID_None, nsGkAtoms::root_,
                                   NS_LITERAL_STRING("true"), false);
     }
@@ -4697,11 +4701,13 @@ ScrollFrameHelper::CreateAnonymousContent(
     mResizerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::dir, dir, false);
 
     if (mIsRoot) {
+      mResizerContent->SetProperty(nsGkAtoms::docLevelNativeAnonymousContent,
+                                   reinterpret_cast<void*>(true));
+
       Element* browserRoot = GetBrowserRoot(mOuter->GetContent());
       mCollapsedResizer = !(browserRoot &&
                             browserRoot->HasAttr(kNameSpaceID_None, nsGkAtoms::showresizer));
-    }
-    else {
+    } else {
       mResizerContent->SetAttr(kNameSpaceID_None, nsGkAtoms::element,
                                     NS_LITERAL_STRING("_parent"), false);
     }
@@ -4718,6 +4724,10 @@ ScrollFrameHelper::CreateAnonymousContent(
                                             kNameSpaceID_XUL,
                                             nsINode::ELEMENT_NODE);
     NS_TrustedNewXULElement(getter_AddRefs(mScrollCornerContent), nodeInfo.forget());
+    if (mIsRoot) {
+      mScrollCornerContent->SetProperty(nsGkAtoms::docLevelNativeAnonymousContent,
+                                        reinterpret_cast<void*>(true));
+    }
     if (!aElements.AppendElement(mScrollCornerContent))
       return NS_ERROR_OUT_OF_MEMORY;
   }

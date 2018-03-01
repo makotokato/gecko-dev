@@ -1403,10 +1403,8 @@ public:
   }
 
   mozilla::StyleBackendType GetStyleBackendType() const {
-    if (mStyleBackendType == mozilla::StyleBackendType::None) {
-      const_cast<nsIDocument*>(this)->UpdateStyleBackendType();
-    }
-    MOZ_ASSERT(mStyleBackendType != mozilla::StyleBackendType::None);
+    MOZ_ASSERT(mStyleBackendType != mozilla::StyleBackendType::None,
+               "Not initialized yet");
     return mStyleBackendType;
   }
 
@@ -1415,14 +1413,6 @@ public:
    * this is only used for XBL documents to set their style backend type to
    * their bounding document's.
    */
-  void SetStyleBackendType(mozilla::StyleBackendType aStyleBackendType) {
-    // We cannot assert mStyleBackendType == mozilla::StyleBackendType::None
-    // because NS_NewXBLDocument() might result GetStyleBackendType() being
-    // called.
-    MOZ_ASSERT(aStyleBackendType != mozilla::StyleBackendType::None,
-               "The StyleBackendType should be set to either Gecko or Servo!");
-    mStyleBackendType = aStyleBackendType;
-  }
 
   /**
    * Decide this document's own style backend type.
@@ -2188,10 +2178,7 @@ public:
     return mMayStartLayout;
   }
 
-  virtual void SetMayStartLayout(bool aMayStartLayout)
-  {
-    mMayStartLayout = aMayStartLayout;
-  }
+  virtual void SetMayStartLayout(bool aMayStartLayout);
 
   already_AddRefed<nsIDocumentEncoder> GetCachedEncoder();
 
@@ -3013,6 +3000,8 @@ public:
 
   already_AddRefed<nsIURI> GetMozDocumentURIIfNotForErrorPages();
 
+  mozilla::dom::Promise* GetDocumentReadyForIdle(mozilla::ErrorResult& aRv);
+
   // ParentNode
   nsIHTMLCollection* Children();
   uint32_t ChildElementCount();
@@ -3296,6 +3285,8 @@ protected:
                                  nsAtom* aAtom, void* aData);
   static void* UseExistingNameString(nsINode* aRootNode, const nsString* aName);
 
+  void MaybeResolveReadyForIdle();
+
   nsCString mReferrer;
   nsString mLastModified;
 
@@ -3376,6 +3367,8 @@ protected:
   mozilla::TimeStamp mLastFocusTime;
 
   mozilla::EventStates mDocumentState;
+
+  RefPtr<mozilla::dom::Promise> mReadyForIdle;
 
   // True if BIDI is enabled.
   bool mBidiEnabled : 1;
@@ -3887,8 +3880,7 @@ NS_NewDOMDocument(nsIDOMDocument** aInstancePtrResult,
                   nsIPrincipal* aPrincipal,
                   bool aLoadedAsData,
                   nsIGlobalObject* aEventObject,
-                  DocumentFlavor aFlavor,
-                  mozilla::StyleBackendType aStyleBackend);
+                  DocumentFlavor aFlavor);
 
 // This is used only for xbl documents created from the startup cache.
 // Non-cached documents are created in the same manner as xml documents.
@@ -3896,8 +3888,7 @@ nsresult
 NS_NewXBLDocument(nsIDOMDocument** aInstancePtrResult,
                   nsIURI* aDocumentURI,
                   nsIURI* aBaseURI,
-                  nsIPrincipal* aPrincipal,
-                  mozilla::StyleBackendType aStyleBackend);
+                  nsIPrincipal* aPrincipal);
 
 nsresult
 NS_NewPluginDocument(nsIDocument** aInstancePtrResult);

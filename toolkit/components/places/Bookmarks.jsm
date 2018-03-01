@@ -57,7 +57,7 @@
  * @see nsINavBookmarkObserver
  */
 
-this.EXPORTED_SYMBOLS = [ "Bookmarks" ];
+var EXPORTED_SYMBOLS = [ "Bookmarks" ];
 
 Cu.importGlobalProperties(["URL"]);
 
@@ -2476,21 +2476,6 @@ async function maybeInsertManyPlaces(db, urls) {
 // with the server.
 function needsTombstone(item) {
   return item._syncStatus == Bookmarks.SYNC_STATUS.NORMAL;
-}
-
-// Inserts a tombstone for a removed synced item. Tombstones are stored as rows
-// in the `moz_bookmarks_deleted` table, and only written for "NORMAL" items.
-// After each sync, `PlacesSyncUtils.bookmarks.pushChanges` drops successfully
-// uploaded tombstones.
-function insertTombstone(db, item, syncChangeDelta) {
-  if (!syncChangeDelta || !needsTombstone(item)) {
-    return Promise.resolve();
-  }
-  return db.executeCached(`
-    INSERT INTO moz_bookmarks_deleted (guid, dateRemoved)
-    VALUES (:guid, :dateRemoved)`,
-    { guid: item.guid,
-      dateRemoved: PlacesUtils.toPRTime(Date.now()) });
 }
 
 // Inserts tombstones for removed synced items.

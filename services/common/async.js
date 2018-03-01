@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-this.EXPORTED_SYMBOLS = ["Async"];
+var EXPORTED_SYMBOLS = ["Async"];
 
 // Constants for makeSyncCallback, waitForSyncCallback.
 const CB_READY = {};
@@ -17,7 +17,7 @@ ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 /*
  * Helpers for various async operations.
  */
-this.Async = {
+var Async = {
 
   /**
    * Execute an arbitrary number of asynchronous functions one after the
@@ -202,6 +202,28 @@ this.Async = {
         await Async.promiseYield();
       }
     };
+  },
+
+  /**
+   * Turn a synchronous iterator/iterable into an async iterator that calls a
+   * Async.jankYielder at each step.
+   *
+   * @param iterable {Iterable}
+   *        Iterable or iterator that should be wrapped. (Anything usable in
+   *        for..of should work)
+   *
+   * @param [maybeYield = 50] {number|() => Promise<void>}
+   *        Either an existing jankYielder to use, or a number to provide as the
+   *        argument to Async.jankYielder.
+   */
+  async* yieldingIterator(iterable, maybeYield = 50) {
+    if (typeof maybeYield == "number") {
+      maybeYield = Async.jankYielder(maybeYield);
+    }
+    for (let item of iterable) {
+      await maybeYield();
+      yield item;
+    }
   },
 
   asyncQueueCaller(log) {

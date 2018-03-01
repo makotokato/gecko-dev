@@ -21,12 +21,11 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/Unused.h"
 
-#include "jsprf.h"
-
 #include "jit/ProcessExecutableMemory.h"
 #include "wasm/WasmBaselineCompile.h"
 #include "wasm/WasmBinaryIterator.h"
 #include "wasm/WasmGenerator.h"
+#include "wasm/WasmIonCompile.h"
 #include "wasm/WasmSignalHandlers.h"
 #include "wasm/WasmValidate.h"
 
@@ -394,9 +393,13 @@ InitialCompileFlags(const CompileArgs& args, Decoder& d, CompileMode* mode, Tier
     if (StartsCodeSection(d.begin(), d.end(), &range))
         codeSectionSize = range.size;
 
+    // Attempt to default to ion if baseline is disabled.
     bool baselineEnabled = BaselineCanCompile() && (args.baselineEnabled || args.testTiering);
     bool debugEnabled = BaselineCanCompile() && args.debugEnabled;
-    bool ionEnabled = args.ionEnabled || !baselineEnabled || args.testTiering;
+    bool ionEnabled = IonCanCompile() && (args.ionEnabled || !baselineEnabled || args.testTiering);
+
+    // HasCompilerSupport() should prevent failure here
+    MOZ_RELEASE_ASSERT(baselineEnabled || ionEnabled);
 
     if (baselineEnabled && ionEnabled && !debugEnabled &&
         (TieringBeneficial(codeSectionSize) || args.testTiering))
@@ -410,6 +413,8 @@ InitialCompileFlags(const CompileArgs& args, Decoder& d, CompileMode* mode, Tier
 
     *debug = debugEnabled ? DebugEnabled::True : DebugEnabled::False;
 }
+
+extern unsigned redundantCount;
 
 SharedModule
 wasm::CompileBuffer(const CompileArgs& args, const ShareableBytes& bytecode, UniqueChars* error)
@@ -438,7 +443,11 @@ wasm::CompileBuffer(const CompileArgs& args, const ShareableBytes& bytecode, Uni
     if (!DecodeModuleTail(d, &env))
         return nullptr;
 
-    return mg.finishModule(bytecode);
+    auto module = mg.finishModule(bytecode);
+
+    printf("# redundant: %u\n", redundantCount);
+
+    return module;
 }
 
 bool

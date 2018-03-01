@@ -9,7 +9,7 @@ XPCOMUtils.defineLazyServiceGetter(this, "serviceWorkerManager",
                                    "@mozilla.org/serviceworkers/manager;1",
                                    "nsIServiceWorkerManager");
 
-this.EXPORTED_SYMBOLS = [
+var EXPORTED_SYMBOLS = [
   "SiteDataManager"
 ];
 
@@ -21,7 +21,7 @@ XPCOMUtils.defineLazyGetter(this, "gBrandBundle", function() {
   return Services.strings.createBundle("chrome://branding/locale/brand.properties");
 });
 
-this.SiteDataManager = {
+var SiteDataManager = {
 
   _qms: Services.qms,
 
@@ -112,8 +112,8 @@ this.SiteDataManager = {
         },
 
         QueryInterface: XPCOMUtils.generateQI([
-          Components.interfaces.nsICacheStorageConsumptionObserver,
-          Components.interfaces.nsISupportsWeakReference
+          Ci.nsICacheStorageConsumptionObserver,
+          Ci.nsISupportsWeakReference
         ])
       };
 

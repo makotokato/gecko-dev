@@ -42,6 +42,39 @@
       "enum": [true]
     },
 
+    "Bookmarks": {
+      "description": "Allows the creation of bookmarks in the Bookmarks bar, Bookmarks menu, or a specified folder inside them.",
+      "first_available": "60.0",
+
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "Title": {
+            "type": "string"
+          },
+
+          "URL": {
+            "type": "URL"
+          },
+
+          "Favicon": {
+            "type": "URL"
+          },
+
+          "Placement": {
+            "type": "string",
+            "enum": ["toolbar", "menu"]
+          },
+
+          "Folder": {
+            "type": "string"
+          }
+        },
+        "required": ["title", "URL"]
+      }
+    },
+
     "Cookies": {
       "description": "Allow or deny websites to set cookies.",
       "first_available": "60.0",
@@ -79,6 +112,13 @@
 
       "type": "boolean",
       "enum": [true]
+    },
+
+    "DisableDeveloperTools": {
+      "description": "Prevents access to developer tools.",
+      "first_available": "60.0",
+
+      "type": "boolean"
     },
 
     "DisableFirefoxScreenshots": {
@@ -170,13 +210,6 @@
           "items": {
             "type": "origin"
           }
-        },
-
-        "Block": {
-          "type": "array",
-          "items": {
-            "type": "origin"
-          }
         }
       }
     },
@@ -188,13 +221,6 @@
       "type": "object",
       "properties": {
         "Allow": {
-          "type": "array",
-          "items": {
-            "type": "origin"
-          }
-        },
-
-        "Block": {
           "type": "array",
           "items": {
             "type": "origin"

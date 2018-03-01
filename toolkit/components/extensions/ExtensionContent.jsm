@@ -5,7 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["ExtensionContent"];
+var EXPORTED_SYMBOLS = ["ExtensionContent"];
 
 /* globals ExtensionContent */
 
@@ -24,10 +24,6 @@ XPCOMUtils.defineLazyServiceGetter(this, "styleSheetService",
                                    "@mozilla.org/content/style-sheet-service;1",
                                    "nsIStyleSheetService");
 
-// xpcshell doesn't handle idle callbacks well.
-XPCOMUtils.defineLazyGetter(this, "idleTimeout",
-                            () => Services.appinfo.name === "XPCShell" ? 500 : undefined);
-
 const DocumentEncoder = Components.Constructor(
   "@mozilla.org/layout/documentEncoder;1?type=text/plain",
   "nsIDocumentEncoder", "init");
@@ -44,6 +40,7 @@ const {
   defineLazyGetter,
   getInnerWindowID,
   getWinUtils,
+  promiseDocumentIdle,
   promiseDocumentLoaded,
   promiseDocumentReady,
   runSafeSyncWithoutClone,
@@ -372,13 +369,8 @@ class Script {
       if (this.runAt === "document_end") {
         await promiseDocumentReady(window.document);
       } else if (this.runAt === "document_idle") {
-        let readyThenIdle = promiseDocumentReady(window.document).then(() => {
-          return new Promise(resolve =>
-            window.requestIdleCallback(resolve, {timeout: idleTimeout}));
-        });
-
         await Promise.race([
-          readyThenIdle,
+          promiseDocumentIdle(window),
           promiseDocumentLoaded(window.document),
         ]);
       }
@@ -448,6 +440,20 @@ class Script {
 
             runSafeSyncWithoutClone(winUtils.addSheet, sheet, type);
           });
+        }
+
+        // We're loading stylesheets via the stylesheet service, which means
+        // that the normal mechanism for blocking layout and onload for pending
+        // stylesheets aren't in effect (since there's no document to block). So
+        // we need to do something custom here, similar to what we do for
+        // scripts. Blocking parsing is overkill, since we really just want to
+        // block layout and onload. But we have an API to do the former and not
+        // the latter, so we do it that way. This hopefully isn't a performance
+        // problem since there are no network loads involved, and since we cache
+        // the stylesheets on first load. We should fix this up if it does becomes
+        // a problem.
+        if (this.css.length > 0) {
+          context.contentWindow.document.blockParsing(cssPromise, {blockScriptCreated: false});
         }
       }
     }
@@ -766,7 +772,7 @@ DocumentManager = {
   },
 };
 
-this.ExtensionContent = {
+var ExtensionContent = {
   BrowserExtensionContent,
   Script,
 

@@ -39,7 +39,6 @@
 #include "nsCycleCollectionNoteRootCallback.h"
 #include "nsCycleCollector.h"
 #include "jsapi.h"
-#include "jsprf.h"
 #include "js/MemoryMetrics.h"
 #include "mozilla/dom/GeneratedAtomList.h"
 #include "mozilla/dom/BindingUtils.h"
@@ -2588,9 +2587,6 @@ AccumulateTelemetryCallback(int id, uint32_t sample, const char* key)
         break;
       case JS_TELEMETRY_GC_ANIMATION_MS:
         Telemetry::Accumulate(Telemetry::GC_ANIMATION_MS, sample);
-        break;
-      case JS_TELEMETRY_GC_MAX_PAUSE_MS:
-        Telemetry::Accumulate(Telemetry::GC_MAX_PAUSE_MS, sample);
         break;
       case JS_TELEMETRY_GC_MAX_PAUSE_MS_2:
         Telemetry::Accumulate(Telemetry::GC_MAX_PAUSE_MS_2, sample);

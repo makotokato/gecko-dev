@@ -43,6 +43,8 @@ struct ImmTag : public Imm32
     { }
 };
 
+class ScratchTagScope;
+
 class MacroAssemblerCompat : public vixl::MacroAssembler
 {
   public:
@@ -519,12 +521,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
     }
 
     using vixl::MacroAssembler::B;
-    void B(wasm::OldTrapDesc) {
-        MOZ_CRASH("NYI");
-    }
-    void B(wasm::OldTrapDesc, Condition cond) {
-        MOZ_CRASH("NYI");
-    }
+    void B(wasm::OldTrapDesc, Condition cond = Always);
 
     void convertDoubleToInt32(FloatRegister src, Register dest, Label* fail,
                               bool negativeZeroCheck = true)
@@ -700,7 +697,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
         Br(vixl::ip0);
     }
     void jump(wasm::OldTrapDesc target) {
-        MOZ_CRASH("NYI");
+        B(target);
     }
 
     void align(int alignment) {
@@ -713,7 +710,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
         armbuffer_.align(alignment);
     }
     void nopAlign(int alignment) {
-        MOZ_CRASH("NYI");
+        armbuffer_.align(alignment);
     }
 
     void movePtr(Register src, Register dest) {
@@ -1186,14 +1183,8 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
         splitTag(dest, dest);
     }
 
-    // Extracts the tag of a value and places it in ScratchReg.
-    Register splitTagForTest(const ValueOperand& value) {
-        vixl::UseScratchRegisterScope temps(this);
-        const ARMRegister scratch64 = temps.AcquireX();
-        MOZ_ASSERT(scratch64.asUnsized() != value.valueReg());
-        Lsr(scratch64, ARMRegister(value.valueReg(), 64), JSVAL_TAG_SHIFT);
-        return scratch64.asUnsized(); // FIXME: Surely we can make a better interface.
-    }
+    // Extracts the tag of a value and places it in tag
+    inline void splitTagForTest(const ValueOperand& value, ScratchTagScope& tag);
     void cmpTag(const ValueOperand& operand, ImmTag tag) {
         MOZ_CRASH("cmpTag");
     }
@@ -1403,7 +1394,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
     }
 
     void unboxPrivate(const ValueOperand& src, Register dest) {
-        ubfx(ARMRegister(dest, 64), ARMRegister(src.valueReg(), 64), 1, JSVAL_TAG_SHIFT - 1);
+        Lsl(ARMRegister(dest, 64), ARMRegister(src.valueReg(), 64), 1);
     }
 
     void notBoolean(const ValueOperand& val) {
@@ -1933,6 +1924,13 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
         return value;
     }
 
+    void wasmLoadImpl(const wasm::MemoryAccessDesc& access, Register memoryBase,
+                      Register ptr, Register ptrScratch, AnyRegister outany,
+                      Register64 out64);
+    void wasmStoreImpl(const wasm::MemoryAccessDesc& access, AnyRegister valany,
+                       Register64 val64, Register memoryBase, Register ptr,
+                       Register ptrScratch);
+
     // Emit a BLR or NOP instruction. ToggleCall can be used to patch
     // this instruction.
     CodeOffset toggledCall(JitCode* target, bool enabled) {
@@ -2103,6 +2101,64 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
         return true;
     }
 };
+
+// See documentation for ScratchTagScope and ScratchTagScopeRelease in
+// MacroAssembler-x64.h.
+
+class ScratchTagScope
+{
+    vixl::UseScratchRegisterScope temps_;
+    ARMRegister scratch64_;
+    bool owned_;
+    mozilla::DebugOnly<bool> released_;
+
+  public:
+    ScratchTagScope(MacroAssemblerCompat& masm, const ValueOperand&)
+      : temps_(&masm),
+        owned_(true),
+        released_(false)
+    {
+        scratch64_ = temps_.AcquireX();
+    }
+
+    operator Register() {
+        MOZ_ASSERT(!released_);
+        return scratch64_.asUnsized();
+    }
+
+    void release() {
+        MOZ_ASSERT(!released_);
+        released_ = true;
+        if (owned_) {
+            temps_.Release(scratch64_);
+            owned_ = false;
+        }
+    }
+
+    void reacquire() {
+        MOZ_ASSERT(released_);
+        released_ = false;
+    }
+};
+
+class ScratchTagScopeRelease
+{
+    ScratchTagScope* ts_;
+
+  public:
+    explicit ScratchTagScopeRelease(ScratchTagScope* ts) : ts_(ts) {
+        ts_->release();
+    }
+    ~ScratchTagScopeRelease() {
+        ts_->reacquire();
+    }
+};
+
+inline void
+MacroAssemblerCompat::splitTagForTest(const ValueOperand& value, ScratchTagScope& tag)
+{
+    splitTag(value, tag);
+}
 
 typedef MacroAssemblerCompat MacroAssemblerSpecific;
 

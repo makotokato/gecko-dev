@@ -586,7 +586,12 @@ MediaEngineWebRTCMicrophoneSource::Allocate(const dom::MediaTrackConstraints &aC
   if (NS_FAILED(rv)) {
     return rv;
   }
-  mAllocations.AppendElement(Allocation(handle));
+
+  {
+    MutexAutoLock lock(mMutex);
+    mAllocations.AppendElement(Allocation(handle));
+  }
+
   handle.forget(aOutHandle);
   return NS_OK;
 }
@@ -747,6 +752,13 @@ MediaEngineWebRTCMicrophoneSource::Stop(const RefPtr<const AllocationHandle>& aH
   }
 
   return NS_OK;
+}
+
+void
+MediaEngineWebRTCMicrophoneSource::GetSettings(dom::MediaTrackSettings& aOutSettings) const
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  aOutSettings = *mSettings;
 }
 
 void

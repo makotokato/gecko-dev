@@ -111,6 +111,24 @@ CodeGeneratorMIPSShared::branchToBlock(Assembler::FloatFormat fmt, FloatRegister
     }
 }
 
+FrameSizeClass
+FrameSizeClass::FromDepth(uint32_t frameDepth)
+{
+    return FrameSizeClass::None();
+}
+
+FrameSizeClass
+FrameSizeClass::ClassLimit()
+{
+    return FrameSizeClass(0);
+}
+
+uint32_t
+FrameSizeClass::frameSize() const
+{
+    MOZ_CRASH("MIPS does not use frame size classes");
+}
+
 void
 OutOfLineBailout::accept(CodeGeneratorMIPSShared* codegen)
 {
@@ -1507,6 +1525,17 @@ CodeGeneratorMIPSShared::visitWasmTruncateToInt32(LWasmTruncateToInt32* lir)
     masm.bind(ool->rejoin());
 }
 
+
+void
+CodeGeneratorMIPSShared::visitOutOfLineBailout(OutOfLineBailout* ool)
+{
+    // Push snapshotOffset and make sure stack is aligned.
+    masm.subPtr(Imm32(sizeof(Value)), StackPointer);
+    masm.storePtr(ImmWord(ool->snapshot()->snapshotOffset()), Address(StackPointer, 0));
+
+    masm.jump(&deoptLabel_);
+}
+
 void
 CodeGeneratorMIPSShared::visitOutOfLineWasmTruncateCheck(OutOfLineWasmTruncateCheck* ool)
 {
@@ -1817,6 +1846,81 @@ void
 CodeGeneratorMIPSShared::visitStoreTypedArrayElementStatic(LStoreTypedArrayElementStatic* ins)
 {
     MOZ_CRASH("NYI");
+}
+
+class js::jit::OutOfLineTableSwitch : public OutOfLineCodeBase<CodeGeneratorMIPSShared>
+{
+    MTableSwitch* mir_;
+    CodeLabel jumpLabel_;
+
+    void accept(CodeGeneratorMIPSShared* codegen) {
+        codegen->visitOutOfLineTableSwitch(this);
+    }
+
+  public:
+    OutOfLineTableSwitch(MTableSwitch* mir)
+      : mir_(mir)
+    {}
+
+    MTableSwitch* mir() const {
+        return mir_;
+    }
+
+    CodeLabel* jumpLabel() {
+        return &jumpLabel_;
+    }
+};
+
+void
+CodeGeneratorMIPSShared::visitOutOfLineTableSwitch(OutOfLineTableSwitch* ool)
+{
+    MTableSwitch* mir = ool->mir();
+
+    masm.haltingAlign(sizeof(void*));
+    masm.bind(ool->jumpLabel());
+    masm.addCodeLabel(*ool->jumpLabel());
+
+    for (size_t i = 0; i < mir->numCases(); i++) {
+        LBlock* caseblock = skipTrivialBlocks(mir->getCase(i))->lir();
+        Label* caseheader = caseblock->label();
+        uint32_t caseoffset = caseheader->offset();
+
+        // The entries of the jump table need to be absolute addresses and thus
+        // must be patched after codegen is finished.
+        CodeLabel cl;
+        masm.writeCodePointer(&cl);
+        cl.target()->bind(caseoffset);
+        masm.addCodeLabel(cl);
+    }
+}
+
+void
+CodeGeneratorMIPSShared::emitTableSwitchDispatch(MTableSwitch* mir, Register index,
+                                           Register base)
+{
+    Label* defaultcase = skipTrivialBlocks(mir->getDefault())->lir()->label();
+
+    // Lower value with low value
+    if (mir->low() != 0)
+        masm.subPtr(Imm32(mir->low()), index);
+
+    // Jump to default case if input is out of range
+    int32_t cases = mir->numCases();
+    masm.branchPtr(Assembler::AboveOrEqual, index, ImmWord(cases), defaultcase);
+
+    // To fill in the CodeLabels for the case entries, we need to first
+    // generate the case entries (we don't yet know their offsets in the
+    // instruction stream).
+    OutOfLineTableSwitch* ool = new(alloc()) OutOfLineTableSwitch(mir);
+    addOutOfLineCode(ool, mir);
+
+    // Compute the position where a pointer to the right case stands.
+    masm.ma_li(base, ool->jumpLabel());
+
+    BaseIndex pointer(base, index, ScalePointer);
+
+    // Jump to the right case
+    masm.branchToComputedAddress(pointer);
 }
 
 template <typename T>

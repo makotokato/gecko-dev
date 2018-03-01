@@ -3,13 +3,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-this.EXPORTED_SYMBOLS = ["PlacesUIUtils"];
+var EXPORTED_SYMBOLS = ["PlacesUIUtils"];
 
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.import("resource://gre/modules/Timer.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
+  OpenInTabsUtils: "resource:///modules/OpenInTabsUtils.jsm",
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
   PluralForm: "resource://gre/modules/PluralForm.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
@@ -204,7 +205,7 @@ let InternalFaviconLoader = {
   },
 };
 
-this.PlacesUIUtils = {
+var PlacesUIUtils = {
   ORGANIZER_LEFTPANE_VERSION: 8,
   ORGANIZER_FOLDER_ANNO: "PlacesOrganizer/OrganizerFolder",
   ORGANIZER_QUERY_ANNO: "PlacesOrganizer/OrganizerQuery",
@@ -353,7 +354,7 @@ this.PlacesUIUtils = {
 
     if (!performed &&
         topUndoEntry != PlacesTransactions.topUndoEntry) {
-      PlacesTransactions.undo().catch(Components.utils.reportError);
+      PlacesTransactions.undo().catch(Cu.reportError);
     }
 
     return performed;
@@ -590,47 +591,6 @@ this.PlacesUIUtils = {
     return itemId == this.leftPaneFolderId;
   },
 
-  /**
-   * Gives the user a chance to cancel loading lots of tabs at once
-   */
-  confirmOpenInTabs(numTabsToOpen, aWindow) {
-    const WARN_ON_OPEN_PREF = "browser.tabs.warnOnOpen";
-    var reallyOpen = true;
-
-    if (Services.prefs.getBoolPref(WARN_ON_OPEN_PREF)) {
-      if (numTabsToOpen >= Services.prefs.getIntPref("browser.tabs.maxOpenBeforeWarn")) {
-        // default to true: if it were false, we wouldn't get this far
-        var warnOnOpen = { value: true };
-
-        var messageKey = "tabs.openWarningMultipleBranded";
-        var openKey = "tabs.openButtonMultiple";
-        const BRANDING_BUNDLE_URI = "chrome://branding/locale/brand.properties";
-        var brandShortName = Services.strings.
-                             createBundle(BRANDING_BUNDLE_URI).
-                             GetStringFromName("brandShortName");
-
-        var buttonPressed = Services.prompt.confirmEx(
-          aWindow,
-          this.getString("tabs.openWarningTitle"),
-          this.getFormattedString(messageKey, [numTabsToOpen, brandShortName]),
-          (Services.prompt.BUTTON_TITLE_IS_STRING * Services.prompt.BUTTON_POS_0) +
-            (Services.prompt.BUTTON_TITLE_CANCEL * Services.prompt.BUTTON_POS_1),
-          this.getString(openKey), null, null,
-          this.getFormattedString("tabs.openWarningPromptMeBranded",
-                                  [brandShortName]),
-          warnOnOpen
-        );
-
-        reallyOpen = (buttonPressed == 0);
-        // don't set the pref unless they press OK and it's false
-        if (reallyOpen && !warnOnOpen.value)
-          Services.prefs.setBoolPref(WARN_ON_OPEN_PREF, false);
-      }
-    }
-
-    return reallyOpen;
-  },
-
   /** aItemsToOpen needs to be an array of objects of the form:
     * {uri: string, isBookmark: boolean}
     */
@@ -699,7 +659,7 @@ this.PlacesUIUtils = {
           urlsToOpen.push({uri: node.uri, isBookmark: false});
         }
 
-        if (this.confirmOpenInTabs(urlsToOpen.length, window)) {
+        if (OpenInTabsUtils.confirmOpenInTabs(urlsToOpen.length, window)) {
           this._openTabset(urlsToOpen, aEvent, window);
         }
       }, Cu.reportError);
@@ -710,7 +670,7 @@ this.PlacesUIUtils = {
     let window = aView.ownerWindow;
 
     let urlsToOpen = PlacesUtils.getURLsForContainerNode(aNode);
-    if (this.confirmOpenInTabs(urlsToOpen.length, window)) {
+    if (OpenInTabsUtils.confirmOpenInTabs(urlsToOpen.length, window)) {
       this._openTabset(urlsToOpen, aEvent, window);
     }
   },
@@ -748,6 +708,10 @@ this.PlacesUIUtils = {
     }
 
     this._openNodeIn(aNode, where, window);
+    let view = this.getViewForNode(aEvent.target);
+    if (view && view.controller.hasCachedLivemarkInfo(aNode.parent)) {
+      Services.telemetry.scalarAdd("browser.feeds.livebookmark_item_opened", 1);
+    }
   },
 
   /**

@@ -967,16 +967,6 @@
     "n_buckets": 50,
     "description": "Time spent running JS GC when animating (ms)"
   },
-  "GC_MAX_PAUSE_MS": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["dev-telemetry-gc-alerts@mozilla.org"],
-    "bug_numbers": [1364503],
-    "expires_in_version": "61",
-    "kind": "linear",
-    "high": 1000,
-    "n_buckets": 50,
-    "description": "Longest GC slice in a GC (ms)"
-  },
   "GC_MAX_PAUSE_MS_2": {
     "record_in_processes": ["main", "content"],
     "alert_emails": ["dev-telemetry-gc-alerts@mozilla.org"],
@@ -2398,7 +2388,7 @@
   },
   "HTTP_AUTH_DIALOG_STATS_3": {
     "record_in_processes": ["main", "content"],
-    "expires_in_version": "61",
+    "expires_in_version": "65",
     "alert_emails": ["necko@mozilla.com", "ddamjanovic@mozilla.com"],
     "bug_numbers": [1357835],
     "kind": "enumerated",
@@ -2427,7 +2417,7 @@
   },
   "TCP_FAST_OPEN_3": {
     "record_in_processes": ["main"],
-    "expires_in_version": "61",
+    "expires_in_version": "65",
     "kind": "enumerated",
     "n_values": 32,
     "description": "When a http connection is closed, track whether or not TCP Fast Open was used: 0=TFO_NOT_SET, 1=TFO_UNKNOWN, 2=TFO_DISABLED, 3=TFO_DISABLED_CONNECT, 4=TFO_NOT_TRIED, 5=TFO_TRIED, 6=TFO_DATA_SENT, 7=TFO_DATA_COOKIE_NOT_ACCEPTED, 8=TFO_FAILED_CONNECTION_REFUSED, 9=TFO_FAILED_NET_TIMEOUT, 10=TFO_FAILED_UNKNOW_ERROR, 11=TFO_FAILED_BACKUP_CONNECTION_TFO_NOT_TRIED, 12=TFO_FAILED_BACKUP_CONNECTION_TFO_TRIED, 13=TFO_FAILED_BACKUP_CONNECTION_TFO_DATA_SENT, 14=TFO_FAILED_BACKUP_CONNECTION_TFO_DATA_COOKIE_NOT_ACCEPTED, 15=TFO_FAILED_CONNECTION_REFUSED_NO_TFO_FAILED_TOO, 16=TFO_FAILED_NET_TIMEOUT__NO_TFO_FAILED_TOO, 17=TFO_FAILED_UNKNOW_ERROR_NO_TFO_FAILED_TOO, 18=TFO_FAILED_BACKUP_CONNECTION_NO_TFO_FAILED_TOO, 19=TFO_BACKUP_CONN. Please look at netwerk/base/TCPFastOpenLayer.h for more info",
@@ -2436,7 +2426,7 @@
   },
   "TCP_FAST_OPEN_STATUS": {
     "record_in_processes": ["main", "content"],
-    "expires_in_version": "61",
+    "expires_in_version": "65",
     "kind": "enumerated",
     "n_values": 8,
     "description": "TCP Fast Open was: 0=enabled during the session, 1=not available or disabled in the os, 2=disabled by the pref, 3=disabled based on the too many connection failures, 4=disable based on too many http transaction stalls after a connection was idle.",
@@ -3758,7 +3748,9 @@
     "n_buckets": 50
   },
   "PREDICTOR_PREDICT_ATTEMPTS": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 1000000,
@@ -3766,7 +3758,9 @@
     "description": "Number of times nsINetworkPredictor::Predict is called and attempts to predict"
   },
   "PREDICTOR_LEARN_ATTEMPTS": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 1000000,
@@ -3774,7 +3768,9 @@
     "description": "Number of times nsINetworkPredictor::Learn is called and attempts to learn"
   },
   "PREDICTOR_PREDICT_FULL_QUEUE": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 60000,
@@ -3782,7 +3778,9 @@
     "description": "Number of times nsINetworkPredictor::Predict doesn't continue because the queue is full"
   },
   "PREDICTOR_LEARN_FULL_QUEUE": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 60000,
@@ -3790,7 +3788,9 @@
     "description": "Number of times nsINetworkPredictor::Learn doesn't continue because the queue is full"
   },
   "PREDICTOR_WAIT_TIME": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 3000,
@@ -3798,7 +3798,8 @@
     "description": "Amount of time a predictor event waits in the queue (ms)"
   },
   "PREDICTOR_PREDICT_WORK_TIME": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 3000,
@@ -3807,7 +3808,9 @@
     "alert_emails": ["necko@mozilla.com"]
   },
   "PREDICTOR_LEARN_WORK_TIME": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 3000,
@@ -3815,7 +3818,9 @@
     "description": "Amount of time spent doing the work for learn (ms)"
   },
   "PREDICTOR_TOTAL_PREDICTIONS": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 1000000,
@@ -3823,9 +3828,9 @@
     "description": "How many actual predictions (preresolves, preconnects, ...) happen"
   },
   "PREDICTOR_TOTAL_PREFETCHES": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
     "expires_in_version": "never",
-    "alert_emails": [],
+    "alert_emails": ["hurley@mozilla.com"],
     "bug_numbers": [1016628],
     "kind": "exponential",
     "high": 1000000,
@@ -3833,9 +3838,9 @@
     "description": "How many actual prefetches happen"
   },
   "PREDICTOR_TOTAL_PREFETCHES_USED": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
     "expires_in_version": "never",
-    "alert_emails": [],
+    "alert_emails": ["hurley@mozilla.com"],
     "bug_numbers": [1016628],
     "kind": "exponential",
     "high": 1000000,
@@ -3843,9 +3848,9 @@
     "description": "How many prefetches are actually used by a channel"
   },
   "PREDICTOR_PREFETCH_TIME": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
     "expires_in_version": "never",
-    "alert_emails": [],
+    "alert_emails": ["hurley@mozilla.com"],
     "bug_numbers": [1016628],
     "kind": "exponential",
     "high": 3000,
@@ -3853,15 +3858,19 @@
     "description": "How long it takes from OnStartRequest to OnStopRequest for a prefetch"
   },
   "PREDICTOR_TOTAL_PRECONNECTS": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
     "expires_in_version": "never",
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "kind": "exponential",
     "high": 1000000,
     "n_buckets": 50,
     "description": "How many actual preconnects happen"
   },
   "PREDICTOR_TOTAL_PRECONNECTS_CREATED": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 1000000,
@@ -3869,7 +3878,9 @@
     "description": "How many preconnects actually created a speculative socket"
   },
   "PREDICTOR_TOTAL_PRECONNECTS_USED": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 1000000,
@@ -3877,7 +3888,9 @@
     "description": "How many preconnects actually created a used speculative socket"
   },
   "PREDICTOR_TOTAL_PRECONNECTS_UNUSED": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 1000000,
@@ -3885,7 +3898,9 @@
     "description": "How many preconnects needlessly created a speculative socket"
   },
   "PREDICTOR_TOTAL_PRERESOLVES": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 1000000,
@@ -3893,7 +3908,9 @@
     "description": "How many actual preresolves happen"
   },
   "PREDICTOR_PREDICTIONS_CALCULATED": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 1000000,
@@ -3901,7 +3918,9 @@
     "description": "How many prediction calculations are performed"
   },
   "PREDICTOR_GLOBAL_DEGRADATION": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "linear",
     "high": 100,
@@ -3909,7 +3928,9 @@
     "description": "The global degradation calculated"
   },
   "PREDICTOR_SUBRESOURCE_DEGRADATION": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "linear",
     "high": 100,
@@ -3917,7 +3938,9 @@
     "description": "The degradation calculated for a subresource"
   },
   "PREDICTOR_BASE_CONFIDENCE": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "linear",
     "high": 100,
@@ -3925,7 +3948,9 @@
     "description": "The base confidence calculated for a subresource"
   },
   "PREDICTOR_CONFIDENCE": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "linear",
     "high": 100,
@@ -3933,7 +3958,8 @@
     "description": "The final confidence calculated for a subresource"
   },
   "PREDICTOR_PREDICT_TIME_TO_ACTION": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 3000,
@@ -3942,7 +3968,9 @@
     "alert_emails": ["necko@mozilla.com"]
   },
   "PREDICTOR_PREDICT_TIME_TO_INACTION": {
-    "record_in_processes": ["main", "content"],
+    "record_in_processes": ["main"],
+    "alert_emails": ["hurley@mozilla.com"],
+    "bug_numbers": [881804],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 3000,
@@ -10407,6 +10435,16 @@
     "n_values": 20,
     "bug_numbers": [1258647],
     "description": "What was the result of the content signature verification? 0=valid, 1=invalid, 2=noCertChain, 3=createContextFailedWithOtherError, 4=expiredCert, 5=certNotValidYet, 6=buildCertChainFailed, 7=eeCertForWrongHost, 8=extractKeyError, 9=vfyContextError"
+  },
+  "CONTENT_SIGNATURE_VERIFICATION_ERRORS": {
+    "record_in_processes": ["main", "content"],
+    "alert_emails": ["seceng-telemetry@mozilla.com", "fkiefer@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "categorical",
+    "keyed": true,
+    "labels": ["err0", "err1", "err2", "err3", "err4", "err5", "err6", "err7", "err8", "err9"],
+    "bug_numbers": [1435713],
+    "description": "Result of the content signature verification keyed by application (certificate fingerprint). 0=valid, 1=invalid, 2=noCertChain, 3=createContextFailedWithOtherError, 4=expiredCert, 5=certNotValidYet, 6=buildCertChainFailed, 7=eeCertForWrongHost, 8=extractKeyError, 9=vfyContextError"
   },
   "HSTS_UPGRADE_SOURCE": {
     "record_in_processes": [ "main" ],

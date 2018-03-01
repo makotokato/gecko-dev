@@ -14,13 +14,13 @@
 #include "mozilla/UniquePtr.h"
 
 #include "jsapi.h" // For JSAutoByteString.  See bug 1033916.
-#include "jsbytecode.h"
 #include "jspubtd.h"
 
 #include "js/CallArgs.h"
 #include "js/CallNonGenericMethod.h"
 #include "js/Class.h"
 #include "js/HeapAPI.h"
+#include "js/TypeDecls.h"
 #include "js/Utility.h"
 
 #ifndef JS_STACK_GROWTH_DIRECTION
@@ -136,7 +136,6 @@ enum {
     JS_TELEMETRY_GC_BUDGET_MS,
     JS_TELEMETRY_GC_BUDGET_OVERRUN,
     JS_TELEMETRY_GC_ANIMATION_MS,
-    JS_TELEMETRY_GC_MAX_PAUSE_MS,
     JS_TELEMETRY_GC_MAX_PAUSE_MS_2,
     JS_TELEMETRY_GC_MARK_MS,
     JS_TELEMETRY_GC_SWEEP_MS,

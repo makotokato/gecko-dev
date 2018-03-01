@@ -17,13 +17,23 @@ import time
 from copy import deepcopy
 
 from mozbuild.util import memoize
-from mozbuild import schedules
 from taskgraph.util.attributes import TRUNK_PROJECTS
 from taskgraph.util.hash import hash_path
 from taskgraph.util.treeherder import split_symbol
 from taskgraph.transforms.base import TransformSequence
-from taskgraph.util.schema import validate_schema, Schema, optionally_keyed_by, resolve_keyed_by
-from taskgraph.util.scriptworker import get_release_config
+from taskgraph.util.schema import (
+    validate_schema,
+    Schema,
+    optionally_keyed_by,
+    resolve_keyed_by,
+    OptimizationSchema,
+)
+from taskgraph.util.scriptworker import (
+    BALROG_ACTIONS,
+    get_balrog_action_scope,
+    get_balrog_server_scope,
+    get_release_config,
+)
 from voluptuous import Any, Required, Optional, Extra
 from taskgraph import GECKO, MAX_DEPENDENCIES
 from ..util import docker as dockerutil
@@ -226,24 +236,7 @@ task_description_schema = Schema({
 
     # Optimization to perform on this task during the optimization phase.
     # Optimizations are defined in taskcluster/taskgraph/optimize.py.
-    Required('optimization'): Any(
-        # always run this task (default)
-        None,
-        # search the index for the given index namespaces, and replace this task if found
-        # the search occurs in order, with the first match winning
-        {'index-search': [basestring]},
-        # consult SETA and skip this task if it is low-value
-        {'seta': None},
-        # skip this task if none of the given file patterns match
-        {'skip-unless-changed': [basestring]},
-        # skip this task if unless the change files' SCHEDULES contains any of these components
-        {'skip-unless-schedules': list(schedules.ALL_COMPONENTS)},
-        # skip if SETA or skip-unless-schedules says to
-        {'skip-unless-schedules-or-seta': list(schedules.ALL_COMPONENTS)},
-        # only run this task if its dependencies will run (useful for follow-on tasks that
-        # are unnecessary if the parent tasks are not run)
-        {'only-if-dependencies-run': None}
-    ),
+    Required('optimization'): OptimizationSchema,
 
     # the provisioner-id/worker-type for the task.  The following parameters will
     # be substituted in this string:
@@ -513,6 +506,15 @@ task_description_schema = Schema({
         # locale key, if this is a locale beetmover job
         Optional('locale'): basestring,
 
+        Required('release-properties'): {
+            'app-name': basestring,
+            'app-version': basestring,
+            'branch': basestring,
+            'build-id': basestring,
+            'hash-type': basestring,
+            'platform': basestring,
+        },
+
         # list of artifact URLs for the artifacts that should be beetmoved
         Required('upstream-artifacts'): [{
             # taskId of the task with the artifact
@@ -535,9 +537,18 @@ task_description_schema = Schema({
         Required('product'): basestring,
     }, {
         Required('implementation'): 'balrog',
+        Required('balrog-action'): Any(*BALROG_ACTIONS),
+        Optional('product'): basestring,
+        Optional('platforms'): [basestring],
+        Optional('channel-names'): optionally_keyed_by('project', [basestring]),
+        Optional('require-mirrors'): bool,
+        Optional('publish-rules'): optionally_keyed_by('project', [int]),
+        Optional('rules-to-update'): optionally_keyed_by('project', [basestring]),
+        Optional('archive-domain'): optionally_keyed_by('project', basestring),
+        Optional('download-domain'): optionally_keyed_by('project', basestring),
 
         # list of artifact URLs for the artifacts that should be beetmoved
-        Required('upstream-artifacts'): [{
+        Optional('upstream-artifacts'): [{
             # taskId of the task with the artifact
             Required('taskId'): taskref_or_string,
 
@@ -1016,11 +1027,20 @@ def build_binary_transparency_payload(config, task, task_def):
 def build_beetmover_payload(config, task, task_def):
     worker = task['worker']
     release_config = get_release_config(config)
+    release_properties = worker['release-properties']
 
     task_def['payload'] = {
         'maxRunTime': worker['max-run-time'],
+        'releaseProperties': {
+            'appName': release_properties['app-name'],
+            'appVersion': release_properties['app-version'],
+            'branch': release_properties['branch'],
+            'buildid': release_properties['build-id'],
+            'hashType': release_properties['hash-type'],
+            'platform': release_properties['platform'],
+        },
         'upload_date': config.params['build_date'],
-        'upstreamArtifacts':  worker['upstream-artifacts']
+        'upstreamArtifacts':  worker['upstream-artifacts'],
     }
     if worker.get('locale'):
         task_def['payload']['locale'] = worker['locale']
@@ -1044,10 +1064,45 @@ def build_beetmover_cdns_payload(config, task, task_def):
 @payload_builder('balrog')
 def build_balrog_payload(config, task, task_def):
     worker = task['worker']
+    release_config = get_release_config(config)
 
-    task_def['payload'] = {
-        'upstreamArtifacts':  worker['upstream-artifacts']
-    }
+    server_scope = get_balrog_server_scope(config)
+    action_scope = get_balrog_action_scope(config, action=worker['balrog-action'])
+    task_def['scopes'] = [server_scope, action_scope]
+
+    if worker['balrog-action'] == 'submit-locale':
+        task_def['payload'] = {
+            'upstreamArtifacts':  worker['upstream-artifacts']
+        }
+    else:
+        for prop in ('archive-domain', 'channel-names', 'download-domain',
+                     'publish-rules', 'rules-to-update'):
+            if prop in worker:
+                resolve_keyed_by(
+                    worker, prop, task['description'],
+                    **config.params
+                )
+        task_def['payload'] = {
+            'build_number': release_config['build_number'],
+            'product': worker['product'],
+            'version': release_config['version'],
+        }
+        if worker['balrog-action'] == 'submit-toplevel':
+            task_def['payload'].update({
+                'app_version': release_config['appVersion'],
+                'archive_domain': worker['archive-domain'],
+                'channel_names': worker['channel-names'],
+                'download_domain': worker['download-domain'],
+                'partial_versions': release_config.get('partial_versions', ""),
+                'platforms': worker['platforms'],
+                'rules_to_update': worker['rules-to-update'],
+                'require_mirrors': worker['require-mirrors'],
+            })
+        else:  # schedule / ship
+            task_def['payload'].update({
+                'publish_rules': worker['publish-rules'],
+                'release_eta': config.params.get('release_eta') or '',
+            })
 
 
 @payload_builder('push-apk')

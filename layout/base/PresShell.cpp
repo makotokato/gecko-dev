@@ -1023,6 +1023,7 @@ PresShell::Init(nsIDocument* aDocument,
       if (XRE_IsParentProcess() && !sProcessInteractable) {
         os->AddObserver(this, "sessionstore-one-or-no-tab-restored", false);
       }
+      os->AddObserver(this, "font-info-updated", false);
     }
   }
 
@@ -1260,6 +1261,7 @@ PresShell::Destroy()
       if (XRE_IsParentProcess()) {
         os->RemoveObserver(this, "sessionstore-one-or-no-tab-restored");
       }
+      os->RemoveObserver(this, "font-info-updated");
     }
   }
 
@@ -1748,6 +1750,14 @@ PresShell::Initialize()
   nsCOMPtr<nsIPresShell> kungFuDeathGrip(this);
 
   RecomputeFontSizeInflationEnabled();
+  MOZ_DIAGNOSTIC_ASSERT(!mIsDestroying);
+
+  // Ensure the pres context doesn't think it has changed, since we haven't even
+  // started layout. This avoids spurious restyles / reflows afterwards.
+  //
+  // Note that this is very intentionally before setting mDidInitialize so it
+  // doesn't notify the document, or run media query change events.
+  mPresContext->FlushPendingMediaFeatureValuesChanged();
   MOZ_DIAGNOSTIC_ASSERT(!mIsDestroying);
 
   mDidInitialize = true;
@@ -4279,9 +4289,9 @@ PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush)
 }
 
 void
-PresShell::CharacterDataChanged(nsIDocument *aDocument,
-                                nsIContent*  aContent,
-                                CharacterDataChangeInfo* aInfo)
+PresShell::CharacterDataChanged(nsIDocument* aDocument,
+                                nsIContent* aContent,
+                                const CharacterDataChangeInfo& aInfo)
 {
   NS_PRECONDITION(!mIsDocumentGone, "Unexpected CharacterDataChanged");
   NS_PRECONDITION(aDocument == mDocument, "Unexpected aDocument");
@@ -4296,7 +4306,7 @@ PresShell::CharacterDataChanged(nsIDocument *aDocument,
     container ? (container->GetFlags() & NODE_ALL_SELECTOR_FLAGS) : 0;
   if (selectorFlags != 0 && !aContent->IsRootOfAnonymousSubtree()) {
     Element* element = container->AsElement();
-    if (aInfo->mAppend && !aContent->GetNextSibling())
+    if (aInfo.mAppend && !aContent->GetNextSibling())
       mPresContext->RestyleManager()->RestyleForAppend(element, aContent);
     else
       mPresContext->RestyleManager()->RestyleForInsertOrChange(element, aContent);
@@ -4485,7 +4495,7 @@ PresShell::ContentInserted(nsIDocument* aDocument,
 }
 
 void
-PresShell::ContentRemoved(nsIDocument *aDocument,
+PresShell::ContentRemoved(nsIDocument* aDocument,
                           nsIContent* aMaybeContainer,
                           nsIContent* aChild,
                           nsIContent* aPreviousSibling)
@@ -4511,8 +4521,14 @@ PresShell::ContentRemoved(nsIDocument *aDocument,
   // not cases when the frame constructor calls its own methods to force
   // frame reconstruction.
   nsIContent* oldNextSibling = nullptr;
-  oldNextSibling = aPreviousSibling ?
-    aPreviousSibling->GetNextSibling() : container->GetFirstChild();
+
+  // Editor calls into here with NAC via HTMLEditor::DeleteRefToAnonymousNode.
+  // This could be asserted if that caller is fixed.
+  if (MOZ_LIKELY(!aChild->IsRootOfAnonymousSubtree())) {
+    oldNextSibling = aPreviousSibling
+      ? aPreviousSibling->GetNextSibling()
+      : container->GetFirstChild();
+  }
 
   mPresContext->RestyleManager()->ContentRemoved(container, aChild, oldNextSibling);
 
@@ -5217,8 +5233,8 @@ PresShell::AddPrintPreviewBackgroundItem(nsDisplayListBuilder& aBuilder,
                                          nsIFrame*             aFrame,
                                          const nsRect&         aBounds)
 {
-  aList.AppendToBottom(new (&aBuilder)
-    nsDisplaySolidColor(&aBuilder, aFrame, aBounds, NS_RGB(115, 115, 115)));
+  aList.AppendToBottom(
+    MakeDisplayItem<nsDisplaySolidColor>(&aBuilder, aFrame, aBounds, NS_RGB(115, 115, 115)));
 }
 
 static bool
@@ -5308,7 +5324,7 @@ PresShell::AddCanvasBackgroundColorItem(nsDisplayListBuilder& aBuilder,
 
   if (!addedScrollingBackgroundColor || forceUnscrolledItem) {
     aList.AppendToBottom(
-      new (&aBuilder) nsDisplaySolidColor(&aBuilder, aFrame, aBounds, bgcolor));
+      MakeDisplayItem<nsDisplaySolidColor>(&aBuilder, aFrame, aBounds, bgcolor));
   }
 }
 
@@ -9326,6 +9342,11 @@ PresShell::Observe(nsISupports* aSubject,
     return NS_OK;
   }
 
+  if (!nsCRT::strcmp(aTopic, "font-info-updated")) {
+    mPresContext->ForceReflowForFontInfoUpdate();
+    return NS_OK;
+  }
+
   NS_WARNING("unrecognized topic in PresShell::Observe");
   return NS_ERROR_FAILURE;
 }
@@ -10637,10 +10658,7 @@ PresShell::AddSizeOfIncludingThis(nsWindowSizes& aSizes) const
   aSizes.mLayoutPresContextSize +=
     mPresContext->SizeOfIncludingThis(mallocSizeOf);
 
-  nsIFrame* rootFrame = mFrameConstructor->GetRootFrame();
-  if (rootFrame) {
-    rootFrame->AddSizeOfExcludingThisForTree(aSizes);
-  }
+  mFrameConstructor->AddSizeOfIncludingThis(aSizes);
 }
 
 size_t

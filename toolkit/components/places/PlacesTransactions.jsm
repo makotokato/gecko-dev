@@ -4,7 +4,7 @@
 
 "use strict";
 
-this.EXPORTED_SYMBOLS = ["PlacesTransactions"];
+var EXPORTED_SYMBOLS = ["PlacesTransactions"];
 
 /**
  * Overview
@@ -180,8 +180,6 @@ ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.defineModuleGetter(this, "PlacesUtils",
                                "resource://gre/modules/PlacesUtils.jsm");
-ChromeUtils.defineModuleGetter(this, "console",
-                               "resource://gre/modules/Console.jsm");
 
 Cu.importGlobalProperties(["URL"]);
 
