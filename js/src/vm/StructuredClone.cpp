@@ -405,7 +405,7 @@ struct JSStructuredCloneReader {
                                      bool v1Read = false);
     MOZ_MUST_USE bool readDataView(uint32_t byteLength, MutableHandleValue vp);
     MOZ_MUST_USE bool readArrayBuffer(uint32_t nbytes, MutableHandleValue vp);
-    MOZ_MUST_USE bool readSharedArrayBuffer(uint32_t nbytes, MutableHandleValue vp);
+    MOZ_MUST_USE bool readSharedArrayBuffer(MutableHandleValue vp);
     MOZ_MUST_USE bool readSharedWasmMemory(uint32_t nbytes, MutableHandleValue vp);
     MOZ_MUST_USE bool readV1ArrayBuffer(uint32_t arrayType, uint32_t nelems, MutableHandleValue vp);
     JSObject* readSavedFrame(uint32_t principalsTag);
@@ -2016,7 +2016,7 @@ JSStructuredCloneReader::readArrayBuffer(uint32_t nbytes, MutableHandleValue vp)
 }
 
 bool
-JSStructuredCloneReader::readSharedArrayBuffer(uint32_t nbytes, MutableHandleValue vp)
+JSStructuredCloneReader::readSharedArrayBuffer(MutableHandleValue vp)
 {
     uint32_t byteLength;
     if (!in.readBytes(&byteLength, sizeof(byteLength)))
@@ -2287,7 +2287,7 @@ JSStructuredCloneReader::startRead(MutableHandleValue vp)
         break;
 
       case SCTAG_SHARED_ARRAY_BUFFER_OBJECT:
-        if (!readSharedArrayBuffer(data, vp))
+        if (!readSharedArrayBuffer(vp))
             return false;
         break;
 
@@ -2375,12 +2375,14 @@ JSStructuredCloneReader::readHeader()
         return in.reportTruncated();
 
     if (tag != SCTAG_HEADER) {
-        // Old structured clone buffer. We must have read it from disk or
-        // somewhere, so we can assume it's scope-compatible.
+        // Old structured clone buffer. We must have read it from disk.
+        storedScope = JS::StructuredCloneScope::DifferentProcess;
         return true;
     }
 
     MOZ_ALWAYS_TRUE(in.readPair(&tag, &data));
+    storedScope = JS::StructuredCloneScope(data);
+
     if (data != uint32_t(JS::StructuredCloneScope::SameProcessSameThread) &&
         data != uint32_t(JS::StructuredCloneScope::SameProcessDifferentThread) &&
         data != uint32_t(JS::StructuredCloneScope::DifferentProcess))
@@ -2389,7 +2391,6 @@ JSStructuredCloneReader::readHeader()
                                   "invalid structured clone scope");
         return false;
     }
-    storedScope = JS::StructuredCloneScope(data);
     if (storedScope < allowedScope) {
         JS_ReportErrorNumberASCII(context(), GetErrorMessage, nullptr, JSMSG_SC_BAD_SERIALIZED_DATA,
                                   "incompatible structured clone scope");

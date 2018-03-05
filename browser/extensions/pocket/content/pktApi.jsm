@@ -42,7 +42,6 @@
  *      usedTags:         All used tags from within the extension sorted by recency
  */
 
-const Cm = Components.manager;
 var EXPORTED_SYMBOLS = ["pktApi"];
 
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -622,7 +621,7 @@ var pktApi = (function() {
     function retrieve(data = {}, options = {}) {
         const requestData = Object.assign({}, data, {access_token: getAccessToken()});
         return apiRequest({
-            path: "/get",
+            path: "/firefox/get",
             data: requestData,
             success: options.success,
             error: options.error

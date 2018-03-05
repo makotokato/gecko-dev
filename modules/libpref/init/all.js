@@ -174,6 +174,10 @@ pref("dom.serviceWorkers.idle_timeout", 30000);
 // The amount of time (milliseconds) service workers can be kept running using waitUntil promises.
 pref("dom.serviceWorkers.idle_extended_timeout", 300000);
 
+// The amount of time (milliseconds) an update request is delayed when triggered
+// by a service worker that doesn't control any clients.
+pref("dom.serviceWorkers.update_delay", 1000);
+
 // Enable test for 24 hours update, service workers will always treat last update check time is over 24 hours
 pref("dom.serviceWorkers.testUpdateOverOneDay", false);
 
@@ -223,7 +227,11 @@ pref("dom.keyboardevent.dispatch_during_composition", false);
 // If this is true, TextEventDispatcher dispatches keypress event with setting
 // WidgetEvent::mFlags::mOnlySystemGroupDispatchInContent to true if it won't
 // cause inputting printable character.
+#ifdef EARLY_BETA_OR_EARLIER
+pref("dom.keyboardevent.keypress.dispatch_non_printable_keys_only_system_group_in_content", true);
+#else
 pref("dom.keyboardevent.keypress.dispatch_non_printable_keys_only_system_group_in_content", false);
+#endif
 
 // Whether the WebMIDI API is enabled
 pref("dom.webmidi.enabled", false);
@@ -1425,6 +1433,8 @@ pref("privacy.resistFingerprinting.autoDeclineNoUserInputCanvasPrompts", true);
 pref("privacy.reduceTimerPrecision", true);
 // Dynamically tune the resolution of the timer reduction for both of the two above prefs
 pref("privacy.resistFingerprinting.reduceTimerPrecision.microseconds", 2000);
+// Enable jittering the clock one precision value forward
+pref("privacy.resistFingerprinting.reduceTimerPrecision.jitter", true);
 // Lower the priority of network loads for resources on the tracking protection list.
 // Note that this requires the privacy.trackingprotection.annotate_channels pref to be on in order to have any effect.
 #ifdef NIGHTLY_BUILD
@@ -3390,7 +3400,7 @@ pref("dom.ipc.processCount.file", 1);
 pref("dom.ipc.processCount.extension", 1);
 
 // Whether a native event loop should be used in the content process.
-#if defined(XP_WIN) && defined(NIGHTLY_BUILD)
+#if defined(XP_WIN)
 pref("dom.ipc.useNativeEventProcessing.content", false);
 #else
 pref("dom.ipc.useNativeEventProcessing.content", true);
@@ -5065,8 +5075,17 @@ pref("geo.enabled", true);
 // Timeout for outbound network geolocation provider XHR
 pref("geo.wifi.xhr.timeout", 60000);
 
-// Enable/Disable the orientation API for content
+// Enable/Disable the various sensor APIs for content
 pref("device.sensors.enabled", true);
+pref("device.sensors.orientation.enabled", true);
+pref("device.sensors.motion.enabled", true);
+#ifdef EARLY_BETA_OR_EARLIER
+pref("device.sensors.proximity.enabled", false);
+pref("device.sensors.ambientLight.enabled", false);
+#else
+pref("device.sensors.proximity.enabled", true);
+pref("device.sensors.ambientLight.enabled", true);
+#endif
 
 // Enable/Disable the device storage API for content
 pref("device.storage.enabled", false);

@@ -449,6 +449,9 @@ task_description_schema = Schema({
         Required('implementation'): 'native-engine',
         Required('os'): Any('macosx', 'linux'),
 
+        # the maximum time to run, in seconds
+        Required('max-run-time'): int,
+
         # A link for an executable to download
         Optional('context'): basestring,
 
@@ -559,9 +562,12 @@ task_description_schema = Schema({
             Required('paths'): [basestring],
         }],
     }, {
-        Required('implementation'): 'push-apk-breakpoint',
-        Required('payload'): object,
-
+        Required('implementation'): 'bouncer-aliases',
+        Required('entries'): object,
+    }, {
+        Required('implementation'): 'bouncer-submission',
+        Required('locales'): [basestring],
+        Required('entries'): object,
     }, {
         Required('implementation'): 'invalid',
         # an invalid task is one which should never actually be created; this is used in
@@ -597,6 +603,13 @@ task_description_schema = Schema({
     }, {
         Required('implementation'): 'shipit',
         Required('release-name'): basestring,
+    }, {
+        Required('implementation'): 'treescript',
+        Required('tag'): bool,
+        Required('bump'): bool,
+        Optional('bump-files'): [basestring],
+        Required('force-dry-run', default=True): bool,
+        Required('push', default=False): bool
     }),
 })
 
@@ -1105,6 +1118,25 @@ def build_balrog_payload(config, task, task_def):
             })
 
 
+@payload_builder('bouncer-aliases')
+def build_bouncer_aliases_payload(config, task, task_def):
+    worker = task['worker']
+
+    task_def['payload'] = {
+        'aliases_entries': worker['entries']
+    }
+
+
+@payload_builder('bouncer-submission')
+def build_bouncer_submission_payload(config, task, task_def):
+    worker = task['worker']
+
+    task_def['payload'] = {
+        'locales':  worker['locales'],
+        'submission_entries': worker['entries']
+    }
+
+
 @payload_builder('push-apk')
 def build_push_apk_payload(config, task, task_def):
     worker = task['worker']
@@ -1119,11 +1151,6 @@ def build_push_apk_payload(config, task, task_def):
         task_def['payload']['rollout_percentage'] = worker['rollout-percentage']
 
 
-@payload_builder('push-apk-breakpoint')
-def build_push_apk_breakpoint_payload(config, task, task_def):
-    task_def['payload'] = task['worker']['payload']
-
-
 @payload_builder('shipit')
 def build_ship_it_payload(config, task, task_def):
     worker = task['worker']
@@ -1131,6 +1158,45 @@ def build_ship_it_payload(config, task, task_def):
     task_def['payload'] = {
         'release_name': worker['release-name']
     }
+
+
+@payload_builder('treescript')
+def build_treescript_payload(config, task, task_def):
+    worker = task['worker']
+    release_config = get_release_config(config)
+
+    task_def['payload'] = {}
+    task_def.setdefault('scopes', [])
+    if worker['tag']:
+        product = task['shipping-product'].upper()
+        version = release_config['version'].replace('.', '_')
+        buildnum = release_config['build_number']
+        tag_names = [
+            "{}_{}_BUILD{}".format(product, version, buildnum),
+            "{}_{}_RELEASE".format(product, version)
+        ]
+        tag_info = {
+            'tags': tag_names,
+            'revision': config.params['head_rev']
+        }
+        task_def['payload']['tag_info'] = tag_info
+        task_def['scopes'].append('project:releng:treescript:action:tagging')
+
+    if worker['bump']:
+        if not worker['bump-files']:
+            raise Exception("Version Bump requested without bump-files")
+
+        bump_info = {}
+        bump_info['next_version'] = release_config['next_version']
+        bump_info['files'] = worker['bump-files']
+        task_def['payload']['version_bump_info'] = bump_info
+        task_def['scopes'].append('project:releng:treescript:action:version_bump')
+
+    if worker['push']:
+        task_def['scopes'].append('project:releng:treescript:action:push')
+
+    if worker.get('force-dry-run'):
+        task_def['payload']['dry_run'] = True
 
 
 @payload_builder('invalid')
@@ -1158,6 +1224,7 @@ def build_macosx_engine_payload(config, task, task_def):
         'command': worker['command'],
         'env': worker['env'],
         'artifacts': artifacts,
+        'maxRunTime': worker['max-run-time'],
     }
     if worker.get('reboot'):
         task_def['payload'] = worker['reboot']

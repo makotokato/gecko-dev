@@ -402,6 +402,8 @@ public:
 
   static bool RegisterProtocolHandlerAllowedForContext(JSContext* /* unused */, JSObject* aObj);
 
+  static bool DeviceSensorsEnabled(JSContext* /* unused */, JSObject* aObj);
+
   bool DoResolve(JSContext* aCx, JS::Handle<JSObject*> aObj,
                  JS::Handle<jsid> aId,
                  JS::MutableHandle<JS::PropertyDescriptor> aDesc);
@@ -1278,6 +1280,12 @@ private:
     }
     mChromeFields.mGroupMessageManagers.Clear();
   }
+
+  // Call or Cancel mDocumentFlushedResolvers items, and perform MicroTask
+  // checkpoint after that, and adds observer if new mDocumentFlushedResolvers
+  // items are added while Promise callbacks inside the checkpoint.
+  template<bool call>
+  void CallOrCancelDocumentFlushedResolvers();
 
   void CallDocumentFlushedResolvers();
   void CancelDocumentFlushedResolvers();
