@@ -234,7 +234,7 @@ partial interface Document {
 partial interface Document {
   // Note: Per spec the 'S' in these two is lowercase, but the "Moz"
   // versions have it uppercase.
-  [LenientSetter, Func="nsDocument::IsUnprefixedFullscreenEnabled"]
+  [LenientSetter, Unscopable, Func="nsDocument::IsUnprefixedFullscreenEnabled"]
   readonly attribute boolean fullscreen;
   [BinaryName="fullscreen"]
   readonly attribute boolean mozFullScreen;
@@ -475,6 +475,11 @@ enum FlashClassification {
 partial interface Document {
   [ChromeOnly]
   readonly attribute FlashClassification documentFlashClassification;
+};
+
+// Allows about: pages to query aboutCapabilities
+partial interface Document {
+  [Throws, Func="nsDocument::CallerIsTrustedAboutPage"] readonly attribute AboutCapabilities aboutCapabilities;
 };
 
 Document implements XPathEvaluator;
