@@ -659,8 +659,6 @@ case "$target" in
         WIN32_GUI_EXE_LDFLAGS=-mwindows
     else
         TARGET_COMPILER_ABI=msvc
-        HOST_CC='$(CC)'
-        HOST_CXX='$(CXX)'
         if test "$AS_BIN"; then
             AS="$(basename "$AS_BIN")"
         fi

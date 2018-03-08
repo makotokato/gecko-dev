@@ -160,6 +160,8 @@ void CPU::EnsureIAndDCacheCoherency(void *address, size_t length) {
     // isb : Instruction Synchronisation Barrier
     "   isb\n"
     : : : "memory");
+#elif defined(_WIN32) && defined(_M_ARM64)
+    FlushInstructionCache(GetCurrentProcess(), address, length);
 #else
   // If the host isn't AArch64, we must be using the simulator, so this function
   // doesn't have to do anything.

@@ -315,11 +315,6 @@ class ExecutableAllocator
                 : "r0", "r1", "r2");
         }
     }
-#elif defined(JS_CODEGEN_ARM64) && defined(_WIN64)
-    static void cacheFlush(void* code, size_t size)
-    {
-        FlushInstructionCache(GetCurrentProcess(), code, size);
-    }
 #elif defined(JS_CODEGEN_ARM64)
     static void cacheFlush(void* code, size_t size)
     {
