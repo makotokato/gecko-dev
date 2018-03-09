@@ -1074,7 +1074,6 @@ case "$target" in
         if test -n "$_WIN32_MSVC"; then
             DSO_LDOPTS="$DSO_LDOPTS -MACHINE:ARM64"
         fi
-        AC_DEFINE(_ARM64_)
         ;;
     *)
         AC_DEFINE(_CPU_ARCH_NOT_DEFINED)
@@ -2529,6 +2528,8 @@ if test -z "$MOZ_SYSTEM_LIBVPX"; then
         dnl The encoder needs obj_int_extract to get asm offsets.
       fi # COMPILE_ENVIRONMENT and others
     ;;
+    WINNT:aach64)
+    ;;
     *:arm*)
       if test -n "$GNU_AS" ; then
         dnl These flags are a lie; they're just used to enable the requisite
@@ -2734,7 +2735,7 @@ dnl D3D compiler DLL
 dnl ========================================================
 MOZ_FOUND_D3D_COMPILERS=
 
-if test -n "$MOZ_ANGLE_RENDERER"; then
+if test -n "$MOZ_ANGLE_RENDERER" -a "${target_cpu}" != 'aarch64'; then
   if test -z "$MOZ_D3D_CPU_SUFFIX"; then
     AC_MSG_ERROR([Couldn't determine MOZ_D3D_CPU_SUFFIX.])
   fi
@@ -2921,6 +2922,8 @@ if test -n "$MOZ_LIBJPEG_TURBO" -a -n "$COMPILE_ENVIRONMENT"; then
   ;;
   WINNT:x86_64)
     LIBJPEG_TURBO_ASFLAGS="-D__x86_64__ -DPIC -DWIN64 -DMSVC"
+  ;;
+  WINNT:aarch64)
   ;;
   *:arm)
     LIBJPEG_TURBO_ASFLAGS="-march=armv7-a -mfpu=neon"
