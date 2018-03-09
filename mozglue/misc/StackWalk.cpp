@@ -264,7 +264,7 @@ WalkStackMain64(struct WalkStackData* aData)
     context = aData->context;
   }
 
-#if defined(_M_IX86) || defined(_M_IA64)
+#if defined(_M_IX86) || defined(_M_IA64) || defined(_M_ARM64)
   // Setup initial stack frame to walk from.
   STACKFRAME64 frame64;
   memset(&frame64, 0, sizeof(frame64));
@@ -318,6 +318,8 @@ WalkStackMain64(struct WalkStackData* aData)
     BOOL ok = StackWalk64(
 #if defined _M_IA64
       IMAGE_FILE_MACHINE_IA64,
+#elif defined _M_ARM64
+      IMAGE_FILE_MACHINE_ARM64,
 #elif defined _M_IX86
       IMAGE_FILE_MACHINE_I386,
 #endif
