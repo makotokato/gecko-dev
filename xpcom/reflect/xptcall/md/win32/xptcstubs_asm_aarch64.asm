@@ -2,19 +2,19 @@
 ; License, v. 2.0. If a copy of the MPL was not distributed with this
 ; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-    NGPREGS EQU 8
-    NFPREGS EQU 8
-
     IMPORT |PrepareAndDispatch|
     EXPORT |SharedStub|
 
     AREA |.text|, CODE, ARM64
 
+    ;NGPREGS EQU 8
+    ;NFPREGS EQU 8
+
 |SharedStub| PROC
     stp         x29, x30, [sp,#-16]!
     mov         x29, sp
 
-    sub         sp, sp, #(8*(NGPREGS + NFPREGS)
+    sub         sp, sp, #8 * (8 + 8) ; #(8*(NGPREGS + NFPREGS)
     stp         x0, x1, [sp, #64+(0*8)]
     stp         x2, x3, [sp, #64+(2*8)]
     stp         x4, x5, [sp, #64+(4*8)]
@@ -27,20 +27,20 @@
     ; methodIndex passed from stub
     mov         w1, w17
 
-    add         x2, sp, #(16 + (8 * (NGPREGS + NFPREGS))
+    add         x2, sp, #(16 + (8 * (8 + 8))) ;#(16 + (8 * (NGPREGS + NFPREGS))
     add         x3, sp, #(8*8) ; 8*NFPREGS
     add         x4, sp, #0
 
     bl          PrepareAndDispatch
 
-    add         sp, sp, #(8 * (NGPREGS + NFPREGS))
+    add         sp, sp, #(8 * (8 + 8)) ;#(8 * (NGPREGS + NFPREGS))
     ldp         x29, x30, [sp],#16
     ret
 
     ENDP
 
     MACRO
-    STUBENTRY $functioname,$paramcount
+    STUBENTRY $functionname,$paramcount
     EXPORT |$functionname|
 |$functionname| PROC
     mov         w17, $paramcount

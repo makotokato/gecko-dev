@@ -726,7 +726,7 @@ protected:
   void CreateTrampoline(void* aOrigFunction, intptr_t aDest, void** aOutTramp)
   {
     *aOutTramp = nullptr;
-#if defined(_M_IX86) || defiend(_M_X64)
+#if defined(_M_IX86) || defined(_M_X64)
     AutoVirtualProtect protectHookPage(mHookPage, mMaxHooks * kHookSize,
                                        PAGE_EXECUTE_READWRITE);
     if (!protectHookPage.Protect()) {
