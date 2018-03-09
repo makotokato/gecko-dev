@@ -150,8 +150,7 @@ Inspector.prototype = {
     // Localize all the nodes containing a data-localization attribute.
     localizeMarkup(this.panelDoc);
 
-    this._cssPropertiesLoaded = initCssProperties(this.toolbox);
-    yield this._cssPropertiesLoaded;
+    this._cssProperties = yield initCssProperties(this.toolbox);
     yield this.target.makeRemote();
     yield this._getPageStyle();
 
@@ -391,7 +390,7 @@ Inspector.prototype = {
       window: this.panelDoc.defaultView,
     });
     let key = INSPECTOR_L10N.getStr("inspector.searchHTML.key");
-    shortcuts.on(key, (name, event) => {
+    shortcuts.on(key, event => {
       // Prevent overriding same shortcut from the computed/rule views
       if (event.target.closest("#sidebar-panel-ruleview") ||
           event.target.closest("#sidebar-panel-computedview")) {
@@ -1297,11 +1296,7 @@ Inspector.prototype = {
       this.animationinspector.destroy();
     }
 
-    let cssPropertiesDestroyer = this._cssPropertiesLoaded.then(({front}) => {
-      if (front) {
-        front.destroy();
-      }
-    });
+    let cssPropertiesDestroyer = this._cssProperties.front.destroy();
 
     this.sidebar.off("select", this.onSidebarSelect);
     let sidebarDestroyer = this.sidebar.destroy();

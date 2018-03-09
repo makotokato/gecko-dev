@@ -24,19 +24,20 @@
 #include "mozilla/Unused.h"
 
 #include "jsmath.h"
-#include "jsstr.h"
 #include "jsutil.h"
 
 #include "builtin/SIMD.h"
+#include "builtin/String.h"
 #include "frontend/Parser.h"
 #include "gc/Policy.h"
 #include "jit/AtomicOperations.h"
 #include "js/MemoryMetrics.h"
 #include "js/Printf.h"
 #include "js/Wrapper.h"
+#include "util/StringBuffer.h"
+#include "util/Text.h"
 #include "vm/ErrorReporting.h"
 #include "vm/SelfHosting.h"
-#include "vm/StringBuffer.h"
 #include "vm/Time.h"
 #include "vm/TypedArrayObject.h"
 #include "wasm/WasmCompile.h"
@@ -844,7 +845,7 @@ class NumLit
   private:
     Which which_;
     union {
-        Value scalar_;
+        JS::UninitializedValue scalar_;
         SimdConstant simd_;
     } u;
 
@@ -867,7 +868,7 @@ class NumLit
 
     int32_t toInt32() const {
         MOZ_ASSERT(which_ == Fixnum || which_ == NegativeInt || which_ == BigUnsigned);
-        return u.scalar_.toInt32();
+        return u.scalar_.asValueRef().toInt32();
     }
 
     uint32_t toUint32() const {
@@ -876,17 +877,17 @@ class NumLit
 
     double toDouble() const {
         MOZ_ASSERT(which_ == Double);
-        return u.scalar_.toDouble();
+        return u.scalar_.asValueRef().toDouble();
     }
 
     float toFloat() const {
         MOZ_ASSERT(which_ == Float);
-        return float(u.scalar_.toDouble());
+        return float(u.scalar_.asValueRef().toDouble());
     }
 
     Value scalarValue() const {
         MOZ_ASSERT(which_ != OutOfRangeInt);
-        return u.scalar_;
+        return u.scalar_.asValueRef();
     }
 
     bool isSimd() const

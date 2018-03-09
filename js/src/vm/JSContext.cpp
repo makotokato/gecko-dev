@@ -30,9 +30,9 @@
 
 #include "jsexn.h"
 #include "jspubtd.h"
-#include "jsstr.h"
 #include "jstypes.h"
 
+#include "builtin/String.h"
 #include "gc/FreeOp.h"
 #include "gc/Marking.h"
 #include "jit/Ion.h"
@@ -1156,6 +1156,18 @@ js::UseInternalJobQueues(JSContext* cx, bool cooperative)
     MOZ_ASSERT(cx->runtime()->offThreadPromiseState.ref().initialized());
 
     JS::SetEnqueuePromiseJobCallback(cx, InternalEnqueuePromiseJobCallback);
+
+    return true;
+}
+
+JS_FRIEND_API(bool)
+js::EnqueueJob(JSContext* cx, JS::HandleObject job)
+{
+    MOZ_ASSERT(cx->jobQueue);
+    if (!cx->jobQueue->append(job)) {
+        ReportOutOfMemory(cx);
+        return false;
+    }
 
     return true;
 }

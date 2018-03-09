@@ -9,48 +9,6 @@
           xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
           xmlns:xbl="http://www.mozilla.org/xbl">
 
-  <!--
-  This binding is bound to <toolbox id="navigator-toolbox"> so that
-  the #tabbrowser binding is initialized before the #tabs binding.
-  Remove after bug 1392352.
-  -->
-  <binding id="empty"/>
-
-  <binding id="tabbrowser">
-    <resources>
-      <stylesheet src="chrome://browser/content/tabbrowser.css"/>
-    </resources>
-
-    <content>
-      <xul:tabbox anonid="tabbox" class="tabbrowser-tabbox"
-                  flex="1" eventnode="document" xbl:inherits="tabcontainer"
-                  onselect="if (event.target.localName == 'tabpanels') gBrowser.updateCurrentBrowser();">
-        <xul:tabpanels flex="1" class="plain" selectedIndex="0" anonid="panelcontainer">
-          <xul:notificationbox flex="1" notificationside="top">
-            <xul:hbox flex="1" class="browserSidebarContainer">
-              <xul:vbox flex="1" class="browserContainer">
-                <xul:stack flex="1" class="browserStack" anonid="browserStack">
-                  <xul:browser anonid="initialBrowser" type="content" message="true" messagemanagergroup="browsers"
-                               primary="true" blank="true"
-                               xbl:inherits="tooltip=contenttooltip,contextmenu=contentcontextmenu,autocompletepopup,selectmenulist,datetimepicker"/>
-                </xul:stack>
-              </xul:vbox>
-            </xul:hbox>
-          </xul:notificationbox>
-        </xul:tabpanels>
-      </xul:tabbox>
-      <children/>
-    </content>
-    <implementation>
-      <constructor>
-        gBrowser = new TabBrowser(this);
-      </constructor>
-      <destructor>
-        gBrowser.disconnectedCallback();
-      </destructor>
-    </implementation>
-  </binding>
-
   <binding id="tabbrowser-arrowscrollbox" extends="chrome://global/content/bindings/scrollbox.xml#arrowscrollbox-clicktoscroll">
     <implementation>
       <!-- Override scrollbox.xml method, since our scrollbox's children are
@@ -115,10 +73,6 @@
 
   <binding id="tabbrowser-tabs"
            extends="chrome://global/content/bindings/tabbox.xml#tabs">
-    <resources>
-      <stylesheet src="chrome://browser/content/tabbrowser.css"/>
-    </resources>
-
     <content>
       <xul:hbox class="tab-drop-indicator-box">
         <xul:image class="tab-drop-indicator" anonid="tab-drop-indicator" collapsed="true"/>
@@ -172,12 +126,17 @@
           this.observe(null, "nsPref:changed", "privacy.userContext.enabled");
 
           this._setPositionalAttributes();
+
+          CustomizableUI.addListener(this);
+          this._updateNewTabVisibility();
         ]]>
       </constructor>
 
       <destructor>
         <![CDATA[
           Services.prefs.removeObserver("privacy.userContext", this);
+
+          CustomizableUI.removeListener(this);
         ]]>
       </destructor>
 
@@ -954,6 +913,57 @@
         ]]>
         </body>
       </method>
+
+      <method name="_updateNewTabVisibility">
+        <body><![CDATA[
+          // Helper functions to help deal with customize mode wrapping some items
+          let wrap = n => n.parentNode.localName == "toolbarpaletteitem" ? n.parentNode : n;
+          let unwrap = n => n && n.localName == "toolbarpaletteitem" ? n.firstElementChild : n;
+
+          let sib = this;
+          do {
+            sib = unwrap(wrap(sib).nextElementSibling);
+          } while (sib && sib.hidden);
+
+          const kAttr = "hasadjacentnewtabbutton";
+          if (sib && sib.id == "new-tab-button") {
+            this.setAttribute(kAttr, "true");
+          } else {
+            this.removeAttribute(kAttr);
+          }
+        ]]></body>
+      </method>
+
+      <method name="onWidgetAfterDOMChange">
+        <parameter name="aNode"/>
+        <parameter name="aNextNode"/>
+        <parameter name="aContainer"/>
+        <body><![CDATA[
+          if (aContainer.ownerDocument == document &&
+              aContainer.id == "TabsToolbar") {
+            this._updateNewTabVisibility();
+          }
+        ]]></body>
+      </method>
+
+      <method name="onAreaNodeRegistered">
+        <parameter name="aArea"/>
+        <parameter name="aContainer"/>
+        <body><![CDATA[
+          if (aContainer.ownerDocument == document &&
+              aArea == "TabsToolbar") {
+            this._updateNewTabVisibility();
+          }
+        ]]></body>
+      </method>
+
+      <method name="onAreaReset">
+        <parameter name="aArea"/>
+        <parameter name="aContainer"/>
+        <body><![CDATA[
+          this.onAreaNodeRegistered(aArea, aContainer);
+        ]]></body>
+      </method>
     </implementation>
 
     <handlers>
@@ -1528,10 +1538,6 @@
 
   <binding id="tabbrowser-tab" display="xul:hbox"
            extends="chrome://global/content/bindings/tabbox.xml#tab">
-    <resources>
-      <stylesheet src="chrome://browser/content/tabbrowser.css"/>
-    </resources>
-
     <content context="tabContextMenu">
       <xul:stack class="tab-stack" flex="1">
         <xul:vbox xbl:inherits="selected=visuallyselected,fadein"

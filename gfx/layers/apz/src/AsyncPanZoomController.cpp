@@ -4,11 +4,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "AsyncPanZoomController.h"     // for AsyncPanZoomController, etc
+
 #include <math.h>                       // for fabsf, fabs, atan2
 #include <stdint.h>                     // for uint32_t, uint64_t
 #include <sys/types.h>                  // for int32_t
 #include <algorithm>                    // for max, min
-#include "AsyncPanZoomController.h"     // for AsyncPanZoomController, etc
+
+#include "APZCTreeManager.h"            // for APZCTreeManager
+#include "AsyncPanZoomAnimation.h"      // for AsyncPanZoomAnimation
 #include "AutoscrollAnimation.h"        // for AutoscrollAnimation
 #include "Axis.h"                       // for AxisX, AxisY, Axis, etc
 #include "CheckerboardEvent.h"          // for CheckerboardEvent
@@ -50,7 +54,6 @@
 #include "mozilla/gfx/Point.h"          // for Point, RoundedToInt, etc
 #include "mozilla/gfx/Rect.h"           // for RoundedIn
 #include "mozilla/gfx/ScaleFactor.h"    // for ScaleFactor
-#include "mozilla/layers/APZCTreeManager.h"  // for ScrollableLayerGuid
 #include "mozilla/layers/APZThreadUtils.h"  // for AssertOnControllerThread, etc
 #include "mozilla/layers/AsyncCompositionManager.h"  // for ViewTransform
 #include "mozilla/layers/AxisPhysicsModel.h" // for AxisPhysicsModel
@@ -69,7 +72,7 @@
 #include "nsMathUtils.h"                // for NS_hypot
 #include "nsPoint.h"                    // for nsIntPoint
 #include "nsStyleConsts.h"
-#include "nsStyleStruct.h"              // for nsTimingFunction
+#include "nsTimingFunction.h"
 #include "nsTArray.h"                   // for nsTArray, nsTArray_Impl, etc
 #include "nsThreadUtils.h"              // for NS_IsMainThread
 #include "nsViewportInfo.h"             // for kViewportMinScale, kViewportMaxScale
@@ -1565,6 +1568,14 @@ nsEventStatus AsyncPanZoomController::OnScaleEnd(const PinchGestureInput& aEvent
     }
   } else {
     // Otherwise, handle the fingers being lifted.
+
+    // Some of the code paths below, like ScrollSnap() or HandleEndOfPan(),
+    // may start an animation, but otherwise we want to end up in the NOTHING
+    // state. To avoid state change notification churn, we use a
+    // notification blocker.
+    StateChangeNotificationBlocker blocker(this);
+    SetState(NOTHING);
+
     if (mZoomConstraints.mAllowZoom) {
       RecursiveMutexAutoLock lock(mRecursiveMutex);
 

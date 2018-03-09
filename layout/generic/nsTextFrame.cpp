@@ -3402,7 +3402,8 @@ CanAddSpacingAfter(const gfxTextRun* aTextRun, uint32_t aOffset)
   if (aOffset + 1 >= aTextRun->GetLength())
     return true;
   return aTextRun->IsClusterStart(aOffset + 1) &&
-    aTextRun->IsLigatureGroupStart(aOffset + 1);
+    aTextRun->IsLigatureGroupStart(aOffset + 1) &&
+    !aTextRun->CharIsFormattingControl(aOffset);
 }
 
 static gfxFloat
@@ -5538,7 +5539,7 @@ struct EmphasisMarkInfo
 
 NS_DECLARE_FRAME_PROPERTY_DELETABLE(EmphasisMarkProperty, EmphasisMarkInfo)
 
-already_AddRefed<gfxTextRun>
+static already_AddRefed<gfxTextRun>
 GenerateTextRunForEmphasisMarks(nsTextFrame* aFrame,
                                 nsFontMetrics* aFontMetrics,
                                 nsStyleContext* aStyleContext,

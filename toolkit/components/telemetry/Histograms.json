@@ -175,7 +175,7 @@
     "record_in_processes": ["main", "content"],
     "alert_emails": ["padenot@mozilla.com", "kinetik@flim.org"],
     "bug_numbers": [1280630],
-    "expires_in_version": "60",
+    "expires_in_version": "65",
     "kind": "enumerated",
     "n_values": 16,
     "description": "The operating system audio back-end used when successfully opening an audio stream, or whether the failure occurred on the first try or not <https://dxr.mozilla.org/mozilla-central/search?q=AUDIOSTREAM_BACKEND_ID_STR>",
@@ -6743,10 +6743,12 @@
     "labels": [
       "enter",
       "enterSelection",
-      "click"
+      "click",
+      "arrowEnterSelection",
+      "tabEnterSelection"
     ],
     "bug_numbers": [1334615],
-    "description": "The input method the user used to select a result in the urlbar. 'enter' => The user hit the Enter key on the heuristic result at index 0. 'enterSelection' => The user chose a non-heuristic result and then hit the Enter key. 'click' => The user clicked a result with the mouse."
+    "description": "The input method the user used to select a result in the urlbar. 'enter' => The user hit the Enter key on the heuristic result at index 0. 'enterSelection' => The user chose a non-heuristic result (in exotic ways) and then hit the Enter key. 'click' => The user clicked a result with the mouse. 'arrowEnterSelection' => The user chose a non-heuristic result using arrow keys and then hit the Enter key. 'tabEnterSelection' => The user chose a non-heuristic result using tab at least once and then hit the Enter key."
   },
   "FX_SEARCHBAR_SELECTED_RESULT_METHOD": {
     "record_in_processes": ["main", "content"],
@@ -10082,27 +10084,6 @@
     "bug_numbers": [1373483],
     "description": "On page load, record the number of CSS Grid elements present on a page when the DevTools is open",
     "releaseChannelCollection": "opt-out"
-  },
-  "VIEW_SOURCE_IN_BROWSER_OPENED_BOOLEAN": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["mozilla-dev-developer-tools@lists.mozilla.org", "jryans@mozilla.com"],
-    "expires_in_version": "53",
-    "kind": "boolean",
-    "description": "How many times has view source in browser / tab been opened?"
-  },
-  "VIEW_SOURCE_IN_WINDOW_OPENED_BOOLEAN": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["mozilla-dev-developer-tools@lists.mozilla.org", "jryans@mozilla.com"],
-    "expires_in_version": "53",
-    "kind": "boolean",
-    "description": "How many times has view source in a new window been opened?"
-  },
-  "VIEW_SOURCE_EXTERNAL_RESULT_BOOLEAN": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["mozilla-dev-developer-tools@lists.mozilla.org", "jryans@mozilla.com"],
-    "expires_in_version": "53",
-    "kind": "boolean",
-    "description": "How many times has view source in an external editor been opened, and did it succeed?"
   },
   "BROWSER_IS_USER_DEFAULT": {
     "record_in_processes": ["main"],

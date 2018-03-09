@@ -1934,7 +1934,11 @@ nsPrintJob::SetupToPrintContent()
 
   PR_PL(("****************** Begin Document ************************\n"));
 
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+    NS_WARNING_ASSERTION(rv == NS_ERROR_ABORT,
+                         "Failed to begin document for printing");
+    return rv;
+  }
 
   // This will print the docshell document
   // when it completes asynchronously in the DonePrintingPages method
@@ -2041,7 +2045,8 @@ nsPrintJob::AfterNetworkPrint(bool aHandleError)
 
   /* cleaup on failure + notify user */
   if (aHandleError && NS_FAILED(rv)) {
-    NS_WARNING("nsPrintJob::AfterNetworkPrint failed");
+    NS_WARNING_ASSERTION(rv == NS_ERROR_ABORT,
+                         "nsPrintJob::AfterNetworkPrint failed");
     CleanupOnFailure(rv, !mIsDoingPrinting);
   }
 
@@ -2424,7 +2429,7 @@ nsPrintJob::ReflowPrintObject(const UniquePtr<nsPrintObject>& aPO)
       FILE * fd = fopen(filename, "w");
       if (fd) {
         nsIFrame *theRootFrame =
-          aPO->mPresShell->FrameManager()->GetRootFrame();
+          aPO->mPresShell->GetRootFrame();
         fprintf(fd, "Title: %s\n", docStr.get());
         fprintf(fd, "URL:   %s\n", urlStr.get());
         fprintf(fd, "--------------- Frames ----------------\n");
@@ -2660,7 +2665,7 @@ nsPrintJob::DoPrint(const UniquePtr<nsPrintObject>& aPO)
     printData->mPreparingForPrint = false;
 
 #ifdef EXTENDED_DEBUG_PRINTING
-    nsIFrame* rootFrame = poPresShell->FrameManager()->GetRootFrame();
+    nsIFrame* rootFrame = poPresShell->GetRootFrame();
     if (aPO->IsPrintable()) {
       nsAutoCString docStr;
       nsAutoCString urlStr;
@@ -3654,7 +3659,7 @@ static void RootFrameList(nsPresContext* aPresContext, FILE* out,
 
   nsIPresShell *shell = aPresContext->GetPresShell();
   if (shell) {
-    nsIFrame* frame = shell->FrameManager()->GetRootFrame();
+    nsIFrame* frame = shell->GetRootFrame();
     if (frame) {
       frame->List(out, aPrefix);
     }
@@ -3810,7 +3815,7 @@ static void DumpPrintObjectsList(const nsTArray<nsPrintObject*>& aDocList)
     NS_ASSERTION(po, "nsPrintObject can't be null!");
     nsIFrame* rootFrame = nullptr;
     if (po->mPresShell) {
-      rootFrame = po->mPresShell->FrameManager()->GetRootFrame();
+      rootFrame = po->mPresShell->GetRootFrame();
       while (rootFrame != nullptr) {
         nsIPageSequenceFrame * sqf = do_QueryFrame(rootFrame);
         if (sqf) {
@@ -3886,7 +3891,7 @@ static void DumpPrintObjectsTreeLayout(const UniquePtr<nsPrintObject>& aPO,
   if (fd) {
     nsIFrame* rootFrame = nullptr;
     if (aPO->mPresShell) {
-      rootFrame = aPO->mPresShell->FrameManager()->GetRootFrame();
+      rootFrame = aPO->mPresShell->GetRootFrame();
     }
     for (int32_t k=0;k<aLevel;k++) fprintf(fd, "  ");
     fprintf(fd, "%s %p %p\n", types[aPO->mFrameType], aPO.get(),

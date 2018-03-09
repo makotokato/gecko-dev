@@ -51,7 +51,7 @@ SelectionManager* SelectionMgr();
 ApplicationAccessible* ApplicationAcc();
 xpcAccessibleApplication* XPCApplicationAcc();
 
-typedef Accessible* (New_Accessible)(nsIContent* aContent, Accessible* aContext);
+typedef Accessible* (New_Accessible)(Element* aElement, Accessible* aContext);
 
 struct MarkupAttrInfo {
   nsStaticAtom** name;
@@ -290,12 +290,6 @@ private:
    * Shutdowns accessibility service.
    */
   void Shutdown();
-
-  /**
-   * Create accessible for the element having XBL bindings.
-   */
-  already_AddRefed<Accessible>
-    CreateAccessibleByType(nsIContent* aContent, DocAccessible* aDoc);
 
   /**
    * Create an accessible whose type depends on the given frame.

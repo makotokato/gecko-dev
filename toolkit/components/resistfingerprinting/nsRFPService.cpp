@@ -42,9 +42,7 @@
 using namespace mozilla;
 using namespace std;
 
-#ifdef DEBUG
 static mozilla::LazyLogModule gResistFingerprintingLog("nsResistFingerprinting");
-#endif
 
 #define RESIST_FINGERPRINTING_PREF "privacy.resistFingerprinting"
 #define RFP_TIMER_PREF "privacy.reduceTimerPrecision"
@@ -163,20 +161,15 @@ public:
         // Double check after we have a lock
         if (MOZ_UNLIKELY(cacheEntry.key != aKey)) {
           // Got evicted in a race
-#if defined(DEBUG)
           long long tmp_key = cacheEntry.key;
           MOZ_LOG(gResistFingerprintingLog, LogLevel::Verbose,
             ("LRU Cache HIT-MISS with %lli != %lli", aKey, tmp_key));
-#endif
           return EmptyCString();
         }
 
         cacheEntry.accessTime = PR_Now();
-
-#if defined(DEBUG)
         MOZ_LOG(gResistFingerprintingLog, LogLevel::Verbose,
           ("LRU Cache HIT with %lli", aKey));
-#endif
         return cacheEntry.data;
       }
     }
@@ -192,10 +185,8 @@ public:
     for (auto & cacheEntry : this->cache) {
       if (MOZ_UNLIKELY(cacheEntry.key == aKey)) {
         // Another thread inserted before us, don't insert twice
-#if defined(DEBUG)
         MOZ_LOG(gResistFingerprintingLog, LogLevel::Verbose,
           ("LRU Cache DOUBLE STORE with %lli", aKey));
-#endif
         return;
       }
       if (cacheEntry.accessTime < lowestKey->accessTime) {
@@ -206,9 +197,7 @@ public:
     lowestKey->key = aKey;
     lowestKey->data = aValue;
     lowestKey->accessTime = PR_Now();
-#if defined(DEBUG)
     MOZ_LOG(gResistFingerprintingLog, LogLevel::Verbose, ("LRU Cache STORE with %lli", aKey));
-#endif
   }
 
 
@@ -411,8 +400,12 @@ nsRFPService::RandomMidpoint(long long aClampedTimeUSec,
   }
 
   // Offset the appropriate index into the hash output, and then turn it into a random midpoint
-  // between 0 and aResolutionUSec
-  int byteOffset = ((aClampedTimeUSec - extraClampedTime) / aResolutionUSec) * 4;
+  // between 0 and aResolutionUSec. Sometimes out input time is negative, we ride the negative
+  // out to the end until we start doing pointer math. (We also triple check we're in bounds.)
+  int byteOffset = abs(((aClampedTimeUSec - extraClampedTime) / aResolutionUSec) * 4);
+  if (MOZ_UNLIKELY(byteOffset > (HASH_DIGEST_SIZE_BYTES - 4))) {
+    byteOffset = 0;
+  }
   uint32_t deterministiclyRandomValue = *BitwiseCast<uint32_t*>(PromiseFlatCString(hashResult).get() + byteOffset);
   deterministiclyRandomValue %= aResolutionUSec;
   *aMidpointOut = deterministiclyRandomValue;
@@ -495,14 +488,12 @@ nsRFPService::ReduceTimePrecisionImpl(
   // Cast it back to a double and reduce it to the correct units.
   double ret = double(clampedAndJittered) / (1000000.0 / aTimeScale);
 
-#if defined(DEBUG)
   bool tmp_jitter = sJitter;
   MOZ_LOG(gResistFingerprintingLog, LogLevel::Verbose,
     ("Given: (%.*f, Scaled: %.*f, Converted: %lli), Rounding with (%lli, Originally %.*f), "
      "Intermediate: (%lli), Clamped: (%lli) Jitter: (%i Midpoint: %lli) Final: (%lli Converted: %.*f)",
      DBL_DIG-1, aTime, DBL_DIG-1, timeScaled, timeAsInt, resolutionAsInt, DBL_DIG-1, aResolutionUSec,
      (long long)floor(double(timeAsInt) / resolutionAsInt), clamped, tmp_jitter, midpoint, clampedAndJittered, DBL_DIG-1, ret));
-#endif
 
   return ret;
 }
@@ -954,8 +945,10 @@ nsRFPService::GetSpoofedModifierStates(const nsIDocument* aDoc,
     return false;
   }
 
-  // We will spoof the modifer state for Alt, Shift, AltGraph and Control.
-  if (aModifier & (MODIFIER_ALT | MODIFIER_SHIFT | MODIFIER_ALTGRAPH | MODIFIER_CONTROL)) {
+  // We will spoof the modifer state for Alt, Shift, and AltGraph.
+  // We don't spoof the Control key, because it is often used
+  // for command key combinations in web apps.
+  if (aModifier & (MODIFIER_ALT | MODIFIER_SHIFT | MODIFIER_ALTGRAPH)) {
     SpoofingKeyboardCode keyCodeInfo;
 
     if (GetSpoofedKeyCodeInfo(aDoc, aKeyboardEvent, keyCodeInfo)) {

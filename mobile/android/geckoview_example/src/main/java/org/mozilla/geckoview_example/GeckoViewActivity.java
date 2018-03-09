@@ -19,10 +19,8 @@ import android.view.WindowManager;
 import java.util.Locale;
 
 import org.mozilla.gecko.GeckoThread;
-import org.mozilla.gecko.util.GeckoBundle;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoSessionSettings;
-import org.mozilla.geckoview.GeckoSession.PermissionDelegate.MediaSource;
 import org.mozilla.geckoview.GeckoSession.Response;
 import org.mozilla.geckoview.GeckoSession.TrackingProtectionDelegate;
 import org.mozilla.geckoview.GeckoView;
@@ -48,25 +46,18 @@ public class GeckoViewActivity extends Activity {
         Log.i(LOGTAG, "zerdatime " + SystemClock.elapsedRealtime() +
               " - application start");
 
-        String geckoArgs = null;
-        final String intentArgs = getIntent().getStringExtra("args");
+        final String[] geckoArgs;
 
         if (BuildConfig.DEBUG) {
             // In debug builds, we want to load JavaScript resources fresh with each build.
-            geckoArgs = "-purgecaches";
-        }
-
-        if (!TextUtils.isEmpty(intentArgs)) {
-            if (geckoArgs == null) {
-                geckoArgs = intentArgs;
-            } else {
-                geckoArgs += " " + intentArgs;
-            }
+            geckoArgs = new String[] { "-purgecaches" };
+        } else {
+            geckoArgs = null;
         }
 
         final boolean useMultiprocess = getIntent().getBooleanExtra(USE_MULTIPROCESS_EXTRA,
                                                                     true);
-        GeckoSession.preload(this, geckoArgs, useMultiprocess);
+        GeckoSession.preload(this, geckoArgs, getIntent().getExtras(), useMultiprocess);
 
         setContentView(R.layout.geckoview_activity);
 
@@ -193,7 +184,7 @@ public class GeckoViewActivity extends Activity {
         @Override
         public void onCloseRequest(final GeckoSession session) {
             if (session != mGeckoSession) {
-                session.closeWindow();
+                session.close();
             }
         }
 
@@ -355,9 +346,9 @@ public class GeckoViewActivity extends Activity {
         }
 
         @Override
-        public boolean onLoadUri(final GeckoSession session, final String uri,
-                                 final TargetWindow where) {
-            Log.d(LOGTAG, "onLoadUri=" + uri + " where=" + where);
+        public boolean onLoadRequest(final GeckoSession session, final String uri,
+                                     final int target) {
+            Log.d(LOGTAG, "onLoadRequest=" + uri + " where=" + target);
             return false;
         }
 

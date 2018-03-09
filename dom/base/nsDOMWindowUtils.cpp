@@ -106,7 +106,7 @@
 #include "HTMLImageElement.h"
 #include "HTMLCanvasElement.h"
 #include "mozilla/css/ImageLoader.h"
-#include "mozilla/layers/APZCTreeManager.h" // for layers::ZoomToRectBehavior
+#include "mozilla/layers/IAPZCTreeManager.h" // for layers::ZoomToRectBehavior
 #include "mozilla/dom/Promise.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/gfx/GPUProcessManager.h"
@@ -488,7 +488,7 @@ nsDOMWindowUtils::SetDisplayPortForElement(float aXPx, float aYPx,
   nsLayoutUtils::InvalidateForDisplayPortChange(content, !!currentData,
     currentData ? currentData->mRect : nsRect(), displayport);
 
-  nsIFrame* rootFrame = presShell->FrameManager()->GetRootFrame();
+  nsIFrame* rootFrame = presShell->GetRootFrame();
   if (rootFrame) {
     rootFrame->SchedulePaint();
 
@@ -3497,7 +3497,7 @@ nsDOMWindowUtils::SelectAtPoint(float aX, float aY, uint32_t aSelectBehavior,
   }
 
   // The root frame for this content window
-  nsIFrame* rootFrame = presShell->FrameManager()->GetRootFrame();
+  nsIFrame* rootFrame = presShell->GetRootFrame();
   if (!rootFrame) {
     return NS_ERROR_UNEXPECTED;
   }

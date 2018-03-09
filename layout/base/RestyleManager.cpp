@@ -19,6 +19,7 @@
 #include "nsPlaceholderFrame.h"
 #include "nsStyleChangeList.h"
 #include "nsStyleUtil.h"
+#include "nsTransitionManager.h"
 #include "StickyScrollContainer.h"
 #include "mozilla/EffectSet.h"
 #include "mozilla/IntegerRange.h"
@@ -850,7 +851,7 @@ GetFrameForChildrenOnlyTransformHint(nsIFrame* aFrame)
 // Returns true if this function managed to successfully move a frame, and
 // false if it could not process the position change, and a reflow should
 // be performed instead.
-bool
+static bool
 RecomputePosition(nsIFrame* aFrame)
 {
   // Don't process position changes on table frames, since we already handle

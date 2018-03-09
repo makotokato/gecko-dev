@@ -50,9 +50,6 @@ var whitelist = [
   // security/manager/pki/resources/content/device_manager.js
   {file: "chrome://pippki/content/load_device.xul"},
 
-  // Used by setting this url as a pref in about:config
-  {file: "chrome://browser/content/newtab/alternativeDefaultSites.json"},
-
   // Add-on compat
   {file: "chrome://global/content/XPCNativeWrapper.js"},
   {file: "chrome://global/locale/brand.dtd"},
@@ -72,9 +69,6 @@ var whitelist = [
   // devtools/client/inspector/bin/dev-server.js
   {file: "chrome://devtools/content/inspector/markup/markup.xhtml",
    isFromDevTools: true},
-
-  // Kept for add-on compatibility, should be removed in bug 851471.
-  {file: "chrome://mozapps/skin/downloads/downloadIcon.png"},
 
   // SpiderMonkey parser API, currently unused in browser/ and toolkit/
   {file: "resource://gre/modules/reflect.jsm"},

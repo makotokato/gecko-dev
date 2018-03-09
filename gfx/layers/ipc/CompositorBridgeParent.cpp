@@ -5,10 +5,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/layers/CompositorBridgeParent.h"
+
 #include <stdio.h>                      // for fprintf, stdout
 #include <stdint.h>                     // for uint64_t
 #include <map>                          // for _Rb_tree_iterator, etc
 #include <utility>                      // for pair
+
+#include "apz/src/APZCTreeManager.h"    // for APZCTreeManager
 #include "LayerTransactionParent.h"     // for LayerTransactionParent
 #include "RenderTrace.h"                // for RenderTraceLayers
 #include "base/message_loop.h"          // for MessageLoop
@@ -37,7 +40,6 @@
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/GPUParent.h"
 #include "mozilla/layers/AnimationHelper.h" // for CompositorAnimationStorage
-#include "mozilla/layers/APZCTreeManager.h"  // for APZCTreeManager
 #include "mozilla/layers/APZCTreeManagerParent.h"  // for APZCTreeManagerParent
 #include "mozilla/layers/APZSampler.h"  // for APZSampler
 #include "mozilla/layers/APZThreadUtils.h"  // for APZThreadUtils
@@ -1146,6 +1148,17 @@ CompositorBridgeParent::DeallocPAPZCTreeManagerParent(PAPZCTreeManagerParent* aA
   return true;
 }
 
+void
+CompositorBridgeParent::AllocateAPZCTreeManagerParent(const MonitorAutoLock& aProofOfLayerTreeStateLock,
+                                                      const uint64_t& aLayersId,
+                                                      LayerTreeState& aState)
+{
+  MOZ_ASSERT(aState.mParent == this);
+  MOZ_ASSERT(mApzcTreeManager);
+  MOZ_ASSERT(!aState.mApzcTreeManagerParent);
+  aState.mApzcTreeManagerParent = new APZCTreeManagerParent(aLayersId, mApzcTreeManager);
+}
+
 PAPZParent*
 CompositorBridgeParent::AllocPAPZParent(const uint64_t& aLayersId)
 {
@@ -1174,11 +1187,13 @@ CompositorBridgeParent::DeallocPAPZParent(PAPZParent* aActor)
   return true;
 }
 
-RefPtr<APZCTreeManager>
-CompositorBridgeParent::GetAPZCTreeManager()
+#if defined(MOZ_WIDGET_ANDROID)
+AndroidDynamicToolbarAnimator*
+CompositorBridgeParent::GetAndroidDynamicToolbarAnimator()
 {
-  return mApzcTreeManager;
+  return mApzcTreeManager ? mApzcTreeManager->GetAndroidDynamicToolbarAnimator() : nullptr;
 }
+#endif
 
 RefPtr<APZSampler>
 CompositorBridgeParent::GetAPZSampler()
@@ -1365,6 +1380,30 @@ CompositorBridgeParent::RecvGetFrameUniformity(FrameUniformityData* aOutData)
 {
   mCompositionManager->GetFrameUniformity(aOutData);
   return IPC_OK();
+}
+
+void
+CompositorBridgeParent::SetTestAsyncScrollOffset(
+    const uint64_t& aLayersId,
+    const FrameMetrics::ViewID& aScrollId,
+    const CSSPoint& aPoint)
+{
+  if (mApzSampler) {
+    uint64_t layersId = (aLayersId == 0 ? mRootLayerTreeID : aLayersId);
+    mApzSampler->SetTestAsyncScrollOffset(layersId, aScrollId, aPoint);
+  }
+}
+
+void
+CompositorBridgeParent::SetTestAsyncZoom(
+    const uint64_t& aLayersId,
+    const FrameMetrics::ViewID& aScrollId,
+    const LayerToParentLayerScale& aZoom)
+{
+  if (mApzSampler) {
+    uint64_t layersId = (aLayersId == 0 ? mRootLayerTreeID : aLayersId);
+    mApzSampler->SetTestAsyncZoom(layersId, aScrollId, aZoom);
+  }
 }
 
 void
@@ -1572,12 +1611,16 @@ CompositorBridgeParent::DeallocPLayerTransactionParent(PLayerTransactionParent* 
 
 CompositorBridgeParent* CompositorBridgeParent::GetCompositorBridgeParent(uint64_t id)
 {
+  MOZ_RELEASE_ASSERT(CompositorThreadHolder::IsInCompositorThread());
+
   CompositorMap::iterator it = sCompositorMap->find(id);
   return it != sCompositorMap->end() ? it->second : nullptr;
 }
 
 void CompositorBridgeParent::AddCompositor(CompositorBridgeParent* compositor, uint64_t* outID)
 {
+  MOZ_RELEASE_ASSERT(CompositorThreadHolder::IsInCompositorThread());
+
   static uint64_t sNextID = 1;
 
   ++sNextID;
@@ -1587,6 +1630,8 @@ void CompositorBridgeParent::AddCompositor(CompositorBridgeParent* compositor, u
 
 CompositorBridgeParent* CompositorBridgeParent::RemoveCompositor(uint64_t id)
 {
+  MOZ_RELEASE_ASSERT(CompositorThreadHolder::IsInCompositorThread());
+
   CompositorMap::iterator it = sCompositorMap->find(id);
   if (it == sCompositorMap->end()) {
     return nullptr;
@@ -1704,10 +1749,15 @@ CompositorBridgeParent::RecvAdoptChild(const uint64_t& child)
     parent = sIndirectLayerTrees[child].mApzcTreeManagerParent;
   }
 
-  // We don't support moving a child from a APZ-enabled compositor to a
-  // APZ-disabled compostior. The mOptions assertion above should already
-  // ensure this, since APZ-ness is one of the things in mOptions.
-  MOZ_ASSERT((oldApzSampler != nullptr) == (mApzSampler != nullptr));
+  if (oldApzSampler) {
+    // We don't support moving a child from an APZ-enabled compositor to a
+    // APZ-disabled compositor. The mOptions assertion above should already
+    // ensure this, since APZ-ness is one of the things in mOptions. Note
+    // however it is possible for mApzSampler to be non-null here with
+    // oldApzSampler null, because the child may not have been previously
+    // composited.
+    MOZ_ASSERT(mApzSampler);
+  }
   if (mApzSampler) {
     if (parent) {
       MOZ_ASSERT(mApzcTreeManager);

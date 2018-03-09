@@ -96,16 +96,6 @@ function waitForWheelEvent(aTarget) {
   });
 }
 
-// Returns true if |aAnimation| begins at the current timeline time.  We
-// sometimes need to detect this case because if we started an animation
-// asynchronously (e.g. using play()) and then ended up running the next frame
-// at precisely the time the animation started (due to aligning with vsync
-// refresh rate) then we won't end up restyling in that frame.
-function startsRightNow(aAnimation) {
-  return aAnimation.startTime === aAnimation.timeline.currentTime &&
-         aAnimation.currentTime === 0;
-}
-
 function tweakExpectedRestyleCount(aAnimation, aExpectedRestyleCount) {
   // Normally we expect one restyling for each requestAnimationFrame (as
   // called by observeRestyling) PLUS one for the last frame because of bug
@@ -123,10 +113,10 @@ function tweakExpectedRestyleCount(aAnimation, aExpectedRestyleCount) {
     // If we have the conformant Promise handling and |aAnimation| begins at
     // the current timeline time, we will not process restyling in the initial
     // frame.
-    if (startsRightNow(aAnimation)) {
+    if (animationStartsRightNow(aAnimation)) {
       return aExpectedRestyleCount - 1;
     }
-  } else if (!startsRightNow(aAnimation)) {
+  } else if (!animationStartsRightNow(aAnimation)) {
     // If we don't have the conformant Promise handling and |aAnimation|
     // doesn't begin at the current timeline time, we will see an additional
     // restyling in the last frame.
@@ -414,7 +404,7 @@ waitForAllPaints(() => {
       var parentElement = addDiv(null,
         { style: 'overflow-y: scroll; height: 20px;' });
       var div = addDiv(null,
-        { style: 'animation: rotate 100s; position: relative; top: 100px;' });
+        { style: 'animation: rotate 100s infinite; position: relative; top: 100px;' });
       parentElement.appendChild(div);
       var animation = div.getAnimations()[0];
       var timeAtStart = document.timeline.currentTime;
@@ -460,7 +450,7 @@ waitForAllPaints(() => {
       var parentElement = addDiv(null,
         { style: 'overflow-y: scroll; height: 20px;' });
       var div = addDiv(null,
-        { style: 'animation: rotate 100s; position: relative; top: 100px;' });
+        { style: 'animation: rotate 100s infinite; position: relative; top: 100px;' });
       parentElement.appendChild(div);
       var animation = div.getAnimations()[0];
       var timeAtStart = document.timeline.currentTime;
@@ -513,7 +503,7 @@ waitForAllPaints(() => {
       var parentElement = addDiv(null,
         { style: 'overflow: hidden;' });
       var div = addDiv(null,
-        { style: 'animation: move-in 100s;' });
+        { style: 'animation: move-in 100s infinite;' });
       parentElement.appendChild(div);
       var animation = div.getAnimations()[0];
       var timeAtStart = document.timeline.currentTime;
@@ -558,7 +548,7 @@ waitForAllPaints(() => {
       var parentElement = addDiv(null,
         { style: 'overflow: hidden;' });
       var div = addDiv(null,
-        { style: 'animation: move-in 100s;' });
+        { style: 'animation: move-in 100s infinite;' });
       parentElement.appendChild(div);
       var animation = div.getAnimations()[0];
       var timeAtStart = document.timeline.currentTime;
@@ -594,6 +584,27 @@ waitForAllPaints(() => {
       await ensureElementRemoval(parentElement);
     }
   );
+
+  add_task(async function finite_transform_animations_in_out_of_view_element() {
+    var parentElement = addDiv(null, { style: 'overflow: hidden;' });
+    var div = addDiv(null);
+    var animation =
+      div.animate({ transform: [ 'translateX(120%)', 'translateX(100%)' ] },
+                                // This animation will move a bit but
+                                // will remain out-of-view.
+                  100 * MS_PER_SEC);
+    parentElement.appendChild(div);
+
+    await animation.ready;
+    ok(!SpecialPowers.wrap(animation).isRunningOnCompositor);
+
+    var markers = await observeStyling(20);
+    is(markers.length, 20,
+       'Finite transform animation in out-of-view element should never be ' +
+       'throttled');
+
+    await ensureElementRemoval(parentElement);
+  });
 
   add_task(async function restyling_main_thread_animations_in_scrolled_out_element() {
     var parentElement = addDiv(null,

@@ -42,7 +42,7 @@
 #include "nsIDOMEvent.h"
 #include "nsDisplayList.h"
 #include "nsRegion.h"
-#include "nsFrameManager.h"
+#include "nsCSSFrameConstructor.h"
 #include "nsBlockFrame.h"
 #include "nsBidiPresUtils.h"
 #include "imgIContainer.h"
@@ -111,7 +111,7 @@
 #include "mozilla/Preferences.h"
 #include "nsFrameSelection.h"
 #include "FrameLayerBuilder.h"
-#include "mozilla/layers/APZCTreeManager.h"
+#include "mozilla/layers/APZUtils.h"    // for apz::CalculatePendingDisplayPort
 #include "mozilla/layers/CompositorBridgeChild.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/EventDispatcher.h"
@@ -833,7 +833,7 @@ nsLayoutUtils::FindContentFor(ViewID aId)
   }
 }
 
-nsIFrame*
+static nsIFrame*
 GetScrollFrameFromContent(nsIContent* aContent)
 {
   nsIFrame* frame = aContent->GetPrimaryFrame();
@@ -1316,7 +1316,7 @@ GetDisplayPortImpl(nsIContent* aContent, nsRect* aResult, float aMultiplier,
   return true;
 }
 
-void
+static void
 TranslateFromScrollPortToScrollFrame(nsIContent* aContent, nsRect* aRect)
 {
   MOZ_ASSERT(aRect);
@@ -3421,7 +3421,7 @@ nsLayoutUtils::CalculateAndSetDisplayPortMargins(nsIScrollableFrame* aScrollFram
   MOZ_ASSERT(content);
 
   FrameMetrics metrics = CalculateBasicFrameMetrics(aScrollFrame);
-  ScreenMargin displayportMargins = APZCTreeManager::CalculatePendingDisplayPort(
+  ScreenMargin displayportMargins = apz::CalculatePendingDisplayPort(
       metrics, ParentLayerPoint(0.0f, 0.0f));
   nsIPresShell* presShell = frame->PresContext()->GetPresShell();
   return nsLayoutUtils::SetDisplayPortMargins(
@@ -6589,7 +6589,7 @@ nsLayoutUtils::GetClosestLayer(nsIFrame* aFrame)
   }
   if (layer)
     return layer;
-  return aFrame->PresShell()->FrameManager()->GetRootFrame();
+  return aFrame->PresShell()->GetRootFrame();
 }
 
 SamplingFilter
@@ -7494,7 +7494,7 @@ nsLayoutUtils::GetDisplayRootFrame(nsIFrame* aFrame)
   nsIFrame* f = aFrame;
   for (;;) {
     if (!f->HasAnyStateBits(NS_FRAME_IN_POPUP)) {
-      f = f->PresContext()->FrameManager()->GetRootFrame();
+      f = f->PresShell()->GetRootFrame();
       if (!f) {
         return aFrame;
       }
