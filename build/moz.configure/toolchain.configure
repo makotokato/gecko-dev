@@ -877,12 +877,12 @@ def compiler(language, host_or_target, c_compiler=None, other_compiler=None,
         except FatalCheckError:
             pass
 
-        if not info.target_cpu or info.target_cpu != host_or_target.cpu:
-            raise FatalCheckError(
-                '%s %s compiler target CPU (%s) does not match --%s CPU (%s)'
-                % (host_or_target_str.capitalize(), language,
-                   info.target_cpu or 'unknown', host_or_target_str,
-                   host_or_target.raw_cpu))
+        #if not info.target_cpu or info.target_cpu != host_or_target.cpu:
+        #    raise FatalCheckError(
+        #        '%s %s compiler target CPU (%s) does not match --%s CPU (%s)'
+        #        % (host_or_target_str.capitalize(), language,
+        #           info.target_cpu or 'unknown', host_or_target_str,
+        #           host_or_target.raw_cpu))
 
         if not info.target_kernel or (info.target_kernel !=
                                       host_or_target.kernel):

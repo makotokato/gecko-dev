@@ -178,8 +178,10 @@ def rust_triple_alias(host_or_target):
             host_or_target_os = host_or_target.os
             host_or_target_raw_os = host_or_target.raw_os
 
+        #rustc_target = rust_supported_targets.per_os.get(
+        #    (host_or_target.cpu, host_or_target.endianness, host_or_target_os))
         rustc_target = rust_supported_targets.per_os.get(
-            (host_or_target.cpu, host_or_target.endianness, host_or_target_os))
+            ('x86_64', host_or_target.endianness, host_or_target_os))
 
         if rustc_target is None:
             rustc_target = rust_supported_targets.per_raw_os.get(
