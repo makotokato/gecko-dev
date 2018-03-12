@@ -1820,6 +1820,13 @@ class Assembler : public MozBaseAssembler {
   }
   static void nop(Instruction* at);
 
+  // Alias for system instructions.
+  // Conditional speculation barrier.
+  BufferOffset csdb() {
+    return hint(CSDB);
+  }
+  static void csdb(Instruction* at);
+
   // FP and NEON instructions.
   // Move double precision immediate to FP register.
   void fmov(const VRegister& vd, double imm);
