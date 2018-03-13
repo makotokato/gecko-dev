@@ -539,7 +539,11 @@ struct PoolHeader {
 	// "Natural" guards are part of the normal instruction stream,
 	// while "non-natural" guards are inserted for the sole purpose
 	// of skipping around a pool.
+#ifdef _MSC_VER
+        uint32_t isNatural : 1;
+#else
         bool isNatural : 1;
+#endif
         uint32_t ONES : 16;
       };
       uint32_t data;
