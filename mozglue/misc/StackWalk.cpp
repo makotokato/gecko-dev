@@ -283,7 +283,7 @@ WalkStackMain64(struct WalkStackData* aData)
   frame64.AddrReturn.Mode  = AddrModeFlat;
 #endif
 
-#ifdef _WIN64
+#ifdef _M_X64
   // If there are any active suppressions, then at least one thread (we don't
   // know which) is holding a lock that can deadlock RtlVirtualUnwind. Since
   // that thread may be the one that we're trying to unwind, we can't proceed.
@@ -311,7 +311,7 @@ WalkStackMain64(struct WalkStackData* aData)
     DWORD64 addr;
     DWORD64 spaddr;
 
-#if defined(_M_IX86) || defined(_M_IA64)
+#if defined(_M_IX86) || defined(_M_IA64) || defined(_M_ARM64)
     // 32-bit frame unwinding.
     // Debug routines are not threadsafe, so grab the lock.
     EnterCriticalSection(&gDbgHelpCS);

@@ -6647,8 +6647,11 @@ GetABI(JSContext* cx, HandleValue abiType, ffi_abi* result)
     *result = FFI_DEFAULT_ABI;
     return true;
   case ABI_THISCALL:
-#if defined(_WIN64)
+#if defined(_WIN64) && (defined(_M_X64) || defined(__x86_64__))
     *result = FFI_WIN64;
+    return true;
+#elif defined(_WIN64) && defined(_M_ARM64)
+    *result = FFI_DEFAULT_ABI;
     return true;
 #elif defined(_WIN32)
     *result = FFI_THISCALL;
@@ -6661,10 +6664,13 @@ GetABI(JSContext* cx, HandleValue abiType, ffi_abi* result)
 #if (defined(_WIN32) && !defined(_WIN64)) || defined(_OS2)
     *result = FFI_STDCALL;
     return true;
-#elif (defined(_WIN64))
+#elif defined(_WIN64) && (defined(_M_X64) || defined(__x86_64__))
     // We'd like the same code to work across Win32 and Win64, so stdcall_api
     // and winapi_abi become aliases to the lone Win64 ABI.
     *result = FFI_WIN64;
+    return true;
+#elif defined(_WIN64) && defined(_M_ARM64)
+    *result = FFI_DEFAULT_ABI;
     return true;
 #endif
   case INVALID_ABI:
