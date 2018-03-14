@@ -7387,6 +7387,12 @@ class CGCallGenerator(CGThing):
                  not a.type.nullable()) or
                 a.type.isDOMString()):
                 arg = CGWrapper(arg, pre="NonNullHelper(", post=")")
+
+            # If it's a refcounted object, let the static analysis know it's
+            # alive for the duration of the call.
+            if a.type.isGeckoInterface():
+                arg = CGWrapper(arg, pre="MOZ_KnownLive(", post=")")
+
             args.append(arg)
 
         needResultDecl = False
@@ -17290,7 +17296,7 @@ class GlobalGenRoots():
 
         def fieldSizeAssert(amount, jitInfoField, message):
             maxFieldValue = "(uint64_t(1) << (sizeof(((JSJitInfo*)nullptr)->%s) * 8))" % jitInfoField
-            return CGGeneric(declare="static_assert(%s < %s, \"%s\");\n\n"
+            return CGGeneric(define="static_assert(%s < %s, \"%s\");\n\n"
                              % (amount, maxFieldValue, message))
 
         idEnum.append(fieldSizeAssert("id::_ID_Count", "protoID",
@@ -17302,7 +17308,8 @@ class GlobalGenRoots():
         idEnum = CGWrapper(idEnum, post='\n')
 
         curr = CGList([CGGeneric(define="#include <stdint.h>\n\n"),
-                       CGGeneric(declare='#include "jsfriendapi.h"\n\n'),
+                       CGGeneric(define='#include "jsfriendapi.h"\n\n'),
+                       CGGeneric(define='#include "mozilla/dom/PrototypeList.h"\n\n'),
                        idEnum])
 
         # Let things know the maximum length of the prototype chain.

@@ -233,13 +233,6 @@ public:
   // @see CrossProcessCompositorBridgeParent::RecvRequestNotifyAfterRemotePaint
   mozilla::ipc::IPCResult RecvRequestNotifyAfterRemotePaint() override { return IPC_OK(); };
 
-  mozilla::ipc::IPCResult RecvClearApproximatelyVisibleRegions(const uint64_t& aLayersId,
-                                                               const uint32_t& aPresShellId) override;
-  void ClearApproximatelyVisibleRegions(const uint64_t& aLayersId,
-                                        const Maybe<uint32_t>& aPresShellId);
-  mozilla::ipc::IPCResult RecvNotifyApproximatelyVisibleRegion(const ScrollableLayerGuid& aGuid,
-                                                               const CSSIntRegion& aRegion) override;
-
   mozilla::ipc::IPCResult RecvAllPluginsCaptured() override;
 
   void ActorDestroy(ActorDestroyReason why) override;
@@ -268,6 +261,7 @@ public:
   AsyncCompositionManager* GetCompositionManager(LayerTransactionParent* aLayerTree) override { return mCompositionManager; }
 
   PTextureParent* AllocPTextureParent(const SurfaceDescriptor& aSharedData,
+                                      const ReadLockDescriptor& aReadLock,
                                       const LayersBackend& aLayersBackend,
                                       const TextureFlags& aFlags,
                                       const uint64_t& aId,

@@ -677,7 +677,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
   /**
    * Check is event handling is allowed.
    */
-  _isEventAllowed: function ({ view }) {
+  _isEventAllowed: function({ view }) {
     return this.rootWin instanceof Ci.nsIDOMChromeWindow ||
            isWindowIncluded(this.rootWin, view);
   },
@@ -799,7 +799,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
   /**
    * Picker method that starts picker content listeners.
    */
-  pick: function () {
+  pick: function() {
     if (!this._isPicking) {
       this._isPicking = true;
       this._startPickerListeners();
@@ -809,7 +809,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
   /**
    * This pick method also focuses the highlighter's target window.
    */
-  pickAndFocus: function () {
+  pickAndFocus: function() {
     this.pick();
     this.rootWin.focus();
   },
@@ -825,11 +825,19 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
    */
   async _findAndAttachAccessible(event) {
     let target = event.originalTarget || event.target;
-    let rawAccessible = this.a11yService.getAccessibleFor(target);
+    let rawAccessible;
+    // Find a first accessible object in the target's ancestry, including
+    // target. Note: not all DOM nodes have corresponding accessible objects
+    // (for example, a <DIV> element that is used as a container for other
+    // things) thus we need to find one that does.
+    while (!rawAccessible && target) {
+      rawAccessible = this.a11yService.getAccessibleFor(target);
+      target = target.parentNode;
+    }
     // If raw accessible object is defunct or detached, no need to cache it and
     // its ancestry.
     if (!rawAccessible || isDefunct(rawAccessible) || rawAccessible.indexInParent < 0) {
-      return {};
+      return null;
     }
 
     const doc = await this.getDocument();
@@ -852,7 +860,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
   /**
    * Start picker content listeners.
    */
-  _startPickerListeners: function () {
+  _startPickerListeners: function() {
     let target = this.tabActor.chromeEventHandler;
     target.addEventListener("mousemove", this.onHovered, true);
     target.addEventListener("click", this.onPick, true);
@@ -866,7 +874,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
   /**
    * If content is still alive, stop picker content listeners.
    */
-  _stopPickerListeners: function () {
+  _stopPickerListeners: function() {
     let target = this.tabActor.chromeEventHandler;
 
     if (!target) {
@@ -885,7 +893,7 @@ const AccessibleWalkerActor = ActorClassWithSpec(accessibleWalkerSpec, {
   /**
    * Cacncel picker pick. Remvoe all content listeners and hide the highlighter.
    */
-  cancelPick: function () {
+  cancelPick: function() {
     this.highlighter.hide();
 
     if (this._isPicking) {

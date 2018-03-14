@@ -241,6 +241,8 @@ extern void InstallSignalHandlers(const char *ProgramName);
 int    gArgc;
 char **gArgv;
 
+#include "buildid.h"
+
 static const char gToolkitVersion[] = NS_STRINGIFY(GRE_MILESTONE);
 static const char gToolkitBuildID[] = NS_STRINGIFY(MOZ_BUILDID);
 
@@ -271,12 +273,6 @@ nsString gAbsoluteArgv0Path;
 #include <fontconfig/fontconfig.h>
 #endif
 #include "BinaryPath.h"
-#ifndef MOZ_BUILDID
-// See comment in Makefile.in why we want to avoid including buildid.h.
-// Still include it when MOZ_BUILDID is not set, which can happen with some
-// build backends.
-#include "buildid.h"
-#endif
 
 #ifdef MOZ_LINKER
 extern "C" MFBT_API bool IsSignalHandlingBroken();
@@ -1252,6 +1248,7 @@ nsXULAppInfo::SetEnabled(bool aEnabled)
 NS_IMETHODIMP
 nsXULAppInfo::GetServerURL(nsIURL** aServerURL)
 {
+  NS_ENSURE_ARG_POINTER(aServerURL);
   if (!CrashReporter::GetEnabled())
     return NS_ERROR_NOT_INITIALIZED;
 

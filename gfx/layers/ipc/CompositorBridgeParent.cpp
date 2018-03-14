@@ -616,39 +616,6 @@ CompositorBridgeParent::RecvStopFrameTimeRecording(const uint32_t& aStartIndex,
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult
-CompositorBridgeParent::RecvClearApproximatelyVisibleRegions(const uint64_t& aLayersId,
-                                                             const uint32_t& aPresShellId)
-{
-  ClearApproximatelyVisibleRegions(aLayersId, Some(aPresShellId));
-  return IPC_OK();
-}
-
-void
-CompositorBridgeParent::ClearApproximatelyVisibleRegions(const uint64_t& aLayersId,
-                                                         const Maybe<uint32_t>& aPresShellId)
-{
-  if (mLayerManager) {
-    mLayerManager->ClearApproximatelyVisibleRegions(aLayersId, aPresShellId);
-
-    // We need to recomposite to update the minimap.
-    ScheduleComposition();
-  }
-}
-
-mozilla::ipc::IPCResult
-CompositorBridgeParent::RecvNotifyApproximatelyVisibleRegion(const ScrollableLayerGuid& aGuid,
-                                                             const CSSIntRegion& aRegion)
-{
-  if (mLayerManager) {
-    mLayerManager->UpdateApproximatelyVisibleRegion(aGuid, aRegion);
-
-    // We need to recomposite to update the minimap.
-    ScheduleComposition();
-  }
-  return IPC_OK();
-}
-
 void
 CompositorBridgeParent::ActorDestroy(ActorDestroyReason why)
 {
@@ -1389,8 +1356,8 @@ CompositorBridgeParent::SetTestAsyncScrollOffset(
     const CSSPoint& aPoint)
 {
   if (mApzSampler) {
-    uint64_t layersId = (aLayersId == 0 ? mRootLayerTreeID : aLayersId);
-    mApzSampler->SetTestAsyncScrollOffset(layersId, aScrollId, aPoint);
+    MOZ_ASSERT(aLayersId != 0);
+    mApzSampler->SetTestAsyncScrollOffset(aLayersId, aScrollId, aPoint);
   }
 }
 
@@ -1401,8 +1368,8 @@ CompositorBridgeParent::SetTestAsyncZoom(
     const LayerToParentLayerScale& aZoom)
 {
   if (mApzSampler) {
-    uint64_t layersId = (aLayersId == 0 ? mRootLayerTreeID : aLayersId);
-    mApzSampler->SetTestAsyncZoom(layersId, aScrollId, aZoom);
+    MOZ_ASSERT(aLayersId != 0);
+    mApzSampler->SetTestAsyncZoom(aLayersId, aScrollId, aZoom);
   }
 }
 
@@ -1410,25 +1377,20 @@ void
 CompositorBridgeParent::FlushApzRepaints(const uint64_t& aLayersId)
 {
   MOZ_ASSERT(mApzcTreeManager);
-  uint64_t layersId = aLayersId;
-  if (layersId == 0) {
-    // The request is coming from the parent-process layer tree, so we should
-    // use the compositor's root layer tree id.
-    layersId = mRootLayerTreeID;
-  }
+  MOZ_ASSERT(aLayersId != 0);
   RefPtr<CompositorBridgeParent> self = this;
   APZThreadUtils::RunOnControllerThread(NS_NewRunnableFunction(
     "layers::CompositorBridgeParent::FlushApzRepaints",
-    [=]() { self->mApzcTreeManager->FlushApzRepaints(layersId); }));
+    [=]() { self->mApzcTreeManager->FlushApzRepaints(aLayersId); }));
 }
 
 void
 CompositorBridgeParent::GetAPZTestData(const uint64_t& aLayersId,
                                        APZTestData* aOutData)
 {
-  uint64_t layersId = (aLayersId == 0 ? mRootLayerTreeID : aLayersId);
   if (mApzSampler) {
-    mApzSampler->GetAPZTestData(layersId, aOutData);
+    MOZ_ASSERT(aLayersId != 0);
+    mApzSampler->GetAPZTestData(aLayersId, aOutData);
   }
 }
 
@@ -1590,14 +1552,14 @@ CompositorBridgeParent::AllocPLayerTransactionParent(const nsTArray<LayersBacken
 
   if (!mLayerManager) {
     NS_WARNING("Failed to initialise Compositor");
-    LayerTransactionParent* p = new LayerTransactionParent(/* aManager */ nullptr, this, /* aAnimStorage */ nullptr, 0);
+    LayerTransactionParent* p = new LayerTransactionParent(/* aManager */ nullptr, this, /* aAnimStorage */ nullptr, mRootLayerTreeID);
     p->AddIPDLReference();
     return p;
   }
 
   mCompositionManager = new AsyncCompositionManager(this, mLayerManager);
 
-  LayerTransactionParent* p = new LayerTransactionParent(mLayerManager, this, GetAnimationStorage(), 0);
+  LayerTransactionParent* p = new LayerTransactionParent(mLayerManager, this, GetAnimationStorage(), mRootLayerTreeID);
   p->AddIPDLReference();
   return p;
 }
@@ -1855,7 +1817,6 @@ EraseLayerState(uint64_t aId)
   if (iter != sIndirectLayerTrees.end()) {
     CompositorBridgeParent* parent = iter->second.mParent;
     if (parent) {
-      parent->ClearApproximatelyVisibleRegions(aId, Nothing());
       if (RefPtr<APZSampler> apz = parent->GetAPZSampler()) {
         apz->NotifyLayerTreeRemoved(aId);
       }
@@ -2231,13 +2192,14 @@ CompositorBridgeParent::GetGeckoContentControllerForRoot(uint64_t aContentLayers
 
 PTextureParent*
 CompositorBridgeParent::AllocPTextureParent(const SurfaceDescriptor& aSharedData,
+                                            const ReadLockDescriptor& aReadLock,
                                             const LayersBackend& aLayersBackend,
                                             const TextureFlags& aFlags,
                                             const uint64_t& aId,
                                             const uint64_t& aSerial,
                                             const wr::MaybeExternalImageId& aExternalImageId)
 {
-  return TextureHost::CreateIPDLActor(this, aSharedData, aLayersBackend, aFlags, aSerial, aExternalImageId);
+  return TextureHost::CreateIPDLActor(this, aSharedData, aReadLock, aLayersBackend, aFlags, aSerial, aExternalImageId);
 }
 
 bool
