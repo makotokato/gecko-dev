@@ -669,7 +669,7 @@ Inspector.prototype = {
         break;
       case "boxmodel":
         // box-model isn't a panel on its own, it used to, now it is being used by
-        // computed view and layout which retrieves an instance via getPanel.
+        // the layout view which retrieves an instance via getPanel.
         const BoxModel = require("devtools/client/inspector/boxmodel/box-model");
         panel = new BoxModel(this, this.panelWin);
         break;
@@ -1158,7 +1158,7 @@ Inspector.prototype = {
   /**
    * When a new node is selected.
    */
-  onNewSelection: function(event, value, reason) {
+  onNewSelection: function(value, reason) {
     if (reason === "selection-destroy") {
       return;
     }
@@ -1253,7 +1253,7 @@ Inspector.prototype = {
    * parent is found (may happen when deleting an iframe inside which the
    * node was selected).
    */
-  onDetached: function(event, parentNode) {
+  onDetached: function(parentNode) {
     this.breadcrumbs.cutAfter(this.breadcrumbs.indexOf(parentNode));
     this.selection.setNodeFront(parentNode ? parentNode : this._defaultNode, "detached");
   },

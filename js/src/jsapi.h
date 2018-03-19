@@ -1986,8 +1986,7 @@ class JS_PUBLIC_API(CompartmentCreationOptions)
 {
   public:
     CompartmentCreationOptions()
-      : addonId_(nullptr),
-        traceGlobal_(nullptr),
+      : traceGlobal_(nullptr),
         zoneSpec_(NewZoneInSystemZoneGroup),
         zonePointer_(nullptr),
         invisibleToDebugger_(false),
@@ -1995,16 +1994,9 @@ class JS_PUBLIC_API(CompartmentCreationOptions)
         preserveJitCode_(false),
         cloneSingletons_(false),
         sharedMemoryAndAtomics_(false),
-        secureContext_(false)
+        secureContext_(false),
+        clampAndJitterTime_(true)
     {}
-
-    // A null add-on ID means that the compartment is not associated with an
-    // add-on.
-    JSAddonId* addonIdOrNull() const { return addonId_; }
-    CompartmentCreationOptions& setAddonId(JSAddonId* id) {
-        addonId_ = id;
-        return *this;
-    }
 
     JSTraceOp getTrace() const {
         return traceGlobal_;
@@ -2071,8 +2063,13 @@ class JS_PUBLIC_API(CompartmentCreationOptions)
         return *this;
     }
 
+    bool clampAndJitterTime() const { return clampAndJitterTime_; }
+    CompartmentCreationOptions& setClampAndJitterTime(bool flag) {
+        clampAndJitterTime_ = flag;
+        return *this;
+    }
+
   private:
-    JSAddonId* addonId_;
     JSTraceOp traceGlobal_;
     ZoneSpecifier zoneSpec_;
     void* zonePointer_; // Per zoneSpec_, either a Zone, ZoneGroup, or null.
@@ -2082,6 +2079,7 @@ class JS_PUBLIC_API(CompartmentCreationOptions)
     bool cloneSingletons_;
     bool sharedMemoryAndAtomics_;
     bool secureContext_;
+    bool clampAndJitterTime_;
 };
 
 /**
@@ -3600,7 +3598,7 @@ class JS_FRIEND_API(TransitiveCompileOptions)
         forceAsync(false),
         sourceIsLazy(false),
         allowHTMLComments(true),
-        isProbablySystemOrAddonCode(false),
+        isProbablySystemCode(false),
         hideScriptFromDebugger(false),
         introductionType(nullptr),
         introductionLineno(0),
@@ -3636,7 +3634,7 @@ class JS_FRIEND_API(TransitiveCompileOptions)
     bool forceAsync;
     bool sourceIsLazy;
     bool allowHTMLComments;
-    bool isProbablySystemOrAddonCode;
+    bool isProbablySystemCode;
     bool hideScriptFromDebugger;
 
     // |introductionType| is a statically allocated C string:
@@ -4716,6 +4714,9 @@ extern JS_PUBLIC_API(JSString*)
 JS_NewUCString(JSContext* cx, char16_t* chars, size_t length);
 
 extern JS_PUBLIC_API(JSString*)
+JS_NewUCStringDontDeflate(JSContext* cx, char16_t* chars, size_t length);
+
+extern JS_PUBLIC_API(JSString*)
 JS_NewUCStringCopyN(JSContext* cx, const char16_t* s, size_t n);
 
 extern JS_PUBLIC_API(JSString*)
@@ -4986,19 +4987,6 @@ class MOZ_RAII JSAutoByteString
     JSAutoByteString(const JSAutoByteString& another);
     JSAutoByteString& operator=(const JSAutoByteString& another);
 };
-
-namespace JS {
-
-extern JS_PUBLIC_API(JSAddonId*)
-NewAddonId(JSContext* cx, JS::HandleString str);
-
-extern JS_PUBLIC_API(JSString*)
-StringOfAddonId(JSAddonId* id);
-
-extern JS_PUBLIC_API(JSAddonId*)
-AddonIdOfObject(JSObject* obj);
-
-} // namespace JS
 
 /************************************************************************/
 /*

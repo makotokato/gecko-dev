@@ -15,6 +15,7 @@
 #include "mozilla/gfx/CompositorHitTestInfo.h"
 #include "mozilla/gfx/Logging.h"        // for gfx::TreeLog
 #include "mozilla/gfx/Matrix.h"         // for Matrix4x4
+#include "mozilla/layers/APZInputBridge.h" // for APZInputBridge
 #include "mozilla/layers/APZTestData.h" // for APZTestData
 #include "mozilla/layers/IAPZCTreeManager.h" // for IAPZCTreeManager
 #include "mozilla/layers/KeyboardMap.h" // for KeyboardMap
@@ -99,7 +100,8 @@ struct ScrollThumbData;
  *
  * Behaviour of APZ is controlled by a number of preferences shown \ref APZCPrefs "here".
  */
-class APZCTreeManager : public IAPZCTreeManager {
+class APZCTreeManager : public IAPZCTreeManager
+                      , public APZInputBridge {
 
   typedef mozilla::layers::AllowedTouchBehavior AllowedTouchBehavior;
   typedef mozilla::layers::AsyncDragMetrics AsyncDragMetrics;
@@ -340,15 +342,16 @@ public:
   bool HitTestAPZC(const ScreenIntPoint& aPoint);
 
   /**
-   * Sets the dpi value used by all AsyncPanZoomControllers.
-   * DPI defaults to 72 if not set using SetDPI() at any point.
+   * Sets the dpi value used by all AsyncPanZoomControllers attached to this
+   * tree manager.
+   * DPI defaults to 160 if not set using SetDPI() at any point.
    */
-  void SetDPI(float aDpiValue) override { sDPI = aDpiValue; }
+  void SetDPI(float aDpiValue) override;
 
   /**
    * Returns the current dpi value in use.
    */
-  static float GetDPI() { return sDPI; }
+  float GetDPI() const;
 
   /**
    * Find the hit testing node for the scrollbar thumb that matches these
@@ -472,6 +475,8 @@ public:
    */
   void SetLongTapEnabled(bool aTapGestureEnabled) override;
 
+  APZInputBridge* InputBridge() override { return this; }
+
   // Methods to help process WidgetInputEvents (or manage conversion to/from InputData)
 
   void ProcessUnhandledEvent(
@@ -551,7 +556,7 @@ public:
    * is occurring such as when the toolbar is being hidden/shown in Fennec.
    * This function can be called to have the y axis' velocity queue updated.
    */
-  void ProcessTouchVelocity(uint32_t aTimestampMs, float aSpeedY) override;
+  void ProcessTouchVelocity(uint32_t aTimestampMs, float aSpeedY);
 private:
   typedef bool (*GuidComparator)(const ScrollableLayerGuid&, const ScrollableLayerGuid&);
 
@@ -690,15 +695,17 @@ private:
    * isolation (that is, if its tree pointers are not being accessed or mutated). The
    * lock also needs to be held when accessing the mRootNode instance variable, as that
    * is considered part of the APZC tree management state.
-   * Finally, the lock needs to be held when accessing mZoomConstraints.
    * IMPORTANT: See the note about lock ordering at the top of this file. */
   mutable mozilla::RecursiveMutex mTreeLock;
   RefPtr<HitTestingTreeNode> mRootNode;
+
   /* Holds the zoom constraints for scrollable layers, as determined by the
-   * the main-thread gecko code. */
+   * the main-thread gecko code. This can only be accessed on the sampler
+   * thread. */
   std::unordered_map<ScrollableLayerGuid, ZoomConstraints, ScrollableLayerGuidHash> mZoomConstraints;
   /* A list of keyboard shortcuts to use for translating keyboard inputs into
    * keyboard actions. This is gathered on the main thread from XBL bindings.
+   * This must only be accessed on the controller thread.
    */
   KeyboardMap mKeyboardMap;
   /* This tracks the focus targets of chrome and content and whether we have
@@ -746,7 +753,8 @@ private:
   std::unordered_map<uint64_t, UniquePtr<APZTestData>> mTestData;
   mutable mozilla::Mutex mTestDataLock;
 
-  static float sDPI;
+  // This must only be touched on the controller thread.
+  float mDPI;
 
 #if defined(MOZ_WIDGET_ANDROID)
 public:

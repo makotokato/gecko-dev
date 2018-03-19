@@ -329,7 +329,7 @@ nsDOMWindowUtils::GetPhysicalMillimeterInCSSPixels(float* aPhysicalMillimeter)
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  *aPhysicalMillimeter = presContext->AppUnitsToFloatCSSPixels(
+  *aPhysicalMillimeter = nsPresContext::AppUnitsToFloatCSSPixels(
     presContext->PhysicalMillimetersToAppUnits(1));
   return NS_OK;
 }
@@ -1666,7 +1666,7 @@ nsDOMWindowUtils::GetScrollbarSize(bool aFlushLayout, int32_t* aWidth,
 
 NS_IMETHODIMP
 nsDOMWindowUtils::GetBoundsWithoutFlushing(nsIDOMElement *aElement,
-                                           nsIDOMClientRect** aResult)
+                                           nsISupports** aResult)
 {
   nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow);
   NS_ENSURE_STATE(window);
@@ -1723,7 +1723,7 @@ nsDOMWindowUtils::NeedsFlush(int32_t aFlushType, bool* aResult)
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::GetRootBounds(nsIDOMClientRect** aResult)
+nsDOMWindowUtils::GetRootBounds(nsISupports** aResult)
 {
   nsIDocument* doc = GetDocument();
   NS_ENSURE_STATE(doc);
@@ -3805,8 +3805,8 @@ nsDOMWindowUtils::GetOMTAStyle(nsIDOMElement* aElement,
                                     &hadAnimatedOpacity);
         }
       } else if (WebRenderLayerManager* wrlm = widgetLayerManager->AsWebRenderLayerManager()) {
-        RefPtr<WebRenderAnimationData> animationData = wrlm->CommandBuilder()
-            .GetWebRenderUserData<WebRenderAnimationData>(frame, (uint32_t)DisplayItemType::TYPE_OPACITY);
+        RefPtr<WebRenderAnimationData> animationData =
+            GetWebRenderUserData<WebRenderAnimationData>(frame, (uint32_t)DisplayItemType::TYPE_OPACITY);
         if (animationData) {
           wrlm->WrBridge()->SendGetAnimationOpacity(
               animationData->GetAnimationInfo().GetCompositorAnimationsId(),
@@ -3830,8 +3830,8 @@ nsDOMWindowUtils::GetOMTAStyle(nsIDOMElement* aElement,
             SendGetAnimationTransform(layer->GetCompositorAnimationsId(), &transform);
         }
       } else if (WebRenderLayerManager* wrlm = widgetLayerManager->AsWebRenderLayerManager()) {
-        RefPtr<WebRenderAnimationData> animationData = wrlm->CommandBuilder()
-            .GetWebRenderUserData<WebRenderAnimationData>(frame, (uint32_t)DisplayItemType::TYPE_TRANSFORM);
+        RefPtr<WebRenderAnimationData> animationData =
+            GetWebRenderUserData<WebRenderAnimationData>(frame, (uint32_t)DisplayItemType::TYPE_TRANSFORM);
         if (animationData) {
           wrlm->WrBridge()->SendGetAnimationTransform(
               animationData->GetAnimationInfo().GetCompositorAnimationsId(),

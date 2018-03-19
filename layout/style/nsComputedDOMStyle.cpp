@@ -36,6 +36,7 @@
 
 #include "nsCSSPseudoElements.h"
 #include "mozilla/EffectSet.h"
+#include "mozilla/IntegerRange.h"
 #include "mozilla/StyleSetHandle.h"
 #include "mozilla/StyleSetHandleInlines.h"
 #ifdef MOZ_OLD_STYLE
@@ -498,7 +499,8 @@ nsComputedDOMStyle::GetPropertyValue(const nsAString& aPropertyName,
   aReturn.Truncate();
 
   ErrorResult error;
-  RefPtr<CSSValue> val = GetPropertyCSSValue(aPropertyName, error);
+  RefPtr<CSSValue> val =
+    GetPropertyCSSValueWithoutWarning(aPropertyName, error);
   if (error.Failed()) {
     return error.StealNSResult();
   }
@@ -859,6 +861,137 @@ nsComputedDOMStyle::GetAdjustedValuesForBoxSizing()
   return adjustment;
 }
 
+static void
+AddImageURL(nsIURI& aURI, nsTArray<nsString>& aURLs)
+{
+  nsAutoCString spec;
+  nsresult rv = aURI.GetSpec(spec);
+  if (NS_FAILED(rv)) {
+    return;
+  }
+
+  aURLs.AppendElement(NS_ConvertUTF8toUTF16(spec));
+}
+
+
+static void
+AddImageURL(const css::URLValueData& aURL, nsTArray<nsString>& aURLs)
+{
+  if (aURL.IsLocalRef()) {
+    return;
+  }
+
+  if (nsIURI* uri = aURL.GetURI()) {
+    AddImageURL(*uri, aURLs);
+  }
+}
+
+
+static void
+AddImageURL(const nsStyleImageRequest& aRequest, nsTArray<nsString>& aURLs)
+{
+  if (auto* value = aRequest.GetImageValue()) {
+    AddImageURL(*value, aURLs);
+  }
+}
+
+static void
+AddImageURL(const nsStyleImage& aImage, nsTArray<nsString>& aURLs)
+{
+  if (auto* urlValue = aImage.GetURLValue()) {
+    AddImageURL(*urlValue, aURLs);
+  }
+}
+
+static void
+AddImageURL(const StyleShapeSource& aShapeSource, nsTArray<nsString>& aURLs)
+{
+  switch (aShapeSource.GetType()) {
+    case StyleShapeSourceType::URL:
+      AddImageURL(*aShapeSource.GetURL(), aURLs);
+      break;
+    case StyleShapeSourceType::Image:
+      AddImageURL(*aShapeSource.GetShapeImage(), aURLs);
+      break;
+    default:
+      break;
+  }
+}
+
+static void
+AddImageURLs(const nsStyleImageLayers& aLayers, nsTArray<nsString>& aURLs)
+{
+  for (auto i : IntegerRange(aLayers.mLayers.Length())) {
+    AddImageURL(aLayers.mLayers[i].mImage, aURLs);
+  }
+}
+
+// FIXME(stylo-everywhere): This should be `const ServoStyleContext&`.
+static void
+CollectImageURLsForProperty(nsCSSPropertyID aProp,
+                            nsStyleContext& aStyle,
+                            nsTArray<nsString>& aURLs)
+{
+  if (nsCSSProps::IsShorthand(aProp)) {
+    CSSPROPS_FOR_SHORTHAND_SUBPROPERTIES(p, aProp, CSSEnabledState::eInChrome) {
+      CollectImageURLsForProperty(*p, aStyle, aURLs);
+    }
+    return;
+  }
+
+  switch (aProp) {
+    case eCSSProperty_cursor:
+      for (auto& image : aStyle.StyleUserInterface()->mCursorImages) {
+        AddImageURL(*image.mImage, aURLs);
+      }
+      break;
+    case eCSSProperty_background_image:
+      AddImageURLs(aStyle.StyleBackground()->mImage, aURLs);
+      break;
+    case eCSSProperty_mask_clip:
+      AddImageURLs(aStyle.StyleSVGReset()->mMask, aURLs);
+      break;
+    case eCSSProperty_list_style_image:
+      if (nsStyleImageRequest* image = aStyle.StyleList()->mListStyleImage) {
+        AddImageURL(*image, aURLs);
+      }
+      break;
+    case eCSSProperty_border_image_source:
+      AddImageURL(aStyle.StyleBorder()->mBorderImageSource, aURLs);
+      break;
+    case eCSSProperty_clip_path:
+      AddImageURL(aStyle.StyleSVGReset()->mClipPath, aURLs);
+      break;
+    case eCSSProperty_shape_outside:
+      AddImageURL(aStyle.StyleDisplay()->mShapeOutside, aURLs);
+      break;
+    default:
+      break;
+  }
+}
+
+void
+nsComputedDOMStyle::GetCSSImageURLs(const nsAString& aPropertyName,
+                                    nsTArray<nsString>& aImageURLs,
+                                    mozilla::ErrorResult& aRv)
+{
+  nsCSSPropertyID prop =
+    nsCSSProps::LookupProperty(aPropertyName, CSSEnabledState::eInChrome);
+  if (prop == eCSSProperty_UNKNOWN) {
+    aRv.Throw(NS_ERROR_DOM_SYNTAX_ERR);
+    return;
+  }
+
+  UpdateCurrentStyleSources(false);
+
+  if (!mStyleContext) {
+    aRv.Throw(NS_ERROR_NOT_AVAILABLE);
+    return;
+  }
+
+  CollectImageURLsForProperty(prop, *mStyleContext, aImageURLs);
+}
+
 // nsDOMCSSDeclaration abstract methods which should never be called
 // on a nsComputedDOMStyle object, but must be defined to avoid
 // compile errors.
@@ -986,8 +1119,8 @@ nsComputedDOMStyle::UpdateCurrentStyleSources(bool aNeedsLayoutFlush)
 
   nsCOMPtr<nsIPresShell> presShellForContent =
     nsContentUtils::GetPresShellForContent(mContent);
-  if (presShellForContent && presShellForContent != document->GetShell()) {
-    presShellForContent->FlushPendingNotifications(FlushType::Style);
+  if (presShellForContent && presShellForContent->GetDocument() != document) {
+    presShellForContent->GetDocument()->FlushPendingNotifications(FlushType::Style);
   }
 
   mPresShell = document->GetShell();
@@ -1159,7 +1292,19 @@ nsComputedDOMStyle::ClearCurrentStyleSources()
 }
 
 already_AddRefed<CSSValue>
-nsComputedDOMStyle::GetPropertyCSSValue(const nsAString& aPropertyName, ErrorResult& aRv)
+nsComputedDOMStyle::GetPropertyCSSValue(const nsAString& aPropertyName,
+                                        ErrorResult& aRv)
+{
+  if (nsCOMPtr<nsIDocument> document = do_QueryReferent(mDocumentWeak)) {
+    document->WarnOnceAbout(nsIDocument::eGetPropertyCSSValue);
+  }
+  return GetPropertyCSSValueWithoutWarning(aPropertyName, aRv);
+}
+
+already_AddRefed<CSSValue>
+nsComputedDOMStyle::GetPropertyCSSValueWithoutWarning(
+  const nsAString& aPropertyName,
+  ErrorResult& aRv)
 {
   nsCSSPropertyID prop =
     nsCSSProps::LookupProperty(aPropertyName, CSSEnabledState::eForAllContent);

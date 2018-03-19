@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/* import-globals-from controller.js */
+
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 ChromeUtils.import("resource://gre/modules/Services.jsm");
 
@@ -138,6 +140,7 @@ PlacesTreeView.prototype = {
       case Ci.nsINavHistoryQueryOptions.RESULTS_AS_DATE_SITE_QUERY:
       case Ci.nsINavHistoryQueryOptions.RESULTS_AS_TAG_QUERY:
       case Ci.nsINavHistoryQueryOptions.RESULTS_AS_ROOTS_QUERY:
+      case Ci.nsINavHistoryQueryOptions.RESULTS_AS_LEFT_PANE_QUERY:
         return false;
     }
 
@@ -1305,11 +1308,13 @@ PlacesTreeView.prototype = {
           case PlacesUtils.bookmarks.virtualUnfiledGuid:
             properties += ` queryFolder_${PlacesUtils.bookmarks.unfiledGuid}`;
             break;
+          case PlacesUtils.virtualAllBookmarksGuid:
+          case PlacesUtils.virtualHistoryGuid:
+          case PlacesUtils.virtualDownloadsGuid:
+          case PlacesUtils.virtualTagsGuid:
+            properties += ` OrganizerQuery_${node.bookmarkGuid}`;
+            break;
           }
-        } else {
-          let queryName = PlacesUIUtils.getLeftPaneQueryNameFromId(itemId);
-          if (queryName)
-            properties += " OrganizerQuery_" + queryName;
         }
       } else if (nodeType == Ci.nsINavHistoryResultNode.RESULT_TYPE_SEPARATOR)
         properties += " separator";
@@ -1791,15 +1796,6 @@ PlacesTreeView.prototype = {
     if (PlacesUtils.nodeIsSeparator(node) || PlacesUtils.isRootItem(itemGuid) ||
         PlacesUtils.isQueryGeneratedFolder(itemGuid))
       return false;
-
-    let parentId = PlacesUtils.getConcreteItemId(node.parent);
-    if (parentId == PlacesUIUtils.leftPaneFolderId) {
-      // Note that the for the time being this is the check that actually
-      // blocks renaming places "roots", and not the isRootItem check above.
-      // That's because places root are only exposed through folder shortcuts
-      // descendants of the left pane folder.
-      return false;
-    }
 
     return true;
   },

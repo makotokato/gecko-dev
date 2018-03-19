@@ -710,15 +710,13 @@
                      label="&newTabControlled.header.message;"
                      buttonlabel="&newTabControlled.keepButton.label;"
                      buttonaccesskey="&newTabControlled.keepButton.accesskey;"
-                     secondarybuttonlabel="&newTabControlled.restoreButton.label;"
-                     secondarybuttonaccesskey="&newTabControlled.restoreButton.accesskey;"
+                     secondarybuttonlabel="&newTabControlled.disableButton.label;"
+                     secondarybuttonaccesskey="&newTabControlled.disableButton.accesskey;"
                      closebuttonhidden="true"
                      dropmarkerhidden="true"
                      checkboxhidden="true">
     <popupnotificationcontent orient="vertical">
-      <description id="extension-new-tab-notification-description">
-        &newTabControlled.message;
-      </description>
+      <description id="extension-new-tab-notification-description"/>
     </popupnotificationcontent>
   </popupnotification>
 </panel>

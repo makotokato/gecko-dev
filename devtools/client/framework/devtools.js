@@ -24,7 +24,7 @@ loader.lazyRequireGetter(this, "WebExtensionInspectedWindowFront",
 
 const {defaultTools: DefaultTools, defaultThemes: DefaultThemes} =
   require("devtools/client/definitions");
-const EventEmitter = require("devtools/shared/old-event-emitter");
+const EventEmitter = require("devtools/shared/event-emitter");
 const {getTheme, setTheme, addThemeObserver, removeThemeObserver} =
   require("devtools/client/shared/theme");
 
@@ -655,7 +655,7 @@ DevTools.prototype = {
   },
 
   /**
-   * Either the SDK Loader has been destroyed by the add-on contribution
+   * Either the DevTools Loader has been destroyed by the add-on contribution
    * workflow, or firefox is shutting down.
 
    * @param {boolean} shuttingDown

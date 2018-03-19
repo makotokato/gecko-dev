@@ -257,6 +257,7 @@ class TabChild final : public TabChildBase,
   typedef mozilla::layout::RenderFrameChild RenderFrameChild;
   typedef mozilla::layers::APZEventState APZEventState;
   typedef mozilla::layers::SetAllowedTouchBehaviorCallback SetAllowedTouchBehaviorCallback;
+  typedef mozilla::layers::TouchBehaviorFlags TouchBehaviorFlags;
 
 public:
   /**
@@ -356,6 +357,7 @@ public:
 
   mozilla::ipc::IPCResult RecvDeactivate();
 
+  MOZ_CAN_RUN_SCRIPT
   virtual mozilla::ipc::IPCResult RecvMouseEvent(const nsString& aType,
                                                  const float& aX,
                                                  const float& aY,
@@ -454,7 +456,8 @@ public:
   virtual mozilla::ipc::IPCResult
   RecvPasteTransferable(const IPCDataTransfer& aDataTransfer,
                         const bool& aIsPrivateData,
-                        const IPC::Principal& aRequestingPrincipal) override;
+                        const IPC::Principal& aRequestingPrincipal,
+                        const uint32_t& aContentPolicyType) override;
 
   virtual mozilla::ipc::IPCResult
   RecvActivateFrameEvent(const nsString& aType, const bool& aCapture) override;
@@ -651,12 +654,14 @@ public:
                                  bool aPreventDefault) const;
   void SetTargetAPZC(uint64_t aInputBlockId,
                     const nsTArray<ScrollableLayerGuid>& aTargets) const;
+  MOZ_CAN_RUN_SCRIPT
   mozilla::ipc::IPCResult RecvHandleTap(const layers::GeckoContentController::TapType& aType,
                                         const LayoutDevicePoint& aPoint,
                                         const Modifiers& aModifiers,
                                         const ScrollableLayerGuid& aGuid,
                                         const uint64_t& aInputBlockId) override;
 
+  MOZ_CAN_RUN_SCRIPT
   mozilla::ipc::IPCResult
   RecvNormalPriorityHandleTap(const layers::GeckoContentController::TapType& aType,
                               const LayoutDevicePoint& aPoint,

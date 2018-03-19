@@ -127,8 +127,9 @@ var Bookmarks = Object.freeze({
     DEFAULT: Ci.nsINavBookmarksService.SOURCE_DEFAULT,
     SYNC: Ci.nsINavBookmarksService.SOURCE_SYNC,
     IMPORT: Ci.nsINavBookmarksService.SOURCE_IMPORT,
-    IMPORT_REPLACE: Ci.nsINavBookmarksService.SOURCE_IMPORT_REPLACE,
     SYNC_REPARENT_REMOVED_FOLDER_CHILDREN: Ci.nsINavBookmarksService.SOURCE_SYNC_REPARENT_REMOVED_FOLDER_CHILDREN,
+    RESTORE: Ci.nsINavBookmarksService.SOURCE_RESTORE,
+    RESTORE_ON_STARTUP: Ci.nsINavBookmarksService.SOURCE_RESTORE_ON_STARTUP,
   },
 
   /**
@@ -152,8 +153,8 @@ var Bookmarks = Object.freeze({
   userContentRoots: ["toolbar_____", "menu________", "unfiled_____", "mobile______"],
 
   /**
-   * GUIDs associated with virtual queries that are used for display in the left
-   * pane.
+   * GUIDs associated with virtual queries that are used for displaying bookmark
+   * folders in the left pane.
    */
   virtualMenuGuid: "menu_______v",
   virtualToolbarGuid: "toolbar____v",
@@ -921,6 +922,8 @@ var Bookmarks = Object.freeze({
                WHERE id IN (SELECT id FROM moz_bookmarks WHERE guid = :folderGuid )
               `, { folderGuid, time, syncChangeDelta });
           }
+
+          await PlacesSyncUtils.bookmarks.resetSyncMetadata(db, options.source);
         });
 
         // We don't wait for the frecency calculation.

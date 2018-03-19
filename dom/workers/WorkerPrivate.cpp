@@ -6,7 +6,6 @@
 
 #include "WorkerPrivate.h"
 
-#include "amIAddonManager.h"
 #include "js/MemoryMetrics.h"
 #include "MessageEventRunnable.h"
 #include "mozilla/dom/ClientManager.h"
@@ -36,12 +35,14 @@
 #include "nsNetUtil.h"
 #include "nsIMemoryReporter.h"
 #include "nsIPermissionManager.h"
+#include "nsIRandomGenerator.h"
 #include "nsIScriptError.h"
 #include "nsIScriptTimeoutHandler.h"
 #include "nsIURI.h"
 #include "nsIURL.h"
 #include "nsPrintfCString.h"
 #include "nsQueryObject.h"
+#include "nsRFPService.h"
 #include "nsSandboxFlags.h"
 #include "nsUTF8Utils.h"
 
@@ -59,9 +60,7 @@
 #include "WorkerScope.h"
 #include "WorkerThread.h"
 
-#ifdef DEBUG
 #include "nsThreadManager.h"
-#endif
 
 #ifdef XP_WIN
 #undef PostMessage
@@ -88,6 +87,9 @@ TimeoutsLog()
   return sWorkerTimeoutsLog;
 }
 
+#ifdef LOG
+#undef LOG
+#endif
 #define LOG(log, _args) MOZ_LOG(log, LogLevel::Debug, _args);
 
 namespace mozilla {
@@ -421,6 +423,11 @@ private:
     if (NS_WARN_IF(!aWorkerPrivate->EnsureClientSource())) {
       return false;
     }
+
+    // PerformanceStorage needs to be initialized on the worker thread before
+    // being used on main-thread. Let's be sure that it is created before any
+    // content loading.
+    aWorkerPrivate->EnsurePerformanceStorage();
 
     ErrorResult rv;
     workerinternals::LoadMainScript(aWorkerPrivate, mScriptURL, WorkerScript, rv);
@@ -1127,12 +1134,10 @@ class WorkerPrivate::MemoryReporter final : public nsIMemoryReporter
 
   SharedMutex mMutex;
   WorkerPrivate* mWorkerPrivate;
-  bool mAlreadyMappedToAddon;
 
 public:
   explicit MemoryReporter(WorkerPrivate* aWorkerPrivate)
-  : mMutex(aWorkerPrivate->mMutex), mWorkerPrivate(aWorkerPrivate),
-    mAlreadyMappedToAddon(false)
+  : mMutex(aWorkerPrivate->mMutex), mWorkerPrivate(aWorkerPrivate)
   {
     aWorkerPrivate->AssertIsOnWorkerThread();
   }
@@ -1230,10 +1235,6 @@ private:
     NS_ASSERTION(mWorkerPrivate, "Disabled more than once!");
     mWorkerPrivate = nullptr;
   }
-
-  // Only call this from the main thread and under mMutex lock.
-  void
-  TryToMapAddon(nsACString &path);
 };
 
 NS_IMPL_ISUPPORTS(WorkerPrivate::MemoryReporter, nsIMemoryReporter)
@@ -1279,8 +1280,6 @@ WorkerPrivate::MemoryReporter::CollectReports(nsIHandleReportCallback* aHandleRe
     }
     path.AppendPrintf(", 0x%p)/", static_cast<void*>(mWorkerPrivate));
 
-    TryToMapAddon(path);
-
     runnable =
       new CollectReportsRunnable(mWorkerPrivate, aHandleReport, aData, aAnonymize, path);
   }
@@ -1290,46 +1289,6 @@ WorkerPrivate::MemoryReporter::CollectReports(nsIHandleReportCallback* aHandleRe
   }
 
   return NS_OK;
-}
-
-void
-WorkerPrivate::MemoryReporter::TryToMapAddon(nsACString &path)
-{
-  AssertIsOnMainThread();
-  mMutex.AssertCurrentThreadOwns();
-
-  if (mAlreadyMappedToAddon || !mWorkerPrivate) {
-    return;
-  }
-
-  nsCOMPtr<nsIURI> scriptURI;
-  if (NS_FAILED(NS_NewURI(getter_AddRefs(scriptURI),
-                          mWorkerPrivate->ScriptURL()))) {
-    return;
-  }
-
-  mAlreadyMappedToAddon = true;
-
-  if (!XRE_IsParentProcess()) {
-    // Only try to access the service from the main process.
-    return;
-  }
-
-  nsAutoCString addonId;
-  bool ok;
-  nsCOMPtr<amIAddonManager> addonManager =
-    do_GetService("@mozilla.org/addons/integration;1");
-
-  if (!addonManager ||
-      NS_FAILED(addonManager->MapURIToAddonID(scriptURI, addonId, &ok)) ||
-      !ok) {
-    return;
-  }
-
-  static const size_t explicitLength = strlen("explicit/");
-  addonId.InsertLiteral("add-ons/", 0);
-  addonId += "/";
-  path.Insert(addonId, explicitLength);
 }
 
 WorkerPrivate::MemoryReporter::CollectReportsRunnable::CollectReportsRunnable(
@@ -2616,6 +2575,9 @@ WorkerPrivate::WorkerPrivate(WorkerPrivate* aParent,
   , mIsSecureContext(false)
   , mDebuggerRegistered(false)
   , mIsInAutomation(false)
+#ifndef RELEASE_OR_BETA
+  , mPerformanceCounter(nullptr)
+#endif
 {
   MOZ_ASSERT_IF(!IsDedicatedWorker(), NS_IsMainThread());
   mLoadInfo.StealFrom(aLoadInfo);
@@ -2662,8 +2624,12 @@ WorkerPrivate::WorkerPrivate(WorkerPrivate* aParent,
     if (mIsSecureContext) {
       mJSSettings.chrome.compartmentOptions
                  .creationOptions().setSecureContext(true);
+      mJSSettings.chrome.compartmentOptions
+                 .creationOptions().setClampAndJitterTime(false);
       mJSSettings.content.compartmentOptions
                  .creationOptions().setSecureContext(true);
+      mJSSettings.content.compartmentOptions
+                 .creationOptions().setClampAndJitterTime(false);
     }
 
     mIsInAutomation = xpc::IsInAutomation();
@@ -3434,6 +3400,16 @@ WorkerPrivate::EnsureClientSource()
   return true;
 }
 
+void
+WorkerPrivate::EnsurePerformanceStorage()
+{
+  AssertIsOnWorkerThread();
+
+  if (!mPerformanceStorage) {
+    mPerformanceStorage = PerformanceStorageWorker::Create(this);
+  }
+}
+
 const ClientInfo&
 WorkerPrivate::GetClientInfo() const
 {
@@ -4157,14 +4133,10 @@ WorkerPrivate::RunCurrentSyncLoop()
 }
 
 bool
-WorkerPrivate::DestroySyncLoop(uint32_t aLoopIndex, nsIThreadInternal* aThread)
+WorkerPrivate::DestroySyncLoop(uint32_t aLoopIndex)
 {
   MOZ_ASSERT(!mSyncLoopStack.IsEmpty());
   MOZ_ASSERT(mSyncLoopStack.Length() - 1 == aLoopIndex);
-
-  if (!aThread) {
-    aThread = mThread;
-  }
 
   // We're about to delete the loop, stash its event target and result.
   SyncLoopInfo* loopInfo = mSyncLoopStack[aLoopIndex];
@@ -5200,10 +5172,8 @@ WorkerPrivate::CreateDebuggerGlobalScope(JSContext* aCx)
   return mDebuggerScope;
 }
 
-#ifdef DEBUG
-
-void
-WorkerPrivate::AssertIsOnWorkerThread() const
+bool
+WorkerPrivate::IsOnWorkerThread() const
 {
   // This is much more complicated than it needs to be but we can't use mThread
   // because it must be protected by mMutex and sometimes this method is called
@@ -5220,10 +5190,15 @@ WorkerPrivate::AssertIsOnWorkerThread() const
 
   bool current;
   rv = thread->IsOnCurrentThread(&current);
-  MOZ_ASSERT(NS_SUCCEEDED(rv));
-  MOZ_ASSERT(current, "Wrong thread!");
+  return NS_SUCCEEDED(rv) && current;
 }
 
+#ifdef DEBUG
+void
+WorkerPrivate::AssertIsOnWorkerThread() const
+{
+  MOZ_ASSERT(IsOnWorkerThread());
+}
 #endif // DEBUG
 
 void
@@ -5239,15 +5214,25 @@ WorkerPrivate::DumpCrashInformation(nsACString& aString)
   }
 }
 
+#ifndef RELEASE_OR_BETA
+PerformanceCounter*
+WorkerPrivate::GetPerformanceCounter()
+{
+  AssertIsOnWorkerThread();
+
+  if (!mPerformanceCounter) {
+    mPerformanceCounter = new PerformanceCounter(NS_ConvertUTF16toUTF8(mWorkerName));
+  }
+
+  return mPerformanceCounter;
+}
+#endif
+
 PerformanceStorage*
 WorkerPrivate::GetPerformanceStorage()
 {
   AssertIsOnMainThread();
-
-  if (!mPerformanceStorage) {
-    mPerformanceStorage = PerformanceStorageWorker::Create(this);
-  }
-
+  MOZ_ASSERT(mPerformanceStorage);
   return mPerformanceStorage;
 }
 

@@ -36,8 +36,6 @@ ChromeUtils.defineModuleGetter(this, "Experiments",
 
 XPCOMUtils.defineLazyPreferenceGetter(this, "WEBEXT_PERMISSION_PROMPTS",
                                       "extensions.webextPermissionPrompts", false);
-XPCOMUtils.defineLazyPreferenceGetter(this, "ALLOW_NON_MPC",
-                                      "extensions.allow-non-mpc-extensions", true);
 XPCOMUtils.defineLazyPreferenceGetter(this, "XPINSTALL_ENABLED",
                                       "xpinstall.enabled", true);
 
@@ -2112,7 +2110,6 @@ var gDiscoverView = {
         return;
       }
 
-      this._browser.homePage = this.homepageURL.spec;
       this._browser.addProgressListener(this);
 
       if (this.loaded)
@@ -2171,7 +2168,7 @@ var gDiscoverView = {
     // and the error page is not visible then there is nothing else to do
     if (this.loaded && this.node.selectedPanel != this._error &&
         (!aIsRefresh || (this._browser.currentURI &&
-         this._browser.currentURI.spec == this._browser.homePage))) {
+         this._browser.currentURI.spec == this.homepageURL.spec))) {
       gViewController.notifyViewChanged();
       return;
     }
@@ -2191,7 +2188,7 @@ var gDiscoverView = {
 
   canRefresh() {
     if (this._browser.currentURI &&
-        this._browser.currentURI.spec == this._browser.homePage)
+        this._browser.currentURI.spec == this.homepageURL.spec)
       return false;
     return true;
   },
@@ -2780,17 +2777,12 @@ var gDetailView = {
     desc.textContent = aAddon.description;
 
     var fullDesc = document.getElementById("detail-fulldesc");
-    if (aAddon.fullDescription) {
-      // The following is part of an awful hack to include the licenses for GMP
-      // plugins without having bug 624602 fixed yet, and intentionally ignores
-      // localisation.
-      if (aAddon.isGMPlugin) {
-        // eslint-disable-next-line no-unsanitized/property
-        fullDesc.unsafeSetInnerHTML(aAddon.fullDescription);
-      } else {
-        fullDesc.textContent = aAddon.fullDescription;
-      }
-
+    if (aAddon.getFullDescription) {
+      fullDesc.textContent = "";
+      fullDesc.append(aAddon.getFullDescription(document));
+      fullDesc.hidden = false;
+    } else if (aAddon.fullDescription) {
+      fullDesc.textContent = aAddon.fullDescription;
       fullDesc.hidden = false;
     } else {
       fullDesc.hidden = true;
@@ -3032,14 +3024,6 @@ var gDetailView = {
           [this._addon.name, gStrings.brandShortName, gStrings.appVersion], 3
         );
         document.getElementById("detail-warning-link").hidden = true;
-      } else if (this._addon.appDisabled && !this._addon.multiprocessCompatible && !ALLOW_NON_MPC) {
-        this.node.setAttribute("notification", "error");
-        document.getElementById("detail-error").textContent = gStrings.ext.formatStringFromName(
-          "details.notification.nonMpcDisabled", [this._addon.name], 1
-        );
-        let errorLink = document.getElementById("detail-error-link");
-        errorLink.value = gStrings.ext.GetStringFromName("details.notification.nonMpcDisabled.link");
-        errorLink.href = "https://wiki.mozilla.org/Add-ons/ShimsNightly";
       } else if (!isCorrectlySigned(this._addon)) {
         this.node.setAttribute("notification", "warning");
         document.getElementById("detail-warning").textContent = gStrings.ext.formatStringFromName(

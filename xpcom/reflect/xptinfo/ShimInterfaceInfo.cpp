@@ -8,28 +8,21 @@
 #include "ShimInterfaceInfo.h"
 
 #include "nsIDOMCharacterData.h"
-#include "nsIDOMClientRect.h"
-#include "nsIDOMClientRectList.h"
 #include "nsIDOMComment.h"
 #include "nsIDOMCustomEvent.h"
 #ifdef MOZ_WEBRTC
 #include "nsIDOMDataChannel.h"
 #endif
-#include "nsIDOMDataTransfer.h"
 #include "nsIDOMDOMCursor.h"
 #include "nsIDOMDOMException.h"
 #include "nsIDOMDOMRequest.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMDocumentFragment.h"
-#include "nsIDOMDocumentType.h"
-#include "nsIDOMDragEvent.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMEventTarget.h"
-#include "nsIDOMFileList.h"
 #include "nsIDOMFocusEvent.h"
 #include "nsIDOMGeoPositionError.h"
-#include "nsIDOMHTMLFormElement.h"
 #include "nsIDOMHTMLInputElement.h"
 #include "nsIDOMMouseEvent.h"
 #include "nsIDOMMouseScrollEvent.h"
@@ -57,8 +50,6 @@
 #include "nsIWebBrowserPersistable.h"
 
 #include "mozilla/dom/CharacterDataBinding.h"
-#include "mozilla/dom/DOMRectBinding.h"
-#include "mozilla/dom/DOMRectListBinding.h"
 #include "mozilla/dom/CommentBinding.h"
 #include "mozilla/dom/CSSPrimitiveValueBinding.h"
 #include "mozilla/dom/CSSStyleDeclarationBinding.h"
@@ -66,25 +57,20 @@
 #include "mozilla/dom/CSSValueBinding.h"
 #include "mozilla/dom/CSSValueListBinding.h"
 #include "mozilla/dom/CustomEventBinding.h"
-#include "mozilla/dom/DataTransferBinding.h"
 #include "mozilla/dom/DOMCursorBinding.h"
 #include "mozilla/dom/DOMExceptionBinding.h"
 #include "mozilla/dom/DOMParserBinding.h"
 #include "mozilla/dom/DOMRequestBinding.h"
 #include "mozilla/dom/DocumentBinding.h"
 #include "mozilla/dom/DocumentFragmentBinding.h"
-#include "mozilla/dom/DocumentTypeBinding.h"
-#include "mozilla/dom/DragEventBinding.h"
 #include "mozilla/dom/ElementBinding.h"
 #include "mozilla/dom/EventBinding.h"
 #include "mozilla/dom/EventTargetBinding.h"
-#include "mozilla/dom/FileListBinding.h"
 #include "mozilla/dom/FocusEventBinding.h"
 #include "mozilla/dom/FrameLoaderBinding.h"
 #include "mozilla/dom/HTMLAnchorElementBinding.h"
 #include "mozilla/dom/HTMLAreaElementBinding.h"
 #include "mozilla/dom/HTMLButtonElementBinding.h"
-#include "mozilla/dom/HTMLFormElementBinding.h"
 #include "mozilla/dom/HTMLFrameSetElementBinding.h"
 #include "mozilla/dom/HTMLHtmlElementBinding.h"
 #include "mozilla/dom/HTMLInputElementBinding.h"
@@ -101,7 +87,6 @@
 #include "mozilla/dom/PositionErrorBinding.h"
 #include "mozilla/dom/ProcessingInstructionBinding.h"
 #include "mozilla/dom/RangeBinding.h"
-#include "mozilla/dom/RectBinding.h"
 #ifdef MOZ_WEBRTC
 #include "mozilla/dom/RTCDataChannelBinding.h"
 #endif
@@ -179,26 +164,19 @@ struct ComponentsInterfaceShimEntry {
 const ComponentsInterfaceShimEntry kComponentsInterfaceShimMap[] =
 {
   DEFINE_SHIM(CharacterData),
-  DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMClientRect, DOMRectReadOnly),
-  DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMClientRectList, DOMRectList),
   DEFINE_SHIM(Comment),
   DEFINE_SHIM(CustomEvent),
-  DEFINE_SHIM(DataTransfer),
   DEFINE_SHIM(DOMCursor),
   DEFINE_SHIM(DOMException),
   DEFINE_SHIM(DOMRequest),
   DEFINE_SHIM(Document),
   DEFINE_SHIM(DocumentFragment),
-  DEFINE_SHIM(DocumentType),
-  DEFINE_SHIM(DragEvent),
   DEFINE_SHIM(Element),
   DEFINE_SHIM(Event),
   DEFINE_SHIM(EventTarget),
-  DEFINE_SHIM(FileList),
   DEFINE_SHIM(FocusEvent),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIFrameLoader, FrameLoader),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMGeoPositionError, PositionError),
-  DEFINE_SHIM(HTMLFormElement),
   DEFINE_SHIM(HTMLInputElement),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIListBoxObject, ListBoxObject),
   DEFINE_SHIM(MouseEvent),

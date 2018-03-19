@@ -117,7 +117,7 @@ XPCOMUtils.defineLazyScriptGetter(this, ["DownloadsButton",
                                          "DownloadsIndicatorView"],
                                   "chrome://browser/content/downloads/indicator.js");
 XPCOMUtils.defineLazyScriptGetter(this, "gEditItemOverlay",
-                                  "chrome://browser/content/places/editBookmarkOverlay.js");
+                                  "chrome://browser/content/places/editBookmark.js");
 if (AppConstants.NIGHTLY_BUILD) {
   XPCOMUtils.defineLazyScriptGetter(this, "gWebRender",
                                     "chrome://browser/content/browser-webrender.js");
@@ -222,8 +222,6 @@ XPCOMUtils.defineLazyGetter(this, "Win7Features", function() {
   return null;
 });
 
-const nsIWebNavigation = Ci.nsIWebNavigation;
-
 var gBrowser;
 var gLastValidURLStr = "";
 var gInPrintPreviewMode = false;
@@ -268,7 +266,7 @@ Object.defineProperty(this, "gFindBar", {
   configurable: true,
   enumerable: true,
   get() {
-    return window.gBrowser.getFindBar();
+    return gBrowser.getCachedFindBar();
   },
 });
 
@@ -276,9 +274,25 @@ Object.defineProperty(this, "gFindBarInitialized", {
   configurable: true,
   enumerable: true,
   get() {
-    return window.gBrowser.isFindBarInitialized();
+    return gBrowser.isFindBarInitialized();
   },
 });
+
+Object.defineProperty(this, "gFindBarPromise", {
+  configurable: true,
+  enumerable: true,
+  get() {
+    return gBrowser.getFindBar();
+  },
+});
+
+async function gLazyFindCommand(cmd, ...args) {
+  let fb = await gFindBarPromise;
+  // We could be closed by now, or the tab with XBL binding could have gone away:
+  if (fb && fb[cmd]) {
+    fb[cmd].apply(fb, args);
+  }
+}
 
 Object.defineProperty(this, "AddonManager", {
   configurable: true,
@@ -1176,7 +1190,14 @@ function RedirectLoad({ target: browser, data }) {
 }
 
 if (document.documentElement.getAttribute("windowtype") == "navigator:browser") {
-  addEventListener("DOMContentLoaded", function() {
+  window.addEventListener("MozBeforeInitialXULLayout", () => {
+    gBrowserInit.onBeforeInitialXULLayout();
+  }, { once: true });
+  // The listener of DOMContentLoaded must be set on window, rather than
+  // document, because the window can go away before the event is fired.
+  // In that case, we don't want to initialize anything, otherwise we
+  // may be leaking things because they will never be destroyed after.
+  window.addEventListener("DOMContentLoaded", () => {
     gBrowserInit.onDOMContentLoaded();
   }, { once: true });
 }
@@ -1189,13 +1210,36 @@ var delayedStartupPromise = new Promise(resolve => {
 var gBrowserInit = {
   delayedStartupFinished: false,
 
+  onBeforeInitialXULLayout() {
+    // Set a sane starting width/height for all resolutions on new profiles.
+    if (Services.prefs.getBoolPref("privacy.resistFingerprinting")) {
+      // When the fingerprinting resistance is enabled, making sure that we don't
+      // have a maximum window to interfere with generating rounded window dimensions.
+      document.documentElement.setAttribute("sizemode", "normal");
+    } else if (!document.documentElement.hasAttribute("width")) {
+      const TARGET_WIDTH = 1280;
+      const TARGET_HEIGHT = 1040;
+      let width = Math.min(screen.availWidth * .9, TARGET_WIDTH);
+      let height = Math.min(screen.availHeight * .9, TARGET_HEIGHT);
+
+      document.documentElement.setAttribute("width", width);
+      document.documentElement.setAttribute("height", height);
+
+      if (width < TARGET_WIDTH && height < TARGET_HEIGHT) {
+        document.documentElement.setAttribute("sizemode", "maximized");
+      }
+    }
+
+    TabsInTitlebar.init();
+  },
+
   onDOMContentLoaded() {
     gBrowser = window._gBrowser;
     delete window._gBrowser;
     gBrowser.init();
 
     window.QueryInterface(Ci.nsIInterfaceRequestor)
-          .getInterface(nsIWebNavigation)
+          .getInterface(Ci.nsIWebNavigation)
           .QueryInterface(Ci.nsIDocShellTreeItem).treeOwner
           .QueryInterface(Ci.nsIInterfaceRequestor)
           .getInterface(Ci.nsIXULWindow)
@@ -1232,25 +1276,6 @@ var gBrowserInit = {
       initBrowser.removeAttribute("blank");
     }
 
-    // Set a sane starting width/height for all resolutions on new profiles.
-    if (Services.prefs.getBoolPref("privacy.resistFingerprinting")) {
-      // When the fingerprinting resistance is enabled, making sure that we don't
-      // have a maximum window to interfere with generating rounded window dimensions.
-      document.documentElement.setAttribute("sizemode", "normal");
-    } else if (!document.documentElement.hasAttribute("width")) {
-      const TARGET_WIDTH = 1280;
-      const TARGET_HEIGHT = 1040;
-      let width = Math.min(screen.availWidth * .9, TARGET_WIDTH);
-      let height = Math.min(screen.availHeight * .9, TARGET_HEIGHT);
-
-      document.documentElement.setAttribute("width", width);
-      document.documentElement.setAttribute("height", height);
-
-      if (width < TARGET_WIDTH && height < TARGET_HEIGHT) {
-        document.documentElement.setAttribute("sizemode", "maximized");
-      }
-    }
-
     gBrowser.updateBrowserRemoteness(initBrowser, isRemote, {
       remoteType, sameProcessAsFrameLoader
     });
@@ -1272,10 +1297,13 @@ var gBrowserInit = {
     });
 
     this._setInitialFocus();
+
+    gBrowser.tabContainer.updateVisibility();
+    TabsInTitlebar.onDOMContentLoaded();
   },
 
   onLoad() {
-    gBrowser.addEventListener("DOMUpdatePageReport", gPopupBlockerObserver);
+    gBrowser.addEventListener("DOMUpdateBlockedPopups", gPopupBlockerObserver);
 
     Services.obs.addObserver(gPluginHandler.NPAPIPluginCrashed, "plugin-crashed");
 
@@ -1307,7 +1335,7 @@ var gBrowserInit = {
 
     if (!gMultiProcessBrowser) {
       // There is a Content:Click message manually sent from content.
-      Services.els.addSystemEventListener(gBrowser.mPanelContainer, "click",
+      Services.els.addSystemEventListener(gBrowser.tabpanels, "click",
         contentAreaClick, true);
     }
 
@@ -2062,7 +2090,7 @@ function HandleAppCommandEvent(evt) {
     BrowserCloseTabOrWindow();
     break;
   case "Find":
-    gFindBar.onFindCommand();
+    gLazyFindCommand("onFindCommand");
     break;
   case "Help":
     openHelpLink("firefox-help");
@@ -2174,9 +2202,8 @@ function BrowserHandleShiftBackspace() {
 }
 
 function BrowserStop() {
-  const stopFlags = nsIWebNavigation.STOP_ALL;
   maybeRecordAbandonmentTelemetry(gBrowser.selectedTab, "stop");
-  gBrowser.webNavigation.stop(stopFlags);
+  gBrowser.webNavigation.stop(Ci.nsIWebNavigation.STOP_ALL);
 }
 
 function BrowserReloadOrDuplicate(aEvent) {
@@ -2202,13 +2229,14 @@ function BrowserReload() {
     // Bug 1167797: For view source, we always skip the cache
     return BrowserReloadSkipCache();
   }
-  const reloadFlags = nsIWebNavigation.LOAD_FLAGS_NONE;
+  const reloadFlags = Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
   BrowserReloadWithFlags(reloadFlags);
 }
 
 function BrowserReloadSkipCache() {
   // Bypass proxy and cache.
-  const reloadFlags = nsIWebNavigation.LOAD_FLAGS_BYPASS_PROXY | nsIWebNavigation.LOAD_FLAGS_BYPASS_CACHE;
+  const reloadFlags = Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_PROXY |
+                      Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CACHE;
   BrowserReloadWithFlags(reloadFlags);
 }
 
@@ -2994,7 +3022,8 @@ var BrowserOnClick = {
       case "Browser:CertExceptionError":
         this.onCertError(msg.target, msg.data.elementId,
                          msg.data.isTopFrame, msg.data.location,
-                         msg.data.securityInfoAsString);
+                         msg.data.securityInfoAsString,
+                         msg.data.frameId);
       break;
       case "Browser:OpenCaptivePortalPage":
         CaptivePortalWatcher.ensureCaptivePortalTab();
@@ -3039,7 +3068,7 @@ var BrowserOnClick = {
     }
   },
 
-  onCertError(browser, elementId, isTopFrame, location, securityInfoAsString) {
+  onCertError(browser, elementId, isTopFrame, location, securityInfoAsString, frameId) {
     let secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
     let securityInfo;
 
@@ -3090,9 +3119,10 @@ var BrowserOnClick = {
         securityInfo = getSecurityInfo(securityInfoAsString);
         let errorInfo = getDetailedCertErrorInfo(location,
                                                  securityInfo);
-        browser.messageManager.sendAsyncMessage( "CertErrorDetails", {
+        browser.messageManager.sendAsyncMessage("CertErrorDetails", {
             code: securityInfo.errorCode,
-            info: errorInfo
+            info: errorInfo,
+            frameId,
         });
         break;
 
@@ -3153,7 +3183,7 @@ var BrowserOnClick = {
     // but add a notify bar as a reminder, so that they don't lose
     // track after, e.g., tab switching.
     gBrowser.loadURIWithFlags(gBrowser.currentURI.spec,
-                              nsIWebNavigation.LOAD_FLAGS_BYPASS_CLASSIFIER,
+                              Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CLASSIFIER,
                               null, null, null);
 
     Services.perms.add(gBrowser.currentURI, "safe-browsing",
@@ -3510,7 +3540,7 @@ var PrintPreviewListener = {
       gBrowser.getNotificationBox().notificationsHidden = false;
 
     if (this._chromeState.findOpen)
-      gFindBar.open();
+      gLazyFindCommand("open");
 
     if (this._chromeState.globalNotificationsOpen)
       document.getElementById("global-notificationbox").notificationsHidden = false;
@@ -5146,6 +5176,7 @@ var TabsProgressListener = {
     // or history.push/pop/replaceState.
     if (aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT) {
       // Reader mode cares about history.pushState and friends.
+      // FIXME: The content process should manage this directly (bug 1445351).
       aBrowser.messageManager.sendAsyncMessage("Reader:PushState", {
         isArticle: aBrowser.isArticle,
       });
@@ -5321,11 +5352,11 @@ nsBrowserAccess.prototype = {
                             Ci.nsIWebNavigation.LOAD_FLAGS_FROM_EXTERNAL :
                             Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
           gBrowser.loadURIWithFlags(aURI.spec, {
-                                    aTriggeringPrincipal,
-                                    flags: loadflags,
-                                    referrerURI: referrer,
-                                    referrerPolicy,
-                                    });
+            aTriggeringPrincipal,
+            flags: loadflags,
+            referrerURI: referrer,
+            referrerPolicy,
+          });
         }
         if (!Services.prefs.getBoolPref("browser.tabs.loadDivertedInBackground"))
           window.focus();
@@ -6205,7 +6236,7 @@ function BrowserSetForcedCharacterSet(aCharset) {
 }
 
 function BrowserCharsetReload() {
-  BrowserReloadWithFlags(nsIWebNavigation.LOAD_FLAGS_CHARSET_CHANGE);
+  BrowserReloadWithFlags(Ci.nsIWebNavigation.LOAD_FLAGS_CHARSET_CHANGE);
 }
 
 function UpdateCurrentCharset(target) {

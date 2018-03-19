@@ -780,24 +780,6 @@ JS_MarkCrossZoneIdValue(JSContext* cx, const Value& value)
     cx->markAtomValue(value);
 }
 
-JS_PUBLIC_API(JSAddonId*)
-JS::NewAddonId(JSContext* cx, HandleString str)
-{
-    return static_cast<JSAddonId*>(JS_AtomizeAndPinJSString(cx, str));
-}
-
-JS_PUBLIC_API(JSString*)
-JS::StringOfAddonId(JSAddonId* id)
-{
-    return id;
-}
-
-JS_PUBLIC_API(JSAddonId*)
-JS::AddonIdOfObject(JSObject* obj)
-{
-    return obj->compartment()->creationOptions().addonIdOrNull();
-}
-
 JS_PUBLIC_API(void)
 JS_SetZoneUserData(JS::Zone* zone, void* data)
 {
@@ -3993,7 +3975,7 @@ JS::TransitiveCompileOptions::copyPODTransitiveOptions(const TransitiveCompileOp
     introductionLineno = rhs.introductionLineno;
     introductionOffset = rhs.introductionOffset;
     hasIntroductionInfo = rhs.hasIntroductionInfo;
-    isProbablySystemOrAddonCode = rhs.isProbablySystemOrAddonCode;
+    isProbablySystemCode = rhs.isProbablySystemCode;
     hideScriptFromDebugger = rhs.hideScriptFromDebugger;
 };
 
@@ -4107,7 +4089,7 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
     strictOption = cx->options().strictMode();
     extraWarningsOption = cx->compartment()->behaviors().extraWarnings(cx);
     expressionClosuresOption = cx->options().expressionClosures();
-    isProbablySystemOrAddonCode = cx->compartment()->isProbablySystemOrAddonCode();
+    isProbablySystemCode = cx->compartment()->isProbablySystemCode();
     werrorOption = cx->options().werror();
     if (!cx->options().asmJS())
         asmJSOption = AsmJSOption::Disabled;
@@ -5813,7 +5795,7 @@ JS_StringHasBeenPinned(JSContext* cx, JSString* str)
     if (!str->isAtom())
         return false;
 
-    return AtomIsPinned(cx, &str->asAtom());
+    return str->asAtom().isPinned();
 }
 
 JS_PUBLIC_API(jsid)
@@ -5879,6 +5861,14 @@ JS_NewUCString(JSContext* cx, char16_t* chars, size_t length)
     AssertHeapIsIdle();
     CHECK_REQUEST(cx);
     return NewString<CanGC>(cx, chars, length);
+}
+
+JS_PUBLIC_API(JSString*)
+JS_NewUCStringDontDeflate(JSContext* cx, char16_t* chars, size_t length)
+{
+    AssertHeapIsIdle();
+    CHECK_REQUEST(cx);
+    return NewStringDontDeflate<CanGC>(cx, chars, length);
 }
 
 JS_PUBLIC_API(JSString*)
@@ -7271,9 +7261,6 @@ JS_SetGlobalJitCompilerOption(JSContext* cx, JSJitCompilerOption opt, uint32_t v
             value = defaultValues.jumpThreshold;
         }
         jit::JitOptions.jumpThreshold = value;
-        break;
-      case JSJITCOMPILER_SIMULATOR_ALWAYS_INTERRUPT:
-        jit::JitOptions.simulatorAlwaysInterrupt = !!value;
         break;
       case JSJITCOMPILER_SPECTRE_INDEX_MASKING:
         jit::JitOptions.spectreIndexMasking = !!value;

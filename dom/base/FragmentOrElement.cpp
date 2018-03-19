@@ -1523,14 +1523,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(FragmentOrElement)
 
 void
-FragmentOrElement::MarkUserData(void* aObject, nsAtom* aKey, void* aChild,
-                               void* aData)
-{
-  uint32_t* gen = static_cast<uint32_t*>(aData);
-  xpc_MarkInCCGeneration(static_cast<nsISupports*>(aChild), *gen);
-}
-
-void
 FragmentOrElement::MarkNodeChildren(nsINode* aNode)
 {
   JSObject* o = GetJSObjectChild(aNode);
@@ -1541,13 +1533,6 @@ FragmentOrElement::MarkNodeChildren(nsINode* aNode)
   EventListenerManager* elm = aNode->GetExistingListenerManager();
   if (elm) {
     elm->MarkForCC();
-  }
-
-  if (aNode->HasProperties()) {
-    nsIDocument* ownerDoc = aNode->OwnerDoc();
-    ownerDoc->PropertyTable(DOM_USER_DATA)->
-      Enumerate(aNode, FragmentOrElement::MarkUserData,
-                &nsCCUncollectableMarker::sGeneration);
   }
 }
 

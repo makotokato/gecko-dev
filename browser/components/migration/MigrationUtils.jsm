@@ -360,7 +360,8 @@ var MigratorPrototype = {
       }
     };
 
-    if (MigrationUtils.isStartupMigration && !this.startupOnlyMigrator) {
+    if (MigrationUtils.isStartupMigration && !this.startupOnlyMigrator &&
+        Services.policies.isAllowed("defaultBookmarks")) {
       MigrationUtils.profileStartup.doStartup();
       // First import the default bookmarks.
       // Note: We do not need to do so for the Firefox migrator
@@ -374,7 +375,10 @@ var MigratorPrototype = {
 
         // Import the default bookmarks. We ignore whether or not we succeed.
         await BookmarkHTMLUtils.importFromURL(
-          "chrome://browser/locale/bookmarks.html", true).catch(r => r);
+          "chrome://browser/locale/bookmarks.html", {
+            replace: true,
+            source: PlacesUtils.bookmarks.SOURCES.RESTORE_ON_STARTUP,
+          }).catch(Cu.reportError);
 
         // We'll tell nsBrowserGlue we've imported bookmarks, but before that
         // we need to make sure we're going to know when it's finished

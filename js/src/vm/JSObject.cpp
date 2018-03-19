@@ -513,7 +513,7 @@ js::SetIntegrityLevel(JSContext* cx, HandleObject obj, IntegrityLevel level)
         }
 
         MOZ_ASSERT(nobj->lastProperty()->slotSpan() == last->slotSpan());
-        JS_ALWAYS_TRUE(nobj->setLastProperty(cx, last));
+        MOZ_ALWAYS_TRUE(nobj->setLastProperty(cx, last));
 
         // Ordinarily ArraySetLength handles this, but we're going behind its back
         // right now, so we must do this manually.
@@ -1438,7 +1438,7 @@ js::XDRObjectLiteral(XDRState<mode>* xdr, MutableHandleObject obj)
 
         // Recursively copy dense elements.
         for (unsigned i = 0; i < initialized; i++)
-            MOZ_TRY(xdr->codeConstValue(values[i]));
+            MOZ_TRY(XDRScriptConst(xdr, values[i]));
 
         uint32_t copyOnWrite;
         if (mode == XDR_ENCODE) {
@@ -1477,8 +1477,8 @@ js::XDRObjectLiteral(XDRState<mode>* xdr, MutableHandleObject obj)
             tmpValue = properties[i].get().value;
         }
 
-        MOZ_TRY(xdr->codeConstValue(&tmpIdValue));
-        MOZ_TRY(xdr->codeConstValue(&tmpValue));
+        MOZ_TRY(XDRScriptConst(xdr, &tmpIdValue));
+        MOZ_TRY(XDRScriptConst(xdr, &tmpValue));
 
         if (mode == XDR_DECODE) {
             if (!ValueToId<CanGC>(cx, tmpIdValue, &tmpId))

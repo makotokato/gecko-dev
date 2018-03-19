@@ -18,12 +18,14 @@
 
 #include "mozilla/Move.h"
 #include "mozilla/UniquePtr.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
 
 #include "webrtc/config.h"
 
 #include "signaling/src/jsep/JsepTrack.h"
 #include "signaling/src/jsep/JsepTransport.h"
+#include "signaling/src/sdp/RsdparsaSdpParser.h"
 #include "signaling/src/sdp/Sdp.h"
 #include "signaling/src/sdp/SipccSdp.h"
 #include "signaling/src/sdp/SipccSdpParser.h"
@@ -64,6 +66,8 @@ JsepSessionImpl::Init()
 
   SetupDefaultCodecs();
   SetupDefaultRtpExtensions();
+
+  mRunRustParser = Preferences::GetBool("media.webrtc.rsdparsa_enabled", false);
 
   return NS_OK;
 }
@@ -197,7 +201,7 @@ JsepSessionImpl::CreateOfferMsection(const JsepOfferOptions& options,
   JsepTrack& recvTrack(transceiver.mRecvTrack);
 
   SdpMediaSection::Protocol protocol(
-      mSdpHelper.GetProtocolForMediaType(sendTrack.GetMediaType()));
+      SdpHelper::GetProtocolForMediaType(sendTrack.GetMediaType()));
 
   const Sdp* answer(GetAnswer());
   const SdpMediaSection* lastAnswerMsection = nullptr;
@@ -226,7 +230,7 @@ JsepSessionImpl::CreateOfferMsection(const JsepOfferOptions& options,
   }
 
   if (transceiver.IsStopped()) {
-    mSdpHelper.DisableMsection(local, msection);
+    SdpHelper::DisableMsection(local, msection);
     return NS_OK;
   }
 
@@ -598,7 +602,7 @@ JsepSessionImpl::CreateAnswerMsection(const JsepAnswerOptions& options,
   if (mSdpHelper.MsectionIsDisabled(remoteMsection) ||
       // JS might have stopped this
       transceiver.IsStopped()) {
-    mSdpHelper.DisableMsection(sdp, &msection);
+    SdpHelper::DisableMsection(sdp, &msection);
     return NS_OK;
   }
 
@@ -620,7 +624,7 @@ JsepSessionImpl::CreateAnswerMsection(const JsepAnswerOptions& options,
 
   if (msection.GetFormats().empty()) {
     // Could not negotiate anything. Disable m-section.
-    mSdpHelper.DisableMsection(sdp, &msection);
+    SdpHelper::DisableMsection(sdp, &msection);
   }
 
   return NS_OK;
@@ -1259,10 +1263,13 @@ JsepSessionImpl::CopyPreviousMsid(const Sdp& oldLocal, Sdp* newLocal)
 nsresult
 JsepSessionImpl::ParseSdp(const std::string& sdp, UniquePtr<Sdp>* parsedp)
 {
-  UniquePtr<Sdp> parsed = mParser.Parse(sdp);
+  UniquePtr<Sdp> parsed = mSipccParser.Parse(sdp);
+  if (mRunRustParser) {
+    UniquePtr<Sdp> rustParsed = mRsdparsaParser.Parse(sdp);
+  }
   if (!parsed) {
     std::string error = "Failed to parse SDP: ";
-    mSdpHelper.appendSdpParseErrors(mParser.GetParseErrors(), &error);
+    mSdpHelper.appendSdpParseErrors(mSipccParser.GetParseErrors(), &error);
     JSEP_SET_ERROR(error);
     return NS_ERROR_INVALID_ARG;
   }
@@ -1816,14 +1823,10 @@ JsepSessionImpl::ValidateAnswer(const Sdp& offer, const Sdp& answer)
             }
 
             if (offExt.entry < 4096 && (offExt.entry != ansExt.entry)) {
-              // FIXME we do not return an error here, because Cisco Spark
-              // actually does respond with different extension ID's then we
-              // offer. See bug 1361206 for details.
-              MOZ_MTLOG(ML_WARNING, "[" << mName << "]: Answer changed id for "
-                        "extmap attribute at level " << i << " ("
-                        << offExt.extensionname << ") from " << offExt.entry
-                        << " to " << ansExt.entry << ".");
-              // return NS_ERROR_INVALID_ARG;
+              JSEP_SET_ERROR("Answer changed id for extmap attribute at level "
+                        << i << " (" << offExt.extensionname << ") from "
+                        << offExt.entry << " to " << ansExt.entry << ".");
+               return NS_ERROR_INVALID_ARG;
             }
 
             if (ansExt.entry >= 4096) {

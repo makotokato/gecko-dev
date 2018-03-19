@@ -30,6 +30,7 @@ namespace mozilla {
 namespace dom {
 
 class BeforeUnloadEvent;
+class DragEvent;
 class EventTarget;
 class EventMessageAutoOverride;
 // ExtendableEvent is a ServiceWorker event that is not
@@ -64,7 +65,6 @@ private:
   void ConstructorInit(EventTarget* aOwner,
                        nsPresContext* aPresContext,
                        WidgetEvent* aEvent);
-  double TimeStampImpl() const;
 
 public:
   static Event* FromSupports(nsISupports* aSupports)
@@ -122,6 +122,12 @@ public:
 
   // KeyboardEvent has all sorts of non-autogeneratable bits so far.
   virtual KeyboardEvent* AsKeyboardEvent()
+  {
+    return nullptr;
+  }
+
+  // DragEvent has a non-autogeneratable initDragEvent.
+  virtual DragEvent* AsDragEvent()
   {
     return nullptr;
   }
@@ -248,7 +254,7 @@ public:
     return mEvent->mFlags.mIsSynthesizedForTests;
   }
 
-  double TimeStamp() const;
+  double TimeStamp();
 
   EventTarget* GetOriginalTarget() const;
   EventTarget* GetExplicitOriginalTarget() const;

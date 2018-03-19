@@ -849,7 +849,7 @@ module.exports = getPrototype;
 /***/ 1272:
 /***/ (function(module, exports, __webpack_require__) {
 
-module.exports = __webpack_require__(3575);
+module.exports = __webpack_require__(1618);
 
 
 /***/ }),
@@ -873,6 +873,434 @@ function overArg(func, transform) {
 
 module.exports = overArg;
 
+
+/***/ }),
+
+/***/ 1360:
+/***/ (function(module, exports, __webpack_require__) {
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+const {
+  originalToGeneratedId,
+  generatedToOriginalId,
+  isGeneratedId,
+  isOriginalId
+} = __webpack_require__(1389);
+
+const { workerUtils: { WorkerDispatcher } } = __webpack_require__(1363);
+
+const dispatcher = new WorkerDispatcher();
+
+const getOriginalURLs = dispatcher.task("getOriginalURLs");
+const getGeneratedLocation = dispatcher.task("getGeneratedLocation");
+const getOriginalLocation = dispatcher.task("getOriginalLocation");
+const getLocationScopes = dispatcher.task("getLocationScopes");
+const getOriginalSourceText = dispatcher.task("getOriginalSourceText");
+const applySourceMap = dispatcher.task("applySourceMap");
+const clearSourceMaps = dispatcher.task("clearSourceMaps");
+const hasMappedSource = dispatcher.task("hasMappedSource");
+
+module.exports = {
+  originalToGeneratedId,
+  generatedToOriginalId,
+  isGeneratedId,
+  isOriginalId,
+  hasMappedSource,
+  getOriginalURLs,
+  getGeneratedLocation,
+  getOriginalLocation,
+  getLocationScopes,
+  getOriginalSourceText,
+  applySourceMap,
+  clearSourceMaps,
+  startSourceMapWorker: dispatcher.start.bind(dispatcher),
+  stopSourceMapWorker: dispatcher.stop.bind(dispatcher)
+};
+
+/***/ }),
+
+/***/ 1363:
+/***/ (function(module, exports, __webpack_require__) {
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+const networkRequest = __webpack_require__(1367);
+const workerUtils = __webpack_require__(1368);
+
+module.exports = {
+  networkRequest,
+  workerUtils
+};
+
+/***/ }),
+
+/***/ 1367:
+/***/ (function(module, exports) {
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+function networkRequest(url, opts) {
+  return fetch(url, {
+    cache: opts.loadFromCache ? "default" : "no-cache"
+  }).then(res => {
+    if (res.status >= 200 && res.status < 300) {
+      return res.text().then(text => ({ content: text }));
+    }
+    return Promise.reject(`request failed with status ${res.status}`);
+  });
+}
+
+module.exports = networkRequest;
+
+/***/ }),
+
+/***/ 1368:
+/***/ (function(module, exports) {
+
+function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { return Promise.resolve(value).then(function (value) { step("next", value); }, function (err) { step("throw", err); }); } } return step("next"); }); }; }
+
+function WorkerDispatcher() {
+  this.msgId = 1;
+  this.worker = null;
+} /* This Source Code Form is subject to the terms of the Mozilla Public
+   * License, v. 2.0. If a copy of the MPL was not distributed with this
+   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+WorkerDispatcher.prototype = {
+  start(url) {
+    this.worker = new Worker(url);
+    this.worker.onerror = () => {
+      console.error(`Error in worker ${url}`);
+    };
+  },
+
+  stop() {
+    if (!this.worker) {
+      return;
+    }
+
+    this.worker.terminate();
+    this.worker = null;
+  },
+
+  task(method) {
+    return (...args) => {
+      return new Promise((resolve, reject) => {
+        const id = this.msgId++;
+        this.worker.postMessage({ id, method, args });
+
+        const listener = ({ data: result }) => {
+          if (result.id !== id) {
+            return;
+          }
+
+          if (!this.worker) {
+            return;
+          }
+
+          this.worker.removeEventListener("message", listener);
+          if (result.error) {
+            reject(result.error);
+          } else {
+            resolve(result.response);
+          }
+        };
+
+        this.worker.addEventListener("message", listener);
+      });
+    };
+  }
+};
+
+function workerHandler(publicInterface) {
+  return function (msg) {
+    const { id, method, args } = msg.data;
+    try {
+      const response = publicInterface[method].apply(undefined, args);
+      if (response instanceof Promise) {
+        response.then(val => self.postMessage({ id, response: val }),
+        // Error can't be sent via postMessage, so be sure to
+        // convert to string.
+        err => self.postMessage({ id, error: err.toString() }));
+      } else {
+        self.postMessage({ id, response });
+      }
+    } catch (error) {
+      // Error can't be sent via postMessage, so be sure to convert to
+      // string.
+      self.postMessage({ id, error: error.toString() });
+    }
+  };
+}
+
+function streamingWorkerHandler(publicInterface, { timeout = 100 } = {}, worker = self) {
+  let streamingWorker = (() => {
+    var _ref = _asyncToGenerator(function* (id, tasks) {
+      let isWorking = true;
+
+      const intervalId = setTimeout(function () {
+        isWorking = false;
+      }, timeout);
+
+      const results = [];
+      while (tasks.length !== 0 && isWorking) {
+        const { callback, context, args } = tasks.shift();
+        const result = yield callback.call(context, args);
+        results.push(result);
+      }
+      worker.postMessage({ id, status: "pending", data: results });
+      clearInterval(intervalId);
+
+      if (tasks.length !== 0) {
+        yield streamingWorker(id, tasks);
+      }
+    });
+
+    return function streamingWorker(_x, _x2) {
+      return _ref.apply(this, arguments);
+    };
+  })();
+
+  return (() => {
+    var _ref2 = _asyncToGenerator(function* (msg) {
+      const { id, method, args } = msg.data;
+      const workerMethod = publicInterface[method];
+      if (!workerMethod) {
+        console.error(`Could not find ${method} defined in worker.`);
+      }
+      worker.postMessage({ id, status: "start" });
+
+      try {
+        const tasks = workerMethod(args);
+        yield streamingWorker(id, tasks);
+        worker.postMessage({ id, status: "done" });
+      } catch (error) {
+        worker.postMessage({ id, status: "error", error });
+      }
+    });
+
+    return function (_x3) {
+      return _ref2.apply(this, arguments);
+    };
+  })();
+}
+
+module.exports = {
+  WorkerDispatcher,
+  workerHandler,
+  streamingWorkerHandler
+};
+
+/***/ }),
+
+/***/ 1375:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+
+var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; /* This Source Code Form is subject to the terms of the Mozilla Public
+                                                                                                                                                                                                                                                                   * License, v. 2.0. If a copy of the MPL was not distributed with this
+                                                                                                                                                                                                                                                                   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+exports.parseScript = parseScript;
+exports.getAst = getAst;
+exports.clearASTs = clearASTs;
+exports.traverseAst = traverseAst;
+
+var _parseScriptTags = __webpack_require__(1023);
+
+var _parseScriptTags2 = _interopRequireDefault(_parseScriptTags);
+
+var _babylon = __webpack_require__(435);
+
+var babylon = _interopRequireWildcard(_babylon);
+
+var _types = __webpack_require__(2268);
+
+var t = _interopRequireWildcard(_types);
+
+var _isEmpty = __webpack_require__(963);
+
+var _isEmpty2 = _interopRequireDefault(_isEmpty);
+
+var _sources = __webpack_require__(1458);
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+let ASTs = new Map();
+
+function _parse(code, opts) {
+  return babylon.parse(code, _extends({}, opts, {
+    tokens: true
+  }));
+}
+
+const sourceOptions = {
+  generated: {
+    tokens: true
+  },
+  original: {
+    sourceType: "unambiguous",
+    tokens: true,
+    plugins: ["jsx", "flow", "doExpressions", "objectRestSpread", "classProperties", "exportDefaultFrom", "exportNamespaceFrom", "asyncGenerators", "functionBind", "functionSent", "dynamicImport"]
+  }
+};
+
+function parse(text, opts) {
+  let ast;
+  if (!text) {
+    return;
+  }
+
+  try {
+    ast = _parse(text, opts);
+  } catch (error) {
+    ast = {};
+  }
+
+  return ast;
+}
+
+// Custom parser for parse-script-tags that adapts its input structure to
+// our parser's signature
+function htmlParser({ source, line }) {
+  return parse(source, { startLine: line });
+}
+
+function parseScript(text, opts) {
+  return _parse(text, opts);
+}
+
+function getAst(sourceId) {
+  if (ASTs.has(sourceId)) {
+    return ASTs.get(sourceId);
+  }
+
+  const source = (0, _sources.getSource)(sourceId);
+
+  let ast = {};
+  const { contentType } = source;
+  if (contentType == "text/html") {
+    ast = (0, _parseScriptTags2.default)(source.text, htmlParser) || {};
+  } else if (contentType && contentType.match(/(javascript|jsx)/)) {
+    const type = source.id.includes("original") ? "original" : "generated";
+    const options = sourceOptions[type];
+    ast = parse(source.text, options);
+  }
+
+  ASTs.set(source.id, ast);
+  return ast;
+}
+
+function clearASTs() {
+  ASTs = new Map();
+}
+
+function traverseAst(sourceId, visitor, state) {
+  const ast = getAst(sourceId);
+  if ((0, _isEmpty2.default)(ast)) {
+    return null;
+  }
+
+  t.traverse(ast, visitor, state);
+  // t.fastTraverse(ast, visitor);
+  return ast;
+}
+
+/***/ }),
+
+/***/ 1389:
+/***/ (function(module, exports, __webpack_require__) {
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+const md5 = __webpack_require__(248);
+
+function originalToGeneratedId(originalId) {
+  const match = originalId.match(/(.*)\/originalSource/);
+  return match ? match[1] : "";
+}
+
+function generatedToOriginalId(generatedId, url) {
+  return `${generatedId}/originalSource-${md5(url)}`;
+}
+
+function isOriginalId(id) {
+  return !!id.match(/\/originalSource/);
+}
+
+function isGeneratedId(id) {
+  return !isOriginalId(id);
+}
+
+/**
+ * Trims the query part or reference identifier of a URL string, if necessary.
+ */
+function trimUrlQuery(url) {
+  let length = url.length;
+  let q1 = url.indexOf("?");
+  let q2 = url.indexOf("&");
+  let q3 = url.indexOf("#");
+  let q = Math.min(q1 != -1 ? q1 : length, q2 != -1 ? q2 : length, q3 != -1 ? q3 : length);
+
+  return url.slice(0, q);
+}
+
+// Map suffix to content type.
+const contentMap = {
+  "js": "text/javascript",
+  "jsm": "text/javascript",
+  "ts": "text/typescript",
+  "tsx": "text/typescript-jsx",
+  "jsx": "text/jsx",
+  "coffee": "text/coffeescript",
+  "elm": "text/elm",
+  "cljs": "text/x-clojure"
+};
+
+/**
+ * Returns the content type for the specified URL.  If no specific
+ * content type can be determined, "text/plain" is returned.
+ *
+ * @return String
+ *         The content type.
+ */
+function getContentType(url) {
+  url = trimUrlQuery(url);
+  let dot = url.lastIndexOf(".");
+  if (dot >= 0) {
+    let name = url.substring(dot + 1);
+    if (name in contentMap) {
+      return contentMap[name];
+    }
+  }
+  return "text/plain";
+}
+
+module.exports = {
+  originalToGeneratedId,
+  generatedToOriginalId,
+  isOriginalId,
+  isGeneratedId,
+  getContentType,
+  contentMapForTesting: contentMap
+};
 
 /***/ }),
 
@@ -909,6 +1337,1282 @@ function isObjectLike(value) {
 
 module.exports = isObjectLike;
 
+
+/***/ }),
+
+/***/ 1411:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.isFunction = isFunction;
+exports.isAwaitExpression = isAwaitExpression;
+exports.isYieldExpression = isYieldExpression;
+exports.isVariable = isVariable;
+exports.isComputedExpression = isComputedExpression;
+exports.getMemberExpression = getMemberExpression;
+exports.getVariables = getVariables;
+
+var _types = __webpack_require__(2268);
+
+var t = _interopRequireWildcard(_types);
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
+
+function isFunction(node) {
+  return t.isFunction(node) || t.isArrowFunctionExpression(node) || t.isObjectMethod(node) || t.isClassMethod(node);
+} /* This Source Code Form is subject to the terms of the Mozilla Public
+   * License, v. 2.0. If a copy of the MPL was not distributed with this
+   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+function isAwaitExpression(path) {
+  const { node, parent } = path;
+  return t.isAwaitExpression(node) || t.isAwaitExpression(parent.init) || t.isAwaitExpression(parent);
+}
+
+function isYieldExpression(path) {
+  const { node, parent } = path;
+  return t.isYieldExpression(node) || t.isYieldExpression(parent.init) || t.isYieldExpression(parent);
+}
+
+function isVariable(path) {
+  const node = path.node;
+  return t.isVariableDeclaration(node) || isFunction(path) && path.node.params != null && path.node.params.length || t.isObjectProperty(node) && !isFunction(path.node.value);
+}
+
+function isComputedExpression(expression) {
+  return (/^\[/m.test(expression)
+  );
+}
+
+function getMemberExpression(root) {
+  function _getMemberExpression(node, expr) {
+    if (t.isMemberExpression(node)) {
+      expr = [node.property.name].concat(expr);
+      return _getMemberExpression(node.object, expr);
+    }
+
+    if (t.isCallExpression(node)) {
+      return [];
+    }
+
+    if (t.isThisExpression(node)) {
+      return ["this"].concat(expr);
+    }
+
+    return [node.name].concat(expr);
+  }
+
+  const expr = _getMemberExpression(root, []);
+  return expr.join(".");
+}
+
+function getVariables(dec) {
+  if (!dec.id) {
+    return [];
+  }
+
+  if (t.isArrayPattern(dec.id)) {
+    if (!dec.id.elements) {
+      return [];
+    }
+
+    // NOTE: it's possible that an element is empty
+    // e.g. const [, a] = arr
+    return dec.id.elements.filter(element => element).map(element => {
+      return {
+        name: t.isAssignmentPattern(element) ? element.left.name : element.name || element.argument.name,
+        location: element.loc
+      };
+    });
+  }
+
+  return [{
+    name: dec.id.name,
+    location: dec.loc
+  }];
+}
+
+/***/ }),
+
+/***/ 1455:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.getClosestExpression = getClosestExpression;
+exports.getClosestPath = getClosestPath;
+
+var _types = __webpack_require__(2268);
+
+var t = _interopRequireWildcard(_types);
+
+var _simplePath = __webpack_require__(3591);
+
+var _simplePath2 = _interopRequireDefault(_simplePath);
+
+var _ast = __webpack_require__(1375);
+
+var _helpers = __webpack_require__(1411);
+
+var _contains = __webpack_require__(1456);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
+
+function getNodeValue(node) {
+  if (t.isThisExpression(node)) {
+    return "this";
+  }
+
+  return node.name;
+} /* This Source Code Form is subject to the terms of the Mozilla Public
+   * License, v. 2.0. If a copy of the MPL was not distributed with this
+   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+function getClosestMemberExpression(sourceId, token, location) {
+  const closest = getClosestPath(sourceId, location).find(path => t.isMemberExpression(path.node) && path.node.property.name === token);
+
+  if (closest) {
+    const memberExpression = (0, _helpers.getMemberExpression)(closest.node);
+    return {
+      expression: memberExpression,
+      location: closest.node.loc
+    };
+  }
+  return null;
+}
+
+function getClosestExpression(sourceId, token, location) {
+  const memberExpression = getClosestMemberExpression(sourceId, token, location);
+  if (memberExpression) {
+    return memberExpression;
+  }
+
+  const path = getClosestPath(sourceId, location);
+  if (!path || !path.node) {
+    return;
+  }
+
+  const { node } = path;
+  return { expression: getNodeValue(node), location: node.loc };
+}
+
+function getClosestPath(sourceId, location) {
+  let closestPath = null;
+
+  (0, _ast.traverseAst)(sourceId, {
+    enter(node, ancestors) {
+      if ((0, _contains.nodeContainsPosition)(node, location)) {
+        const path = (0, _simplePath2.default)(ancestors);
+
+        if (path && (!closestPath || path.depth > closestPath.depth)) {
+          closestPath = path;
+        }
+      }
+    }
+  });
+
+  if (!closestPath) {
+    throw new Error("Assertion failure - This should always fine a path");
+  }
+
+  return closestPath;
+}
+
+/***/ }),
+
+/***/ 1456:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.containsPosition = containsPosition;
+exports.containsLocation = containsLocation;
+exports.nodeContainsPosition = nodeContainsPosition;
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+function startsBefore(a, b) {
+  let before = a.start.line < b.line;
+  if (a.start.line === b.line) {
+    before = a.start.column >= 0 && b.column >= 0 ? a.start.column <= b.column : true;
+  }
+  return before;
+}
+
+function endsAfter(a, b) {
+  let after = a.end.line > b.line;
+  if (a.end.line === b.line) {
+    after = a.end.column >= 0 && b.column >= 0 ? a.end.column >= b.column : true;
+  }
+  return after;
+}
+
+function containsPosition(a, b) {
+  return startsBefore(a, b) && endsAfter(a, b);
+}
+
+function containsLocation(a, b) {
+  return containsPosition(a, b.start) && containsPosition(a, b.end);
+}
+
+function nodeContainsPosition(node, position) {
+  return containsPosition(node.loc, position);
+}
+
+/***/ }),
+
+/***/ 1457:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+
+var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; /* This Source Code Form is subject to the terms of the Mozilla Public
+                                                                                                                                                                                                                                                                   * License, v. 2.0. If a copy of the MPL was not distributed with this
+                                                                                                                                                                                                                                                                   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+exports.clearSymbols = clearSymbols;
+exports.getSymbols = getSymbols;
+
+var _flatten = __webpack_require__(706);
+
+var _flatten2 = _interopRequireDefault(_flatten);
+
+var _types = __webpack_require__(2268);
+
+var t = _interopRequireWildcard(_types);
+
+var _simplePath = __webpack_require__(3591);
+
+var _simplePath2 = _interopRequireDefault(_simplePath);
+
+var _ast = __webpack_require__(1375);
+
+var _helpers = __webpack_require__(1411);
+
+var _inferClassName = __webpack_require__(1620);
+
+var _getFunctionName = __webpack_require__(1621);
+
+var _getFunctionName2 = _interopRequireDefault(_getFunctionName);
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+let symbolDeclarations = new Map();
+
+function getFunctionParameterNames(path) {
+  if (path.node.params != null) {
+    return path.node.params.map(param => {
+      if (param.type !== "AssignmentPattern") {
+        return param.name;
+      }
+
+      // Parameter with default value
+      if (param.left.type === "Identifier" && param.right.type === "Identifier") {
+        return `${param.left.name} = ${param.right.name}`;
+      } else if (param.left.type === "Identifier" && param.right.type === "StringLiteral") {
+        return `${param.left.name} = ${param.right.value}`;
+      } else if (param.left.type === "Identifier" && param.right.type === "ObjectExpression") {
+        return `${param.left.name} = {}`;
+      } else if (param.left.type === "Identifier" && param.right.type === "ArrayExpression") {
+        return `${param.left.name} = []`;
+      } else if (param.left.type === "Identifier" && param.right.type === "NullLiteral") {
+        return `${param.left.name} = null`;
+      }
+    });
+  }
+  return [];
+}
+
+function getVariableNames(path) {
+  if (t.isObjectProperty(path.node) && !(0, _helpers.isFunction)(path.node.value)) {
+    if (path.node.key.type === "StringLiteral") {
+      return [{
+        name: path.node.key.value,
+        location: path.node.loc
+      }];
+    } else if (path.node.value.type === "Identifier") {
+      return [{ name: path.node.value.name, location: path.node.loc }];
+    } else if (path.node.value.type === "AssignmentPattern") {
+      return [{ name: path.node.value.left.name, location: path.node.loc }];
+    }
+
+    return [{
+      name: path.node.key.name,
+      location: path.node.loc
+    }];
+  }
+
+  if (!path.node.declarations) {
+    return path.node.params.map(dec => ({
+      name: dec.name,
+      location: dec.loc
+    }));
+  }
+
+  const declarations = path.node.declarations.filter(dec => dec.id.type !== "ObjectPattern").map(_helpers.getVariables);
+
+  return (0, _flatten2.default)(declarations);
+}
+
+function getComments(ast) {
+  if (!ast || !ast.comments) {
+    return [];
+  }
+  return ast.comments.map(comment => ({
+    name: comment.location,
+    location: comment.loc
+  }));
+}
+
+function getSpecifiers(specifiers) {
+  if (!specifiers) {
+    return null;
+  }
+
+  return specifiers.map(specifier => specifier.local && specifier.local.name);
+}
+
+function extractSymbol(path, symbols) {
+  if ((0, _helpers.isVariable)(path)) {
+    symbols.variables.push(...getVariableNames(path));
+  }
+
+  if ((0, _helpers.isFunction)(path)) {
+    symbols.functions.push({
+      name: (0, _getFunctionName2.default)(path.node, path.parent),
+      klass: (0, _inferClassName.inferClassName)(path),
+      location: path.node.loc,
+      parameterNames: getFunctionParameterNames(path),
+      identifier: path.node.id
+    });
+  }
+
+  if (t.isJSXElement(path)) {
+    symbols.hasJsx = true;
+  }
+
+  if (t.isGenericTypeAnnotation(path)) {
+    symbols.hasTypes = true;
+  }
+
+  if (t.isClassDeclaration(path)) {
+    symbols.classes.push({
+      name: path.node.id.name,
+      parent: path.node.superClass,
+      location: path.node.loc
+    });
+  }
+
+  if (t.isImportDeclaration(path)) {
+    symbols.imports.push({
+      source: path.node.source.value,
+      location: path.node.loc,
+      specifiers: getSpecifiers(path.node.specifiers)
+    });
+  }
+
+  if (t.isObjectProperty(path)) {
+    const { start, end, identifierName } = path.node.key.loc;
+    symbols.objectProperties.push({
+      name: identifierName,
+      location: { start, end },
+      expression: getSnippet(path)
+    });
+  }
+
+  if (t.isMemberExpression(path)) {
+    const { start, end } = path.node.property.loc;
+    symbols.memberExpressions.push({
+      name: path.node.property.name,
+      location: { start, end },
+      expressionLocation: path.node.loc,
+      expression: getSnippet(path),
+      computed: path.node.computed
+    });
+  }
+
+  if (t.isCallExpression(path)) {
+    const callee = path.node.callee;
+    const args = path.node.arguments;
+    if (!t.isMemberExpression(callee)) {
+      const { start, end, identifierName } = callee.loc;
+      symbols.callExpressions.push({
+        name: identifierName,
+        values: args.filter(arg => arg.value).map(arg => arg.value),
+        location: { start, end }
+      });
+    }
+  }
+
+  if (t.isIdentifier(path) && !t.isGenericTypeAnnotation(path.parent)) {
+    let { start, end } = path.node.loc;
+
+    // We want to include function params, but exclude the function name
+    if (t.isClassMethod(path.parent) && !path.inList) {
+      return;
+    }
+
+    if (t.isProperty(path.parent)) {
+      return;
+    }
+
+    if (path.node.typeAnnotation) {
+      const column = path.node.typeAnnotation.loc.start.column;
+      end = _extends({}, end, { column });
+    }
+
+    symbols.identifiers.push({
+      name: path.node.name,
+      expression: path.node.name,
+      location: { start, end }
+    });
+  }
+
+  if (t.isThisExpression(path.node)) {
+    const { start, end } = path.node.loc;
+    symbols.identifiers.push({
+      name: "this",
+      location: { start, end },
+      expressionLocation: path.node.loc,
+      expression: "this"
+    });
+  }
+
+  if (t.isVariableDeclarator(path)) {
+    const node = path.node.id;
+    const { start, end } = path.node.loc;
+    if (t.isArrayPattern(node)) {
+      return;
+    }
+    symbols.identifiers.push({
+      name: node.name,
+      expression: node.name,
+      location: { start, end }
+    });
+  }
+}
+
+function extractSymbols(sourceId) {
+  const symbols = {
+    functions: [],
+    variables: [],
+    callExpressions: [],
+    memberExpressions: [],
+    objectProperties: [],
+    comments: [],
+    identifiers: [],
+    classes: [],
+    imports: [],
+    hasJsx: false,
+    hasTypes: false
+  };
+
+  const ast = (0, _ast.traverseAst)(sourceId, {
+    enter(node, ancestors) {
+      try {
+        const path = (0, _simplePath2.default)(ancestors);
+        if (path) {
+          extractSymbol(path, symbols);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  });
+
+  // comments are extracted separately from the AST
+  symbols.comments = getComments(ast);
+
+  return symbols;
+}
+
+function extendSnippet(name, expression, path = null, prevPath = null) {
+  const computed = path && path.node.computed;
+  const prevComputed = prevPath && prevPath.node.computed;
+  const prevArray = t.isArrayExpression(prevPath);
+  const array = t.isArrayExpression(path);
+  const value = path && path.node.property && path.node.property.extra && path.node.property.extra.raw || "";
+
+  if (expression === "") {
+    if (computed) {
+      return name === undefined ? `[${value}]` : `[${name}]`;
+    }
+    return name;
+  }
+
+  if (computed || array) {
+    if (prevComputed || prevArray) {
+      return `[${name}]${expression}`;
+    }
+    return `[${name === undefined ? value : name}].${expression}`;
+  }
+
+  if (prevComputed || prevArray) {
+    return `${name}${expression}`;
+  }
+
+  if ((0, _helpers.isComputedExpression)(expression) && name !== undefined) {
+    return `${name}${expression}`;
+  }
+
+  return `${name}.${expression}`;
+}
+
+function getMemberSnippet(node, expression = "") {
+  if (t.isMemberExpression(node)) {
+    const name = node.property.name;
+    const snippet = getMemberSnippet(node.object, extendSnippet(name, expression, { node }));
+    return snippet;
+  }
+
+  if (t.isCallExpression(node)) {
+    return "";
+  }
+
+  if (t.isThisExpression(node)) {
+    return `this.${expression}`;
+  }
+
+  if (t.isIdentifier(node)) {
+    if ((0, _helpers.isComputedExpression)(expression)) {
+      return `${node.name}${expression}`;
+    }
+    return `${node.name}.${expression}`;
+  }
+
+  return expression;
+}
+
+function getObjectSnippet(path, prevPath, expression = "") {
+  if (!path) {
+    return expression;
+  }
+
+  const name = path.node.key.name;
+
+  const extendedExpression = extendSnippet(name, expression, path, prevPath);
+
+  const nextPrevPath = path;
+  const nextPath = path.parentPath && path.parentPath.parentPath;
+
+  return getSnippet(nextPath, nextPrevPath, extendedExpression);
+}
+
+function getArraySnippet(path, prevPath, expression) {
+  if (!prevPath.parentPath) {
+    throw new Error("Assertion failure - path should exist");
+  }
+
+  const index = `${prevPath.parentPath.containerIndex}`;
+  const extendedExpression = extendSnippet(index, expression, path, prevPath);
+
+  const nextPrevPath = path;
+  const nextPath = path.parentPath && path.parentPath.parentPath;
+
+  return getSnippet(nextPath, nextPrevPath, extendedExpression);
+}
+
+function getSnippet(path, prevPath = null, expression = "") {
+  if (!path) {
+    return expression;
+  }
+
+  if (t.isVariableDeclaration(path)) {
+    const node = path.node.declarations[0];
+    const name = node.id.name;
+    return extendSnippet(name, expression, path, prevPath);
+  }
+
+  if (t.isVariableDeclarator(path)) {
+    const node = path.node.id;
+    if (t.isObjectPattern(node)) {
+      return expression;
+    }
+
+    const name = node.name;
+    const prop = extendSnippet(name, expression, path, prevPath);
+    return prop;
+  }
+
+  if (t.isAssignmentExpression(path)) {
+    const node = path.node.left;
+    const name = t.isMemberExpression(node) ? getMemberSnippet(node) : node.name;
+
+    const prop = extendSnippet(name, expression, path, prevPath);
+    return prop;
+  }
+
+  if ((0, _helpers.isFunction)(path)) {
+    return expression;
+  }
+
+  if (t.isIdentifier(path)) {
+    const node = path.node;
+    return `${node.name}.${expression}`;
+  }
+
+  if (t.isObjectProperty(path)) {
+    return getObjectSnippet(path, prevPath, expression);
+  }
+
+  if (t.isObjectExpression(path)) {
+    const parentPath = prevPath && prevPath.parentPath;
+    return getObjectSnippet(parentPath, prevPath, expression);
+  }
+
+  if (t.isMemberExpression(path)) {
+    return getMemberSnippet(path.node, expression);
+  }
+
+  if (t.isArrayExpression(path)) {
+    if (!prevPath) {
+      throw new Error("Assertion failure - path should exist");
+    }
+
+    return getArraySnippet(path, prevPath, expression);
+  }
+}
+
+function clearSymbols() {
+  symbolDeclarations = new Map();
+}
+
+function getSymbols(sourceId) {
+  if (symbolDeclarations.has(sourceId)) {
+    const symbols = symbolDeclarations.get(sourceId);
+    if (symbols) {
+      return symbols;
+    }
+  }
+
+  const symbols = extractSymbols(sourceId);
+
+  symbolDeclarations.set(sourceId, symbols);
+  return symbols;
+}
+
+/***/ }),
+
+/***/ 1458:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.hasSource = hasSource;
+exports.setSource = setSource;
+exports.getSource = getSource;
+exports.clearSources = clearSources;
+
+
+let cachedSources = new Map(); /* This Source Code Form is subject to the terms of the Mozilla Public
+                                * License, v. 2.0. If a copy of the MPL was not distributed with this
+                                * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+function hasSource(sourceId) {
+  return cachedSources.has(sourceId);
+}
+
+function setSource(source) {
+  cachedSources.set(source.id, source);
+}
+
+function getSource(sourceId) {
+  if (!cachedSources.has(sourceId)) {
+    throw new Error(`Parser: source ${sourceId} was not provided.`);
+  }
+
+  return cachedSources.get(sourceId);
+}
+
+function clearSources() {
+  cachedSources = new Map();
+}
+
+/***/ }),
+
+/***/ 1618:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var _closest = __webpack_require__(1455);
+
+var _getSymbols = __webpack_require__(1457);
+
+var _ast = __webpack_require__(1375);
+
+var _getScopes = __webpack_require__(2413);
+
+var _getScopes2 = _interopRequireDefault(_getScopes);
+
+var _sources = __webpack_require__(1458);
+
+var _findOutOfScopeLocations = __webpack_require__(1624);
+
+var _findOutOfScopeLocations2 = _interopRequireDefault(_findOutOfScopeLocations);
+
+var _steps = __webpack_require__(1625);
+
+var _getEmptyLines = __webpack_require__(1628);
+
+var _getEmptyLines2 = _interopRequireDefault(_getEmptyLines);
+
+var _validate = __webpack_require__(1629);
+
+var _frameworks = __webpack_require__(1703);
+
+var _pauseLocation = __webpack_require__(2422);
+
+var _devtoolsUtils = __webpack_require__(1363);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+const { workerHandler } = _devtoolsUtils.workerUtils;
+
+self.onmessage = workerHandler({
+  getClosestExpression: _closest.getClosestExpression,
+  findOutOfScopeLocations: _findOutOfScopeLocations2.default,
+  getSymbols: _getSymbols.getSymbols,
+  getScopes: _getScopes2.default,
+  clearSymbols: _getSymbols.clearSymbols,
+  clearScopes: _getScopes.clearScopes,
+  clearASTs: _ast.clearASTs,
+  hasSource: _sources.hasSource,
+  setSource: _sources.setSource,
+  clearSources: _sources.clearSources,
+  isInvalidPauseLocation: _pauseLocation.isInvalidPauseLocation,
+  getNextStep: _steps.getNextStep,
+  getEmptyLines: _getEmptyLines2.default,
+  hasSyntaxError: _validate.hasSyntaxError,
+  getFramework: _frameworks.getFramework
+});
+
+/***/ }),
+
+/***/ 1620:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.inferClassName = inferClassName;
+
+var _types = __webpack_require__(2268);
+
+var t = _interopRequireWildcard(_types);
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
+
+// the function class is inferred from a call like
+// createClass or extend
+function fromCallExpression(callExpression) {
+  const whitelist = ["extend", "createClass"];
+  const callee = callExpression.node.callee;
+  if (!callee) {
+    return null;
+  }
+
+  const name = t.isMemberExpression(callee) ? callee.property.name : callee.name;
+
+  if (!whitelist.includes(name)) {
+    return null;
+  }
+
+  const variable = callExpression.findParent(p => t.isVariableDeclarator(p.node));
+  if (variable) {
+    return variable.node.id.name;
+  }
+
+  const assignment = callExpression.findParent(p => t.isAssignmentExpression(p.node));
+
+  if (!assignment) {
+    return null;
+  }
+
+  const left = assignment.node.left;
+
+  if (left.name) {
+    return name;
+  }
+
+  if (t.isMemberExpression(left)) {
+    return left.property.name;
+  }
+
+  return null;
+}
+
+// the function class is inferred from a prototype assignment
+// e.g. TodoClass.prototype.render = function() {}
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+function fromPrototype(assignment) {
+  const left = assignment.node.left;
+  if (!left) {
+    return null;
+  }
+
+  if (t.isMemberExpression(left) && left.object && t.isMemberExpression(left.object) && left.object.property.identifier === "prototype") {
+    return left.object.object.name;
+  }
+
+  return null;
+}
+
+// infer class finds an appropriate class for functions
+// that are defined inside of a class like thing.
+// e.g. `class Foo`, `TodoClass.prototype.foo`,
+//      `Todo = createClass({ foo: () => {}})`
+function inferClassName(path) {
+  const classDeclaration = path.findParent(p => t.isClassDeclaration(p.node));
+  if (classDeclaration) {
+    return classDeclaration.node.id.name;
+  }
+
+  const callExpression = path.findParent(p => t.isCallExpression(p.node));
+  if (callExpression) {
+    return fromCallExpression(callExpression);
+  }
+
+  const assignment = path.findParent(p => t.isAssignmentExpression(p.node));
+  if (assignment) {
+    return fromPrototype(assignment);
+  }
+
+  return null;
+}
+
+/***/ }),
+
+/***/ 1621:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.default = getFunctionName;
+
+var _types = __webpack_require__(2268);
+
+var t = _interopRequireWildcard(_types);
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
+
+// Perform ES6's anonymous function name inference for all
+// locations where static analysis is possible.
+// eslint-disable-next-line complexity
+function getFunctionName(node, parent) {
+  if (t.isIdentifier(node.id)) {
+    return node.id.name;
+  }
+
+  if (t.isObjectMethod(node, { computed: false }) || t.isClassMethod(node, { computed: false })) {
+    const key = node.key;
+
+    if (t.isIdentifier(key)) {
+      return key.name;
+    }
+    if (t.isStringLiteral(key)) {
+      return key.value;
+    }
+    if (t.isNumericLiteral(key)) {
+      return `${key.value}`;
+    }
+  }
+
+  if (t.isObjectProperty(parent, { computed: false, value: node }) ||
+  // TODO: Babylon 6 doesn't support computed class props. It is included
+  // here so that it is most flexible. Once Babylon 7 is used, this
+  // can change to use computed: false like ObjectProperty.
+  t.isClassProperty(parent, { value: node }) && !parent.computed) {
+    const key = parent.key;
+
+    if (t.isIdentifier(key)) {
+      return key.name;
+    }
+    if (t.isStringLiteral(key)) {
+      return key.value;
+    }
+    if (t.isNumericLiteral(key)) {
+      return `${key.value}`;
+    }
+  }
+
+  if (t.isAssignmentExpression(parent, { operator: "=", right: node })) {
+    if (t.isIdentifier(parent.left)) {
+      return parent.left.name;
+    }
+
+    // This case is not supported in standard ES6 name inference, but it
+    // is included here since it is still a helpful case during debugging.
+    if (t.isMemberExpression(parent.left, { computed: false })) {
+      return parent.left.property.name;
+    }
+  }
+
+  if (t.isAssignmentPattern(parent, { right: node }) && t.isIdentifier(parent.left)) {
+    return parent.left.name;
+  }
+
+  if (t.isVariableDeclarator(parent, { init: node }) && t.isIdentifier(parent.id)) {
+    return parent.id.name;
+  }
+
+  if (t.isExportDefaultDeclaration(parent, { declaration: node }) && t.isFunctionDeclaration(node)) {
+    return "default";
+  }
+
+  return "anonymous";
+} /* This Source Code Form is subject to the terms of the Mozilla Public
+   * License, v. 2.0. If a copy of the MPL was not distributed with this
+   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+/***/ }),
+
+/***/ 1624:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+
+var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; /* This Source Code Form is subject to the terms of the Mozilla Public
+                                                                                                                                                                                                                                                                   * License, v. 2.0. If a copy of the MPL was not distributed with this
+                                                                                                                                                                                                                                                                   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+var _get = __webpack_require__(67);
+
+var _get2 = _interopRequireDefault(_get);
+
+var _findIndex = __webpack_require__(262);
+
+var _findIndex2 = _interopRequireDefault(_findIndex);
+
+var _findLastIndex = __webpack_require__(1686);
+
+var _findLastIndex2 = _interopRequireDefault(_findLastIndex);
+
+var _contains = __webpack_require__(1456);
+
+var _getSymbols = __webpack_require__(1457);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function findSymbols(source) {
+  const { functions, comments } = (0, _getSymbols.getSymbols)(source);
+  return { functions, comments };
+}
+
+/**
+ * Returns the location for a given function path. If the path represents a
+ * function declaration, the location will begin after the function identifier
+ * but before the function parameters.
+ */
+
+function getLocation(func) {
+  const location = _extends({}, func.location);
+
+  // if the function has an identifier, start the block after it so the
+  // identifier is included in the "scope" of its parent
+  const identifierEnd = (0, _get2.default)(func, "identifier.loc.end");
+  if (identifierEnd) {
+    location.start = identifierEnd;
+  }
+
+  return location;
+}
+
+/**
+ * Find the nearest location containing the input position and
+ * return new locations without inner locations under that nearest location
+ *
+ * @param locations Notice! The locations MUST be sorted by `sortByStart`
+ *                  so that we can do linear time complexity operation.
+ */
+function removeInnerLocations(locations, position) {
+  // First, let's find the nearest position-enclosing function location,
+  // which is to find the last location enclosing the position.
+  const newLocs = locations.slice();
+  const parentIndex = (0, _findLastIndex2.default)(newLocs, loc => (0, _contains.containsPosition)(loc, position));
+  if (parentIndex < 0) {
+    return newLocs;
+  }
+
+  // Second, from the nearest location, loop locations again, stop looping
+  // once seeing the 1st location not enclosed by the nearest location
+  // to find the last inner locations inside the nearest location.
+  const innerStartIndex = parentIndex + 1;
+  const parentLoc = newLocs[parentIndex];
+  const outerBoundaryIndex = (0, _findIndex2.default)(newLocs, loc => !(0, _contains.containsLocation)(parentLoc, loc), innerStartIndex);
+  const innerBoundaryIndex = outerBoundaryIndex < 0 ? newLocs.length - 1 : outerBoundaryIndex - 1;
+
+  // Third, remove those inner functions
+  newLocs.splice(innerStartIndex, innerBoundaryIndex - parentIndex);
+  return newLocs;
+}
+
+/**
+ * Return an new locations array which excludes
+ * items that are completely enclosed by another location in the input locations
+ *
+ * @param locations Notice! The locations MUST be sorted by `sortByStart`
+ *                  so that we can do linear time complexity operation.
+ */
+function removeOverlaps(locations) {
+  if (locations.length == 0) {
+    return [];
+  }
+  const firstParent = locations[0];
+  return locations.reduce(deduplicateNode, [firstParent]);
+}
+
+function deduplicateNode(nodes, location) {
+  const parent = nodes[nodes.length - 1];
+  if (!(0, _contains.containsLocation)(parent, location)) {
+    nodes.push(location);
+  }
+  return nodes;
+}
+
+/**
+ * Sorts an array of locations by start position
+ */
+function sortByStart(a, b) {
+  if (a.start.line < b.start.line) {
+    return -1;
+  } else if (a.start.line === b.start.line) {
+    return a.start.column - b.start.column;
+  }
+
+  return 1;
+}
+
+/**
+ * Returns an array of locations that are considered out of scope for the given
+ * location.
+ */
+function findOutOfScopeLocations(sourceId, position) {
+  const { functions, comments } = findSymbols(sourceId);
+  const commentLocations = comments.map(c => c.location);
+  let locations = functions.map(getLocation).concat(commentLocations).sort(sortByStart);
+  // Must remove inner locations then filter, otherwise,
+  // we will mis-judge in-scope inner locations as out of scope.
+  locations = removeInnerLocations(locations, position).filter(loc => !(0, _contains.containsPosition)(loc, position));
+  return removeOverlaps(locations);
+}
+
+exports.default = findOutOfScopeLocations;
+
+/***/ }),
+
+/***/ 1625:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+
+var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; /* This Source Code Form is subject to the terms of the Mozilla Public
+                                                                                                                                                                                                                                                                   * License, v. 2.0. If a copy of the MPL was not distributed with this
+                                                                                                                                                                                                                                                                   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+exports.getNextStep = getNextStep;
+
+var _types = __webpack_require__(2268);
+
+var t = _interopRequireWildcard(_types);
+
+var _types2 = __webpack_require__(1627);
+
+var _closest = __webpack_require__(1455);
+
+var _helpers = __webpack_require__(1411);
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
+
+function getNextStep(sourceId, pausedPosition) {
+  const currentExpression = getSteppableExpression(sourceId, pausedPosition);
+  if (!currentExpression) {
+    return null;
+  }
+
+  const currentStatement = currentExpression.find(p => {
+    return p.inList && t.isStatement(p.node);
+  });
+
+  if (!currentStatement) {
+    throw new Error("Assertion failure - this should always find at least Program");
+  }
+
+  return _getNextStep(currentStatement, pausedPosition);
+}
+
+function getSteppableExpression(sourceId, pausedPosition) {
+  const closestPath = (0, _closest.getClosestPath)(sourceId, pausedPosition);
+
+  if (!closestPath) {
+    return null;
+  }
+
+  if ((0, _helpers.isAwaitExpression)(closestPath) || (0, _helpers.isYieldExpression)(closestPath)) {
+    return closestPath;
+  }
+
+  return closestPath.find(p => t.isAwaitExpression(p.node) || t.isYieldExpression(p.node));
+}
+
+function _getNextStep(statement, position) {
+  const nextStatement = statement.getSibling(1);
+  if (nextStatement) {
+    return _extends({}, nextStatement.node.loc.start, {
+      sourceId: position.sourceId
+    });
+  }
+
+  return null;
+}
+
+/***/ }),
+
+/***/ 1627:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+/***/ }),
+
+/***/ 1628:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.default = getEmptyLines;
+
+var _uniq = __webpack_require__(561);
+
+var _uniq2 = _interopRequireDefault(_uniq);
+
+var _difference = __webpack_require__(1129);
+
+var _difference2 = _interopRequireDefault(_difference);
+
+var _ast = __webpack_require__(1375);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+const commentTokens = ["CommentBlock", "CommentLine"]; /* This Source Code Form is subject to the terms of the Mozilla Public
+                                                        * License, v. 2.0. If a copy of the MPL was not distributed with this
+                                                        * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+function fillRange(start, end) {
+  return Array(end - start + 1).fill().map((item, index) => start + index);
+}
+
+// Populates a pre-filled array of every line number,
+// then removes lines which were found to be executable
+function getLines(ast) {
+  return fillRange(1, ast.tokens[ast.tokens.length - 1].loc.end.line);
+}
+
+// The following sequence stores lines which have executable code
+// (contents other than comments or EOF, regardless of line position)
+function getExecutableLines(ast) {
+  const lines = ast.tokens.filter(token => !commentTokens.includes(token.type) && (!token.type || token.type.label && token.type.label != "eof")).map(token => token.loc.start.line);
+
+  return (0, _uniq2.default)(lines);
+}
+
+function getEmptyLines(sourceId) {
+  if (!sourceId) {
+    return null;
+  }
+
+  const ast = (0, _ast.getAst)(sourceId);
+  if (!ast || !ast.comments) {
+    return [];
+  }
+
+  const executableLines = getExecutableLines(ast);
+  const lines = getLines(ast);
+  return (0, _difference2.default)(lines, executableLines);
+}
+
+/***/ }),
+
+/***/ 1629:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.hasSyntaxError = hasSyntaxError;
+
+var _ast = __webpack_require__(1375);
+
+function hasSyntaxError(input) {
+  try {
+    (0, _ast.parseScript)(input);
+    return false;
+  } catch (e) {
+    return `${e.name} : ${e.message}`;
+  }
+} /* This Source Code Form is subject to the terms of the Mozilla Public
+   * License, v. 2.0. If a copy of the MPL was not distributed with this
+   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 /***/ }),
 
@@ -975,6 +2679,87 @@ function findLastIndex(array, predicate, fromIndex) {
 
 module.exports = findLastIndex;
 
+
+/***/ }),
+
+/***/ 1703:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.getFramework = getFramework;
+
+var _getSymbols = __webpack_require__(1457);
+
+function getFramework(sourceId) {
+  const sourceSymbols = (0, _getSymbols.getSymbols)(sourceId);
+
+  if (isReactComponent(sourceSymbols)) {
+    return "React";
+  }
+  if (isAngularComponent(sourceSymbols)) {
+    return "Angular";
+  }
+  if (isVueComponent(sourceSymbols)) {
+    return "Vue";
+  }
+}
+
+// React
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+function isReactComponent(sourceSymbols) {
+  const { imports, classes, callExpressions } = sourceSymbols;
+  return (importsReact(imports) || requiresReact(callExpressions)) && extendsReactComponent(classes);
+}
+
+function importsReact(imports) {
+  return imports.some(importObj => importObj.source === "react" && importObj.specifiers.some(specifier => specifier === "React"));
+}
+
+function requiresReact(callExpressions) {
+  return callExpressions.some(callExpression => callExpression.name === "require" && callExpression.values.some(value => value === "react"));
+}
+
+function extendsReactComponent(classes) {
+  let result = false;
+  classes.some(classObj => {
+    if (classObj.parent.name === "Component" || classObj.parent.name === "PureComponent" || classObj.parent.property.name === "Component") {
+      result = true;
+    }
+  });
+
+  return result;
+}
+
+// Angular
+
+const isAngularComponent = sourceSymbols => {
+  const { memberExpressions, identifiers } = sourceSymbols;
+  return identifiesAngular(identifiers) && hasAngularExpressions(memberExpressions);
+};
+
+const identifiesAngular = identifiers => {
+  return identifiers.some(item => item.name == "angular");
+};
+
+const hasAngularExpressions = memberExpressions => {
+  return memberExpressions.some(item => item.name == "controller" || item.name == "module");
+};
+
+// Vue
+
+const isVueComponent = sourceSymbols => {
+  const { identifiers } = sourceSymbols;
+  return identifiers.some(identifier => identifier.name == "Vue");
+};
 
 /***/ }),
 
@@ -1361,7 +3146,7 @@ var isBuffer = nativeIsBuffer || stubFalse;
 
 module.exports = isBuffer;
 
-/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(3223)(module)))
+/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(793)(module)))
 
 /***/ }),
 
@@ -1580,7 +3365,7 @@ var nodeUtil = (function() {
 
 module.exports = nodeUtil;
 
-/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(3223)(module)))
+/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(793)(module)))
 
 /***/ }),
 
@@ -12632,6 +14417,705 @@ exports.parseFragment = parseFragment;
 
 /***/ }),
 
+/***/ 2413:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.default = getScopes;
+exports.clearScopes = clearScopes;
+
+var _visitor = __webpack_require__(2414);
+
+let parsedScopesCache = new Map(); /* This Source Code Form is subject to the terms of the Mozilla Public
+                                    * License, v. 2.0. If a copy of the MPL was not distributed with this
+                                    * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+function getScopes(location) {
+  const { sourceId } = location;
+  let parsedScopes = parsedScopesCache.get(sourceId);
+  if (!parsedScopes) {
+    parsedScopes = (0, _visitor.parseSourceScopes)(sourceId);
+    parsedScopesCache.set(sourceId, parsedScopes);
+  }
+  return parsedScopes ? findScopes(parsedScopes, location) : [];
+}
+
+function clearScopes() {
+  parsedScopesCache = new Map();
+}
+
+/**
+ * Searches all scopes and their bindings at the specific location.
+ */
+function findScopes(scopes, location) {
+  // Find inner most in the tree structure.
+  let searchInScopes = scopes;
+  const found = [];
+  while (searchInScopes) {
+    const foundOne = searchInScopes.some(s => {
+      if (compareLocations(s.start, location) <= 0 && compareLocations(location, s.end) < 0) {
+        // Found the next scope, trying to search recusevly in its children.
+        found.unshift(s);
+        searchInScopes = s.children;
+        return true;
+      }
+      return false;
+    });
+    if (!foundOne) {
+      break;
+    }
+  }
+  return found.map(i => {
+    return {
+      type: i.type,
+      displayName: i.displayName,
+      start: i.start,
+      end: i.end,
+      bindings: i.bindings
+    };
+  });
+}
+
+function compareLocations(a, b) {
+  // According to type of Location.column can be undefined, if will not be the
+  // case here, ignoring flow error.
+  // $FlowIgnore
+  return a.line == b.line ? a.column - b.column : a.line - b.line;
+}
+
+/***/ }),
+
+/***/ 2414:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.parseSourceScopes = parseSourceScopes;
+
+var _isEmpty = __webpack_require__(963);
+
+var _isEmpty2 = _interopRequireDefault(_isEmpty);
+
+var _types = __webpack_require__(2268);
+
+var t = _interopRequireWildcard(_types);
+
+var _devtoolsSourceMap = __webpack_require__(1360);
+
+var _getFunctionName = __webpack_require__(1621);
+
+var _getFunctionName2 = _interopRequireDefault(_getFunctionName);
+
+var _ast = __webpack_require__(1375);
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+/**
+ * "implicit"
+ * Variables added automaticly like "this" and "arguments"
+ *
+ * "var"
+ * Variables declared with "var" or non-block function declarations
+ *
+ * "let"
+ * Variables declared with "let".
+ *
+ * "const"
+ * Variables declared with "const", or added as const
+ * bindings like inner function expressions and inner class names.
+ *
+ * "import"
+ * Imported binding names exposed from other modules.
+ */
+
+
+// Location information about the expression immediartely surrounding a
+// given binding reference.
+function parseSourceScopes(sourceId) {
+  const ast = (0, _ast.getAst)(sourceId);
+  if ((0, _isEmpty2.default)(ast)) {
+    return null;
+  }
+
+  const { global, lexical } = createGlobalScope(ast, sourceId);
+
+  const state = {
+    sourceId,
+    scope: lexical,
+    scopeStack: []
+  };
+  t.traverse(ast, scopeCollectionVisitor, state);
+
+  // TODO: This should probably check for ".mjs" extension on the
+  // original file, and should also be skipped if the the generated
+  // code is an ES6 module rather than a script.
+  if ((0, _devtoolsSourceMap.isGeneratedId)(sourceId) || ast.program.sourceType === "script" && !looksLikeCommonJS(global)) {
+    stripModuleScope(global);
+  }
+
+  return toParsedScopes([global], sourceId) || [];
+} /* This Source Code Form is subject to the terms of the Mozilla Public
+   * License, v. 2.0. If a copy of the MPL was not distributed with this
+   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+function toParsedScopes(children, sourceId) {
+  if (!children || children.length === 0) {
+    return undefined;
+  }
+  return children.map(scope => {
+    // Removing unneed information from TempScope such as parent reference.
+    // We also need to convert BabelLocation to the Location type.
+    return {
+      start: scope.loc.start,
+      end: scope.loc.end,
+      type: scope.type === "module" ? "block" : scope.type,
+      displayName: scope.displayName,
+      bindings: scope.bindings,
+      children: toParsedScopes(scope.children, sourceId)
+    };
+  });
+}
+
+function createTempScope(type, displayName, parent, loc) {
+  const result = {
+    type,
+    displayName,
+    parent,
+    children: [],
+    loc,
+    bindings: Object.create(null)
+  };
+  if (parent) {
+    parent.children.push(result);
+  }
+  return result;
+}
+function pushTempScope(state, type, displayName, loc) {
+  const scope = createTempScope(type, displayName, state.scope, loc);
+
+  state.scope = scope;
+  return scope;
+}
+
+function isNode(node, type) {
+  return node ? node.type === type : false;
+}
+
+function getVarScope(scope) {
+  let s = scope;
+  while (s.type !== "function" && s.type !== "module") {
+    if (!s.parent) {
+      return s;
+    }
+    s = s.parent;
+  }
+  return s;
+}
+
+function fromBabelLocation(location, sourceId) {
+  return {
+    sourceId,
+    line: location.line,
+    column: location.column
+  };
+}
+
+function parseDeclarator(declaratorId, targetScope, type, declaration, sourceId) {
+  if (isNode(declaratorId, "Identifier")) {
+    let existing = targetScope.bindings[declaratorId.name];
+    if (!existing) {
+      existing = {
+        type,
+        refs: []
+      };
+      targetScope.bindings[declaratorId.name] = existing;
+    }
+    existing.refs.push({
+      type: "decl",
+      start: fromBabelLocation(declaratorId.loc.start, sourceId),
+      end: fromBabelLocation(declaratorId.loc.end, sourceId),
+      declaration: {
+        start: fromBabelLocation(declaration.loc.start, sourceId),
+        end: fromBabelLocation(declaration.loc.end, sourceId)
+      }
+    });
+  } else if (isNode(declaratorId, "ObjectPattern")) {
+    declaratorId.properties.forEach(prop => {
+      parseDeclarator(prop.value, targetScope, type, declaration, sourceId);
+    });
+  } else if (isNode(declaratorId, "ArrayPattern")) {
+    declaratorId.elements.forEach(item => {
+      parseDeclarator(item, targetScope, type, declaration, sourceId);
+    });
+  } else if (isNode(declaratorId, "AssignmentPattern")) {
+    parseDeclarator(declaratorId.left, targetScope, type, declaration, sourceId);
+  } else if (isNode(declaratorId, "RestElement")) {
+    parseDeclarator(declaratorId.argument, targetScope, type, declaration, sourceId);
+  }
+}
+
+function isLetOrConst(node) {
+  return node.kind === "let" || node.kind === "const";
+}
+
+function hasLexicalDeclaration(node, parent) {
+  const isFunctionBody = t.isFunction(parent, { body: node });
+
+  return node.body.some(child => isLexicalVariable(child) || !isFunctionBody && child.type === "FunctionDeclaration" || child.type === "ClassDeclaration");
+}
+function isLexicalVariable(node) {
+  return isNode(node, "VariableDeclaration") && isLetOrConst(node);
+}
+
+function findIdentifierInScopes(scope, name) {
+  // Find nearest outer scope with the specifed name and add reference.
+  for (let s = scope; s; s = s.parent) {
+    if (name in s.bindings) {
+      return s;
+    }
+  }
+  return null;
+}
+
+function createGlobalScope(ast, sourceId) {
+  const global = createTempScope("object", "Global", null, {
+    start: fromBabelLocation(ast.loc.start, sourceId),
+    end: fromBabelLocation(ast.loc.end, sourceId)
+  });
+
+  // Include fake bindings to collect references to CommonJS
+  Object.assign(global.bindings, {
+    module: {
+      type: "var",
+      refs: []
+    },
+    exports: {
+      type: "var",
+      refs: []
+    },
+    __dirname: {
+      type: "var",
+      refs: []
+    },
+    __filename: {
+      type: "var",
+      refs: []
+    },
+    require: {
+      type: "var",
+      refs: []
+    }
+  });
+
+  const lexical = createTempScope("block", "Lexical Global", global, {
+    start: fromBabelLocation(ast.loc.start, sourceId),
+    end: fromBabelLocation(ast.loc.end, sourceId)
+  });
+
+  return {
+    global,
+    lexical
+  };
+}
+
+const scopeCollectionVisitor = {
+  // eslint-disable-next-line complexity
+  enter(node, ancestors, state) {
+    state.scopeStack.push(state.scope);
+
+    const parentNode = ancestors.length === 0 ? null : ancestors[ancestors.length - 1].node;
+
+    if (t.isProgram(node)) {
+      const scope = pushTempScope(state, "module", "Module", {
+        start: fromBabelLocation(node.loc.start, state.sourceId),
+        end: fromBabelLocation(node.loc.end, state.sourceId)
+      });
+      scope.bindings.this = {
+        type: "implicit",
+        refs: []
+      };
+    } else if (t.isFunction(node)) {
+      let scope = state.scope;
+      if (t.isFunctionExpression(node) && isNode(node.id, "Identifier")) {
+        scope = pushTempScope(state, "block", "Function Expression", {
+          start: fromBabelLocation(node.loc.start, state.sourceId),
+          end: fromBabelLocation(node.loc.end, state.sourceId)
+        });
+        scope.bindings[node.id.name] = {
+          type: "const",
+          refs: [{
+            type: "decl",
+            start: fromBabelLocation(node.id.loc.start, state.sourceId),
+            end: fromBabelLocation(node.id.loc.end, state.sourceId),
+            declaration: {
+              start: fromBabelLocation(node.loc.start, state.sourceId),
+              end: fromBabelLocation(node.loc.end, state.sourceId)
+            }
+          }]
+        };
+      }
+
+      if (t.isFunctionDeclaration(node) && isNode(node.id, "Identifier")) {
+        // This ignores Annex B function declaration hoisting, which
+        // is probably a fine assumption.
+        const fnScope = getVarScope(scope);
+        scope.bindings[node.id.name] = {
+          type: fnScope === scope ? "var" : "let",
+          refs: [{
+            type: "decl",
+            start: fromBabelLocation(node.id.loc.start, state.sourceId),
+            end: fromBabelLocation(node.id.loc.end, state.sourceId),
+            declaration: {
+              start: fromBabelLocation(node.loc.start, state.sourceId),
+              end: fromBabelLocation(node.loc.end, state.sourceId)
+            }
+          }]
+        };
+      }
+
+      scope = pushTempScope(state, "function", (0, _getFunctionName2.default)(node, parentNode), {
+        // Being at the start of a function doesn't count as
+        // being inside of it.
+        start: fromBabelLocation(node.params[0] ? node.params[0].loc.start : node.loc.start, state.sourceId),
+        end: fromBabelLocation(node.loc.end, state.sourceId)
+      });
+
+      node.params.forEach(param => parseDeclarator(param, scope, "var", node, state.sourceId));
+
+      if (!t.isArrowFunctionExpression(node)) {
+        scope.bindings.this = {
+          type: "implicit",
+          refs: []
+        };
+        scope.bindings.arguments = {
+          type: "implicit",
+          refs: []
+        };
+      }
+    } else if (t.isClass(node)) {
+      if (t.isClassDeclaration(node) && t.isIdentifier(node.id)) {
+        state.scope.bindings[node.id.name] = {
+          type: "let",
+          refs: [{
+            type: "decl",
+            start: fromBabelLocation(node.id.loc.start, state.sourceId),
+            end: fromBabelLocation(node.id.loc.end, state.sourceId),
+            declaration: {
+              start: fromBabelLocation(node.loc.start, state.sourceId),
+              end: fromBabelLocation(node.loc.end, state.sourceId)
+            }
+          }]
+        };
+      }
+
+      if (t.isIdentifier(node.id)) {
+        const scope = pushTempScope(state, "block", "Class", {
+          start: fromBabelLocation(node.loc.start, state.sourceId),
+          end: fromBabelLocation(node.loc.end, state.sourceId)
+        });
+
+        scope.bindings[node.id.name] = {
+          type: "const",
+          refs: [{
+            type: "decl",
+            start: fromBabelLocation(node.id.loc.start, state.sourceId),
+            end: fromBabelLocation(node.id.loc.end, state.sourceId),
+            declaration: {
+              start: fromBabelLocation(node.loc.start, state.sourceId),
+              end: fromBabelLocation(node.loc.end, state.sourceId)
+            }
+          }]
+        };
+      }
+    } else if (t.isForXStatement(node) || t.isForStatement(node)) {
+      const init = node.init || node.left;
+      if (isNode(init, "VariableDeclaration") && isLetOrConst(init)) {
+        // Debugger will create new lexical environment for the for.
+        pushTempScope(state, "block", "For", {
+          // Being at the start of a for loop doesn't count as
+          // being inside it.
+          start: fromBabelLocation(init.loc.start, state.sourceId),
+          end: fromBabelLocation(node.loc.end, state.sourceId)
+        });
+      }
+    } else if (t.isCatchClause(node)) {
+      const scope = pushTempScope(state, "block", "Catch", {
+        start: fromBabelLocation(node.loc.start, state.sourceId),
+        end: fromBabelLocation(node.loc.end, state.sourceId)
+      });
+      parseDeclarator(node.param, scope, "var", node, state.sourceId);
+    } else if (t.isBlockStatement(node) && hasLexicalDeclaration(node, parentNode)) {
+      // Debugger will create new lexical environment for the block.
+      pushTempScope(state, "block", "Block", {
+        start: fromBabelLocation(node.loc.start, state.sourceId),
+        end: fromBabelLocation(node.loc.end, state.sourceId)
+      });
+    } else if (t.isVariableDeclaration(node) && (node.kind === "var" ||
+    // Lexical declarations in for statements are handled above.
+    !t.isForStatement(parentNode, { init: node }) || !t.isForXStatement(parentNode, { left: node }))) {
+      // Finds right lexical environment
+      const hoistAt = !isLetOrConst(node) ? getVarScope(state.scope) : state.scope;
+      node.declarations.forEach(declarator => {
+        parseDeclarator(declarator.id, hoistAt, node.kind, node, state.sourceId);
+      });
+    } else if (t.isImportDeclaration(node)) {
+      node.specifiers.forEach(spec => {
+        if (t.isImportNamespaceSpecifier(spec)) {
+          state.scope.bindings[spec.local.name] = {
+            // Imported namespaces aren't live import bindings, they are
+            // just normal const bindings.
+            type: "const",
+            refs: [{
+              type: "decl",
+              start: fromBabelLocation(spec.local.loc.start, state.sourceId),
+              end: fromBabelLocation(spec.local.loc.end, state.sourceId)
+            }]
+          };
+        } else {
+          state.scope.bindings[spec.local.name] = {
+            type: "import",
+            refs: [{
+              type: "decl",
+              start: fromBabelLocation(spec.local.loc.start, state.sourceId),
+              end: fromBabelLocation(spec.local.loc.end, state.sourceId),
+              importName: t.isImportDefaultSpecifier(spec) ? "default" : spec.imported.name,
+              declaration: {
+                start: fromBabelLocation(node.loc.start, state.sourceId),
+                end: fromBabelLocation(node.loc.end, state.sourceId)
+              }
+            }]
+          };
+        }
+      });
+    } else if (t.isIdentifier(node) && t.isReferenced(node, parentNode)) {
+      const identScope = findIdentifierInScopes(state.scope, node.name);
+      if (identScope) {
+        identScope.bindings[node.name].refs.push({
+          type: "ref",
+          start: fromBabelLocation(node.loc.start, state.sourceId),
+          end: fromBabelLocation(node.loc.end, state.sourceId),
+          meta: buildMetaBindings(state.sourceId, node, ancestors)
+        });
+      }
+    } else if (t.isThisExpression(node)) {
+      const identScope = findIdentifierInScopes(state.scope, "this");
+      if (identScope) {
+        identScope.bindings.this.refs.push({
+          type: "ref",
+          start: fromBabelLocation(node.loc.start, state.sourceId),
+          end: fromBabelLocation(node.loc.end, state.sourceId),
+          meta: buildMetaBindings(state.sourceId, node, ancestors)
+        });
+      }
+    } else if (t.isClassProperty(parentNode, { value: node })) {
+      const scope = pushTempScope(state, "function", "Class Field", {
+        start: fromBabelLocation(node.loc.start, state.sourceId),
+        end: fromBabelLocation(node.loc.end, state.sourceId)
+      });
+      scope.bindings.this = {
+        type: "implicit",
+        refs: []
+      };
+      scope.bindings.arguments = {
+        type: "implicit",
+        refs: []
+      };
+    } else if (t.isSwitchStatement(node) && node.cases.some(caseNode => caseNode.consequent.some(child => isLexicalVariable(child)))) {
+      pushTempScope(state, "block", "Switch", {
+        start: fromBabelLocation(node.loc.start, state.sourceId),
+        end: fromBabelLocation(node.loc.end, state.sourceId)
+      });
+    }
+  },
+  exit(node, ancestors, state) {
+    const scope = state.scopeStack.pop();
+    if (!scope) {
+      throw new Error("Assertion failure - unsynchronized pop");
+    }
+
+    state.scope = scope;
+  }
+};
+
+function buildMetaBindings(sourceId, node, ancestors, parentIndex = ancestors.length - 1) {
+  if (parentIndex <= 1) {
+    return null;
+  }
+  const parent = ancestors[parentIndex].node;
+  const grandparent = ancestors[parentIndex - 1].node;
+
+  // Consider "0, foo" to be equivalent to "foo".
+  if (t.isSequenceExpression(parent) && parent.expressions.length === 2 && t.isNumericLiteral(parent.expressions[0]) && parent.expressions[1] === node) {
+    let start = parent.loc.start;
+    let end = parent.loc.end;
+
+    if (t.isCallExpression(grandparent, { callee: parent })) {
+      // Attempt to expand the range around parentheses, e.g.
+      // (0, foo.bar)()
+      start = grandparent.loc.start;
+      end = Object.assign({}, end);
+      end.column += 1;
+    }
+
+    return {
+      type: "inherit",
+      start: fromBabelLocation(start, sourceId),
+      end: fromBabelLocation(end, sourceId),
+      parent: buildMetaBindings(sourceId, parent, ancestors, parentIndex - 1)
+    };
+  }
+
+  // Consider "Object(foo)" to be equivalent to "foo"
+  if (t.isCallExpression(parent) && t.isIdentifier(parent.callee, { name: "Object" }) && parent.arguments.length === 1 && parent.arguments[0] === node) {
+    return {
+      type: "inherit",
+      start: fromBabelLocation(parent.loc.start, sourceId),
+      end: fromBabelLocation(parent.loc.end, sourceId),
+      parent: buildMetaBindings(sourceId, parent, ancestors, parentIndex - 1)
+    };
+  }
+
+  if (t.isMemberExpression(parent, { object: node })) {
+    if (parent.computed) {
+      if (t.isStringLiteral(parent.property)) {
+        return {
+          type: "member",
+          start: fromBabelLocation(parent.loc.start, sourceId),
+          end: fromBabelLocation(parent.loc.end, sourceId),
+          property: parent.property.value,
+          parent: buildMetaBindings(sourceId, parent, ancestors, parentIndex - 1)
+        };
+      }
+    } else {
+      return {
+        type: "member",
+        start: fromBabelLocation(parent.loc.start, sourceId),
+        end: fromBabelLocation(parent.loc.end, sourceId),
+        property: parent.property.name,
+        parent: buildMetaBindings(sourceId, parent, ancestors, parentIndex - 1)
+      };
+    }
+  }
+  if (t.isCallExpression(parent, { callee: node }) && parent.arguments.length == 0) {
+    return {
+      type: "call",
+      start: fromBabelLocation(parent.loc.start, sourceId),
+      end: fromBabelLocation(parent.loc.end, sourceId),
+      parent: buildMetaBindings(sourceId, parent, ancestors, parentIndex - 1)
+    };
+  }
+
+  return null;
+}
+
+function looksLikeCommonJS(rootScope) {
+  return rootScope.bindings.__dirname.refs.length > 0 || rootScope.bindings.__filename.refs.length > 0 || rootScope.bindings.require.refs.length > 0 || rootScope.bindings.exports.refs.length > 0 || rootScope.bindings.module.refs.length > 0;
+}
+
+function stripModuleScope(rootScope) {
+  const rootLexicalScope = rootScope.children[0];
+  const moduleScope = rootLexicalScope.children[0];
+  if (moduleScope.type !== "module") {
+    throw new Error("Assertion failure - should be module");
+  }
+
+  Object.keys(moduleScope.bindings).forEach(name => {
+    const binding = moduleScope.bindings[name];
+    if (binding.type === "let" || binding.type === "const") {
+      rootLexicalScope.bindings[name] = binding;
+    } else {
+      rootScope.bindings[name] = binding;
+    }
+  });
+  rootLexicalScope.children = moduleScope.children;
+  rootLexicalScope.children.forEach(child => {
+    child.parent = rootLexicalScope;
+  });
+}
+
+/***/ }),
+
+/***/ 2422:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.isInvalidPauseLocation = isInvalidPauseLocation;
+
+var _types = __webpack_require__(2268);
+
+var t = _interopRequireWildcard(_types);
+
+var _ast = __webpack_require__(1375);
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+const STOP = {};
+
+function isInvalidPauseLocation(location) {
+  const state = {
+    invalid: false,
+    location
+  };
+
+  try {
+    (0, _ast.traverseAst)(location.sourceId, { enter: invalidLocationVisitor }, state);
+  } catch (e) {
+    if (e !== STOP) {
+      throw e;
+    }
+  }
+
+  return state.invalid;
+}
+
+function invalidLocationVisitor(node, ancestors, state) {
+  const { location } = state;
+
+  if (node.loc.end.line < location.line) {
+    return;
+  }
+  if (node.loc.start.line > location.line) {
+    throw STOP;
+  }
+
+  if (location.line === node.loc.start.line && location.column >= node.loc.start.column && t.isFunction(node) && !t.isArrowFunctionExpression(node) && (location.line < node.body.loc.start.line || location.line === node.body.loc.start.line && location.column <= node.body.loc.start.column)) {
+    // Disallow pausing _inside_ in function arguments to avoid pausing inside
+    // of destructuring and other logic.
+    state.invalid = true;
+    throw STOP;
+  }
+
+  if (location.line === node.loc.start.line && location.column === node.loc.start.column && t.isBlockStatement(node)) {
+    // Disallow pausing directly before the opening curly of a block statement.
+    // Babel occasionally maps statements with unknown original positions to
+    // this location.
+    state.invalid = true;
+    throw STOP;
+  }
+}
+
+/***/ }),
+
 /***/ 248:
 /***/ (function(module, exports, __webpack_require__) {
 
@@ -13821,1098 +16305,7 @@ module.exports = toNumber;
 
 /***/ }),
 
-/***/ 3197:
-/***/ (function(module, exports, __webpack_require__) {
-
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-const {
-  originalToGeneratedId,
-  generatedToOriginalId,
-  isGeneratedId,
-  isOriginalId
-} = __webpack_require__(3246);
-
-const { workerUtils: { WorkerDispatcher } } = __webpack_require__(3204);
-
-const dispatcher = new WorkerDispatcher();
-
-const getOriginalURLs = dispatcher.task("getOriginalURLs");
-const getGeneratedLocation = dispatcher.task("getGeneratedLocation");
-const getOriginalLocation = dispatcher.task("getOriginalLocation");
-const getLocationScopes = dispatcher.task("getLocationScopes");
-const getOriginalSourceText = dispatcher.task("getOriginalSourceText");
-const applySourceMap = dispatcher.task("applySourceMap");
-const clearSourceMaps = dispatcher.task("clearSourceMaps");
-const hasMappedSource = dispatcher.task("hasMappedSource");
-
-module.exports = {
-  originalToGeneratedId,
-  generatedToOriginalId,
-  isGeneratedId,
-  isOriginalId,
-  hasMappedSource,
-  getOriginalURLs,
-  getGeneratedLocation,
-  getOriginalLocation,
-  getLocationScopes,
-  getOriginalSourceText,
-  applySourceMap,
-  clearSourceMaps,
-  startSourceMapWorker: dispatcher.start.bind(dispatcher),
-  stopSourceMapWorker: dispatcher.stop.bind(dispatcher)
-};
-
-/***/ }),
-
-/***/ 3204:
-/***/ (function(module, exports, __webpack_require__) {
-
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-const networkRequest = __webpack_require__(3212);
-const workerUtils = __webpack_require__(3213);
-
-module.exports = {
-  networkRequest,
-  workerUtils
-};
-
-/***/ }),
-
-/***/ 3208:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-var g;
-
-// This works in non-strict mode
-g = function () {
-	return this;
-}();
-
-try {
-	// This works if eval is allowed (see CSP)
-	g = g || Function("return this")() || (1, eval)("this");
-} catch (e) {
-	// This works if the window reference is available
-	if (typeof window === "object") g = window;
-}
-
-// g can still be undefined, but nothing to do about it...
-// We return undefined, instead of nothing here, so it's
-// easier to handle this case. if(!global) { ...}
-
-module.exports = g;
-
-/***/ }),
-
-/***/ 3212:
-/***/ (function(module, exports) {
-
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-function networkRequest(url, opts) {
-  return fetch(url, {
-    cache: opts.loadFromCache ? "default" : "no-cache"
-  }).then(res => {
-    if (res.status >= 200 && res.status < 300) {
-      return res.text().then(text => ({ content: text }));
-    }
-    return Promise.reject(`request failed with status ${res.status}`);
-  });
-}
-
-module.exports = networkRequest;
-
-/***/ }),
-
-/***/ 3213:
-/***/ (function(module, exports) {
-
-function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { return Promise.resolve(value).then(function (value) { step("next", value); }, function (err) { step("throw", err); }); } } return step("next"); }); }; }
-
-function WorkerDispatcher() {
-  this.msgId = 1;
-  this.worker = null;
-} /* This Source Code Form is subject to the terms of the Mozilla Public
-   * License, v. 2.0. If a copy of the MPL was not distributed with this
-   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-WorkerDispatcher.prototype = {
-  start(url) {
-    this.worker = new Worker(url);
-    this.worker.onerror = () => {
-      console.error(`Error in worker ${url}`);
-    };
-  },
-
-  stop() {
-    if (!this.worker) {
-      return;
-    }
-
-    this.worker.terminate();
-    this.worker = null;
-  },
-
-  task(method) {
-    return (...args) => {
-      return new Promise((resolve, reject) => {
-        const id = this.msgId++;
-        this.worker.postMessage({ id, method, args });
-
-        const listener = ({ data: result }) => {
-          if (result.id !== id) {
-            return;
-          }
-
-          if (!this.worker) {
-            return;
-          }
-
-          this.worker.removeEventListener("message", listener);
-          if (result.error) {
-            reject(result.error);
-          } else {
-            resolve(result.response);
-          }
-        };
-
-        this.worker.addEventListener("message", listener);
-      });
-    };
-  }
-};
-
-function workerHandler(publicInterface) {
-  return function (msg) {
-    const { id, method, args } = msg.data;
-    try {
-      const response = publicInterface[method].apply(undefined, args);
-      if (response instanceof Promise) {
-        response.then(val => self.postMessage({ id, response: val }),
-        // Error can't be sent via postMessage, so be sure to
-        // convert to string.
-        err => self.postMessage({ id, error: err.toString() }));
-      } else {
-        self.postMessage({ id, response });
-      }
-    } catch (error) {
-      // Error can't be sent via postMessage, so be sure to convert to
-      // string.
-      self.postMessage({ id, error: error.toString() });
-    }
-  };
-}
-
-function streamingWorkerHandler(publicInterface, { timeout = 100 } = {}, worker = self) {
-  let streamingWorker = (() => {
-    var _ref = _asyncToGenerator(function* (id, tasks) {
-      let isWorking = true;
-
-      const intervalId = setTimeout(function () {
-        isWorking = false;
-      }, timeout);
-
-      const results = [];
-      while (tasks.length !== 0 && isWorking) {
-        const { callback, context, args } = tasks.shift();
-        const result = yield callback.call(context, args);
-        results.push(result);
-      }
-      worker.postMessage({ id, status: "pending", data: results });
-      clearInterval(intervalId);
-
-      if (tasks.length !== 0) {
-        yield streamingWorker(id, tasks);
-      }
-    });
-
-    return function streamingWorker(_x, _x2) {
-      return _ref.apply(this, arguments);
-    };
-  })();
-
-  return (() => {
-    var _ref2 = _asyncToGenerator(function* (msg) {
-      const { id, method, args } = msg.data;
-      const workerMethod = publicInterface[method];
-      if (!workerMethod) {
-        console.error(`Could not find ${method} defined in worker.`);
-      }
-      worker.postMessage({ id, status: "start" });
-
-      try {
-        const tasks = workerMethod(args);
-        yield streamingWorker(id, tasks);
-        worker.postMessage({ id, status: "done" });
-      } catch (error) {
-        worker.postMessage({ id, status: "error", error });
-      }
-    });
-
-    return function (_x3) {
-      return _ref2.apply(this, arguments);
-    };
-  })();
-}
-
-module.exports = {
-  WorkerDispatcher,
-  workerHandler,
-  streamingWorkerHandler
-};
-
-/***/ }),
-
-/***/ 3215:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-
-var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; /* This Source Code Form is subject to the terms of the Mozilla Public
-                                                                                                                                                                                                                                                                   * License, v. 2.0. If a copy of the MPL was not distributed with this
-                                                                                                                                                                                                                                                                   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-exports.parseScript = parseScript;
-exports.getAst = getAst;
-exports.clearASTs = clearASTs;
-exports.traverseAst = traverseAst;
-
-var _parseScriptTags = __webpack_require__(1023);
-
-var _parseScriptTags2 = _interopRequireDefault(_parseScriptTags);
-
-var _babylon = __webpack_require__(435);
-
-var babylon = _interopRequireWildcard(_babylon);
-
-var _types = __webpack_require__(2268);
-
-var t = _interopRequireWildcard(_types);
-
-var _isEmpty = __webpack_require__(963);
-
-var _isEmpty2 = _interopRequireDefault(_isEmpty);
-
-var _sources = __webpack_require__(3322);
-
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-
-let ASTs = new Map();
-
-function _parse(code, opts) {
-  return babylon.parse(code, _extends({}, opts, {
-    tokens: true
-  }));
-}
-
-const sourceOptions = {
-  generated: {
-    tokens: true
-  },
-  original: {
-    sourceType: "unambiguous",
-    tokens: true,
-    plugins: ["jsx", "flow", "doExpressions", "objectRestSpread", "classProperties", "exportDefaultFrom", "exportNamespaceFrom", "asyncGenerators", "functionBind", "functionSent", "dynamicImport"]
-  }
-};
-
-function parse(text, opts) {
-  let ast;
-  if (!text) {
-    return;
-  }
-
-  try {
-    ast = _parse(text, opts);
-  } catch (error) {
-    ast = {};
-  }
-
-  return ast;
-}
-
-// Custom parser for parse-script-tags that adapts its input structure to
-// our parser's signature
-function htmlParser({ source, line }) {
-  return parse(source, { startLine: line });
-}
-
-function parseScript(text, opts) {
-  return _parse(text, opts);
-}
-
-function getAst(sourceId) {
-  if (ASTs.has(sourceId)) {
-    return ASTs.get(sourceId);
-  }
-
-  const source = (0, _sources.getSource)(sourceId);
-
-  let ast = {};
-  const { contentType } = source;
-  if (contentType == "text/html") {
-    ast = (0, _parseScriptTags2.default)(source.text, htmlParser) || {};
-  } else if (contentType && contentType.match(/(javascript|jsx)/)) {
-    const type = source.id.includes("original") ? "original" : "generated";
-    const options = sourceOptions[type];
-    ast = parse(source.text, options);
-  }
-
-  ASTs.set(source.id, ast);
-  return ast;
-}
-
-function clearASTs() {
-  ASTs = new Map();
-}
-
-function traverseAst(sourceId, visitor, state) {
-  const ast = getAst(sourceId);
-  if ((0, _isEmpty2.default)(ast)) {
-    return null;
-  }
-
-  t.traverse(ast, visitor, state);
-  // t.fastTraverse(ast, visitor);
-  return ast;
-}
-
-/***/ }),
-
-/***/ 3223:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-module.exports = function (module) {
-	if (!module.webpackPolyfill) {
-		module.deprecate = function () {};
-		module.paths = [];
-		// module.parent = undefined by default
-		if (!module.children) module.children = [];
-		Object.defineProperty(module, "loaded", {
-			enumerable: true,
-			get: function () {
-				return module.l;
-			}
-		});
-		Object.defineProperty(module, "id", {
-			enumerable: true,
-			get: function () {
-				return module.i;
-			}
-		});
-		module.webpackPolyfill = 1;
-	}
-	return module;
-};
-
-/***/ }),
-
-/***/ 3246:
-/***/ (function(module, exports, __webpack_require__) {
-
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-const md5 = __webpack_require__(248);
-
-function originalToGeneratedId(originalId) {
-  const match = originalId.match(/(.*)\/originalSource/);
-  return match ? match[1] : "";
-}
-
-function generatedToOriginalId(generatedId, url) {
-  return `${generatedId}/originalSource-${md5(url)}`;
-}
-
-function isOriginalId(id) {
-  return !!id.match(/\/originalSource/);
-}
-
-function isGeneratedId(id) {
-  return !isOriginalId(id);
-}
-
-/**
- * Trims the query part or reference identifier of a URL string, if necessary.
- */
-function trimUrlQuery(url) {
-  let length = url.length;
-  let q1 = url.indexOf("?");
-  let q2 = url.indexOf("&");
-  let q3 = url.indexOf("#");
-  let q = Math.min(q1 != -1 ? q1 : length, q2 != -1 ? q2 : length, q3 != -1 ? q3 : length);
-
-  return url.slice(0, q);
-}
-
-// Map suffix to content type.
-const contentMap = {
-  "js": "text/javascript",
-  "jsm": "text/javascript",
-  "ts": "text/typescript",
-  "tsx": "text/typescript-jsx",
-  "jsx": "text/jsx",
-  "coffee": "text/coffeescript",
-  "elm": "text/elm",
-  "cljs": "text/x-clojure"
-};
-
-/**
- * Returns the content type for the specified URL.  If no specific
- * content type can be determined, "text/plain" is returned.
- *
- * @return String
- *         The content type.
- */
-function getContentType(url) {
-  url = trimUrlQuery(url);
-  let dot = url.lastIndexOf(".");
-  if (dot >= 0) {
-    let name = url.substring(dot + 1);
-    if (name in contentMap) {
-      return contentMap[name];
-    }
-  }
-  return "text/plain";
-}
-
-module.exports = {
-  originalToGeneratedId,
-  generatedToOriginalId,
-  isOriginalId,
-  isGeneratedId,
-  getContentType,
-  contentMapForTesting: contentMap
-};
-
-/***/ }),
-
-/***/ 3269:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.isFunction = isFunction;
-exports.isAwaitExpression = isAwaitExpression;
-exports.isYieldExpression = isYieldExpression;
-exports.isVariable = isVariable;
-exports.getMemberExpression = getMemberExpression;
-exports.getVariables = getVariables;
-
-var _types = __webpack_require__(2268);
-
-var t = _interopRequireWildcard(_types);
-
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
-
-function isFunction(node) {
-  return t.isFunction(node) || t.isArrowFunctionExpression(node) || t.isObjectMethod(node) || t.isClassMethod(node);
-} /* This Source Code Form is subject to the terms of the Mozilla Public
-   * License, v. 2.0. If a copy of the MPL was not distributed with this
-   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-function isAwaitExpression(path) {
-  const { node, parent } = path;
-  return t.isAwaitExpression(node) || t.isAwaitExpression(parent.init) || t.isAwaitExpression(parent);
-}
-
-function isYieldExpression(path) {
-  const { node, parent } = path;
-  return t.isYieldExpression(node) || t.isYieldExpression(parent.init) || t.isYieldExpression(parent);
-}
-
-function isVariable(path) {
-  const node = path.node;
-  return t.isVariableDeclaration(node) || isFunction(path) && path.node.params != null && path.node.params.length || t.isObjectProperty(node) && !isFunction(path.node.value);
-}
-
-function getMemberExpression(root) {
-  function _getMemberExpression(node, expr) {
-    if (t.isMemberExpression(node)) {
-      expr = [node.property.name].concat(expr);
-      return _getMemberExpression(node.object, expr);
-    }
-
-    if (t.isCallExpression(node)) {
-      return [];
-    }
-
-    if (t.isThisExpression(node)) {
-      return ["this"].concat(expr);
-    }
-
-    return [node.name].concat(expr);
-  }
-
-  const expr = _getMemberExpression(root, []);
-  return expr.join(".");
-}
-
-function getVariables(dec) {
-  if (!dec.id) {
-    return [];
-  }
-
-  if (t.isArrayPattern(dec.id)) {
-    if (!dec.id.elements) {
-      return [];
-    }
-
-    // NOTE: it's possible that an element is empty
-    // e.g. const [, a] = arr
-    return dec.id.elements.filter(element => element).map(element => {
-      return {
-        name: t.isAssignmentPattern(element) ? element.left.name : element.name || element.argument.name,
-        location: element.loc
-      };
-    });
-  }
-
-  return [{
-    name: dec.id.name,
-    location: dec.loc
-  }];
-}
-
-/***/ }),
-
-/***/ 3270:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-
-var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; /* This Source Code Form is subject to the terms of the Mozilla Public
-                                                                                                                                                                                                                                                                   * License, v. 2.0. If a copy of the MPL was not distributed with this
-                                                                                                                                                                                                                                                                   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-exports.clearSymbols = clearSymbols;
-exports.default = getSymbols;
-
-var _flatten = __webpack_require__(706);
-
-var _flatten2 = _interopRequireDefault(_flatten);
-
-var _types = __webpack_require__(2268);
-
-var t = _interopRequireWildcard(_types);
-
-var _simplePath = __webpack_require__(3321);
-
-var _simplePath2 = _interopRequireDefault(_simplePath);
-
-var _ast = __webpack_require__(3215);
-
-var _helpers = __webpack_require__(3269);
-
-var _inferClassName = __webpack_require__(3576);
-
-var _getFunctionName = __webpack_require__(3324);
-
-var _getFunctionName2 = _interopRequireDefault(_getFunctionName);
-
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-
-let symbolDeclarations = new Map();
-
-function getFunctionParameterNames(path) {
-  if (path.node.params != null) {
-    return path.node.params.map(param => {
-      if (param.type !== "AssignmentPattern") {
-        return param.name;
-      }
-
-      // Parameter with default value
-      if (param.left.type === "Identifier" && param.right.type === "Identifier") {
-        return `${param.left.name} = ${param.right.name}`;
-      } else if (param.left.type === "Identifier" && param.right.type === "StringLiteral") {
-        return `${param.left.name} = ${param.right.value}`;
-      } else if (param.left.type === "Identifier" && param.right.type === "ObjectExpression") {
-        return `${param.left.name} = {}`;
-      } else if (param.left.type === "Identifier" && param.right.type === "ArrayExpression") {
-        return `${param.left.name} = []`;
-      } else if (param.left.type === "Identifier" && param.right.type === "NullLiteral") {
-        return `${param.left.name} = null`;
-      }
-    });
-  }
-  return [];
-}
-
-function getVariableNames(path) {
-  if (t.isObjectProperty(path.node) && !(0, _helpers.isFunction)(path.node.value)) {
-    if (path.node.key.type === "StringLiteral") {
-      return [{
-        name: path.node.key.value,
-        location: path.node.loc
-      }];
-    } else if (path.node.value.type === "Identifier") {
-      return [{ name: path.node.value.name, location: path.node.loc }];
-    } else if (path.node.value.type === "AssignmentPattern") {
-      return [{ name: path.node.value.left.name, location: path.node.loc }];
-    }
-
-    return [{
-      name: path.node.key.name,
-      location: path.node.loc
-    }];
-  }
-
-  if (!path.node.declarations) {
-    return path.node.params.map(dec => ({
-      name: dec.name,
-      location: dec.loc
-    }));
-  }
-
-  const declarations = path.node.declarations.filter(dec => dec.id.type !== "ObjectPattern").map(_helpers.getVariables);
-
-  return (0, _flatten2.default)(declarations);
-}
-
-function getComments(ast) {
-  if (!ast || !ast.comments) {
-    return [];
-  }
-  return ast.comments.map(comment => ({
-    name: comment.location,
-    location: comment.loc
-  }));
-}
-
-function getSpecifiers(specifiers) {
-  if (!specifiers) {
-    return null;
-  }
-
-  return specifiers.map(specifier => specifier.local && specifier.local.name);
-}
-
-function extractSymbol(path, symbols) {
-  if ((0, _helpers.isVariable)(path)) {
-    symbols.variables.push(...getVariableNames(path));
-  }
-
-  if ((0, _helpers.isFunction)(path)) {
-    symbols.functions.push({
-      name: (0, _getFunctionName2.default)(path.node, path.parent),
-      klass: (0, _inferClassName.inferClassName)(path),
-      location: path.node.loc,
-      parameterNames: getFunctionParameterNames(path),
-      identifier: path.node.id
-    });
-  }
-
-  if (t.isJSXElement(path)) {
-    symbols.hasJsx = true;
-  }
-
-  if (t.isClassDeclaration(path)) {
-    symbols.classes.push({
-      name: path.node.id.name,
-      parent: path.node.superClass,
-      location: path.node.loc
-    });
-  }
-
-  if (t.isImportDeclaration(path)) {
-    symbols.imports.push({
-      source: path.node.source.value,
-      location: path.node.loc,
-      specifiers: getSpecifiers(path.node.specifiers)
-    });
-  }
-
-  if (t.isObjectProperty(path)) {
-    const { start, end, identifierName } = path.node.key.loc;
-    symbols.objectProperties.push({
-      name: identifierName,
-      location: { start, end },
-      expression: getSnippet(path)
-    });
-  }
-
-  if (t.isMemberExpression(path)) {
-    const { start, end } = path.node.property.loc;
-    symbols.memberExpressions.push({
-      name: path.node.property.name,
-      location: { start, end },
-      expressionLocation: path.node.loc,
-      expression: getSnippet(path),
-      computed: path.node.computed
-    });
-  }
-
-  if (t.isCallExpression(path)) {
-    const callee = path.node.callee;
-    const args = path.node.arguments;
-    if (!t.isMemberExpression(callee)) {
-      const { start, end, identifierName } = callee.loc;
-      symbols.callExpressions.push({
-        name: identifierName,
-        values: args.filter(arg => arg.value).map(arg => arg.value),
-        location: { start, end }
-      });
-    }
-  }
-
-  if (t.isIdentifier(path)) {
-    let { start, end } = path.node.loc;
-
-    if (path.node.typeAnnotation) {
-      const column = path.node.typeAnnotation.loc.start.column;
-      end = _extends({}, end, { column });
-    }
-
-    symbols.identifiers.push({
-      name: path.node.name,
-      expression: path.node.name,
-      location: { start, end }
-    });
-  }
-
-  if (t.isThisExpression(path.node)) {
-    const { start, end } = path.node.loc;
-    symbols.identifiers.push({
-      name: "this",
-      location: { start, end },
-      expressionLocation: path.node.loc,
-      expression: "this"
-    });
-  }
-
-  if (t.isVariableDeclarator(path)) {
-    const node = path.node.id;
-    const { start, end } = path.node.loc;
-    if (t.isArrayPattern(node)) {
-      return;
-    }
-
-    symbols.identifiers.push({
-      name: node.name,
-      expression: node.name,
-      location: { start, end }
-    });
-  }
-}
-
-function extractSymbols(sourceId) {
-  const symbols = {
-    functions: [],
-    variables: [],
-    callExpressions: [],
-    memberExpressions: [],
-    objectProperties: [],
-    comments: [],
-    identifiers: [],
-    classes: [],
-    imports: [],
-    hasJsx: false
-  };
-
-  const ast = (0, _ast.traverseAst)(sourceId, {
-    enter(node, ancestors) {
-      try {
-        const path = (0, _simplePath2.default)(ancestors);
-        if (path) {
-          extractSymbol(path, symbols);
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    }
-  });
-
-  // comments are extracted separately from the AST
-  symbols.comments = getComments(ast);
-
-  return symbols;
-}
-
-function extendSnippet(name, expression, path = null, prevPath = null) {
-  const computed = path && path.node.computed;
-  const prevComputed = prevPath && prevPath.node.computed;
-  const prevArray = t.isArrayExpression(prevPath);
-  const array = t.isArrayExpression(path);
-
-  if (expression === "") {
-    if (computed) {
-      return `[${name}]`;
-    }
-    return name;
-  }
-
-  if (computed || array) {
-    if (prevComputed || prevArray) {
-      return `[${name}]${expression}`;
-    }
-    return `[${name}].${expression}`;
-  }
-
-  if (prevComputed || prevArray) {
-    return `${name}${expression}`;
-  }
-
-  return `${name}.${expression}`;
-}
-
-function getMemberSnippet(node, expression = "") {
-  if (t.isMemberExpression(node)) {
-    const name = node.property.name;
-
-    return getMemberSnippet(node.object, extendSnippet(name, expression));
-  }
-
-  if (t.isCallExpression(node)) {
-    return "";
-  }
-
-  if (t.isThisExpression(node)) {
-    return `this.${expression}`;
-  }
-
-  if (t.isIdentifier(node)) {
-    return `${node.name}.${expression}`;
-  }
-
-  return expression;
-}
-
-function getObjectSnippet(path, prevPath, expression = "") {
-  if (!path) {
-    return expression;
-  }
-
-  const name = path.node.key.name;
-
-  const extendedExpression = extendSnippet(name, expression, path, prevPath);
-
-  const nextPrevPath = path;
-  const nextPath = path.parentPath && path.parentPath.parentPath;
-
-  return getSnippet(nextPath, nextPrevPath, extendedExpression);
-}
-
-function getArraySnippet(path, prevPath, expression) {
-  if (!prevPath.parentPath) {
-    throw new Error("Assertion failure - path should exist");
-  }
-
-  const index = `${prevPath.parentPath.containerIndex}`;
-  const extendedExpression = extendSnippet(index, expression, path, prevPath);
-
-  const nextPrevPath = path;
-  const nextPath = path.parentPath && path.parentPath.parentPath;
-
-  return getSnippet(nextPath, nextPrevPath, extendedExpression);
-}
-
-function getSnippet(path, prevPath = null, expression = "") {
-  if (!path) {
-    return expression;
-  }
-
-  if (t.isVariableDeclaration(path)) {
-    const node = path.node.declarations[0];
-    const name = node.id.name;
-    return extendSnippet(name, expression, path, prevPath);
-  }
-
-  if (t.isVariableDeclarator(path)) {
-    const node = path.node.id;
-    if (t.isObjectPattern(node)) {
-      return expression;
-    }
-
-    const name = node.name;
-    const prop = extendSnippet(name, expression, path, prevPath);
-    return prop;
-  }
-
-  if (t.isAssignmentExpression(path)) {
-    const node = path.node.left;
-    const name = t.isMemberExpression(node) ? getMemberSnippet(node) : node.name;
-
-    const prop = extendSnippet(name, expression, path, prevPath);
-    return prop;
-  }
-
-  if ((0, _helpers.isFunction)(path)) {
-    return expression;
-  }
-
-  if (t.isIdentifier(path)) {
-    const node = path.node;
-    return `${node.name}.${expression}`;
-  }
-
-  if (t.isObjectProperty(path)) {
-    return getObjectSnippet(path, prevPath, expression);
-  }
-
-  if (t.isObjectExpression(path)) {
-    const parentPath = prevPath && prevPath.parentPath;
-    return getObjectSnippet(parentPath, prevPath, expression);
-  }
-
-  if (t.isMemberExpression(path)) {
-    return getMemberSnippet(path.node, expression);
-  }
-
-  if (t.isArrayExpression(path)) {
-    if (!prevPath) {
-      throw new Error("Assertion failure - path should exist");
-    }
-
-    return getArraySnippet(path, prevPath, expression);
-  }
-}
-
-function clearSymbols() {
-  symbolDeclarations = new Map();
-}
-
-function getSymbols(sourceId) {
-  if (symbolDeclarations.has(sourceId)) {
-    const symbols = symbolDeclarations.get(sourceId);
-    if (symbols) {
-      return symbols;
-    }
-  }
-
-  const symbols = extractSymbols(sourceId);
-
-  symbolDeclarations.set(sourceId, symbols);
-  return symbols;
-}
-
-/***/ }),
-
-/***/ 3320:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.getClosestExpression = getClosestExpression;
-exports.getClosestPath = getClosestPath;
-
-var _types = __webpack_require__(2268);
-
-var t = _interopRequireWildcard(_types);
-
-var _simplePath = __webpack_require__(3321);
-
-var _simplePath2 = _interopRequireDefault(_simplePath);
-
-var _ast = __webpack_require__(3215);
-
-var _helpers = __webpack_require__(3269);
-
-var _contains = __webpack_require__(3323);
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
-
-function getNodeValue(node) {
-  if (t.isThisExpression(node)) {
-    return "this";
-  }
-
-  return node.name;
-} /* This Source Code Form is subject to the terms of the Mozilla Public
-   * License, v. 2.0. If a copy of the MPL was not distributed with this
-   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-function getClosestMemberExpression(sourceId, token, location) {
-  const closest = getClosestPath(sourceId, location).find(path => t.isMemberExpression(path.node) && path.node.property.name === token);
-
-  if (closest) {
-    const memberExpression = (0, _helpers.getMemberExpression)(closest.node);
-    return {
-      expression: memberExpression,
-      location: closest.node.loc
-    };
-  }
-  return null;
-}
-
-function getClosestExpression(sourceId, token, location) {
-  const memberExpression = getClosestMemberExpression(sourceId, token, location);
-  if (memberExpression) {
-    return memberExpression;
-  }
-
-  const path = getClosestPath(sourceId, location);
-  if (!path || !path.node) {
-    return;
-  }
-
-  const { node } = path;
-  return { expression: getNodeValue(node), location: node.loc };
-}
-
-function getClosestPath(sourceId, location) {
-  let closestPath = null;
-
-  (0, _ast.traverseAst)(sourceId, {
-    enter(node, ancestors) {
-      if ((0, _contains.nodeContainsPosition)(node, location)) {
-        const path = (0, _simplePath2.default)(ancestors);
-
-        if (path && (!closestPath || path.depth > closestPath.depth)) {
-          closestPath = path;
-        }
-      }
-    }
-  });
-
-  if (!closestPath) {
-    throw new Error("Assertion failure - This should always fine a path");
-  }
-
-  return closestPath;
-}
-
-/***/ }),
-
-/***/ 3321:
+/***/ 3591:
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -15055,1373 +16448,6 @@ class SimplePath {
 
 /***/ }),
 
-/***/ 3322:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.hasSource = hasSource;
-exports.setSource = setSource;
-exports.getSource = getSource;
-exports.clearSources = clearSources;
-
-
-let cachedSources = new Map(); /* This Source Code Form is subject to the terms of the Mozilla Public
-                                * License, v. 2.0. If a copy of the MPL was not distributed with this
-                                * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-function hasSource(sourceId) {
-  return cachedSources.has(sourceId);
-}
-
-function setSource(source) {
-  cachedSources.set(source.id, source);
-}
-
-function getSource(sourceId) {
-  if (!cachedSources.has(sourceId)) {
-    throw new Error(`Parser: source ${sourceId} was not provided.`);
-  }
-
-  return cachedSources.get(sourceId);
-}
-
-function clearSources() {
-  cachedSources = new Map();
-}
-
-/***/ }),
-
-/***/ 3323:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.containsPosition = containsPosition;
-exports.containsLocation = containsLocation;
-exports.nodeContainsPosition = nodeContainsPosition;
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-function startsBefore(a, b) {
-  let before = a.start.line < b.line;
-  if (a.start.line === b.line) {
-    before = a.start.column >= 0 && b.column >= 0 ? a.start.column <= b.column : true;
-  }
-  return before;
-}
-
-function endsAfter(a, b) {
-  let after = a.end.line > b.line;
-  if (a.end.line === b.line) {
-    after = a.end.column >= 0 && b.column >= 0 ? a.end.column >= b.column : true;
-  }
-  return after;
-}
-
-function containsPosition(a, b) {
-  return startsBefore(a, b) && endsAfter(a, b);
-}
-
-function containsLocation(a, b) {
-  return containsPosition(a, b.start) && containsPosition(a, b.end);
-}
-
-function nodeContainsPosition(node, position) {
-  return containsPosition(node.loc, position);
-}
-
-/***/ }),
-
-/***/ 3324:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.default = getFunctionName;
-
-var _types = __webpack_require__(2268);
-
-var t = _interopRequireWildcard(_types);
-
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
-
-// Perform ES6's anonymous function name inference for all
-// locations where static analysis is possible.
-// eslint-disable-next-line complexity
-function getFunctionName(node, parent) {
-  if (t.isIdentifier(node.id)) {
-    return node.id.name;
-  }
-
-  if (t.isObjectMethod(node, { computed: false }) || t.isClassMethod(node, { computed: false })) {
-    const key = node.key;
-
-    if (t.isIdentifier(key)) {
-      return key.name;
-    }
-    if (t.isStringLiteral(key)) {
-      return key.value;
-    }
-    if (t.isNumericLiteral(key)) {
-      return `${key.value}`;
-    }
-  }
-
-  if (t.isObjectProperty(parent, { computed: false, value: node }) ||
-  // TODO: Babylon 6 doesn't support computed class props. It is included
-  // here so that it is most flexible. Once Babylon 7 is used, this
-  // can change to use computed: false like ObjectProperty.
-  t.isClassProperty(parent, { value: node }) && !parent.computed) {
-    const key = parent.key;
-
-    if (t.isIdentifier(key)) {
-      return key.name;
-    }
-    if (t.isStringLiteral(key)) {
-      return key.value;
-    }
-    if (t.isNumericLiteral(key)) {
-      return `${key.value}`;
-    }
-  }
-
-  if (t.isAssignmentExpression(parent, { operator: "=", right: node })) {
-    if (t.isIdentifier(parent.left)) {
-      return parent.left.name;
-    }
-
-    // This case is not supported in standard ES6 name inference, but it
-    // is included here since it is still a helpful case during debugging.
-    if (t.isMemberExpression(parent.left, { computed: false })) {
-      return parent.left.property.name;
-    }
-  }
-
-  if (t.isAssignmentPattern(parent, { right: node }) && t.isIdentifier(parent.left)) {
-    return parent.left.name;
-  }
-
-  if (t.isVariableDeclarator(parent, { init: node }) && t.isIdentifier(parent.id)) {
-    return parent.id.name;
-  }
-
-  if (t.isExportDefaultDeclaration(parent, { declaration: node }) && t.isFunctionDeclaration(node)) {
-    return "default";
-  }
-
-  return "anonymous";
-} /* This Source Code Form is subject to the terms of the Mozilla Public
-   * License, v. 2.0. If a copy of the MPL was not distributed with this
-   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-/***/ }),
-
-/***/ 3575:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-var _closest = __webpack_require__(3320);
-
-var _getSymbols = __webpack_require__(3270);
-
-var _getSymbols2 = _interopRequireDefault(_getSymbols);
-
-var _ast = __webpack_require__(3215);
-
-var _getScopes = __webpack_require__(3577);
-
-var _getScopes2 = _interopRequireDefault(_getScopes);
-
-var _sources = __webpack_require__(3322);
-
-var _findOutOfScopeLocations = __webpack_require__(3579);
-
-var _findOutOfScopeLocations2 = _interopRequireDefault(_findOutOfScopeLocations);
-
-var _steps = __webpack_require__(3580);
-
-var _getEmptyLines = __webpack_require__(3582);
-
-var _getEmptyLines2 = _interopRequireDefault(_getEmptyLines);
-
-var _validate = __webpack_require__(3583);
-
-var _frameworks = __webpack_require__(3584);
-
-var _pauseLocation = __webpack_require__(3585);
-
-var _devtoolsUtils = __webpack_require__(3204);
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-const { workerHandler } = _devtoolsUtils.workerUtils;
-
-self.onmessage = workerHandler({
-  getClosestExpression: _closest.getClosestExpression,
-  findOutOfScopeLocations: _findOutOfScopeLocations2.default,
-  getSymbols: _getSymbols2.default,
-  getScopes: _getScopes2.default,
-  clearSymbols: _getSymbols.clearSymbols,
-  clearScopes: _getScopes.clearScopes,
-  clearASTs: _ast.clearASTs,
-  hasSource: _sources.hasSource,
-  setSource: _sources.setSource,
-  clearSources: _sources.clearSources,
-  isInvalidPauseLocation: _pauseLocation.isInvalidPauseLocation,
-  getNextStep: _steps.getNextStep,
-  getEmptyLines: _getEmptyLines2.default,
-  hasSyntaxError: _validate.hasSyntaxError,
-  getFramework: _frameworks.getFramework
-});
-
-/***/ }),
-
-/***/ 3576:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.inferClassName = inferClassName;
-
-var _types = __webpack_require__(2268);
-
-var t = _interopRequireWildcard(_types);
-
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
-
-// the function class is inferred from a call like
-// createClass or extend
-function fromCallExpression(callExpression) {
-  const whitelist = ["extend", "createClass"];
-  const callee = callExpression.node.callee;
-  if (!callee) {
-    return null;
-  }
-
-  const name = t.isMemberExpression(callee) ? callee.property.name : callee.name;
-
-  if (!whitelist.includes(name)) {
-    return null;
-  }
-
-  const variable = callExpression.findParent(p => t.isVariableDeclarator(p.node));
-  if (variable) {
-    return variable.node.id.name;
-  }
-
-  const assignment = callExpression.findParent(p => t.isAssignmentExpression(p.node));
-
-  if (!assignment) {
-    return null;
-  }
-
-  const left = assignment.node.left;
-
-  if (left.name) {
-    return name;
-  }
-
-  if (t.isMemberExpression(left)) {
-    return left.property.name;
-  }
-
-  return null;
-}
-
-// the function class is inferred from a prototype assignment
-// e.g. TodoClass.prototype.render = function() {}
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-function fromPrototype(assignment) {
-  const left = assignment.node.left;
-  if (!left) {
-    return null;
-  }
-
-  if (t.isMemberExpression(left) && left.object && t.isMemberExpression(left.object) && left.object.property.identifier === "prototype") {
-    return left.object.object.name;
-  }
-
-  return null;
-}
-
-// infer class finds an appropriate class for functions
-// that are defined inside of a class like thing.
-// e.g. `class Foo`, `TodoClass.prototype.foo`,
-//      `Todo = createClass({ foo: () => {}})`
-function inferClassName(path) {
-  const classDeclaration = path.findParent(p => t.isClassDeclaration(p.node));
-  if (classDeclaration) {
-    return classDeclaration.node.id.name;
-  }
-
-  const callExpression = path.findParent(p => t.isCallExpression(p.node));
-  if (callExpression) {
-    return fromCallExpression(callExpression);
-  }
-
-  const assignment = path.findParent(p => t.isAssignmentExpression(p.node));
-  if (assignment) {
-    return fromPrototype(assignment);
-  }
-
-  return null;
-}
-
-/***/ }),
-
-/***/ 3577:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.default = getScopes;
-exports.clearScopes = clearScopes;
-
-var _visitor = __webpack_require__(3578);
-
-let parsedScopesCache = new Map(); /* This Source Code Form is subject to the terms of the Mozilla Public
-                                    * License, v. 2.0. If a copy of the MPL was not distributed with this
-                                    * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-function getScopes(location) {
-  const { sourceId } = location;
-  let parsedScopes = parsedScopesCache.get(sourceId);
-  if (!parsedScopes) {
-    parsedScopes = (0, _visitor.parseSourceScopes)(sourceId);
-    parsedScopesCache.set(sourceId, parsedScopes);
-  }
-  return parsedScopes ? findScopes(parsedScopes, location) : [];
-}
-
-function clearScopes() {
-  parsedScopesCache = new Map();
-}
-
-/**
- * Searches all scopes and their bindings at the specific location.
- */
-function findScopes(scopes, location) {
-  // Find inner most in the tree structure.
-  let searchInScopes = scopes;
-  const found = [];
-  while (searchInScopes) {
-    const foundOne = searchInScopes.some(s => {
-      if (compareLocations(s.start, location) <= 0 && compareLocations(location, s.end) < 0) {
-        // Found the next scope, trying to search recusevly in its children.
-        found.unshift(s);
-        searchInScopes = s.children;
-        return true;
-      }
-      return false;
-    });
-    if (!foundOne) {
-      break;
-    }
-  }
-  return found.map(i => {
-    return {
-      type: i.type,
-      displayName: i.displayName,
-      start: i.start,
-      end: i.end,
-      bindings: i.bindings
-    };
-  });
-}
-
-function compareLocations(a, b) {
-  // According to type of Location.column can be undefined, if will not be the
-  // case here, ignoring flow error.
-  // $FlowIgnore
-  return a.line == b.line ? a.column - b.column : a.line - b.line;
-}
-
-/***/ }),
-
-/***/ 3578:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-
-var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; /* This Source Code Form is subject to the terms of the Mozilla Public
-                                                                                                                                                                                                                                                                   * License, v. 2.0. If a copy of the MPL was not distributed with this
-                                                                                                                                                                                                                                                                   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-exports.parseSourceScopes = parseSourceScopes;
-
-var _isEmpty = __webpack_require__(963);
-
-var _isEmpty2 = _interopRequireDefault(_isEmpty);
-
-var _types = __webpack_require__(2268);
-
-var t = _interopRequireWildcard(_types);
-
-var _devtoolsSourceMap = __webpack_require__(3197);
-
-var _getFunctionName = __webpack_require__(3324);
-
-var _getFunctionName2 = _interopRequireDefault(_getFunctionName);
-
-var _ast = __webpack_require__(3215);
-
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-
-/**
- * "implicit"
- * Variables added automaticly like "this" and "arguments"
- *
- * "var"
- * Variables declared with "var" or non-block function declarations
- *
- * "let"
- * Variables declared with "let".
- *
- * "const"
- * Variables declared with "const", or added as const
- * bindings like inner function expressions and inner class names.
- *
- * "import"
- * Imported binding names exposed from other modules.
- */
-
-
-// Location information about the expression immediartely surrounding a
-// given binding reference.
-function parseSourceScopes(sourceId) {
-  const ast = (0, _ast.getAst)(sourceId);
-  if ((0, _isEmpty2.default)(ast)) {
-    return null;
-  }
-
-  const { global, lexical } = createGlobalScope(ast);
-
-  const state = {
-    sourceId,
-    scope: lexical,
-    scopeStack: []
-  };
-  t.traverse(ast, scopeCollectionVisitor, state);
-
-  // TODO: This should probably check for ".mjs" extension on the
-  // original file, and should also be skipped if the the generated
-  // code is an ES6 module rather than a script.
-  if ((0, _devtoolsSourceMap.isGeneratedId)(sourceId) || ast.program.sourceType === "script" && !looksLikeCommonJS(global)) {
-    stripModuleScope(global);
-  }
-
-  return toParsedScopes([global], sourceId) || [];
-}
-
-function createTempScope(type, displayName, parent, loc) {
-  const result = {
-    type,
-    displayName,
-    parent,
-    children: [],
-    loc,
-    names: Object.create(null)
-  };
-  if (parent) {
-    parent.children.push(result);
-  }
-  return result;
-}
-function pushTempScope(state, type, displayName, loc) {
-  const scope = createTempScope(type, displayName, state.scope, loc);
-
-  state.scope = scope;
-  return scope;
-}
-
-function isNode(node, type) {
-  return node ? node.type === type : false;
-}
-
-function getVarScope(scope) {
-  let s = scope;
-  while (s.type !== "function" && s.type !== "module") {
-    if (!s.parent) {
-      return s;
-    }
-    s = s.parent;
-  }
-  return s;
-}
-
-function fromBabelLocation(location, sourceId) {
-  return {
-    sourceId,
-    line: location.line,
-    column: location.column
-  };
-}
-
-function parseDeclarator(declaratorId, targetScope, type) {
-  if (isNode(declaratorId, "Identifier")) {
-    let existing = targetScope.names[declaratorId.name];
-    if (!existing) {
-      existing = {
-        type,
-        declarations: [],
-        refs: []
-      };
-      targetScope.names[declaratorId.name] = existing;
-    }
-    existing.declarations.push(declaratorId.loc);
-  } else if (isNode(declaratorId, "ObjectPattern")) {
-    declaratorId.properties.forEach(prop => {
-      parseDeclarator(prop.value, targetScope, type);
-    });
-  } else if (isNode(declaratorId, "ArrayPattern")) {
-    declaratorId.elements.forEach(item => {
-      parseDeclarator(item, targetScope, type);
-    });
-  } else if (isNode(declaratorId, "AssignmentPattern")) {
-    parseDeclarator(declaratorId.left, targetScope, type);
-  } else if (isNode(declaratorId, "RestElement")) {
-    parseDeclarator(declaratorId.argument, targetScope, type);
-  }
-}
-
-function isLetOrConst(node) {
-  return node.kind === "let" || node.kind === "const";
-}
-
-function hasLexicalDeclaration(node, parent) {
-  const isFunctionBody = t.isFunction(parent, { body: node });
-
-  return node.body.some(child => isLexicalVariable(child) || !isFunctionBody && child.type === "FunctionDeclaration" || child.type === "ClassDeclaration");
-}
-function isLexicalVariable(node) {
-  return isNode(node, "VariableDeclaration") && isLetOrConst(node);
-}
-
-function findIdentifierInScopes(scope, name) {
-  // Find nearest outer scope with the specifed name and add reference.
-  for (let s = scope; s; s = s.parent) {
-    if (name in s.names) {
-      return s;
-    }
-  }
-  return null;
-}
-
-function toParsedScopes(children, sourceId) {
-  if (!children || children.length === 0) {
-    return undefined;
-  }
-  return children.map(scope => {
-    // Removing unneed information from TempScope such as parent reference.
-    // We also need to convert BabelLocation to the Location type.
-    const bindings = Object.keys(scope.names).reduce((_bindings, n) => {
-      const nameRefs = scope.names[n];
-
-      _bindings[n] = {
-        type: nameRefs.type,
-        declarations: nameRefs.declarations.map(({ start, end }) => ({
-          start: fromBabelLocation(start, sourceId),
-          end: fromBabelLocation(end, sourceId)
-        })),
-        refs: nameRefs.refs.map(({ start, end, meta }) => ({
-          start: fromBabelLocation(start, sourceId),
-          end: fromBabelLocation(end, sourceId),
-          // eslint-disable-next-line max-nested-callbacks
-          meta: mapMeta(meta || null, item => {
-            // $FlowIgnore - Flow doesn't like merging here.
-            return _extends({}, item, {
-              start: fromBabelLocation(item.start, sourceId),
-              end: fromBabelLocation(item.end, sourceId)
-            });
-          })
-        }))
-      };
-      return _bindings;
-    }, Object.create(null));
-    return {
-      start: fromBabelLocation(scope.loc.start, sourceId),
-      end: fromBabelLocation(scope.loc.end, sourceId),
-      type: scope.type === "module" ? "block" : scope.type,
-      displayName: scope.displayName,
-      bindings: bindings,
-      children: toParsedScopes(scope.children, sourceId)
-    };
-  });
-}
-
-function mapMeta(item, callback) {
-  if (!item) {
-    return null;
-  }
-
-  const result = callback(item);
-
-  // $FlowIgnore - Flow doesn't like merging here.
-  return _extends({}, result, {
-    parent: mapMeta(item.parent, callback)
-  });
-}
-
-function createGlobalScope(ast) {
-  const global = createTempScope("object", "Global", null, ast.loc);
-
-  // Include fake bindings to collect references to CommonJS
-  Object.assign(global.names, {
-    module: {
-      type: "var",
-      declarations: [],
-      refs: []
-    },
-    exports: {
-      type: "var",
-      declarations: [],
-      refs: []
-    },
-    __dirname: {
-      type: "var",
-      declarations: [],
-      refs: []
-    },
-    __filename: {
-      type: "var",
-      declarations: [],
-      refs: []
-    },
-    require: {
-      type: "var",
-      declarations: [],
-      refs: []
-    }
-  });
-
-  const lexical = createTempScope("block", "Lexical Global", global, ast.loc);
-
-  return {
-    global,
-    lexical
-  };
-}
-
-const scopeCollectionVisitor = {
-  // eslint-disable-next-line complexity
-  enter(node, ancestors, state) {
-    state.scopeStack.push(state.scope);
-
-    const parentNode = ancestors.length === 0 ? null : ancestors[ancestors.length - 1].node;
-
-    if (t.isProgram(node)) {
-      const scope = pushTempScope(state, "module", "Module", node.loc);
-      scope.names.this = {
-        type: "implicit",
-        declarations: [],
-        refs: []
-      };
-    } else if (t.isFunction(node)) {
-      let scope = state.scope;
-      if (t.isFunctionExpression(node) && isNode(node.id, "Identifier")) {
-        scope = pushTempScope(state, "block", "Function Expression", node.loc);
-        scope.names[node.id.name] = {
-          type: "const",
-          declarations: [node.id.loc],
-          refs: []
-        };
-      }
-
-      if (t.isFunctionDeclaration(node) && isNode(node.id, "Identifier")) {
-        // This ignores Annex B function declaration hoisting, which
-        // is probably a fine assumption.
-        const fnScope = getVarScope(scope);
-        scope.names[node.id.name] = {
-          type: fnScope === scope ? "var" : "let",
-          declarations: [node.id.loc],
-          refs: []
-        };
-      }
-
-      scope = pushTempScope(state, "function", (0, _getFunctionName2.default)(node, parentNode), {
-        // Being at the start of a function doesn't count as
-        // being inside of it.
-        start: node.params[0] ? node.params[0].loc.start : node.loc.start,
-        end: node.loc.end
-      });
-
-      node.params.forEach(param => parseDeclarator(param, scope, "var"));
-
-      if (!t.isArrowFunctionExpression(node)) {
-        scope.names.this = {
-          type: "implicit",
-          declarations: [],
-          refs: []
-        };
-        scope.names.arguments = {
-          type: "implicit",
-          declarations: [],
-          refs: []
-        };
-      }
-    } else if (t.isClass(node)) {
-      if (t.isClassDeclaration(node) && t.isIdentifier(node.id)) {
-        state.scope.names[node.id.name] = {
-          type: "let",
-          declarations: [node.id.loc],
-          refs: []
-        };
-      }
-
-      if (t.isIdentifier(node.id)) {
-        const scope = pushTempScope(state, "block", "Class", node.loc);
-
-        scope.names[node.id.name] = {
-          type: "const",
-          declarations: [node.id.loc],
-          refs: []
-        };
-      }
-    } else if (t.isForXStatement(node) || t.isForStatement(node)) {
-      const init = node.init || node.left;
-      if (isNode(init, "VariableDeclaration") && isLetOrConst(init)) {
-        // Debugger will create new lexical environment for the for.
-        pushTempScope(state, "block", "For", {
-          // Being at the start of a for loop doesn't count as
-          // being inside it.
-          start: init.loc.start,
-          end: node.loc.end
-        });
-      }
-    } else if (t.isCatchClause(node)) {
-      const scope = pushTempScope(state, "block", "Catch", node.loc);
-      parseDeclarator(node.param, scope, "var");
-    } else if (t.isBlockStatement(node) && hasLexicalDeclaration(node, parentNode)) {
-      // Debugger will create new lexical environment for the block.
-      pushTempScope(state, "block", "Block", node.loc);
-    } else if (t.isVariableDeclaration(node) && (node.kind === "var" ||
-    // Lexical declarations in for statements are handled above.
-    !t.isForStatement(parentNode, { init: node }) || !t.isForXStatement(parentNode, { left: node }))) {
-      // Finds right lexical environment
-      const hoistAt = !isLetOrConst(node) ? getVarScope(state.scope) : state.scope;
-      node.declarations.forEach(declarator => {
-        parseDeclarator(declarator.id, hoistAt, node.kind);
-      });
-    } else if (t.isImportDeclaration(node)) {
-      node.specifiers.forEach(spec => {
-        state.scope.names[spec.local.name] = {
-          // Imported namespaces aren't live import bindings, they are
-          // just normal const bindings.
-          type: t.isImportNamespaceSpecifier(spec) ? "const" : "import",
-          declarations: [spec.local.loc],
-          refs: []
-        };
-      });
-    } else if (t.isIdentifier(node) && t.isReferenced(node, parentNode)) {
-      const identScope = findIdentifierInScopes(state.scope, node.name);
-      if (identScope) {
-        identScope.names[node.name].refs.push({
-          start: node.loc.start,
-          end: node.loc.end,
-          meta: buildMetaBindings(node, ancestors)
-        });
-      }
-    } else if (t.isThisExpression(node)) {
-      const identScope = findIdentifierInScopes(state.scope, "this");
-      if (identScope) {
-        identScope.names.this.refs.push({
-          start: node.loc.start,
-          end: node.loc.end,
-          meta: buildMetaBindings(node, ancestors)
-        });
-      }
-    } else if (t.isClassProperty(parentNode, { value: node })) {
-      const scope = pushTempScope(state, "function", "Class Field", node.loc);
-      scope.names.this = {
-        type: "implicit",
-        declarations: [],
-        refs: []
-      };
-      scope.names.arguments = {
-        type: "implicit",
-        declarations: [],
-        refs: []
-      };
-    } else if (t.isSwitchStatement(node) && node.cases.some(caseNode => caseNode.consequent.some(child => isLexicalVariable(child)))) {
-      pushTempScope(state, "block", "Switch", node.loc);
-    }
-  },
-  exit(node, ancestors, state) {
-    const scope = state.scopeStack.pop();
-    if (!scope) {
-      throw new Error("Assertion failure - unsynchronized pop");
-    }
-
-    state.scope = scope;
-  }
-};
-
-function buildMetaBindings(node, ancestors, parentIndex = ancestors.length - 1) {
-  if (parentIndex <= 1) {
-    return null;
-  }
-  const parent = ancestors[parentIndex].node;
-  const grandparent = ancestors[parentIndex - 1].node;
-
-  // Consider "0, foo" to be equivalent to "foo".
-  if (t.isSequenceExpression(parent) && parent.expressions.length === 2 && t.isNumericLiteral(parent.expressions[0]) && parent.expressions[1] === node) {
-    let start = parent.loc.start;
-    let end = parent.loc.end;
-
-    if (t.isCallExpression(grandparent, { callee: parent })) {
-      // Attempt to expand the range around parentheses, e.g.
-      // (0, foo.bar)()
-      start = grandparent.loc.start;
-      end = Object.assign({}, end);
-      end.column += 1;
-    }
-
-    return {
-      type: "inherit",
-      start,
-      end,
-      parent: buildMetaBindings(parent, ancestors, parentIndex - 1)
-    };
-  }
-
-  // Consider "Object(foo)" to be equivalent to "foo"
-  if (t.isCallExpression(parent) && t.isIdentifier(parent.callee, { name: "Object" }) && parent.arguments.length === 1 && parent.arguments[0] === node) {
-    return {
-      type: "inherit",
-      start: parent.loc.start,
-      end: parent.loc.end,
-      parent: buildMetaBindings(parent, ancestors, parentIndex - 1)
-    };
-  }
-
-  if (t.isMemberExpression(parent, { object: node })) {
-    if (parent.computed) {
-      if (t.isStringLiteral(parent.property)) {
-        return {
-          type: "member",
-          start: parent.loc.start,
-          end: parent.loc.end,
-          property: parent.property.value,
-          parent: buildMetaBindings(parent, ancestors, parentIndex - 1)
-        };
-      }
-    } else {
-      return {
-        type: "member",
-        start: parent.loc.start,
-        end: parent.loc.end,
-        property: parent.property.name,
-        parent: buildMetaBindings(parent, ancestors, parentIndex - 1)
-      };
-    }
-  }
-  if (t.isCallExpression(parent, { callee: node }) && parent.arguments.length == 0) {
-    return {
-      type: "call",
-      start: parent.loc.start,
-      end: parent.loc.end,
-      parent: buildMetaBindings(parent, ancestors, parentIndex - 1)
-    };
-  }
-
-  return null;
-}
-
-function looksLikeCommonJS(rootScope) {
-  return rootScope.names.__dirname.refs.length > 0 || rootScope.names.__filename.refs.length > 0 || rootScope.names.require.refs.length > 0 || rootScope.names.exports.refs.length > 0 || rootScope.names.module.refs.length > 0;
-}
-
-function stripModuleScope(rootScope) {
-  const rootLexicalScope = rootScope.children[0];
-  const moduleScope = rootLexicalScope.children[0];
-  if (moduleScope.type !== "module") {
-    throw new Error("Assertion failure - should be module");
-  }
-
-  Object.keys(moduleScope.names).forEach(name => {
-    const binding = moduleScope.names[name];
-    if (binding.type === "let" || binding.type === "const") {
-      rootLexicalScope.names[name] = binding;
-    } else {
-      rootScope.names[name] = binding;
-    }
-  });
-  rootLexicalScope.children = moduleScope.children;
-  rootLexicalScope.children.forEach(child => {
-    child.parent = rootLexicalScope;
-  });
-}
-
-/***/ }),
-
-/***/ 3579:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-
-var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; /* This Source Code Form is subject to the terms of the Mozilla Public
-                                                                                                                                                                                                                                                                   * License, v. 2.0. If a copy of the MPL was not distributed with this
-                                                                                                                                                                                                                                                                   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-var _get = __webpack_require__(67);
-
-var _get2 = _interopRequireDefault(_get);
-
-var _findIndex = __webpack_require__(262);
-
-var _findIndex2 = _interopRequireDefault(_findIndex);
-
-var _findLastIndex = __webpack_require__(1686);
-
-var _findLastIndex2 = _interopRequireDefault(_findLastIndex);
-
-var _contains = __webpack_require__(3323);
-
-var _getSymbols = __webpack_require__(3270);
-
-var _getSymbols2 = _interopRequireDefault(_getSymbols);
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-
-function findSymbols(source) {
-  const { functions, comments } = (0, _getSymbols2.default)(source);
-  return { functions, comments };
-}
-
-/**
- * Returns the location for a given function path. If the path represents a
- * function declaration, the location will begin after the function identifier
- * but before the function parameters.
- */
-
-function getLocation(func) {
-  const location = _extends({}, func.location);
-
-  // if the function has an identifier, start the block after it so the
-  // identifier is included in the "scope" of its parent
-  const identifierEnd = (0, _get2.default)(func, "identifier.loc.end");
-  if (identifierEnd) {
-    location.start = identifierEnd;
-  }
-
-  return location;
-}
-
-/**
- * Find the nearest location containing the input position and
- * return new locations without inner locations under that nearest location
- *
- * @param locations Notice! The locations MUST be sorted by `sortByStart`
- *                  so that we can do linear time complexity operation.
- */
-function removeInnerLocations(locations, position) {
-  // First, let's find the nearest position-enclosing function location,
-  // which is to find the last location enclosing the position.
-  const newLocs = locations.slice();
-  const parentIndex = (0, _findLastIndex2.default)(newLocs, loc => (0, _contains.containsPosition)(loc, position));
-  if (parentIndex < 0) {
-    return newLocs;
-  }
-
-  // Second, from the nearest location, loop locations again, stop looping
-  // once seeing the 1st location not enclosed by the nearest location
-  // to find the last inner locations inside the nearest location.
-  const innerStartIndex = parentIndex + 1;
-  const parentLoc = newLocs[parentIndex];
-  const outerBoundaryIndex = (0, _findIndex2.default)(newLocs, loc => !(0, _contains.containsLocation)(parentLoc, loc), innerStartIndex);
-  const innerBoundaryIndex = outerBoundaryIndex < 0 ? newLocs.length - 1 : outerBoundaryIndex - 1;
-
-  // Third, remove those inner functions
-  newLocs.splice(innerStartIndex, innerBoundaryIndex - parentIndex);
-  return newLocs;
-}
-
-/**
- * Return an new locations array which excludes
- * items that are completely enclosed by another location in the input locations
- *
- * @param locations Notice! The locations MUST be sorted by `sortByStart`
- *                  so that we can do linear time complexity operation.
- */
-function removeOverlaps(locations) {
-  if (locations.length == 0) {
-    return [];
-  }
-  const firstParent = locations[0];
-  return locations.reduce(deduplicateNode, [firstParent]);
-}
-
-function deduplicateNode(nodes, location) {
-  const parent = nodes[nodes.length - 1];
-  if (!(0, _contains.containsLocation)(parent, location)) {
-    nodes.push(location);
-  }
-  return nodes;
-}
-
-/**
- * Sorts an array of locations by start position
- */
-function sortByStart(a, b) {
-  if (a.start.line < b.start.line) {
-    return -1;
-  } else if (a.start.line === b.start.line) {
-    return a.start.column - b.start.column;
-  }
-
-  return 1;
-}
-
-/**
- * Returns an array of locations that are considered out of scope for the given
- * location.
- */
-function findOutOfScopeLocations(sourceId, position) {
-  const { functions, comments } = findSymbols(sourceId);
-  const commentLocations = comments.map(c => c.location);
-  let locations = functions.map(getLocation).concat(commentLocations).sort(sortByStart);
-  // Must remove inner locations then filter, otherwise,
-  // we will mis-judge in-scope inner locations as out of scope.
-  locations = removeInnerLocations(locations, position).filter(loc => !(0, _contains.containsPosition)(loc, position));
-  return removeOverlaps(locations);
-}
-
-exports.default = findOutOfScopeLocations;
-
-/***/ }),
-
-/***/ 3580:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-
-var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; /* This Source Code Form is subject to the terms of the Mozilla Public
-                                                                                                                                                                                                                                                                   * License, v. 2.0. If a copy of the MPL was not distributed with this
-                                                                                                                                                                                                                                                                   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-exports.getNextStep = getNextStep;
-
-var _types = __webpack_require__(2268);
-
-var t = _interopRequireWildcard(_types);
-
-var _types2 = __webpack_require__(3581);
-
-var _closest = __webpack_require__(3320);
-
-var _helpers = __webpack_require__(3269);
-
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
-
-function getNextStep(sourceId, pausedPosition) {
-  const currentExpression = getSteppableExpression(sourceId, pausedPosition);
-  if (!currentExpression) {
-    return null;
-  }
-
-  const currentStatement = currentExpression.find(p => {
-    return p.inList && t.isStatement(p.node);
-  });
-
-  if (!currentStatement) {
-    throw new Error("Assertion failure - this should always find at least Program");
-  }
-
-  return _getNextStep(currentStatement, pausedPosition);
-}
-
-function getSteppableExpression(sourceId, pausedPosition) {
-  const closestPath = (0, _closest.getClosestPath)(sourceId, pausedPosition);
-
-  if (!closestPath) {
-    return null;
-  }
-
-  if ((0, _helpers.isAwaitExpression)(closestPath) || (0, _helpers.isYieldExpression)(closestPath)) {
-    return closestPath;
-  }
-
-  return closestPath.find(p => t.isAwaitExpression(p.node) || t.isYieldExpression(p.node));
-}
-
-function _getNextStep(statement, position) {
-  const nextStatement = statement.getSibling(1);
-  if (nextStatement) {
-    return _extends({}, nextStatement.node.loc.start, {
-      sourceId: position.sourceId
-    });
-  }
-
-  return null;
-}
-
-/***/ }),
-
-/***/ 3581:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-/***/ }),
-
-/***/ 3582:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.default = getEmptyLines;
-
-var _uniq = __webpack_require__(561);
-
-var _uniq2 = _interopRequireDefault(_uniq);
-
-var _difference = __webpack_require__(1129);
-
-var _difference2 = _interopRequireDefault(_difference);
-
-var _ast = __webpack_require__(3215);
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-
-const commentTokens = ["CommentBlock", "CommentLine"]; /* This Source Code Form is subject to the terms of the Mozilla Public
-                                                        * License, v. 2.0. If a copy of the MPL was not distributed with this
-                                                        * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-function fillRange(start, end) {
-  return Array(end - start + 1).fill().map((item, index) => start + index);
-}
-
-// Populates a pre-filled array of every line number,
-// then removes lines which were found to be executable
-function getLines(ast) {
-  return fillRange(1, ast.tokens[ast.tokens.length - 1].loc.end.line);
-}
-
-// The following sequence stores lines which have executable code
-// (contents other than comments or EOF, regardless of line position)
-function getExecutableLines(ast) {
-  const lines = ast.tokens.filter(token => !commentTokens.includes(token.type) && (!token.type || token.type.label && token.type.label != "eof")).map(token => token.loc.start.line);
-
-  return (0, _uniq2.default)(lines);
-}
-
-function getEmptyLines(sourceId) {
-  if (!sourceId) {
-    return null;
-  }
-
-  const ast = (0, _ast.getAst)(sourceId);
-  if (!ast || !ast.comments) {
-    return [];
-  }
-
-  const executableLines = getExecutableLines(ast);
-  const lines = getLines(ast);
-  return (0, _difference2.default)(lines, executableLines);
-}
-
-/***/ }),
-
-/***/ 3583:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.hasSyntaxError = hasSyntaxError;
-
-var _ast = __webpack_require__(3215);
-
-function hasSyntaxError(input) {
-  try {
-    (0, _ast.parseScript)(input);
-    return false;
-  } catch (e) {
-    return `${e.name} : ${e.message}`;
-  }
-} /* This Source Code Form is subject to the terms of the Mozilla Public
-   * License, v. 2.0. If a copy of the MPL was not distributed with this
-   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-/***/ }),
-
-/***/ 3584:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.getFramework = getFramework;
-
-var _getSymbols = __webpack_require__(3270);
-
-var _getSymbols2 = _interopRequireDefault(_getSymbols);
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-
-function getFramework(sourceId) {
-  if (isReactComponent(sourceId)) {
-    return "React";
-  }
-} /* This Source Code Form is subject to the terms of the Mozilla Public
-   * License, v. 2.0. If a copy of the MPL was not distributed with this
-   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-function isReactComponent(sourceId) {
-  const { imports, classes, callExpressions } = (0, _getSymbols2.default)(sourceId);
-  return (importsReact(imports) || requiresReact(callExpressions)) && extendsComponent(classes);
-}
-
-function importsReact(imports) {
-  return imports.some(importObj => importObj.source === "react" && importObj.specifiers.some(specifier => specifier === "React"));
-}
-
-function requiresReact(callExpressions) {
-  return callExpressions.some(callExpression => callExpression.name === "require" && callExpression.values.some(value => value === "react"));
-}
-
-function extendsComponent(classes) {
-  let result = false;
-  classes.some(classObj => {
-    if (classObj.parent.name === "Component" || classObj.parent.name === "PureComponent" || classObj.parent.property.name === "Component") {
-      result = true;
-    }
-  });
-
-  return result;
-}
-
-/***/ }),
-
-/***/ 3585:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.isInvalidPauseLocation = isInvalidPauseLocation;
-
-var _types = __webpack_require__(2268);
-
-var t = _interopRequireWildcard(_types);
-
-var _ast = __webpack_require__(3215);
-
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
-
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-const STOP = {};
-
-function isInvalidPauseLocation(location) {
-  const state = {
-    invalid: false,
-    location
-  };
-
-  try {
-    (0, _ast.traverseAst)(location.sourceId, { enter: invalidLocationVisitor }, state);
-  } catch (e) {
-    if (e !== STOP) {
-      throw e;
-    }
-  }
-
-  return state.invalid;
-}
-
-function invalidLocationVisitor(node, ancestors, state) {
-  const { location } = state;
-
-  if (node.loc.end.line < location.line) {
-    return;
-  }
-  if (node.loc.start.line > location.line) {
-    throw STOP;
-  }
-
-  if (location.line === node.loc.start.line && location.column >= node.loc.start.column && t.isFunction(node) && !t.isArrowFunctionExpression(node) && (location.line < node.body.loc.start.line || location.line === node.body.loc.start.line && location.column <= node.body.loc.start.column)) {
-    // Disallow pausing _inside_ in function arguments to avoid pausing inside
-    // of destructuring and other logic.
-    state.invalid = true;
-    throw STOP;
-  }
-
-  if (location.line === node.loc.start.line && location.column === node.loc.start.column && t.isBlockStatement(node)) {
-    // Disallow pausing directly before the opening curly of a block statement.
-    // Babel occasionally maps statements with unknown original positions to
-    // this location.
-    state.invalid = true;
-    throw STOP;
-  }
-}
-
-/***/ }),
-
 /***/ 398:
 /***/ (function(module, exports, __webpack_require__) {
 
@@ -16461,7 +16487,7 @@ function cloneBuffer(buffer, isDeep) {
 
 module.exports = cloneBuffer;
 
-/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(3223)(module)))
+/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(793)(module)))
 
 /***/ }),
 
@@ -29117,6 +29143,63 @@ module.exports = hashClear;
 
 /***/ }),
 
+/***/ 792:
+/***/ (function(module, exports) {
+
+var g;
+
+// This works in non-strict mode
+g = (function() {
+	return this;
+})();
+
+try {
+	// This works if eval is allowed (see CSP)
+	g = g || Function("return this")() || (1,eval)("this");
+} catch(e) {
+	// This works if the window reference is available
+	if(typeof window === "object")
+		g = window;
+}
+
+// g can still be undefined, but nothing to do about it...
+// We return undefined, instead of nothing here, so it's
+// easier to handle this case. if(!global) { ...}
+
+module.exports = g;
+
+
+/***/ }),
+
+/***/ 793:
+/***/ (function(module, exports) {
+
+module.exports = function(module) {
+	if(!module.webpackPolyfill) {
+		module.deprecate = function() {};
+		module.paths = [];
+		// module.parent = undefined by default
+		if(!module.children) module.children = [];
+		Object.defineProperty(module, "loaded", {
+			enumerable: true,
+			get: function() {
+				return module.l;
+			}
+		});
+		Object.defineProperty(module, "id", {
+			enumerable: true,
+			get: function() {
+				return module.i;
+			}
+		});
+		module.webpackPolyfill = 1;
+	}
+	return module;
+};
+
+
+/***/ }),
+
 /***/ 799:
 /***/ (function(module, exports, __webpack_require__) {
 
@@ -30251,7 +30334,7 @@ var freeGlobal = typeof global == 'object' && global && global.Object === Object
 
 module.exports = freeGlobal;
 
-/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(3208)))
+/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(792)))
 
 /***/ }),
 

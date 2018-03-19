@@ -196,6 +196,9 @@ pref("dom.performance.enable_user_timing_logging", false);
 // Enable notification of performance timing
 pref("dom.performance.enable_notify_performance_timing", false);
 
+// Enable collecting of docgroup activity in the scheduler
+pref("dom.performance.enable_scheduler_timing", false);
+
 // Enable Permission API's .revoke() method
 pref("dom.permissions.revoke.enable", false);
 
@@ -231,11 +234,6 @@ pref("dom.keyboardevent.keypress.dispatch_non_printable_keys_only_system_group_i
 
 // Whether the WebMIDI API is enabled
 pref("dom.webmidi.enabled", false);
-
-// Whether to run add-on code in different compartments from browser code. This
-// causes a separate compartment for each (addon, global) combination, which may
-// significantly increase the number of compartments in the system.
-pref("dom.compartment_per_addon", true);
 
 // Whether to enable the JavaScript start-up cache. This causes one of the first
 // execution to record the bytecode of the JavaScript function used, and save it
@@ -2386,12 +2384,26 @@ pref("intl.regional_prefs.use_os_locales",  false);
 pref("intl.fallbackCharsetList.ISO-8859-1", "windows-1252");
 pref("font.language.group",                 "chrome://global/locale/intl.properties");
 
-// Android-specific pref to use key-events-only mode for IME-unaware webapps.
+// Android-specific pref to control if keydown and keyup events are fired even
+// in during composition.  Note that those prefs are ignored if
+// "dom.keyboardevent.dispatch_during_composition" is false.
 #ifdef MOZ_WIDGET_ANDROID
+// If true, dispatch the keydown and keyup events on any web apps even during
+// composition.
+#ifdef EARLY_BETA_OR_EARLIER
+pref("intl.ime.hack.on_any_apps.fire_key_events_for_composition", true);
+#else // #ifdef EARLY_BETA_OR_EARLIER
+pref("intl.ime.hack.on_any_apps.fire_key_events_for_composition", false);
+#endif // #ifdef EARLY_BETA_OR_EARLIER #else
+// If true and the above pref is false, dispatch the keydown and keyup events
+// only on IME-unaware web apps.  So, this supports web apps which listen to
+// only keydown or keyup event to get a change to do something at every text
+// input.
 pref("intl.ime.hack.on_ime_unaware_apps.fire_key_events_for_composition", true);
-#else
+#else // #ifdef MOZ_WIDGET_ANDROID
+pref("intl.ime.hack.on_any_apps.fire_key_events_for_composition", false);
 pref("intl.ime.hack.on_ime_unaware_apps.fire_key_events_for_composition", false);
-#endif
+#endif // #ifdef MOZ_WIDGET_ANDROID #else
 
 // If you use legacy Chinese IME which puts an ideographic space to composition
 // string as placeholder, this pref might be useful.  If this is true and when
@@ -2640,11 +2652,7 @@ pref("security.mixed_content.block_display_content", false);
 pref("security.mixed_content.upgrade_display_content", false);
 
 // Block sub requests that happen within an object
-#ifdef EARLY_BETA_OR_EARLIER
-pref("security.mixed_content.block_object_subrequest", true);
-#else
 pref("security.mixed_content.block_object_subrequest", false);
-#endif
 
 // Sub-resource integrity
 pref("security.sri.enable", true);
@@ -3072,7 +3080,7 @@ pref("layout.css.prefixes.webkit", true);
 // Are "-webkit-{min|max}-device-pixel-ratio" media queries supported?
 // (Note: this pref has no effect if the master 'layout.css.prefixes.webkit'
 // pref is set to false.)
-pref("layout.css.prefixes.device-pixel-ratio-webkit", true);
+pref("layout.css.prefixes.device-pixel-ratio-webkit", false);
 
 // Is support for the :scope selector enabled?
 pref("layout.css.scope-pseudo.enabled", true);
@@ -3227,10 +3235,6 @@ pref("dom.animations-api.core.enabled", true);
 // Note that if dom.animations-api.core.enabled is true, this preference is
 // ignored.
 pref("dom.animations-api.element-animate.enabled", true);
-
-// Is the pending state reported using a separate 'pending' member of the
-// Animation interface as opposed to the 'playState' member?
-pref("dom.animations-api.pending-member.enabled", true);
 
 // Pref to throttle offsreen animations
 pref("dom.animations.offscreen-throttling", true);
@@ -3418,9 +3422,6 @@ pref("browser.tabs.remote.separateFileUriProcess", true);
 // sorts of pages, which we have to do when we run them in the normal web
 // content process, causes compatibility issues.
 pref("browser.tabs.remote.allowLinkedWebInFileUriProcess", true);
-
-// Enable caching of Moz2D Path objects for SVG geometry elements
-pref("svg.path-caching.enabled", true);
 
 // Enable the use of display-lists for SVG hit-testing and painting.
 pref("svg.display-lists.hit-testing.enabled", true);
@@ -4541,6 +4542,13 @@ pref("mousewheel.system_scroll_override_on_root_content.enabled", false);
 
 pref("intl.ime.use_simple_context_on_password_field", false);
 
+// uim may use key snooper to listen to key events.  Unfortunately, we cannot
+// know whether it uses or not since it's a build option.  So, we need to make
+// distribution switchable whether we think uim uses key snooper or not with
+// this pref.  Debian 9.x still uses uim as their default IM and it uses key
+// snooper.  So, let's use true for its default value.
+pref("intl.ime.hack.uim.using_key_snooper", true);
+
 #ifdef MOZ_WIDGET_GTK
 // maximum number of fonts to substitute for a generic
 pref("gfx.font_rendering.fontconfig.max_generic_substitutions", 3);
@@ -4750,8 +4758,8 @@ pref("image.mem.animated.use_heap", false);
 #endif
 
 // Decodes images into shared memory to allow direct use in separate
-// rendering processes.
-pref("image.mem.shared", 2);
+// rendering processes. Only applicable with WebRender.
+pref("image.mem.shared", 1);
 
 // Allows image locking of decoded image data in content processes.
 pref("image.mem.allow_locking_in_content_processes", true);
@@ -5096,7 +5104,6 @@ pref("extensions.langpacks.signatures.required", false);
 pref("extensions.minCompatiblePlatformVersion", "2.0");
 pref("extensions.webExtensionsMinPlatformVersion", "42.0a1");
 pref("extensions.legacy.enabled", true);
-pref("extensions.allow-non-mpc-extensions", true);
 
 // Other webextensions prefs
 pref("extensions.webextensions.keepStorageOnUninstall", false);
@@ -5344,6 +5351,8 @@ pref("dom.vr.enabled", false);
 pref("dom.vr.autoactivate.enabled", false);
 // The threshold value of trigger inputs for VR controllers
 pref("dom.vr.controller_trigger_threshold", "0.1");
+// Enable external XR API integrations
+pref("dom.vr.external.enabled", false);
 // Maximum number of milliseconds the browser will wait for content to call
 // VRDisplay.requestPresent after emitting vrdisplayactivate during VR
 // link traversal.  This prevents a long running event handler for

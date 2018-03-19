@@ -54,7 +54,7 @@
           },
 
           "Favicon": {
-            "type": "URL"
+            "type": "URLorEmpty"
           },
 
           "Placement": {
@@ -66,7 +66,7 @@
             "type": "string"
           }
         },
-        "required": ["title", "URL"]
+        "required": ["Title", "URL"]
       }
     },
 
@@ -107,8 +107,22 @@
       "type": "boolean"
     },
 
+    "DisableBuiltinPDFViewer": {
+      "description": "Disables PDF.js, which displays PDFs within Firefox.",
+      "first_available": "60.0",
+
+      "type": "boolean"
+    },
+
     "DisableDeveloperTools": {
       "description": "Prevents access to developer tools.",
+      "first_available": "60.0",
+
+      "type": "boolean"
+    },
+
+    "DisableFeedbackCommands": {
+      "description": "Prevents ability to send feedback from the help menu (\"Submit Feedback\" and \"Report Deceptive Site\").",
       "first_available": "60.0",
 
       "type": "boolean"
@@ -156,6 +170,13 @@
       "type": "boolean"
     },
 
+    "DisableSafeMode": {
+      "description": "Prevents ability to restart in safe mode.",
+      "first_available": "60.0",
+
+      "type": "boolean"
+    },
+
     "DisableSysAddonUpdate": {
       "description": "Prevent the browser from installing and updating system addons.",
       "first_available": "60.0",
@@ -184,6 +205,22 @@
       "first_available": "60.0",
 
       "type": "boolean"
+    },
+
+    "EnableTrackingProtection": {
+      "description": "Enables or disables tracking protection and optionally locks it.",
+      "first_available": "60.0",
+
+      "type": "object",
+      "properties": {
+        "Value": {
+          "type": "boolean"
+        },
+        "Locked": {
+          "type": "boolean"
+        }
+      },
+      "required": ["Value"]
     },
 
     "FlashPlugin": {
@@ -244,6 +281,14 @@
           }
         }
       }
+    },
+
+    "NoDefaultBookmarks": {
+      "description": "Don't create the default bookmarks bundled with Firefox, nor the Smart Bookmarks (Most Visited, Recent Tags). Note: this policy is only effective if used before the first run of the profile.",
+      "first_available": "60.0",
+
+      "type": "boolean",
+      "enum": [true]
     },
 
     "Popups": {

@@ -1179,8 +1179,7 @@ TabParent::QueryDropLinksForVerification()
     return false;
   }
 
-  nsCOMPtr<nsIDOMDataTransfer> initialDataTransfer;
-  dragSession->GetDataTransfer(getter_AddRefs(initialDataTransfer));
+  RefPtr<DataTransfer> initialDataTransfer = dragSession->GetDataTransfer();
   if (!initialDataTransfer) {
     NS_WARNING("No initialDataTransfer to query links for verification");
     return false;
@@ -2312,11 +2311,13 @@ TabParent::SendSelectionEvent(WidgetSelectionEvent& aEvent)
 bool
 TabParent::SendPasteTransferable(const IPCDataTransfer& aDataTransfer,
                                  const bool& aIsPrivateData,
-                                 const IPC::Principal& aRequestingPrincipal)
+                                 const IPC::Principal& aRequestingPrincipal,
+                                 const uint32_t& aContentPolicyType)
 {
   return PBrowserParent::SendPasteTransferable(aDataTransfer,
                                                aIsPrivateData,
-                                               aRequestingPrincipal);
+                                               aRequestingPrincipal,
+                                               aContentPolicyType);
 }
 
 /*static*/ TabParent*

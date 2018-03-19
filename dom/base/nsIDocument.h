@@ -95,7 +95,6 @@ class nsIDocShellTreeItem;
 class nsIDocumentEncoder;
 class nsIDocumentObserver;
 class nsIDOMDocument;
-class nsIDOMDocumentType;
 class nsIDOMElement;
 class nsIDOMNodeList;
 class nsIHTMLCollection;
@@ -106,6 +105,7 @@ class nsIObserver;
 class nsIPrincipal;
 class nsIRequest;
 class nsIRunnable;
+class nsISecurityConsoleMessage;
 class nsIStreamListener;
 class nsIStructuredCloneContainer;
 class nsIURI;
@@ -116,6 +116,7 @@ class nsRange;
 class nsSMILAnimationController;
 class nsSVGElement;
 class nsTextNode;
+class nsUnblockOnloadEvent;
 class nsWindowSizes;
 class nsDOMCaretPosition;
 class nsViewportInfo;
@@ -128,6 +129,7 @@ class CSSStyleSheet;
 class Encoding;
 class ErrorResult;
 class EventStates;
+class EventListenerManager;
 class PendingAnimationTracker;
 class StyleSetHandle;
 template<typename> class OwningNonNull;
@@ -788,7 +790,7 @@ public:
   /**
    * Set the document's character encoding.
    */
-  virtual void SetDocumentCharacterSet(NotNull<const Encoding*> aEncoding) = 0;
+  virtual void SetDocumentCharacterSet(NotNull<const Encoding*> aEncoding);
 
   int32_t GetDocumentCharacterSetSource() const
   {
@@ -857,7 +859,7 @@ public:
   /**
    * Set the Content-Type of this document.
    */
-  virtual void SetContentType(const nsAString& aContentType) = 0;
+  virtual void SetContentType(const nsAString& aContentType);
 
   /**
    * Return the language of this document.
@@ -1223,13 +1225,8 @@ public:
     return !mBFCacheDisallowed;
   }
 
-  void SetBFCacheEntry(nsIBFCacheEntry* aEntry)
-  {
-    NS_ASSERTION(IsBFCachingAllowed() || !aEntry,
-                 "You should have checked!");
-
-    mBFCacheEntry = aEntry;
-  }
+  // Accepts null to clear the BFCache entry too.
+  void SetBFCacheEntry(nsIBFCacheEntry* aEntry);
 
   nsIBFCacheEntry* GetBFCacheEntry() const
   {
@@ -1308,7 +1305,7 @@ public:
    * NOTE: If the site is optimized for mobile (via the doctype), this
    * will return viewport information that specifies default information.
    */
-  virtual nsViewportInfo GetViewportInfo(const mozilla::ScreenIntSize& aDisplaySize) = 0;
+  nsViewportInfo GetViewportInfo(const mozilla::ScreenIntSize& aDisplaySize);
 
   /**
    * True iff this doc will ignore manual character encoding overrides.
@@ -1405,7 +1402,48 @@ public:
   mozilla::Maybe<mozilla::dom::ClientState> GetClientState() const;
   mozilla::Maybe<mozilla::dom::ServiceWorkerDescriptor> GetController() const;
 
+  // Returns the size of the mBlockedTrackingNodes array.
+  //
+  // This array contains nodes that have been blocked to prevent
+  // user tracking. They most likely have had their nsIChannel
+  // canceled by the URL classifier (Safebrowsing).
+  //
+  // A script can subsequently use GetBlockedTrackingNodes()
+  // to get a list of references to these nodes.
+  //
+  // Note:
+  // This expresses how many tracking nodes have been blocked for this
+  // document since its beginning, not how many of them are still around
+  // in the DOM tree. Weak references to blocked nodes are added in the
+  // mBlockedTrackingNodesArray but they are not removed when those nodes
+  // are removed from the tree or even garbage collected.
+  long BlockedTrackingNodeCount() const
+  {
+    return mBlockedTrackingNodes.Length();
+  }
+
+  //
+  // Returns strong references to mBlockedTrackingNodes. (nsIDocument.h)
+  //
+  // This array contains nodes that have been blocked to prevent
+  // user tracking. They most likely have had their nsIChannel
+  // canceled by the URL classifier (Safebrowsing).
+  //
+  already_AddRefed<nsSimpleContentList> BlockedTrackingNodes() const;
+
 protected:
+  friend class nsUnblockOnloadEvent;
+
+  nsresult InitCSP(nsIChannel* aChannel);
+
+  void PostUnblockOnloadEvent();
+
+  void DoUnblockOnload();
+
+  void ClearAllBoxObjects();
+
+  void MaybeEndOutermostXBLUpdate();
+
   void DispatchContentLoadedEvents();
 
   void DispatchPageTransition(mozilla::dom::EventTarget* aDispatchTarget,
@@ -1764,7 +1802,7 @@ public:
     return mStyleAttrStyleSheet;
   }
 
-  virtual void SetScriptGlobalObject(nsIScriptGlobalObject* aGlobalObject) = 0;
+  virtual void SetScriptGlobalObject(nsIScriptGlobalObject* aGlobalObject);
 
   /**
    * Get/set the object from which the context for the event/script handling can
@@ -2100,15 +2138,16 @@ public:
    * like ResetToURI, but also sets the document's channel to aChannel.
    * The principal of the document will be set from the channel.
    */
-  virtual void Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup) = 0;
+  virtual void Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup);
 
   /**
    * Reset this document to aURI, aLoadGroup, and aPrincipal.  aURI must not be
    * null.  If aPrincipal is null, a codebase principal based on aURI will be
    * used.
    */
-  virtual void ResetToURI(nsIURI *aURI, nsILoadGroup* aLoadGroup,
-                          nsIPrincipal* aPrincipal) = 0;
+  virtual void ResetToURI(nsIURI* aURI,
+                          nsILoadGroup* aLoadGroup,
+                          nsIPrincipal* aPrincipal);
 
   /**
    * Set the container (docshell) for this document. Virtual so that
@@ -2203,10 +2242,10 @@ public:
    * Create an element with the specified name, prefix and namespace ID.
    * Returns null if element name parsing failed.
    */
-  virtual already_AddRefed<Element> CreateElem(const nsAString& aName,
-                                               nsAtom* aPrefix,
-                                               int32_t aNamespaceID,
-                                               const nsAString* aIs = nullptr) = 0;
+  already_AddRefed<Element> CreateElem(const nsAString& aName,
+                                       nsAtom* aPrefix,
+                                       int32_t aNamespaceID,
+                                       const nsAString* aIs = nullptr);
 
   /**
    * Get the security info (i.e. SSL state etc) that the document got
@@ -2224,13 +2263,19 @@ public:
    * Get the channel that failed to load and resulted in an error page, if it
    * exists. This is only relevant to error pages.
    */
-  virtual nsIChannel* GetFailedChannel() const = 0;
+  nsIChannel* GetFailedChannel() const
+  {
+    return mFailedChannel;
+  }
 
   /**
    * Set the channel that failed to load and resulted in an error page.
    * This is only relevant to error pages.
    */
-  virtual void SetFailedChannel(nsIChannel* aChannel) = 0;
+  void SetFailedChannel(nsIChannel* aChannel)
+  {
+    mFailedChannel = aChannel;
+  }
 
   /**
    * Returns the default namespace ID used for elements created in this
@@ -2244,13 +2289,10 @@ public:
   void DeleteAllProperties();
   void DeleteAllPropertiesFor(nsINode* aNode);
 
-  nsPropertyTable* PropertyTable(uint16_t aCategory) {
-    if (aCategory == 0)
-      return &mPropertyTable;
-    return GetExtraPropertyTable(aCategory);
+  nsPropertyTable& PropertyTable()
+  {
+    return mPropertyTable;
   }
-  uint32_t GetPropertyTableCount()
-  { return mExtraPropertyTables.Length() + 1; }
 
   /**
    * Sets the ID used to identify this part of the multipart document
@@ -3460,6 +3502,22 @@ public:
 
   bool DidFireDOMContentLoaded() const { return mDidFireDOMContentLoaded; }
 
+  bool IsSynthesized();
+
+  enum class UseCounterReportKind {
+    // Flush the document's use counters only; the use counters for any
+    // external resource documents will be flushed when the external
+    // resource documents themselves are destroyed.
+    eDefault,
+
+    // Flush use counters for the document and for its external resource
+    // documents. (Should only be necessary for tests, where we need
+    // flushing to happen synchronously and deterministically.)
+    eIncludeExternalResources,
+  };
+
+  void ReportUseCounters(UseCounterReportKind aKind = UseCounterReportKind::eDefault);
+
   void SetDocumentUseCounter(mozilla::UseCounter aUseCounter)
   {
     if (!mUseCounters[aUseCounter]) {
@@ -3632,6 +3690,14 @@ public:
   nsIContent* GetContentInThisDocument(nsIFrame* aFrame) const;
 
 protected:
+  already_AddRefed<nsIPrincipal> MaybeDowngradePrincipal(nsIPrincipal* aPrincipal);
+
+  void EnsureOnloadBlocker();
+
+  void SendToConsole(nsCOMArray<nsISecurityConsoleMessage>& aMessages);
+
+  // Returns true if the scheme for the url for this document is "about".
+  bool IsAboutPage() const;
 
   bool ContainsEMEContent();
   bool ContainsMSEContent();
@@ -3738,7 +3804,6 @@ protected:
   }
 
   ~nsIDocument();
-  nsPropertyTable* GetExtraPropertyTable(uint16_t aCategory);
 
   // Never ever call this. Only call GetWindow!
   nsPIDOMWindowOuter* GetWindowInternal() const;
@@ -3880,7 +3945,6 @@ protected:
 
   // Table of element properties for this document.
   nsPropertyTable mPropertyTable;
-  nsTArray<nsAutoPtr<nsPropertyTable> > mExtraPropertyTables;
 
   // Our cached .children collection
   nsCOMPtr<nsIHTMLCollection> mChildrenCollection;
@@ -4128,9 +4192,45 @@ protected:
   // Used to prevent multiple requests to ServiceWorkerManager.
   bool mMaybeServiceWorkerControlled: 1;
 
+  // These member variables cache information about the viewport so we don't
+  // have to recalculate it each time.
+  bool mValidWidth: 1;
+  bool mValidHeight: 1;
+  bool mAutoSize: 1;
+  bool mAllowZoom: 1;
+  bool mAllowDoubleTapZoom: 1;
+  bool mValidScaleFloat: 1;
+  bool mValidMaxScale: 1;
+  bool mScaleStrEmpty: 1;
+  bool mWidthStrEmpty: 1;
+
+  // Parser aborted. True if the parser of this document was forcibly
+  // terminated instead of letting it finish at its own pace.
+  bool mParserAborted: 1;
+
+  // Whether we have reported use counters for this document with Telemetry yet.
+  // Normally this is only done at document destruction time, but for image
+  // documents (SVG documents) that are not guaranteed to be destroyed, we
+  // report use counters when the image cache no longer has any imgRequestProxys
+  // pointing to them.  We track whether we ever reported use counters so
+  // that we only report them once for the document.
+  bool mReportedUseCounters: 1;
+
+#ifdef DEBUG
+public:
+  bool mWillReparent: 1;
+protected:
+#endif
+
   uint8_t mPendingFullscreenRequests;
 
   uint8_t mXMLDeclarationBits;
+
+  // Currently active onload blockers.
+  uint32_t mOnloadBlockCount;
+
+  // Onload blockers which haven't been activated yet.
+  uint32_t mAsyncOnloadBlockCount;
 
   // Compatibility mode
   nsCompatibility mCompatMode;
@@ -4443,6 +4543,19 @@ protected:
   // 2)  We haven't had Destroy() called on us yet.
   nsCOMPtr<nsILayoutHistoryState> mLayoutHistoryState;
 
+  // These member variables cache information about the viewport so we don't
+  // have to recalculate it each time.
+  mozilla::LayoutDeviceToScreenScale mScaleMinFloat;
+  mozilla::LayoutDeviceToScreenScale mScaleMaxFloat;
+  mozilla::LayoutDeviceToScreenScale mScaleFloat;
+  mozilla::CSSToLayoutDeviceScale mPixelRatio;
+  mozilla::CSSSize mViewportSize;
+
+  RefPtr<mozilla::EventListenerManager> mListenerManager;
+
+  nsCOMPtr<nsIRunnable> mMaybeEndOutermostXBLUpdateRunner;
+  nsCOMPtr<nsIRequest> mOnloadBlocker;
+
   nsTArray<RefPtr<mozilla::StyleSheet>> mOnDemandBuiltInUASheets;
   nsTArray<RefPtr<mozilla::StyleSheet>> mAdditionalSheets[AdditionalSheetTypeCount];
 
@@ -4587,7 +4700,7 @@ nsresult
 NS_NewDOMDocument(nsIDOMDocument** aInstancePtrResult,
                   const nsAString& aNamespaceURI,
                   const nsAString& aQualifiedName,
-                  nsIDOMDocumentType* aDoctype,
+                  mozilla::dom::DocumentType* aDoctype,
                   nsIURI* aDocumentURI,
                   nsIURI* aBaseURI,
                   nsIPrincipal* aPrincipal,

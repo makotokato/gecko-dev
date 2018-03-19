@@ -144,7 +144,6 @@
 #include "nsQueryObject.h"
 #include "nsContentUtils.h"
 #include "nsCSSProps.h"
-#include "nsIDOMFileList.h"
 #include "nsIURIFixup.h"
 #include "nsIURIMutator.h"
 #ifndef DEBUG
@@ -215,7 +214,6 @@
 #include "nsRefreshDriver.h"
 #include "Layers.h"
 
-#include "mozilla/AddonPathService.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/Services.h"
 #include "mozilla/Telemetry.h"
@@ -1639,13 +1637,6 @@ CreateNativeGlobalForInner(JSContext* aCx,
 
   SelectZoneGroup(aNewInner, options.creationOptions());
 
-  // Sometimes add-ons load their own XUL windows, either as separate top-level
-  // windows or inside a browser element. In such cases we want to tag the
-  // window's compartment with the add-on ID. See bug 1092156.
-  if (nsContentUtils::IsSystemPrincipal(aPrincipal)) {
-    options.creationOptions().setAddonId(MapURIToAddonID(aURI));
-  }
-
   options.creationOptions().setSecureContext(aIsSecureContext);
 
   xpc::InitGlobalObjectOptions(options, aPrincipal);
@@ -1862,6 +1853,7 @@ nsGlobalWindowOuter::SetNewDocument(nsIDocument* aDocument,
         if (currentInner->mPerformance) {
           newInnerWindow->mPerformance =
             Performance::CreateForMainThread(newInnerWindow->AsInner(),
+                                             aDocument->NodePrincipal(),
                                              currentInner->mPerformance->GetDOMTiming(),
                                              currentInner->mPerformance->GetChannel());
         }
@@ -6156,7 +6148,7 @@ nsGlobalWindowOuter::EnterModalState()
         nsContentUtils::ContentIsCrossDocDescendantOf(mDoc, activeShell->GetDocument()))) {
       EventStateManager::ClearGlobalActiveContent(activeESM);
 
-      activeShell->SetCapturingContent(nullptr, 0);
+      nsIPresShell::SetCapturingContent(nullptr, 0);
 
       if (activeShell) {
         RefPtr<nsFrameSelection> frameSelection = activeShell->FrameSelection();
@@ -7880,3 +7872,4 @@ nsAutoPopupStatePusherInternal::~nsAutoPopupStatePusherInternal()
 {
   nsContentUtils::PopPopupControlState(mOldState);
 }
+

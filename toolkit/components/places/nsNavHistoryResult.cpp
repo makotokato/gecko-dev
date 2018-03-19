@@ -1813,7 +1813,8 @@ nsNavHistoryQueryResultNode::IsContainersQuery()
          resultType == nsINavHistoryQueryOptions::RESULTS_AS_DATE_SITE_QUERY ||
          resultType == nsINavHistoryQueryOptions::RESULTS_AS_TAG_QUERY ||
          resultType == nsINavHistoryQueryOptions::RESULTS_AS_SITE_QUERY ||
-         resultType == nsINavHistoryQueryOptions::RESULTS_AS_ROOTS_QUERY;
+         resultType == nsINavHistoryQueryOptions::RESULTS_AS_ROOTS_QUERY ||
+         resultType == nsINavHistoryQueryOptions::RESULTS_AS_LEFT_PANE_QUERY;
 }
 
 
@@ -1886,7 +1887,8 @@ nsNavHistoryQueryResultNode::GetHasChildren(bool* aHasChildren)
   // Tags are always populated, otherwise they are removed.
   if (resultType == nsINavHistoryQueryOptions::RESULTS_AS_TAG_CONTENTS ||
       // AllBookmarks also always has children.
-      resultType == nsINavHistoryQueryOptions::RESULTS_AS_ROOTS_QUERY) {
+      resultType == nsINavHistoryQueryOptions::RESULTS_AS_ROOTS_QUERY ||
+      resultType == nsINavHistoryQueryOptions::RESULTS_AS_LEFT_PANE_QUERY) {
     *aHasChildren = true;
     return NS_OK;
   }
@@ -2112,6 +2114,13 @@ nsNavHistoryQueryResultNode::FillChildren()
       mChildren.RemoveObjectAt(mChildren.Count() - 1);
   }
 
+  // If we're not updating the query, we don't need to add listeners, so bail
+  // out early.
+  if (mLiveUpdate == QUERYUPDATE_NONE) {
+    mContentsValid = true;
+    return NS_OK;
+  }
+
   nsNavHistoryResult* result = GetResult();
   NS_ENSURE_STATE(result);
 
@@ -2196,12 +2205,21 @@ nsNavHistoryQueryResultNode::Refresh()
   // containing other queries.  In this case calling Refresh for each child
   // query could cause a major slowdown.  We should not refresh nested
   // queries, since we will already refresh the parent one.
-  if (!mExpanded ||
-      (mParent && mParent->IsQuery() &&
-       mParent->GetAsQuery()->IsContainersQuery())) {
-    // Don't update, just invalidate and unhook
+  // The only exception to this, is if the parent query is of QUERYUPDATE_NONE,
+  // this can be the case for the RESULTS_AS_TAG_QUERY
+  // under RESULTS_AS_LEFT_PANE_QUERY.
+  if (!mExpanded) {
     ClearChildren(true);
-    return NS_OK; // no updates in tree state
+    return NS_OK;
+  }
+
+  if (mParent && mParent->IsQuery()) {
+    nsNavHistoryQueryResultNode* parent = mParent->GetAsQuery();
+    if (parent->IsContainersQuery() && parent->mLiveUpdate != QUERYUPDATE_NONE) {
+      // Don't update, just invalidate and unhook
+      ClearChildren(true);
+      return NS_OK; // no updates in tree state
+    }
   }
 
   if (mLiveUpdate == QUERYUPDATE_COMPLEX_WITH_BOOKMARKS)
@@ -4137,7 +4155,7 @@ nsNavHistoryResult::AddHistoryObserver(nsNavHistoryQueryResultNode* aNode)
   // Don't add duplicate observers.  In some case we don't unregister when
   // children are cleared (see ClearChildren) and the next FillChildren call
   // will try to add the observer again.
-  if (mHistoryObservers.IndexOf(aNode) == mHistoryObservers.NoIndex) {
+  if (mHistoryObservers.IndexOf(aNode) == QueryObserverList::NoIndex) {
     mHistoryObservers.AppendElement(aNode);
   }
 }
@@ -4158,7 +4176,7 @@ nsNavHistoryResult::AddAllBookmarksObserver(nsNavHistoryQueryResultNode* aNode)
   // Don't add duplicate observers.  In some case we don't unregister when
   // children are cleared (see ClearChildren) and the next FillChildren call
   // will try to add the observer again.
-  if (mAllBookmarksObservers.IndexOf(aNode) == mAllBookmarksObservers.NoIndex) {
+  if (mAllBookmarksObservers.IndexOf(aNode) == QueryObserverList::NoIndex) {
     mAllBookmarksObservers.AppendElement(aNode);
   }
 }
@@ -4199,7 +4217,7 @@ nsNavHistoryResult::AddBookmarkFolderObserver(nsNavHistoryFolderResultNode* aNod
   // children are cleared (see ClearChildren) and the next FillChildren call
   // will try to add the observer again.
   FolderObserverList* list = BookmarkFolderObserversForId(aFolder, true);
-  if (list->IndexOf(aNode) == list->NoIndex) {
+  if (list->IndexOf(aNode) == FolderObserverList::NoIndex) {
     list->AppendElement(aNode);
   }
 }
@@ -4372,7 +4390,7 @@ void
 nsNavHistoryResult::requestRefresh(nsNavHistoryContainerResultNode* aContainer)
 {
   // Don't add twice the same container.
-  if (mRefreshParticipants.IndexOf(aContainer) == mRefreshParticipants.NoIndex)
+  if (mRefreshParticipants.IndexOf(aContainer) == ContainerObserverList::NoIndex)
     mRefreshParticipants.AppendElement(aContainer);
 }
 

@@ -1,7 +1,7 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-// This test can be really slow on debug platforms and should be split
+// This test can be really slow on debug platforms and should be split.
 requestLongerTimeout(4);
 
 // Tests loading sourcemapped sources for Babel's compile output.
@@ -162,15 +162,15 @@ add_task(async function() {
   // The call-based ones work, but the single-identifier ones do not.
   await breakpointScopes(dbg, "imported-bindings", { line: 17, column: 2 }, [
     "Module",
-    ["aDefault", "(unmapped)"],
+    ["aDefault", '"a-default"'],
     ["aDefault2", '"a-default2"'],
-    ["aDefault3", "(unmapped)"],
-    ["anAliased", "(unmapped)"],
+    ["aDefault3", '"a-default3"'],
+    ["anAliased", '"an-original"'],
     ["anAliased2", '"an-original2"'],
-    ["anAliased3", "(unmapped)"],
-    ["aNamed", "(unmapped)"],
+    ["anAliased3", '"an-original3"'],
+    ["aNamed", '"a-named"'],
     ["aNamed2", '"a-named2"'],
-    ["aNamed3", "(unmapped)"],
+    ["aNamed3", '"a-named3"'],
     ["aNamespace", "{\u2026}"],
     ["aNamespace2", "{\u2026}"],
     ["aNamespace3", "{\u2026}"],
@@ -315,6 +315,30 @@ add_task(async function() {
     ["aNamespace", "{\u2026}"],
     ["aNamespace2", "{\u2026}"],
     ["aNamespace3", "{\u2026}"],
+    "root()"
+  ]);
+
+  await breakpointScopes(dbg, "webpack-standalone", { line: 11, column: 0 }, [
+    "Block",
+    ["<this>", '"this-value"'],
+    ["arg", '"arg-value"'],
+    ["arguments", "Arguments"],
+    ["inner", "undefined"],
+    "Block",
+    ["someName", "(optimized away)"],
+    "Block",
+    ["two", "2"],
+    "Block",
+    ["one", "1"],
+    "root",
+    ["arguments", "Arguments"],
+    "fn:someName()",
+    "webpackStandalone",
+    ["__webpack_exports__", "(optimized away)"],
+    ["__WEBPACK_IMPORTED_MODULE_0__src_mod1__", "{\u2026}"],
+    ["__webpack_require__", "(optimized away)"],
+    ["arguments", "(unavailable)"],
+    ["module", "(optimized away)"],
     "root()"
   ]);
 });

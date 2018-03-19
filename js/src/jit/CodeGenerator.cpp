@@ -9845,9 +9845,14 @@ CodeGenerator::generateWasm(wasm::SigIdDesc sigId, wasm::BytecodeOffset trapOffs
 {
     JitSpew(JitSpew_Codegen, "# Emitting wasm code");
 
-    wasm::IsLeaf isLeaf = !gen->needsOverrecursedCheck();
+    wasm::GenerateFunctionPrologue(masm, sigId, mozilla::Nothing(), offsets);
 
-    wasm::GenerateFunctionPrologue(masm, frameSize(), isLeaf, sigId, trapOffset, offsets);
+    if (omitOverRecursedCheck())
+        masm.reserveStack(frameSize());
+    else
+        masm.wasmReserveStackChecked(frameSize(), trapOffset);
+
+    MOZ_ASSERT(masm.framePushed() == frameSize());
 
     if (!generateBody())
         return false;
@@ -11165,7 +11170,7 @@ CodeGenerator::visitLoadElementHole(LLoadElementHole* lir)
     // If the index is out of bounds, load |undefined|. Otherwise, load the
     // value.
     Label outOfBounds, done;
-    masm.boundsCheck32ForLoad(index, initLength, out.scratchReg(), &outOfBounds);
+    masm.spectreBoundsCheck32(index, initLength, out.scratchReg(), &outOfBounds);
 
     masm.loadValue(BaseObjectElementIndex(elements, index), out);
 
@@ -11304,7 +11309,7 @@ CodeGenerator::visitLoadTypedArrayElementHole(LLoadTypedArrayElementHole* lir)
 
     // Load undefined if index >= length.
     Label outOfBounds, done;
-    masm.boundsCheck32ForLoad(index, scratch, scratch2, &outOfBounds);
+    masm.spectreBoundsCheck32(index, scratch, scratch2, &outOfBounds);
 
     // Load the elements vector.
     masm.loadPtr(Address(object, TypedArrayObject::dataOffset()), scratch);
@@ -12717,6 +12722,14 @@ CodeGenerator::visitInterruptCheck(LInterruptCheck* lir)
     masm.branch32(Assembler::NotEqual, Address(temp, offsetof(JSContext, interrupt_)),
                   Imm32(0), ool->entry());
     masm.bind(ool->rejoin());
+}
+
+void
+CodeGenerator::visitWasmInterruptCheck(LWasmInterruptCheck* lir)
+{
+    MOZ_ASSERT(gen->compilingWasm());
+
+    masm.wasmInterruptCheck(ToRegister(lir->tlsPtr()), lir->mir()->bytecodeOffset());
 }
 
 void

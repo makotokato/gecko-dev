@@ -19,6 +19,7 @@
 #include "mozilla/BrowserElementParent.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/EventListenerManager.h"
+#include "mozilla/dom/DataTransfer.h"
 #include "mozilla/dom/indexedDB/PIndexedDBPermissionRequestChild.h"
 #include "mozilla/dom/PaymentRequestChild.h"
 #include "mozilla/dom/TelemetryScrollProbe.h"
@@ -1723,7 +1724,7 @@ TabChild::HandleRealMouseButtonEvent(const WidgetMouseEvent& aEvent,
 
   InputAPZContext context(aGuid, aInputBlockId, nsEventStatus_eIgnore);
   if (pendingLayerization) {
-    context.SetPendingLayerization();
+    InputAPZContext::SetPendingLayerization();
   }
 
   WidgetMouseEvent localEvent(aEvent);
@@ -1955,8 +1956,7 @@ TabChild::RecvRealDragEvent(const WidgetDragEvent& aEvent,
   if (dragSession) {
     dragSession->SetDragAction(aDragAction);
     dragSession->SetTriggeringPrincipalURISpec(aPrincipalURISpec);
-    nsCOMPtr<nsIDOMDataTransfer> initialDataTransfer;
-    dragSession->GetDataTransfer(getter_AddRefs(initialDataTransfer));
+    RefPtr<DataTransfer> initialDataTransfer = dragSession->GetDataTransfer();
     if (initialDataTransfer) {
       initialDataTransfer->SetDropEffectInt(aDropEffect);
     }
@@ -2164,7 +2164,8 @@ TabChild::RecvNormalPrioritySelectionEvent(const WidgetSelectionEvent& aEvent)
 mozilla::ipc::IPCResult
 TabChild::RecvPasteTransferable(const IPCDataTransfer& aDataTransfer,
                                 const bool& aIsPrivateData,
-                                const IPC::Principal& aRequestingPrincipal)
+                                const IPC::Principal& aRequestingPrincipal,
+                                const uint32_t& aContentPolicyType)
 {
   nsresult rv;
   nsCOMPtr<nsITransferable> trans =
@@ -2175,6 +2176,7 @@ TabChild::RecvPasteTransferable(const IPCDataTransfer& aDataTransfer,
   rv = nsContentUtils::IPCTransferableToTransferable(aDataTransfer,
                                                      aIsPrivateData,
                                                      aRequestingPrincipal,
+                                                     aContentPolicyType,
                                                      trans, nullptr, this);
   NS_ENSURE_SUCCESS(rv, IPC_OK());
 

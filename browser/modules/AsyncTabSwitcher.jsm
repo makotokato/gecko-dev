@@ -254,7 +254,9 @@ class AsyncTabSwitcher {
     if (state == this.STATE_LOADING) {
       this.assert(!this.minimizedOrFullyOccluded);
 
-      if (!this.tabbrowser.tabWarmingEnabled) {
+      // If we're not in the process of warming this tab, we
+      // don't need to delay activating its DocShell.
+      if (!this.warmingTabs.has(tab)) {
         browser.docShellIsActive = true;
       }
 
@@ -388,7 +390,7 @@ class AsyncTabSwitcher {
 
     if (!needSpinner && this.spinnerTab) {
       this.spinnerHidden();
-      this.tabbrowser.mPanelContainer.removeAttribute("pendingpaint");
+      this.tabbrowser.tabpanels.removeAttribute("pendingpaint");
       this.spinnerTab.linkedBrowser.removeAttribute("pendingpaint");
       this.spinnerTab = null;
     } else if (needSpinner && this.spinnerTab !== showTab) {
@@ -398,7 +400,7 @@ class AsyncTabSwitcher {
         this.spinnerDisplayed();
       }
       this.spinnerTab = showTab;
-      this.tabbrowser.mPanelContainer.setAttribute("pendingpaint", "true");
+      this.tabbrowser.tabpanels.setAttribute("pendingpaint", "true");
       this.spinnerTab.linkedBrowser.setAttribute("pendingpaint", "true");
     }
 
@@ -410,7 +412,7 @@ class AsyncTabSwitcher {
       this.maybeVisibleTabs.add(showTab);
 
       let tabs = this.tabbrowser.tabbox.tabs;
-      let tabPanel = this.tabbrowser.mPanelContainer;
+      let tabPanel = this.tabbrowser.tabpanels;
       let showPanel = tabs.getRelatedElement(showTab);
       let index = Array.indexOf(tabPanel.childNodes, showPanel);
       if (index != -1) {

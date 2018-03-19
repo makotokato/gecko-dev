@@ -22,6 +22,7 @@
 # include <sys/mman.h>
 #endif
 
+#include "jsfriendapi.h"
 #include "jsmath.h"
 
 #include "builtin/Promise.h"
@@ -44,7 +45,6 @@
 #include "vm/JSScript.h"
 #include "vm/TraceLogging.h"
 #include "vm/TraceLoggingGraph.h"
-#include "wasm/WasmSignalHandlers.h"
 
 #include "gc/GC-inl.h"
 #include "vm/JSContext-inl.h"
@@ -177,8 +177,10 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
     lastAnimationTime(0),
     performanceMonitoring_(),
     stackFormat_(parentRuntime ? js::StackFormat::Default
-                               : js::StackFormat::SpiderMonkey)
+                               : js::StackFormat::SpiderMonkey),
+    wasmInstances(mutexid::WasmRuntimeInstances)
 {
+    JS_COUNT_CTOR(JSRuntime);
     liveRuntimesCount++;
 
     /* Initialize infallibly first, so we can goto bad and JS_DestroyRuntime. */
@@ -189,10 +191,13 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
 
 JSRuntime::~JSRuntime()
 {
+    JS_COUNT_DTOR(JSRuntime);
     MOZ_ASSERT(!initialized_);
 
     DebugOnly<size_t> oldCount = liveRuntimesCount--;
     MOZ_ASSERT(oldCount > 0);
+
+    MOZ_ASSERT(wasmInstances.lock()->empty());
 }
 
 bool
@@ -509,6 +514,8 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
         jitRuntime_->execAlloc().addSizeOfCode(&rtSizes->code);
         jitRuntime_->backedgeExecAlloc().addSizeOfCode(&rtSizes->code);
     }
+
+    rtSizes->wasmRuntime += wasmInstances.lock()->sizeOfExcludingThis(mallocSizeOf);
 }
 
 static bool
@@ -594,11 +601,12 @@ JSContext::requestInterrupt(InterruptMode mode)
         // not regularly polled. Wake ilooping Ion code, irregexp JIT code and
         // Atomics.wait()
         interruptRegExpJit_ = true;
-        fx.lock();
+        FutexThread::lock();
         if (fx.isWaiting())
             fx.wake(FutexThread::WakeForJSInterrupt);
         fx.unlock();
-        InterruptRunningJitCode(this);
+        jit::InterruptRunningCode(this);
+        wasm::InterruptRunningCode(this);
     }
 }
 

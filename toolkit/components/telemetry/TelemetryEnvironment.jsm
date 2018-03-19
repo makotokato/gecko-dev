@@ -217,7 +217,6 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["dom.ipc.processCount", {what: RECORD_PREF_VALUE}],
   ["dom.max_script_run_time", {what: RECORD_PREF_VALUE}],
   ["experiments.manifest.uri", {what: RECORD_PREF_VALUE}],
-  ["extensions.allow-non-mpc-extensions", {what: RECORD_PREF_VALUE}],
   ["extensions.autoDisableScopes", {what: RECORD_PREF_VALUE}],
   ["extensions.enabledScopes", {what: RECORD_PREF_VALUE}],
   ["extensions.blocklist.enabled", {what: RECORD_PREF_VALUE}],
@@ -247,6 +246,7 @@ const DEFAULT_ENVIRONMENT_PREFS = new Map([
   ["layers.prefer-opengl", {what: RECORD_PREF_VALUE}],
   ["layout.css.devPixelsPerPx", {what: RECORD_PREF_VALUE}],
   ["layout.css.servo.enabled", {what: RECORD_PREF_VALUE}],
+  ["marionette.enabled", {what: RECORD_PREF_VALUE}],
   ["network.proxy.autoconfig_url", {what: RECORD_PREF_STATE}],
   ["network.proxy.http", {what: RECORD_PREF_STATE}],
   ["network.proxy.ssl", {what: RECORD_PREF_STATE}],
@@ -693,7 +693,7 @@ EnvironmentAddonBuilder.prototype = {
           updateDay: Utils.millisecondsToDays(updateDate.getTime()),
           isSystem: addon.isSystem,
           isWebExtension: addon.isWebExtension,
-          multiprocessCompatible: Boolean(addon.multiprocessCompatible),
+          multiprocessCompatible: true,
         };
 
         // getActiveAddons() gives limited data during startup and full

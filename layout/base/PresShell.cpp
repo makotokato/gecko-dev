@@ -8,6 +8,7 @@
 
 #include "mozilla/PresShell.h"
 
+#include "mozilla/dom/FontFaceSet.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/StyleSheetInlines.h"
@@ -94,6 +95,9 @@
 #include "nsDisplayList.h"
 #include "nsRegion.h"
 #include "nsAutoLayoutPhase.h"
+#ifdef MOZ_GECKO_PROFILER
+#include "AutoProfilerStyleMarker.h"
+#endif
 #ifdef MOZ_REFLOW_PERF
 #include "nsFontMetrics.h"
 #endif
@@ -428,10 +432,25 @@ struct nsCallbackEventRequest
 };
 
 // ----------------------------------------------------------------------------
+//
+// NOTE(emilio): It'd be nice for this to assert that our document isn't in the
+// bfcache, but font pref changes don't care about that, and maybe / probably
+// shouldn't.
+#ifdef DEBUG
 #define ASSERT_REFLOW_SCHEDULED_STATE()                                       \
-  NS_ASSERTION(ObservingLayoutFlushes() ==                                    \
-                 GetPresContext()->RefreshDriver()->                          \
-                   IsLayoutFlushObserver(this), "Unexpected state")
+{                                                                             \
+  if (ObservingLayoutFlushes()) {                                             \
+    MOZ_ASSERT(mDocument->GetBFCacheEntry() ||                                \
+               mPresContext->RefreshDriver()->IsLayoutFlushObserver(this),    \
+               "Unexpected state");                                           \
+  } else {                                                                    \
+    MOZ_ASSERT(!mPresContext->RefreshDriver()->IsLayoutFlushObserver(this),   \
+               "Unexpected state");                                           \
+  }                                                                           \
+}
+#else
+#define ASSERT_REFLOW_SCHEDULED_STATE() /* nothing */
+#endif
 
 class nsAutoCauseReflowNotifier
 {
@@ -793,6 +812,7 @@ nsIPresShell::nsIPresShell()
     , mNeedStyleFlush(true)
     , mObservingStyleFlushes(false)
     , mObservingLayoutFlushes(false)
+    , mResizeEventPending(false)
     , mNeedThrottledAnimationFlush(true)
     , mPresShellId(0)
     , mFontSizeInflationEmPerLine(0)
@@ -830,7 +850,6 @@ PresShell::PresShell()
   , mNoDelayedMouseEvents(false)
   , mNoDelayedKeyEvents(false)
   , mShouldUnsuppressPainting(false)
-  , mResizeEventPending(false)
   , mApproximateFrameVisibilityVisited(false)
   , mNextPaintCompressed(false)
   , mHasCSSBackgroundColor(false)
@@ -1364,10 +1383,7 @@ PresShell::Destroy()
   // Revoke any pending events.  We need to do this and cancel pending reflows
   // before we destroy the frame manager, since apparently frame destruction
   // sometimes spins the event queue when plug-ins are involved(!).
-  if (mResizeEventPending) {
-    rd->RemoveResizeEventFlushObserver(this);
-  }
-  rd->RemoveLayoutFlushObserver(this);
+  StopObservingRefreshDriver();
 
   if (rd->GetPresContext() == GetPresContext()) {
     rd->RevokeViewManagerFlush();
@@ -1408,6 +1424,36 @@ PresShell::Destroy()
   mHaveShutDown = true;
 
   mTouchManager.Destroy();
+}
+
+void
+nsIPresShell::StopObservingRefreshDriver()
+{
+  nsRefreshDriver* rd = mPresContext->RefreshDriver();
+  if (mResizeEventPending) {
+    rd->RemoveResizeEventFlushObserver(this);
+  }
+  if (mObservingLayoutFlushes) {
+    rd->RemoveLayoutFlushObserver(this);
+  }
+  if (mObservingStyleFlushes) {
+    rd->RemoveStyleFlushObserver(this);
+  }
+}
+
+void
+nsIPresShell::StartObservingRefreshDriver()
+{
+  nsRefreshDriver* rd = mPresContext->RefreshDriver();
+  if (mResizeEventPending) {
+    rd->AddResizeEventFlushObserver(this);
+  }
+  if (mObservingLayoutFlushes) {
+    rd->AddLayoutFlushObserver(this);
+  }
+  if (mObservingStyleFlushes) {
+    rd->AddStyleFlushObserver(this);
+  }
 }
 
 nsRefreshDriver*
@@ -2051,7 +2097,9 @@ PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight,
 
   if (!mIsDestroying && !mResizeEventPending) {
     mResizeEventPending = true;
-    GetPresContext()->RefreshDriver()->AddResizeEventFlushObserver(this);
+    if (MOZ_LIKELY(!mDocument->GetBFCacheEntry())) {
+      mPresContext->RefreshDriver()->AddResizeEventFlushObserver(this);
+    }
   }
 
   return NS_OK; //XXX this needs to be real. MMP
@@ -4056,6 +4104,13 @@ nsIPresShell::IsSafeToFlush() const
   return true;
 }
 
+void
+nsIPresShell::NotifyFontFaceSetOnRefresh()
+{
+  if (FontFaceSet* set = mDocument->GetFonts()) {
+    set->DidRefresh();
+  }
+}
 
 void
 PresShell::DoFlushPendingNotifications(FlushType aType)
@@ -4188,9 +4243,7 @@ PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush)
       if (!mIsDestroying) {
         nsAutoScriptBlocker scriptBlocker;
 #ifdef MOZ_GECKO_PROFILER
-        AutoProfilerTracing tracingStyleFlush("Paint", "Styles",
-                                              Move(mStyleCause));
-        mStyleCause = nullptr;
+        AutoProfilerStyleMarker tracingStyleFlush(Move(mStyleCause));
 #endif
 
         mPresContext->RestyleManager()->ProcessPendingRestyles();
@@ -4214,9 +4267,7 @@ PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush)
     if (!mIsDestroying) {
       nsAutoScriptBlocker scriptBlocker;
 #ifdef MOZ_GECKO_PROFILER
-      AutoProfilerTracing tracingStyleFlush("Paint", "Styles",
-                                            Move(mStyleCause));
-      mStyleCause = nullptr;
+      AutoProfilerStyleMarker tracingStyleFlush(Move(mStyleCause));
 #endif
 
       mPresContext->RestyleManager()->ProcessPendingRestyles();
@@ -6994,22 +7045,21 @@ PresShell::HandleEvent(nsIFrame* aFrame,
     }
 
     // Only capture mouse events and pointer events.
-    nsIContent* pointerCapturingContent =
+    nsCOMPtr<nsIContent> pointerCapturingContent =
       PointerEventHandler::GetPointerCapturingContent(aEvent);
 
     if (pointerCapturingContent) {
-      nsIFrame* pointerCapturingFrame =
-        pointerCapturingContent->GetPrimaryFrame();
+      frame = pointerCapturingContent->GetPrimaryFrame();
 
-      if (!pointerCapturingFrame) {
+      if (!frame) {
         // Dispatch events to the capturing content even it's frame is
         // destroyed.
         PointerEventHandler::DispatchPointerFromMouseOrTouch(
-          this, nullptr, pointerCapturingContent, aEvent, false, aEventStatus,
-          nullptr);
+          this, nullptr, pointerCapturingContent, aEvent, false,
+          aEventStatus, nullptr);
 
-        PresShell* shell = GetShellForEventTarget(nullptr,
-                                                  pointerCapturingContent);
+        RefPtr<PresShell> shell =
+          GetShellForEventTarget(nullptr, pointerCapturingContent);
 
         if (!shell) {
           // The capturing element could be changed when dispatch pointer
@@ -7019,8 +7069,6 @@ PresShell::HandleEvent(nsIFrame* aFrame,
         return shell->HandleEventWithTarget(aEvent, nullptr,
                                             pointerCapturingContent,
                                             aEventStatus, true);
-      } else {
-        frame = pointerCapturingFrame;
       }
     }
 
@@ -7095,7 +7143,7 @@ PresShell::HandleEvent(nsIFrame* aFrame,
       return NS_OK;
     }
 
-    PresShell* shell = static_cast<PresShell*>(frame->PresShell());
+    RefPtr<PresShell> shell = static_cast<PresShell*>(frame->PresShell());
     // Check if we have an active EventStateManager which isn't the
     // EventStateManager of the current PresContext.
     // If that is the case, and mouse is over some ancestor document,
@@ -7198,7 +7246,7 @@ PresShell::HandleEvent(nsIFrame* aFrame,
                 touchEvent)) {
           frame = newFrame;
           frame->GetContentForEvent(aEvent, getter_AddRefs(targetElement));
-          shell = static_cast<PresShell*>(frame->PresContext()->PresShell());
+          shell = static_cast<PresShell*>(frame->PresShell());
         }
       } else if (PresShell* newShell = GetShellForTouchEvent(aEvent)) {
         // Touch events (except touchstart) are dispatching to the captured
@@ -7207,8 +7255,6 @@ PresShell::HandleEvent(nsIFrame* aFrame,
       }
     }
 
-    // Prevent deletion until we're done with event handling (bug 336582)
-    nsCOMPtr<nsIPresShell> kungFuDeathGrip(shell);
     nsresult rv;
 
     // Handle the event in the correct shell.
@@ -8210,7 +8256,7 @@ PresShell::GetCurrentItemAndPositionForElement(nsIDOMElement *aCurrentEl,
           treeBox->GetFirstVisibleRow(&firstVisibleRow);
           treeBox->GetRowHeight(&rowHeight);
 
-          extraTreeY += presContext->CSSPixelsToAppUnits(
+          extraTreeY += nsPresContext::CSSPixelsToAppUnits(
                           (currentIndex - firstVisibleRow + 1) * rowHeight);
           istree = true;
 
@@ -8615,7 +8661,7 @@ PresShell::WillDoReflow()
 
   mPresContext->FlushFontFeatureValues();
 
-  mLastReflowStart = GetPerformanceNow();
+  mLastReflowStart = GetPerformanceNowUnclamped();
 }
 
 void
@@ -8625,7 +8671,7 @@ PresShell::DidDoReflow(bool aInterruptible)
 
   nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell();
   if (docShell) {
-    DOMHighResTimeStamp now = GetPerformanceNow();
+    DOMHighResTimeStamp now = GetPerformanceNowUnclamped();
     docShell->NotifyReflowObservers(aInterruptible, mLastReflowStart, now);
   }
 
@@ -8637,7 +8683,7 @@ PresShell::DidDoReflow(bool aInterruptible)
 }
 
 DOMHighResTimeStamp
-PresShell::GetPerformanceNow()
+PresShell::GetPerformanceNowUnclamped()
 {
   DOMHighResTimeStamp now = 0;
 
@@ -8645,7 +8691,7 @@ PresShell::GetPerformanceNow()
     Performance* perf = window->GetPerformance();
 
     if (perf) {
-      now = perf->Now();
+      now = perf->NowUnclamped();
     }
   }
 
@@ -9210,16 +9256,22 @@ void
 nsIPresShell::DoObserveStyleFlushes()
 {
   MOZ_ASSERT(!ObservingStyleFlushes());
-  mObservingStyleFlushes =
+  mObservingStyleFlushes = true;
+
+  if (MOZ_LIKELY(!mDocument->GetBFCacheEntry())) {
     mPresContext->RefreshDriver()->AddStyleFlushObserver(this);
+  }
 }
 
 void
 nsIPresShell::DoObserveLayoutFlushes()
 {
   MOZ_ASSERT(!ObservingLayoutFlushes());
-  mObservingLayoutFlushes =
+  mObservingLayoutFlushes = true;
+
+  if (MOZ_LIKELY(!mDocument->GetBFCacheEntry())) {
     mPresContext->RefreshDriver()->AddLayoutFlushObserver(this);
+  }
 }
 
 //------------------------------------------------------

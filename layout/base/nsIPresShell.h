@@ -541,6 +541,12 @@ public:
   bool IsSafeToFlush() const;
 
   /**
+   * Informs the document's FontFaceSet that the refresh driver ticked,
+   * flushing style and layout.
+   */
+  void NotifyFontFaceSetOnRefresh();
+
+  /**
    * Flush pending notifications of the type specified.  This method
    * will not affect the content model; it'll just affect style and
    * frames. Callers that actually want up-to-date presentation (other
@@ -555,7 +561,6 @@ public:
    *
    * @param aType the type of notifications to flush
    */
-public:
   void FlushPendingNotifications(mozilla::FlushType aType)
   {
     if (!NeedFlush(aType)) {
@@ -609,6 +614,23 @@ public:
   inline void SetNeedStyleFlush();
   inline void SetNeedLayoutFlush();
   inline void SetNeedThrottledAnimationFlush();
+
+  // Removes ourself from the list of layout / style / and resize refresh driver
+  // observers.
+  //
+  // Right now this is only used for documents in the BFCache, so if you want to
+  // use this for anything else you need to ensure we don't end up in those
+  // lists after calling this, but before calling StartObservingRefreshDriver
+  // again.
+  //
+  // That is handled by the mDocument->GetBFCacheEntry checks in
+  // DoObserve*Flushes functions, though that could conceivably become a boolean
+  // member in the shell if needed.
+  //
+  // Callers are responsible of manually calling StartObservingRefreshDriver
+  // again.
+  void StopObservingRefreshDriver();
+  void StartObservingRefreshDriver();
 
   bool ObservingStyleFlushes() const { return mObservingStyleFlushes; }
   bool ObservingLayoutFlushes() const { return mObservingLayoutFlushes; }
@@ -1773,6 +1795,8 @@ protected:
   //
   // Guaranteed to be false if mReflowContinueTimer is non-null.
   bool mObservingLayoutFlushes: 1;
+
+  bool mResizeEventPending : 1;
 
   // True if there are throttled animations that would be processed when
   // performing a flush with mFlushAnimations == true.

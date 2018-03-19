@@ -1843,7 +1843,7 @@ nsGenericHTMLElement*
 HTMLInputElement::GetList() const
 {
   nsAutoString dataListId;
-  GetAttr(kNameSpaceID_None, nsGkAtoms::list, dataListId);
+  GetAttr(kNameSpaceID_None, nsGkAtoms::list_, dataListId);
   if (dataListId.IsEmpty()) {
     return nullptr;
   }
@@ -2755,12 +2755,11 @@ HTMLInputElement::SetFilesOrDirectories(const nsTArray<OwningFileOrDirectory>& a
 }
 
 void
-HTMLInputElement::SetFiles(nsIDOMFileList* aFiles,
+HTMLInputElement::SetFiles(FileList* aFiles,
                            bool aSetValueChanged)
 {
   MOZ_ASSERT(mFileData);
 
-  RefPtr<FileList> files = static_cast<FileList*>(aFiles);
   mFileData->mFilesOrDirectories.Clear();
   mFileData->ClearGetFilesHelpers();
 
@@ -2770,12 +2769,11 @@ HTMLInputElement::SetFiles(nsIDOMFileList* aFiles,
   }
 
   if (aFiles) {
-    uint32_t listLength;
-    aFiles->GetLength(&listLength);
+    uint32_t listLength = aFiles->Length();
     for (uint32_t i = 0; i < listLength; i++) {
       OwningFileOrDirectory* element =
         mFileData->mFilesOrDirectories.AppendElement();
-      element->SetAsFile() = files->Item(i);
+      element->SetAsFile() = aFiles->Item(i);
     }
   }
 
@@ -3211,6 +3209,10 @@ HTMLInputElement::GetRadioGroupContainer() const
 
   if (mForm) {
     return mForm;
+  }
+
+  if (IsInAnonymousSubtree()) {
+    return nullptr;
   }
 
   //XXXsmaug It isn't clear how this should work in Shadow DOM.
@@ -6680,7 +6682,7 @@ HTMLInputElement::AddedToRadioGroup()
 {
   // If the element is neither in a form nor a document, there is no group so we
   // should just stop here.
-  if (!mForm && !IsInUncomposedDoc()) {
+  if (!mForm && (!IsInUncomposedDoc() || IsInAnonymousSubtree())) {
     return;
   }
 

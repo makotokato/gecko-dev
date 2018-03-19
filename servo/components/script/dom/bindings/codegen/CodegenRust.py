@@ -870,8 +870,51 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
 
         return handleOptional(templateBody, declType, handleDefaultNull("None"))
 
-    if type.isSpiderMonkeyInterface():
-        raise TypeError("Can't handle SpiderMonkey interface arguments yet")
+    if is_typed_array(type):
+        if failureCode is None:
+            substitutions = {
+                "sourceDescription": sourceDescription,
+                "exceptionCode": exceptionCode,
+            }
+            unwrapFailureCode = string.Template(
+                'throw_type_error(cx, "${sourceDescription} is not a typed array.");\n'
+                '${exceptionCode}').substitute(substitutions)
+        else:
+            unwrapFailureCode = failureCode
+
+        typeName = type.unroll().name  # unroll because it may be nullable
+
+        if isMember == "Union":
+            typeName = "Heap" + typeName
+
+        templateBody = fill(
+            """
+            match typedarray::${ty}::from($${val}.get().to_object()) {
+                Ok(val) => val,
+                Err(()) => {
+                    $*{failureCode}
+                }
+            }
+            """,
+            ty=typeName,
+            failureCode=unwrapFailureCode + "\n",
+        )
+
+        if isMember == "Union":
+            templateBody = "RootedTraceableBox::new(%s)" % templateBody
+
+        declType = CGGeneric("typedarray::%s" % typeName)
+        if type.nullable():
+            templateBody = "Some(%s)" % templateBody
+            declType = CGWrapper(declType, pre="Option<", post=">")
+
+        templateBody = wrapObjectTemplate(templateBody, "None",
+                                          isDefinitelyObject, type, failureCode)
+
+        return handleOptional(templateBody, declType, handleDefaultNull("None"))
+
+    elif type.isSpiderMonkeyInterface():
+        raise TypeError("Can't handle SpiderMonkey interface arguments other than typed arrays yet")
 
     if type.isDOMString():
         nullBehavior = getConversionConfigForType(type, isEnforceRange, isClamp, treatNullAs)
@@ -1075,19 +1118,23 @@ def getJSToNativeConversionInfo(type, descriptorProvider, failureCode=None,
     if type.isObject():
         assert not isEnforceRange and not isClamp
 
-        # TODO: Need to root somehow
-        # https://github.com/servo/servo/issues/6382
+        templateBody = "${val}.get().to_object()"
         default = "ptr::null_mut()"
-        templateBody = wrapObjectTemplate("${val}.get().to_object()",
-                                          default,
-                                          isDefinitelyObject, type, failureCode)
 
-        if isMember in ("Dictionary", "Union"):
+        # TODO: Do we need to do the same for dictionaries?
+        if isMember == "Union":
+            templateBody = "RootedTraceableBox::from_box(Heap::boxed(%s))" % templateBody
+            default = "RootedTraceableBox::new(Heap::default())"
+            declType = CGGeneric("RootedTraceableBox<Heap<*mut JSObject>>")
+        elif isMember == "Dictionary":
             declType = CGGeneric("Heap<*mut JSObject>")
         else:
             # TODO: Need to root somehow
             # https://github.com/servo/servo/issues/6382
             declType = CGGeneric("*mut JSObject")
+
+        templateBody = wrapObjectTemplate(templateBody, default,
+                                          isDefinitelyObject, type, failureCode)
 
         return handleOptional(templateBody, declType,
                               handleDefaultNull(default))
@@ -2283,6 +2330,7 @@ def UnionTypes(descriptors, dictionaries, callbacks, typedefs, config):
         'js::jsapi::JSObject',
         'js::jsapi::MutableHandleValue',
         'js::jsval::JSVal',
+        'js::typedarray'
     ]
 
     # Now find all the things we'll need as arguments and return values because
@@ -4134,6 +4182,9 @@ def getUnionTypeTemplateVars(type, descriptorProvider):
     elif type.isObject():
         name = type.name
         typeName = "Heap<*mut JSObject>"
+    elif is_typed_array(type):
+        name = type.name
+        typeName = "typedarray::Heap" + name
     else:
         raise TypeError("Can't handle %s in unions yet" % type)
 
@@ -4291,11 +4342,13 @@ class CGUnionConversionStruct(CGThing):
         else:
             mozMapObject = None
 
-        hasObjectTypes = interfaceObject or arrayObject or dateObject or object or mozMapObject
+        hasObjectTypes = object or interfaceObject or arrayObject or dateObject or mozMapObject
         if hasObjectTypes:
             # "object" is not distinguishable from other types
             assert not object or not (interfaceObject or arrayObject or dateObject or callbackObject or mozMapObject)
             templateBody = CGList([], "\n")
+            if object:
+                templateBody.append(object)
             if interfaceObject:
                 templateBody.append(interfaceObject)
             if arrayObject:
@@ -4362,11 +4415,6 @@ class CGUnionConversionStruct(CGThing):
             actualType = "RootedTraceableBox<%s>" % actualType
         returnType = "Result<Option<%s>, ()>" % actualType
         jsConversion = templateVars["jsConversion"]
-
-        # Any code to convert to Object is unused, since we're already converting
-        # from an Object value.
-        if t.name == 'Object':
-            return CGGeneric('')
 
         return CGWrapper(
             CGIndenter(jsConversion, 4),
@@ -5687,6 +5735,7 @@ def generate_imports(config, cgthings, descriptors, callbacks=None, dictionaries
         'js::jsapi::MutableHandleValue',
         'js::jsapi::ObjectOpResult',
         'js::jsapi::PropertyDescriptor',
+        'js::jsapi::Rooted',
         'js::jsapi::RootedId',
         'js::jsapi::RootedObject',
         'js::jsapi::RootedString',
@@ -5718,6 +5767,7 @@ def generate_imports(config, cgthings, descriptors, callbacks=None, dictionaries
         'js::rust::define_methods',
         'js::rust::define_properties',
         'js::rust::get_object_class',
+        'js::typedarray',
         'dom',
         'dom::bindings',
         'dom::bindings::codegen::InterfaceObjectMap',
@@ -6418,6 +6468,9 @@ def type_needs_tracing(t):
         if t.isUnion():
             return any(type_needs_tracing(member) for member in t.flatMemberTypes)
 
+        if is_typed_array(t):
+            return True
+
         return False
 
     if t.isDictionary():
@@ -6438,6 +6491,12 @@ def type_needs_tracing(t):
     assert False, (t, type(t))
 
 
+def is_typed_array(t):
+    assert isinstance(t, IDLObject), (t, type(t))
+
+    return t.isTypedArray() or t.isArrayBuffer() or t.isArrayBufferView() or t.isSharedArrayBuffer()
+
+
 def type_needs_auto_root(t):
     """
     Certain IDL types, such as `sequence<any>` or `sequence<object>` need to be
@@ -6447,6 +6506,9 @@ def type_needs_auto_root(t):
 
     if t.isType():
         if t.isSequence() and (t.inner.isAny() or t.inner.isObject()):
+            return True
+        # SpiderMonkey interfaces, we currently don't support any other except typed arrays
+        if is_typed_array(t):
             return True
 
     return False

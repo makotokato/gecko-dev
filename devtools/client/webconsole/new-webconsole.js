@@ -253,6 +253,16 @@ NewWebConsoleFrame.prototype = {
                    this.window.top.close.bind(this.window.top));
 
       ZoomKeys.register(this.window);
+
+      if (!system.constants.MOZILLA_OFFICIAL) {
+        // In local builds, inject the "quick restart" shortcut.
+        // This script expects to have Services on the global and we haven't yet imported
+        // it into the window, so assign it.
+        this.window.Services = Services;
+        Services.scriptloader.loadSubScript(
+          "chrome://browser/content/browser-development-helpers.js", this.window);
+        shortcuts.on("CmdOrCtrl+Alt+R", this.window.DevelopmentHelpers.quickRestart);
+      }
     } else if (Services.prefs.getBoolPref(PREF_SIDEBAR_ENABLED)) {
       shortcuts.on("Esc", event => {
         if (!this.jsterm.autocompletePopup || !this.jsterm.autocompletePopup.isOpen) {
@@ -305,32 +315,34 @@ NewWebConsoleFrame.prototype = {
    * @param object packet
    *        Notification packet received from the server.
    */
-  handleTabNavigated: async function(event, packet) {
-    if (event == "will-navigate") {
-      if (this.persistLog) {
-        // Add a _type to hit convertCachedPacket.
-        packet._type = true;
-        this.newConsoleOutput.dispatchMessageAdd(packet);
-      } else {
-        this.jsterm.clearOutput(false);
-      }
+  handleTabNavigated: async function(packet) {
+    if (packet.url) {
+      this.onLocationChange(packet.url, packet.title);
+    }
+
+    if (!packet.nativeConsoleAPI) {
+      this.logWarningAboutReplacedAPI();
+    }
+
+    // Wait for completion of any async dispatch before notifying that the console
+    // is fully updated after a page reload
+    await this.newConsoleOutput.waitAsyncDispatches();
+    this.emit("reloaded");
+  },
+
+  handleTabWillNavigate: function(packet) {
+    if (this.persistLog) {
+      // Add a _type to hit convertCachedPacket.
+      packet._type = true;
+      this.newConsoleOutput.dispatchMessageAdd(packet);
+    } else {
+      this.jsterm.clearOutput(false);
     }
 
     if (packet.url) {
       this.onLocationChange(packet.url, packet.title);
     }
-
-    if (event == "navigate" && !packet.nativeConsoleAPI) {
-      this.logWarningAboutReplacedAPI();
-    }
-
-    if (event == "navigate") {
-      // Wait for completion of any async dispatch before notifying that the console
-      // is fully updated after a page reload
-      await this.newConsoleOutput.waitAsyncDispatches();
-      this.emit("reloaded");
-    }
-  },
+  }
 };
 
 exports.NewWebConsoleFrame = NewWebConsoleFrame;

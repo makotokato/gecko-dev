@@ -145,7 +145,6 @@
 #include "nsQueryObject.h"
 #include "nsContentUtils.h"
 #include "nsCSSProps.h"
-#include "nsIDOMFileList.h"
 #include "nsIURIFixup.h"
 #ifndef DEBUG
 #include "nsIAppStartup.h"
@@ -213,7 +212,6 @@
 #include "nsRefreshDriver.h"
 #include "Layers.h"
 
-#include "mozilla/AddonPathService.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/Services.h"
 #include "mozilla/Telemetry.h"
@@ -2366,7 +2364,7 @@ nsPIDOMWindowInner::CreatePerformanceObjectIfNeeded()
     timedChannel = nullptr;
   }
   if (timing) {
-    mPerformance = Performance::CreateForMainThread(this, timing, timedChannel);
+    mPerformance = Performance::CreateForMainThread(this, mDoc->NodePrincipal(), timing, timedChannel);
   }
 }
 

@@ -41,6 +41,20 @@ class StringObject;
 
 namespace jit {
 
+// Forward declarations of MIR types.
+#define FORWARD_DECLARE(op) class M##op;
+ MIR_OPCODE_LIST(FORWARD_DECLARE)
+#undef FORWARD_DECLARE
+
+// MDefinition visitor which ignores non-overloaded visit functions.
+class MDefinitionVisitorDefaultNoop
+{
+  public:
+#define VISIT_INS(op) void visit##op(M##op*) { }
+    MIR_OPCODE_LIST(VISIT_INS)
+#undef VISIT_INS
+};
+
 class BaselineInspector;
 class Range;
 
@@ -111,7 +125,7 @@ static inline
 MIRType SimdTypeToMIRType(SimdType type)
 {
     MIRType ret = MIRType::None;
-    JS_ALWAYS_TRUE(MaybeSimdTypeToMIRType(type, &ret));
+    MOZ_ALWAYS_TRUE(MaybeSimdTypeToMIRType(type, &ret));
     return ret;
 }
 
@@ -1208,6 +1222,8 @@ class MInstruction
     virtual MIRType typePolicySpecialization() = 0;
 };
 
+// Note: GenerateOpcodeFiles.py generates MOpcodes.h based on the
+// INSTRUCTION_HEADER* macros.
 #define INSTRUCTION_HEADER_WITHOUT_TYPEPOLICY(opcode)                       \
     static const Opcode classOpcode = Opcode::opcode;                       \
     using MThisOpcode = M##opcode;
@@ -8335,6 +8351,33 @@ class MInterruptCheck : public MNullaryInstruction
     }
 };
 
+// Check whether we need to fire the interrupt handler (in wasm code).
+class MWasmInterruptCheck
+  : public MUnaryInstruction,
+    public NoTypePolicy::Data
+{
+    wasm::BytecodeOffset bytecodeOffset_;
+
+    MWasmInterruptCheck(MDefinition* tlsPointer, wasm::BytecodeOffset bytecodeOffset)
+      : MUnaryInstruction(classOpcode, tlsPointer),
+        bytecodeOffset_(bytecodeOffset)
+    {
+        setGuard();
+    }
+
+  public:
+    INSTRUCTION_HEADER(WasmInterruptCheck)
+    TRIVIAL_NEW_WRAPPERS
+    NAMED_OPERANDS((0, tlsPtr))
+
+    AliasSet getAliasSet() const override {
+        return AliasSet::None();
+    }
+    wasm::BytecodeOffset bytecodeOffset() const {
+        return bytecodeOffset_;
+    }
+};
+
 // Directly jumps to the indicated trap, leaving Wasm code and reporting a
 // runtime error.
 
@@ -9662,7 +9705,8 @@ class MSpectreMaskIndex
     MSpectreMaskIndex(MDefinition* index, MDefinition* length)
       : MBinaryInstruction(classOpcode, index, length)
     {
-        setGuard();
+        // Note: this instruction does not need setGuard(): if there are no uses
+        // it's fine for DCE to eliminate this instruction.
         setMovable();
         MOZ_ASSERT(index->type() == MIRType::Int32);
         MOZ_ASSERT(length->type() == MIRType::Int32);

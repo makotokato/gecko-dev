@@ -28,6 +28,7 @@
 #ifdef MOZ_OLD_STYLE
 #include "mozilla/css/StyleRule.h"
 #endif
+#include "mozilla/dom/DocumentType.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/L10nUtilsBinding.h"
@@ -62,7 +63,6 @@
 #include "nsIControllers.h"
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
-#include "nsIDOMDocumentType.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMEventListener.h"
 #include "nsIDOMNodeList.h"
@@ -106,7 +106,6 @@
 #include "HTMLLegendElement.h"
 #include "nsWrapperCacheInlines.h"
 #include "WrapperFactory.h"
-#include "DocumentType.h"
 #include <algorithm>
 #include "nsGlobalWindow.h"
 #include "nsDOMMutationObserver.h"
@@ -166,8 +165,7 @@ nsINode::~nsINode()
 }
 
 void*
-nsINode::GetProperty(uint16_t aCategory, nsAtom *aPropertyName,
-                     nsresult *aStatus) const
+nsINode::GetProperty(nsAtom* aPropertyName, nsresult* aStatus) const
 {
   if (!HasProperties()) { // a fast HasFlag() test
     if (aStatus) {
@@ -175,21 +173,21 @@ nsINode::GetProperty(uint16_t aCategory, nsAtom *aPropertyName,
     }
     return nullptr;
   }
-  return OwnerDoc()->PropertyTable(aCategory)->GetProperty(this, aPropertyName,
-                                                           aStatus);
+  return OwnerDoc()->PropertyTable().GetProperty(this, aPropertyName, aStatus);
 }
 
 nsresult
-nsINode::SetProperty(uint16_t aCategory, nsAtom *aPropertyName, void *aValue,
-                     NSPropertyDtorFunc aDtor, bool aTransfer,
-                     void **aOldValue)
+nsINode::SetProperty(nsAtom* aPropertyName,
+                     void* aValue,
+                     NSPropertyDtorFunc aDtor,
+                     bool aTransfer)
 {
-  nsresult rv = OwnerDoc()->PropertyTable(aCategory)->SetProperty(this,
-                                                                  aPropertyName,
-                                                                  aValue, aDtor,
-                                                                  nullptr,
-                                                                  aTransfer,
-                                                                  aOldValue);
+  nsresult rv = OwnerDoc()->PropertyTable().SetProperty(this,
+                                                        aPropertyName,
+                                                        aValue,
+                                                        aDtor,
+                                                        nullptr,
+                                                        aTransfer);
   if (NS_SUCCEEDED(rv)) {
     SetFlags(NODE_HAS_PROPERTIES);
   }
@@ -198,18 +196,15 @@ nsINode::SetProperty(uint16_t aCategory, nsAtom *aPropertyName, void *aValue,
 }
 
 void
-nsINode::DeleteProperty(uint16_t aCategory, nsAtom *aPropertyName)
+nsINode::DeleteProperty(nsAtom* aPropertyName)
 {
-  OwnerDoc()->PropertyTable(aCategory)->DeleteProperty(this, aPropertyName);
+  OwnerDoc()->PropertyTable().DeleteProperty(this, aPropertyName);
 }
 
 void*
-nsINode::UnsetProperty(uint16_t aCategory, nsAtom *aPropertyName,
-                       nsresult *aStatus)
+nsINode::UnsetProperty(nsAtom* aPropertyName, nsresult* aStatus)
 {
-  return OwnerDoc()->PropertyTable(aCategory)->UnsetProperty(this,
-                                                             aPropertyName,
-                                                             aStatus);
+  return OwnerDoc()->PropertyTable().UnsetProperty(this, aPropertyName, aStatus);
 }
 
 nsINode::nsSlots*
@@ -737,103 +732,6 @@ nsINode::LookupPrefix(const nsAString& aNamespaceURI, nsAString& aPrefix)
   SetDOMStringToNull(aPrefix);
 }
 
-static nsresult
-SetUserDataProperty(uint16_t aCategory, nsINode *aNode, nsAtom *aKey,
-                    nsISupports* aValue, void** aOldValue)
-{
-  nsresult rv = aNode->SetProperty(aCategory, aKey, aValue,
-                                   nsPropertyTable::SupportsDtorFunc, true,
-                                   aOldValue);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Property table owns it now.
-  NS_ADDREF(aValue);
-
-  return NS_OK;
-}
-
-nsresult
-nsINode::SetUserData(const nsAString &aKey, nsIVariant *aData, nsIVariant **aResult)
-{
-  OwnerDoc()->WarnOnceAbout(nsIDocument::eGetSetUserData);
-  *aResult = nullptr;
-
-  RefPtr<nsAtom> key = NS_Atomize(aKey);
-  if (!key) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsresult rv;
-  void *data;
-  if (aData) {
-    rv = SetUserDataProperty(DOM_USER_DATA, this, key, aData, &data);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-  else {
-    data = UnsetProperty(DOM_USER_DATA, key);
-  }
-
-  // Take over ownership of the old data from the property table.
-  nsCOMPtr<nsIVariant> oldData = dont_AddRef(static_cast<nsIVariant*>(data));
-  oldData.swap(*aResult);
-  return NS_OK;
-}
-
-void
-nsINode::SetUserData(JSContext* aCx, const nsAString& aKey,
-                     JS::Handle<JS::Value> aData,
-                     JS::MutableHandle<JS::Value> aRetval,
-                     ErrorResult& aError)
-{
-  nsCOMPtr<nsIVariant> data;
-  aError = nsContentUtils::XPConnect()->JSValToVariant(aCx, aData, getter_AddRefs(data));
-  if (aError.Failed()) {
-    return;
-  }
-
-  nsCOMPtr<nsIVariant> oldData;
-  aError = SetUserData(aKey, data, getter_AddRefs(oldData));
-  if (aError.Failed()) {
-    return;
-  }
-
-  if (!oldData) {
-    aRetval.setNull();
-    return;
-  }
-
-  JSAutoCompartment ac(aCx, GetWrapper());
-  aError = nsContentUtils::XPConnect()->VariantToJS(aCx, GetWrapper(), oldData,
-                                                    aRetval);
-}
-
-nsIVariant*
-nsINode::GetUserData(const nsAString& aKey)
-{
-  OwnerDoc()->WarnOnceAbout(nsIDocument::eGetSetUserData);
-  RefPtr<nsAtom> key = NS_Atomize(aKey);
-  if (!key) {
-    return nullptr;
-  }
-
-  return static_cast<nsIVariant*>(GetProperty(DOM_USER_DATA, key));
-}
-
-void
-nsINode::GetUserData(JSContext* aCx, const nsAString& aKey,
-                     JS::MutableHandle<JS::Value> aRetval, ErrorResult& aError)
-{
-  nsIVariant* data = GetUserData(aKey);
-  if (!data) {
-    aRetval.setNull();
-    return;
-  }
-
-  JSAutoCompartment ac(aCx, GetWrapper());
-  aError = nsContentUtils::XPConnect()->VariantToJS(aCx, GetWrapper(), data,
-                                                    aRetval);
-}
-
 uint16_t
 nsINode::CompareDocumentPosition(nsINode& aOtherNode) const
 {
@@ -1048,10 +946,8 @@ nsINode::IsEqualNode(nsINode* aOther)
       }
       case DOCUMENT_TYPE_NODE:
       {
-        nsCOMPtr<nsIDOMDocumentType> docType1 = do_QueryInterface(node1);
-        nsCOMPtr<nsIDOMDocumentType> docType2 = do_QueryInterface(node2);
-
-        NS_ASSERTION(docType1 && docType2, "Why don't we have a document type node?");
+        DocumentType* docType1 = static_cast<DocumentType*>(node1);
+        DocumentType* docType2 = static_cast<DocumentType*>(node2);
 
         // Public ID
         docType1->GetPublicId(string1);
@@ -1415,7 +1311,6 @@ nsINode::Traverse(nsINode *tmp, nsCycleCollectionTraversalCallback &cb)
   }
 
   if (tmp->HasProperties()) {
-    nsNodeUtils::TraverseUserData(tmp, cb);
     nsCOMArray<nsISupports>* objects =
       static_cast<nsCOMArray<nsISupports>*>(tmp->GetProperty(nsGkAtoms::keepobjectsalive));
     if (objects) {
@@ -1451,7 +1346,6 @@ nsINode::Unlink(nsINode* tmp)
   }
 
   if (tmp->HasProperties()) {
-    nsNodeUtils::UnlinkUserData(tmp);
     tmp->DeleteProperty(nsGkAtoms::keepobjectsalive);
   }
 }

@@ -116,6 +116,7 @@ using namespace mozilla::widget;
 #include "mozilla/layers/CompositorThread.h"
 
 #ifdef MOZ_X11
+#include "GLContextGLX.h" // for GLContextGLX::FindVisual()
 #include "GtkCompositorWidget.h"
 #include "gfxXlibSurface.h"
 #include "WindowSurfaceX11Image.h"
@@ -139,6 +140,7 @@ using namespace mozilla::gfx;
 using namespace mozilla::widget;
 using namespace mozilla::layers;
 using mozilla::gl::GLContext;
+using mozilla::gl::GLContextGLX;
 
 // Don't put more than this many rects in the dirty region, just fluff
 // out to the bounding-box if there are more
@@ -2937,15 +2939,31 @@ IsCtrlAltTab(GdkEventKey *aEvent)
 }
 
 bool
-nsWindow::DispatchKeyDownEvent(GdkEventKey *aEvent, bool *aCancelled)
+nsWindow::DispatchKeyDownOrKeyUpEvent(GdkEventKey* aEvent,
+                                      bool aIsProcessedByIME,
+                                      bool* aIsCancelled)
 {
-    NS_PRECONDITION(aCancelled, "aCancelled must not be null");
+    MOZ_ASSERT(aIsCancelled, "aIsCancelled must not be nullptr");
 
-    *aCancelled = false;
+    *aIsCancelled = false;
 
-    if (IsCtrlAltTab(aEvent)) {
+    if (aEvent->type == GDK_KEY_PRESS && IsCtrlAltTab(aEvent)) {
         return false;
     }
+
+    EventMessage message =
+        aEvent->type == GDK_KEY_PRESS ? eKeyDown : eKeyUp;
+    WidgetKeyboardEvent keyEvent(true, message, this);
+    KeymapWrapper::InitKeyEvent(keyEvent, aEvent, aIsProcessedByIME);
+    return DispatchKeyDownOrKeyUpEvent(keyEvent, aIsCancelled);
+}
+bool
+nsWindow::DispatchKeyDownOrKeyUpEvent(WidgetKeyboardEvent& aKeyboardEvent,
+                                      bool* aIsCancelled)
+{
+    MOZ_ASSERT(aIsCancelled, "aIsCancelled must not be nullptr");
+
+    *aIsCancelled = false;
 
     RefPtr<TextEventDispatcher> dispatcher = GetTextEventDispatcher();
     nsresult rv = dispatcher->BeginNativeInputTransaction();
@@ -2953,14 +2971,12 @@ nsWindow::DispatchKeyDownEvent(GdkEventKey *aEvent, bool *aCancelled)
         return FALSE;
     }
 
-    WidgetKeyboardEvent keydownEvent(true, eKeyDown, this);
-    KeymapWrapper::InitKeyEvent(keydownEvent, aEvent);
     nsEventStatus status = nsEventStatus_eIgnore;
     bool dispatched =
-        dispatcher->DispatchKeyboardEvent(eKeyDown, keydownEvent,
-                                          status, aEvent);
-    *aCancelled = (status == nsEventStatus_eConsumeNoDefault);
-    return dispatched ? TRUE : FALSE;
+        dispatcher->DispatchKeyboardEvent(aKeyboardEvent.mMessage,
+                                          aKeyboardEvent, status, nullptr);
+    *aIsCancelled = (status == nsEventStatus_eConsumeNoDefault);
+    return dispatched;
 }
 
 WidgetEventTime
@@ -3045,7 +3061,7 @@ nsWindow::OnKeyPressEvent(GdkEventKey *aEvent)
     // KEYDOWN -> KEYPRESS -> KEYUP -> KEYDOWN -> KEYPRESS -> KEYUP...
 
     bool isKeyDownCancelled = false;
-    if (DispatchKeyDownEvent(aEvent, &isKeyDownCancelled) &&
+    if (DispatchKeyDownOrKeyUpEvent(aEvent, false, &isKeyDownCancelled) &&
         (MOZ_UNLIKELY(mIsDestroyed) || isKeyDownCancelled)) {
         return TRUE;
     }
@@ -3094,7 +3110,7 @@ nsWindow::OnKeyPressEvent(GdkEventKey *aEvent)
     }
 
     WidgetKeyboardEvent keypressEvent(true, eKeyPress, this);
-    KeymapWrapper::InitKeyEvent(keypressEvent, aEvent);
+    KeymapWrapper::InitKeyEvent(keypressEvent, aEvent, false);
 
     // before we dispatch a key, check if it's the context menu key.
     // If so, send a context menu key event instead.
@@ -3178,7 +3194,7 @@ nsWindow::MaybeDispatchContextMenuEvent(const GdkEventKey* aEvent)
 }
 
 gboolean
-nsWindow::OnKeyReleaseEvent(GdkEventKey *aEvent)
+nsWindow::OnKeyReleaseEvent(GdkEventKey* aEvent)
 {
     LOGFOCUS(("OnKeyReleaseEvent [%p]\n", (void *)this));
 
@@ -3186,16 +3202,10 @@ nsWindow::OnKeyReleaseEvent(GdkEventKey *aEvent)
         return TRUE;
     }
 
-    RefPtr<TextEventDispatcher> dispatcher = GetTextEventDispatcher();
-    nsresult rv = dispatcher->BeginNativeInputTransaction();
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-        return false;
+    bool isCancelled = false;
+    if (NS_WARN_IF(!DispatchKeyDownOrKeyUpEvent(aEvent, false, &isCancelled))) {
+        return FALSE;
     }
-
-    WidgetKeyboardEvent keyupEvent(true, eKeyUp, this);
-    KeymapWrapper::InitKeyEvent(keyupEvent, aEvent);
-    nsEventStatus status = nsEventStatus_eIgnore;
-    dispatcher->DispatchKeyboardEvent(eKeyUp, keyupEvent, status, aEvent);
 
     return TRUE;
 }
@@ -3632,11 +3642,30 @@ nsWindow::Create(nsIWidget* aParent,
         if (Preferences::GetBool("mozilla.widget.use-argb-visuals", false))
             useAlphaVisual = true;
 
-        // We need to select an ARGB visual here instead of in
-        // SetTransparencyMode() because it has to be done before the
-        // widget is realized.  An ARGB visual is only useful if we
-        // are on a compositing window manager.
-        if (useAlphaVisual) {
+        bool useWebRender = gfxPlatform::Initialized() &&
+            gfx::gfxVars::UseWebRender() &&
+            AllowWebRenderForThisWindow();
+
+        // If using WebRender on X11, we need to select a visual with a depth buffer,
+        // as well as an alpha channel if transparency is requested. This must be done
+        // before the widget is realized.
+        if (mIsX11Display && useWebRender) {
+            auto display =
+                GDK_DISPLAY_XDISPLAY(gtk_widget_get_display(mShell));
+            auto screen = gtk_widget_get_screen(mShell);
+            int screenNumber = GDK_SCREEN_XNUMBER(screen);
+            int visualId = 0;
+
+            if (GLContextGLX::FindVisual(display, screenNumber,
+                                         useWebRender, useAlphaVisual,
+                                         &visualId)) {
+                // If we're using CSD, rendering will go through mContainer, but
+                // it will inherit this visual as it is a child of mShell.
+                gtk_widget_set_visual(mShell,
+                                      gdk_x11_screen_lookup_visual(screen,
+                                                                   visualId));
+            }
+        } else if (useAlphaVisual) {
             GdkScreen *screen = gtk_widget_get_screen(mShell);
             if (gdk_screen_is_composited(screen)) {
                 GdkVisual *visual = gdk_screen_get_rgba_visual(screen);
@@ -3751,7 +3780,7 @@ nsWindow::Create(nsIWidget* aParent,
         // it explicitly now.
         gtk_widget_realize(mShell);
 
-        /* There are two cases here:
+        /* There are several cases here:
          *
          * 1) We're running on Gtk+ without client side decorations.
          *    Content is rendered to mShell window and we listen
@@ -7094,7 +7123,7 @@ nsWindow::SetProgress(unsigned long progressPercent)
     return;
   }
 
-  progressPercent = CLAMP(progressPercent, 0, 100);
+  progressPercent = MIN(progressPercent, 100);
 
   set_window_hint_cardinal(GDK_WINDOW_XID(gtk_widget_get_window(mShell)),
                            PROGRESS_HINT,

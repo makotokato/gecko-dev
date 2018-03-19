@@ -84,6 +84,7 @@ enum class EditAction : int32_t;
 
 namespace dom {
 class DataTransfer;
+class DragEvent;
 class Element;
 class EventTarget;
 class Text;
@@ -1120,13 +1121,7 @@ public:
   }
   static nsIContent* GetNodeAtRangeOffsetPoint(const RawRangeBoundary& aPoint);
 
-  static nsresult GetStartNodeAndOffset(Selection* aSelection,
-                                        nsINode** aStartContainer,
-                                        int32_t* aStartOffset);
   static EditorRawDOMPoint GetStartPoint(Selection* aSelection);
-  static nsresult GetEndNodeAndOffset(Selection* aSelection,
-                                      nsINode** aEndContainer,
-                                      int32_t* aEndOffset);
   static EditorRawDOMPoint GetEndPoint(Selection* aSelection);
 
   static nsresult GetEndChildNode(Selection* aSelection,
@@ -1462,7 +1457,7 @@ public:
                                           int32_t aDestOffset,
                                           bool aDoDeleteSelection) = 0;
 
-  virtual nsresult InsertFromDrop(nsIDOMEvent* aDropEvent) = 0;
+  virtual nsresult InsertFromDrop(dom::DragEvent* aDropEvent) = 0;
 
   /**
    * GetIMESelectionStartOffsetIn() returns the start offset of IME selection in
