@@ -150,7 +150,7 @@ inline bool supportsSSE2()
         return supports;
     }
 
-#if defined(ANGLE_PLATFORM_WINDOWS) && (defined(_M_IX86) || defined(_M_X64))
+#if defined(ANGLE_PLATFORM_WINDOWS)
     {
         int info[4];
         __cpuid(info, 0);
@@ -162,7 +162,7 @@ inline bool supportsSSE2()
             supports = (info[3] >> 26) & 1;
         }
     }
-#endif  // defined(ANGLE_PLATFORM_WINDOWS) && (defined(_M_Ix86) || defined(_M_X64))
+#endif  // defined(ANGLE_PLATFORM_WINDOWS)
     checked = true;
     return supports;
 #else  // defined(ANGLE_USE_SSE)
