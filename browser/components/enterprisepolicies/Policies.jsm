@@ -12,6 +12,7 @@ XPCOMUtils.defineLazyServiceGetter(this, "gXulStore",
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   BookmarksPolicies: "resource:///modules/policies/BookmarksPolicies.jsm",
+  ProxyPolicies: "resource:///modules/policies/ProxyPolicies.jsm",
 });
 
 const PREF_LOGLEVEL           = "browser.policies.loglevel";
@@ -297,9 +298,11 @@ var Policies = {
         setAndLockPref("pref.browser.homepage.disable_button.bookmark_page", true);
         setAndLockPref("pref.browser.homepage.disable_button.restore_default", true);
       } else {
+        setDefaultPref("browser.startup.homepage", homepages);
+        setDefaultPref("browser.startup.page", 1);
         runOncePerModification("setHomepage", homepages, () => {
-          Services.prefs.setStringPref("browser.startup.homepage", homepages);
-          Services.prefs.setIntPref("browser.startup.page", 1);
+          Services.prefs.clearUserPref("browser.startup.homepage");
+          Services.prefs.clearUserPref("browser.startup.page");
         });
       }
     }
@@ -322,6 +325,17 @@ var Policies = {
   "Popups": {
     onBeforeUIStartup(manager, param) {
       addAllowDenyPermissions("popup", param.Allow, null);
+    }
+  },
+
+  "Proxy": {
+    onBeforeAddons(manager, param) {
+      if (param.Locked) {
+        manager.disallowFeature("changeProxySettings");
+        ProxyPolicies.configureProxySettings(param, setAndLockPref);
+      } else {
+        ProxyPolicies.configureProxySettings(param, setDefaultPref);
+      }
     }
   },
 

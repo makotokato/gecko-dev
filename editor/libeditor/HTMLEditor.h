@@ -21,7 +21,6 @@
 #include "nsCOMPtr.h"
 #include "nsICSSLoaderObserver.h"
 #include "nsIDocumentObserver.h"
-#include "nsIDOMElement.h"
 #include "nsIDOMEventListener.h"
 #include "nsIEditorMailSupport.h"
 #include "nsIEditorStyleSheets.h"
@@ -39,7 +38,7 @@ class nsDocumentFragment;
 class nsITransferable;
 class nsIClipboard;
 class nsIDOMDocument;
-class nsIDOMMouseEvent;
+class nsIDOMElement;
 class nsILinkHandler;
 class nsTableWrapperFrame;
 class nsIDOMRange;
@@ -58,6 +57,7 @@ struct PropItem;
 template<class T> class OwningNonNull;
 namespace dom {
 class DocumentFragment;
+class MouseEvent;
 } // namespace dom
 namespace widget {
 struct IMEState;
@@ -386,7 +386,7 @@ public:
                                  EStripWrappers aStripWrappers) override;
   nsresult DeleteNode(nsINode* aNode);
   NS_IMETHOD DeleteNode(nsIDOMNode* aNode) override;
-  nsresult DeleteText(nsGenericDOMDataNode& aTextNode, uint32_t aOffset,
+  nsresult DeleteText(dom::CharacterData& aTextNode, uint32_t aOffset,
                       uint32_t aLength);
   virtual nsresult
   InsertTextImpl(nsIDocument& aDocument,
@@ -535,7 +535,7 @@ public:
    * event callback when the mouse pointer is moved
    * @param aMouseEvent [IN] the event
    */
-  nsresult OnMouseMove(nsIDOMMouseEvent* aMouseEvent);
+  nsresult OnMouseMove(dom::MouseEvent* aMouseEvent);
 
   /**
    * Modifies the table containing the selection according to the
@@ -1332,7 +1332,7 @@ protected:
   void HideGrabber();
 
   ManualNACPtr CreateGrabber(nsIContent& aParentContent);
-  nsresult StartMoving(nsIDOMElement* aHandle);
+  nsresult StartMoving();
   nsresult SetFinalPosition(int32_t aX, int32_t aY);
   void AddPositioningOffset(int32_t& aX, int32_t& aY);
   void SnapToGrid(int32_t& newX, int32_t& newY);

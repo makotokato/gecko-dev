@@ -84,7 +84,6 @@
 #include "nsXULTooltipListener.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozAutoDocUpdate.h"
-#include "nsIDOMXULCommandEvent.h"
 #include "nsCCUncollectableMarker.h"
 #include "nsICSSDeclaration.h"
 #include "nsLayoutUtils.h"
@@ -92,7 +91,9 @@
 #include "mozilla/dom/XULElementBinding.h"
 #include "mozilla/dom/BoxObject.h"
 #include "mozilla/dom/HTMLIFrameElement.h"
+#include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/MutationEventBinding.h"
+#include "mozilla/dom/XULCommandEvent.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -615,7 +616,7 @@ nsXULElement::PerformAccesskey(bool aKeyCausesActivation,
         }
         if (aKeyCausesActivation &&
             !content->IsAnyOfXULElements(nsGkAtoms::textbox, nsGkAtoms::menulist)) {
-          elm->ClickWithInputSource(nsIDOMMouseEvent::MOZ_SOURCE_KEYBOARD, aIsTrustedEvent);
+          elm->ClickWithInputSource(MouseEventBinding::MOZ_SOURCE_KEYBOARD, aIsTrustedEvent);
         }
     } else {
         return content->PerformAccesskey(aKeyCausesActivation, aIsTrustedEvent);
@@ -1359,16 +1360,15 @@ nsXULElement::DispatchXULCommand(const EventChainVisitor& aVisitor,
         // sourceEvent will be the original command event that we're
         // handling.
         nsCOMPtr<nsIDOMEvent> domEvent = aVisitor.mDOMEvent;
-        uint16_t inputSource = nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN;
+        uint16_t inputSource = MouseEventBinding::MOZ_SOURCE_UNKNOWN;
         while (domEvent) {
             Event* event = domEvent->InternalDOMEvent();
             NS_ENSURE_STATE(!SameCOMIdentity(event->GetOriginalTarget(),
                                              commandElt));
-            nsCOMPtr<nsIDOMXULCommandEvent> commandEvent =
-                do_QueryInterface(domEvent);
+            RefPtr<XULCommandEvent> commandEvent = event->AsXULCommandEvent();
             if (commandEvent) {
-                commandEvent->GetSourceEvent(getter_AddRefs(domEvent));
-                commandEvent->GetInputSource(&inputSource);
+                domEvent = commandEvent->GetSourceEvent();
+                inputSource = commandEvent->InputSource();
             } else {
                 domEvent = nullptr;
             }
@@ -1406,12 +1406,11 @@ nsXULElement::GetEventTargetParent(EventChainPreVisitor& aVisitor)
         !IsXULElement(nsGkAtoms::command)) {
         // Check that we really have an xul command event. That will be handled
         // in a special way.
-        nsCOMPtr<nsIDOMXULCommandEvent> xulEvent =
-            do_QueryInterface(aVisitor.mDOMEvent);
         // See if we have a command elt.  If so, we execute on the command
         // instead of on our content element.
         nsAutoString command;
-        if (xulEvent &&
+        if (aVisitor.mDOMEvent &&
+            aVisitor.mDOMEvent->InternalDOMEvent()->AsXULCommandEvent() &&
             GetAttr(kNameSpaceID_None, nsGkAtoms::command, command) &&
             !command.IsEmpty()) {
             // Stop building the event target chain for the original event.
@@ -1664,7 +1663,7 @@ nsXULElement::GetParentTree(nsIDOMXULMultiSelectControlElement** aTreeElement)
 void
 nsXULElement::Click(CallerType aCallerType)
 {
-  ClickWithInputSource(nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN,
+  ClickWithInputSource(MouseEventBinding::MOZ_SOURCE_UNKNOWN,
                        aCallerType == CallerType::System);
 }
 

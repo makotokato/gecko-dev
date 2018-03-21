@@ -12,7 +12,7 @@ add_task(async function() {
   await openPreferencesViaOpenPreferencesAPI("paneGeneral", { leaveOpen: true });
   let searchInput = gBrowser.contentDocument.getElementById("searchInput");
   is_element_visible(searchInput, "Search box should be shown");
-  await BrowserTestUtils.removeTab(gBrowser.selectedTab);
+  BrowserTestUtils.removeTab(gBrowser.selectedTab);
 });
 
 /**
@@ -60,7 +60,7 @@ add_task(async function() {
     }
   }
 
-  await BrowserTestUtils.removeTab(gBrowser.selectedTab);
+  BrowserTestUtils.removeTab(gBrowser.selectedTab);
 });
 
 /**
@@ -110,7 +110,6 @@ add_task(async function() {
     let child = mainPrefTag.children[i];
     if (child.id == "paneGeneral"
       || child.id == "startupGroup"
-      || child.id == "homepageGroup"
       || child.id == "languagesGroup"
       || child.id == "fontsGroup"
       || child.id == "downloadsGroup"
@@ -129,11 +128,11 @@ add_task(async function() {
       || child.id == "networkProxyCategory") {
       is_element_visible(child, "Should be in general tab");
     } else if (child.id) {
-      is_element_hidden(child, "Should not be in general tab");
+      is_element_hidden(child, `Should not be in general tab: ${child.id}`);
     }
   }
 
-  await BrowserTestUtils.removeTab(gBrowser.selectedTab);
+  BrowserTestUtils.removeTab(gBrowser.selectedTab);
 });
 
 /**
@@ -171,7 +170,7 @@ add_task(async function() {
 
   is_element_hidden(noResultsEl, "Should not be in search results");
 
-  await BrowserTestUtils.removeTab(gBrowser.selectedTab);
+  BrowserTestUtils.removeTab(gBrowser.selectedTab);
 });
 
 /**
@@ -207,7 +206,7 @@ add_task(async function() {
   // Checks if back to normal
   is_element_visible(generalPane, "Should be in generalPane");
 
-  await BrowserTestUtils.removeTab(gBrowser.selectedTab);
+  BrowserTestUtils.removeTab(gBrowser.selectedTab);
 });
 
 /**
@@ -250,7 +249,7 @@ add_task(async function() {
   // Checks if back to normal
   is_element_visible(generalPane, "Should be in generalPane");
 
-  await BrowserTestUtils.removeTab(gBrowser.selectedTab);
+  BrowserTestUtils.removeTab(gBrowser.selectedTab);
 });
 
 /**
@@ -282,5 +281,5 @@ add_task(async function() {
     }
   }
 
-  await BrowserTestUtils.removeTab(gBrowser.selectedTab);
+  BrowserTestUtils.removeTab(gBrowser.selectedTab);
 });

@@ -131,6 +131,8 @@ IsThingPoisoned(T* thing)
         JS_MOVED_TENURED_PATTERN,
         JS_SWEPT_TENURED_PATTERN,
         JS_ALLOCATED_TENURED_PATTERN,
+        JS_FREED_HEAP_PTR_PATTERN,
+        JS_SWEPT_TI_PATTERN,
         JS_SWEPT_CODE_PATTERN
     };
     const int numPoisonBytes = sizeof(poisonBytes) / sizeof(poisonBytes[0]);
@@ -2848,10 +2850,9 @@ void
 js::gc::StoreBuffer::traceWholeCells(TenuringTracer& mover)
 {
     for (ArenaCellSet* cells = bufferWholeCell; cells; cells = cells->next) {
-        Arena* arena = cells->arena;
-        MOZ_ASSERT(IsCellPointerValid(arena));
+        cells->check();
 
-        MOZ_ASSERT(arena->bufferedCells() == cells);
+        Arena* arena = cells->arena;
         arena->bufferedCells() = &ArenaCellSet::Empty;
 
         JS::TraceKind kind = MapAllocToTraceKind(arena->getAllocKind());

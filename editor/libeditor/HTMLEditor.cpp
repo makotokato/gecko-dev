@@ -28,7 +28,6 @@
 #include "nsIDOMDocument.h"
 #include "nsIDocumentInlines.h"
 #include "nsIDOMEventTarget.h"
-#include "nsIDOMMouseEvent.h"
 #include "nsISelectionController.h"
 #include "nsILinkHandler.h"
 #include "nsIInlineSpellChecker.h"
@@ -377,6 +376,10 @@ HTMLEditor::UpdateRootElement()
 already_AddRefed<nsIContent>
 HTMLEditor::FindSelectionRoot(nsINode* aNode)
 {
+  if (NS_WARN_IF(!aNode)) {
+    return nullptr;
+  }
+
   NS_PRECONDITION(aNode->IsNodeOfType(nsINode::eDOCUMENT) ||
                   aNode->IsContent(),
                   "aNode must be content or document node");
@@ -3194,7 +3197,7 @@ HTMLEditor::DeleteNode(nsIDOMNode* aNode)
 }
 
 nsresult
-HTMLEditor::DeleteText(nsGenericDOMDataNode& aCharData,
+HTMLEditor::DeleteText(CharacterData& aCharData,
                        uint32_t aOffset,
                        uint32_t aLength)
 {

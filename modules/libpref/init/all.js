@@ -225,7 +225,11 @@ pref("dom.gamepad.haptic_feedback.enabled", true);
 // If this is true, TextEventDispatcher dispatches keydown and keyup events
 // even during composition (keypress events are never fired during composition
 // even if this is true).
+#ifdef EARLY_BETA_OR_EARLIER
+pref("dom.keyboardevent.dispatch_during_composition", true);
+#else
 pref("dom.keyboardevent.dispatch_during_composition", false);
+#endif
 
 // If this is true, TextEventDispatcher dispatches keypress event with setting
 // WidgetEvent::mFlags::mOnlySystemGroupDispatchInContent to true if it won't
@@ -733,6 +737,7 @@ pref("apz.keyboard.passive-listeners", true);
 pref("apz.keyboard.enabled", false);
 pref("apz.keyboard.passive-listeners", false);
 #endif
+pref("apz.max_tap_time", 300);
 pref("apz.max_velocity_inches_per_ms", "-1.0");
 pref("apz.max_velocity_queue_size", 5);
 pref("apz.min_skate_speed", "1.0");
@@ -1794,6 +1799,13 @@ pref("network.http.connection-timeout", 90);
 // seconds.
 pref("network.http.tls-handshake-timeout", 30);
 
+// The number of seconds after which we time out a connection of a retry (fallback)
+// socket when a certain IP family is already preferred.  This shorter connection
+// timeout allows us to find out more quickly that e.g. an IPv6 host is no longer
+// available and let us try an IPv4 address, if provided for the host name.
+// Set to '0' to use the default connection timeout.
+pref("network.http.fallback-connection-timeout", 5);
+
 // The number of seconds to allow active connections to prove that they have
 // traffic before considered stalled, after a network change has been detected
 // and signalled.
@@ -2274,7 +2286,7 @@ pref("network.auth.private-browsing-sso", false);
 // Control how throttling of http responses works - number of ms that each
 // suspend and resume period lasts (prefs named appropriately)
 pref("network.http.throttle.enable", true);
-pref("network.http.throttle.version", 1);
+pref("network.http.throttle.version", 2);
 
 // V1 prefs
 pref("network.http.throttle.suspend-for", 900);
@@ -2956,10 +2968,14 @@ pref("layout.css.report_errors", true);
 pref("layout.css.visited_links_enabled", true);
 
 // Pref to control whether @-moz-document rules are enabled in content pages.
-#ifdef EARLY_BETA_OR_EARLIER
 pref("layout.css.moz-document.content.enabled",  false);
+
+// Pref to control whether @-moz-document url-prefix() is parsed in content
+// pages. Only effective when layout.css.moz-document.content.enabled is false.
+#ifdef EARLY_BETA_OR_EARLIER
+pref("layout.css.moz-document.url-prefix-hack.enabled", false);
 #else
-pref("layout.css.moz-document.content.enabled",  true);
+pref("layout.css.moz-document.url-prefix-hack.enabled", true);
 #endif
 
 // Override DPI. A value of -1 means use the maximum of 96 and the system DPI.

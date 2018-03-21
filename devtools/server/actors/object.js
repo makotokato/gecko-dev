@@ -1869,8 +1869,9 @@ DebuggerServer.ObjectActorPreviewers.Object = [
       }
     } else if (obj.class == "Attr") {
       preview.value = hooks.createValueGrip(rawObj.value);
-    } else if (rawObj instanceof Ci.nsIDOMText ||
-               rawObj instanceof Ci.nsIDOMComment) {
+    } else if (obj.class == "Text" ||
+               obj.class == "CDATASection" ||
+               obj.class == "Comment") {
       preview.textContent = hooks.createValueGrip(rawObj.textContent);
     }
 
@@ -1894,7 +1895,11 @@ DebuggerServer.ObjectActorPreviewers.Object = [
     }
 
     let props = [];
-    if (rawObj instanceof Ci.nsIDOMMouseEvent) {
+    if (obj.class == "MouseEvent" ||
+        obj.class == "DragEvent" ||
+        obj.class == "PointerEvent" ||
+        obj.class == "SimpleGestureEvent" ||
+        obj.class == "WheelEvent") {
       props.push("buttons", "clientX", "clientY", "layerX", "layerY");
     } else if (obj.class == "KeyboardEvent") {
       let modifiers = [];

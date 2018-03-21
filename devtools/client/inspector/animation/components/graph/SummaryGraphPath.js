@@ -35,17 +35,26 @@ class SummaryGraphPath extends PureComponent {
     this.state = {
       // Duration which can display in one pixel.
       durationPerPixel: 0,
+      // To avoid rendering while the state is updating
+      // since we call an async function in updateState.
+      isStateUpdating: false,
       // List of keyframe which consists by only offset and easing.
       keyframesList: [],
     };
   }
 
   componentDidMount() {
-    this.updateState(this.props.animation);
+    // No need to set isStateUpdating state since paint sequence is finish here.
+    this.updateState(this.props);
   }
 
   componentWillReceiveProps(nextProps) {
-    this.updateState(nextProps.animation);
+    this.setState({ isStateUpdating: true });
+    this.updateState(nextProps);
+  }
+
+  shouldComponentUpdate(nextProps, nextState) {
+    return !nextState.isStateUpdating;
   }
 
   /**
@@ -141,21 +150,38 @@ class SummaryGraphPath extends PureComponent {
     return true;
   }
 
-  async updateState(animation) {
+  async updateState(props) {
     const {
+      animation,
       emitEventForTest,
       getAnimatedPropertyMap,
       timeScale,
-    } = this.props;
+    } = props;
 
-    const animatedPropertyMap = await getAnimatedPropertyMap(animation);
+    let animatedPropertyMap = null;
+
+    try {
+      animatedPropertyMap = await getAnimatedPropertyMap(animation);
+    } catch (e) {
+      // Expected if we've already been destroyed or other node have been selected
+      // in the meantime.
+      console.error(e);
+      return;
+    }
+
     const keyframesList = this.getOffsetAndEasingOnlyKeyframes(animatedPropertyMap);
 
     const thisEl = ReactDOM.findDOMNode(this);
     const totalDuration = this.getTotalDuration(animation, timeScale);
     const durationPerPixel = totalDuration / thisEl.parentNode.clientWidth;
 
-    this.setState({ durationPerPixel, keyframesList });
+    this.setState(
+      {
+        durationPerPixel,
+        isStateUpdating: false,
+        keyframesList
+      }
+    );
 
     emitEventForTest("animation-summary-graph-rendered");
   }

@@ -44,7 +44,6 @@
 #include "mozilla/RangeBoundary.h"
 #include "nsIContentPolicy.h"
 #include "nsIDocument.h"
-#include "nsIDOMMouseEvent.h"
 #include "nsPIDOMWindow.h"
 #include "nsRFPService.h"
 
@@ -2113,7 +2112,7 @@ public:
 
   /**
    * This method creates and dispatches "command" event, which implements
-   * nsIDOMXULCommandEvent.
+   * XULCommandEvent.
    * If aShell is not null, dispatching goes via
    * nsIPresShell::HandleDOMEventWithTarget.
    */
@@ -2125,7 +2124,9 @@ public:
                                      bool aAlt = false,
                                      bool aShift = false,
                                      bool aMeta = false,
-                                     uint16_t inputSource = nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN);
+                                     // Including MouseEventBinding here leads
+                                     // to incude loops, unfortunately.
+                                     uint16_t inputSource = 0 /* MouseEventBinding::MOZ_SOURCE_UNKNOWN */);
 
   static bool CheckMayLoad(nsIPrincipal* aPrincipal, nsIChannel* aChannel, bool aAllowIfInheritsPrincipal);
 

@@ -197,7 +197,6 @@
 
 #include "nsLayoutStylesheetCache.h"
 
-#include "ContentPrefs.h"
 #include "mozilla/Sprintf.h"
 
 #ifdef MOZ_WEBRTC
@@ -2009,7 +2008,7 @@ ContentParent::LaunchSubprocess(ProcessPriority aInitialPriority /* = PROCESS_PR
 
   // Serialize the early prefs.
   nsAutoCStringN<1024> prefs;
-  Preferences::SerializeEarlyPreferences(prefs);
+  Preferences::SerializePreferences(prefs);
 
   // Set up the shared memory.
   base::SharedMemory shm;
@@ -2163,6 +2162,60 @@ ContentParent::~ContentParent()
                !sBrowserContentParents->Contains(mRemoteType) ||
                !sBrowserContentParents->Get(mRemoteType)->Contains(this));
   }
+#ifdef NIGHTLY_BUILD
+  MessageChannel* channel = GetIPCChannel();
+
+  if (channel && !channel->Unsound_IsClosed()) {
+    nsString friendlyName;
+    FriendlyName(friendlyName, false);
+
+    AddRef();
+    nsrefcnt refcnt = Release();
+    uint32_t numQueuedMessages = 0;
+    numQueuedMessages = channel->Unsound_NumQueuedMessages();
+
+    nsPrintfCString msg("queued-ipc-messages/content-parent"
+                        "(%s, pid=%d, %s, 0x%p, refcnt=%" PRIuPTR
+                        ", numQueuedMessages=%d, remoteType=%s, "
+                        "mCalledClose=%s, mCalledKillHard=%s, "
+                        "mShutdownPending=%s, mIPCOpen=%s)",
+                        NS_ConvertUTF16toUTF8(friendlyName).get(),
+                        Pid(), "open channel",
+                        static_cast<nsIContentParent*>(this), refcnt,
+                        numQueuedMessages,
+                        NS_ConvertUTF16toUTF8(mRemoteType).get(),
+                        mCalledClose ? "true" : "false",
+                        mCalledKillHard ? "true" : "false",
+                        mShutdownPending ? "true" : "false",
+                        mIPCOpen ? "true" : "false");
+    CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("IPCFatalErrorMsg"),
+                                       msg);
+    switch (channel->GetChannelState__TotallyRacy()) {
+        case ChannelOpening:
+            MOZ_CRASH("MessageChannel destroyed without being closed " \
+                      "(mChannelState == ChannelOpening).");
+            break;
+        case ChannelConnected:
+            MOZ_CRASH("MessageChannel destroyed without being closed " \
+                      "(mChannelState == ChannelConnected).");
+            break;
+        case ChannelTimeout:
+            MOZ_CRASH("MessageChannel destroyed without being closed " \
+                      "(mChannelState == ChannelTimeout).");
+            break;
+        case ChannelClosing:
+            MOZ_CRASH("MessageChannel destroyed without being closed " \
+                      "(mChannelState == ChannelClosing).");
+            break;
+        case ChannelError:
+            MOZ_CRASH("MessageChannel destroyed without being closed " \
+                      "(mChannelState == ChannelError).");
+            break;
+        default:
+            MOZ_CRASH("MessageChannel destroyed without being closed.");
+    }
+  }
+#endif
 }
 
 void
@@ -2174,7 +2227,6 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority)
 
   XPCOMInitData xpcomInit;
 
-  Preferences::GetPreferences(&xpcomInit.prefs());
   nsCOMPtr<nsIIOService> io(do_GetIOService());
   MOZ_ASSERT(io, "No IO service?");
   DebugOnly<nsresult> rv = io->GetOffline(&xpcomInit.isOffline());

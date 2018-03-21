@@ -29,13 +29,11 @@ function debug(aMsg) {
 // Dispatches GeckoView:LocationChange to the GeckoView on location change when
 // active.
 // Implements nsIBrowserDOMWindow.
-// Implements nsILoadURIDelegate.
 class GeckoViewNavigation extends GeckoViewModule {
   init() {
-    this._frameScriptLoaded = false;
     this.window.QueryInterface(Ci.nsIDOMChromeWindow).browserDOMWindow = this;
 
-    this.eventDispatcher.registerListener(this, [
+    this.registerListener([
       "GeckoView:GoBack",
       "GeckoView:GoForward",
       "GeckoView:LoadUri",
@@ -56,7 +54,30 @@ class GeckoViewNavigation extends GeckoViewModule {
         this.browser.goForward();
         break;
       case "GeckoView:LoadUri":
-        this.browser.loadURI(aData.uri, null, null, null);
+        const { uri, referrer, baseUri, flags } = aData;
+
+        let navFlags = 0;
+
+        // These need to match the values in GeckoSession.LOAD_TYPE_*
+        if (flags & (1 << 0)) {
+          navFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CACHE;
+        }
+
+        if (flags & (1 << 1)) {
+          navFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_PROXY;
+        }
+
+        if (flags & (1 << 2)) {
+          navFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_EXTERNAL;
+        }
+
+        if (flags & (1 << 3)) {
+          navFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_POPUPS;
+        }
+
+        this.browser.loadURIWithFlags(uri, navFlags, referrer || null,
+                                      baseUri ? Services.io.newURI(baseUri) : null,
+                                      /* nsIPrincipal */ null);
         break;
       case "GeckoView:Reload":
         this.browser.reload();
@@ -203,11 +224,8 @@ class GeckoViewNavigation extends GeckoViewModule {
   register() {
     debug("register");
 
-    if (!this._frameScriptLoaded) {
-      this.messageManager.loadFrameScript(
-        "chrome://geckoview/content/GeckoViewNavigationContent.js", true);
-      this._frameScriptLoaded = true;
-    }
+    this.registerContent(
+      "chrome://geckoview/content/GeckoViewNavigationContent.js");
 
     let flags = Ci.nsIWebProgress.NOTIFY_LOCATION;
     this.progressFilter =

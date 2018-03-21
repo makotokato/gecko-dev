@@ -52,6 +52,7 @@
 #include "mozilla/dom/HTMLSlotElement.h"
 #include "mozilla/dom/HTMLTemplateElement.h"
 #include "mozilla/dom/IDTracker.h"
+#include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/KeyboardEventBinding.h"
 #include "mozilla/dom/IPCBlobUtils.h"
 #include "mozilla/dom/NodeBinding.h"
@@ -5799,9 +5800,7 @@ nsContentUtils::GetWindowProviderForContentProcess()
 already_AddRefed<nsPIDOMWindowOuter>
 nsContentUtils::GetMostRecentNonPBWindow()
 {
-  nsCOMPtr<nsIWindowMediator> windowMediator =
-    do_GetService(NS_WINDOWMEDIATOR_CONTRACTID);
-  nsCOMPtr<nsIWindowMediator_44> wm = do_QueryInterface(windowMediator);
+  nsCOMPtr<nsIWindowMediator> wm = do_GetService(NS_WINDOWMEDIATOR_CONTRACTID);
 
   nsCOMPtr<mozIDOMWindowProxy> window;
   wm->GetMostRecentNonPBWindow(u"navigator:browser",
@@ -6715,8 +6714,12 @@ nsContentUtils::DispatchXULCommand(nsIContent* aTarget,
   RefPtr<XULCommandEvent> xulCommand = new XULCommandEvent(doc, presContext,
                                                            nullptr);
   xulCommand->InitCommandEvent(NS_LITERAL_STRING("command"), true, true,
-                               doc->GetInnerWindow(), 0, aCtrl, aAlt, aShift,
-                               aMeta, aSourceEvent, aInputSource);
+                               nsGlobalWindowInner::Cast(doc->GetInnerWindow()),
+                               0, aCtrl, aAlt, aShift,
+                               aMeta,
+                               aSourceEvent ?
+                                 aSourceEvent->InternalDOMEvent() : nullptr,
+                               aInputSource, IgnoreErrors());
 
   if (aShell) {
     nsEventStatus status = nsEventStatus_eIgnore;
@@ -8690,8 +8693,8 @@ nsContentUtils::SendMouseEvent(const nsCOMPtr<nsIPresShell>& aPresShell,
     return NS_ERROR_FAILURE;
   }
 
-  if (aInputSourceArg == nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN) {
-    aInputSourceArg = nsIDOMMouseEvent::MOZ_SOURCE_MOUSE;
+  if (aInputSourceArg == MouseEventBinding::MOZ_SOURCE_UNKNOWN) {
+    aInputSourceArg = MouseEventBinding::MOZ_SOURCE_MOUSE;
   }
 
   WidgetMouseEvent event(true, msg, widget,

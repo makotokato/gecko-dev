@@ -856,7 +856,6 @@ FrameIter::operator++()
         MOZ_CRASH("Unexpected state");
       case INTERP:
         if (interpFrame()->isDebuggerEvalFrame() &&
-            interpFrame()->evalInFramePrev() &&
             data_.debuggerEvalOption_ == FOLLOW_DEBUGGER_EVAL_PREV_LINK)
         {
             AbstractFramePtr eifPrev = interpFrame()->evalInFramePrev();
@@ -891,15 +890,6 @@ FrameIter::copyData() const
     if (data && isIonScripted())
         data->ionInlineFrameNo_ = ionInlineFrames_.frameNo();
     return data;
-}
-
-AbstractFramePtr
-FrameIter::copyDataAsAbstractFramePtr() const
-{
-    AbstractFramePtr frame;
-    if (Data* data = copyData())
-        frame.ptr_ = uintptr_t(data);
-    return frame;
 }
 
 void*
@@ -1746,6 +1736,8 @@ void
 jit::JitActivation::startWasmTrap(wasm::Trap trap, uint32_t bytecodeOffset,
                                   const wasm::RegisterState& state)
 {
+    MOZ_ASSERT(!isWasmTrapping());
+
     bool unwound;
     wasm::UnwindState unwindState;
     MOZ_ALWAYS_TRUE(wasm::StartUnwinding(state, &unwindState, &unwound));
@@ -1762,62 +1754,23 @@ jit::JitActivation::startWasmTrap(wasm::Trap trap, uint32_t bytecodeOffset,
     if (unwound)
         bytecodeOffset = code.lookupCallSite(pc)->lineOrBytecode();
 
-    wasm::TrapData trapData;
-    trapData.resumePC = ((uint8_t*)state.pc) + jit::WasmTrapInstructionLength;
-    trapData.unwoundPC = pc;
-    trapData.trap = trap;
-    trapData.bytecodeOffset = bytecodeOffset;
-
-    cx_->runtime()->wasmTrapData = Some(trapData);
     setWasmExitFP(fp);
+    wasmTrapData_.emplace();
+    wasmTrapData_->resumePC = ((uint8_t*)state.pc) + jit::WasmTrapInstructionLength;
+    wasmTrapData_->unwoundPC = pc;
+    wasmTrapData_->trap = trap;
+    wasmTrapData_->bytecodeOffset = bytecodeOffset;
+
+    MOZ_ASSERT(isWasmTrapping());
 }
 
 void
 jit::JitActivation::finishWasmTrap()
 {
     MOZ_ASSERT(isWasmTrapping());
-
-    cx_->runtime()->wasmTrapData.ref().reset();
     packedExitFP_ = nullptr;
-}
-
-bool
-jit::JitActivation::isWasmTrapping() const
-{
-    JSRuntime* rt = cx_->runtime();
-    if (!rt->wasmTrapData.ref())
-        return false;
-
-    Activation* act = cx_->activation();
-    while (act && !act->hasWasmExitFP())
-        act = act->prev();
-
-    if (act != this)
-        return false;
-
-    MOZ_ASSERT(wasmExitFP()->instance()->code().containsCodePC(rt->wasmTrapData->unwoundPC));
-    return true;
-}
-
-void*
-jit::JitActivation::wasmTrapResumePC() const
-{
-    MOZ_ASSERT(isWasmTrapping());
-    return cx_->runtime()->wasmTrapData->resumePC;
-}
-
-void*
-jit::JitActivation::wasmTrapUnwoundPC() const
-{
-    MOZ_ASSERT(isWasmTrapping());
-    return cx_->runtime()->wasmTrapData->unwoundPC;
-}
-
-uint32_t
-jit::JitActivation::wasmTrapBytecodeOffset() const
-{
-    MOZ_ASSERT(isWasmTrapping());
-    return cx_->runtime()->wasmTrapData->bytecodeOffset;
+    wasmTrapData_.reset();
+    MOZ_ASSERT(!isWasmTrapping());
 }
 
 InterpreterFrameIterator&
