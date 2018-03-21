@@ -78,8 +78,6 @@ dnl ========================================================
 MOZ_USE_PTHREADS=
 _PTHREAD_LDFLAGS=""
 
-MOZ_DEFAULT_COMPILER
-
 if test "$COMPILE_ENVIRONMENT"; then
     MOZ_ANDROID_NDK
 fi # COMPILE_ENVIRONMENT
@@ -123,7 +121,6 @@ else
     esac
     AC_PROG_CXX
     AC_PROG_RANLIB
-    MOZ_PATH_PROGS(AS, $AS as, $CC)
     AC_CHECK_PROGS(AR, ar, :)
     AC_CHECK_PROGS(STRIP, strip, :)
     AC_CHECK_PROGS(WINDRES, windres, :)
@@ -156,7 +153,6 @@ case "$target" in
     if test "$GCC" != "yes"; then
         # Check to see if we are really running in a msvc environemnt
         _WIN32_MSVC=1
-        AC_CHECK_PROGS(MIDL, midl)
 
         # Make sure compilers are valid
         CFLAGS="$CFLAGS -TC -nologo"
@@ -342,7 +338,6 @@ case "$target" in
             AC_MSG_ERROR([windres version $WINDRES_VERSION or higher is required to build.])
         fi
 
-        AC_CHECK_PROGS(MIDL, $target-widl widl)
         if test -n "$MIDL"; then
             case "$target" in
             i*86-*)
@@ -465,10 +460,7 @@ fi # COMPILE_ENVIRONMENT
 dnl ========================================================
 dnl set the defaults first
 dnl ========================================================
-AS_BIN=$AS
 AR_EXTRACT='$(AR) x'
-AS='$(CC)'
-AS_DASH_C_FLAG='-c'
 MOZ_USER_DIR=".mozilla"
 
 MOZ_FIX_LINK_PATHS="-Wl,-rpath-link,${DIST}/bin -Wl,-rpath-link,${prefix}/lib"
@@ -888,9 +880,6 @@ case "$target" in
         MOZ_FOLD_LIBS_FLAGS="-mnop-fun-dllimport"
     else
         TARGET_COMPILER_ABI=msvc
-        if test "$AS_BIN"; then
-            AS="$(basename "$AS_BIN")"
-        fi
         AR='lib'
         AR_FLAGS='-NOLOGO -OUT:$@'
         AR_EXTRACT=
@@ -4201,9 +4190,7 @@ dnl ========================================================
 AC_SUBST(AR)
 AC_SUBST(AR_FLAGS)
 AC_SUBST(AR_EXTRACT)
-AC_SUBST(AS)
 AC_SUBST_LIST(ASFLAGS)
-AC_SUBST(AS_DASH_C_FLAG)
 AC_SUBST(RC)
 AC_SUBST(RCFLAGS)
 AC_SUBST(WINDRES)

@@ -97,7 +97,6 @@ if test -n "$ios_sdk"; then
    MOZ_IOS_PATH_PROG(CXX, clang++, $ARGS)
    export CPP="$CC -E"
    MOZ_IOS_PATH_PROG(AR)
-   MOZ_IOS_PATH_PROG(AS, as, $ARGS)
    MOZ_IOS_PATH_PROG(OTOOL)
    MOZ_IOS_PATH_PROG(STRIP)
    export PKG_CONFIG_PATH=${ios_sdk_path}/usr/lib/pkgconfig/

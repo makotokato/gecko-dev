@@ -63,8 +63,6 @@ dnl ========================================================
 USE_PTHREADS=
 _PTHREAD_LDFLAGS=""
 
-MOZ_DEFAULT_COMPILER
-
 if test -z "$JS_STANDALONE"; then
   autoconfmk=autoconf-js.mk
 fi
@@ -108,7 +106,6 @@ else
     AC_PROG_CC
     AC_PROG_CXX
     AC_PROG_RANLIB
-    MOZ_PATH_PROGS(AS, $AS as, $CC)
     AC_CHECK_PROGS(AR, ar, :)
     AC_CHECK_PROGS(STRIP, strip, :)
     AC_CHECK_PROGS(WINDRES, windres, :)
@@ -399,10 +396,7 @@ AC_SUBST(MOZJS_ALPHA)
 dnl ========================================================
 dnl set the defaults first
 dnl ========================================================
-AS_BIN=$AS
 AR_EXTRACT='$(AR) x'
-AS='$(CC)'
-AS_DASH_C_FLAG='-c'
 MOZ_USER_DIR=".mozilla"
 
 MOZ_FIX_LINK_PATHS="-Wl,-rpath-link,${DIST}/bin -Wl,-rpath-link,${prefix}/lib"
@@ -659,9 +653,6 @@ case "$target" in
         WIN32_GUI_EXE_LDFLAGS=-mwindows
     else
         TARGET_COMPILER_ABI=msvc
-        if test "$AS_BIN"; then
-            AS="$(basename "$AS_BIN")"
-        fi
         AR='lib'
         AR_FLAGS='-NOLOGO -OUT:$@'
         AR_EXTRACT=
@@ -1710,9 +1701,7 @@ dnl ========================================================
 AC_SUBST(AR)
 AC_SUBST(AR_FLAGS)
 AC_SUBST(AR_EXTRACT)
-AC_SUBST(AS)
 AC_SUBST_LIST(ASFLAGS)
-AC_SUBST(AS_DASH_C_FLAG)
 AC_SUBST(RC)
 AC_SUBST(RCFLAGS)
 AC_SUBST(WINDRES)
