@@ -1,0 +1,6 @@
+  EXPORT |DATA_SYMBOL|
+  AREA |.rdata|, DATA, ARM64, READONLY
+
+DATA_SYMBOL
+  INCBIN icudt60l.dat
+  END
