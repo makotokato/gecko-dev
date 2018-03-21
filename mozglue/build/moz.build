@@ -53,7 +53,7 @@ if CONFIG['MOZ_WIDGET_TOOLKIT']:
             '/memory/build',
         ]
 
-        if CONFIG['CC_TYPE'] == "msvc":
+        if CONFIG['CC_TYPE'] == "msvc" and CONFIG['CPU_ARCH'] != 'aarch64':
             SOURCES += ['WindowsCFGStatus.cpp']
         SOURCES += [
             'Authenticode.cpp',

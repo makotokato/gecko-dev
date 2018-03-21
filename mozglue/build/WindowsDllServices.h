@@ -53,7 +53,9 @@ public:
 
   void Disable()
   {
+  #if defined(HAS_DLL_BLOCKLIST)
     DllBlocklist_SetDllServices(nullptr);
+  #endif
   }
 
   DllServicesBase(const DllServicesBase&) = delete;
@@ -71,7 +73,9 @@ protected:
 
   void Enable()
   {
-    DllBlocklist_SetDllServices(this);
+  #if defined(HAS_DLL_BLOCKLIST)
+      DllBlocklist_SetDllServices(this);
+  #endif
   }
 
 private:
