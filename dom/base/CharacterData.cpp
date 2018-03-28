@@ -37,6 +37,7 @@
 #include "nsBidiUtils.h"
 #include "PLDHashTable.h"
 #include "mozilla/Sprintf.h"
+#include "nsWindowSizes.h"
 #include "nsWrapperCacheInlines.h"
 
 namespace mozilla {
@@ -425,9 +426,7 @@ CharacterData::ToCString(nsAString& aBuf, int32_t aOffset,
       } else if (ch == '>') {
         aBuf.AppendLiteral("&gt;");
       } else if ((ch < ' ') || (ch >= 127)) {
-        char buf[10];
-        SprintfLiteral(buf, "\\u%04x", ch);
-        AppendASCIItoUTF16(buf, aBuf);
+        aBuf.AppendPrintf("\\u%04x", ch);
       } else {
         aBuf.Append(ch);
       }
@@ -445,9 +444,7 @@ CharacterData::ToCString(nsAString& aBuf, int32_t aOffset,
       } else if (ch == '>') {
         aBuf.AppendLiteral("&gt;");
       } else if ((ch < ' ') || (ch >= 127)) {
-        char buf[10];
-        SprintfLiteral(buf, "\\u%04x", ch);
-        AppendASCIItoUTF16(buf, aBuf);
+        aBuf.AppendPrintf("\\u%04x", ch);
       } else {
         aBuf.Append(ch);
       }

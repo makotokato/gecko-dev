@@ -203,8 +203,12 @@ class TabsUpdateFilterEventManager extends EventManager {
           needed.push("pinned");
         } else if (event.type == "TabUnpinned") {
           needed.push("pinned");
-        } else if (event.type == "TabBrowserInserted" &&
-                   !event.detail.insertedOnTabCreation) {
+        } else if (event.type == "TabBrowserInserted") {
+          // This may be an adopted tab. Bail early to avoid asking tabManager
+          // about the tab before we run the adoption logic in ext-browser.js.
+          if (event.detail.insertedOnTabCreation) {
+            return;
+          }
           needed.push("discarded");
         } else if (event.type == "TabBrowserDiscarded") {
           needed.push("discarded");
@@ -614,7 +618,7 @@ this.tabs = class extends ExtensionAPI {
                       : Ci.nsIWebNavigation.LOAD_FLAGS_NONE,
               triggeringPrincipal: context.principal,
             };
-            nativeTab.linkedBrowser.loadURIWithFlags(url, options);
+            nativeTab.linkedBrowser.loadURI(url, options);
           }
 
           if (updateProperties.active !== null) {

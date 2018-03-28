@@ -9,7 +9,6 @@
 #include "mozilla/layers/CompositorBridgeChild.h"
 #include "mozilla/layers/LayerTransactionChild.h"
 #include "nsPresContext.h"
-#include "nsDOMClassInfoID.h"
 #include "nsError.h"
 #include "nsIDOMEvent.h"
 #include "nsQueryContentEventResult.h"
@@ -382,7 +381,11 @@ NS_IMETHODIMP
 nsDOMWindowUtils::UpdateLayerTree()
 {
   if (nsIPresShell* presShell = GetPresShell()) {
-    presShell->FlushPendingNotifications(FlushType::Display);
+    // Don't flush throttled animations since it might fire MozAfterPaint event
+    // (in WebRender it constantly does), thus the reftest harness can't take
+    // any snapshot until the throttled animations finished.
+    presShell->FlushPendingNotifications(
+      ChangesToFlush(FlushType::Display, false /* flush animations */));
     RefPtr<nsViewManager> vm = presShell->GetViewManager();
     nsView* view = vm->GetRootView();
     if (view) {
@@ -1480,8 +1483,8 @@ nsDOMWindowUtils::CompareCanvases(nsISupports *aCanvas1,
 
   nsCOMPtr<nsIContent> contentCanvas1 = do_QueryInterface(aCanvas1);
   nsCOMPtr<nsIContent> contentCanvas2 = do_QueryInterface(aCanvas2);
-  auto canvas1 = HTMLCanvasElement::FromContentOrNull(contentCanvas1);
-  auto canvas2 = HTMLCanvasElement::FromContentOrNull(contentCanvas2);
+  auto canvas1 = HTMLCanvasElement::FromNodeOrNull(contentCanvas1);
+  auto canvas2 = HTMLCanvasElement::FromNodeOrNull(contentCanvas2);
 
   if (!canvas1 || !canvas2) {
     return NS_ERROR_FAILURE;
@@ -2330,13 +2333,6 @@ nsDOMWindowUtils::GetCurrentMaxAudioChannels(uint32_t* aChannels)
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::GetCurrentPreferredChannelLayout(nsAString& aLayout)
-{
-  CubebUtils::GetPreferredChannelLayout(aLayout);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsDOMWindowUtils::GetCurrentPreferredSampleRate(uint32_t* aRate)
 {
   *aRate = CubebUtils::PreferredSampleRate();
@@ -2727,9 +2723,9 @@ nsDOMWindowUtils::ComputeAnimationDistance(nsIDOMElement* aElement,
     return NS_ERROR_ILLEGAL_VALUE;
   }
 
-  RefPtr<nsStyleContext> styleContext =
-    nsComputedDOMStyle::GetStyleContext(element, nullptr);
-  *aResult = v1.ComputeDistance(property, v2, styleContext);
+  RefPtr<ComputedStyle> computedStyle =
+    nsComputedDOMStyle::GetComputedStyle(element, nullptr);
+  *aResult = v1.ComputeDistance(property, v2, computedStyle);
   return NS_OK;
 }
 
@@ -2825,60 +2821,20 @@ nsDOMWindowUtils::GetUnanimatedComputedStyle(nsIDOMElement* aElement,
   }
 
   RefPtr<nsAtom> pseudo = nsCSSPseudoElements::GetPseudoAtom(aPseudoElement);
-  RefPtr<nsStyleContext> styleContext =
-    nsComputedDOMStyle::GetUnanimatedStyleContextNoFlush(element, pseudo);
-  if (!styleContext) {
+  RefPtr<ComputedStyle> computedStyle =
+    nsComputedDOMStyle::GetUnanimatedComputedStyleNoFlush(element, pseudo);
+  if (!computedStyle) {
     return NS_ERROR_FAILURE;
   }
 
-  if (styleContext->IsServo()) {
-    RefPtr<RawServoAnimationValue> value =
-      Servo_ComputedValues_ExtractAnimationValue(styleContext->AsServo(),
-                                                 propertyID).Consume();
-    if (!value) {
-      return NS_ERROR_FAILURE;
-    }
-    Servo_AnimationValue_Serialize(value, propertyID, &aResult);
-    return NS_OK;
-  }
-
-#ifdef MOZ_OLD_STYLE
-  StyleAnimationValue computedValue;
-  if (!StyleAnimationValue::ExtractComputedValue(propertyID,
-                                                 styleContext->AsGecko(),
-                                                 computedValue)) {
+  RefPtr<RawServoAnimationValue> value =
+    Servo_ComputedValues_ExtractAnimationValue(computedStyle,
+                                               propertyID).Consume();
+  if (!value) {
     return NS_ERROR_FAILURE;
   }
-
-  // Note: ExtractComputedValue can return 'unset', 'initial', or 'inherit' in
-  // its "computedValue" outparam, even though these technically aren't valid
-  // computed values. (It has this behavior for discretely-animatable
-  // properties, e.g. 'align-content', when these keywords are explicitly
-  // specified or when there is no specified value.)  But we need to return a
-  // valid computed value -- these keywords won't do.  So we fall back to
-  // nsComputedDOMStyle in this case.
-  if (computedValue.GetUnit() == StyleAnimationValue::eUnit_DiscreteCSSValue &&
-      (computedValue.GetCSSValueValue()->GetUnit() == eCSSUnit_Unset ||
-       computedValue.GetCSSValueValue()->GetUnit() == eCSSUnit_Initial ||
-       computedValue.GetCSSValueValue()->GetUnit() == eCSSUnit_Inherit)) {
-    RefPtr<nsComputedDOMStyle> computedStyle =
-      NS_NewComputedDOMStyle(
-       element, aPseudoElement, shell,
-       nsComputedDOMStyle::StyleType::eAll,
-       nsComputedDOMStyle::AnimationFlag::eWithoutAnimation);
-    computedStyle->GetPropertyValue(propertyID, aResult);
-    return NS_OK;
-  }
-
-  DebugOnly<bool> uncomputeResult =
-    StyleAnimationValue::UncomputeValue(propertyID,
-                                        Move(computedValue), aResult);
-  MOZ_ASSERT(uncomputeResult,
-             "Unable to get specified value from computed value");
+  Servo_AnimationValue_Serialize(value, propertyID, &aResult);
   return NS_OK;
-#else
-  MOZ_CRASH("old style system disabled");
-#endif
 }
 
 nsresult
@@ -4203,7 +4159,7 @@ nsDOMWindowUtils::ForceUseCounterFlush(nsIDOMNode *aNode)
   }
 
   if (nsCOMPtr<nsIContent> content = do_QueryInterface(aNode)) {
-    if (HTMLImageElement* img = HTMLImageElement::FromContent(content)) {
+    if (HTMLImageElement* img = HTMLImageElement::FromNode(content)) {
       img->FlushUseCounters();
       return NS_OK;
     }
@@ -4404,8 +4360,7 @@ nsDOMWindowUtils::EnsureDirtyRootFrame()
 NS_IMETHODIMP
 nsDOMWindowUtils::GetIsStyledByServo(bool* aStyledByServo)
 {
-  nsIDocument* doc = GetDocument();
-  *aStyledByServo = doc && doc->IsStyledByServo();
+  *aStyledByServo = true;
   return NS_OK;
 }
 

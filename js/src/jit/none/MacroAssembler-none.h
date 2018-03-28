@@ -201,7 +201,8 @@ class MacroAssemblerNone : public Assembler
     bool appendRawCode(const uint8_t* code, size_t numBytes) { MOZ_CRASH(); }
     bool swapBuffer(wasm::Bytes& bytes) { MOZ_CRASH(); }
 
-    void trace(JSTracer*) { MOZ_CRASH(); }
+    void assertNoGCThings() const { MOZ_CRASH(); }
+
     static void TraceJumpRelocations(JSTracer*, JitCode*, CompactBufferReader&) { MOZ_CRASH(); }
     static void TraceDataRelocations(JSTracer*, JitCode*, CompactBufferReader&) { MOZ_CRASH(); }
 
@@ -218,7 +219,6 @@ class MacroAssemblerNone : public Assembler
     void flushBuffer() { MOZ_CRASH(); }
 
     template <typename T> void bind(T) { MOZ_CRASH(); }
-    void bindLater(Label*, wasm::OldTrapDesc) { MOZ_CRASH(); }
     template <typename T> void j(Condition, T) { MOZ_CRASH(); }
     template <typename T> void jump(T) { MOZ_CRASH(); }
     void writeCodePointer(CodeLabel* label) { MOZ_CRASH(); }

@@ -244,21 +244,6 @@ class MacroAssembler : public MacroAssemblerSpecific
     }
 
   public:
-    class AutoRooter : public JS::AutoGCRooter
-    {
-        MacroAssembler* masm_;
-
-      public:
-        AutoRooter(JSContext* cx, MacroAssembler* masm)
-          : JS::AutoGCRooter(cx, IONMASM),
-            masm_(masm)
-        { }
-
-        MacroAssembler* masm() const {
-            return masm_;
-        }
-    };
-
     /*
      * Base class for creating a branch.
      */
@@ -330,7 +315,6 @@ class MacroAssembler : public MacroAssemblerSpecific
         void emit(MacroAssembler& masm);
     };
 
-    mozilla::Maybe<AutoRooter> autoRooter_;
     mozilla::Maybe<JitContext> jitContext_;
     mozilla::Maybe<AutoJitContextAlloc> alloc_;
 
@@ -338,73 +322,19 @@ class MacroAssembler : public MacroAssemblerSpecific
     // Labels for handling exceptions and failures.
     NonAssertingLabel failureLabel_;
 
-  public:
-    MacroAssembler()
-      : framePushed_(0),
-#ifdef DEBUG
-        inCall_(false),
-#endif
-        emitProfilingInstrumentation_(false)
-    {
-        JitContext* jcx = GetJitContext();
-        JSContext* cx = jcx->cx;
-        if (cx)
-            constructRoot(cx);
-
-        if (!jcx->temp) {
-            MOZ_ASSERT(cx);
-            alloc_.emplace(cx);
-        }
-
-        moveResolver_.setAllocator(*jcx->temp);
-
-#if defined(JS_CODEGEN_ARM)
-        initWithAllocator();
-        m_buffer.id = jcx->getNextAssemblerId();
-#elif defined(JS_CODEGEN_ARM64)
-        initWithAllocator();
-        armbuffer_.id = jcx->getNextAssemblerId();
-#endif
-    }
+  protected:
+    // Constructors are protected. Use one of the derived classes!
+    MacroAssembler();
 
     // This constructor should only be used when there is no JitContext active
     // (for example, Trampoline-$(ARCH).cpp and IonCaches.cpp).
-    explicit MacroAssembler(JSContext* cx, IonScript* ion = nullptr,
-                            JSScript* script = nullptr, jsbytecode* pc = nullptr);
+    explicit MacroAssembler(JSContext* cx);
 
     // wasm compilation handles its own JitContext-pushing
     struct WasmToken {};
-    explicit MacroAssembler(WasmToken, TempAllocator& alloc)
-      : framePushed_(0),
-#ifdef DEBUG
-        inCall_(false),
-#endif
-        emitProfilingInstrumentation_(false)
-    {
-        moveResolver_.setAllocator(alloc);
+    explicit MacroAssembler(WasmToken, TempAllocator& alloc);
 
-#if defined(JS_CODEGEN_ARM)
-        initWithAllocator();
-        m_buffer.id = 0;
-#elif defined(JS_CODEGEN_ARM64)
-        initWithAllocator();
-        // Stubs + builtins + the baseline compiler all require the native SP,
-        // not the PSP.
-        SetStackPointer64(sp);
-        armbuffer_.id = 0;
-#endif
-    }
-
-#ifdef DEBUG
-    bool isRooted() const {
-        return autoRooter_.isSome();
-    }
-#endif
-
-    void constructRoot(JSContext* cx) {
-        autoRooter_.emplace(cx, this);
-    }
-
+  public:
     MoveResolver& moveResolver() {
         return moveResolver_;
     }
@@ -1127,8 +1057,8 @@ class MacroAssembler : public MacroAssemblerSpecific
     inline void branchFloat32NotInInt64Range(Address src, Register temp, Label* fail);
     inline void branchFloat32NotInUInt64Range(Address src, Register temp, Label* fail);
 
-    template <typename T, typename L>
-    inline void branchAdd32(Condition cond, T src, Register dest, L label) PER_SHARED_ARCH;
+    template <typename T>
+    inline void branchAdd32(Condition cond, T src, Register dest, Label* label) PER_SHARED_ARCH;
     template <typename T>
     inline void branchSub32(Condition cond, T src, Register dest, Label* label) PER_SHARED_ARCH;
 
@@ -1538,18 +1468,13 @@ class MacroAssembler : public MacroAssemblerSpecific
     // 'cond' holds. Required when WASM_HUGE_MEMORY is not defined. If
     // JitOptions.spectreMaskIndex is true, in speculative executions 'index' is
     // saturated in-place to 'boundsCheckLimit'.
-    template <class L>
-    inline void wasmBoundsCheck(Condition cond, Register index, Register boundsCheckLimit, L label)
+    void wasmBoundsCheck(Condition cond, Register index, Register boundsCheckLimit, Label* label)
         DEFINED_ON(arm, arm64, mips32, mips64, x86);
 
-    template <class L>
-    inline void wasmBoundsCheck(Condition cond, Register index, Address boundsCheckLimit, L label)
+    void wasmBoundsCheck(Condition cond, Register index, Address boundsCheckLimit, Label* label)
         DEFINED_ON(arm, arm64, mips32, mips64, x86);
 
-    // On x86, each instruction adds its own wasm::MemoryAccess's to the
-    // wasm::MemoryAccessVector (there can be multiple when i64 is involved).
-    // On x64, only some asm.js accesses need a wasm::MemoryAccess so the caller
-    // is responsible for doing this instead.
+    // Each wasm load/store instruction appends its own wasm::Trap::OutOfBounds.
     void wasmLoad(const wasm::MemoryAccessDesc& access, Operand srcAddr, AnyRegister out) DEFINED_ON(x86, x64);
     void wasmLoadI64(const wasm::MemoryAccessDesc& access, Operand srcAddr, Register64 out) DEFINED_ON(x86, x64);
     void wasmStore(const wasm::MemoryAccessDesc& access, AnyRegister value, Operand dstAddr) DEFINED_ON(x86, x64);
@@ -1663,11 +1588,6 @@ class MacroAssembler : public MacroAssemblerSpecific
     // (TLS & pinned regs are non-volatile registers in the system ABI).
     void wasmCallBuiltinInstanceMethod(const wasm::CallSiteDesc& desc, const ABIArg& instanceArg,
                                        wasm::SymbolicAddress builtin);
-
-    // Emit the out-of-line trap code to which trapping jumps/branches are
-    // bound. This should be called once per function after all other codegen,
-    // including "normal" OutOfLineCode.
-    void wasmEmitOldTrapOutOfLineCode();
 
     // As enterFakeExitFrame(), but using register conventions appropriate for
     // wasm stubs.
@@ -2699,6 +2619,45 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     Vector<JSObject*, 0, SystemAllocPolicy> pendingObjectReadBarriers_;
     Vector<ObjectGroup*, 0, SystemAllocPolicy> pendingObjectGroupReadBarriers_;
+};
+
+// StackMacroAssembler checks no GC will happen while it's on the stack.
+class MOZ_RAII StackMacroAssembler : public MacroAssembler
+{
+    JS::AutoCheckCannotGC nogc;
+
+  public:
+    StackMacroAssembler()
+      : MacroAssembler()
+    {}
+    explicit StackMacroAssembler(JSContext* cx)
+      : MacroAssembler(cx)
+    {}
+};
+
+// WasmMacroAssembler does not contain GC pointers, so it doesn't need the no-GC
+// checking StackMacroAssembler has.
+class MOZ_RAII WasmMacroAssembler : public MacroAssembler
+{
+  public:
+    explicit WasmMacroAssembler(TempAllocator& alloc)
+      : MacroAssembler(WasmToken(), alloc)
+    {}
+    ~WasmMacroAssembler() {
+        assertNoGCThings();
+    }
+};
+
+// Heap-allocated MacroAssembler used for Ion off-thread code generation.
+// GC cancels off-thread compilations.
+class IonHeapMacroAssembler : public MacroAssembler
+{
+  public:
+    IonHeapMacroAssembler()
+      : MacroAssembler()
+    {
+        MOZ_ASSERT(CurrentThreadIsIonCompiling());
+    }
 };
 
 //{{{ check_macroassembler_style

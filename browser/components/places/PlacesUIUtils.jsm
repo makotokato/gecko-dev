@@ -10,13 +10,14 @@ ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.import("resource://gre/modules/Timer.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
+  AppConstants: "resource://gre/modules/AppConstants.jsm",
   OpenInTabsUtils: "resource:///modules/OpenInTabsUtils.jsm",
+  PlacesTransactions: "resource://gre/modules/PlacesTransactions.jsm",
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
   PluralForm: "resource://gre/modules/PluralForm.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
-  RecentWindow: "resource:///modules/RecentWindow.jsm",
   PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
-  PlacesTransactions: "resource://gre/modules/PlacesTransactions.jsm",
+  RecentWindow: "resource:///modules/RecentWindow.jsm",
   Weave: "resource://services-sync/main.js",
 });
 
@@ -262,7 +263,7 @@ var PlacesUIUtils = {
    *        Owner window for the new dialog.
    *
    * @see documentation at the top of bookmarkProperties.js
-   * @return true if any transaction has been performed, false otherwise.
+   * @return The guid of the item that was created or edited, undefined otherwise.
    */
   showBookmarkDialog(aInfo, aParentWindow) {
     // Preserve size attributes differently based on the fact the dialog has
@@ -289,16 +290,16 @@ var PlacesUIUtils = {
 
     aParentWindow.openDialog(dialogURL, "", features, aInfo);
 
-    let performed = ("performed" in aInfo && aInfo.performed);
+    let bookmarkGuid = ("bookmarkGuid" in aInfo && aInfo.bookmarkGuid) || undefined;
 
     batchBlockingDeferred.resolve();
 
-    if (!performed &&
+    if (!bookmarkGuid &&
         topUndoEntry != PlacesTransactions.topUndoEntry) {
       PlacesTransactions.undo().catch(Cu.reportError);
     }
 
-    return performed;
+    return bookmarkGuid;
   },
 
   /**
@@ -821,23 +822,18 @@ var PlacesUIUtils = {
   isFolderShortcutQueryString(queryString) {
     // Based on GetSimpleBookmarksQueryFolder in nsNavHistory.cpp.
 
-    let queriesParam = { }, optionsParam = { };
-    PlacesUtils.history.queryStringToQueries(queryString,
-                                             queriesParam,
-                                             { },
-                                             optionsParam);
-    let queries = queries.value;
-    if (queries.length == 0)
-      throw new Error(`Invalid place: uri: ${queryString}`);
-    return queries.length == 1 &&
-           queries[0].folderCount == 1 &&
-           !queries[0].hasBeginTime &&
-           !queries[0].hasEndTime &&
-           !queries[0].hasDomain &&
-           !queries[0].hasURI &&
-           !queries[0].hasSearchTerms &&
-           !queries[0].tags.length == 0 &&
-           optionsParam.value.maxResults == 0;
+    let query = {}, options = {};
+    PlacesUtils.history.queryStringToQuery(queryString, query, options);
+    query = query.value;
+    options = options.value;
+    return query.folderCount == 1 &&
+           !query.hasBeginTime &&
+           !query.hasEndTime &&
+           !query.hasDomain &&
+           !query.hasURI &&
+           !query.hasSearchTerms &&
+           !query.tags.length == 0 &&
+           options.maxResults == 0;
   },
 
   /**
@@ -1036,6 +1032,94 @@ var PlacesUIUtils = {
 
     return guidsToSelect;
   },
+
+  onSidebarTreeClick(event) {
+    // right-clicks are not handled here
+    if (event.button == 2)
+      return;
+
+    let tree = event.target.parentNode;
+    let tbo = tree.treeBoxObject;
+    let cell = tbo.getCellAt(event.clientX, event.clientY);
+    if (cell.row == -1 || cell.childElt == "twisty")
+      return;
+
+    // getCoordsForCellItem returns the x coordinate in logical coordinates
+    // (i.e., starting from the left and right sides in LTR and RTL modes,
+    // respectively.)  Therefore, we make sure to exclude the blank area
+    // before the tree item icon (that is, to the left or right of it in
+    // LTR and RTL modes, respectively) from the click target area.
+    let win = tree.ownerGlobal;
+    let rect = tbo.getCoordsForCellItem(cell.row, cell.col, "image");
+    let isRTL = win.getComputedStyle(tree).direction == "rtl";
+    let mouseInGutter = isRTL ? event.clientX > rect.x
+                              : event.clientX < rect.x;
+
+    let metaKey = AppConstants.platform === "macosx" ? event.metaKey
+                                                     : event.ctrlKey;
+    let modifKey = metaKey || event.shiftKey;
+    let isContainer = tbo.view.isContainer(cell.row);
+    let openInTabs = isContainer &&
+                     (event.button == 1 || (event.button == 0 && modifKey)) &&
+                     PlacesUtils.hasChildURIs(tree.view.nodeForTreeIndex(cell.row));
+
+    if (event.button == 0 && isContainer && !openInTabs) {
+      tbo.view.toggleOpenState(cell.row);
+    } else if (!mouseInGutter && openInTabs &&
+               event.originalTarget.localName == "treechildren") {
+      tbo.view.selection.select(cell.row);
+      this.openContainerNodeInTabs(tree.selectedNode, event, tree);
+    } else if (!mouseInGutter && !isContainer &&
+               event.originalTarget.localName == "treechildren") {
+      // Clear all other selection since we're loading a link now. We must
+      // do this *before* attempting to load the link since openURL uses
+      // selection as an indication of which link to load.
+      tbo.view.selection.select(cell.row);
+      this.openNodeWithEvent(tree.selectedNode, event);
+    }
+  },
+
+  onSidebarTreeKeyPress(event) {
+    let node = event.target.selectedNode;
+    if (node) {
+      if (event.keyCode == KeyEvent.DOM_VK_RETURN)
+        this.openNodeWithEvent(node, event);
+    }
+  },
+
+  /**
+   * The following function displays the URL of a node that is being
+   * hovered over.
+   */
+  onSidebarTreeMouseMove(event) {
+    let treechildren = event.target;
+    if (treechildren.localName != "treechildren")
+      return;
+
+    let tree = treechildren.parentNode;
+    let cell = tree.treeBoxObject.getCellAt(event.clientX, event.clientY);
+
+    // cell.row is -1 when the mouse is hovering an empty area within the tree.
+    // To avoid showing a URL from a previously hovered node for a currently
+    // hovered non-url node, we must clear the moused-over URL in these cases.
+    if (cell.row != -1) {
+      let node = tree.view.nodeForTreeIndex(cell.row);
+      if (PlacesUtils.nodeIsURI(node)) {
+        this.setMouseoverURL(node.uri, tree.ownerGlobal);
+        return;
+      }
+    }
+    this.setMouseoverURL("", tree.ownerGlobal);
+  },
+
+  setMouseoverURL(url, win) {
+    // When the browser window is closed with an open sidebar, the sidebar
+    // unload event happens after the browser's one.  In this case
+    // top.XULBrowserWindow has been nullified already.
+    if (win.top.XULBrowserWindow) {
+      win.top.XULBrowserWindow.setOverLink(url, null);
+    }
+  }
 };
 
 // These are lazy getters to avoid importing PlacesUtils immediately.

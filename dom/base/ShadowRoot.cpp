@@ -10,7 +10,6 @@
 #include "mozilla/dom/DocumentFragment.h"
 #include "ChildIterator.h"
 #include "nsContentUtils.h"
-#include "nsDOMClassInfoID.h"
 #include "nsIStyleSheetLinkingElement.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLSlotElement.h"
@@ -272,10 +271,6 @@ ShadowRoot::RuleChanged(StyleSheet&, css::Rule*) {
 void
 ShadowRoot::ApplicableRulesChanged()
 {
-  if (!IsComposedDocParticipant()) {
-    return;
-  }
-
   if (!IsComposedDocParticipant()) {
     return;
   }
@@ -619,7 +614,7 @@ ShadowRoot::ContentInserted(nsIContent* aChild)
 
   // If parent's root is a shadow root, and parent is a slot whose assigned
   // nodes is the empty list, then run signal a slot change for parent.
-  HTMLSlotElement* slot = HTMLSlotElement::FromContentOrNull(aChild->GetParent());
+  HTMLSlotElement* slot = HTMLSlotElement::FromNodeOrNull(aChild->GetParent());
   if (slot && slot->GetContainingShadow() == this &&
       slot->AssignedNodes().IsEmpty()) {
     slot->EnqueueSlotChangeEvent();
@@ -655,7 +650,7 @@ ShadowRoot::ContentRemoved(nsIContent* aChild, nsIContent* aPreviousSibling)
 
   // If parent's root is a shadow root, and parent is a slot whose assigned
   // nodes is the empty list, then run signal a slot change for parent.
-  HTMLSlotElement* slot = HTMLSlotElement::FromContentOrNull(aChild->GetParent());
+  HTMLSlotElement* slot = HTMLSlotElement::FromNodeOrNull(aChild->GetParent());
   if (slot && slot->GetContainingShadow() == this &&
       slot->AssignedNodes().IsEmpty()) {
     slot->EnqueueSlotChangeEvent();

@@ -24,14 +24,11 @@
 #include "nsIPresShell.h"
 #include "nsFrameList.h"
 #include "nsHTMLParts.h"
-#include "nsStyleContext.h"
+#include "mozilla/ComputedStyle.h"
 #include "nsBoxLayoutState.h"
 #include "nsIServiceManager.h"
 #include "nsContainerFrame.h"
 #include "nsContentCID.h"
-#ifdef MOZ_OLD_STYLE
-#include "mozilla/GeckoStyleContext.h"
-#endif
 #include "mozilla/StyleSetHandle.h"
 #include "mozilla/StyleSetHandleInlines.h"
 #include "nsLayoutUtils.h"
@@ -203,15 +200,15 @@ nsSplitterFrameInner::GetState()
 // Creates a new Toolbar frame and returns it
 //
 nsIFrame*
-NS_NewSplitterFrame (nsIPresShell* aPresShell, nsStyleContext* aContext)
+NS_NewSplitterFrame (nsIPresShell* aPresShell, ComputedStyle* aStyle)
 {
-  return new (aPresShell) nsSplitterFrame(aContext);
+  return new (aPresShell) nsSplitterFrame(aStyle);
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(nsSplitterFrame)
 
-nsSplitterFrame::nsSplitterFrame(nsStyleContext* aContext)
-: nsBoxFrame(aContext, kClassID),
+nsSplitterFrame::nsSplitterFrame(ComputedStyle* aStyle)
+: nsBoxFrame(aStyle, kClassID),
   mInner(0)
 {
 }
@@ -252,15 +249,7 @@ nsSplitterFrame::AttributeChanged(int32_t aNameSpaceID,
 {
   nsresult rv = nsBoxFrame::AttributeChanged(aNameSpaceID, aAttribute,
                                              aModType);
-  // if the alignment changed. Let the grippy know
-  if (aAttribute == nsGkAtoms::align) {
-    // tell the slider its attribute changed so it can
-    // update itself
-    nsIFrame* grippy = nullptr;
-    nsScrollbarButtonFrame::GetChildWithTag(nsGkAtoms::grippy, this, grippy);
-    if (grippy)
-      grippy->AttributeChanged(aNameSpaceID, aAttribute, aModType);
-  } else if (aAttribute == nsGkAtoms::state) {
+  if (aAttribute == nsGkAtoms::state) {
     mInner->UpdateState();
   }
 
@@ -292,20 +281,6 @@ nsSplitterFrame::Init(nsIContent*       aContent,
                                            nsGkAtoms::orient)) {
         aContent->AsElement()->SetAttr(kNameSpaceID_None, nsGkAtoms::orient,
                                        NS_LITERAL_STRING("vertical"), false);
-        if (StyleContext()->IsGecko()) {
-#ifdef MOZ_OLD_STYLE
-          // FIXME(emilio): Even if we did this in Servo, this just won't
-          // work, and we'd need a specific "really re-resolve the style" API...
-          GeckoStyleContext* parentStyleContext =
-            StyleContext()->AsGecko()->GetParent();
-          RefPtr<nsStyleContext> newContext = PresContext()->StyleSet()->
-            ResolveStyleFor(aContent->AsElement(), parentStyleContext,
-                            LazyComputeBehavior::Allow);
-          SetStyleContextWithoutNotification(newContext);
-#else
-          MOZ_CRASH("old style system disabled");
-#endif
-        }
       }
     }
   }
@@ -443,7 +418,7 @@ nsSplitterFrameInner::MouseUp(nsPresContext* aPresContext,
     // if we dragged then fire a command event.
     if (mDidDrag) {
       RefPtr<nsXULElement> element =
-        nsXULElement::FromContent(mOuter->GetContent());
+        nsXULElement::FromNode(mOuter->GetContent());
       element->DoCommand();
     }
 
@@ -769,7 +744,7 @@ nsSplitterFrameInner::MouseDown(nsIDOMEvent* aMouseEvent)
      mChildInfosAfterCount = 0;
 
   int32_t c;
-  nsPoint pt = nsLayoutUtils::GetDOMEventCoordinatesRelativeTo(mouseEvent->AsEvent(),
+  nsPoint pt = nsLayoutUtils::GetDOMEventCoordinatesRelativeTo(mouseEvent,
                                                                mParentBox);
   if (isHorizontal) {
      c = pt.x;

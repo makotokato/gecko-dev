@@ -23,9 +23,6 @@
 #include "nsQueryObject.h"
 #include "nsIContentInlines.h"
 #include "nsIContentViewer.h"
-#ifdef MOZ_OLD_STYLE
-#include "mozilla/css/Declaration.h"
-#endif
 #include "nsIDocument.h"
 #include "nsIDocumentEncoder.h"
 #include "nsIDOMDocumentFragment.h"
@@ -1613,7 +1610,7 @@ nsGenericHTMLElement::GetContextMenu() const
     //XXXsmaug How should this work in Shadow DOM?
     nsIDocument* doc = GetUncomposedDoc();
     if (doc) {
-      return HTMLMenuElement::FromContentOrNull(doc->GetElementById(value));
+      return HTMLMenuElement::FromNodeOrNull(doc->GetElementById(value));
     }
   }
   return nullptr;
@@ -1629,7 +1626,7 @@ nsGenericHTMLElement::IsLabelable() const
 nsGenericHTMLElement::MatchLabelsElement(Element* aElement, int32_t aNamespaceID,
                                          nsAtom* aAtom, void* aData)
 {
-  HTMLLabelElement* element = HTMLLabelElement::FromContent(aElement);
+  HTMLLabelElement* element = HTMLLabelElement::FromNode(aElement);
   return element && element->GetControl() == aData;
 }
 
@@ -2341,7 +2338,7 @@ nsGenericHTMLFormElement::UpdateFieldSet(bool aNotify)
   for (parent = GetParent(); parent && parent != bindingParent;
        prev = parent, parent = parent->GetParent()) {
     HTMLFieldSetElement* fieldset =
-      HTMLFieldSetElement::FromContent(parent);
+      HTMLFieldSetElement::FromNode(parent);
     if (fieldset &&
         (!prev || fieldset->GetFirstLegend() != prev)) {
       if (mFieldSet == fieldset) {
@@ -2409,7 +2406,7 @@ nsGenericHTMLFormElement::UpdateRequiredState(bool aIsRequired, bool aNotify)
              "This should be called only on types that @required applies");
 
 #ifdef DEBUG
-  HTMLInputElement* input = HTMLInputElement::FromContent(this);
+  HTMLInputElement* input = HTMLInputElement::FromNode(this);
   if (input) {
     MOZ_ASSERT(input->DoesRequiredApply(),
                "This should be called only on input types that @required applies");
@@ -2640,7 +2637,7 @@ void
 nsGenericHTMLElement::SyncEditorsOnSubtree(nsIContent* content)
 {
   /* Sync this node */
-  nsGenericHTMLElement* element = FromContent(content);
+  nsGenericHTMLElement* element = FromNode(content);
   if (element) {
     RefPtr<TextEditor> textEditor = element->GetAssociatedEditor();
     if (textEditor) {
@@ -2966,39 +2963,7 @@ IsOrHasAncestorWithDisplayNone(Element* aElement, nsIPresShell* aPresShell)
     return !aElement->HasServoData() || Servo_Element_IsDisplayNone(aElement);
   }
 
-#ifdef MOZ_OLD_STYLE
-  AutoTArray<Element*, 10> elementsToCheck;
-  // Style and layout work on the flattened tree, so this is what we need to
-  // check in order to figure out whether we're in a display: none subtree.
-  for (Element* e = aElement; e; e = e->GetFlattenedTreeParentElement()) {
-    if (e->GetPrimaryFrame()) {
-      // e definitely isn't display:none and doesn't have a display:none
-      // ancestor.
-      break;
-    }
-    elementsToCheck.AppendElement(e);
-  }
-
-  if (elementsToCheck.IsEmpty()) {
-    return false;
-  }
-
-  nsStyleSet* styleSet = aPresShell->StyleSet()->AsGecko();
-  RefPtr<GeckoStyleContext> sc;
-  for (auto* element : Reversed(elementsToCheck)) {
-    if (sc) {
-      sc = styleSet->ResolveStyleFor(element, sc, LazyComputeBehavior::Assert);
-    } else {
-      sc = nsComputedDOMStyle::GetStyleContextNoFlush(element, nullptr)
-        .downcast<GeckoStyleContext>();
-    }
-    if (sc->StyleDisplay()->mDisplay == StyleDisplay::None) {
-      return true;
-    }
-  }
-#else
   MOZ_CRASH("Old style system disabled");
-#endif
 
   return false;
 }

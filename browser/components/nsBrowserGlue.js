@@ -705,6 +705,9 @@ BrowserGlue.prototype = {
       iconURL: "resource:///chrome/browser/content/browser/defaultthemes/dark.icon.svg",
       textcolor: "white",
       accentcolor: "black",
+      popup: "hsl(240, 5%, 5%)",
+      popup_text: "rgb(249, 249, 250)",
+      popup_border: "rgba(24, 26, 27, 0.14)",
       author: vendorShortName,
     });
 
@@ -1830,7 +1833,7 @@ BrowserGlue.prototype = {
 
   // eslint-disable-next-line complexity
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 64;
+    const UI_VERSION = 65;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul";
 
     let currentUIVersion;
@@ -2142,7 +2145,12 @@ BrowserGlue.prototype = {
       }
     }
 
-    if (currentUIVersion < 63 &&
+    if (currentUIVersion < 64) {
+      OS.File.remove(OS.Path.join(OS.Constants.Path.profileDir,
+                                  "directoryLinks.json"), {ignoreAbsent: true});
+    }
+
+    if (currentUIVersion < 65 &&
         Services.prefs.getCharPref("general.config.filename", "") == "dsengine.cfg") {
       let searchInitializedPromise = new Promise(resolve => {
         if (Services.search.isInitialized) {
@@ -2159,7 +2167,7 @@ BrowserGlue.prototype = {
       });
       searchInitializedPromise.then(() => {
         let engineNames = ["Bing Search Engine",
-                           "Yahoo Search Engine",
+                           "Yahoo! Search Engine",
                            "Yandex Search Engine"];
         for (let engineName of engineNames) {
           let engine = Services.search.getEngineByName(engineName);
@@ -2168,11 +2176,6 @@ BrowserGlue.prototype = {
           }
         }
       });
-    }
-
-    if (currentUIVersion < 64) {
-      OS.File.remove(OS.Path.join(OS.Constants.Path.profileDir,
-                                  "directoryLinks.json"), {ignoreAbsent: true});
     }
 
     // Update the migration version.
@@ -3048,14 +3051,13 @@ this.NSGetFactory = XPCOMUtils.generateNSGetFactory(components);
 // Listen for UITour messages.
 // Do it here instead of the UITour module itself so that the UITour module is lazy loaded
 // when the first message is received.
-var globalMM = Cc["@mozilla.org/globalmessagemanager;1"].getService(Ci.nsIMessageListenerManager);
-globalMM.addMessageListener("UITour:onPageEvent", function(aMessage) {
+Services.mm.addMessageListener("UITour:onPageEvent", function(aMessage) {
   UITour.onPageEvent(aMessage, aMessage.data);
 });
 
 // Listen for HybridContentTelemetry messages.
 // Do it here instead of HybridContentTelemetry.init() so that
 // the module can be lazily loaded on the first message.
-globalMM.addMessageListener("HybridContentTelemetry:onTelemetryMessage", aMessage => {
+Services.mm.addMessageListener("HybridContentTelemetry:onTelemetryMessage", aMessage => {
   HybridContentTelemetry.onTelemetryMessage(aMessage, aMessage.data);
 });

@@ -1172,16 +1172,13 @@ class PackageFrontend(MachCommandBase):
         state_dir = self._mach_context.state_dir
         cache_dir = os.path.join(state_dir, 'package-frontend')
 
-        here = os.path.abspath(os.path.dirname(__file__))
-        build_obj = MozbuildObject.from_environment(cwd=here)
-
         hg = None
-        if conditions.is_hg(build_obj):
-            hg = build_obj.substs['HG']
+        if conditions.is_hg(self):
+            hg = self.substs['HG']
 
         git = None
-        if conditions.is_git(build_obj):
-            git = build_obj.substs['GIT']
+        if conditions.is_git(self):
+            git = self.substs['GIT']
 
         from mozbuild.artifacts import Artifacts
         artifacts = Artifacts(tree, self.substs, self.defines, job,
@@ -1617,7 +1614,8 @@ class StaticAnalysis(MachCommandBase):
                           'the diff mode.')
     @CommandArgument('--checks', '-c', default='-*', metavar='checks',
                      help='Static analysis checks to enable.  By default, this enables only '
-                     'custom Mozilla checks, but can be any clang-tidy checks syntax.')
+                     'checks that are published here: https://mzl.la/2DRHeTh, but can be any '
+                     'clang-tidy checks syntax.')
     @CommandArgument('--jobs', '-j', default='0', metavar='jobs', type=int,
                      help='Number of concurrent jobs to run. Default is the number of CPUs.')
     @CommandArgument('--strip', '-p', default='1', metavar='NUM',
@@ -1731,7 +1729,7 @@ class StaticAnalysis(MachCommandBase):
         rc = self._get_clang_tools(verbose=verbose)
         if rc != 0:
             return rc
-        args = [self._clang_tidy_path, '-list-checks', '-checks=-*,mozilla-*']
+        args = [self._clang_tidy_path, '-list-checks', '-checks=%s' % self._get_checks()]
         return self._run_command_in_objdir(args=args, pass_thru=True)
 
     @Command('clang-format',  category='misc', description='Run clang-format on current changes')

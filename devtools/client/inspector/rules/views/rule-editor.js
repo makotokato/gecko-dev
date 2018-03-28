@@ -29,7 +29,6 @@ const {
 const promise = require("promise");
 const Services = require("Services");
 const EventEmitter = require("devtools/shared/event-emitter");
-const {Task} = require("devtools/shared/task");
 const {Tools} = require("devtools/client/definitions");
 const {gDevTools} = require("devtools/client/framework/devtools");
 const CssLogic = require("devtools/shared/inspector/css-logic");
@@ -65,6 +64,7 @@ function RuleEditor(ruleView, rule) {
   // being edited
   this.isEditing = false;
 
+  this._onFontSwatchClick = this._onFontSwatchClick.bind(this);
   this._onNewProperty = this._onNewProperty.bind(this);
   this._newPropertyDestroy = this._newPropertyDestroy.bind(this);
   this._onSelectorDone = this._onSelectorDone.bind(this);
@@ -73,10 +73,12 @@ function RuleEditor(ruleView, rule) {
   this._onToolChanged = this._onToolChanged.bind(this);
   this._updateLocation = this._updateLocation.bind(this);
   this._onSourceClick = this._onSourceClick.bind(this);
+  this._onRuleUnselected = this._onRuleUnselected.bind(this);
 
   this.rule.domRule.on("location-changed", this._locationChanged);
   this.toolbox.on("tool-registered", this._onToolChanged);
   this.toolbox.on("tool-unregistered", this._onToolChanged);
+  this.ruleView.on("ruleview-rule-unselected", this._onRuleUnselected);
 
   this._create();
 }
@@ -86,6 +88,11 @@ RuleEditor.prototype = {
     this.rule.domRule.off("location-changed");
     this.toolbox.off("tool-registered", this._onToolChanged);
     this.toolbox.off("tool-unregistered", this._onToolChanged);
+    this.ruleView.off("ruleview-rule-unselected", this._onRuleUnselected);
+
+    if (this.fontSwatch) {
+      this.fontSwatch.removeEventListener("click", this._onFontSwatchClick);
+    }
 
     let url = null;
     if (this.rule.sheet) {
@@ -160,7 +167,7 @@ RuleEditor.prototype = {
     }
 
     if (this.rule.domRule.type !== CSSRule.KEYFRAME_RULE) {
-      Task.spawn(function* () {
+      (async function() {
         let selector;
 
         if (this.rule.domRule.selectors) {
@@ -169,7 +176,7 @@ RuleEditor.prototype = {
         } else if (this.rule.inherited) {
           // This is an inline style from an inherited rule. Need to resolve the unique
           // selector from the node which rule this is inherited from.
-          selector = yield this.rule.inherited.getUniqueSelector();
+          selector = await this.rule.inherited.getUniqueSelector();
         } else {
           // This is an inline style from the current node.
           selector = this.ruleView.inspector.selectionCssSelector;
@@ -187,7 +194,7 @@ RuleEditor.prototype = {
 
         this.uniqueSelector = selector;
         this.emit("selector-icon-created");
-      }.bind(this));
+      }.bind(this))();
     }
 
     this.openBrace = createChild(header, "span", {
@@ -234,6 +241,52 @@ RuleEditor.prototype = {
       editableItem({ element: this.closeBrace }, () => {
         this.newProperty();
       });
+    }
+
+    // Create the font editor toggle icon visible on hover.
+    if (this.ruleView.showFontEditor) {
+      this.fontSwatch = createChild(this.element, "div", {
+        class: "ruleview-fontswatch"
+      });
+
+      this.fontSwatch.addEventListener("click", this._onFontSwatchClick);
+    }
+  },
+
+  /**
+   * Handler for clicks on font swatch icon.
+   * Toggles the selected state of the the current rule for the font editor.
+   *
+   * @param {MouseEvent} e
+   *        Mouse click event.
+   */
+  _onFontSwatchClick: function(e) {
+    const editorId = "fonteditor";
+    const isActive = e.target.classList.toggle("active");
+
+    if (isActive) {
+      this.ruleView.selectRule(this.rule, editorId);
+    } else {
+      this.ruleView.unselectRule(this.rule, editorId);
+    }
+  },
+
+  /**
+   * Called when a rule was released from being selected for an editor.
+   * A rule may be released by: toggling a swatch icon, an action from an editor
+   * (ex: close), selecting a different node in the markup view, etc.
+   *
+   * @param {Object} eventData
+   *        Data payload for the event. Contains:
+   *        - {String} editorId - id of the editor for which the rule was released
+   *        - {Rule} rule - reference to rule that was released
+   */
+  _onRuleUnselected: function(eventData) {
+    const { rule, editorId } = eventData;
+
+    // If no longer selected for the font editor, toggle the swatch icon.
+    if (editorId === "fonteditor" && rule == this.rule) {
+      this.fontSwatch.classList.remove("active");
     }
   },
 
@@ -614,7 +667,7 @@ RuleEditor.prototype = {
    * @param {Number} direction
    *        The move focus direction number.
    */
-  _onSelectorDone: Task.async(function* (value, commit, direction) {
+  async _onSelectorDone(value, commit, direction) {
     if (!commit || this.isEditing || value === "" ||
         value === this.rule.selectorText) {
       return;
@@ -629,7 +682,7 @@ RuleEditor.prototype = {
     this.isEditing = true;
 
     try {
-      let response = yield this.rule.domRule.modifySelector(element, value);
+      let response = await this.rule.domRule.modifySelector(element, value);
 
       if (!supportsUnmatchedRules) {
         this.isEditing = false;
@@ -642,7 +695,7 @@ RuleEditor.prototype = {
 
       // We recompute the list of applied styles, because editing a
       // selector might cause this rule's position to change.
-      let applied = yield elementStyle.pageStyle.getApplied(element, {
+      let applied = await elementStyle.pageStyle.getApplied(element, {
         inherited: true,
         matchedSelectors: true,
         filter: elementStyle.showUserAgentStyles ? "ua" : undefined
@@ -695,7 +748,7 @@ RuleEditor.prototype = {
       this.isEditing = false;
       promiseWarn(err);
     }
-  }),
+  },
 
   /**
    * Handle moving the focus change after a tab or return keypress in the

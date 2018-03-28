@@ -185,8 +185,8 @@ jit::InitializeIon()
 
 #ifdef JS_CACHEIR_SPEW
     const char* env = getenv("CACHEIR_LOGS");
-    if (env && env[0])
-        CacheIRSpewer::singleton().init();
+    if (env && env[0] && env[0] != '0')
+        CacheIRSpewer::singleton().init(env);
 #endif
 
 #if defined(JS_CODEGEN_ARM)
@@ -251,7 +251,7 @@ JitRuntime::initialize(JSContext* cx, AutoLockForExclusiveAccess& lock)
     if (!functionWrappers_ || !functionWrappers_->init())
         return false;
 
-    MacroAssembler masm;
+    StackMacroAssembler masm;
 
     Label bailoutTail;
     JitSpew(JitSpew_Codegen, "# Emitting bailout tail stub");
@@ -575,12 +575,6 @@ LinkBackgroundCodeGen(JSContext* cx, IonBuilder* builder)
         return false;
 
     JitContext jctx(cx, &builder->alloc());
-
-    // Root the assembler until the builder is finished below. As it was
-    // constructed off thread, the assembler has not been rooted previously,
-    // though any GC activity would discard the builder.
-    MacroAssembler::AutoRooter masm(cx, &codegen->masm);
-
     return LinkCodeGen(cx, builder, codegen);
 }
 
@@ -2950,12 +2944,10 @@ jit::InvalidateAll(FreeOp* fop, Zone* zone)
     if (zone->isAtomsZone())
         return;
     JSContext* cx = TlsContext.get();
-    for (const CooperatingContext& target : cx->runtime()->cooperatingContexts()) {
-        for (JitActivationIterator iter(cx, target); !iter.done(); ++iter) {
-            if (iter->compartment()->zone() == zone) {
-                JitSpew(JitSpew_IonInvalidate, "Invalidating all frames for GC");
-                InvalidateActivation(fop, iter, true);
-            }
+    for (JitActivationIterator iter(cx); !iter.done(); ++iter) {
+        if (iter->compartment()->zone() == zone) {
+            JitSpew(JitSpew_IonInvalidate, "Invalidating all frames for GC");
+            InvalidateActivation(fop, iter, true);
         }
     }
 }
@@ -2998,18 +2990,9 @@ jit::Invalidate(TypeZone& types, FreeOp* fop,
         return;
     }
 
-    // This method can be called both during GC and during the course of normal
-    // script execution. In the former case this class will already be on the
-    // stack, and in the latter case the invalidations will all be on the
-    // current thread's stack, but the assertion under ActivationIterator can't
-    // tell that this is a thread local use of the iterator.
-    JSRuntime::AutoProhibitActiveContextChange apacc(fop->runtime());
-
     JSContext* cx = TlsContext.get();
-    for (const CooperatingContext& target : cx->runtime()->cooperatingContexts()) {
-        for (JitActivationIterator iter(cx, target); !iter.done(); ++iter)
-            InvalidateActivation(fop, iter, false);
-    }
+    for (JitActivationIterator iter(cx); !iter.done(); ++iter)
+        InvalidateActivation(fop, iter, false);
 
     // Drop the references added above. If a script was never active, its
     // IonScript will be immediately destroyed. Otherwise, it will be held live
@@ -3361,9 +3344,8 @@ jit::JitSupportsAtomics()
 static void
 RedirectIonBackedgesToInterruptCheck(JSContext* cx)
 {
-    // Jitcode may only be modified on the runtime's active thread.
-    if (cx != cx->runtime()->activeContext())
-        return;
+    // Jitcode may only be modified on the runtime's main thread.
+    MOZ_ASSERT(cx == cx->runtime()->mainContextFromAnyThread());
 
     // The faulting thread is suspended so we can access cx fields that can
     // normally only be accessed by the cx's active thread.

@@ -34,7 +34,11 @@ from ..frontend.data import (
     JARManifest,
     ObjdirFiles,
     PerSourceFlag,
+    Program,
+    HostProgram,
+    SharedLibrary,
     Sources,
+    StaticLibrary,
     VariablePassthru,
 )
 from ..util import (
@@ -62,11 +66,15 @@ class BackendTupfile(object):
         self.defines = []
         self.host_defines = []
         self.delayed_generated_files = []
+        self.delayed_installed_files = []
         self.per_source_flags = defaultdict(list)
         self.local_flags = defaultdict(list)
         self.sources = defaultdict(list)
         self.host_sources = defaultdict(list)
         self.variables = {}
+        self.static_lib = None
+        self.shared_lib = None
+        self.program = None
 
         self.fh = FileAvoidWrite(self.name, capture_diff=True)
         self.fh.write('# THIS FILE WAS AUTOMATICALLY GENERATED. DO NOT EDIT.\n')
@@ -188,6 +196,22 @@ class TupOnly(CommonBackend, PartialBackend):
         # will be built before any rules that list this as an input.
         self._installed_idls = '$(MOZ_OBJ_ROOT)/<installed-idls>'
         self._installed_files = '$(MOZ_OBJ_ROOT)/<installed-files>'
+        # The preprocessor including source-repo.h and buildid.h creates
+        # dependencies that aren't specified by moz.build and cause errors
+        # in Tup. Express these as a group dependency.
+        self._early_generated_files = '$(MOZ_OBJ_ROOT)/<early-generated-files>'
+
+        # application.ini.h is a special case since we need to process
+        # the FINAL_TARGET_PP_FILES for application.ini before running
+        # the GENERATED_FILES script, and tup doesn't handle the rules
+        # out of order. Similarly, dependentlibs.list uses libxul as
+        # an input, so must be written after the rule for libxul.
+        self._delayed_files = (
+            'application.ini.h',
+            'dependentlibs.list',
+            'dependentlibs.list.gtest'
+        )
+
 
     def _get_backend_file(self, relobjdir):
         objdir = mozpath.normpath(mozpath.join(self.environment.topobjdir, relobjdir))
@@ -208,6 +232,129 @@ class TupOnly(CommonBackend, PartialBackend):
         ]
         return cmd
 
+    def _lib_paths(self, objdir, libs):
+        return [mozpath.relpath(mozpath.join(l.objdir, l.import_name), objdir)
+                for l in libs]
+
+    def _gen_shared_library(self, backend_file):
+        if backend_file.shared_lib.name == 'libxul.so':
+            # This will fail to link currently due to missing rust symbols.
+            return
+
+        if backend_file.shared_lib.cxx_link:
+            mkshlib = (
+                [backend_file.environment.substs['CXX']] +
+                backend_file.local_flags['CXX_LDFLAGS']
+            )
+        else:
+            mkshlib = (
+                [backend_file.environment.substs['CC']] +
+                backend_file.local_flags['C_LDFLAGS']
+            )
+
+        mkshlib += (
+            backend_file.environment.substs['DSO_PIC_CFLAGS'] +
+            [backend_file.environment.substs['DSO_LDOPTS']] +
+            ['-Wl,-h,%s' % backend_file.shared_lib.soname] +
+            ['-o', backend_file.shared_lib.lib_name]
+        )
+
+        objs, _, shared_libs, os_libs, static_libs = self._expand_libs(backend_file.shared_lib)
+        static_libs = self._lib_paths(backend_file.objdir, static_libs)
+        shared_libs = self._lib_paths(backend_file.objdir, shared_libs)
+
+        list_file_name = '%s.list' % backend_file.shared_lib.name.replace('.', '_')
+        list_file = self._make_list_file(backend_file.objdir, objs, list_file_name)
+
+        inputs = objs + static_libs + shared_libs
+        if any(i.endswith('libxul.so') for i in inputs):
+            # Don't attempt to link anything that depends on libxul.
+            return
+
+        symbols_file = []
+        if backend_file.shared_lib.symbols_file:
+            inputs.append(backend_file.shared_lib.symbols_file)
+            # TODO: Assumes GNU LD
+            symbols_file = ['-Wl,--version-script,%s' % backend_file.shared_lib.symbols_file]
+
+        cmd = (
+            mkshlib +
+            [list_file] +
+            backend_file.local_flags['LDFLAGS'] +
+            static_libs +
+            shared_libs +
+            symbols_file +
+            [backend_file.environment.substs['OS_LIBS']] +
+            os_libs
+        )
+        backend_file.rule(
+            cmd=cmd,
+            inputs=inputs,
+            outputs=[backend_file.shared_lib.lib_name],
+            display='LINK %o'
+        )
+
+
+    def _gen_program(self, backend_file):
+        cc_or_cxx = 'CXX' if backend_file.program.cxx_link else 'CC'
+        objs, _, shared_libs, os_libs, static_libs = self._expand_libs(backend_file.program)
+        static_libs = self._lib_paths(backend_file.objdir, static_libs)
+        shared_libs = self._lib_paths(backend_file.objdir, shared_libs)
+
+        inputs = objs + static_libs + shared_libs
+        if any(i.endswith('libxul.so') for i in inputs):
+            # Don't attempt to link anything that depends on libxul.
+            return
+
+        list_file_name = '%s.list' % backend_file.program.name.replace('.', '_')
+        list_file = self._make_list_file(backend_file.objdir, objs, list_file_name)
+
+        outputs = [mozpath.relpath(backend_file.program.output_path.full_path,
+                                   backend_file.objdir)]
+        cmd = (
+            [backend_file.environment.substs[cc_or_cxx], '-o', '%o'] +
+            backend_file.local_flags['CXX_LDFLAGS'] +
+            [list_file] +
+            backend_file.local_flags['LDFLAGS'] +
+            static_libs +
+            [backend_file.environment.substs['MOZ_PROGRAM_LDFLAGS']] +
+            shared_libs +
+            [backend_file.environment.substs['OS_LIBS']] +
+            os_libs
+        )
+        backend_file.rule(
+            cmd=cmd,
+            inputs=inputs,
+            outputs=outputs,
+            display='LINK %o'
+        )
+
+
+    def _gen_static_library(self, backend_file):
+        ar = [
+            backend_file.environment.substs['AR'],
+            backend_file.environment.substs['AR_FLAGS'].replace('$@', '%o')
+        ]
+
+        objs, _, shared_libs, _, static_libs = self._expand_libs(backend_file.static_lib)
+        static_libs = self._lib_paths(backend_file.objdir, static_libs)
+        shared_libs = self._lib_paths(backend_file.objdir, shared_libs)
+
+        inputs = objs + static_libs
+
+        cmd = (
+            ar +
+            inputs
+        )
+
+        backend_file.rule(
+            cmd=cmd,
+            inputs=inputs,
+            outputs=[backend_file.static_lib.name],
+            display='AR %o'
+        )
+
+
     def consume_object(self, obj):
         """Write out build files necessary to build with tup."""
 
@@ -221,24 +368,16 @@ class TupOnly(CommonBackend, PartialBackend):
         backend_file = self._get_backend_file_for(obj)
 
         if isinstance(obj, GeneratedFile):
-            # These files are already generated by make before tup runs.
-            skip_files = (
-                'buildid.h',
-                'source-repo.h',
-            )
+            skip_files = []
 
             if self.environment.is_artifact_build:
-                skip_files = skip_files + self._compile_env_gen_files
+                skip_files = self._compile_env_gen_files
 
             for f in obj.outputs:
                 if any(mozpath.match(f, p) for p in skip_files):
                     return False
 
-            if 'application.ini.h' in obj.outputs:
-                # application.ini.h is a special case since we need to process
-                # the FINAL_TARGET_PP_FILES for application.ini before running
-                # the GENERATED_FILES script, and tup doesn't handle the rules
-                # out of order.
+            if any([f in obj.outputs for f in self._delayed_files]):
                 backend_file.delayed_generated_files.append(obj)
             else:
                 self._process_generated_file(backend_file, obj)
@@ -270,6 +409,20 @@ class TupOnly(CommonBackend, PartialBackend):
             backend_file.host_sources[obj.canonical_suffix].extend(obj.files)
         elif isinstance(obj, VariablePassthru):
             backend_file.variables = obj.variables
+        elif isinstance(obj, StaticLibrary):
+            backend_file.static_lib = obj
+        elif isinstance(obj, SharedLibrary):
+            backend_file.shared_lib = obj
+        elif isinstance(obj, HostProgram):
+            pass
+        elif isinstance(obj, Program):
+            backend_file.program = obj
+
+        # The top-level Makefile.in still contains our driver target and some
+        # things related to artifact builds, so as a special case ensure the
+        # make backend generates a Makefile there.
+        if obj.objdir == self.environment.topobjdir:
+            return False
 
         return True
 
@@ -284,9 +437,18 @@ class TupOnly(CommonBackend, PartialBackend):
                 fh.write(''.join('%s\n' % e for e in sorted(entries)))
 
         for objdir, backend_file in sorted(self._backend_files.items()):
+            backend_file.gen_sources_rules([self._installed_files])
+            for condition, gen_method in ((backend_file.shared_lib, self._gen_shared_library),
+                                          (backend_file.static_lib and backend_file.static_lib.no_expand_lib,
+                                           self._gen_static_library),
+                                          (backend_file.program, self._gen_program)):
+                if condition:
+                    backend_file.export_shell()
+                    gen_method(backend_file)
             for obj in backend_file.delayed_generated_files:
                 self._process_generated_file(backend_file, obj)
-            backend_file.gen_sources_rules([self._installed_files])
+            for path, output in backend_file.delayed_installed_files:
+                backend_file.symlink_rule(path, output=output)
             with self._write_file(fh=backend_file):
                 pass
 
@@ -347,7 +509,11 @@ class TupOnly(CommonBackend, PartialBackend):
             outputs.extend(obj.outputs)
             outputs.append('%s.pp' % obj.outputs[0])
 
-            extra_outputs = [self._installed_files] if obj.required_for_compile else None
+            if any(f in obj.outputs for f in ('source-repo.h', 'buildid.h')):
+                extra_outputs = [self._early_generated_files]
+            else:
+                extra_outputs = [self._installed_files] if obj.required_for_compile else []
+                full_inputs += [self._early_generated_files]
 
             backend_file.rule(
                 display='python {script}:{method} -> [%o]'.format(script=obj.script, method=obj.method),
@@ -426,14 +592,19 @@ class TupOnly(CommonBackend, PartialBackend):
                         output = mozpath.join('$(MOZ_OBJ_ROOT)', target, path,
                                               f.target_basename)
                         gen_backend_file = self._get_backend_file(f.context.relobjdir)
-                        gen_backend_file.symlink_rule(f.full_path, output=output,
-                                                      output_group=self._installed_files)
+                        if f.target_basename in self._delayed_files:
+                            gen_backend_file.delayed_installed_files.append((f.full_path, output))
+                        else:
+                            gen_backend_file.symlink_rule(f.full_path, output=output,
+                                                          output_group=self._installed_files)
+
 
     def _process_final_target_pp_files(self, obj, backend_file):
         for i, (path, files) in enumerate(obj.files.walk()):
             for f in files:
                 self._preprocess(backend_file, f.full_path,
-                                 destdir=mozpath.join(self.environment.topobjdir, obj.install_target, path))
+                                 destdir=mozpath.join(self.environment.topobjdir, obj.install_target, path),
+                                 target=f.target_basename)
 
     def _process_computed_flags(self, obj, backend_file):
         for var, flags in obj.get_flags():
@@ -495,22 +666,25 @@ class TupOnly(CommonBackend, PartialBackend):
         for m in manager.chrome_manifests:
             self._manifest_entries[m].add('manifest components/interfaces.manifest')
 
-    def _preprocess(self, backend_file, input_file, destdir=None):
+    def _preprocess(self, backend_file, input_file, destdir=None, target=None):
+        if target is None:
+            target = mozpath.basename(input_file)
         # .css files use '%' as the preprocessor marker, which must be scaped as
         # '%%' in the Tupfile.
-        marker = '%%' if input_file.endswith('.css') else '#'
+        marker = '%%' if target.endswith('.css') else '#'
 
         cmd = self._py_action('preprocessor')
         cmd.extend([shell_quote(d) for d in backend_file.defines])
         cmd.extend(['$(ACDEFINES)', '%f', '-o', '%o', '--marker=%s' % marker])
 
-        base_input = mozpath.basename(input_file)
+        base_input = mozpath.basename(target)
         if base_input.endswith('.in'):
             base_input = mozpath.splitext(base_input)[0]
         output = mozpath.join(destdir, base_input) if destdir else base_input
 
         backend_file.rule(
             inputs=[input_file],
+            extra_inputs=[self._early_generated_files],
             display='Preprocess %o',
             cmd=cmd,
             outputs=[output],

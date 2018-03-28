@@ -1,9 +1,12 @@
-/* Any copyright is dedicated to the Public Domain.
-   http://creativecommons.org/publicdomain/zero/1.0/ */
+/* -*- Mode: Java; c-basic-offset: 4; tab-width: 4; indent-tabs-mode: nil; -*-
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 package org.mozilla.geckoview.test
 
 import android.os.Parcel
+import android.support.test.InstrumentationRegistry
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule
 
@@ -25,6 +28,7 @@ open class BaseSessionTest(noErrorCollector: Boolean = false) {
         const val HELLO2_HTML_PATH = "/assets/www/hello2.html"
         const val NEW_SESSION_HTML_PATH = "/assets/www/newSession.html";
         const val NEW_SESSION_CHILD_HTML_PATH = "/assets/www/newSession_child.html";
+        const val CLICK_TO_RELOAD_HTML_PATH = "/assets/www/clickToReload.html";
     }
 
     @get:Rule val sessionRule = GeckoSessionTestRule()
@@ -37,6 +41,10 @@ open class BaseSessionTest(noErrorCollector: Boolean = false) {
             sessionRule.errorCollector = errors
         }
     }
+
+    fun GeckoSession.getTestBytes(path: String) =
+            InstrumentationRegistry.getTargetContext().resources.assets
+                    .open(path.removePrefix("/assets/")).readBytes()
 
     fun GeckoSession.loadTestPath(path: String) =
             this.loadUri(GeckoSessionTestRule.APK_URI_PREFIX + path.removePrefix("/"))

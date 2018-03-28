@@ -66,7 +66,7 @@ class CodeGeneratorShared : public LElementVisitor
     js::Vector<OutOfLineCode*, 0, SystemAllocPolicy> outOfLineCode_;
 
     MacroAssembler& ensureMasm(MacroAssembler* masm);
-    mozilla::Maybe<MacroAssembler> maybeMasm_;
+    mozilla::Maybe<IonHeapMacroAssembler> maybeMasm_;
 
   public:
     MacroAssembler& masm;
@@ -498,11 +498,6 @@ class CodeGeneratorShared : public LElementVisitor
 #if !defined(JS_CODEGEN_MIPS32) && !defined(JS_CODEGEN_MIPS64)
     void jumpToBlock(MBasicBlock* mir, Assembler::Condition cond);
 #endif
-
-    template <class T>
-    wasm::OldTrapDesc oldTrap(T* mir, wasm::Trap trap) {
-        return wasm::OldTrapDesc(mir->bytecodeOffset(), trap, masm.framePushed());
-    }
 
   private:
     void generateInvalidateEpilogue();

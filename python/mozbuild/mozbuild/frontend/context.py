@@ -934,6 +934,7 @@ SchedulingComponents = ContextDerivedTypedRecord(
 GeneratedFilesList = StrictOrderingOnAppendListWithFlagsFactory({
     'script': unicode,
     'inputs': list,
+    'force': bool,
     'flags': list, })
 
 
@@ -1279,8 +1280,8 @@ VARIABLES = {
 
         This variable contains a list of files for the build system to
         generate at export time. The generation method may be declared
-        with optional ``script``, ``inputs`` and ``flags`` attributes on
-        individual entries.
+        with optional ``script``, ``inputs``, ``flags``, and ``force``
+        attributes on individual entries.
         If the optional ``script`` attribute is not present on an entry, it
         is assumed that rules for generating the file are present in
         the associated Makefile.in.
@@ -1318,6 +1319,11 @@ VARIABLES = {
 
         When the ``flags`` attribute is present, the given list of flags is
         passed as extra arguments following the inputs.
+
+        When the ``force`` attribute is present, the file is generated every
+        build, regardless of whether it is stale.  This is special to the
+        RecursiveMake backend and intended for special situations only (e.g.,
+        localization).  Please consult a build peer before using ``force``.
         """),
 
     'DEFINES': (InitializedDefines, dict,

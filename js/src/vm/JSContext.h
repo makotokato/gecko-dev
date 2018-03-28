@@ -21,11 +21,6 @@
 #include "vm/MallocProvider.h"
 #include "vm/Runtime.h"
 
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable:4100) /* Silence unreferenced formal parameter warnings */
-#endif
-
 struct DtoaState;
 
 namespace js {
@@ -227,9 +222,6 @@ struct JSContext : public JS::RootingContext,
     inline void enterNullCompartment();
     inline void leaveCompartment(JSCompartment* oldCompartment,
                                  const js::AutoLockForExclusiveAccess* maybeLock = nullptr);
-
-    inline void enterZoneGroup(js::ZoneGroup* group);
-    inline void leaveZoneGroup(js::ZoneGroup* group);
 
     void setHelperThread(js::HelperThread* helperThread);
     js::HelperThread* helperThread() const { return helperThread_; }
@@ -863,6 +855,19 @@ struct JSContext : public JS::RootingContext,
         return handlingJitInterrupt_;
     }
 
+    void* addressOfInterrupt() {
+        return &interrupt_;
+    }
+    void* addressOfInterruptRegExpJit() {
+        return &interruptRegExpJit_;
+    }
+    void* addressOfJitStackLimit() {
+        return &jitStackLimit;
+    }
+    void* addressOfJitStackLimitNoInterrupt() {
+        return &jitStackLimitNoInterrupt;
+    }
+
     /* Futex state, used by Atomics.wait() and Atomics.wake() on the Atomics object */
     js::FutexThread fx;
 
@@ -940,10 +945,10 @@ JSContext::boolToResult(bool ok)
 }
 
 inline JSContext*
-JSRuntime::activeContextFromOwnThread()
+JSRuntime::mainContextFromOwnThread()
 {
-    MOZ_ASSERT(activeContext() == js::TlsContext.get());
-    return activeContext();
+    MOZ_ASSERT(mainContextFromAnyThread() == js::TlsContext.get());
+    return mainContextFromAnyThread();
 }
 
 namespace js {
@@ -990,15 +995,6 @@ struct MOZ_RAII AutoResolving {
  */
 extern JSContext*
 NewContext(uint32_t maxBytes, uint32_t maxNurseryBytes, JSRuntime* parentRuntime);
-
-extern JSContext*
-NewCooperativeContext(JSContext* siblingContext);
-
-extern void
-YieldCooperativeContext(JSContext* cx);
-
-extern void
-ResumeCooperativeContext(JSContext* cx);
 
 extern void
 DestroyContext(JSContext* cx);
@@ -1385,9 +1381,5 @@ struct MOZ_RAII AutoSetThreadIsSweeping
 } // namespace gc
 
 } /* namespace js */
-
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 
 #endif /* vm_JSContext_h */

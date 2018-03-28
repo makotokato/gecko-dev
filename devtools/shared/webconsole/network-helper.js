@@ -525,8 +525,7 @@ var NetworkHelper = {
    *                    * "broken": secure connection failed (e.g. expired cert)
    *                    * "secure": the connection was properly secured.
    *          If state == broken:
-   *            - errorMessage: full error message from
-   *                            nsITransportSecurityInfo.
+   *            - errorMessage: error code string.
    *          If state == secure:
    *            - protocolVersion: one of TLSv1, TLSv1.1, TLSv1.2, TLSv1.3.
    *            - cipherSuite: the cipher suite used in this connection.
@@ -654,6 +653,34 @@ var NetworkHelper = {
       // Certificate.
       info.cert = this.parseCertificateInfo(SSLStatus.serverCert);
 
+      info.certificateTransparency = null;
+
+      switch (SSLStatus.certificateTransparencyStatus) {
+        case SSLStatus.CERTIFICATE_TRANSPARENCY_NOT_APPLICABLE:
+        default:
+          break;
+        case SSLStatus.CERTIFICATE_TRANSPARENCY_NONE:
+          info.certificateTransparency =
+            L10N.getStr("certmgr.certificateTransparency.status.none");
+          break;
+        case SSLStatus.CERTIFICATE_TRANSPARENCY_POLICY_COMPLIANT:
+          info.certificateTransparency =
+            L10N.getStr("certmgr.certificateTransparency.status.ok");
+          break;
+        case SSLStatus.CERTIFICATE_TRANSPARENCY_POLICY_NOT_ENOUGH_SCTS:
+          info.certificateTransparency =
+            L10N.getStr(
+              "certmgr.certificateTransparency.status.notEnoughSCTS"
+            );
+          break;
+        case SSLStatus.CERTIFICATE_TRANSPARENCY_POLICY_NOT_DIVERSE_SCTS:
+          info.certificateTransparency =
+            L10N.getStr(
+              "certmgr.certificateTransparency.status.notDiverseSCTS"
+            );
+          break;
+      }
+
       // HSTS and HPKP if available.
       if (httpActivity.hostname) {
         const sss = Cc["@mozilla.org/ssservice;1"]
@@ -682,7 +709,7 @@ var NetworkHelper = {
     } else {
       // The connection failed.
       info.state = "broken";
-      info.errorMessage = securityInfo.errorMessage;
+      info.errorMessage = securityInfo.errorCodeString;
     }
 
     return info;

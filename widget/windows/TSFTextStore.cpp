@@ -5131,7 +5131,7 @@ TSFTextStore::RecordCompositionStartAction(ITfCompositionView* aComposition,
       mPendingActions[mPendingActions.Length() - 2];
     contentForTSF.RestoreCommittedComposition(
       aComposition, pendingCompositionStart, pendingCompositionEnd);
-    mPendingActions.RemoveElementAt(mPendingActions.Length() - 1);
+    mPendingActions.RemoveLastElement();
     MOZ_LOG(sTextStoreLog, LogLevel::Info,
       ("0x%p   TSFTextStore::RecordCompositionStartAction() "
        "succeeded: restoring the committed string as composing string, "
@@ -5325,6 +5325,13 @@ TSFTextStore::OnUpdateComposition(ITfCompositionView* pComposition,
 
   // pRangeNew is null when the update is not complete
   if (!pRangeNew) {
+    MaybeDispatchKeyboardEventAsProcessedByIME();
+    if (mDestroyed) {
+      MOZ_LOG(sTextStoreLog, LogLevel::Error,
+        ("0x%p   TSFTextStore::OnUpdateComposition() FAILED due to "
+         "destroyed during dispatching a keyboard event", this));
+      return E_FAIL;
+    }
     PendingAction* action = LastOrNewPendingCompositionUpdate();
     action->mIncomplete = true;
     MOZ_LOG(sTextStoreLog, LogLevel::Info,

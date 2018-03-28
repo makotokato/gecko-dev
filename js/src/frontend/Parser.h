@@ -340,9 +340,6 @@ class ParserBase
 
     bool hasValidSimpleStrictParameterNames();
 
-    bool allowExpressionClosures() const {
-        return options().expressionClosuresOption;
-    }
     /*
      * Create a new function object given a name (which is optional if this is
      * a function expression).
@@ -705,7 +702,6 @@ class GeneralParser
     using Base::isValidSimpleAssignmentTarget;
     using Base::pc;
     using Base::usedNames;
-    using Base::allowExpressionClosures;
 
   private:
     using Base::checkAndMarkSuperScope;
@@ -1156,7 +1152,10 @@ class GeneralParser
                                                      TokenKind tt);
 
     inline bool checkExportedName(JSAtom* exportName);
+    inline bool checkExportedNamesForArrayBinding(Node node);
+    inline bool checkExportedNamesForObjectBinding(Node node);
     inline bool checkExportedNamesForDeclaration(Node node);
+    inline bool checkExportedNamesForDeclarationList(Node node);
     inline bool checkExportedNameForFunction(Node node);
     inline bool checkExportedNameForClass(Node node);
     inline bool checkExportedNameForClause(Node node);
@@ -1350,7 +1349,10 @@ class Parser<SyntaxParseHandler, CharT> final
     inline Node importDeclaration();
     inline bool checkLocalExportNames(Node node);
     inline bool checkExportedName(JSAtom* exportName);
+    inline bool checkExportedNamesForArrayBinding(Node node);
+    inline bool checkExportedNamesForObjectBinding(Node node);
     inline bool checkExportedNamesForDeclaration(Node node);
+    inline bool checkExportedNamesForDeclarationList(Node node);
     inline bool checkExportedNameForFunction(Node node);
     inline bool checkExportedNameForClass(Node node);
     inline bool checkExportedNameForClause(Node node);
@@ -1408,7 +1410,6 @@ class Parser<FullParseHandler, CharT> final
     using Base::pos;
     using Base::ss;
     using Base::tokenStream;
-    using Base::allowExpressionClosures;
 
   private:
     using Base::alloc;
@@ -1466,7 +1467,10 @@ class Parser<FullParseHandler, CharT> final
     Node importDeclaration();
     bool checkLocalExportNames(Node node);
     bool checkExportedName(JSAtom* exportName);
+    bool checkExportedNamesForArrayBinding(Node node);
+    bool checkExportedNamesForObjectBinding(Node node);
     bool checkExportedNamesForDeclaration(Node node);
+    bool checkExportedNamesForDeclarationList(Node node);
     bool checkExportedNameForFunction(Node node);
     bool checkExportedNameForClass(Node node);
     inline bool checkExportedNameForClause(Node node);

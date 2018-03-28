@@ -72,8 +72,14 @@ pref("devtools.changesview.enabled", false);
 pref("devtools.eventsview.enabled", false);
 // Enable the Flexbox Inspector panel
 pref("devtools.flexboxinspector.enabled", false);
-// Enable the new Animation Inspector
+// Enable the new Animation Inspector in Nightly only
+#if defined(NIGHTLY_BUILD)
+pref("devtools.new-animationinspector.enabled", true);
+#else
 pref("devtools.new-animationinspector.enabled", false);
+#endif
+// Enable the Variable Fonts editor
+pref("devtools.inspector.fonteditor.enabled", false);
 
 // Grid highlighter preferences
 pref("devtools.gridinspector.gridOutlineMaxColumns", 50);
@@ -162,6 +168,9 @@ pref("devtools.netmonitor.filters", "[\"all\"]");
 pref("devtools.netmonitor.visibleColumns",
   "[\"status\",\"method\",\"file\",\"domain\",\"cause\",\"type\",\"transferred\",\"contentSize\",\"waterfall\"]"
 );
+
+// Save request/response bodies yes/no.
+pref("devtools.netmonitor.saveRequestAndResponseBodies", true);
 
 // The default Network monitor HAR export setting
 pref("devtools.netmonitor.har.defaultLogDir", "");

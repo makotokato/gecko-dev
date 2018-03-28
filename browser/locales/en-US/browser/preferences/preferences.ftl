@@ -16,11 +16,6 @@ pref-page =
            *[other] Preferences
         }
 
-# This string is currently used only in Firefox 60 and will be removed when not
-# needed for x-channel. See bug 1445686 for details.
-search-input =
-    .style = width: 15.4em
-
 # This is used to determine the width of the search field in about:preferences,
 # in order to make the entire placeholder string visible
 #
@@ -462,3 +457,16 @@ search-keyword-warning-title = Duplicate Keyword
 #   $name (String) - Name of a search engine.
 search-keyword-warning-engine = You have chosen a keyword that is currently in use by “{ $name }”. Please select another.
 search-keyword-warning-bookmark = You have chosen a keyword that is currently in use by a bookmark. Please select another.
+
+## Containers Section
+
+containers-back-link = « Go Back
+containers-header = Container Tabs
+containers-add-button =
+    .label = Add New Container
+    .accesskey = A
+
+containers-preferences-button =
+    .label = Preferences
+containers-remove-button =
+    .label = Remove

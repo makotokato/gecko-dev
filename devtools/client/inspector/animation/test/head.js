@@ -15,14 +15,10 @@ const TAB_NAME = "newanimationinspector";
 const ANIMATION_L10N =
   new LocalizationHelper("devtools/client/locales/animationinspector.properties");
 
-// Enable new animation inspector.
-Services.prefs.setBoolPref("devtools.new-animationinspector.enabled", true);
-
 // Auto clean-up when a test ends.
 // Clean-up all prefs that might have been changed during a test run
 // (safer here because if the test fails, then the pref is never reverted)
 registerCleanupFunction(() => {
-  Services.prefs.clearUserPref("devtools.new-animationinspector.enabled");
   Services.prefs.clearUserPref("devtools.toolsidebar-width.inspector");
 });
 
@@ -294,6 +290,19 @@ const getDurationAndRate = function(animationInspector, panel, pixels) {
 };
 
 /**
+ * Select animation inspector in sidebar and toolbar.
+ *
+ * @param {InspectorPanel} inspector
+ */
+const selectAnimationInspector = async function(inspector) {
+  await inspector.toolbox.selectTool("inspector");
+  const onUpdated = inspector.once("inspector-updated");
+  inspector.sidebar.select("newanimationinspector");
+  await onUpdated;
+  await waitForRendering(inspector.animationinspector);
+};
+
+/**
  * Set the inspector's current selection to a node or to the first match of the
  * given css selector and wait for the animations to be displayed
  *
@@ -329,6 +338,24 @@ const sendSpaceKeyEvent = async function(animationInspector, panel) {
 };
 
 /**
+ * Set a node class attribute to the given selector.
+ *
+ * @param {AnimationInspector} animationInspector
+ * @param {String} selector
+ * @param {String} cls
+ *        e.g. ".ball.still"
+ */
+const setClassAttribute = async function(animationInspector, selector, cls) {
+  const options = {
+    attributeName: "class",
+    attributeValue: cls,
+    selector,
+  };
+  await executeInContent("devtools:test:setAttribute", options);
+  await waitForSummaryAndDetail(animationInspector);
+};
+
+/**
  * Set the sidebar width by given parameter.
  *
  * @param {String} width
@@ -341,6 +368,27 @@ const setSidebarWidth = async function(width, inspector) {
   const onUpdated = inspector.toolbox.once("inspector-sidebar-resized");
   inspector.splitBox.setState({ width });
   await onUpdated;
+};
+
+/**
+ * Set a new style property declaration to the node for the given selector.
+ *
+ * @param {AnimationInspector} animationInspector
+ * @param {String} selector
+ * @param {String} propertyName
+ *        e.g. "animationDuration"
+ * @param {String} propertyValue
+ *        e.g. "5.5s"
+ */
+const setStyle = async function(animationInspector,
+                                selector, propertyName, propertyValue) {
+  const options = {
+    propertyName,
+    propertyValue,
+    selector,
+  };
+  await executeInContent("devtools:test:setStyle", options);
+  await waitForSummaryAndDetail(animationInspector);
 };
 
 /**

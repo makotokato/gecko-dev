@@ -79,6 +79,7 @@
 #include "nsAttrValueOrString.h"
 #include "nsAttrValueInlines.h"
 #include "nsCSSPseudoElements.h"
+#include "nsWindowSizes.h"
 #ifdef MOZ_XUL
 #include "nsXULElement.h"
 #endif /* MOZ_XUL */
@@ -112,11 +113,6 @@
 #include "nsView.h"
 #include "nsViewManager.h"
 #include "nsIScrollableFrame.h"
-#ifdef MOZ_OLD_STYLE
-#include "mozilla/css/StyleRule.h" /* For nsCSSSelectorList */
-#include "nsCSSRuleProcessor.h"
-#include "nsRuleProcessorData.h"
-#endif
 #include "nsTextNode.h"
 
 #include "nsCycleCollectionParticipant.h"
@@ -548,9 +544,9 @@ Element::GetBindingURL(nsIDocument *aDocument, css::URLValue **aResult)
     return true;
   }
 
-  // Get the computed -moz-binding directly from the style context
-  RefPtr<nsStyleContext> sc =
-    nsComputedDOMStyle::GetStyleContextNoFlush(this, nullptr);
+  // Get the computed -moz-binding directly from the ComputedStyle
+  RefPtr<ComputedStyle> sc =
+    nsComputedDOMStyle::GetComputedStyleNoFlush(this, nullptr);
   NS_ENSURE_TRUE(sc, false);
 
   NS_IF_ADDREF(*aResult = sc->StyleDisplay()->mBinding);
@@ -586,7 +582,7 @@ Element::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aGivenProto)
     return obj;
   }
 
-  // Make sure the style context goes away _before_ we load the binding
+  // Make sure the ComputedStyle goes away _before_ we load the binding
   // since that can destroy the relevant presshell.
 
   {
@@ -1510,10 +1506,10 @@ Element::GetElementsWithGrid(nsTArray<RefPtr<Element>>& aElements)
   // generate a nsGridContainerFrame during layout.
   auto IsDisplayGrid = [](Element* aElement) -> bool
   {
-    RefPtr<nsStyleContext> styleContext =
-      nsComputedDOMStyle::GetStyleContext(aElement, nullptr);
-    if (styleContext) {
-      const nsStyleDisplay* display = styleContext->StyleDisplay();
+    RefPtr<ComputedStyle> computedStyle =
+      nsComputedDOMStyle::GetComputedStyle(aElement, nullptr);
+    if (computedStyle) {
+      const nsStyleDisplay* display = computedStyle->StyleDisplay();
       return (display->mDisplay == StyleDisplay::Grid ||
               display->mDisplay == StyleDisplay::InlineGrid);
     }
@@ -1542,7 +1538,7 @@ Element::GetElementsByMatching(nsElementMatchFunc aFunc,
 static uint32_t
 EditableInclusiveDescendantCount(nsIContent* aContent)
 {
-  auto htmlElem = nsGenericHTMLElement::FromContent(aContent);
+  auto htmlElem = nsGenericHTMLElement::FromNode(aContent);
   if (htmlElem) {
     return htmlElem->EditableInclusiveDescendantCount();
   }
@@ -1582,7 +1578,7 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
 
 #ifdef MOZ_XUL
   // First set the binding parent
-  nsXULElement* xulElem = nsXULElement::FromContent(this);
+  nsXULElement* xulElem = nsXULElement::FromNode(this);
   if (xulElem) {
     xulElem->SetXULBindingParent(aBindingParent);
   }
@@ -1636,6 +1632,8 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
 
   // XXXbz sXBL/XBL2 issue!
 
+  MOZ_ASSERT(!HasAnyOfFlags(Element::kAllServoDescendantBits));
+
   // Finally, set the document
   if (aDocument) {
     // Notify XBL- & nsIAnonymousContentCreator-generated
@@ -1655,14 +1653,7 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     SetIsInDocument();
 
     // Clear the lazy frame construction bits.
-    UnsetFlags(NODE_NEEDS_FRAME | NODE_DESCENDANTS_NEED_FRAMES |
-               // And the restyle bits. These shouldn't even get set if we came
-               // from a Servo-styled document, but they may be set if the
-               // element comes from a Gecko-backed document, see bug 1394586.
-               //
-               // TODO(emilio): We can remove this and assert we don't have any
-               // of them when we remove the old style system.
-               ELEMENT_ALL_RESTYLE_FLAGS);
+    UnsetFlags(NODE_NEEDS_FRAME | NODE_DESCENDANTS_NEED_FRAMES);
   } else if (IsInShadowTree()) {
     // We're not in a document, but we did get inserted into a shadow tree.
     // Since we won't have any restyle data in the document's restyle trackers,
@@ -1672,15 +1663,14 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     // inserted into a document.
     //
     // See the comment about the restyle bits above, it also applies.
-    UnsetFlags(NODE_NEEDS_FRAME | NODE_DESCENDANTS_NEED_FRAMES |
-               ELEMENT_ALL_RESTYLE_FLAGS);
+    UnsetFlags(NODE_NEEDS_FRAME | NODE_DESCENDANTS_NEED_FRAMES);
   } else {
     // If we're not in the doc and not in a shadow tree,
     // update our subtree pointer.
     SetSubtreeRootPointer(aParent->SubtreeRoot());
   }
 
-  if (CustomElementRegistry::IsCustomElementEnabled() && IsInComposedDoc()) {
+  if (CustomElementRegistry::IsCustomElementEnabled(OwnerDoc()) && IsInComposedDoc()) {
     // Connected callback must be enqueued whenever a custom element becomes
     // connected.
     CustomElementData* data = GetCustomElementData();
@@ -1896,10 +1886,9 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
   if (HasServoData()) {
     MOZ_ASSERT(document);
     MOZ_ASSERT(IsInAnonymousSubtree());
-    MOZ_ASSERT(document && document->IsStyledByServo());
   }
 
-  if (document && document->IsStyledByServo()) {
+  if (document) {
     ClearServoData(document);
   }
 
@@ -1984,7 +1973,7 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
   bool clearBindingParent = true;
 
 #ifdef MOZ_XUL
-  if (nsXULElement* xulElem = nsXULElement::FromContent(this)) {;
+  if (nsXULElement* xulElem = nsXULElement::FromNode(this)) {;
     xulElem->SetXULBindingParent(nullptr);
     clearBindingParent = false;
   }
@@ -2022,7 +2011,7 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
 
      // Disconnected must be enqueued whenever a connected custom element becomes
      // disconnected.
-    if (CustomElementRegistry::IsCustomElementEnabled()) {
+    if (CustomElementRegistry::IsCustomElementEnabled(OwnerDoc())) {
       CustomElementData* data  = GetCustomElementData();
       if (data) {
         if (data->mState == CustomElementData::State::eCustom) {
@@ -2071,7 +2060,7 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
     shadowRoot->SetIsComposedDocParticipant(false);
   }
 
-  MOZ_ASSERT_IF(IsStyledByServo(), !HasAnyOfFlags(kAllServoDescendantBits));
+  MOZ_ASSERT(!HasAnyOfFlags(kAllServoDescendantBits));
   MOZ_ASSERT(!document || document->GetServoRestyleRoot() != this);
 }
 
@@ -2694,7 +2683,7 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
     }
   }
 
-  if (CustomElementRegistry::IsCustomElementEnabled()) {
+  if (CustomElementRegistry::IsCustomElementEnabled(OwnerDoc())) {
     CustomElementDefinition* definition = GetCustomElementDefinition();
     // Only custom element which is in `custom` state could get the
     // CustomElementDefinition.
@@ -2868,7 +2857,7 @@ Element::OnAttrSetButNotChanged(int32_t aNamespaceID, nsAtom* aName,
                                 const nsAttrValueOrString& aValue,
                                 bool aNotify)
 {
-  if (CustomElementRegistry::IsCustomElementEnabled()) {
+  if (CustomElementRegistry::IsCustomElementEnabled(OwnerDoc())) {
     // Only custom element which is in `custom` state could get the
     // CustomElementDefinition.
     CustomElementDefinition* definition = GetCustomElementDefinition();
@@ -3001,7 +2990,7 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsAtom* aName,
     }
   }
 
-  if (CustomElementRegistry::IsCustomElementEnabled()) {
+  if (CustomElementRegistry::IsCustomElementEnabled(OwnerDoc())) {
     CustomElementDefinition* definition = GetCustomElementDefinition();
     // Only custom element which is in `custom` state could get the
     // CustomElementDefinition.
@@ -3142,21 +3131,17 @@ Element::List(FILE* out, int32_t aIndent,
   // Note: not listing nsIAnonymousContentCreator-created content...
 
   nsBindingManager* bindingManager = document->BindingManager();
-  nsCOMPtr<nsIDOMNodeList> anonymousChildren;
-  bindingManager->GetAnonymousNodesFor(nonConstThis,
-                                       getter_AddRefs(anonymousChildren));
+  nsINodeList* anonymousChildren =
+    bindingManager->GetAnonymousNodesFor(nonConstThis);
 
   if (anonymousChildren) {
-    uint32_t length = 0;
-    anonymousChildren->GetLength(&length);
+    uint32_t length = anonymousChildren->Length();
 
     for (indent = aIndent; --indent >= 0; ) fputs("  ", out);
     fputs("anonymous-children<\n", out);
 
     for (uint32_t i = 0; i < length; ++i) {
-      nsCOMPtr<nsIDOMNode> node;
-      anonymousChildren->Item(i, getter_AddRefs(node));
-      nsCOMPtr<nsIContent> child = do_QueryInterface(node);
+      nsIContent* child = anonymousChildren->Item(i);
       child->List(out, aIndent + 1);
     }
 
@@ -3498,30 +3483,7 @@ Element::Closest(const nsAString& aSelector, ErrorResult& aResult)
       return const_cast<Element*>(Servo_SelectorList_Closest(this, aList));
     },
     [&](nsCSSSelectorList* aList) -> Element* {
-#ifdef MOZ_OLD_STYLE
-      if (!aList) {
-        // Either we failed (and aError already has the exception), or this
-        // is a pseudo-element-only selector that matches nothing.
-        return nullptr;
-      }
-      TreeMatchContext matchingContext(false,
-                                       nsRuleWalker::eRelevantLinkUnvisited,
-                                       OwnerDoc(),
-                                       TreeMatchContext::eNeverMatchVisited);
-      matchingContext.SetHasSpecifiedScope();
-      matchingContext.AddScopeElement(this);
-      for (nsINode* node = this; node; node = node->GetParentNode()) {
-        if (node->IsElement() &&
-            nsCSSRuleProcessor::SelectorListMatches(node->AsElement(),
-                                                    matchingContext,
-                                                    aList)) {
-          return node->AsElement();
-        }
-      }
-      return nullptr;
-#else
       MOZ_CRASH("old style system disabled");
-#endif
     }
   );
 }
@@ -3539,23 +3501,7 @@ Element::Matches(const nsAString& aSelector, ErrorResult& aError)
       return Servo_SelectorList_Matches(this, aList);
     },
     [&](nsCSSSelectorList* aList) {
-#ifdef MOZ_OLD_STYLE
-      if (!aList) {
-        // Either we failed (and aError already has the exception), or this
-        // is a pseudo-element-only selector that matches nothing.
-        return false;
-      }
-      TreeMatchContext matchingContext(false,
-                                       nsRuleWalker::eRelevantLinkUnvisited,
-                                       OwnerDoc(),
-                                       TreeMatchContext::eNeverMatchVisited);
-      matchingContext.SetHasSpecifiedScope();
-      matchingContext.AddScopeElement(this);
-      return nsCSSRuleProcessor::SelectorListMatches(this, matchingContext,
-                                                     aList);
-#else
       MOZ_CRASH("old style system disabled");
-#endif
     }
   );
 }
@@ -3687,7 +3633,7 @@ Element::GetTransformToAncestor(Element& aAncestor)
       ancestorFrame, nsIFrame::IN_CSS_UNITS).GetMatrix();
   }
 
-  DOMMatrixReadOnly* matrix = new DOMMatrix(this, transform, IsStyledByServo());
+  DOMMatrixReadOnly* matrix = new DOMMatrix(this, transform);
   RefPtr<DOMMatrixReadOnly> result(matrix);
   return result.forget();
 }
@@ -3704,7 +3650,7 @@ Element::GetTransformToParent()
       parentFrame, nsIFrame::IN_CSS_UNITS).GetMatrix();
   }
 
-  DOMMatrixReadOnly* matrix = new DOMMatrix(this, transform, IsStyledByServo());
+  DOMMatrixReadOnly* matrix = new DOMMatrix(this, transform);
   RefPtr<DOMMatrixReadOnly> result(matrix);
   return result.forget();
 }
@@ -3719,7 +3665,7 @@ Element::GetTransformToViewport()
       nsLayoutUtils::GetDisplayRootFrame(primaryFrame), nsIFrame::IN_CSS_UNITS).GetMatrix();
   }
 
-  DOMMatrixReadOnly* matrix = new DOMMatrix(this, transform, IsStyledByServo());
+  DOMMatrixReadOnly* matrix = new DOMMatrix(this, transform);
   RefPtr<DOMMatrixReadOnly> result(matrix);
   return result.forget();
 }
@@ -3883,11 +3829,10 @@ Element::GetAnimationsUnsorted(Element* aElement,
   }
 }
 
-NS_IMETHODIMP
-Element::GetInnerHTML(nsAString& aInnerHTML)
+void
+Element::GetInnerHTML(nsAString& aInnerHTML, OOMReporter& aError)
 {
   GetMarkup(false, aInnerHTML);
-  return NS_OK;
 }
 
 void
@@ -4354,9 +4299,7 @@ Element::UpdateIntersectionObservation(DOMIntersectionObserver* aObserver, int32
 
 void
 Element::ClearServoData(nsIDocument* aDoc) {
-  MOZ_ASSERT(IsStyledByServo());
   MOZ_ASSERT(aDoc);
-#ifdef MOZ_STYLO
   if (HasServoData()) {
     Servo_Element_ClearData(this);
   } else {
@@ -4370,9 +4313,6 @@ Element::ClearServoData(nsIDocument* aDoc) {
   if (aDoc->GetServoRestyleRoot() == this) {
     aDoc->ClearServoRestyleRoot();
   }
-#else
-  MOZ_CRASH("Accessing servo node data in non-stylo build");
-#endif
 }
 
 void
@@ -4422,7 +4362,7 @@ Element::AddSizeOfExcludingThis(nsWindowSizes& aSizes, size_t* aNodeSize) const
 
   if (HasServoData()) {
     // Measure the ElementData object itself.
-    aSizes.mLayoutServoElementDataObjects +=
+    aSizes.mLayoutElementDataObjects +=
       aSizes.mState.mMallocSizeOf(mServoData.Get());
 
     // Measure mServoData, excluding the ComputedValues. This measurement
@@ -4437,7 +4377,7 @@ Element::AddSizeOfExcludingThis(nsWindowSizes& aSizes, size_t* aNodeSize) const
 
     // Now measure just the ComputedValues (and style structs) under
     // mServoData. This counts towards the relevant fields in |aSizes|.
-    RefPtr<ServoStyleContext> sc;
+    RefPtr<ComputedStyle> sc;
     if (Servo_Element_HasPrimaryComputedValues(this)) {
       sc = Servo_Element_GetPrimaryComputedValues(this).Consume();
       if (!aSizes.mState.HaveSeenPtr(sc.get())) {
@@ -4550,7 +4490,6 @@ static void
 NoteDirtyElement(Element* aElement, uint32_t aBits)
 {
   MOZ_ASSERT(aElement->IsInComposedDoc());
-  MOZ_ASSERT(aElement->IsStyledByServo());
 
   // Check the existing root early on, since it may allow us to short-circuit
   // before examining the parent chain.

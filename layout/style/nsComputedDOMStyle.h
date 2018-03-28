@@ -18,7 +18,7 @@
 #include "nscore.h"
 #include "nsCSSProps.h"
 #include "nsDOMCSSDeclaration.h"
-#include "nsStyleContext.h"
+#include "mozilla/ComputedStyle.h"
 #include "nsIWeakReferenceUtils.h"
 #include "mozilla/gfx/Types.h"
 #include "nsCoord.h"
@@ -35,7 +35,7 @@ class Element;
 struct ComputedGridTrackInfo;
 } // namespace mozilla
 
-struct nsComputedStyleMap;
+struct ComputedStyleMap;
 class nsIFrame;
 class nsIPresShell;
 class nsDOMCSSValueList;
@@ -86,49 +86,34 @@ public:
     eAll // Includes all stylesheets
   };
 
-  enum AnimationFlag {
-    eWithAnimation,
-    eWithoutAnimation,
-  };
-
   nsComputedDOMStyle(mozilla::dom::Element* aElement,
                      const nsAString& aPseudoElt,
                      nsIPresShell* aPresShell,
-                     StyleType aStyleType,
-                     AnimationFlag aFlag = eWithAnimation);
+                     StyleType aStyleType);
 
   virtual nsINode *GetParentObject() override
   {
     return mContent;
   }
 
-  static already_AddRefed<nsStyleContext>
-  GetStyleContext(mozilla::dom::Element* aElement, nsAtom* aPseudo,
-                  StyleType aStyleType = eAll);
+  static already_AddRefed<mozilla::ComputedStyle>
+  GetComputedStyle(mozilla::dom::Element* aElement, nsAtom* aPseudo,
+                   StyleType aStyleType = eAll);
 
-  static already_AddRefed<nsStyleContext>
-  GetStyleContextNoFlush(mozilla::dom::Element* aElement,
-                         nsAtom* aPseudo,
-                         StyleType aStyleType = eAll)
+  static already_AddRefed<mozilla::ComputedStyle>
+  GetComputedStyleNoFlush(mozilla::dom::Element* aElement,
+                          nsAtom* aPseudo,
+                          StyleType aStyleType = eAll)
   {
-    return DoGetStyleContextNoFlush(aElement,
-                                    aPseudo,
-                                    aElement->OwnerDoc()->GetShell(),
-                                    aStyleType,
-                                    eWithAnimation);
+    return DoGetComputedStyleNoFlush(aElement,
+                                     aPseudo,
+                                     aElement->OwnerDoc()->GetShell(),
+                                     aStyleType);
   }
 
-  static already_AddRefed<nsStyleContext>
-  GetUnanimatedStyleContextNoFlush(mozilla::dom::Element* aElement,
-                                   nsAtom* aPseudo,
-                                   StyleType aStyleType = eAll)
-  {
-    return DoGetStyleContextNoFlush(aElement,
-                                    aPseudo,
-                                    aElement->OwnerDoc()->GetShell(),
-                                    aStyleType,
-                                    eWithoutAnimation);
-  }
+  static already_AddRefed<mozilla::ComputedStyle>
+  GetUnanimatedComputedStyleNoFlush(mozilla::dom::Element* aElement,
+                                    nsAtom* aPseudo);
 
   // Helper for nsDOMWindowUtils::GetVisitedDependentComputedStyle
   void SetExposeVisitedStyle(bool aExpose) {
@@ -175,26 +160,25 @@ private:
   already_AddRefed<CSSValue> CreateTextAlignValue(uint8_t aAlign,
                                                   bool aAlignTrue,
                                                   const KTableEntry aTable[]);
-  // This indicates error by leaving mStyleContext null.
+  // This indicates error by leaving mComputedStyle null.
   void UpdateCurrentStyleSources(bool aNeedsLayoutFlush);
   void ClearCurrentStyleSources();
 
   // Helper functions called by UpdateCurrentStyleSources.
-  void ClearStyleContext();
-  void SetResolvedStyleContext(RefPtr<nsStyleContext>&& aContext,
-                               uint64_t aGeneration);
-  void SetFrameStyleContext(nsStyleContext* aContext, uint64_t aGeneration);
+  void ClearComputedStyle();
+  void SetResolvedComputedStyle(RefPtr<mozilla::ComputedStyle>&& aContext,
+                                uint64_t aGeneration);
+  void SetFrameComputedStyle(mozilla::ComputedStyle* aStyle, uint64_t aGeneration);
 
-  static already_AddRefed<nsStyleContext>
-  DoGetStyleContextNoFlush(mozilla::dom::Element* aElement,
-                           nsAtom* aPseudo,
-                           nsIPresShell* aPresShell,
-                           StyleType aStyleType,
-                           AnimationFlag aAnimationFlag);
+  static already_AddRefed<mozilla::ComputedStyle>
+  DoGetComputedStyleNoFlush(mozilla::dom::Element* aElement,
+                            nsAtom* aPseudo,
+                            nsIPresShell* aPresShell,
+                            StyleType aStyleType);
 
-#define STYLE_STRUCT(name_, checkdata_cb_)                              \
-  const nsStyle##name_ * Style##name_() {                               \
-    return mStyleContext->Style##name_();                               \
+#define STYLE_STRUCT(name_)                 \
+  const nsStyle##name_ * Style##name_() {   \
+    return mComputedStyle->Style##name_();  \
   }
 #include "nsStyleStructList.h"
 #undef STYLE_STRUCT
@@ -737,7 +721,7 @@ private:
   bool NeedsToFlush(nsIDocument* aDocument) const;
 
 
-  static nsComputedStyleMap* GetComputedStyleMap();
+  static ComputedStyleMap* GetComputedStyleMap();
 
   // We don't really have a good immutable representation of "presentation".
   // Given the way GetComputedStyle is currently used, we should just grab the
@@ -746,22 +730,22 @@ private:
   nsCOMPtr<nsIContent> mContent;
 
   /**
-   * Strong reference to the style context we access data from.  This can be
-   * either a style context we resolved ourselves or a style context we got
+   * Strong reference to the ComputedStyle we access data from.  This can be
+   * either a ComputedStyle we resolved ourselves or a ComputedStyle we got
    * from our frame.
    *
-   * If we got the style context from the frame, we clear out mStyleContext
+   * If we got the ComputedStyle from the frame, we clear out mComputedStyle
    * in ClearCurrentStyleSources.  If we resolved one ourselves, then
-   * ClearCurrentStyleSources leaves it in mStyleContext for use the next
+   * ClearCurrentStyleSources leaves it in mComputedStyle for use the next
    * time this nsComputedDOMStyle object is queried.  UpdateCurrentStyleSources
-   * in this case will check that the style context is still valid to be used,
+   * in this case will check that the ComputedStyle is still valid to be used,
    * by checking whether flush styles results in any restyles having been
    * processed.
    *
-   * Since an ArenaRefPtr is used to hold the style context, it will be cleared
+   * Since an ArenaRefPtr is used to hold the ComputedStyle, it will be cleared
    * if the pres arena from which it was allocated goes away.
    */
-  mozilla::ArenaRefPtr<nsStyleContext> mStyleContext;
+  mozilla::ArenaRefPtr<mozilla::ComputedStyle> mComputedStyle;
   RefPtr<nsAtom> mPseudo;
 
   /*
@@ -789,22 +773,17 @@ private:
 
   /**
    * The nsComputedDOMStyle generation at the time we last resolved a style
-   * context and stored it in mStyleContext.
+   * context and stored it in mComputedStyle.
    */
-  uint64_t mStyleContextGeneration;
+  uint64_t mComputedStyleGeneration;
 
   bool mExposeVisitedStyle;
 
   /**
-   * Whether we resolved a style context last time we called
+   * Whether we resolved a ComputedStyle last time we called
    * UpdateCurrentStyleSources.  Initially false.
    */
-  bool mResolvedStyleContext;
-
-  /**
-   * Whether we include animation rules in the computed style.
-   */
-  AnimationFlag mAnimationFlag;
+  bool mResolvedComputedStyle;
 
 #ifdef DEBUG
   bool mFlushedPendingReflows;
@@ -816,8 +795,6 @@ NS_NewComputedDOMStyle(mozilla::dom::Element* aElement,
                        const nsAString& aPseudoElt,
                        nsIPresShell* aPresShell,
                        nsComputedDOMStyle::StyleType aStyleType =
-                         nsComputedDOMStyle::eAll,
-                       nsComputedDOMStyle::AnimationFlag aFlag =
-                         nsComputedDOMStyle::eWithAnimation);
+                         nsComputedDOMStyle::eAll);
 
 #endif /* nsComputedDOMStyle_h__ */

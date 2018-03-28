@@ -5,7 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
- * structs that contain the data provided by nsStyleContext, the
+ * structs that contain the data provided by ComputedStyle, the
  * internal API for computed style data for an element
  */
 
@@ -14,9 +14,6 @@
 
 #include "mozilla/ArenaObjectID.h"
 #include "mozilla/Attributes.h"
-#ifdef MOZ_OLD_STYLE
-#include "mozilla/CSSVariableValues.h"
-#endif
 #include "mozilla/Maybe.h"
 #include "mozilla/SheetType.h"
 #include "mozilla/StaticPtr.h"
@@ -45,11 +42,11 @@
 
 class nsIFrame;
 class nsIURI;
-class nsStyleContext;
 class nsTextFrame;
 class imgIContainer;
 struct nsStyleVisibility;
 namespace mozilla {
+class ComputedStyle;
 namespace dom {
 class ImageTracker;
 } // namespace dom
@@ -70,57 +67,36 @@ class ImageTracker;
   (((nsStyleStructID_size_t(1) << nsStyleStructID_Reset_Count) - 1) \
    << nsStyleStructID_Inherited_Count)
 
-// Additional bits for nsStyleContext's mBits:
-// See nsStyleContext::HasTextDecorationLines
+// Additional bits for ComputedStyle's mBits:
+// See ComputedStyle::HasTextDecorationLines
 #define NS_STYLE_HAS_TEXT_DECORATION_LINES 0x001000000
-// See nsStyleContext::HasPseudoElementData.
+// See ComputedStyle::HasPseudoElementData.
 #define NS_STYLE_HAS_PSEUDO_ELEMENT_DATA   0x002000000
-// See nsStyleContext::RelevantLinkIsVisited
+// See ComputedStyle::RelevantLinkIsVisited
 #define NS_STYLE_RELEVANT_LINK_VISITED     0x004000000
-// See nsStyleContext::IsStyleIfVisited
+// See ComputedStyle::IsStyleIfVisited
 #define NS_STYLE_IS_STYLE_IF_VISITED       0x008000000
-// See nsStyleContext::HasChildThatUsesGrandancestorStyle
+// See ComputedStyle::HasChildThatUsesGrandancestorStyle
 #define NS_STYLE_CHILD_USES_GRANDANCESTOR_STYLE 0x010000000
-// See nsStyleContext::IsShared
+// See ComputedStyle::IsShared
 #define NS_STYLE_IS_SHARED                 0x020000000
-// See nsStyleContext::AssertStructsNotUsedElsewhere
+// See ComputedStyle::AssertStructsNotUsedElsewhere
 // (This bit is currently only used in #ifdef DEBUG code.)
 #define NS_STYLE_IS_GOING_AWAY             0x040000000
-// See nsStyleContext::ShouldSuppressLineBreak
+// See ComputedStyle::ShouldSuppressLineBreak
 #define NS_STYLE_SUPPRESS_LINEBREAK        0x080000000
-// See nsStyleContext::IsInDisplayNoneSubtree
+// See ComputedStyle::IsInDisplayNoneSubtree
 #define NS_STYLE_IN_DISPLAY_NONE_SUBTREE   0x100000000
-// See nsStyleContext::FindChildWithRules
+// See ComputedStyle::FindChildWithRules
 #define NS_STYLE_INELIGIBLE_FOR_SHARING    0x200000000
-// See nsStyleContext::HasChildThatUsesResetStyle
+// See ComputedStyle::HasChildThatUsesResetStyle
 #define NS_STYLE_HAS_CHILD_THAT_USES_RESET_STYLE 0x400000000
-// See nsStyleContext::IsTextCombined
+// See ComputedStyle::IsTextCombined
 #define NS_STYLE_IS_TEXT_COMBINED          0x800000000
-// Whether a style context is a Gecko or Servo context
+// Whether a ComputedStyle is a Gecko or Servo context
 #define NS_STYLE_CONTEXT_IS_GECKO          0x1000000000
-// See nsStyleContext::GetPseudoEnum
+// See ComputedStyle::GetPseudoEnum
 #define NS_STYLE_CONTEXT_TYPE_SHIFT        37
-
-// Additional bits for nsRuleNode's mDependentBits:
-#define NS_RULE_NODE_IS_ANIMATION_RULE      0x01000000
-// Free bit                                 0x02000000
-#define NS_RULE_NODE_USED_DIRECTLY          0x04000000
-#define NS_RULE_NODE_IS_IMPORTANT           0x08000000
-#define NS_RULE_NODE_LEVEL_MASK             0xf0000000
-#define NS_RULE_NODE_LEVEL_SHIFT            28
-
-// Additional bits for nsRuleNode's mNoneBits:
-#define NS_RULE_NODE_HAS_ANIMATION_DATA     0x80000000
-
-static_assert(int(mozilla::SheetType::Count) - 1 <=
-                (NS_RULE_NODE_LEVEL_MASK >> NS_RULE_NODE_LEVEL_SHIFT),
-              "NS_RULE_NODE_LEVEL_MASK cannot fit SheetType");
-
-static_assert(NS_STYLE_INHERIT_MASK == (1 << nsStyleStructID_Length) - 1,
-              "NS_STYLE_INHERIT_MASK is not correct");
-
-static_assert((NS_RULE_NODE_IS_ANIMATION_RULE & NS_STYLE_INHERIT_MASK) == 0,
-  "NS_RULE_NODE_IS_ANIMATION_RULE must not overlap the style struct bits.");
 
 namespace mozilla {
 
@@ -893,11 +869,11 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleBackground {
 
   // Return the background color as nscolor.
   nscolor BackgroundColor(const nsIFrame* aFrame) const;
-  nscolor BackgroundColor(nsStyleContext* aContext) const;
+  nscolor BackgroundColor(mozilla::ComputedStyle* aStyle) const;
 
   // True if this background is completely transparent.
   bool IsTransparent(const nsIFrame* aFrame) const;
-  bool IsTransparent(nsStyleContext* aContext) const;
+  bool IsTransparent(mozilla::ComputedStyle* aStyle) const;
 
   // We have to take slower codepaths for fixed background attachment,
   // but we don't want to do that when there's no image.
@@ -1359,7 +1335,7 @@ protected:
 /**
  * An object that allows sharing of arrays that store 'quotes' property
  * values.  This is particularly important for inheritance, where we want
- * to share the same 'quotes' value with a parent style context.
+ * to share the same 'quotes' value with a parent ComputedStyle.
  */
 class nsStyleQuoteValues
 {
@@ -1598,16 +1574,16 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition
                               const nsStyleVisibility* aOldStyleVisibility) const;
 
   /**
-   * Return the used value for 'align-self' given our parent StyleContext
+   * Return the used value for 'align-self' given our parent ComputedStyle
    * aParent (or null for the root).
    */
-  uint8_t UsedAlignSelf(nsStyleContext* aParent) const;
+  uint8_t UsedAlignSelf(mozilla::ComputedStyle* aParent) const;
 
   /**
-   * Return the used value for 'justify-self' given our parent StyleContext
+   * Return the used value for 'justify-self' given our parent ComputedStyle
    * aParent (or null for the root).
    */
-  uint8_t UsedJustifySelf(nsStyleContext* aParent) const;
+  uint8_t UsedJustifySelf(mozilla::ComputedStyle* aParent) const;
 
   mozilla::Position mObjectPosition;    // [reset]
   nsStyleSides  mOffset;                // [reset] coord, percent, calc, auto
@@ -1634,10 +1610,10 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition
   //
   // They're effectively only different in this regard: mJustifyItems is set to
   // mSpecifiedJustifyItems, except when the latter is AUTO -- in that case,
-  // mJustifyItems is set to NORMAL, or to the parent style context's
+  // mJustifyItems is set to NORMAL, or to the parent ComputedStyle's
   // mJustifyItems if it has the legacy flag.
   //
-  // This last part happens in nsStyleContext::ApplyStyleFixups.
+  // This last part happens in ComputedStyle::ApplyStyleFixups.
   uint8_t       mSpecifiedJustifyItems; // [reset] see nsStyleConsts.h
   uint8_t       mJustifyItems;          // [reset] see nsStyleConsts.h
   uint8_t       mJustifySelf;           // [reset] see nsStyleConsts.h
@@ -1820,7 +1796,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleTextReset
   }
 
   // Note the difference between this and
-  // nsStyleContext::HasTextDecorationLines.
+  // ComputedStyle::HasTextDecorationLines.
   bool HasTextDecorationLines() const {
     return mTextDecorationLine != NS_STYLE_TEXT_DECORATION_LINE_NONE &&
            mTextDecorationLine != NS_STYLE_TEXT_DECORATION_LINE_OVERRIDE_ALL;
@@ -2695,12 +2671,14 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay
 
   /**
    * The same as IsAbsPosContainingBlock, except skipping the tests that
-   * are based on the frame rather than the style context (thus
+   * are based on the frame rather than the ComputedStyle (thus
    * potentially returning a false positive).
+   *
+   * FIXME(stylo-everywhere): Pretty sure the template can go here.
    */
-  template<class StyleContextLike>
+  template<class ComputedStyleLike>
   inline bool IsAbsPosContainingBlockForAppropriateFrame(
-                StyleContextLike* aStyleContext) const;
+                ComputedStyleLike* aComputedStyle) const;
 
   /**
    * Returns true when the element has the transform property
@@ -2718,12 +2696,14 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay
 
   /**
    * The same as IsFixedPosContainingBlock, except skipping the tests that
-   * are based on the frame rather than the style context (thus
+   * are based on the frame rather than the ComputedStyle (thus
    * potentially returning a false positive).
+   *
+   * FIXME(stylo-everywhere): Pretty sure the template can go here.
    */
-  template<class StyleContextLike>
+  template<class ComputedStyleLike>
   inline bool IsFixedPosContainingBlockForAppropriateFrame(
-                StyleContextLike* aStyleContext) const;
+                ComputedStyleLike* aComputedStyle) const;
 
   /**
    * Returns the final combined transform.
@@ -2740,12 +2720,14 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay
 private:
   // Helpers for above functions, which do some but not all of the tests
   // for them (since transform must be tested separately for each).
-  template<class StyleContextLike>
+  //
+  // FIXME(stylo-everywhere): Pretty sure the template can go here.
+  template<class ComputedStyleLike>
   inline bool HasAbsPosContainingBlockStyleInternal(
-                StyleContextLike* aStyleContext) const;
-  template<class StyleContextLike>
+                ComputedStyleLike* aComputedStyle) const;
+  template<class ComputedStyleLike>
   inline bool HasFixedPosContainingBlockStyleInternal(
-                StyleContextLike* aStyleContext) const;
+                ComputedStyleLike* aComputedStyle) const;
   void GenerateCombinedTransform();
 public:
   // Return the 'float' and 'clear' properties, with inline-{start,end} values
@@ -3542,9 +3524,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleVariables
 
   nsChangeHint CalcDifference(const nsStyleVariables& aNewData) const;
 
-#ifdef MOZ_OLD_STYLE
-  mozilla::CSSVariableValues mVariables;
-#endif
 };
 
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleEffects

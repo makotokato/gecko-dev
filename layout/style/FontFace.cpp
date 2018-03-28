@@ -537,26 +537,8 @@ FontFace::ParseDescriptor(nsCSSFontDesc aDescID,
   nsCOMPtr<nsIURI> docURI = window->GetDocumentURI();
   nsCOMPtr<nsIURI> base = window->GetDocBaseURI();
 
-  if (mFontFaceSet->Document()->IsStyledByServo()) {
-    RefPtr<URLExtraData> url = new URLExtraData(base, docURI, principal);
-    return ServoCSSParser::ParseFontDescriptor(aDescID, aString, url, aResult);
-  }
-
-#ifdef MOZ_OLD_STYLE
-  nsCSSParser parser;
-  if (!parser.ParseFontFaceDescriptor(aDescID, aString,
-                                      docURI, // aSheetURL
-                                      base,
-                                      principal,
-                                      aResult)) {
-    aResult.Reset();
-    return false;
-  }
-
-  return true;
-#else
-  MOZ_CRASH("old style system disabled");
-#endif
+  RefPtr<URLExtraData> url = new URLExtraData(base, docURI, principal);
+  return ServoCSSParser::ParseFontDescriptor(aDescID, aString, url, aResult);
 }
 
 void

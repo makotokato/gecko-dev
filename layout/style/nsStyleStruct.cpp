@@ -5,7 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
- * structs that contain the data provided by nsStyleContext, the
+ * structs that contain the data provided by ComputedStyle, the
  * internal API for computed style data for an element
  */
 
@@ -57,7 +57,7 @@ static_assert((((1 << nsStyleStructID_Length) - 1) &
 // are allocated by Servo side with Arc, the total size doesn't exceed
 // 512 bytes, which minimizes allocator slop.
 static constexpr size_t kStyleStructSizeLimit = 504;
-#define STYLE_STRUCT(name_, checkdata_cb_) \
+#define STYLE_STRUCT(name_) \
   static_assert(sizeof(nsStyle##name_) <= kStyleStructSizeLimit, \
                 "nsStyle" #name_ " became larger than the size limit");
 #include "nsStyleStructList.h"
@@ -1789,7 +1789,7 @@ nsStylePosition::CalcDifference(const nsStylePosition& aNewData,
   // layout.
   // Note that we pass an nsStyleVisibility here because we don't want
   // to cause a new struct to be computed during
-  // nsStyleContext::CalcStyleDifference, which can lead to incorrect
+  // ComputedStyle::CalcStyleDifference, which can lead to incorrect
   // style data.
   // It doesn't matter whether we're looking at the old or new
   // visibility struct, since a change between vertical and horizontal
@@ -1837,7 +1837,7 @@ nsStylePosition::WidthCoordDependsOnContainer(const nsStyleCoord &aCoord)
 }
 
 uint8_t
-nsStylePosition::UsedAlignSelf(nsStyleContext* aParent) const
+nsStylePosition::UsedAlignSelf(ComputedStyle* aParent) const
 {
   if (mAlignSelf != NS_STYLE_ALIGN_AUTO) {
     return mAlignSelf;
@@ -1852,7 +1852,7 @@ nsStylePosition::UsedAlignSelf(nsStyleContext* aParent) const
 }
 
 uint8_t
-nsStylePosition::UsedJustifySelf(nsStyleContext* aParent) const
+nsStylePosition::UsedJustifySelf(ComputedStyle* aParent) const
 {
   if (mJustifySelf != NS_STYLE_JUSTIFY_AUTO) {
     return mJustifySelf;
@@ -3409,31 +3409,31 @@ nsStyleBackground::HasFixedBackground(nsIFrame* aFrame) const
 nscolor
 nsStyleBackground::BackgroundColor(const nsIFrame* aFrame) const
 {
-  return BackgroundColor(aFrame->StyleContext());
+  return BackgroundColor(aFrame->Style());
 }
 
 nscolor
-nsStyleBackground::BackgroundColor(nsStyleContext* aContext) const
+nsStyleBackground::BackgroundColor(mozilla::ComputedStyle* aStyle) const
 {
   // In majority of cases, background-color should just be a numeric color.
   // In that case, we can skip resolving StyleColor().
   return mBackgroundColor.IsNumericColor()
     ? mBackgroundColor.mColor
-    : aContext->StyleColor()->CalcComplexColor(mBackgroundColor);
+    : aStyle->StyleColor()->CalcComplexColor(mBackgroundColor);
 }
 
 bool
 nsStyleBackground::IsTransparent(const nsIFrame* aFrame) const
 {
-  return IsTransparent(aFrame->StyleContext());
+  return IsTransparent(aFrame->Style());
 }
 
 bool
-nsStyleBackground::IsTransparent(nsStyleContext* aContext) const
+nsStyleBackground::IsTransparent(mozilla::ComputedStyle* aStyle) const
 {
   return BottomLayer().mImage.IsEmpty() &&
          mImage.mImageCount == 1 &&
-         NS_GET_A(BackgroundColor(aContext)) == 0;
+         NS_GET_A(BackgroundColor(aStyle)) == 0;
 }
 
 void
@@ -4009,10 +4009,10 @@ nsStyleDisplay::CalcDifference(const nsStyleDisplay& aNewData) const
   // changed.
   // We do handle changes to transition-property, but we don't need to
   // bother with anything here, since the transition manager is notified
-  // of any style context change anyway.
+  // of any ComputedStyle change anyway.
 
   // Note: Likewise, for animation-*, the animation manager gets
-  // notified about every new style context constructed, and it uses
+  // notified about every new ComputedStyle constructed, and it uses
   // that opportunity to handle dynamic changes appropriately.
 
   // But we still need to return nsChangeHint_NeutralChange for these
@@ -4839,9 +4839,6 @@ nsStyleVariables::nsStyleVariables(const nsPresContext* aContext)
 }
 
 nsStyleVariables::nsStyleVariables(const nsStyleVariables& aSource)
-#ifdef MOZ_OLD_STYLE
-  : mVariables(aSource.mVariables)
-#endif
 {
   MOZ_COUNT_CTOR(nsStyleVariables);
 }

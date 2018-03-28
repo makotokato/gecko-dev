@@ -215,11 +215,13 @@ SandboxImport(JSContext* cx, unsigned argc, Value* vp)
 
     // We need to resolve the this object, because this function is used
     // unbound and should still work and act on the original sandbox.
-    RootedObject thisObject(cx, JS_THIS_OBJECT(cx, vp));
-    if (!thisObject) {
+
+    RootedValue thisv(cx, args.computeThis(cx));
+    if (!thisv.isObject()) {
         XPCThrower::Throw(NS_ERROR_UNEXPECTED, cx);
         return false;
     }
+    RootedObject thisObject(cx, &thisv.toObject());
     if (!JS_SetPropertyById(cx, thisObject, id, args[0]))
         return false;
 
@@ -1086,8 +1088,7 @@ xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp, nsISupports* prin
                 return NS_ERROR_XPC_UNEXPECTED;
         }
 
-        bool allowComponents = principal == nsXPConnect::SystemPrincipal() ||
-                               nsContentUtils::IsExpandedPrincipal(principal);
+        bool allowComponents = principal == nsXPConnect::SystemPrincipal();
         if (options.wantComponents && allowComponents &&
             !ObjectScope(sandbox)->AttachComponentsObject(cx))
             return NS_ERROR_XPC_UNEXPECTED;

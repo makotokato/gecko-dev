@@ -195,7 +195,7 @@ public:
              uint32_t aFlags) override;
 
   already_AddRefed<SourceSurface>
-  RenderSelection(nsISelection* aSelection,
+  RenderSelection(dom::Selection* aSelection,
                   const LayoutDeviceIntPoint aPoint,
                   LayoutDeviceIntRect* aScreenRect,
                   uint32_t aFlags) override;
@@ -317,7 +317,7 @@ public:
 #endif
 
 #ifdef DEBUG
-  void ListStyleContexts(FILE *out, int32_t aIndent = 0) override;
+  void ListComputedStyles(FILE *out, int32_t aIndent = 0) override;
 
   void ListStyleSheets(FILE *out, int32_t aIndent = 0) override;
   void VerifyStyleTree() override;
@@ -508,9 +508,6 @@ private:
   bool mCaretEnabled;
 
 #ifdef DEBUG
-#ifdef MOZ_OLD_STYLE
-  nsStyleSet* CloneStyleSet(nsStyleSet* aSet);
-#endif
   ServoStyleSet* CloneStyleSet(ServoStyleSet* aSet);
   bool VerifyIncrementalReflow();
   bool mInVerifyReflow;
@@ -532,7 +529,7 @@ private:
   // create a RangePaintInfo for the range aRange containing the
   // display list needed to paint the range to a surface
   UniquePtr<RangePaintInfo>
-  CreateRangePaintInfo(nsIDOMRange* aRange,
+  CreateRangePaintInfo(nsRange* aRange,
                        nsRect& aSurfaceRect,
                        bool aForPrimarySelection);
 

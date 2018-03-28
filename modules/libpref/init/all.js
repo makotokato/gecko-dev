@@ -5,21 +5,14 @@
 
 /* The prefs in this file are shipped with the GRE and should apply to all
  * embedding situations. Application-specific preferences belong somewhere else,
- * for example xpfe/bootstrap/browser-prefs.js
+ * such as browser/app/profile/firefox.js or mobile/android/app/mobile.js.
  *
- * Platform-specific #ifdefs at the end of this file override the generic
- * entries at the top.
- */
-
-/*
- * SYNTAX HINTS:
+ * For the syntax used by this file, consult the comments at the top of
+ * modules/libpref/parser/src/lib.rs.
  *
- *  - Dashes are delimiters; use underscores instead.
- *  - The first character after a period must be alphabetic.
- *  - Computed values (e.g. 50 * 1024) don't work.
+ * Some prefs, especially VarCache prefs, are defined in StaticPrefList.h
+ * rather than this (or any other) data file.
  */
-
-pref("preferences.allow.omt-write", true);
 
 pref("keyword.enabled", false);
 pref("general.useragent.compatMode.firefox", false);
@@ -843,7 +836,7 @@ pref("gfx.downloadable_fonts.otl_validation", true);
 pref("gfx.downloadable_fonts.keep_color_bitmaps", false);
 
 // Whether to preserve OpenType variation tables in fonts (bypassing OTS)
-pref("gfx.downloadable_fonts.keep_variation_tables", false);
+pref("gfx.downloadable_fonts.keep_variation_tables", true);
 
 #ifdef ANDROID
 pref("gfx.bundled_fonts.enabled", true);
@@ -924,6 +917,7 @@ pref("gfx.webrender.program-binary", true);
 
 pref("gfx.webrender.highlight-painted-layers", false);
 pref("gfx.webrender.blob-images", 1);
+pref("gfx.webrender.blob.invalidation", false);
 pref("gfx.webrender.hit-test", true);
 
 // WebRender debugging utilities.
@@ -1114,6 +1108,12 @@ pref("devtools.debugger.remote-websocket", false);
 pref("devtools.debugger.force-local", true);
 // Block tools from seeing / interacting with certified apps
 pref("devtools.debugger.forbid-certified-apps", true);
+
+// Limit for intercepted response bodies (1 MB)
+// Possible values:
+// 0 => the response body has no limit
+// n => represents max number of bytes stored
+pref("devtools.netmonitor.responseBodyLimit", 1048576);
 
 // DevTools default color unit
 pref("devtools.defaultColorUnit", "authored");
@@ -1380,6 +1380,13 @@ pref("dom.input.skip_cursor_move_for_same_value_set", true);
 
 pref("dom.cycle_collector.incremental", true);
 
+// Whether to shim a Components object on untrusted windows.
+#ifdef NIGHTLY_BUILD
+pref("dom.use_components_shim", false);
+#else // NIGHTLY_BUILD
+pref("dom.use_components_shim", true);
+#endif // NIGHTLY_BUILD
+
 // Parsing perf prefs. For now just mimic what the old code did.
 #ifndef XP_WIN
 pref("content.sink.pending_event_mode", 0);
@@ -1423,7 +1430,7 @@ pref("privacy.resistFingerprinting.autoDeclineNoUserInputCanvasPrompts", true);
 //   File.lastModified, audioContext.currentTime, canvas.captureStream.currentTime
 pref("privacy.reduceTimerPrecision", true);
 // Dynamically tune the resolution of the timer reduction for both of the two above prefs
-pref("privacy.resistFingerprinting.reduceTimerPrecision.microseconds", 2000);
+pref("privacy.resistFingerprinting.reduceTimerPrecision.microseconds", 100);
 // Enable jittering the clock one precision value forward
 pref("privacy.resistFingerprinting.reduceTimerPrecision.jitter", true);
 // Lower the priority of network loads for resources on the tracking protection list.
@@ -2166,29 +2173,6 @@ pref("network.prefetch-next", true);
 // enables the preloading (i.e., preloading of <link rel="preload"> URLs).
 pref("network.preload", false);
 
-// enables the predictive service
-pref("network.predictor.enabled", true);
-pref("network.predictor.enable-hover-on-ssl", false);
-pref("network.predictor.enable-prefetch", false);
-pref("network.predictor.page-degradation.day", 0);
-pref("network.predictor.page-degradation.week", 5);
-pref("network.predictor.page-degradation.month", 10);
-pref("network.predictor.page-degradation.year", 25);
-pref("network.predictor.page-degradation.max", 50);
-pref("network.predictor.subresource-degradation.day", 1);
-pref("network.predictor.subresource-degradation.week", 10);
-pref("network.predictor.subresource-degradation.month", 25);
-pref("network.predictor.subresource-degradation.year", 50);
-pref("network.predictor.subresource-degradation.max", 100);
-pref("network.predictor.prefetch-rolling-load-count", 10);
-pref("network.predictor.prefetch-min-confidence", 100);
-pref("network.predictor.preconnect-min-confidence", 90);
-pref("network.predictor.preresolve-min-confidence", 60);
-pref("network.predictor.prefetch-force-valid-for", 10);
-pref("network.predictor.max-resources-per-entry", 100);
-pref("network.predictor.max-uri-length", 500);
-pref("network.predictor.cleaned-up", false);
-
 // The following prefs pertain to the negotiate-auth extension (see bug 17578),
 // which provides transparent Kerberos or NTLM authentication using the SPNEGO
 // protocol.  Each pref is a comma-separated list of keys, where each key has
@@ -2250,26 +2234,6 @@ pref("network.automatic-ntlm-auth.trusted-uris", "");
 // that is listed in allowedWorkstations for the user's account in their
 // AD Domain.
 pref("network.generic-ntlm-auth.workstation", "WORKSTATION");
-
-// Sub-resources HTTP-authentication:
-//   0 - don't allow sub-resources to open HTTP authentication credentials
-//       dialogs
-//   1 - allow sub-resources to open HTTP authentication credentials dialogs,
-//       but don't allow it for cross-origin sub-resources
-//   2 - allow the cross-origin authentication as well.
-pref("network.auth.subresource-http-auth-allow", 2);
-
-// Sub-resources HTTP-authentication for cross-origin images:
-// true - it is allowed to present http auth. dialog for cross-origin images.
-// false - it is not allowed.
-// If network.auth.subresource-http-auth-allow has values 0 or 1 this pref does not
-// have any effect.
-pref("network.auth.subresource-img-cross-origin-http-auth-allow", false);
-
-// Resources that are triggered by some non-web-content:
-// true - they are allow to present http auth. dialog
-// false - they are not allow to present http auth. dialog.
-pref("network.auth.non-web-content-triggered-resources-http-auth-allow", false);
 
 // This preference controls whether to allow sending default credentials (SSO) to
 // NTLM/Negotiate servers allowed in the "trusted uri" list when navigating them
@@ -2696,6 +2660,7 @@ pref("security.allow_chrome_frames_inside_content", false);
 
 // Services security settings
 pref("services.settings.server", "https://firefox.settings.services.mozilla.com/v1");
+pref("services.settings.changes.path", "/buckets/monitor/collections/changes/records");
 
 // Blocklist preferences
 pref("extensions.blocklist.enabled", true);
@@ -2712,7 +2677,6 @@ pref("extensions.blocklist.itemURL", "https://blocked.cdn.mozilla.net/%blockID%.
 // blocking them.
 pref("extensions.blocklist.level", 2);
 // Blocklist via settings server (Kinto)
-pref("services.blocklist.changes.path", "/buckets/monitor/collections/changes/records");
 pref("services.blocklist.bucket", "blocklists");
 pref("services.blocklist.onecrl.collection", "certificates");
 pref("services.blocklist.onecrl.checked", 0);
@@ -2726,14 +2690,8 @@ pref("services.blocklist.pinning.collection", "pins");
 pref("services.blocklist.pinning.checked", 0);
 pref("services.blocklist.gfx.collection", "gfx");
 pref("services.blocklist.gfx.checked", 0);
-
-// Controls whether signing should be enforced on signature-capable blocklist
-// collections.
-pref("services.blocklist.signing.enforced", true);
-
 // Enable blocklists via the services settings mechanism
 pref("services.blocklist.update_enabled", true);
-
 
 // Modifier key prefs: default to Windows settings,
 // menu access key = alt, accelerator key = control.
@@ -2978,6 +2936,12 @@ pref("layout.css.moz-document.url-prefix-hack.enabled", false);
 pref("layout.css.moz-document.url-prefix-hack.enabled", true);
 #endif
 
+#ifdef NIGHTLY_BUILD
+pref("layout.css.getPropertyCSSValue.enabled", false);
+#else
+pref("layout.css.getPropertyCSSValue.enabled", true);
+#endif
+
 // Override DPI. A value of -1 means use the maximum of 96 and the system DPI.
 // A value of 0 means use the system DPI. A positive value is used as the DPI.
 // This sets the physical size of a device pixel and thus controls the
@@ -3059,7 +3023,7 @@ pref("layout.css.image-orientation.enabled", true);
 pref("layout.css.font-display.enabled", true);
 
 // Is support for variation fonts enabled?
-pref("layout.css.font-variations.enabled", false);
+pref("layout.css.font-variations.enabled", true);
 
 // Is support for the frames() timing function enabled?
 #ifdef RELEASE_OR_BETA
@@ -3097,9 +3061,6 @@ pref("layout.css.prefixes.webkit", true);
 // (Note: this pref has no effect if the master 'layout.css.prefixes.webkit'
 // pref is set to false.)
 pref("layout.css.prefixes.device-pixel-ratio-webkit", false);
-
-// Is support for the :scope selector enabled?
-pref("layout.css.scope-pseudo.enabled", true);
 
 // Is support for background-blend-mode enabled?
 pref("layout.css.background-blend-mode.enabled", true);
@@ -5220,7 +5181,7 @@ pref("dom.streams.enabled", false);
 pref("dom.push.enabled", false);
 pref("dom.push.alwaysConnect", false);
 
-pref("dom.push.loglevel", "error");
+pref("dom.push.loglevel", "Error");
 
 pref("dom.push.serverURL", "wss://push.services.mozilla.com/");
 pref("dom.push.userAgentID", "");
@@ -5304,7 +5265,7 @@ pref("media.ondevicechange.fakeDeviceChangeEvent.enabled", false);
 // a no-op.
 pref("layout.css.touch_action.enabled", true);
 
-// Enables some assertions in nsStyleContext that are too expensive
+// Enables some assertions in ComputedStyle that are too expensive
 // for general use, but might be useful to enable for specific tests.
 // This only has an effect in DEBUG-builds.
 pref("layout.css.expensive-style-struct-assertions.enabled", false);
@@ -5918,21 +5879,6 @@ pref("dom.webkitBlink.filesystem.enabled", true);
 
 pref("media.block-autoplay-until-in-foreground", true);
 
-// Is Stylo CSS support built and enabled?
-// Only define these prefs if Stylo support is actually built in.
-#ifdef MOZ_STYLO
-#ifdef MOZ_STYLO_ENABLE
-pref("layout.css.servo.enabled", true);
-#else
-pref("layout.css.servo.enabled", false);
-#endif
-// Whether Stylo is enabled for chrome document?
-// If Stylo is not enabled, this pref doesn't take any effect.
-// Note that this pref is only read once when requested. Changing it
-// at runtime may have no effect.
-pref("layout.css.servo.chrome.enabled", true);
-#endif
-
 // TODO: Bug 1324406: Treat 'data:' documents as unique, opaque origins
 // If true, data: URIs will be treated as unique opaque origins, hence will use
 // a NullPrincipal as the security context.
@@ -5995,24 +5941,6 @@ pref("layers.mlgpu.enabled", true);
 // on Windows 7.
 pref("layers.mlgpu.enable-on-windows7", true);
 #endif
-
-// Set advanced layers preferences here to have them show up in about:config or
-// to be overridable in reftest.list files. They should pretty much all be set
-// to a value of 2, and the conditional-pref code in gfxPrefs.h will convert
-// it to a boolean as appropriate. In particular, do NOT add ifdefs here to
-// turn these on and off, instead use the conditional-pref code in gfxPrefs.h
-// to do that.
-pref("layers.advanced.background-color", false);
-pref("layers.advanced.background-image", 2);
-pref("layers.advanced.border-layers", 2);
-pref("layers.advanced.bullet-layers", 2);
-pref("layers.advanced.canvas-background-color", 2);
-pref("layers.advanced.caret-layers", false);
-pref("layers.advanced.columnRule-layers", 2);
-pref("layers.advanced.image-layers", 2);
-pref("layers.advanced.outline-layers", 2);
-pref("layers.advanced.solid-color", false);
-pref("layers.advanced.table", false);
 
 // Enable lowercased response header name
 pref("dom.xhr.lowercase_header.enabled", false);

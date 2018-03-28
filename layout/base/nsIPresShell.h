@@ -1052,7 +1052,7 @@ public:
 
 #ifdef DEBUG
   // Debugging hooks
-  virtual void ListStyleContexts(FILE *out, int32_t aIndent = 0) = 0;
+  virtual void ListComputedStyles(FILE *out, int32_t aIndent = 0) = 0;
 
   virtual void ListStyleSheets(FILE *out, int32_t aIndent = 0) = 0;
   virtual void VerifyStyleTree() = 0;
@@ -1180,7 +1180,7 @@ public:
    * frames.
    */
   virtual already_AddRefed<mozilla::gfx::SourceSurface>
-  RenderSelection(nsISelection* aSelection,
+  RenderSelection(mozilla::dom::Selection* aSelection,
                   const mozilla::LayoutDeviceIntPoint aPoint,
                   mozilla::LayoutDeviceIntRect* aScreenRect,
                   uint32_t aFlags) = 0;

@@ -14,6 +14,13 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   TelemetryStopwatch: "resource://gre/modules/TelemetryStopwatch.jsm",
 });
 
+XPCOMUtils.defineLazyPreferenceGetter(this, "gTabWarmingEnabled",
+  "browser.tabs.remote.warmup.enabled");
+XPCOMUtils.defineLazyPreferenceGetter(this, "gTabWarmingMax",
+  "browser.tabs.remote.warmup.maxTabs");
+XPCOMUtils.defineLazyPreferenceGetter(this, "gTabWarmingUnloadDelayMs",
+  "browser.tabs.remote.warmup.unloadDelayMs");
+
 /**
  * The tab switcher is responsible for asynchronously switching
  * tabs in e10s. It waits until the new tab is ready (i.e., the
@@ -107,10 +114,8 @@ class AsyncTabSwitcher {
     // removed from the set upon MozAfterPaint.
     this.maybeVisibleTabs = new Set([tabbrowser.selectedTab]);
 
-    // This holds onto the set of tabs that we've been asked to warm up.
-    // This is used only for Telemetry and logging, and (in order to not
-    // over-complicate the async tab switcher any further) has nothing to do
-    // with how warmed tabs are loaded and unloaded.
+    // This holds onto the set of tabs that we've been asked to warm up,
+    // and tabs are evicted once they're done loading or are unloaded.
     this.warmingTabs = new WeakSet();
 
     this.STATE_UNLOADED = 0;
@@ -411,13 +416,12 @@ class AsyncTabSwitcher {
 
       this.maybeVisibleTabs.add(showTab);
 
-      let tabs = this.tabbrowser.tabbox.tabs;
-      let tabPanel = this.tabbrowser.tabpanels;
-      let showPanel = tabs.getRelatedElement(showTab);
-      let index = Array.indexOf(tabPanel.childNodes, showPanel);
+      let tabpanels = this.tabbrowser.tabpanels;
+      let showPanel = this.tabbrowser.tabContainer.getRelatedElement(showTab);
+      let index = Array.indexOf(tabpanels.childNodes, showPanel);
       if (index != -1) {
         this.log(`Switch to tab ${index} - ${this.tinfo(showTab)}`);
-        tabPanel.setAttribute("selectedIndex", index);
+        tabpanels.setAttribute("selectedIndex", index);
         if (showTab === this.requestedTab) {
           if (this._requestingTab) {
             /*
@@ -603,7 +607,7 @@ class AsyncTabSwitcher {
 
     this.maybeFinishTabSwitch();
 
-    if (numWarming > this.tabbrowser.tabWarmingMax) {
+    if (numWarming > gTabWarmingMax) {
       this.logState("Hit tabWarmingMax");
       if (this.unloadTimer) {
         this.clearTimer(this.unloadTimer);
@@ -823,7 +827,7 @@ class AsyncTabSwitcher {
   }
 
   canWarmTab(tab) {
-    if (!this.tabbrowser.tabWarmingEnabled) {
+    if (!gTabWarmingEnabled) {
       return false;
     }
 
@@ -842,16 +846,21 @@ class AsyncTabSwitcher {
       return false;
     }
 
-    // Similarly, if the tab is already in STATE_LOADING or
-    // STATE_LOADED somehow, there's no point in trying to
-    // warm it up.
-    let state = this.getTabState(tab);
-    if (state === this.STATE_LOADING ||
-      state === this.STATE_LOADED) {
-      return false;
+    return true;
+  }
+
+  shouldWarmTab(tab) {
+    if (this.canWarmTab(tab)) {
+      // Tabs that are already in STATE_LOADING or STATE_LOADED
+      // have no need to be warmed up.
+      let state = this.getTabState(tab);
+      if (state === this.STATE_UNLOADING ||
+          state === this.STATE_UNLOADED) {
+        return true;
+      }
     }
 
-    return true;
+    return false;
   }
 
   unwarmTab(tab) {
@@ -859,7 +868,7 @@ class AsyncTabSwitcher {
   }
 
   warmupTab(tab) {
-    if (!this.canWarmTab(tab)) {
+    if (!this.shouldWarmTab(tab)) {
       return;
     }
 
@@ -867,8 +876,7 @@ class AsyncTabSwitcher {
 
     this.warmingTabs.add(tab);
     this.setTabState(tab, this.STATE_LOADING);
-    this.suppressDisplayPortAndQueueUnload(tab,
-      this.tabbrowser.tabWarmingUnloadDelay);
+    this.suppressDisplayPortAndQueueUnload(tab, gTabWarmingUnloadDelayMs);
   }
 
   // Called when the user asks to switch to a given tab.
@@ -877,18 +885,24 @@ class AsyncTabSwitcher {
       return;
     }
 
-    if (this.tabbrowser.tabWarmingEnabled) {
+    if (gTabWarmingEnabled) {
       let warmingState = "disqualified";
 
-      if (this.warmingTabs.has(tab)) {
+      if (this.canWarmTab(tab)) {
         let tabState = this.getTabState(tab);
         if (tabState == this.STATE_LOADING) {
           warmingState = "stillLoading";
         } else if (tabState == this.STATE_LOADED) {
           warmingState = "loaded";
+        } else if (tabState == this.STATE_UNLOADING ||
+                   tabState == this.STATE_UNLOADED) {
+          // At this point, if the tab's browser was being inserted
+          // lazily, we never had a chance to warm it up, and unfortunately
+          // there's no great way to detect that case. Those cases will
+          // end up in the "notWarmed" bucket, along with legitimate cases
+          // where tabs could have been warmed but weren't.
+          warmingState = "notWarmed";
         }
-      } else if (this.canWarmTab(tab)) {
-        warmingState = "notWarmed";
       }
 
       Services.telemetry
@@ -944,22 +958,29 @@ class AsyncTabSwitcher {
     this._processing = true;
     this.preActions();
 
-    if (event.type == "MozLayerTreeReady") {
-      this.onLayersReady(event.originalTarget);
-    }
-    if (event.type == "MozAfterPaint") {
-      this.onPaint();
-    } else if (event.type == "MozLayerTreeCleared") {
-      this.onLayersCleared(event.originalTarget);
-    } else if (event.type == "TabRemotenessChange") {
-      this.onRemotenessChange(event.target);
-    } else if (event.type == "sizemodechange" ||
-      event.type == "occlusionstatechange") {
-      this.onSizeModeOrOcclusionStateChange();
-    } else if (event.type == "SwapDocShells") {
-      this.onSwapDocShells(event.originalTarget, event.detail);
-    } else if (event.type == "EndSwapDocShells") {
-      this.onEndSwapDocShells(event.originalTarget, event.detail);
+    switch (event.type) {
+      case "MozLayerTreeReady":
+        this.onLayersReady(event.originalTarget);
+        break;
+      case "MozAfterPaint":
+        this.onPaint();
+        break;
+      case "MozLayerTreeCleared":
+        this.onLayersCleared(event.originalTarget);
+        break;
+      case "TabRemotenessChange":
+        this.onRemotenessChange(event.target);
+        break;
+      case "sizemodechange":
+      case "occlusionstatechange":
+        this.onSizeModeOrOcclusionStateChange();
+        break;
+      case "SwapDocShells":
+        this.onSwapDocShells(event.originalTarget, event.detail);
+        break;
+      case "EndSwapDocShells":
+        this.onEndSwapDocShells(event.originalTarget, event.detail);
+        break;
     }
 
     this.postActions();

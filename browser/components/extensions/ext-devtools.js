@@ -14,7 +14,7 @@
  */
 
 ChromeUtils.defineModuleGetter(this, "DevToolsShim",
-                               "chrome://devtools-shim/content/DevToolsShim.jsm");
+                               "chrome://devtools-startup/content/DevToolsShim.jsm");
 
 ChromeUtils.import("resource://gre/modules/ExtensionParent.jsm");
 
@@ -176,7 +176,7 @@ class DevToolsPage extends HiddenExtensionPage {
       },
     });
 
-    this.browser.loadURIWithFlags(this.url, {
+    this.browser.loadURI(this.url, {
       triggeringPrincipal: this.extension.principal,
     });
 

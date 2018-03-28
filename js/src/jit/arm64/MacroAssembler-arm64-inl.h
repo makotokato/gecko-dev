@@ -359,6 +359,7 @@ MacroAssembler::sub32FromStackPtrWithPatch(Register dest)
 {
     vixl::UseScratchRegisterScope temps(this);
     const ARMRegister scratch = temps.AcquireX();
+    AutoForbidPools afp(this, /* max number of instructions in scope = */ 3);
     CodeOffset offs = CodeOffset(currentOffset());
     movz(scratch, 0, 0);
     movk(scratch, 0, 16);
@@ -1314,9 +1315,9 @@ MacroAssembler::branchTruncateDoubleToInt32(FloatRegister src, Register dest, La
     convertDoubleToInt32(src, dest, fail);
 }
 
-template <typename T, typename L>
+template <typename T>
 void
-MacroAssembler::branchAdd32(Condition cond, T src, Register dest, L label)
+MacroAssembler::branchAdd32(Condition cond, T src, Register dest, Label* label)
 {
     adds32(src, dest);
     B(label, cond);
@@ -1964,25 +1965,6 @@ MacroAssembler::clampIntToUint8(Register reg)
     Csel(reg32, reg32, scratch32, Assembler::LessThanOrEqual);
 }
 
-// ========================================================================
-// wasm support
-
-template <class L>
-void
-MacroAssembler::wasmBoundsCheck(Condition cond, Register index, Register boundsCheckLimit, L label)
-{
-    // Not used on ARM64, we rely on signal handling instead
-    MOZ_CRASH("NYI - wasmBoundsCheck");
-}
-
-template <class L>
-void
-MacroAssembler::wasmBoundsCheck(Condition cond, Register index, Address boundsCheckLimit, L label)
-{
-    // Not used on ARM64, we rely on signal handling instead
-    MOZ_CRASH("NYI - wasmBoundsCheck");
-}
-
 //}}} check_macroassembler_style
 // ===============================================================
 
@@ -2130,6 +2112,18 @@ MacroAssemblerCompat::branchStackPtrRhs(Condition cond, Address lhs, Label* labe
     vixl::UseScratchRegisterScope temps(this);
     const ARMRegister scratch = temps.AcquireX();
     Ldr(scratch, toMemOperand(lhs));
+    // Cmp disallows SP as the rhs, so flip the operands and invert the
+    // condition.
+    Cmp(GetStackPointer64(), scratch);
+    B(label, Assembler::InvertCondition(cond));
+}
+
+void
+MacroAssemblerCompat::branchStackPtrRhs(Condition cond, AbsoluteAddress lhs, Label* label)
+{
+    vixl::UseScratchRegisterScope temps(this);
+    const ARMRegister scratch = temps.AcquireX();
+    movePtr(ImmPtr(lhs.addr), scratch.asUnsized());
     // Cmp disallows SP as the rhs, so flip the operands and invert the
     // condition.
     Cmp(GetStackPointer64(), scratch);

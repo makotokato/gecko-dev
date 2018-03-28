@@ -209,13 +209,13 @@ class SyncedBookmarksMirror {
     // before we call `setCollectionLastModified`. We subtract one second, the
     // maximum time precision guaranteed by the server, so that we don't miss
     // other records with the same time as the newest one we downloaded.
-    let rows = await this.db.execute(`
+    let rows = await this.db.executeCached(`
       SELECT MAX(
         IFNULL((SELECT MAX(serverModified) - 1000 FROM items), 0),
         IFNULL((SELECT CAST(value AS INTEGER) FROM meta
                 WHERE key = :modifiedKey), 0)
       ) AS highWaterMark`,
-      { modifiedKey: SyncedBookmarksMirror.META.MODIFIED });
+      { modifiedKey: SyncedBookmarksMirror.META_KEY.LAST_MODIFIED });
     let highWaterMark = rows[0].getResultByName("highWaterMark");
     return highWaterMark / 1000;
   }
@@ -234,10 +234,63 @@ class SyncedBookmarksMirror {
     }
     await this.db.executeBeforeShutdown(
       "SyncedBookmarksMirror: setCollectionLastModified",
-      db => db.execute(`
+      db => db.executeCached(`
         REPLACE INTO meta(key, value)
         VALUES(:modifiedKey, :lastModified)`,
-        { modifiedKey: SyncedBookmarksMirror.META.MODIFIED, lastModified })
+        { modifiedKey: SyncedBookmarksMirror.META_KEY.LAST_MODIFIED,
+          lastModified })
+    );
+  }
+
+  /**
+   * Returns the bookmarks collection sync ID. This corresponds to
+   * `PlacesSyncUtils.bookmarks.getSyncId`.
+   *
+   * @return {String}
+   *         The sync ID, or `""` if one isn't set.
+   */
+  async getSyncId() {
+    let rows = await this.db.executeCached(`
+      SELECT value FROM meta WHERE key = :syncIdKey`,
+      { syncIdKey: SyncedBookmarksMirror.META_KEY.SYNC_ID });
+    return rows.length ? rows[0].getResultByName("value") : "";
+  }
+
+  /**
+   * Ensures that the sync ID in the mirror is up-to-date with the server and
+   * Places, and discards the mirror on mismatch.
+   *
+   * The bookmarks engine store the same sync ID in Places and the mirror to
+   * "tie" the two together. This allows Sync to do the right thing if the
+   * database files are copied between profiles connected to different accounts.
+   *
+   * See `PlacesSyncUtils.bookmarks.ensureCurrentSyncId` for an explanation of
+   * how Places handles sync ID mismatches.
+   *
+   * @param {String} newSyncId
+   *        The server's sync ID.
+   */
+  async ensureCurrentSyncId(newSyncId) {
+    if (!newSyncId || typeof newSyncId != "string") {
+      throw new TypeError("Invalid new bookmarks sync ID");
+    }
+    let existingSyncId = await this.getSyncId();
+    if (existingSyncId == newSyncId) {
+      MirrorLog.trace("Sync ID up-to-date in mirror", { existingSyncId });
+      return;
+    }
+    MirrorLog.info("Sync ID changed from ${existingSyncId} to " +
+                   "${newSyncId}; resetting mirror",
+                   { existingSyncId, newSyncId });
+    await this.db.executeBeforeShutdown(
+      "SyncedBookmarksMirror: ensureCurrentSyncId",
+      db => db.executeTransaction(async function() {
+        await resetMirror(db);
+        await db.execute(`
+          REPLACE INTO meta(key, value)
+          VALUES(:syncIdKey, :newSyncId)`,
+          { syncIdKey: SyncedBookmarksMirror.META_KEY.SYNC_ID, newSyncId });
+      })
     );
   }
 
@@ -480,18 +533,7 @@ class SyncedBookmarksMirror {
   async reset() {
     await this.db.executeBeforeShutdown(
       "SyncedBookmarksMirror: reset",
-      async function(db) {
-        await db.executeTransaction(async function() {
-          await db.execute(`DELETE FROM meta`);
-          await db.execute(`DELETE FROM structure`);
-          await db.execute(`DELETE FROM items`);
-          await db.execute(`DELETE FROM urls`);
-
-          // Since we need to reset the modified times for the syncable roots,
-          // we simply delete and recreate them.
-          await createMirrorRoots(db);
-        });
-      }
+      db => db.executeTransaction(() => resetMirror(db))
     );
   }
 
@@ -617,7 +659,7 @@ class SyncedBookmarksMirror {
     }
     if (guid == PlacesUtils.bookmarks.rootGuid) {
       // The Places root shouldn't be synced at all.
-      MirrorLog.warn("Ignoring Places root record", record.cleartext);
+      MirrorLog.warn("Ignoring Places root record", record);
       this.recordTelemetryEvent("mirror", "ignore", "folder",
                                 { why: "root" });
       return;
@@ -657,6 +699,18 @@ class SyncedBookmarksMirror {
           { childGuid, parentGuid: guid, position });
       }
     }
+    // parentChild relationships are usually determined via the children list
+    // in the parent. However, this doesn't work for an item that is directly
+    // under the root - such items are invalid, but we still want to store
+    // them so we can ignore that entire sub-tree - so such items need special
+    // treatment.
+    let parentGuid = validateGuid(record.parentid);
+    if (parentGuid == PlacesUtils.bookmarks.rootGuid) {
+        await this.db.executeCached(`
+          INSERT OR IGNORE INTO structure(guid, parentGuid, position)
+          VALUES(:guid, :parentGuid, -1)`,
+          { guid, parentGuid });
+      }
   }
 
   async storeRemoteLivemark(record, { needsMerge }) {
@@ -913,6 +967,13 @@ class SyncedBookmarksMirror {
     // includes items orphaned by an interrupted upload on another device.
     // We keep the orphans in "unfiled" until the other device returns and
     // uploads the missing parent.
+    // Note that we avoid returning orphaned queries here - there's a really
+    // good chance that orphaned queries are actually left-pane queries with
+    // the left-pane root missing.
+    // In some bizarre edge-cases this might mean some legitimate queries are
+    // lost for the user, but this should happen far less often than us finding
+    // illegitimate left-pane queries - and if the actual parents ever do
+    // appear, they will spring back into life.
     let itemRows = await this.db.execute(`
       SELECT v.guid, IFNULL(s.parentGuid, :unfiledGuid) AS parentGuid,
              IFNULL(s.position, -1) AS position, v.serverModified, v.kind,
@@ -920,10 +981,12 @@ class SyncedBookmarksMirror {
       FROM items v
       LEFT JOIN structure s ON s.guid = v.guid
       WHERE NOT v.isDeleted AND
-            v.guid <> :rootGuid
+            v.guid <> :rootGuid AND
+            (s.parentGuid IS NOT NULL OR v.kind <> :queryKind)
       ORDER BY parentGuid, position = -1, position, v.guid`,
       { rootGuid: PlacesUtils.bookmarks.rootGuid,
-        unfiledGuid: PlacesUtils.bookmarks.unfiledGuid });
+        unfiledGuid: PlacesUtils.bookmarks.unfiledGuid,
+        queryKind: SyncedBookmarksMirror.KIND.QUERY });
 
     let pseudoTree = new Map();
     for await (let row of yieldingIterator(itemRows)) {
@@ -1877,9 +1940,10 @@ SyncedBookmarksMirror.KIND = {
   SEPARATOR: 5,
 };
 
-/** Valid key types for the key-value `meta` table. */
-SyncedBookmarksMirror.META = {
-  MODIFIED: 1,
+/** Key names for the key-value `meta` table. */
+SyncedBookmarksMirror.META_KEY = {
+  LAST_MODIFIED: "collection/lastModified",
+  SYNC_ID: "collection/syncId",
 };
 
 /**
@@ -1922,12 +1986,11 @@ async function migrateMirrorSchema(db) {
  *        The mirror database connection.
  */
 async function initializeMirrorDatabase(db) {
-  // Key-value metadata table. Currently stores just the server collection
-  // last modified time.
+  // Key-value metadata table. Stores the server collection last modified time
+  // and sync ID.
   await db.execute(`CREATE TABLE mirror.meta(
-    key INTEGER PRIMARY KEY,
+    key TEXT PRIMARY KEY,
     value NOT NULL
-    CHECK(key = ${SyncedBookmarksMirror.META.MODIFIED})
   )`);
 
   await db.execute(`CREATE TABLE mirror.items(
@@ -1985,8 +2048,10 @@ async function initializeMirrorDatabase(db) {
 }
 
 /**
- * Sets up the syncable roots. All items in the mirror should descend from these
- * roots.
+ * Sets up the syncable roots. All items in the mirror we apply will descend
+ * from these roots - however, malformed records from the server which create
+ * a different root *will* be created in the mirror - just not applied.
+ *
  *
  * @param {Sqlite.OpenedConnection} db
  *        The mirror database connection.
@@ -2596,6 +2661,17 @@ async function initializeTempMirrorEntities(db) {
   ) WITHOUT ROWID`);
 }
 
+async function resetMirror(db) {
+  await db.execute(`DELETE FROM meta`);
+  await db.execute(`DELETE FROM structure`);
+  await db.execute(`DELETE FROM items`);
+  await db.execute(`DELETE FROM urls`);
+
+  // Since we need to reset the modified times and merge flags for the syncable
+  // roots, we simply delete and recreate them.
+  await createMirrorRoots(db);
+}
+
 // Converts a Sync record ID to a Places GUID. Returns `null` if the ID is
 // invalid.
 function validateGuid(recordId) {
@@ -2917,11 +2993,6 @@ class BookmarkNode {
     return new BookmarkNode(guid, age, kind, needsMerge);
   }
 
-  isRoot() {
-    return this.guid == PlacesUtils.bookmarks.rootGuid ||
-           PlacesUtils.bookmarks.userContentRoots.includes(this.guid);
-  }
-
   isFolder() {
     return this.kind == SyncedBookmarksMirror.KIND.FOLDER;
   }
@@ -3001,12 +3072,12 @@ class BookmarkNode {
    *
    * @return {String} A string in the form of
    *         "bookmarkAAAA (Bookmark; Age = 1.234s; Unmerged)", where "Bookmark"
-   *         is the kind, "Age = 1.234s" indicates the age, and "Unmerged"
-   *         (which may not be present) indicates that the node needs to be
-   *         merged.
+   *         is the kind, "Age = 1.234s" indicates the age in seconds, and
+   *         "Unmerged" (which may not be present) indicates that the node
+   *         needs to be merged.
    */
   toString() {
-    let info = `${this.kindToString()}; ${this.age.toFixed(3)}s `;
+    let info = `${this.kindToString()}; Age = ${this.age.toFixed(3)}s`;
     if (this.needsMerge) {
       info += "; Unmerged";
     }
@@ -3105,12 +3176,17 @@ class BookmarkTree {
     this.deletedGuids.add(guid);
   }
 
-  * guids() {
-    for (let [guid, node] of this.byGuid) {
-      if (node == this.root) {
-        continue;
+  * syncableGuids() {
+    let nodesToWalk = PlacesUtils.bookmarks.userContentRoots.map(guid => {
+      let node = this.byGuid.get(guid);
+      return node ? node.children : [];
+    });
+    while (nodesToWalk.length) {
+      let childNodes = nodesToWalk.pop();
+      for (let node of childNodes) {
+        yield node.guid;
+        nodesToWalk.push(node.children);
       }
-      yield guid;
     }
     for (let guid of this.deletedGuids) {
       yield guid;
@@ -3118,8 +3194,7 @@ class BookmarkTree {
   }
 
   /**
-   * Generates an ASCII art representation of the complete tree. Deleted GUIDs
-   * are prefixed with "~".
+   * Generates an ASCII art representation of the complete tree.
    *
    * @return {String}
    */
@@ -3314,10 +3389,15 @@ class BookmarkMerger {
   }
 
   async merge() {
-    let localRoot = this.localTree.nodeForGuid(PlacesUtils.bookmarks.rootGuid);
-    let remoteRoot = this.remoteTree.nodeForGuid(PlacesUtils.bookmarks.rootGuid);
-    let mergedRoot = await this.mergeNode(PlacesUtils.bookmarks.rootGuid, localRoot,
-                                          remoteRoot);
+    let mergedRoot = new MergedBookmarkNode(PlacesUtils.bookmarks.rootGuid,
+      BookmarkNode.root(), null, BookmarkMergeState.local);
+    for (let guid of PlacesUtils.bookmarks.userContentRoots) {
+      let localSyncableRoot = this.localTree.nodeForGuid(guid);
+      let remoteSyncableRoot = this.remoteTree.nodeForGuid(guid);
+      let mergedSyncableRoot = await this.mergeNode(guid, localSyncableRoot,
+                                                    remoteSyncableRoot);
+      mergedRoot.mergedChildren.push(mergedSyncableRoot);
+    }
 
     // Any remaining deletions on one side should be deleted on the other side.
     // This happens when the remote tree has tombstones for items that don't
@@ -3337,7 +3417,7 @@ class BookmarkMerger {
   }
 
   async subsumes(tree) {
-    for await (let guid of Async.yieldingIterator(tree.guids())) {
+    for await (let guid of Async.yieldingIterator(tree.syncableGuids())) {
       if (!this.mentions(guid)) {
         return false;
       }
@@ -4369,20 +4449,19 @@ class BookmarkMerger {
   }
 
   /**
-   * Returns an array of local ("L: ~bookmarkAAAA, ~bookmarkBBBB") and remote
-   * ("R: ~bookmarkCCCC, ~bookmarkDDDD") deletions for logging.
+   * Returns an array of local and remote deletions for logging.
    *
    * @return {String[]}
    */
   deletionsToStrings() {
     let infos = [];
     if (this.deleteLocally.size) {
-      infos.push("L: " + Array.from(this.deleteLocally,
-        guid => `~${guid}`).join(", "));
+      infos.push("Delete Locally: " + Array.from(this.deleteLocally).join(
+        ", "));
     }
     if (this.deleteRemotely.size) {
-      infos.push("R: " + Array.from(this.deleteRemotely,
-        guid => `~${guid}`).join(", "));
+      infos.push("Delete Remotely: " + Array.from(this.deleteRemotely).join(
+        ", "));
     }
     return infos;
   }

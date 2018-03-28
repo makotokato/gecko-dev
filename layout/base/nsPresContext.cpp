@@ -38,20 +38,11 @@
 #include "nsThreadUtils.h"
 #include "nsLayoutUtils.h"
 #include "nsViewManager.h"
-#ifdef MOZ_OLD_STYLE
-#include "mozilla/GeckoRestyleManager.h"
-#endif
 #include "mozilla/RestyleManager.h"
 #include "mozilla/RestyleManagerInlines.h"
 #include "SurfaceCacheUtils.h"
 #include "nsMediaFeatures.h"
-#ifdef MOZ_OLD_STYLE
-#include "nsRuleNode.h"
-#endif
 #include "gfxPlatform.h"
-#ifdef MOZ_OLD_STYLE
-#include "nsCSSRules.h"
-#endif
 #include "nsFontFaceLoader.h"
 #include "mozilla/AnimationEventDispatcher.h"
 #include "mozilla/EffectCompositor.h"
@@ -126,35 +117,6 @@ public:
   nsPresContext* mPresContext;
 };
 
-#ifdef MOZ_OLD_STYLE
-
-namespace {
-
-class CharSetChangingRunnable : public Runnable
-{
-public:
-  CharSetChangingRunnable(nsPresContext* aPresContext,
-                          NotNull<const Encoding*> aCharSet)
-    : Runnable("CharSetChangingRunnable"),
-      mPresContext(aPresContext),
-      mCharSet(aCharSet)
-  {
-  }
-
-  NS_IMETHOD Run() override
-  {
-    mPresContext->DoChangeCharSet(mCharSet);
-    return NS_OK;
-  }
-
-private:
-  RefPtr<nsPresContext> mPresContext;
-  NotNull<const Encoding*> mCharSet;
-};
-
-} // namespace
-
-#endif
 
 nscolor
 nsPresContext::MakeColorPref(const nsString& aColor)
@@ -167,24 +129,13 @@ nsPresContext::MakeColorPref(const nsString& aColor)
     : nullptr;
 
   bool useServoParser =
-#ifdef MOZ_OLD_STYLE
-    servoStyleSet;
-#else
     true;
-#endif
 
   if (useServoParser) {
     ok = ServoCSSParser::ComputeColor(servoStyleSet, NS_RGB(0, 0, 0), aColor,
                                       &result);
   } else {
-#ifdef MOZ_OLD_STYLE
-    nsCSSParser parser;
-    nsCSSValue value;
-    ok = parser.ParseColorString(aColor, nullptr, 0, value) &&
-         nsRuleNode::ComputeColor(value, this, nullptr, result);
-#else
     MOZ_CRASH("old style system disabled");
-#endif
   }
 
   if (!ok) {
@@ -895,11 +846,9 @@ nsPresContext::Init(nsDeviceContext* aDeviceContext)
   // most of the time.
   //
   // FIXME(emilio): I'm pretty sure this doesn't happen after bug 1414999.
-  if (mDocument->IsStyledByServo()) {
-    Element* root = mDocument->GetRootElement();
-    if (root && root->HasServoData()) {
-      ServoRestyleManager::ClearServoDataFromSubtree(root);
-    }
+  Element* root = mDocument->GetRootElement();
+  if (root && root->HasServoData()) {
+    ServoRestyleManager::ClearServoDataFromSubtree(root);
   }
 
   if (mDeviceContext->SetFullZoom(mFullZoom))
@@ -1030,11 +979,7 @@ nsPresContext::AttachShell(nsIPresShell* aShell, StyleBackendType aBackendType)
   if (aBackendType == StyleBackendType::Servo) {
     mRestyleManager = new ServoRestyleManager(this);
   } else {
-#ifdef MOZ_OLD_STYLE
-    mRestyleManager = new GeckoRestyleManager(this);
-#else
     MOZ_CRASH("old style system disabled");
-#endif
   }
 
   // Since CounterStyleManager is also the name of a method of
@@ -1129,12 +1074,13 @@ nsPresContext::DoChangeCharSet(NotNull<const Encoding*> aCharSet)
 {
   UpdateCharSet(aCharSet);
   mDeviceContext->FlushFontCache();
-  // In Stylo, if a document contains one or more <script> elements, frame
-  // construction might happen earlier than the UpdateCharSet(), so we need to
-  // restyle descendants to make their style data up-to-date.
-  RebuildAllStyleData(NS_STYLE_HINT_REFLOW,
-                      mDocument->IsStyledByServo()
-                      ? eRestyle_ForceDescendants : nsRestyleHint(0));
+
+  // If a document contains one or more <script> elements, frame construction
+  // might happen earlier than the UpdateCharSet(), so we need to restyle
+  // descendants to make their style data up-to-date.
+  //
+  // FIXME(emilio): Revisit whether this is true after bug 1438911.
+  RebuildAllStyleData(NS_STYLE_HINT_REFLOW, eRestyle_ForceDescendants);
 }
 
 void
@@ -1169,14 +1115,6 @@ nsPresContext::UpdateCharSet(NotNull<const Encoding*> aCharSet)
 void
 nsPresContext::DispatchCharSetChange(NotNull<const Encoding*> aEncoding)
 {
-#ifdef MOZ_OLD_STYLE
-  if (!Document()->IsStyledByServo()) {
-    RefPtr<CharSetChangingRunnable> runnable =
-      new CharSetChangingRunnable(this, aEncoding);
-    Document()->Dispatch(TaskCategory::Other, runnable.forget());
-    return;
-  }
-#endif
   // In Servo RebuildAllStyleData is async, so no need to do the runnable dance.
   DoChangeCharSet(aEncoding);
 }
@@ -1539,7 +1477,7 @@ GetPropagatedScrollbarStylesForViewport(nsPresContext* aPresContext,
 
   // Check the style on the document root element
   StyleSetHandle styleSet = aPresContext->StyleSet();
-  RefPtr<nsStyleContext> rootStyle =
+  RefPtr<ComputedStyle> rootStyle =
     styleSet->ResolveStyleFor(docElement, nullptr, LazyComputeBehavior::Allow);
   if (CheckOverflow(rootStyle->StyleDisplay(), aStyles)) {
     // tell caller we stole the overflow style from the root element
@@ -1566,7 +1504,7 @@ GetPropagatedScrollbarStylesForViewport(nsPresContext* aPresContext,
   MOZ_ASSERT(bodyElement->IsHTMLElement(nsGkAtoms::body),
              "GetBodyElement returned something bogus");
 
-  RefPtr<nsStyleContext> bodyStyle =
+  RefPtr<ComputedStyle> bodyStyle =
     styleSet->ResolveStyleFor(bodyElement, rootStyle,
                               LazyComputeBehavior::Allow);
 
@@ -2075,13 +2013,6 @@ nsPresContext::RebuildAllStyleData(nsChangeHint aExtraHint,
   // here if there's no restyle hint? That looks pretty bogus.
   mUsesRootEMUnits = false;
   mUsesExChUnits = false;
-  if (mShell->StyleSet()->IsGecko()) {
-#ifdef MOZ_OLD_STYLE
-    mShell->StyleSet()->AsGecko()->SetUsesViewportUnits(false);
-#else
-    MOZ_CRASH("old style system disabled");
-#endif
-  }
 
   // TODO(emilio): It's unclear to me why would these three calls below be
   // needed. In particular, RebuildAllStyleData doesn't rebuild rules or
@@ -2275,17 +2206,6 @@ bool
 nsPresContext::HasAuthorSpecifiedRules(const nsIFrame* aFrame,
                                        uint32_t aRuleTypeMask) const
 {
-  if (aFrame->StyleContext()->IsGecko()) {
-#ifdef MOZ_OLD_STYLE
-    auto* geckoStyleContext = aFrame->StyleContext()->AsGecko();
-    return
-      nsRuleNode::HasAuthorSpecifiedRules(geckoStyleContext,
-                                          aRuleTypeMask,
-                                          UseDocumentColors());
-#else
-    MOZ_CRASH("old style system disabled");
-#endif
-  }
   Element* elem = aFrame->GetContent()->AsElement();
 
   // We need to handle non-generated content pseudos too, so we use
@@ -2299,15 +2219,15 @@ nsPresContext::HasAuthorSpecifiedRules(const nsIFrame* aFrame,
     return false;
   }
 
-  nsStyleContext* styleContext = aFrame->StyleContext();
-  CSSPseudoElementType pseudoType = styleContext->GetPseudoType();
+  ComputedStyle* computedStyle = aFrame->Style();
+  CSSPseudoElementType pseudoType = computedStyle->GetPseudoType();
   // Anonymous boxes are more complicated, and we just assume that they
   // cannot have any author-specified rules here.
   if (pseudoType == CSSPseudoElementType::InheritingAnonBox ||
       pseudoType == CSSPseudoElementType::NonInheritingAnonBox) {
     return false;
   }
-  return Servo_HasAuthorSpecifiedRules(styleContext->AsServo(),
+  return Servo_HasAuthorSpecifiedRules(computedStyle,
                                        elem, pseudoType,
                                        aRuleTypeMask,
                                        UseDocumentColors());

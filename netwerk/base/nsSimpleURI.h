@@ -36,10 +36,11 @@ class nsSimpleURI
     , public nsIIPCSerializableURI
 {
 protected:
+    nsSimpleURI();
     virtual ~nsSimpleURI();
 
 public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_NSIURI
     NS_DECL_NSISERIALIZABLE
     NS_DECL_NSICLASSINFO
@@ -49,8 +50,6 @@ public:
     static already_AddRefed<nsSimpleURI> From(nsIURI* aURI);
 
     // nsSimpleURI methods:
-
-    nsSimpleURI();
 
     bool Equals(nsSimpleURI* aOther)
     {

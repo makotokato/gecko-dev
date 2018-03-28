@@ -1,5 +1,7 @@
-/* Any copyright is dedicated to the Public Domain.
-   http://creativecommons.org/publicdomain/zero/1.0/ */
+/* -*- Mode: Java; c-basic-offset: 4; tab-width: 4; indent-tabs-mode: nil; -*-
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 package org.mozilla.geckoview.test
 
@@ -49,6 +51,37 @@ class ProgressDelegateTest : BaseSessionTest() {
                 assertThat("Load should succeed", success, equalTo(true))
             }
         })
+    }
+
+    fun loadExpectNetError(testUri: String) {
+        sessionRule.session.loadUri(testUri);
+        sessionRule.waitForPageStop()
+
+        sessionRule.forCallbacksDuringWait(object : Callbacks.ProgressDelegate, Callbacks.NavigationDelegate {
+            @AssertCalled(count = 2)
+            override fun onLoadRequest(session: GeckoSession, uri: String,
+                                       where: Int, response: GeckoSession.Response<Boolean>) {
+                if (sessionRule.currentCall.counter == 1) {
+                    assertThat("URI should be " + testUri, uri, equalTo(testUri));
+                } else {
+                    assertThat("URI should be about:neterror", uri, startsWith("about:neterror"));
+                }
+                response.respond(false)
+            }
+
+            @AssertCalled(count = 1)
+            override fun onPageStop(session: GeckoSession, success: Boolean) {
+                assertThat("Load should fail", success, equalTo(false))
+            }
+        })
+    }
+
+    @Test fun loadUnknownHost() {
+        loadExpectNetError("http://does.not.exist.mozilla.org/")
+    }
+
+    @Test fun loadBadPort() {
+        loadExpectNetError("http://localhost:1/")
     }
 
     @Test fun multipleLoads() {

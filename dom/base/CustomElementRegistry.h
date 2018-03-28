@@ -138,7 +138,7 @@ private:
   RefPtr<CustomElementDefinition> mCustomElementDefinition;
 };
 
-#define ALEADY_CONSTRUCTED_MARKER nullptr
+#define ALREADY_CONSTRUCTED_MARKER nullptr
 
 // The required information for a custom element as defined in:
 // https://html.spec.whatwg.org/multipage/scripting.html#custom-element-definition
@@ -363,11 +363,8 @@ public:
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(CustomElementRegistry)
 
 public:
-  static bool IsCustomElementEnabled(JSContext* aCx = nullptr,
-                                     JSObject* aObject = nullptr)
-  {
-    return nsContentUtils::IsCustomElementsEnabled();
-  }
+  static bool IsCustomElementEnabled(JSContext* aCx, JSObject* aObject);
+  static bool IsCustomElementEnabled(nsIDocument* aDoc);
 
   explicit CustomElementRegistry(nsPIDOMWindowInner* aWindow);
 

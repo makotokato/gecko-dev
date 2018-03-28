@@ -3042,7 +3042,7 @@ SVGTextDrawPathCallbacks::StrokeGeometry()
         RefPtr<Path> path = mContext.GetPath();
         SVGContentUtils::AutoStrokeOptions strokeOptions;
         SVGContentUtils::GetStrokeOptions(&strokeOptions, svgOwner,
-                                          mFrame->StyleContext(),
+                                          mFrame->Style(),
                                           /*aContextPaint*/ nullptr);
         DrawOptions drawOptions;
         drawOptions.mAntialiasMode =
@@ -3154,9 +3154,9 @@ NS_QUERYFRAME_TAIL_INHERITING(nsSVGDisplayContainerFrame)
 // Implementation
 
 nsIFrame*
-NS_NewSVGTextFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
+NS_NewSVGTextFrame(nsIPresShell* aPresShell, ComputedStyle* aStyle)
 {
-  return new (aPresShell) SVGTextFrame(aContext);
+  return new (aPresShell) SVGTextFrame(aStyle);
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(SVGTextFrame)
@@ -3227,10 +3227,10 @@ SVGTextFrame::AttributeChanged(int32_t aNameSpaceID,
 }
 
 void
-SVGTextFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
+SVGTextFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle)
 {
   if (mState & NS_FRAME_IS_NONDISPLAY) {
-    // We need this DidSetStyleContext override to handle cases like this:
+    // We need this DidSetComputedStyle override to handle cases like this:
     //
     //   <defs>
     //     <g>
@@ -3246,7 +3246,7 @@ SVGTextFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
     // nsSVGDisplayContainerFrame::ReflowSVG, we would find the non-display
     // <defs> container and then call ReflowSVGNonDisplayText on it.  If we do
     // not actually reflow the parent of the <defs>, then without this
-    // DidSetStyleContext we would (a) not cause the <text>'s anonymous block
+    // DidSetComputedStyle we would (a) not cause the <text>'s anonymous block
     // child to be reflowed when it is next painted, and (b) not cause the
     // <text> to be repainted anyway since the user of the <mask> would not
     // know it needs to be repainted.
@@ -3355,7 +3355,7 @@ SVGTextFrame::MutationObserver::CharacterDataChanged(nsIContent* aContent,
 
 void
 SVGTextFrame::MutationObserver::AttributeChanged(
-                                                mozilla::dom::Element* aElement,
+                                                Element* aElement,
                                                 int32_t aNameSpaceID,
                                                 nsAtom* aAttribute,
                                                 int32_t aModType,
@@ -3381,7 +3381,8 @@ SVGTextFrame::HandleAttributeChangeInDescendant(Element* aElement,
 {
   if (aElement->IsSVGElement(nsGkAtoms::textPath)) {
     if (aNameSpaceID == kNameSpaceID_None &&
-        aAttribute == nsGkAtoms::startOffset) {
+        (aAttribute == nsGkAtoms::startOffset ||
+         aAttribute == nsGkAtoms::side_)) {
       NotifyGlyphMetricsChange();
     } else if ((aNameSpaceID == kNameSpaceID_XLink ||
                 aNameSpaceID == kNameSpaceID_None) &&
@@ -3671,7 +3672,7 @@ SVGTextFrame::PaintSVG(gfxContext& aContext,
     if (drawMode != DrawMode(0)) {
       bool paintSVGGlyphs;
       nsTextFrame::PaintTextParams params(&aContext);
-      params.framePt = gfx::Point();
+      params.framePt = Point();
       params.dirtyRect = LayoutDevicePixel::
         FromAppUnits(frame->GetVisualOverflowRect(), auPerDevPx);
       params.contextPaint = contextPaint;
@@ -3862,7 +3863,7 @@ TextRenderedRunFlagsForBBoxContribution(const TextRenderedRun& aRun,
 }
 
 SVGBBox
-SVGTextFrame::GetBBoxContribution(const gfx::Matrix &aToBBoxUserspace,
+SVGTextFrame::GetBBoxContribution(const Matrix &aToBBoxUserspace,
                                   uint32_t aFlags)
 {
   NS_ASSERTION(PrincipalChildList().FirstChild(), "must have a child frame");
@@ -4262,7 +4263,7 @@ SVGTextFrame::GetSubStringLengthSlowFallback(nsIContent* aContent,
  */
 int32_t
 SVGTextFrame::GetCharNumAtPosition(nsIContent* aContent,
-                                   mozilla::nsISVGPoint* aPoint)
+                                   nsISVGPoint* aPoint)
 {
   nsIFrame* kid = PrincipalChildList().FirstChild();
   if (NS_SUBTREE_DIRTY(kid)) {
@@ -4302,7 +4303,7 @@ SVGTextFrame::GetCharNumAtPosition(nsIContent* aContent,
 nsresult
 SVGTextFrame::GetStartPositionOfChar(nsIContent* aContent,
                                      uint32_t aCharNum,
-                                     mozilla::nsISVGPoint** aResult)
+                                     nsISVGPoint** aResult)
 {
   nsIFrame* kid = PrincipalChildList().FirstChild();
   if (NS_SUBTREE_DIRTY(kid)) {
@@ -4335,7 +4336,7 @@ SVGTextFrame::GetStartPositionOfChar(nsIContent* aContent,
 nsresult
 SVGTextFrame::GetEndPositionOfChar(nsIContent* aContent,
                                    uint32_t aCharNum,
-                                   mozilla::nsISVGPoint** aResult)
+                                   nsISVGPoint** aResult)
 {
   nsIFrame* kid = PrincipalChildList().FirstChild();
   if (NS_SUBTREE_DIRTY(kid)) {
@@ -4380,7 +4381,7 @@ SVGTextFrame::GetEndPositionOfChar(nsIContent* aContent,
 nsresult
 SVGTextFrame::GetExtentOfChar(nsIContent* aContent,
                               uint32_t aCharNum,
-                              dom::SVGIRect** aResult)
+                              SVGIRect** aResult)
 {
   nsIFrame* kid = PrincipalChildList().FirstChild();
   if (NS_SUBTREE_DIRTY(kid)) {
@@ -4435,7 +4436,7 @@ SVGTextFrame::GetExtentOfChar(nsIContent* aContent,
   // Transform the glyph's rect into user space.
   gfxRect r = m.TransformBounds(glyphRect);
 
-  RefPtr<dom::SVGRect> rect = new dom::SVGRect(aContent, r.x, r.y, r.width, r.height);
+  RefPtr<SVGRect> rect = new SVGRect(aContent, r.x, r.y, r.width, r.height);
   rect.forget(aResult);
   return NS_OK;
 }
@@ -4853,7 +4854,7 @@ ConvertLogicalTextAnchorToPhysical(uint8_t aTextAnchor, bool aIsRightToLeft)
  * @param aAnchorSide The direction to anchor.
  */
 static void
-ShiftAnchoredChunk(nsTArray<mozilla::CharPosition>& aCharPositions,
+ShiftAnchoredChunk(nsTArray<CharPosition>& aCharPositions,
                    uint32_t aChunkStart,
                    uint32_t aChunkEnd,
                    gfxFloat aVisIStartEdge,
@@ -4983,13 +4984,13 @@ SVGTextFrame::GetTextPathGeometryElement(nsIFrame* aTextPathFrame)
 
   if (!property) {
     nsIContent* content = aTextPathFrame->GetContent();
-    dom::SVGTextPathElement* tp = static_cast<dom::SVGTextPathElement*>(content);
+    SVGTextPathElement* tp = static_cast<SVGTextPathElement*>(content);
     nsAutoString href;
-    if (tp->mStringAttributes[dom::SVGTextPathElement::HREF].IsExplicitlySet()) {
-      tp->mStringAttributes[dom::SVGTextPathElement::HREF]
+    if (tp->mStringAttributes[SVGTextPathElement::HREF].IsExplicitlySet()) {
+      tp->mStringAttributes[SVGTextPathElement::HREF]
         .GetAnimValue(href, tp);
     } else {
-      tp->mStringAttributes[dom::SVGTextPathElement::XLINK_HREF]
+      tp->mStringAttributes[SVGTextPathElement::XLINK_HREF]
         .GetAnimValue(href, tp);
     }
 
@@ -5045,16 +5046,16 @@ SVGTextFrame::GetOffsetScale(nsIFrame* aTextPathFrame)
   if (!element)
     return 1.0;
 
-  return element->GetPathLengthScale(dom::SVGGeometryElement::eForTextPath);
+  return element->GetPathLengthScale(SVGGeometryElement::eForTextPath);
 }
 
 gfxFloat
 SVGTextFrame::GetStartOffset(nsIFrame* aTextPathFrame)
 {
-  dom::SVGTextPathElement *tp =
-    static_cast<dom::SVGTextPathElement*>(aTextPathFrame->GetContent());
+  SVGTextPathElement *tp =
+    static_cast<SVGTextPathElement*>(aTextPathFrame->GetContent());
   nsSVGLength2 *length =
-    &tp->mLengthAttributes[dom::SVGTextPathElement::STARTOFFSET];
+    &tp->mLengthAttributes[SVGTextPathElement::STARTOFFSET];
 
   if (length->IsPercentage()) {
     RefPtr<Path> data = GetTextPath(aTextPathFrame);
@@ -5092,7 +5093,10 @@ SVGTextFrame::DoTextPathLayout()
       continue;
     }
 
-    nsIContent* textPath = textPathFrame->GetContent();
+    SVGTextPathElement* textPath =
+      static_cast<SVGTextPathElement*>(textPathFrame->GetContent());
+    RefPtr<SVGAnimatedEnumeration> sideEnum = textPath->Side();
+    uint16_t side = sideEnum->AnimVal();
 
     gfxFloat offset = GetStartOffset(textPathFrame);
     Float pathLength = path->ComputeLength();
@@ -5113,7 +5117,13 @@ SVGTextFrame::DoTextPathLayout()
 
       // Position the character on the path at the right angle.
       Point tangent; // Unit vector tangent to the point we find.
-      Point pt = path->ComputePointAtLength(Float(midx), &tangent);
+      Point pt;
+      if (side == TEXTPATH_SIDETYPE_RIGHT) {
+        pt = path->ComputePointAtLength(Float(pathLength - midx), &tangent);
+        tangent = -tangent;
+      } else {
+        pt = path->ComputePointAtLength(Float(midx), &tangent);
+      }
       Float rotation = vertical ? atan2f(-tangent.x, tangent.y)
                                 : atan2f(tangent.y, tangent.x);
       Point normal(-tangent.y, tangent.x); // Unit vector normal to the point.

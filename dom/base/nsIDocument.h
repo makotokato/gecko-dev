@@ -1522,12 +1522,7 @@ public:
             mServo = aOther.mServo;
             aOther.mServo = nullptr;
           } else {
-#ifdef MOZ_OLD_STYLE
-            mGecko = aOther.mGecko;
-            aOther.mGecko = nullptr;
-#else
             MOZ_CRASH("old style system disabled");
-#endif
           }
           return *this;
         }
@@ -1539,12 +1534,6 @@ public:
           , mServo(aList.release())
         {}
 
-#ifdef MOZ_OLD_STYLE
-        explicit SelectorList(mozilla::UniquePtr<nsCSSSelectorList>&& aList)
-          : mIsServo(false)
-          , mGecko(aList.release())
-        {}
-#endif
 
         ~SelectorList() {
           Reset();
@@ -1748,25 +1737,9 @@ public:
     return mCSSLoader;
   }
 
-  mozilla::StyleBackendType GetStyleBackendType() const {
-    MOZ_ASSERT(mStyleBackendType != mozilla::StyleBackendType::None,
-               "Not initialized yet");
-    return mStyleBackendType;
-  }
-
-  /**
-   * Documents generally decide their style backend type themselves, and
-   * this is only used for XBL documents to set their style backend type to
-   * their bounding document's.
-   */
-
-  /**
-   * Decide this document's own style backend type.
-   */
-  void UpdateStyleBackendType();
-
-  bool IsStyledByServo() const {
-    return GetStyleBackendType() == mozilla::StyleBackendType::Servo;
+  mozilla::StyleBackendType GetStyleBackendType() const
+  {
+    return mozilla::StyleBackendType::Servo;
   }
 
   /**
@@ -3875,10 +3848,8 @@ protected:
   nsCOMPtr<nsIURI> mDocumentBaseURI;
   nsCOMPtr<nsIURI> mChromeXHRDocBaseURI;
 
-#ifdef MOZ_STYLO
   // A lazily-constructed URL data for style system to resolve URL value.
   RefPtr<mozilla::URLExtraData> mCachedURLData;
-#endif
 
   nsWeakPtr mDocumentLoadGroup;
 
@@ -4237,10 +4208,6 @@ protected:
 
   // Our readyState
   ReadyState mReadyState;
-
-  // Whether this document has (or will have, once we have a pres shell) a
-  // Gecko- or Servo-backed style system.
-  mozilla::StyleBackendType mStyleBackendType;
 
 #ifdef MOZILLA_INTERNAL_API
   // Our visibility state

@@ -11,7 +11,6 @@
 #include "mozilla/gfx/Matrix.h"
 #include "mozilla/EffectSet.h"
 #include "mozilla/PodOperations.h"
-#include "mozilla/RuleNodeCacheConditions.h"
 #include "gfx2DGlue.h"
 #include "nsExpirationTracker.h"
 #include "nsContainerFrame.h"
@@ -258,15 +257,11 @@ IncrementScaleRestyleCountIfNeeded(nsIFrame* aFrame, LayerActivity* aActivity)
   }
 
   // Compute the new scale due to the CSS transform property.
-  nsPresContext* presContext = aFrame->PresContext();
-  RuleNodeCacheConditions dummy;
   bool dummyBool;
   nsStyleTransformMatrix::TransformReferenceBox refBox(aFrame);
   Matrix4x4 transform =
     nsStyleTransformMatrix::ReadTransforms(transformList->mHead,
-                                           aFrame->StyleContext(),
-                                           presContext,
-                                           dummy, refBox,
+                                           refBox,
                                            nsPresContext::AppUnitsPerCSSPixel(),
                                            &dummyBool);
   Matrix transform2D;

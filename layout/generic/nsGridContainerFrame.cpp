@@ -12,6 +12,7 @@
 #include <functional>
 #include <limits>
 #include "gfxContext.h"
+#include "mozilla/ComputedStyle.h"
 #include "mozilla/CSSAlignUtils.h"
 #include "mozilla/CSSOrderAwareFrameIterator.h"
 #include "mozilla/dom/GridBinding.h"
@@ -29,10 +30,6 @@
 #include "nsIFrameInlines.h"
 #include "nsPresContext.h"
 #include "nsReadableUtils.h"
-#ifdef MOZ_OLD_STYLE
-#include "nsRuleNode.h"
-#endif
-#include "nsStyleContext.h"
 #include "nsTableWrapperFrame.h"
 
 using namespace mozilla;
@@ -2659,9 +2656,9 @@ NS_IMPL_FRAMEARENA_HELPERS(nsGridContainerFrame)
 
 nsContainerFrame*
 NS_NewGridContainerFrame(nsIPresShell* aPresShell,
-                         nsStyleContext* aContext)
+                         ComputedStyle* aStyle)
 {
-  return new (aPresShell) nsGridContainerFrame(aContext);
+  return new (aPresShell) nsGridContainerFrame(aStyle);
 }
 
 
@@ -4022,12 +4019,9 @@ nsGridContainerFrame::Tracks::InitializeItemBaselines(
   nsTArray<ItemBaselineData> firstBaselineItems;
   nsTArray<ItemBaselineData> lastBaselineItems;
   WritingMode wm = aState.mWM;
-  nsStyleContext* containerSC = aState.mFrame->StyleContext();
-  CSSOrderAwareFrameIterator& iter = aState.mIter;
-  iter.Reset();
-  for (; !iter.AtEnd(); iter.Next()) {
-    nsIFrame* child = *iter;
-    GridItemInfo& gridItem = aGridItems[iter.ItemIndex()];
+  ComputedStyle* containerSC = aState.mFrame->Style();
+  for (GridItemInfo& gridItem : aGridItems) {
+    nsIFrame* child = gridItem.mFrame;
     uint32_t baselineTrack = kAutoLine;
     auto state = ItemState(0);
     auto childWM = child->GetWritingMode();
@@ -4320,7 +4314,6 @@ nsGridContainerFrame::Tracks::ResolveIntrinsicSize(
   };
   AutoTArray<PerSpanData, 16> perSpanData;
   nsTArray<Step2ItemData> step2Items;
-  CSSOrderAwareFrameIterator& iter = aState.mIter;
   gfxContext* rc = &aState.mRenderingContext;
   WritingMode wm = aState.mWM;
   uint32_t maxSpan = 0; // max span of the step2Items items
@@ -4333,9 +4326,7 @@ nsGridContainerFrame::Tracks::ResolveIntrinsicSize(
     aConstraint == SizingConstraint::eMaxContent ?
     (TrackSize::eMaxContentMinSizing | TrackSize::eAutoMinSizing) :
     TrackSize::eMaxContentMinSizing;
-  iter.Reset();
-  for (; !iter.AtEnd(); iter.Next()) {
-    auto& gridItem = aGridItems[iter.ItemIndex()];
+  for (auto& gridItem : aGridItems) {
     MOZ_ASSERT(!(gridItem.mState[mAxis] &
                  (ItemState::eApplyAutoMinSize | ItemState::eIsFlexing |
                   ItemState::eClampMarginBoxMinSize)),
@@ -4358,9 +4349,10 @@ nsGridContainerFrame::Tracks::ResolveIntrinsicSize(
         gridItem.mState[mAxis] |= ItemState::eApplyAutoMinSize;
       }
 
-      if ((state & (TrackSize::eIntrinsicMinSizing |
-                    TrackSize::eIntrinsicMaxSizing)) &&
-          !(state & TrackSize::eFlexMaxSizing)) {
+      if (state & TrackSize::eFlexMaxSizing) {
+        gridItem.mState[mAxis] |= ItemState::eIsFlexing;
+      } else if (state & (TrackSize::eIntrinsicMinSizing |
+                          TrackSize::eIntrinsicMaxSizing)) {
         // Collect data for Step 2.
         maxSpan = std::max(maxSpan, span);
         if (span >= perSpanData.Length()) {
@@ -4370,10 +4362,8 @@ nsGridContainerFrame::Tracks::ResolveIntrinsicSize(
         perSpanData[span].mStateBits |= state;
         CachedIntrinsicSizes cache;
         // Calculate data for "Automatic Minimum Size" clamping, if needed.
-        bool needed = ((state & TrackSize::eIntrinsicMinSizing) ||
-                       aConstraint == SizingConstraint::eNoConstraint) &&
-                      (gridItem.mState[mAxis] & ItemState::eApplyAutoMinSize);
-        if (needed && TrackSize::IsDefiniteMaxSizing(state)) {
+        if (TrackSize::IsDefiniteMaxSizing(state) &&
+            (gridItem.mState[mAxis] & ItemState::eApplyAutoMinSize)) {
           nscoord minSizeClamp = 0;
           for (auto i : lineRange.Range()) {
             auto maxCoord = aFunctions.MaxSizingFor(i);
@@ -4402,15 +4392,7 @@ nsGridContainerFrame::Tracks::ResolveIntrinsicSize(
         }
         step2Items.AppendElement(
           Step2ItemData({span, state, lineRange, minSize,
-                         minContent, maxContent, *iter}));
-      } else {
-        if (state & TrackSize::eFlexMaxSizing) {
-          gridItem.mState[mAxis] |= ItemState::eIsFlexing;
-        } else if (aConstraint == SizingConstraint::eNoConstraint &&
-                   TrackSize::IsDefiniteMaxSizing(state) &&
-                   (gridItem.mState[mAxis] & ItemState::eApplyAutoMinSize)) {
-          gridItem.mState[mAxis] |= ItemState::eClampMarginBoxMinSize;
-        }
+                         minContent, maxContent, gridItem.mFrame}));
       }
     }
     MOZ_ASSERT(!(gridItem.mState[mAxis] & ItemState::eClampMarginBoxMinSize) ||
@@ -4433,9 +4415,11 @@ nsGridContainerFrame::Tracks::ResolveIntrinsicSize(
       return false;
     };
 
-    // Sort the collected items on span length, shortest first.
-    std::stable_sort(step2Items.begin(), step2Items.end(),
-                     Step2ItemData::IsSpanLessThan);
+    // Sort the collected items on span length, shortest first.  There's no need
+    // for a stable sort here since the sizing isn't order dependent within
+    // a group of items with the same span length.
+    std::sort(step2Items.begin(), step2Items.end(),
+              Step2ItemData::IsSpanLessThan);
 
     nsTArray<uint32_t> tracks(maxSpan);
     nsTArray<TrackSize> plan(mSizes.Length());
@@ -4593,12 +4577,9 @@ nsGridContainerFrame::Tracks::FindUsedFlexFraction(
   }
   WritingMode wm = aState.mWM;
   gfxContext* rc = &aState.mRenderingContext;
-  CSSOrderAwareFrameIterator& iter = aState.mIter;
-  iter.Reset();
   // ... the result of 'finding the size of an fr' for each item that spans
   // a flex track with its max-content contribution as 'space to fill'
-  for (; !iter.AtEnd(); iter.Next()) {
-    const GridItemInfo& item = aGridItems[iter.ItemIndex()];
+  for (const GridItemInfo& item : aGridItems) {
     if (item.mState[mAxis] & ItemState::eIsFlexing) {
       // XXX optimize: bug 1194446
       auto pb = Some(aState.PercentageBasisFor(mAxis, item));
@@ -5057,7 +5038,7 @@ nsGridContainerFrame::ReflowInFlowChild(nsIFrame*              aChild,
                                         nsReflowStatus&        aStatus)
 {
   nsPresContext* pc = PresContext();
-  nsStyleContext* containerSC = StyleContext();
+  ComputedStyle* containerSC = Style();
   WritingMode wm = aState.mReflowInput->GetWritingMode();
   LogicalMargin pad(aState.mReflowInput->ComputedLogicalPadding());
   const LogicalPoint padStart(wm, pad.IStart(wm), pad.BStart(wm));
@@ -5145,8 +5126,8 @@ nsGridContainerFrame::ReflowInFlowChild(nsIFrame*              aChild,
   if (aGridItemInfo) {
     // Clamp during reflow if we're stretching in that axis.
     auto* pos = aChild->StylePosition();
-    auto j = pos->UsedJustifySelf(StyleContext());
-    auto a = pos->UsedAlignSelf(StyleContext());
+    auto j = pos->UsedJustifySelf(Style());
+    auto a = pos->UsedAlignSelf(Style());
     bool stretch[2];
     stretch[eLogicalAxisInline] = j == NS_STYLE_JUSTIFY_NORMAL ||
                                   j == NS_STYLE_JUSTIFY_STRETCH;
@@ -5210,7 +5191,7 @@ nsGridContainerFrame::ReflowInFlowChild(nsIFrame*              aChild,
     if (!childRI.mStyleMargin->HasBlockAxisAuto(childWM) &&
         childRI.mStylePosition->BSize(childWM).GetUnit() == eStyleUnit_Auto) {
       auto blockAxisAlignment =
-        childRI.mStylePosition->UsedAlignSelf(StyleContext());
+        childRI.mStylePosition->UsedAlignSelf(Style());
       if (blockAxisAlignment == NS_STYLE_ALIGN_NORMAL ||
           blockAxisAlignment == NS_STYLE_ALIGN_STRETCH) {
         stretch = true;
@@ -6626,8 +6607,8 @@ nsGridContainerFrame::CSSAlignmentForAbsPosChild(const ReflowInput& aChildRI,
              "This method should only be called for abspos children");
 
   uint16_t alignment = (aLogicalAxis == eLogicalAxisInline) ?
-    aChildRI.mStylePosition->UsedJustifySelf(StyleContext()) :
-    aChildRI.mStylePosition->UsedAlignSelf(StyleContext());
+    aChildRI.mStylePosition->UsedJustifySelf(Style()) :
+    aChildRI.mStylePosition->UsedAlignSelf(Style());
 
   // XXX strip off <overflow-position> bits until we implement it
   // (bug 1311892)

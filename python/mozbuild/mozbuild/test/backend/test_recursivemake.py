@@ -418,6 +418,36 @@ class TestRecursiveMakeBackend(BackendTester):
         self.maxDiff = None
         self.assertEqual(lines, expected)
 
+    def test_generated_files_force(self):
+        """Ensure GENERATED_FILES with .force is handled properly."""
+        env = self._consume('generated-files-force', RecursiveMakeBackend)
+
+        backend_path = mozpath.join(env.topobjdir, 'backend.mk')
+        lines = [l.strip() for l in open(backend_path, 'rt').readlines()[2:]]
+
+        expected = [
+            'export:: bar.c',
+            'GARBAGE += bar.c',
+            'EXTRA_MDDEPEND_FILES += bar.c.pp',
+            'bar.c: %s/generate-bar.py FORCE' % env.topsrcdir,
+            '$(REPORT_BUILD)',
+            '$(call py_action,file_generate,%s/generate-bar.py baz bar.c $(MDDEPDIR)/bar.c.pp)' % env.topsrcdir,
+            '',
+            'export:: foo.c',
+            'GARBAGE += foo.c',
+            'EXTRA_MDDEPEND_FILES += foo.c.pp',
+            'foo.c: %s/generate-foo.py $(srcdir)/foo-data' % (env.topsrcdir),
+            '$(REPORT_BUILD)',
+            '$(call py_action,file_generate,%s/generate-foo.py main foo.c $(MDDEPDIR)/foo.c.pp $(srcdir)/foo-data)' % (env.topsrcdir),
+            '',
+            'export:: quux.c',
+            'GARBAGE += quux.c',
+            'EXTRA_MDDEPEND_FILES += quux.c.pp',
+        ]
+
+        self.maxDiff = None
+        self.assertEqual(lines, expected)
+
     def test_localized_generated_files(self):
         """Ensure LOCALIZED_GENERATED_FILES is handled properly."""
         env = self._consume('localized-generated-files', RecursiveMakeBackend)
@@ -437,6 +467,33 @@ class TestRecursiveMakeBackend(BackendTester):
             'LOCALIZED_FILES_0_DEST = $(FINAL_TARGET)/',
             'LOCALIZED_FILES_0_TARGET := libs',
             'INSTALL_TARGETS += LOCALIZED_FILES_0',
+        ]
+
+        self.maxDiff = None
+        self.assertEqual(lines, expected)
+
+    def test_localized_generated_files_force(self):
+        """Ensure LOCALIZED_GENERATED_FILES with .force is handled properly."""
+        env = self._consume('localized-generated-files-force', RecursiveMakeBackend)
+
+        backend_path = mozpath.join(env.topobjdir, 'backend.mk')
+        lines = [l.strip() for l in open(backend_path, 'rt').readlines()[2:]]
+
+        expected = [
+            'libs:: foo.xyz',
+            'GARBAGE += foo.xyz',
+            'EXTRA_MDDEPEND_FILES += foo.xyz.pp',
+            'foo.xyz: %s/generate-foo.py $(call MERGE_FILE,localized-input) $(srcdir)/non-localized-input $(if $(IS_LANGUAGE_REPACK),FORCE)' % env.topsrcdir,
+            '$(REPORT_BUILD)',
+            '$(call py_action,file_generate,--locale=$(AB_CD) %s/generate-foo.py main foo.xyz $(MDDEPDIR)/foo.xyz.pp $(call MERGE_FILE,localized-input) $(srcdir)/non-localized-input)' % env.topsrcdir,
+            '',
+            'libs:: abc.xyz',
+            'GARBAGE += abc.xyz',
+            'EXTRA_MDDEPEND_FILES += abc.xyz.pp',
+            'abc.xyz: %s/generate-foo.py $(call MERGE_FILE,localized-input) $(srcdir)/non-localized-input FORCE' % env.topsrcdir,
+            '$(REPORT_BUILD)',
+            '$(call py_action,file_generate,--locale=$(AB_CD) %s/generate-foo.py main abc.xyz $(MDDEPDIR)/abc.xyz.pp $(call MERGE_FILE,localized-input) $(srcdir)/non-localized-input)' % env.topsrcdir,
+            '',
         ]
 
         self.maxDiff = None
@@ -992,6 +1049,73 @@ class TestRecursiveMakeBackend(BackendTester):
 
             for line in lines:
                 self.assertNotIn('LIB_IS_C_ONLY', line)
+
+    def test_linkage(self):
+        env = self._consume('linkage', RecursiveMakeBackend)
+        expected_linkage = {
+            'prog': {
+                'SHARED_LIBS': ['$(DEPTH)/prog/qux/qux.so',
+                                '$(DEPTH)/shared/baz.so'],
+                'STATIC_LIBS': ['$(DEPTH)/real/foo.a'],
+                'OS_LIBS': ['-lfoo', '-lbaz', '-lbar'],
+            },
+            'shared': {
+                'OS_LIBS': ['-lfoo'],
+                'SHARED_LIBS': ['$(DEPTH)/prog/qux/qux.so'],
+                'STATIC_LIBS': [],
+            },
+            'static': {
+                'STATIC_LIBS': ['$(DEPTH)/real/foo.a'],
+                'OS_LIBS': ['-lbar'],
+                'SHARED_LIBS': ['$(DEPTH)/prog/qux/qux.so'],
+            },
+            'real': {
+                'STATIC_LIBS': [],
+                'SHARED_LIBS': ['$(DEPTH)/prog/qux/qux.so'],
+                'OS_LIBS': ['-lbaz'],
+            }
+        }
+        actual_linkage = {}
+        for name in expected_linkage.keys():
+            with open(os.path.join(env.topobjdir, name, 'backend.mk'), 'rb') as fh:
+                actual_linkage[name] = [line.rstrip() for line in fh.readlines()]
+        for name in expected_linkage:
+            for var in expected_linkage[name]:
+                for val in expected_linkage[name][var]:
+                    line = '%s += %s' % (var, val)
+                    self.assertIn(line,
+                                  actual_linkage[name])
+                    actual_linkage[name].remove(line)
+                for line in actual_linkage[name]:
+                    self.assertNotIn('%s +=' % var, line)
+
+    def test_list_files(self):
+        env = self._consume('linkage', RecursiveMakeBackend)
+        expected_list_files = {
+            'prog/MyProgram_exe.list': [
+                '../static/bar/bar1.o',
+                '../static/bar/bar2.o',
+                '../static/bar/bar_helper/bar_helper1.o',
+            ],
+            'shared/baz_so.list': [
+                'baz/baz1.o',
+            ],
+        }
+        actual_list_files = {}
+        for name in expected_list_files.keys():
+            with open(os.path.join(env.topobjdir, name), 'rb') as fh:
+                actual_list_files[name] = [mozpath.normsep(line.rstrip())
+                                           for line in fh.readlines()]
+        for name in expected_list_files:
+            self.assertEqual(actual_list_files[name],
+                             expected_list_files[name])
+
+        # We don't produce a list file for a shared library composed only of
+        # object files in its directory, but instead list them in a variable.
+        with open(os.path.join(env.topobjdir, 'prog', 'qux', 'backend.mk'), 'rb') as fh:
+            lines = [line.rstrip() for line in fh.readlines()]
+
+        self.assertIn('qux.so_OBJS := qux1.o', lines)
 
     def test_jar_manifests(self):
         env = self._consume('jar-manifests', RecursiveMakeBackend)

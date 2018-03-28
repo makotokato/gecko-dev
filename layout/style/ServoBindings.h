@@ -19,7 +19,6 @@
 #include "mozilla/EffectCompositor.h"
 #include "mozilla/ComputedTimingFunction.h"
 #include "nsChangeHint.h"
-#include "nsCSSPseudoClasses.h"
 #include "nsIDocument.h"
 #include "nsStyleStruct.h"
 
@@ -54,7 +53,7 @@ namespace mozilla {
   enum class UpdateAnimationsTasks : uint8_t;
   struct LangGroupFontPrefs;
   class SeenPtrs;
-  class ServoStyleContext;
+  class ComputedStyle;
   class ServoStyleSheet;
   class ServoElementSnapshotTable;
 }
@@ -82,12 +81,12 @@ const bool GECKO_IS_NIGHTLY = false;
 #endif
 
 namespace mozilla {
-  #define STYLE_STRUCT(name_, checkdata_cb_) struct Gecko##name_ {nsStyle##name_ gecko;};
+  #define STYLE_STRUCT(name_) struct Gecko##name_ {nsStyle##name_ gecko;};
   #include "nsStyleStructList.h"
   #undef STYLE_STRUCT
 }
 
-#define STYLE_STRUCT(name_, checkdata_cb_) \
+#define STYLE_STRUCT(name_) \
   const nsStyle##name_* ServoComputedData::GetStyle##name_() const { return &name_.mPtr->gecko; }
 #define STYLE_STRUCT_LIST_IGNORE_VARIABLES
 #include "nsStyleStructList.h"
@@ -162,11 +161,11 @@ RawGeckoElementBorrowedOrNull Gecko_GetBeforeOrAfterPseudo(RawGeckoElementBorrow
 nsTArray<nsIContent*>* Gecko_GetAnonymousContentForElement(RawGeckoElementBorrowed element);
 void Gecko_DestroyAnonymousContentList(nsTArray<nsIContent*>* anon_content);
 
-void Gecko_ServoStyleContext_Init(mozilla::ServoStyleContext* context,
-                                  ServoStyleContextBorrowedOrNull parent_context,
-                                  RawGeckoPresContextBorrowed pres_context, ServoComputedDataBorrowed values,
-                                  mozilla::CSSPseudoElementType pseudo_type, nsAtom* pseudo_tag);
-void Gecko_ServoStyleContext_Destroy(mozilla::ServoStyleContext* context);
+void Gecko_ComputedStyle_Init(mozilla::ComputedStyle* context,
+                              ComputedStyleBorrowedOrNull parent_context,
+                              RawGeckoPresContextBorrowed pres_context, ServoComputedDataBorrowed values,
+                              mozilla::CSSPseudoElementType pseudo_type, nsAtom* pseudo_tag);
+void Gecko_ComputedStyle_Destroy(mozilla::ComputedStyle* context);
 
 // By default, Servo walks the DOM by traversing the siblings of the DOM-view
 // first child. This generally works, but misses anonymous children, which we
@@ -190,12 +189,13 @@ Gecko_LoadStyleSheet(mozilla::css::Loader* loader,
 // Selector Matching.
 uint64_t Gecko_ElementState(RawGeckoElementBorrowed element);
 bool Gecko_IsRootElement(RawGeckoElementBorrowed element);
-bool Gecko_MatchesElement(mozilla::CSSPseudoClassType type, RawGeckoElementBorrowed element);
 bool Gecko_MatchLang(RawGeckoElementBorrowed element,
                      nsAtom* override_lang, bool has_override_lang,
                      const char16_t* value);
 nsAtom* Gecko_GetXMLLangValue(RawGeckoElementBorrowed element);
 nsIDocument::DocumentTheme Gecko_GetDocumentLWTheme(const nsIDocument* aDocument);
+bool Gecko_IsTableBorderNonzero(RawGeckoElementBorrowed element);
+bool Gecko_IsBrowserFrame(RawGeckoElementBorrowed element);
 
 // Attributes.
 #define SERVO_DECLARE_ELEMENT_ATTR_MATCHING_FUNCTIONS(prefix_, implementor_)  \
@@ -259,8 +259,8 @@ void Gecko_CopyAnimationNames(RawGeckoStyleAnimationListBorrowedMut aDest,
 void Gecko_SetAnimationName(mozilla::StyleAnimation* aStyleAnimation,
                             nsAtom* aAtom);
 void Gecko_UpdateAnimations(RawGeckoElementBorrowed aElementOrPseudo,
-                            ServoStyleContextBorrowedOrNull aOldComputedValues,
-                            ServoStyleContextBorrowedOrNull aComputedValues,
+                            ComputedStyleBorrowedOrNull aOldComputedValues,
+                            ComputedStyleBorrowedOrNull aComputedValues,
                             mozilla::UpdateAnimationsTasks aTasks);
 bool Gecko_ElementHasAnimations(RawGeckoElementBorrowed aElementOrPseudo);
 bool Gecko_ElementHasCSSAnimations(RawGeckoElementBorrowed aElementOrPseudo);
@@ -404,8 +404,8 @@ mozilla::CSSPseudoElementType Gecko_GetImplementedPseudo(RawGeckoElementBorrowed
 // We'd like to return `nsChangeHint` here, but bindgen bitfield enums don't
 // work as return values with the Linux 32-bit ABI at the moment because
 // they wrap the value in a struct.
-uint32_t Gecko_CalcStyleDifference(ServoStyleContextBorrowed old_style,
-                                   ServoStyleContextBorrowed new_style,
+uint32_t Gecko_CalcStyleDifference(ComputedStyleBorrowed old_style,
+                                   ComputedStyleBorrowed new_style,
                                    bool* any_style_changed,
                                    bool* reset_only_changed);
 
@@ -657,12 +657,12 @@ void Gecko_AddPropertyToSet(nsCSSPropertyIDSetBorrowedMut, nsCSSPropertyID);
 int32_t Gecko_RegisterNamespace(nsAtom* ns);
 
 // Style-struct management.
-#define STYLE_STRUCT(name, checkdata_cb)                                       \
-  void Gecko_Construct_Default_nsStyle##name(                                  \
-    nsStyle##name* ptr,                                                        \
-    RawGeckoPresContextBorrowed pres_context);                                 \
-  void Gecko_CopyConstruct_nsStyle##name(nsStyle##name* ptr,                   \
-                                         const nsStyle##name* other);          \
+#define STYLE_STRUCT(name)                                            \
+  void Gecko_Construct_Default_nsStyle##name(                         \
+    nsStyle##name* ptr,                                               \
+    RawGeckoPresContextBorrowed pres_context);                        \
+  void Gecko_CopyConstruct_nsStyle##name(nsStyle##name* ptr,          \
+                                         const nsStyle##name* other); \
   void Gecko_Destroy_nsStyle##name(nsStyle##name* ptr);
 #include "nsStyleStructList.h"
 #undef STYLE_STRUCT

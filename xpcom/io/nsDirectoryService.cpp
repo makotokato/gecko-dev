@@ -9,9 +9,9 @@
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "nsDirectoryService.h"
-#include "nsDirectoryServiceDefs.h"
 #include "nsLocalFile.h"
 #include "nsDebug.h"
+#include "nsGkAtoms.h"
 #include "nsStaticAtom.h"
 #include "nsEnumeratorUtils.h"
 
@@ -105,17 +105,34 @@ nsDirectoryService::Create(nsISupports* aOuter, REFNSIID aIID, void** aResult)
   return gService->QueryInterface(aIID, aResult);
 }
 
-#define DIR_ATOM(name_, value_) NS_STATIC_ATOM_DEFN(nsDirectoryService, name_)
-#include "nsDirectoryServiceAtomList.h"
-#undef DIR_ATOM
+namespace mozilla {
+namespace detail {
 
-#define DIR_ATOM(name_, value_) NS_STATIC_ATOM_BUFFER(name_, value_)
+MOZ_PUSH_DISABLE_INTEGRAL_CONSTANT_OVERFLOW_WARNING
+extern constexpr DirectoryAtoms gDirectoryAtoms = {
+  #define DIR_ATOM(name_, value_) NS_STATIC_ATOM_INIT_STRING(value_)
+  #include "nsDirectoryServiceAtomList.h"
+  #undef DIR_ATOM
+
+  #define DIR_ATOM(name_, value_) \
+    NS_STATIC_ATOM_INIT_ATOM(DirectoryAtoms, name_, value_)
+  #include "nsDirectoryServiceAtomList.h"
+  #undef DIR_ATOM
+};
+MOZ_POP_DISABLE_INTEGRAL_CONSTANT_OVERFLOW_WARNING
+
+} // namespace detail
+} // namespace mozilla
+
+#define DIR_ATOM(name_, value_) \
+  NS_STATIC_ATOM_DEFN_PTR(nsDirectoryService, name_)
 #include "nsDirectoryServiceAtomList.h"
 #undef DIR_ATOM
 
 static const nsStaticAtomSetup sDirectoryServiceAtomSetup[] = {
   #define DIR_ATOM(name_, value_) \
-    NS_STATIC_ATOM_SETUP(nsDirectoryService, name_)
+    NS_STATIC_ATOM_SETUP( \
+      mozilla::detail::gDirectoryAtoms, nsDirectoryService, name_)
   #include "nsDirectoryServiceAtomList.h"
   #undef DIR_ATOM
 };
@@ -415,6 +432,11 @@ nsDirectoryService::GetFile(const char* aProp, bool* aPersistent,
 
   RefPtr<nsAtom> inAtom = NS_Atomize(aProp);
 
+  // Check that nsGkAtoms::Home matches the value that sOS_HomeDirectory would
+  // have if it wasn't commented out to avoid static atom duplication.
+  MOZ_ASSERT(
+    NS_strcmp(nsGkAtoms::Home->GetUTF16String(), u"" NS_OS_HOME_DIR) == 0);
+
   // check to see if it is one of our defaults
 
   if (inAtom == nsDirectoryService::sCurrentProcess ||
@@ -462,7 +484,7 @@ nsDirectoryService::GetFile(const char* aProp, bool* aPersistent,
     rv = GetOSXFolderType(kClassicDomain, kInternetSearchSitesFolderType, getter_AddRefs(localFile));
   } else if (inAtom == nsDirectoryService::sUserLibDirectory) {
     rv = GetOSXFolderType(kUserDomain, kDomainLibraryFolderType, getter_AddRefs(localFile));
-  } else if (inAtom == nsDirectoryService::sOS_HomeDirectory) {
+  } else if (inAtom == nsGkAtoms::Home) {
     rv = GetOSXFolderType(kUserDomain, kDomainTopLevelFolderType, getter_AddRefs(localFile));
   } else if (inAtom == nsDirectoryService::sDefaultDownloadDirectory) {
     // 10.5 and later, we can use kDownloadsFolderType which is defined in
@@ -520,7 +542,7 @@ nsDirectoryService::GetFile(const char* aProp, bool* aPersistent,
     rv = GetSpecialSystemDirectory(Win_WindowsDirectory, getter_AddRefs(localFile));
   } else if (inAtom == nsDirectoryService::sWindowsProgramFiles) {
     rv = GetSpecialSystemDirectory(Win_ProgramFiles, getter_AddRefs(localFile));
-  } else if (inAtom == nsDirectoryService::sOS_HomeDirectory) {
+  } else if (inAtom == nsGkAtoms::Home) {
     rv = GetSpecialSystemDirectory(Win_HomeDirectory, getter_AddRefs(localFile));
   } else if (inAtom == nsDirectoryService::sDesktop) {
     rv = GetSpecialSystemDirectory(Win_Desktop, getter_AddRefs(localFile));
@@ -598,7 +620,7 @@ nsDirectoryService::GetFile(const char* aProp, bool* aPersistent,
     rv = GetSpecialSystemDirectory(Unix_LocalDirectory, getter_AddRefs(localFile));
   } else if (inAtom == nsDirectoryService::sLibDirectory) {
     rv = GetSpecialSystemDirectory(Unix_LibDirectory, getter_AddRefs(localFile));
-  } else if (inAtom == nsDirectoryService::sOS_HomeDirectory) {
+  } else if (inAtom == nsGkAtoms::Home) {
     rv = GetSpecialSystemDirectory(Unix_HomeDirectory, getter_AddRefs(localFile));
   } else if (inAtom == nsDirectoryService::sXDGDesktop ||
              inAtom == nsDirectoryService::sOS_DesktopDirectory) {

@@ -395,8 +395,13 @@ class AssemblerX86Shared : public AssemblerShared
 
     static void TraceDataRelocations(JSTracer* trc, JitCode* code, CompactBufferReader& reader);
 
-    // MacroAssemblers hold onto gcthings, so they are traced by the GC.
-    void trace(JSTracer* trc);
+    void assertNoGCThings() const {
+#ifdef DEBUG
+        MOZ_ASSERT(dataRelocations_.length() == 0);
+        for (auto& j : jumps_)
+            MOZ_ASSERT(j.kind == Relocation::HARDCODED);
+#endif
+    }
 
     bool oom() const {
         return AssemblerShared::oom() ||
@@ -934,17 +939,6 @@ class AssemblerX86Shared : public AssemblerShared
     void j(Condition cond, RepatchLabel* label) { jSrc(cond, label); }
     void jmp(RepatchLabel* label) { jmpSrc(label); }
 
-    void j(Condition cond, wasm::OldTrapDesc target) {
-        Label l;
-        j(cond, &l);
-        bindLater(&l, target);
-    }
-    void jmp(wasm::OldTrapDesc target) {
-        Label l;
-        jmp(&l);
-        bindLater(&l, target);
-    }
-
     void jmp(const Operand& op) {
         switch (op.kind()) {
           case Operand::MEM_REG_DISP:
@@ -974,15 +968,6 @@ class AssemblerX86Shared : public AssemblerShared
             } while (more);
         }
         label->bind(dst.offset());
-    }
-    void bindLater(Label* label, wasm::OldTrapDesc target) {
-        if (label->used()) {
-            JmpSrc jmp(label->offset());
-            do {
-                append(wasm::OldTrapSite(target, jmp.offset()));
-            } while (masm.nextJump(jmp, &jmp));
-        }
-        label->reset();
     }
     void bind(RepatchLabel* label) {
         JmpDst dst(masm.label());

@@ -120,15 +120,13 @@
 
   <broadcasterset id="mainBroadcasterSet">
     <broadcaster id="viewBookmarksSidebar" autoCheck="false" label="&bookmarksButton.label;"
-                 type="checkbox" group="sidebar" sidebarurl="chrome://browser/content/bookmarks/bookmarksPanel.xul"
+                 type="checkbox" group="sidebar"
+                 sidebarurl="chrome://browser/content/places/bookmarksSidebar.xul"
                  oncommand="SidebarUI.toggle('viewBookmarksSidebar');"/>
 
-    <!-- for both places and non-places, the sidebar lives at
-         chrome://browser/content/history/history-panel.xul so there are no
-         problems when switching between versions -->
     <broadcaster id="viewHistorySidebar" autoCheck="false" sidebartitle="&historyButton.label;"
                  type="checkbox" group="sidebar"
-                 sidebarurl="chrome://browser/content/history/history-panel.xul"
+                 sidebarurl="chrome://browser/content/places/historySidebar.xul"
                  oncommand="SidebarUI.toggle('viewHistorySidebar');"/>
 
     <broadcaster id="viewWebPanelsSidebar" autoCheck="false"
@@ -167,7 +165,7 @@
     <!-- A broadcaster of a number of attributes suitable for "sync now" UI -
         A 'syncstatus' attribute is set while actively syncing, and the label
         attribute which changes from "sync now" to "syncing" etc. -->
-    <broadcaster id="sync-status"/>
+    <broadcaster id="sync-status" onmouseover="gSync.refreshSyncButtonsTooltip();"/>
     <!-- broadcasters of the "hidden" attribute to reflect setup state for
          menus -->
     <broadcaster id="sync-setup-state" hidden="true"/>

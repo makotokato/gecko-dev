@@ -8,7 +8,6 @@
 
 const promise = require("promise");
 const Services = require("Services");
-const {Task} = require("devtools/shared/task");
 const {l10n} = require("devtools/shared/inspector/css-logic");
 const {ELEMENT_STYLE} = require("devtools/shared/specs/styles");
 const OutputParser = require("devtools/client/shared/output-parser");
@@ -40,6 +39,7 @@ const AutocompletePopup = require("devtools/client/shared/autocomplete-popup");
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 const PREF_UA_STYLES = "devtools.inspector.showUserAgentStyles";
 const PREF_DEFAULT_COLOR_UNIT = "devtools.defaultColorUnit";
+const PREF_FONT_EDITOR = "devtools.inspector.fonteditor.enabled";
 const FILTER_CHANGED_TIMEOUT = 150;
 
 // This is used to parse user input when filtering.
@@ -100,11 +100,16 @@ const INSET_POINT_TYPES = ["top", "right", "bottom", "left"];
  *        The PageStyleFront for communicating with the remote server.
  */
 function CssRuleView(inspector, document, store, pageStyle) {
+  EventEmitter.decorate(this);
+
   this.inspector = inspector;
   this.highlighters = inspector.highlighters;
   this.styleDocument = document;
   this.styleWindow = this.styleDocument.defaultView;
   this.store = store || {};
+  // References to rules marked by various editors where they intend to write changes.
+  // @see selectRule(), unselectRule()
+  this.selectedRules = new Map();
   this.pageStyle = pageStyle;
 
   // Allow tests to override debouncing behavior, as this can cause intermittents.
@@ -119,6 +124,7 @@ function CssRuleView(inspector, document, store, pageStyle) {
   this._onCopy = this._onCopy.bind(this);
   this._onFilterStyles = this._onFilterStyles.bind(this);
   this._onClearSearch = this._onClearSearch.bind(this);
+  this._onRuleSelected = this._onRuleSelected.bind(this);
   this._onTogglePseudoClassPanel = this._onTogglePseudoClassPanel.bind(this);
   this._onTogglePseudoClass = this._onTogglePseudoClass.bind(this);
   this._onToggleClassPanel = this._onToggleClassPanel.bind(this);
@@ -154,6 +160,7 @@ function CssRuleView(inspector, document, store, pageStyle) {
   this.hoverCheckbox.addEventListener("click", this._onTogglePseudoClass);
   this.activeCheckbox.addEventListener("click", this._onTogglePseudoClass);
   this.focusCheckbox.addEventListener("click", this._onTogglePseudoClass);
+  this.on("ruleview-rule-selected", this._onRuleSelected);
 
   this._handlePrefChange = this._handlePrefChange.bind(this);
   this._handleUAStylePrefChange = this._handleUAStylePrefChange.bind(this);
@@ -165,6 +172,7 @@ function CssRuleView(inspector, document, store, pageStyle) {
   this._prefObserver.on(PREF_DEFAULT_COLOR_UNIT, this._handleDefaultColorUnitPrefChange);
 
   this.showUserAgentStyles = Services.prefs.getBoolPref(PREF_UA_STYLES);
+  this.showFontEditor = Services.prefs.getBoolPref(PREF_FONT_EDITOR);
 
   // The popup will be attached to the toolbox document.
   this.popup = new AutocompletePopup(inspector._toolbox.doc, {
@@ -182,8 +190,6 @@ function CssRuleView(inspector, document, store, pageStyle) {
   this.highlighters.addToView(this);
 
   this.classListPreviewer = new ClassListPreviewer(this.inspector, this.classPanel);
-
-  EventEmitter.decorate(this);
 }
 
 CssRuleView.prototype = {
@@ -214,7 +220,7 @@ CssRuleView.prototype = {
    *
    * @return {Promise} Resolves to the instance of the highlighter.
    */
-  getSelectorHighlighter: Task.async(function* () {
+  async getSelectorHighlighter() {
     if (!this.inspector) {
       return null;
     }
@@ -229,7 +235,7 @@ CssRuleView.prototype = {
     }
 
     try {
-      let h = yield utils.getHighlighterByType("SelectorHighlighter");
+      let h = await utils.getHighlighterByType("SelectorHighlighter");
       this.selectorHighlighter = h;
       return h;
     } catch (e) {
@@ -237,7 +243,7 @@ CssRuleView.prototype = {
       // current target.  It could be an older server, or a XUL page.
       return null;
     }
-  }),
+  },
 
   /**
    * Highlight/unhighlight all the nodes that match a given set of selectors
@@ -255,18 +261,18 @@ CssRuleView.prototype = {
    * @param {String} selector
    *        The selector used to find nodes in the page.
    */
-  toggleSelectorHighlighter: Task.async(function* (selectorIcon, selector) {
+  async toggleSelectorHighlighter(selectorIcon, selector) {
     if (this.lastSelectorIcon) {
       this.lastSelectorIcon.classList.remove("highlighted");
     }
     selectorIcon.classList.remove("highlighted");
 
-    let highlighter = yield this.getSelectorHighlighter();
+    let highlighter = await this.getSelectorHighlighter();
     if (!highlighter) {
       return;
     }
 
-    yield highlighter.hide();
+    await highlighter.hide();
 
     if (selector !== this.highlighters.selectorHighlighterShown) {
       this.highlighters.selectorHighlighterShown = selector;
@@ -275,7 +281,7 @@ CssRuleView.prototype = {
 
       let node = this.inspector.selection.nodeFront;
 
-      yield highlighter.show(node, {
+      await highlighter.show(node, {
         hideInfoBar: true,
         hideGuides: true,
         selector
@@ -286,7 +292,7 @@ CssRuleView.prototype = {
       this.highlighters.selectorHighlighterShown = null;
       this.emit("ruleview-selectorhighlighter-toggled", false);
     }
-  }),
+  },
 
   /**
    * Get the type of a given node in the rule-view
@@ -720,6 +726,7 @@ CssRuleView.prototype = {
     this.tooltips.destroy();
     this.highlighters.removeFromView(this);
     this.classListPreviewer.destroy();
+    this.unselectAllRules();
 
     // Remove bound listeners
     this.shortcuts.destroy();
@@ -733,6 +740,7 @@ CssRuleView.prototype = {
     this.hoverCheckbox.removeEventListener("click", this._onTogglePseudoClass);
     this.activeCheckbox.removeEventListener("click", this._onTogglePseudoClass);
     this.focusCheckbox.removeEventListener("click", this._onTogglePseudoClass);
+    this.off("ruleview-rule-selected", this._onRuleSelected);
 
     this.searchField = null;
     this.searchClearButton = null;
@@ -799,6 +807,7 @@ CssRuleView.prototype = {
 
     this.clearPseudoClassPanel();
     this.refreshAddRuleButtonState();
+    this.unselectAllRules();
 
     if (!this._viewedElement) {
       this._stopSelectingElement();
@@ -1191,6 +1200,117 @@ CssRuleView.prototype = {
     }
 
     return isHighlighted;
+  },
+
+  /**
+  * Mark a rule as selected for the given editor id.
+  *
+  * Editing tools can mark one or more rules as selected for themselves so they have
+  * a reference of where to make changes, like add / remove properties.
+  * Each editor has an identifier string (aka editorId) which is used as a key in a map
+  * that holds references to Rule objects.
+  *
+  * Many editors may operate at the same time (ex: Font Editor and Shape Path Editor) so
+  * there are multiple possible selected rules at any given time. A rule can be selected
+  * by different editors at the same time, with each editor operating independently on it.
+  *
+  * @param {Rule} rule
+  *        Rule object for which to hold a reference.
+  * @param {String} editorId
+  *        Key to use for collecting references to selected rules.
+  * @param {Boolean} [unselectOthers=true]
+  *        Optional. Default: `true`. If true, unselect all other rules that were
+  *        selected for the given editor. Ensures only one rule at a time is selected for
+  *        a particular editor. Set to `false` if an editor may operate on multiple rules
+  *        at a time.
+  */
+  selectRule(rule, editorId, unselectOthers = true) {
+    const rules = this.getSelectedRules(editorId);
+    if (!rules.includes(rule)) {
+      this.selectedRules.set(editorId, [...rules, rule]);
+    }
+
+    // Mark other rules for this editorId as unselected.
+    if (unselectOthers) {
+      rules
+        .filter(item => item !== rule)
+        .map(item => this.unselectRule(item, editorId));
+    }
+
+    this.emit("ruleview-rule-selected", {editorId, rule});
+  },
+
+  /**
+   * Unmark a rule as selected for the given editor id.
+   *
+   * @param {Rule} rule
+   *        Rule object for which to remove the reference.
+   * @param {String} editorId
+   *        Key for which to mark the given rule as selected.
+   */
+  unselectRule(rule, editorId) {
+    const rules = this.selectedRules.get(editorId);
+    if (!Array.isArray(rules)) {
+      return;
+    }
+
+    let index = rules.findIndex(item => item === rule);
+    if (index === -1) {
+      return;
+    }
+
+    rules.splice(index, 1);
+    this.selectedRules.set(editorId, rules);
+    this.emit("ruleview-rule-unselected", {editorId, rule});
+  },
+
+  /**
+  * Unmark all selected rules for all editors. If an editor id is provided, unmark all
+  * selected rules just for that editor leaving others untouched.
+  *
+  * @param {String} editorId
+  *        Optional editor id for which to restrict unselect operation.
+  */
+  unselectAllRules(editorId) {
+    for (let [id, rules] of this.selectedRules) {
+      // If we're supposed to unselect rules from just one editorId but it did not match,
+      // skip this iteration.
+      if (editorId && id !== editorId) {
+        continue;
+      }
+      rules.map(rule => this.unselectRule(rule, id));
+    }
+  },
+
+  /**
+   * Return an array of selected rules for the given editor id.
+   * If no rules match, return an empty arrary;
+   *
+   * @param {String} editorId
+   *        Editor id for which to return selected rules.
+   * @return {Array}
+   */
+  getSelectedRules(editorId) {
+    const rules = this.selectedRules.get(editorId);
+    return Array.isArray(rules) ? rules : [];
+  },
+
+  /**
+   * Called when a rule from the Rule view was marked as selected for an editor.
+   * Handle the event and show panels relevant for the given editor id.
+   *
+   * @param {Object} eventData
+   *        Data payload for the event. Contains:
+   *        - {String} editorId - id of the editor for which the rule was selected
+   *        - {Rule} rule - reference to rule that was selected
+   */
+  _onRuleSelected(eventData) {
+    const { editorId } = eventData;
+    switch (editorId) {
+      case "fonteditor":
+        this.inspector.sidebar.show("fontinspector");
+        break;
+    }
   },
 
   /**

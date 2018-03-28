@@ -2,7 +2,7 @@
 args = [
     "-x", "c++", "-std=c++14", "-fno-sized-deallocation",
     "-DTRACING=1", "-DIMPL_LIBXUL", "-DMOZ_STYLO_BINDINGS=1",
-    "-DMOZILLA_INTERNAL_API", "-DRUST_BINDGEN", "-DMOZ_STYLO"
+    "-DMOZILLA_INTERNAL_API", "-DRUST_BINDGEN"
 ]
 "family=unix" = ["-DOS_POSIX=1"]
 "os=solaris" = ["-DOS_SOLARIS=1"]
@@ -74,7 +74,7 @@ headers = [
     "mozilla/StylePrefs.h",
     "mozilla/ServoBindings.h",
     "mozilla/ServoMediaList.h",
-    "mozilla/ServoStyleContext.h",
+    "mozilla/ComputedStyle.h",
     "mozilla/ServoDeclarationBlock.h",
     "mozilla/ServoTraversalStatistics.h",
     "mozilla/SizeOfState.h",
@@ -187,7 +187,6 @@ rusty-enums = [
     "nsStyleSVGFallbackType",
     "nsINode_BooleanFlag",
     "mozilla::CSSPseudoElementType",
-    "mozilla::CSSPseudoClassType",
     "mozilla::LookAndFeel_ColorID",
     "mozilla::LookAndFeel_FontID",
     "nsStyleTransformMatrix::MatrixTransformOperator",
@@ -227,12 +226,11 @@ whitelist-types = [
     "mozilla::ComputedTimingFunction::BeforeFlag",
     "mozilla::SeenPtrs",
     "mozilla::ServoElementSnapshot.*",
-    "mozilla::ServoStyleContext",
+    "mozilla::ComputedStyle",
     "mozilla::ServoStyleSheet",
     "mozilla::ServoStyleSheetInner",
     "mozilla::ServoStyleSetSizes",
     "mozilla::ServoTraversalStatistics",
-    "mozilla::CSSPseudoClassType",
     "mozilla::css::ErrorReporter",
     "mozilla::css::LoaderReusableStyleSheets",
     "mozilla::css::SheetLoadData",
@@ -305,6 +303,7 @@ whitelist-types = [
     "nsCursorImage",
     "nsFont",
     "nsAtom",
+    "nsDynamicAtom",
     "nsMainThreadPtrHandle",
     "nsMainThreadPtrHolder",
     "nsMargin",
@@ -322,7 +321,7 @@ whitelist-types = [
     "nsStyleColumn",
     "nsStyleContent",
     "nsStyleContentData",
-    "nsStyleContext",
+    "ComputedStyle",
     "nsStyleCoord",
     "nsStyleCounterData",
     "nsStyleDisplay",
@@ -363,9 +362,9 @@ whitelist-types = [
     "ServoComputedData",
     "ServoComputedDataBorrowed",
     "ServoElementSnapshot",
-    "ServoStyleContextStrong",
-    "ServoStyleContextBorrowed",
-    "ServoStyleContextBorrowedOrNull",
+    "ComputedStyleStrong",
+    "ComputedStyleBorrowed",
+    "ComputedStyleBorrowedOrNull",
     "SheetParsingMode",
     "StaticRefPtr",
     "StyleAnimation",
@@ -441,7 +440,7 @@ mapped-generic-types = [
     { generic = false, gecko = "mozilla::ServoVisitedStyle", servo = "Option<::servo_arc::RawOffsetArc<::properties::ComputedValues>>" },
     { generic = false, gecko = "mozilla::ServoComputedValueFlags", servo = "::properties::computed_value_flags::ComputedValueFlags" },
     { generic = true, gecko = "mozilla::ServoRawOffsetArc", servo = "::servo_arc::RawOffsetArc" },
-    { generic = false, gecko = "ServoStyleContextStrong", servo = "::gecko_bindings::sugar::ownership::Strong<::properties::ComputedValues>" },
+    { generic = false, gecko = "ComputedStyleStrong", servo = "::gecko_bindings::sugar::ownership::Strong<::properties::ComputedValues>" },
 ]
 fixups = [
     { pat = "\\broot\\s*::\\s*nsString\\b", rep = "::nsstring::nsStringRepr" },
@@ -453,8 +452,8 @@ headers = ["mozilla/ServoBindings.h"]
 hide-types = [
     "nsACString_internal",
     "nsAString_internal",
-    "ServoStyleContextBorrowed",
-    "ServoStyleContextBorrowedOrNull",
+    "ComputedStyleBorrowed",
+    "ComputedStyleBorrowedOrNull",
 ]
 raw-lines = [
     "pub use nsstring::{nsACString, nsAString, nsString, nsStringRepr};",
@@ -462,8 +461,8 @@ raw-lines = [
     "use gecko_bindings::structs::nsTArray;",
     "type nsACString_internal = nsACString;",
     "type nsAString_internal = nsAString;",
-    "pub type ServoStyleContextBorrowed<'a> = &'a ::properties::ComputedValues;",
-    "pub type ServoStyleContextBorrowedOrNull<'a> = Option<&'a ::properties::ComputedValues>;",
+    "pub type ComputedStyleBorrowed<'a> = &'a ::properties::ComputedValues;",
+    "pub type ComputedStyleBorrowedOrNull<'a> = Option<&'a ::properties::ComputedValues>;",
     "pub type ServoComputedDataBorrowed<'a> = &'a ServoComputedData;",
     "pub type RawServoAnimationValueTableBorrowed<'a> = &'a ();"
 ]
@@ -514,7 +513,6 @@ structs-types = [
     "RawServoSourceSizeList",
     "RefPtr",
     "RustString",
-    "CSSPseudoClassType",
     "CSSPseudoElementType",
     "ServoTraversalFlags",
     "ComputedTimingFunction_BeforeFlag",
@@ -562,7 +560,7 @@ structs-types = [
     "nsStyleContentData",
     "nsStyleContentData_CounterFunction",
     "nsStyleContentType",
-    "nsStyleContext",
+    "ComputedStyle",
     "nsStyleCoord",
     "nsStyleCoord_Calc",
     "nsStyleCoord_CalcValue",
@@ -608,8 +606,7 @@ structs-types = [
     "SheetLoadData",
     "ServoStyleSheet",
     "ServoComputedData",
-    "ServoStyleContext",
-    "ServoStyleContextStrong",
+    "ComputedStyleStrong",
     "EffectCompositor_CascadeLevel",
     "UpdateAnimationsTasks",
     "ParsingMode",

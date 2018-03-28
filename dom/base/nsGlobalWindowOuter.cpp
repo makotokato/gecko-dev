@@ -49,7 +49,6 @@
 #include "nsIScriptTimeoutHandler.h"
 #include "nsITimeoutHandler.h"
 #include "nsIController.h"
-#include "nsScriptNameSpaceManager.h"
 #include "nsISlowScriptDebug.h"
 #include "nsWindowMemoryReporter.h"
 #include "nsWindowSizes.h"
@@ -67,7 +66,6 @@
 #include "js/Wrapper.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsReadableUtils.h"
-#include "nsDOMClassInfo.h"
 #include "nsJSEnvironment.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/Preferences.h"
@@ -640,7 +638,7 @@ nsOuterWindowProxy::get(JSContext *cx, JS::Handle<JSObject*> proxy,
                         JS::Handle<jsid> id,
                         JS::MutableHandle<JS::Value> vp) const
 {
-  if (id == nsDOMClassInfo::sWrappedJSObject_id &&
+  if (id == GetJSIDByIndex(cx, XPCJSContext::IDX_WRAPPED_JSOBJECT) &&
       xpc::AccessCheck::isChrome(js::GetContextCompartment(cx))) {
     vp.set(JS::ObjectValue(*proxy));
     return true;
@@ -3882,11 +3880,7 @@ nsGlobalWindowOuter::DispatchResizeEvent(const CSSIntSize& aSize)
                                NS_LITERAL_STRING("DOMWindowResize"),
                                /* aCanBubble = */ true,
                                /* aCancelable = */ true,
-                               detailValue,
-                               res);
-  if (res.Failed()) {
-    return false;
-  }
+                               detailValue);
 
   domEvent->SetTrusted(true);
   domEvent->WidgetEventPtr()->mFlags.mOnlyChromeDispatch = true;
@@ -4985,7 +4979,7 @@ nsGlobalWindowOuter::HomeOuter(nsIPrincipal& aSubjectPrincipal, ErrorResult& aEr
 #ifdef DEBUG_seth
     printf("all else failed.  using %s as the home page\n", DEFAULT_HOME_PAGE);
 #endif
-    CopyASCIItoUTF16(DEFAULT_HOME_PAGE, homeURL);
+    homeURL = NS_LITERAL_STRING(DEFAULT_HOME_PAGE);
   }
 
 #ifdef MOZ_PHOENIX

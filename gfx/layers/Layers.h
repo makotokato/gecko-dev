@@ -88,7 +88,6 @@ class LayerMetricsWrapper;
 class PaintedLayer;
 class ContainerLayer;
 class ImageLayer;
-class DisplayItemLayer;
 class ColorLayer;
 class CompositorAnimations;
 class CompositorBridgeChild;
@@ -446,11 +445,6 @@ public:
    */
   virtual already_AddRefed<RefLayer> CreateRefLayer() { return nullptr; }
   /**
-   * CONSTRUCTION PHASE ONLY
-   * Create a DisplayItemLayer for this manager's layer tree.
-   */
-  virtual already_AddRefed<DisplayItemLayer> CreateDisplayItemLayer() { return nullptr; }
-  /**
    * Can be called anytime, from any thread.
    *
    * Creates an Image container which forwards its images to the compositor within
@@ -460,15 +454,6 @@ public:
    */
   static already_AddRefed<ImageContainer> CreateImageContainer(ImageContainer::Mode flag
                                                                 = ImageContainer::SYNCHRONOUS);
-
-  /**
-   * Since the lifetimes of display items and display item layers are different,
-   * calling this tells the layer manager that the display item layer is valid for
-   * only one transaction. Users should call ClearDisplayItemLayers() to remove
-   * references to the dead display item at the end of a transaction.
-   */
-  virtual void TrackDisplayItemLayer(RefPtr<DisplayItemLayer> aLayer);
-  virtual void ClearDisplayItemLayers();
 
   /**
    * Type of layer manager his is. This is to be used sparsely in order to
@@ -789,14 +774,6 @@ public:
   void ClearPendingScrollInfoUpdate();
 private:
   std::map<FrameMetrics::ViewID,ScrollUpdateInfo> mPendingScrollUpdates;
-
-  // Display items are only valid during this transaction.
-  // At the end of the transaction, we have to go and clear out
-  // DisplayItemLayer's and null their display item. See comment
-  // above DisplayItemLayer declaration.
-  // Since layers are ref counted, we also have to stop holding
-  // a reference to the display item layer as well.
-  nsTArray<RefPtr<DisplayItemLayer>> mDisplayItemLayers;
 };
 
 /**
@@ -1577,12 +1554,6 @@ public:
    * ShadowableLayer.  Can be used anytime.
    */
   virtual ShadowableLayer* AsShadowableLayer() { return nullptr; }
-
-  /**
-   * Dynamic cast as a DisplayItemLayer. Return null if not a
-   * DisplayItemLayer. Can be used anytime.
-   */
-  virtual DisplayItemLayer* AsDisplayItemLayer() { return nullptr; }
 
   // These getters can be used anytime.  They return the effective
   // values that should be used when drawing this layer to screen,
@@ -2394,61 +2365,6 @@ protected:
 };
 
 /**
- * A generic layer that references back to its display item.
- *
- * In order to not throw away information early in the pipeline from layout -> webrender,
- * we'd like a generic layer type that can represent all the nsDisplayItems instead of
- * creating a new layer type for each nsDisplayItem for Webrender. Another option
- * is to break down nsDisplayItems into smaller nsDisplayItems early in the pipeline.
- * The problem with this is that the whole pipeline would have to deal with more
- * display items, which is slower.
- *
- * An alternative is to create a DisplayItemLayer, but the wrinkle with this is that
- * it has a pointer to its nsDisplayItem. Managing the lifetime is key as display items
- * only live as long as their display list builder, which goes away at the end of a paint.
- * Layers however, are retained between paints.
- * It's ok to recycle a DisplayItemLayer for a different display item since its just a pointer.
- * Instead, when a layer transaction is completed, it is up to the layer manager to tell
- * DisplayItemLayers that the display item pointer is no longer valid.
- */
-class DisplayItemLayer : public Layer {
-  public:
-    virtual DisplayItemLayer* AsDisplayItemLayer() override { return this; }
-    void EndTransaction();
-
-    MOZ_LAYER_DECL_NAME("DisplayItemLayer", TYPE_DISPLAYITEM)
-
-    void SetDisplayItem(nsDisplayItem* aItem, nsDisplayListBuilder* aBuilder) {
-      mItem = aItem;
-      mBuilder = aBuilder;
-    }
-
-    nsDisplayItem* GetDisplayItem() { return mItem; }
-    nsDisplayListBuilder* GetDisplayListBuilder() { return mBuilder; }
-
-    virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface) override
-    {
-      gfx::Matrix4x4 idealTransform = GetLocalTransform() * aTransformToSurface;
-      mEffectiveTransform = SnapTransformTranslation(idealTransform, nullptr);
-      ComputeEffectiveTransformForMaskLayers(aTransformToSurface);
-    }
-
-  protected:
-    DisplayItemLayer(LayerManager* aManager, void* aImplData)
-      : Layer(aManager, aImplData)
-      , mItem(nullptr)
-  {}
-
-  virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix) override;
-
-  virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent) override;
-
-  // READ COMMENT ABOVE TO ENSURE WE DON'T HAVE A DANGLING POINTER
-  nsDisplayItem* mItem;
-  nsDisplayListBuilder* mBuilder;
-};
-
-/**
  * A Layer which just renders a solid color in its visible region. It actually
  * can fill any area that contains the visible region, so if you need to
  * restrict the area filled, set a clip region on this layer.
@@ -2720,9 +2636,9 @@ public:
    * CONSTRUCTION PHASE ONLY
    * Set the ID of the layer's referent.
    */
-  void SetReferentId(uint64_t aId)
+  void SetReferentId(LayersId aId)
   {
-    MOZ_ASSERT(aId != 0);
+    MOZ_ASSERT(aId.IsValid());
     if (mId != aId) {
       MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) ReferentId", this));
       mId = aId;
@@ -2784,7 +2700,7 @@ public:
   // These getters can be used anytime.
   virtual RefLayer* AsRefLayer() override { return this; }
 
-  virtual uint64_t GetReferentId() { return mId; }
+  virtual LayersId GetReferentId() { return mId; }
 
   /**
    * DRAWING PHASE ONLY
@@ -2796,7 +2712,7 @@ public:
 protected:
   RefLayer(LayerManager* aManager, void* aImplData)
     : ContainerLayer(aManager, aImplData)
-    , mId(0)
+    , mId{0}
     , mEventRegionsOverride(EventRegionsOverride::NoOverride)
   {}
 
@@ -2805,7 +2721,7 @@ protected:
   virtual void DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent) override;
 
   // 0 is a special value that means "no ID".
-  uint64_t mId;
+  LayersId mId;
   EventRegionsOverride mEventRegionsOverride;
 };
 

@@ -6,15 +6,11 @@
 
 "use strict";
 
-const { Cc, Ci, Cu } = require("chrome");
+const { Cu } = require("chrome");
 const Services = require("Services");
 const { ActorPool, appendExtraActors, createExtraActors } = require("devtools/server/actors/common");
 const { DebuggerServer } = require("devtools/server/main");
 
-loader.lazyGetter(this, "ppmm", () => {
-  return Cc["@mozilla.org/parentprocessmessagemanager;1"].getService(
-    Ci.nsIMessageBroadcaster);
-});
 loader.lazyRequireGetter(this, "WindowActor",
   "devtools/server/actors/window", true);
 
@@ -524,7 +520,7 @@ RootActor.prototype = {
     this._parameters.processList.onListChanged = null;
   },
 
-  onGetProcess: function(request) {
+  async onGetProcess(request) {
     if (!DebuggerServer.allowChromeProcess) {
       return { error: "forbidden",
                message: "You are not allowed to debug chrome." };
@@ -547,7 +543,7 @@ RootActor.prototype = {
     }
 
     let { id } = request;
-    let mm = ppmm.getChildAt(id);
+    let mm = Services.ppmm.getChildAt(id);
     if (!mm) {
       return { error: "noProcess",
                message: "There is no process with id '" + id + "'." };
@@ -559,10 +555,9 @@ RootActor.prototype = {
     let onDestroy = () => {
       this._processActors.delete(id);
     };
-    return DebuggerServer.connectToContent(this.conn, mm, onDestroy).then(formResult => {
-      this._processActors.set(id, formResult);
-      return { form: formResult };
-    });
+    form = await DebuggerServer.connectToContentProcess(this.conn, mm, onDestroy);
+    this._processActors.set(id, form);
+    return { form };
   },
 
   /* This is not in the spec, but it's used by tests. */

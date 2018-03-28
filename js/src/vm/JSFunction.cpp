@@ -60,6 +60,7 @@ using namespace js::gc;
 using namespace js::frontend;
 
 using mozilla::ArrayLength;
+using mozilla::CheckedInt;
 using mozilla::Maybe;
 using mozilla::Some;
 
@@ -537,7 +538,7 @@ fun_resolve(JSContext* cx, HandleObject obj, HandleId id, bool* resolvedp)
             if (fun->hasResolvedName())
                 return true;
 
-            RootedAtom name(cx);
+            RootedString name(cx);
             if (!JSFunction::getUnresolvedName(cx, fun, &name))
                 return false;
 
@@ -590,7 +591,7 @@ js::XDRInterpretedFunction(XDRState<mode>* xdr, HandleScope enclosingScope,
         if (!fun->isInterpreted())
             return xdr->fail(JS::TranscodeResult_Failure_NotInterpretedFun);
 
-        if (fun->explicitName() || fun->hasCompileTimeName() || fun->hasGuessedAtom())
+        if (fun->explicitName() || fun->hasInferredName() || fun->hasGuessedAtom())
             firstword |= HasAtom;
 
         if (fun->isGenerator() || fun->isAsync())
@@ -1032,12 +1033,15 @@ js::FunctionToString(JSContext* cx, HandleFunction fun, bool isToSource)
         if (fun->explicitName()) {
             if (!out.append(' '))
                 return nullptr;
-            if (fun->isBoundFunction() && !fun->hasBoundFunctionNamePrefix()) {
-                if (!out.append(cx->names().boundWithSpace))
+
+            if (fun->isBoundFunction()) {
+                JSLinearString* boundName = JSFunction::getBoundFunctionName(cx, fun);
+                if (!boundName || !out.append(boundName))
+                    return nullptr;
+            } else {
+                if (!out.append(fun->explicitName()))
                     return nullptr;
             }
-            if (!out.append(fun->explicitName()))
-                return nullptr;
         }
 
         if (fun->isInterpreted() &&
@@ -1321,45 +1325,90 @@ JSFunction::getUnresolvedLength(JSContext* cx, HandleFunction fun, MutableHandle
     return true;
 }
 
-/* static */ bool
-JSFunction::getUnresolvedName(JSContext* cx, HandleFunction fun, MutableHandleAtom v)
+JSAtom*
+JSFunction::infallibleGetUnresolvedName(JSContext* cx)
 {
-    MOZ_ASSERT(!IsInternalFunctionObject(*fun));
-    MOZ_ASSERT(!fun->hasResolvedName());
+    MOZ_ASSERT(!IsInternalFunctionObject(*this));
+    MOZ_ASSERT(!hasResolvedName());
 
-    JSAtom* name = fun->explicitOrCompileTimeName();
-    if (fun->isClassConstructor()) {
-        // It's impossible to have an empty named class expression. We use
-        // empty as a sentinel when creating default class constructors.
-        MOZ_ASSERT(name != cx->names().empty);
+    if (JSAtom* name = explicitOrInferredName())
+        return name;
 
-        // Unnamed class expressions should not get a .name property at all.
-        if (name)
-            v.set(name);
+    // Unnamed class expressions should not get a .name property at all.
+    if (isClassConstructor())
+        return nullptr;
+
+    return cx->names().empty;
+}
+
+/* static */ bool
+JSFunction::getUnresolvedName(JSContext* cx, HandleFunction fun, MutableHandleString v)
+{
+    if (fun->isBoundFunction()) {
+        JSLinearString* name = JSFunction::getBoundFunctionName(cx, fun);
+        if (!name)
+            return false;
+
+        v.set(name);
         return true;
     }
 
-    if (fun->isBoundFunction() && !fun->hasBoundFunctionNamePrefix()) {
-        // Bound functions are never unnamed.
-        MOZ_ASSERT(name);
+    v.set(fun->infallibleGetUnresolvedName(cx));
+    return true;
+}
 
-        if (name->length() > 0) {
-            StringBuffer sb(cx);
-            if (!sb.append(cx->names().boundWithSpace) || !sb.append(name))
-                return false;
+/* static */ JSLinearString*
+JSFunction::getBoundFunctionName(JSContext* cx, HandleFunction fun)
+{
+    MOZ_ASSERT(fun->isBoundFunction());
+    JSAtom* name = fun->explicitName();
 
-            name = sb.finishAtom();
-            if (!name)
-                return false;
-        } else {
-            name = cx->names().boundWithSpace;
-        }
+    // Bound functions are never unnamed.
+    MOZ_ASSERT(name);
 
-        fun->setPrefixedBoundFunctionName(name);
+    // If the bound function prefix is present, return the name as is.
+    if (fun->hasBoundFunctionNamePrefix())
+        return name;
+
+    // Otherwise return "bound " * (number of bound function targets) + name.
+    size_t boundTargets = 0;
+    for (JSFunction* boundFn = fun; boundFn->isBoundFunction(); ) {
+        boundTargets++;
+
+        JSObject* target = boundFn->getBoundFunctionTarget();
+        if (!target->is<JSFunction>())
+            break;
+        boundFn = &target->as<JSFunction>();
     }
 
-    v.set(name != nullptr ? name : cx->names().empty);
-    return true;
+    // |function /*unnamed*/ (){...}.bind()| is a common case, handle it here.
+    if (name->empty() && boundTargets == 1)
+        return cx->names().boundWithSpace;
+
+    static constexpr char boundWithSpaceChars[] = "bound ";
+    static constexpr size_t boundWithSpaceCharsLength =
+        ArrayLength(boundWithSpaceChars) - 1; // No trailing '\0'.
+    MOZ_ASSERT(StringEqualsAscii(cx->names().boundWithSpace, boundWithSpaceChars));
+
+    StringBuffer sb(cx);
+    if (name->hasTwoByteChars() && !sb.ensureTwoByteChars())
+        return nullptr;
+
+    CheckedInt<size_t> len(boundTargets);
+    len *= boundWithSpaceCharsLength;
+    len += name->length();
+    if (!len.isValid()) {
+        ReportAllocationOverflow(cx);
+        return nullptr;
+    }
+    if (!sb.reserve(len.value()))
+        return nullptr;
+
+    while (boundTargets--)
+        sb.infallibleAppend(boundWithSpaceChars, boundWithSpaceCharsLength);
+    sb.infallibleAppendSubstring(name, 0, name->length());
+
+    return sb.finishString();
 }
 
 static const js::Value&
@@ -1403,6 +1452,18 @@ size_t
 JSFunction::getBoundFunctionArgumentCount() const
 {
     return GetBoundFunctionArguments(this)->length();
+}
+
+static JSAtom*
+AppendBoundFunctionPrefix(JSContext* cx, JSString* str)
+{
+    static constexpr char boundWithSpaceChars[] = "bound ";
+    MOZ_ASSERT(StringEqualsAscii(cx->names().boundWithSpace, boundWithSpaceChars));
+
+    StringBuffer sb(cx);
+    if (!sb.append(boundWithSpaceChars) || !sb.append(str))
+        return nullptr;
+    return sb.finishAtom();
 }
 
 /* static */ bool
@@ -1461,11 +1522,26 @@ JSFunction::finishBoundFunctionInit(JSContext* cx, HandleFunction bound, HandleO
     // 19.2.3.2 Function.prototype.bind, step 8.
     bound->setExtendedSlot(BOUND_FUN_LENGTH_SLOT, NumberValue(length));
 
+    MOZ_ASSERT(!bound->hasGuessedAtom());
+
     // Try to avoid invoking the resolve hook.
-    RootedAtom name(cx);
+    JSAtom* name = nullptr;
     if (targetObj->is<JSFunction>() && !targetObj->as<JSFunction>().hasResolvedName()) {
-        if (!JSFunction::getUnresolvedName(cx, targetObj.as<JSFunction>(), &name))
-            return false;
+        JSFunction* targetFn = &targetObj->as<JSFunction>();
+
+        // If the target is a bound function with a prefixed name, we can't
+        // lazily compute the full name in getBoundFunctionName(), therefore
+        // we need to append the bound function name prefix here.
+        if (targetFn->isBoundFunction() && targetFn->hasBoundFunctionNamePrefix()) {
+            name = AppendBoundFunctionPrefix(cx, targetFn->explicitName());
+            if (!name)
+                return false;
+            bound->setPrefixedBoundFunctionName(name);
+        } else {
+            name = targetFn->infallibleGetUnresolvedName(cx);
+            if (name)
+                bound->setAtom(name);
+        }
     }
 
     // 19.2.3.2 Function.prototype.bind, steps 9-11.
@@ -1476,17 +1552,25 @@ JSFunction::finishBoundFunctionInit(JSContext* cx, HandleFunction bound, HandleO
             return false;
 
         // 19.2.3.2 Function.prototype.bind, step 10.
-        if (targetName.isString() && !targetName.toString()->empty()) {
+        if (!targetName.isString())
+            targetName.setString(cx->names().empty);
+
+        // If the target itself is a bound function (with a resolved name), we
+        // can't compute the full name in getBoundFunctionName() based only on
+        // the number of bound target functions, therefore we need to store
+        // the complete prefixed name here.
+        if (targetObj->is<JSFunction>() && targetObj->as<JSFunction>().isBoundFunction()) {
+            name = AppendBoundFunctionPrefix(cx, targetName.toString());
+            if (!name)
+                return false;
+            bound->setPrefixedBoundFunctionName(name);
+        } else {
             name = AtomizeString(cx, targetName.toString());
             if (!name)
                 return false;
-        } else {
-            name = cx->names().empty;
+            bound->setAtom(name);
         }
     }
-
-    MOZ_ASSERT(!bound->hasGuessedAtom());
-    bound->setAtom(name);
 
     return true;
 }
@@ -2198,14 +2282,42 @@ js::CloneSelfHostingIntrinsic(JSContext* cx, HandleFunction fun)
     return clone;
 }
 
+static JSAtom*
+SymbolToFunctionName(JSContext* cx, JS::Symbol* symbol, FunctionPrefixKind prefixKind)
+{
+    // Step 4.a.
+    JSAtom* desc = symbol->description();
+
+    // Step 4.b, no prefix fastpath.
+    if (!desc && prefixKind == FunctionPrefixKind::None)
+        return cx->names().empty;
+
+    // Step 5 (reordered).
+    StringBuffer sb(cx);
+    if (prefixKind == FunctionPrefixKind::Get) {
+        if (!sb.append("get "))
+            return nullptr;
+    } else if (prefixKind == FunctionPrefixKind::Set) {
+        if (!sb.append("set "))
+            return nullptr;
+    }
+
+    // Step 4.b.
+    if (desc) {
+        // Step 4.c.
+        if (!sb.append('[') || !sb.append(desc) || !sb.append(']'))
+            return nullptr;
+    }
+    return sb.finishAtom();
+}
+
 /*
  * Return an atom for use as the name of a builtin method with the given
  * property id.
  *
  * Function names are always strings. If id is the well-known @@iterator
  * symbol, this returns "[Symbol.iterator]".  If a prefix is supplied the final
- * name is |prefix + " " + name|. A prefix cannot be supplied if id is a
- * symbol value.
+ * name is |prefix + " " + name|.
  *
  * Implements steps 3-5 of 9.2.11 SetFunctionName in ES2016.
  */
@@ -2220,32 +2332,8 @@ js::IdToFunctionName(JSContext* cx, HandleId id,
     // Step 3 (implicit).
 
     // Step 4.
-    if (JSID_IS_SYMBOL(id)) {
-        // Step 4.a.
-        RootedAtom desc(cx, JSID_TO_SYMBOL(id)->description());
-
-        // Step 4.b, no prefix fastpath.
-        if (!desc && prefixKind == FunctionPrefixKind::None)
-            return cx->names().empty;
-
-        // Step 5 (reordered).
-        StringBuffer sb(cx);
-        if (prefixKind == FunctionPrefixKind::Get) {
-            if (!sb.append("get "))
-                return nullptr;
-        } else if (prefixKind == FunctionPrefixKind::Set) {
-            if (!sb.append("set "))
-                return nullptr;
-        }
-
-        // Step 4.b.
-        if (desc) {
-            // Step 4.c.
-            if (!sb.append('[') || !sb.append(desc) || !sb.append(']'))
-                return nullptr;
-        }
-        return sb.finishAtom();
-    }
+    if (JSID_IS_SYMBOL(id))
+        return SymbolToFunctionName(cx, JSID_TO_SYMBOL(id), prefixKind);
 
     RootedValue idv(cx, IdToValue(id));
     RootedAtom name(cx, ToAtom<CanGC>(cx, idv));
@@ -2284,29 +2372,27 @@ js::SetFunctionNameIfNoOwnName(JSContext* cx, HandleFunction fun, HandleValue na
 
     if (fun->isClassConstructor()) {
         // A class may have static 'name' method or accessor.
-        RootedId nameId(cx, NameToId(cx->names().name));
-        bool result;
-        if (!HasOwnProperty(cx, fun, nameId, &result))
-            return false;
-
-        if (result)
+        if (fun->contains(cx, cx->names().name))
             return true;
     } else {
         // Anonymous function shouldn't have own 'name' property at this point.
         MOZ_ASSERT(!fun->containsPure(cx->names().name));
     }
 
-    RootedId id(cx);
-    if (!ValueToId<CanGC>(cx, name, &id))
-        return false;
-
-    RootedAtom funNameAtom(cx, IdToFunctionName(cx, id, prefixKind));
+    JSAtom* funNameAtom;
+    if (name.isSymbol()) {
+        funNameAtom = SymbolToFunctionName(cx, name.toSymbol(), prefixKind);
+    } else {
+        RootedAtom nameAtom(cx, ToAtom<CanGC>(cx, name));
+        if (!nameAtom)
+            return false;
+        funNameAtom = NameToFunctionName(cx, nameAtom, prefixKind);
+    }
     if (!funNameAtom)
         return false;
 
-    RootedValue funNameVal(cx, StringValue(funNameAtom));
-    if (!NativeDefineDataProperty(cx, fun, cx->names().name, funNameVal, JSPROP_READONLY))
-        return false;
+    MOZ_ASSERT(!fun->hasResolvedName());
+    fun->setInferredName(funNameAtom);
 
     return true;
 }

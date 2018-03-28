@@ -664,19 +664,19 @@ nsXBLPrototypeHandler::GetController(EventTarget* aTarget)
 
   nsCOMPtr<nsIContent> targetContent(do_QueryInterface(aTarget));
   RefPtr<nsXULElement> xulElement =
-    nsXULElement::FromContentOrNull(targetContent);
+    nsXULElement::FromNodeOrNull(targetContent);
   if (xulElement) {
     controllers = xulElement->GetControllers(IgnoreErrors());
   }
 
   if (!controllers) {
-    HTMLTextAreaElement* htmlTextArea = HTMLTextAreaElement::FromContent(targetContent);
+    HTMLTextAreaElement* htmlTextArea = HTMLTextAreaElement::FromNode(targetContent);
     if (htmlTextArea)
       htmlTextArea->GetControllers(getter_AddRefs(controllers));
   }
 
   if (!controllers) {
-    HTMLInputElement* htmlInputElement = HTMLInputElement::FromContent(targetContent);
+    HTMLInputElement* htmlInputElement = HTMLInputElement::FromNode(targetContent);
     if (htmlInputElement)
       htmlInputElement->GetControllers(getter_AddRefs(controllers));
   }
@@ -1023,10 +1023,10 @@ nsXBLPrototypeHandler::ReportKeyConflict(const char16_t* aKey, const char16_t* a
 
 bool
 nsXBLPrototypeHandler::ModifiersMatchMask(
-                         nsIDOMUIEvent* aEvent,
+                         UIEvent* aEvent,
                          const IgnoreModifierState& aIgnoreModifierState)
 {
-  WidgetInputEvent* inputEvent = aEvent->AsEvent()->WidgetEventPtr()->AsInputEvent();
+  WidgetInputEvent* inputEvent = aEvent->WidgetEventPtr()->AsInputEvent();
   NS_ENSURE_TRUE(inputEvent, false);
 
   if (mKeyMask & cMetaMask) {

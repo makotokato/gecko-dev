@@ -8,6 +8,7 @@
 #endif
 #include "GPUParent.h"
 #include "gfxConfig.h"
+#include "gfxCrashReporterUtils.h"
 #include "gfxPlatform.h"
 #include "gfxPrefs.h"
 #include "GPUProcessHost.h"
@@ -164,7 +165,7 @@ GPUParent::NotifyDeviceReset()
 }
 
 PAPZInputBridgeParent*
-GPUParent::AllocPAPZInputBridgeParent(const uint64_t& aLayersId)
+GPUParent::AllocPAPZInputBridgeParent(const LayersId& aLayersId)
 {
   APZInputBridgeParent* parent = new APZInputBridgeParent(aLayersId);
   parent->AddRef();
@@ -200,6 +201,14 @@ GPUParent::RecvInit(nsTArray<GfxPrefSetting>&& prefs,
   gfxConfig::Inherit(Feature::OPENGL_COMPOSITING, devicePrefs.oglCompositing());
   gfxConfig::Inherit(Feature::ADVANCED_LAYERS, devicePrefs.advancedLayers());
   gfxConfig::Inherit(Feature::DIRECT2D, devicePrefs.useD2D1());
+
+  { // Let the crash reporter know if we've got WR enabled or not. For other
+    // processes this happens in gfxPlatform::InitWebRenderConfig.
+    ScopedGfxFeatureReporter reporter("WR", gfxPlatform::WebRenderPrefEnabled());
+    if (gfxVars::UseWebRender()) {
+      reporter.SetSuccessful();
+    }
+  }
 
   for (const LayerTreeIdMapping& map : aMappings) {
     LayerTreeOwnerTracker::Get()->Map(map.layersId(), map.ownerId());
@@ -294,7 +303,7 @@ GPUParent::RecvInitVRManager(Endpoint<PVRManagerParent>&& aEndpoint)
 }
 
 mozilla::ipc::IPCResult
-GPUParent::RecvInitUiCompositorController(const uint64_t& aRootLayerTreeId, Endpoint<PUiCompositorControllerParent>&& aEndpoint)
+GPUParent::RecvInitUiCompositorController(const LayersId& aRootLayerTreeId, Endpoint<PUiCompositorControllerParent>&& aEndpoint)
 {
   UiCompositorControllerParent::Start(aRootLayerTreeId, Move(aEndpoint));
   return IPC_OK();

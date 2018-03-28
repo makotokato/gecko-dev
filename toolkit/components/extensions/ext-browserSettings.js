@@ -105,6 +105,16 @@ ExtensionPreferencesManager.addSetting("cacheEnabled", {
   },
 });
 
+ExtensionPreferencesManager.addSetting("closeTabsByDoubleClick", {
+  prefNames: [
+    "browser.tabs.closeTabByDblclick",
+  ],
+
+  setCallback(value) {
+    return {[this.prefNames[0]]: value};
+  },
+});
+
 ExtensionPreferencesManager.addSetting("contextMenuShowEvent", {
   prefNames: [
     "ui.context_menus.after_mouseup",
@@ -122,6 +132,20 @@ ExtensionPreferencesManager.addSetting("imageAnimationBehavior", {
 
   setCallback(value) {
     return {[this.prefNames[0]]: value};
+  },
+});
+
+ExtensionPreferencesManager.addSetting("newTabPosition", {
+  prefNames: [
+    "browser.tabs.insertRelatedAfterCurrent",
+    "browser.tabs.insertAfterCurrent",
+  ],
+
+  setCallback(value) {
+    return {
+      "browser.tabs.insertAfterCurrent": value === "afterCurrent",
+      "browser.tabs.insertRelatedAfterCurrent": value === "relatedAfterCurrent",
+    };
   },
 });
 
@@ -221,6 +245,11 @@ this.browserSettings = class extends ExtensionAPI {
             return Services.prefs.getBoolPref("browser.cache.disk.enable") &&
               Services.prefs.getBoolPref("browser.cache.memory.enable");
           }),
+        closeTabsByDoubleClick: getSettingsAPI(
+          extension, "closeTabsByDoubleClick",
+          () => {
+            return Services.prefs.getBoolPref("browser.tabs.closeTabByDblclick");
+          }, undefined, false, ["android"]),
         contextMenuShowEvent: Object.assign(
           getSettingsAPI(
             extension, "contextMenuShowEvent",
@@ -259,6 +288,17 @@ this.browserSettings = class extends ExtensionAPI {
           extension, "imageAnimationBehavior",
           () => {
             return Services.prefs.getCharPref("image.animation_mode");
+          }),
+        newTabPosition: getSettingsAPI(
+          extension, "newTabPosition",
+          () => {
+            if (Services.prefs.getBoolPref("browser.tabs.insertAfterCurrent")) {
+              return "afterCurrent";
+            }
+            if (Services.prefs.getBoolPref("browser.tabs.insertRelatedAfterCurrent")) {
+              return "relatedAfterCurrent";
+            }
+            return "atEnd";
           }),
         newTabPageOverride: getSettingsAPI(
           extension, NEW_TAB_OVERRIDE_SETTING,

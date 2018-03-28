@@ -50,12 +50,14 @@ class AnimationInspector {
       this.simulateAnimationForKeyframesProgressBar.bind(this);
     this.toggleElementPicker = this.toggleElementPicker.bind(this);
     this.update = this.update.bind(this);
+    this.onAnimationStateChanged = this.onAnimationStateChanged.bind(this);
     this.onAnimationsCurrentTimeUpdated = this.onAnimationsCurrentTimeUpdated.bind(this);
+    this.onAnimationsMutation = this.onAnimationsMutation.bind(this);
     this.onCurrentTimeTimerUpdated = this.onCurrentTimeTimerUpdated.bind(this);
     this.onElementPickerStarted = this.onElementPickerStarted.bind(this);
     this.onElementPickerStopped = this.onElementPickerStopped.bind(this);
     this.onSidebarResized = this.onSidebarResized.bind(this);
-    this.onSidebarSelect = this.onSidebarSelect.bind(this);
+    this.onSidebarSelectionChanged = this.onSidebarSelectionChanged.bind(this);
 
     EventEmitter.decorate(this);
     this.emit = this.emit.bind(this);
@@ -132,19 +134,22 @@ class AnimationInspector {
     );
     this.provider = provider;
 
-    this.inspector.selection.on("new-node-front", this.update);
-    this.inspector.sidebar.on("newanimationinspector-selected", this.onSidebarSelect);
-    this.inspector.toolbox.on("inspector-sidebar-resized", this.onSidebarResized);
+    this.inspector.sidebar.on("select", this.onSidebarSelectionChanged);
     this.inspector.toolbox.on("picker-started", this.onElementPickerStarted);
     this.inspector.toolbox.on("picker-stopped", this.onElementPickerStopped);
+    this.inspector.toolbox.on("select", this.onSidebarSelectionChanged);
   }
 
   destroy() {
+    this.setAnimationStateChangedListenerEnabled(false);
     this.inspector.selection.off("new-node-front", this.update);
-    this.inspector.sidebar.off("newanimationinspector-selected", this.onSidebarSelect);
+    this.inspector.sidebar.off("select", this.onSidebarSelectionChanged);
     this.inspector.toolbox.off("inspector-sidebar-resized", this.onSidebarResized);
     this.inspector.toolbox.off("picker-started", this.onElementPickerStarted);
     this.inspector.toolbox.off("picker-stopped", this.onElementPickerStopped);
+    this.inspector.toolbox.off("select", this.onSidebarSelectionChanged);
+
+    this.animationsFront.off("mutations", this.onAnimationsMutation);
 
     if (this.simulatedAnimation) {
       this.simulatedAnimation.cancel();
@@ -242,6 +247,11 @@ class AnimationInspector {
            this.inspector.sidebar.getCurrentTabID() === "newanimationinspector";
   }
 
+  onAnimationStateChanged() {
+    // Simply update the animations since the state has already been updated.
+    this.updateState([...this.state.animations]);
+  }
+
   /**
    * This method should call when the current time is changed.
    * Then, dispatches the current time to listeners that are registered
@@ -271,6 +281,23 @@ class AnimationInspector {
     }
   }
 
+  onAnimationsMutation(changes) {
+    const animations = [...this.state.animations];
+
+    for (const {type, player: animation} of changes) {
+      if (type === "added") {
+        animations.push(animation);
+        animation.on("changed", this.onAnimationStateChanged);
+      } else if (type === "removed") {
+        const index = animations.indexOf(animation);
+        animations.splice(index, 1);
+        animation.off("changed", this.onAnimationStateChanged);
+      }
+    }
+
+    this.updateState(animations);
+  }
+
   onElementPickerStarted() {
     this.inspector.store.dispatch(updateElementPickerEnabled(true));
   }
@@ -279,16 +306,33 @@ class AnimationInspector {
     this.inspector.store.dispatch(updateElementPickerEnabled(false));
   }
 
-  onSidebarSelect() {
-    this.update();
-    this.onSidebarResized(this.inspector.getSidebarSize());
-  }
+  async onSidebarSelectionChanged() {
+    const isPanelVisibled = this.isPanelVisible();
 
-  onSidebarResized(size) {
-    if (!this.isPanelVisible()) {
+    if (this.wasPanelVisibled === isPanelVisibled) {
+      // onSidebarSelectionChanged is called some times even same state
+      // from sidebar and toolbar.
       return;
     }
 
+    this.wasPanelVisibled = isPanelVisibled;
+
+    if (this.isPanelVisible()) {
+      await this.update();
+      this.onSidebarResized(null, this.inspector.getSidebarSize());
+      this.animationsFront.on("mutations", this.onAnimationsMutation);
+      this.inspector.selection.on("new-node-front", this.update);
+      this.inspector.toolbox.on("inspector-sidebar-resized", this.onSidebarResized);
+    } else {
+      this.stopAnimationsCurrentTimeTimer();
+      this.animationsFront.off("mutations", this.onAnimationsMutation);
+      this.inspector.selection.off("new-node-front", this.update);
+      this.inspector.toolbox.off("inspector-sidebar-resized", this.onSidebarResized);
+      this.setAnimationStateChangedListenerEnabled(false);
+    }
+  }
+
+  onSidebarResized(size) {
     this.inspector.store.dispatch(updateSidebarSize(size));
   }
 
@@ -335,6 +379,10 @@ class AnimationInspector {
 
   async setAnimationsPlaybackRate(playbackRate) {
     const animations = this.state.animations;
+    // "changed" event on each animation will fire respectively when the playback
+    // rate changed. Since for each occurrence of event, change of UI is urged.
+    // To avoid this, disable the listeners once in order to not capture the event.
+    this.setAnimationStateChangedListenerEnabled(false);
 
     try {
       await this.animationsFront.setPlaybackRates(animations, playbackRate);
@@ -344,6 +392,8 @@ class AnimationInspector {
       // in the meantime.
       console.error(e);
       return;
+    } finally {
+      this.setAnimationStateChangedListenerEnabled(true);
     }
 
     await this.updateState([...animations]);
@@ -366,6 +416,25 @@ class AnimationInspector {
     }
 
     await this.updateState([...this.state.animations]);
+  }
+
+  /**
+   * Enable/disable the animation state change listener.
+   * If set true, observe "changed" event on current animations.
+   * Otherwise, quit observing the "changed" event.
+   *
+   * @param {Bool} isEnabled
+   */
+  setAnimationStateChangedListenerEnabled(isEnabled) {
+    if (isEnabled) {
+      for (const animation of this.state.animations) {
+        animation.on("changed", this.onAnimationStateChanged);
+      }
+    } else {
+      for (const animation of this.state.animations) {
+        animation.off("changed", this.onAnimationStateChanged);
+      }
+    }
   }
 
   setDetailVisibility(isVisible) {
@@ -459,11 +528,6 @@ class AnimationInspector {
   }
 
   async update() {
-    if (!this.inspector || !this.isPanelVisible()) {
-      // AnimationInspector was destroyed already or the panel is hidden.
-      return;
-    }
-
     const done = this.inspector.updating("newanimationinspector");
 
     const selection = this.inspector.selection;
@@ -475,6 +539,7 @@ class AnimationInspector {
 
     if (!currentAnimations || !isAllAnimationEqual(currentAnimations, nextAnimations)) {
       this.updateState(nextAnimations);
+      this.setAnimationStateChangedListenerEnabled(true);
     }
 
     done();

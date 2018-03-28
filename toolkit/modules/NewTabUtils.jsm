@@ -617,7 +617,7 @@ var PlacesProvider = {
     // Execute the query.
     let query = PlacesUtils.history.getNewQuery();
     let db = PlacesUtils.history.QueryInterface(Ci.nsPIPlacesDatabase);
-    db.asyncExecuteLegacyQueries([query], 1, options, callback);
+    db.asyncExecuteLegacyQuery(query, options, callback);
   },
 
   /**
@@ -772,6 +772,12 @@ var ActivityStreamProvider = {
   /**
    * Shared WHERE expression filtering out undesired pages, e.g., hidden,
    * unvisited, and non-http/s urls. Assumes moz_places is in FROM / JOIN.
+   *
+   * NB: SUBSTR(url) is used even without an index instead of url_hash because
+   * most desired pages will match http/s, so it will only run on the ~10s of
+   * rows matched. If url_hash were to be used, it should probably *not* be used
+   * by the query optimizer as we primarily want it optimized for the other
+   * conditions, e.g., most frecent first.
    */
   _commonPlacesWhere: `
     AND hidden = 0

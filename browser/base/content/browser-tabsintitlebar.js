@@ -32,33 +32,32 @@ var TabsInTitlebar = {
 
     this.onAreaReset = function(aArea) {
       if (aArea == CustomizableUI.AREA_TABSTRIP || aArea == CustomizableUI.AREA_MENUBAR)
-        this._update(true);
+        this.update();
     };
     this.onWidgetAdded = this.onWidgetRemoved = function(aWidgetId, aArea) {
       if (aArea == CustomizableUI.AREA_TABSTRIP || aArea == CustomizableUI.AREA_MENUBAR)
-        this._update(true);
+        this.update();
     };
     CustomizableUI.addListener(this);
 
-    addEventListener("resolutionchange", this, false);
+    window.addEventListener("resolutionchange", this);
+    window.addEventListener("resize", this);
 
-    this._update(true, true);
+    gDragSpaceObserver.init();
+
+    this.update(true);
   },
 
   allowedBy(condition, allow) {
     if (allow) {
       if (condition in this._disallowed) {
         delete this._disallowed[condition];
-        this._update(true);
+        this.update();
       }
     } else if (!(condition in this._disallowed)) {
       this._disallowed[condition] = null;
-      this._update(true);
+      this.update();
     }
-  },
-
-  updateAppearance: function updateAppearance(aForce) {
-    this._update(aForce);
   },
 
   get enabled() {
@@ -71,21 +70,48 @@ var TabsInTitlebar = {
   },
 
   handleEvent(aEvent) {
-    if (aEvent.type == "resolutionchange" && aEvent.target == window) {
-      this._update(true);
+    switch (aEvent.type) {
+      case "resolutionchange":
+        if (aEvent.target == window) {
+          this.update();
+        }
+        break;
+      case "resize":
+        if (window.fullScreen || aEvent.target != window) {
+           break;
+        }
+        // We use resize events because the window is not ready after
+        // sizemodechange events. However, we only care about the event when
+        // the sizemode is different from the last time we updated the
+        // appearance of the tabs in the titlebar.
+        let sizemode = document.documentElement.getAttribute("sizemode");
+        if (this._lastSizeMode == sizemode) {
+          break;
+        }
+        let oldSizeMode = this._lastSizeMode;
+        this._lastSizeMode = sizemode;
+        // Don't update right now if we are leaving fullscreen, since the UI is
+        // still changing in the consequent "fullscreen" event. Code there will
+        // call this function again when everything is ready.
+        // See browser-fullScreen.js: FullScreen.toggle and bug 1173768.
+        if (oldSizeMode == "fullscreen") {
+          break;
+        }
+        this.update();
+        break;
     }
   },
 
   onDOMContentLoaded() {
     this._domLoaded = true;
-    this._update(true);
+    this.update();
   },
 
   _onMenuMutate(aMutations) {
     for (let mutation of aMutations) {
       if (mutation.attributeName == "inactive" ||
           mutation.attributeName == "autohide") {
-        TabsInTitlebar._update(true);
+        TabsInTitlebar.update();
         return;
       }
     }
@@ -101,7 +127,7 @@ var TabsInTitlebar = {
                    Services.prefs.getBoolPref(this._prefName));
   },
 
-  _update(aForce = false, aFromInit = false) {
+  update(aFromInit = false) {
     let $ = id => document.getElementById(id);
     let rect = ele => ele.getBoundingClientRect();
     let verticalMargins = cstyle => parseFloat(cstyle.marginBottom) + parseFloat(cstyle.marginTop);
@@ -115,26 +141,6 @@ var TabsInTitlebar = {
     // will be superseded by the one on onDOMContentLoaded.
     if (!this._domLoaded && !aFromInit) {
       return;
-    }
-
-    if (!aForce) {
-      // _update is called on resize events, because the window is not ready
-      // after sizemode events. However, we only care about the event when the
-      // sizemode is different from the last time we updated the appearance of
-      // the tabs in the titlebar.
-      let sizemode = document.documentElement.getAttribute("sizemode");
-      if (this._lastSizeMode == sizemode) {
-        return;
-      }
-      let oldSizeMode = this._lastSizeMode;
-      this._lastSizeMode = sizemode;
-      // Don't update right now if we are leaving fullscreen, since the UI is
-      // still changing in the consequent "fullscreen" event. Code there will
-      // call this function again when everything is ready.
-      // See browser-fullScreen.js: FullScreen.toggle and bug 1173768.
-      if (oldSizeMode == "fullscreen") {
-        return;
-      }
     }
 
     let allowed = (Object.keys(this._disallowed)).length == 0;
@@ -277,6 +283,7 @@ var TabsInTitlebar = {
     Services.prefs.removeObserver(this._prefName, this);
     this._menuObserver.disconnect();
     CustomizableUI.removeListener(this);
+    gDragSpaceObserver.uninit();
   }
 };
 
@@ -303,3 +310,35 @@ function onTitlebarMaxClick() {
   else
     window.maximize();
 }
+
+// Adds additional drag space to the window by listening to
+// the corresponding preference.
+var gDragSpaceObserver = {
+  pref: "browser.tabs.extraDragSpace",
+
+  init() {
+    this.update();
+    Services.prefs.addObserver(this.pref, this);
+  },
+
+  uninit() {
+    Services.prefs.removeObserver(this.pref, this);
+  },
+
+  observe(aSubject, aTopic, aPrefName) {
+    if (aTopic != "nsPref:changed" || aPrefName != this.pref) {
+      return;
+    }
+
+    this.update();
+  },
+
+  update() {
+    if (Services.prefs.getBoolPref(this.pref)) {
+      document.documentElement.setAttribute("extradragspace", "true");
+    } else {
+      document.documentElement.removeAttribute("extradragspace");
+    }
+    TabsInTitlebar.update();
+  },
+};

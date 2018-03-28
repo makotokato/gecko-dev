@@ -36,9 +36,6 @@
 #include "nsIScriptError.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIServiceManager.h"
-#ifdef MOZ_OLD_STYLE
-#include "mozilla/css/StyleRule.h"
-#endif
 #include "nsIURL.h"
 #include "nsViewManager.h"
 #include "nsIWidget.h"
@@ -52,9 +49,6 @@
 #include "nsPIBoxObject.h"
 #include "XULDocument.h"
 #include "nsXULPopupListener.h"
-#ifdef MOZ_OLD_STYLE
-#include "nsRuleWalker.h"
-#endif
 #include "nsCSSParser.h"
 #include "ListBoxObject.h"
 #include "nsContentUtils.h"
@@ -183,7 +177,7 @@ nsXULElement::Create(nsXULPrototypeElement* aPrototype, mozilla::dom::NodeInfo *
     NS_NewXULElement(getter_AddRefs(baseElement), ni.forget(), dom::FROM_PARSER_NETWORK);
 
     if (baseElement) {
-        nsXULElement* element = FromContent(baseElement);
+        nsXULElement* element = FromNode(baseElement);
 
         if (aPrototype->mHasIdAttribute) {
             element->SetHasID();
@@ -583,7 +577,7 @@ nsXULElement::PerformAccesskey(bool aKeyCausesActivation,
     }
 
     bool focused = false;
-    nsXULElement* elm = FromContent(content);
+    nsXULElement* elm = FromNode(content);
     if (elm) {
         // Define behavior for each type of XUL element.
         if (!content->IsXULElement(nsGkAtoms::toolbarbutton)) {
@@ -677,6 +671,7 @@ nsXULElement::UpdateEditableState(bool aNotify)
     UpdateState(aNotify);
 }
 
+#ifdef DEBUG
 /**
  * Returns true if the user-agent style sheet rules for this XUL element are
  * in minimal-xul.css instead of xul.css.
@@ -689,31 +684,11 @@ static inline bool XULElementsRulesInMinimalXULSheet(nsAtom* aTag)
          aTag == nsGkAtoms::scrollcorner ||
          aTag == nsGkAtoms::slider ||
          aTag == nsGkAtoms::thumb ||
-         aTag == nsGkAtoms::scale ||
          // other
          aTag == nsGkAtoms::datetimebox ||
          aTag == nsGkAtoms::resizer ||
          aTag == nsGkAtoms::label ||
          aTag == nsGkAtoms::videocontrols;
-}
-
-#ifdef DEBUG
-/**
- * Returns true if aElement is a XUL element created by the video controls
- * binding. HTML <video> and <audio> bindings pull in this binding. This
- * binding creates lots of different types of XUL elements.
- */
-static inline bool
-IsInVideoControls(nsXULElement* aElement)
-{
-  nsIContent* ancestor = aElement->GetParent();
-  while (ancestor) {
-    if (ancestor->NodeInfo()->Equals(nsGkAtoms::videocontrols, kNameSpaceID_XUL)) {
-      return true;
-    }
-    ancestor = ancestor->GetParent();
-  }
-  return false;
 }
 #endif
 
@@ -769,6 +744,7 @@ nsXULElement::BindToTree(nsIDocument* aDocument,
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsIDocument* doc = GetComposedDoc();
+#ifdef DEBUG
   if (doc &&
       !doc->LoadsFullXULStyleSheetUpFront() &&
       !doc->IsUnstyledDocument()) {
@@ -776,30 +752,15 @@ nsXULElement::BindToTree(nsIDocument* aDocument,
     // To save CPU cycles and memory, non-XUL documents only load the user
     // agent style sheet rules for a minimal set of XUL elements such as
     // 'scrollbar' that may be created implicitly for their content (those
-    // rules being in minimal-xul.css).  This is where we make sure that all
-    // the other XUL UA style sheet rules (xul.css) have been loaded if the
-    // minimal set is not sufficient.
+    // rules being in minimal-xul.css).
     //
-    // We do this during binding, not element construction, because elements
-    // can be moved from the document that creates them to another document.
-
+    // This assertion makes sure no other XUL element than the ones in the
+    // minimal XUL sheet is used in the bindings.
     if (!XULElementsRulesInMinimalXULSheet(NodeInfo()->NameAtom())) {
-      auto cache = nsLayoutStylesheetCache::For(doc->GetStyleBackendType());
-      doc->EnsureOnDemandBuiltInUASheet(cache->XULSheet());
-      // To keep memory usage down it is important that we try and avoid
-      // pulling xul.css into non-XUL documents. That should be very rare, and
-      // for HTML we currently should only pull it in if the document contains
-      // an <audio> or <video> element. This assertion is here to make sure
-      // that we don't fail to notice if a change to bindings causes us to
-      // start pulling in xul.css much more frequently. If this assertion
-      // fails then we need to figure out why, and how we can continue to avoid
-      // pulling in xul.css.
-      // Note that add-ons may introduce bindings that cause this assertion to
-      // fire.
-      NS_ASSERTION(IsInVideoControls(this),
-                   "Unexpected XUL element in non-XUL doc");
+      NS_ERROR("Unexpected XUL element in non-XUL doc");
     }
   }
+#endif
 
   if (doc && NeedTooltipSupport(*this)) {
       AddTooltipSupport();
@@ -876,7 +837,7 @@ nsXULElement::RemoveChildAt_Deprecated(uint32_t aIndex, bool aNotify)
       if (!controlElement)
         GetParentTree(getter_AddRefs(controlElement));
       nsCOMPtr<nsIContent> controlContent(do_QueryInterface(controlElement));
-      RefPtr<nsXULElement> xulElement = FromContentOrNull(controlContent);
+      RefPtr<nsXULElement> xulElement = FromNodeOrNull(controlContent);
 
       nsCOMPtr<nsIDOMElement> oldKidElem = do_QueryInterface(oldKid);
       if (xulElement && oldKidElem) {
@@ -970,7 +931,7 @@ nsXULElement::RemoveChildNode(nsIContent* aKid, bool aNotify)
       if (!controlElement)
         GetParentTree(getter_AddRefs(controlElement));
       nsCOMPtr<nsIContent> controlContent(do_QueryInterface(controlElement));
-      RefPtr<nsXULElement> xulElement = FromContentOrNull(controlContent);
+      RefPtr<nsXULElement> xulElement = FromNodeOrNull(controlContent);
 
       nsCOMPtr<nsIDOMElement> oldKidElem = do_QueryInterface(aKid);
       if (xulElement && oldKidElem) {
@@ -1150,24 +1111,11 @@ nsXULElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
                     MaybeUpdatePrivateLifetime();
                 }
             }
-            // title, (in)activetitlebarcolor and drawintitlebar are settable on
+            // title and drawintitlebar are settable on
             // any root node (windows, dialogs, etc)
             if (document && document->GetRootElement() == this) {
                 if (aName == nsGkAtoms::title) {
                     document->NotifyPossibleTitleChange(false);
-                } else if ((aName == nsGkAtoms::activetitlebarcolor ||
-                            aName == nsGkAtoms::inactivetitlebarcolor)) {
-                    nscolor color = NS_RGBA(0, 0, 0, 0);
-                    if (aValue->Type() == nsAttrValue::eColor) {
-                        aValue->GetColorValue(color);
-                    } else {
-                        nsAutoString tmp;
-                        nsAttrValue attrValue;
-                        aValue->ToString(tmp);
-                        attrValue.ParseColor(tmp);
-                        attrValue.GetColorValue(color);
-                    }
-                    SetTitlebarColor(color, aName == nsGkAtoms::activetitlebarcolor);
                 } else if (aName == nsGkAtoms::drawintitlebar) {
                     SetDrawsInTitlebar(
                         aValue->Equals(NS_LITERAL_STRING("true"), eCaseMatters));
@@ -1207,11 +1155,7 @@ nsXULElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
 
             nsIDocument* doc = GetUncomposedDoc();
             if (doc && doc->GetRootElement() == this) {
-                if ((aName == nsGkAtoms::activetitlebarcolor ||
-                     aName == nsGkAtoms::inactivetitlebarcolor)) {
-                    // Use 0, 0, 0, 0 as the "none" color.
-                    SetTitlebarColor(NS_RGBA(0, 0, 0, 0), aName == nsGkAtoms::activetitlebarcolor);
-                } else if (aName == nsGkAtoms::localedir) {
+                if (aName == nsGkAtoms::localedir) {
                     // if the localedir changed on the root element, reset the document direction
                     XULDocument* xuldoc = doc->AsXULDocument();
                     if (xuldoc) {
@@ -1443,13 +1387,6 @@ nsXULElement::PreHandleEvent(EventChainVisitor& aVisitor)
 //----------------------------------------------------------------------
 // Implementation methods
 
-#ifdef MOZ_OLD_STYLE
-NS_IMETHODIMP
-nsXULElement::WalkContentStyleRules(nsRuleWalker* aRuleWalker)
-{
-    return NS_OK;
-}
-#endif
 
 nsChangeHint
 nsXULElement::GetAttributeChangeHint(const nsAtom* aAttribute,
@@ -1510,20 +1447,20 @@ nsXULElement::GetBoxObject(ErrorResult& rv)
     return OwnerDoc()->GetBoxObjectFor(this, rv);
 }
 
-nsresult
+void
 nsXULElement::LoadSrc()
 {
     // Allow frame loader only on objects for which a container box object
     // can be obtained.
     if (!IsAnyOfXULElements(nsGkAtoms::browser, nsGkAtoms::editor,
                             nsGkAtoms::iframe)) {
-        return NS_OK;
+        return;
     }
     if (!IsInUncomposedDoc() ||
         !OwnerDoc()->GetRootElement() ||
         OwnerDoc()->GetRootElement()->
             NodeInfo()->Equals(nsGkAtoms::overlay, kNameSpaceID_XUL)) {
-        return NS_OK;
+        return;
     }
     RefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
     if (!frameLoader) {
@@ -1544,22 +1481,17 @@ nsXULElement::LoadSrc()
         // Usually xul elements are used in chrome, which doesn't have
         // session history at all.
         frameLoader = nsFrameLoader::Create(this, opener, false);
-        slots->mFrameLoaderOrOpener = static_cast<nsIFrameLoader*>(frameLoader);
-        NS_ENSURE_TRUE(frameLoader, NS_OK);
+        slots->mFrameLoaderOrOpener = ToSupports(frameLoader);
+        if (NS_WARN_IF(!frameLoader)) {
+            return;
+        }
 
         (new AsyncEventDispatcher(this,
                                   NS_LITERAL_STRING("XULFrameLoaderCreated"),
                                   /* aBubbles */ true))->RunDOMEventWhenSafe();
     }
 
-    return frameLoader->LoadFrame(false);
-}
-
-nsresult
-nsXULElement::GetFrameLoaderXPCOM(nsIFrameLoader **aFrameLoader)
-{
-    *aFrameLoader = GetFrameLoader().take();
-    return NS_OK;
+    frameLoader->LoadFrame(false);
 }
 
 already_AddRefed<nsFrameLoader>
@@ -1569,8 +1501,8 @@ nsXULElement::GetFrameLoader()
     if (!slots)
         return nullptr;
 
-    nsCOMPtr<nsIFrameLoader> loader = do_QueryInterface(slots->mFrameLoaderOrOpener);
-    return already_AddRefed<nsFrameLoader>(static_cast<nsFrameLoader*>(loader.forget().take()));
+    RefPtr<nsFrameLoader> loader = do_QueryObject(slots->mFrameLoaderOrOpener);
+    return loader.forget();
 }
 
 void
@@ -1583,12 +1515,12 @@ nsXULElement::PresetOpenerWindow(mozIDOMWindowProxy* aWindow, ErrorResult& aRv)
 }
 
 void
-nsXULElement::InternalSetFrameLoader(nsIFrameLoader* aNewFrameLoader)
+nsXULElement::InternalSetFrameLoader(nsFrameLoader* aNewFrameLoader)
 {
     nsExtendedDOMSlots* slots = GetExistingExtendedDOMSlots();
     MOZ_ASSERT(slots);
 
-    slots->mFrameLoaderOrOpener = aNewFrameLoader;
+    slots->mFrameLoaderOrOpener = ToSupports(aNewFrameLoader);
 }
 
 void
@@ -1864,15 +1796,6 @@ nsXULElement::GetWindowWidget()
         }
     }
     return nullptr;
-}
-
-void
-nsXULElement::SetTitlebarColor(nscolor aColor, bool aActive)
-{
-    nsIWidget* mainWidget = GetWindowWidget();
-    if (mainWidget) {
-        mainWidget->SetWindowTitlebarColor(aColor, aActive);
-    }
 }
 
 class SetDrawInTitleBarEvent : public Runnable
@@ -2381,23 +2304,11 @@ nsXULPrototypeElement::SetAttrAt(uint32_t aPos, const nsAString& aValue,
         // TODO: If we implement Content Security Policy for chrome documents
         // as has been discussed, the CSP should be checked here to see if
         // inline styles are allowed to be applied.
-
-        RefPtr<DeclarationBlock> declaration;
-        if (nsLayoutUtils::StyloEnabled() &&
-            nsLayoutUtils::ShouldUseStylo(principal)) {
-          RefPtr<URLExtraData> data =
-            new URLExtraData(aDocumentURI, aDocumentURI, principal);
-          declaration = ServoDeclarationBlock::FromCssText(
-              aValue, data, eCompatibility_FullStandards, nullptr);
-        } else {
-#ifdef MOZ_OLD_STYLE
-          nsCSSParser parser;
-          declaration = parser.ParseStyleAttribute(aValue, aDocumentURI,
-                                                   aDocumentURI, principal);
-#else
-          MOZ_CRASH("old style system disabled");
-#endif
-        }
+        RefPtr<URLExtraData> data =
+          new URLExtraData(aDocumentURI, aDocumentURI, principal);
+        RefPtr<DeclarationBlock> declaration =
+          ServoDeclarationBlock::FromCssText(
+            aValue, data, eCompatibility_FullStandards, nullptr);
         if (declaration) {
             mAttributes[aPos].mValue.SetTo(declaration.forget(), &aValue);
 

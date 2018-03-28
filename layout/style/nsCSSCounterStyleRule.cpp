@@ -124,21 +124,9 @@ nsCSSCounterStyleRule::GetName(nsAString& aName)
 void
 nsCSSCounterStyleRule::SetName(const nsAString& aName)
 {
-  RefPtr<nsAtom> name;
 
   nsIDocument* doc = GetDocument();
-  if (!doc || doc->IsStyledByServo()) {
-    name = ServoCSSParser::ParseCounterStyleName(aName);
-  } else {
-#ifdef MOZ_OLD_STYLE
-    nsCSSParser parser;
-    name = parser.ParseCounterStyleName(aName, nullptr);
-#else
-    MOZ_CRASH("old style system disabled");
-#endif
-  }
-
-  if (name) {
+  if (RefPtr<nsAtom> name = ServoCSSParser::ParseCounterStyleName(aName)) {
     MOZ_AUTO_DOC_UPDATE(doc, UPDATE_STYLE, true);
 
     mName = name;
@@ -405,26 +393,14 @@ nsCSSCounterStyleRule::SetDescriptor(nsCSSCounterDesc aDescID,
 
   StyleSheet* sheet = GetStyleSheet();
 
-#ifdef MOZ_STYLO
   bool useServo = !sheet || sheet->IsServo();
-#else
-  bool useServo = false;
-#endif
 
   if (useServo) {
     URLExtraData* data = sheet ? sheet->AsServo()->URLData() : nullptr;
     ok = ServoCSSParser::ParseCounterStyleDescriptor(aDescID, aValue, data,
                                                      value);
   } else {
-#ifdef MOZ_OLD_STYLE
-    nsCSSParser parser;
-    nsIURI* baseURL = sheet ? sheet->GetBaseURI() : nullptr;
-    nsIPrincipal* principal = sheet ? sheet->Principal() : nullptr;
-    ok = parser.ParseCounterDescriptor(aDescID, aValue, nullptr,
-                                       baseURL, principal, value);
-#else
     MOZ_CRASH("old style system disabled");
-#endif
   }
 
   if (ok && CheckDescValue(GetSystem(), aDescID, value)) {

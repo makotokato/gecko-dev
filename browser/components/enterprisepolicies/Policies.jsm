@@ -234,27 +234,25 @@ var Policies = {
 
   "DisplayBookmarksToolbar": {
     onBeforeUIStartup(manager, param) {
-      if (param) {
-        // This policy is meant to change the default behavior, not to force it.
-        // If this policy was alreay applied and the user chose to re-hide the
-        // bookmarks toolbar, do not show it again.
-        runOnce("displayBookmarksToolbar", () => {
-          gXulStore.setValue(BROWSER_DOCUMENT_URL, "PersonalToolbar", "collapsed", "false");
-        });
-      }
+      let value = (!param).toString();
+      // This policy is meant to change the default behavior, not to force it.
+      // If this policy was alreay applied and the user chose to re-hide the
+      // bookmarks toolbar, do not show it again.
+      runOncePerModification("displayBookmarksToolbar", value, () => {
+        gXulStore.setValue(BROWSER_DOCUMENT_URL, "PersonalToolbar", "collapsed", value);
+      });
     }
   },
 
   "DisplayMenuBar": {
     onBeforeUIStartup(manager, param) {
-      if (param) {
+      let value = (!param).toString();
         // This policy is meant to change the default behavior, not to force it.
         // If this policy was alreay applied and the user chose to re-hide the
         // menu bar, do not show it again.
-        runOnce("displayMenuBar", () => {
-          gXulStore.setValue(BROWSER_DOCUMENT_URL, "toolbar-menubar", "autohide", "false");
-        });
-      }
+      runOncePerModification("displayMenuBar", value, () => {
+        gXulStore.setValue(BROWSER_DOCUMENT_URL, "toolbar-menubar", "autohide", value);
+      });
     }
   },
 
@@ -266,12 +264,17 @@ var Policies = {
 
   "EnableTrackingProtection": {
     onBeforeUIStartup(manager, param) {
-      if (param.Locked) {
-        setAndLockPref("privacy.trackingprotection.enabled", param.Value);
-        setAndLockPref("privacy.trackingprotection.pbmode.enabled", param.Value);
+      if (param.Value) {
+        if (param.Locked) {
+          setAndLockPref("privacy.trackingprotection.enabled", true);
+          setAndLockPref("privacy.trackingprotection.pbmode.enabled", true);
+        } else {
+          setDefaultPref("privacy.trackingprotection.enabled", true);
+          setDefaultPref("privacy.trackingprotection.pbmode.enabled", true);
+        }
       } else {
-        setDefaultPref("privacy.trackingprotection.enabled", param.Value);
-        setDefaultPref("privacy.trackingprotection.pbmode.enabled", param.Value);
+        setAndLockPref("privacy.trackingprotection.enabled", false);
+        setAndLockPref("privacy.trackingprotection.pbmode.enabled", false);
       }
     }
   },
@@ -344,6 +347,63 @@ var Policies = {
       setAndLockPref("signon.rememberSignons", param);
     }
   },
+
+  "SearchEngines": {
+    onAllWindowsRestored(manager, param) {
+      Services.search.init(() => {
+        if (param.Add) {
+          // Only rerun if the list of engine names has changed.
+          let engineNameList = param.Add.map(engine => engine.Name);
+          runOncePerModification("addSearchEngines",
+                                 JSON.stringify(engineNameList),
+                                 () => {
+            for (let newEngine of param.Add) {
+              let newEngineParameters = {
+                template:    newEngine.URLTemplate,
+                iconURL:     newEngine.IconURL,
+                alias:       newEngine.Alias,
+                description: newEngine.Description,
+                method:      newEngine.Method,
+                suggestURL:  newEngine.SuggestURLTemplate,
+                extensionID: "set-via-policy"
+              };
+              try {
+                Services.search.addEngineWithDetails(newEngine.Name,
+                                                     newEngineParameters);
+              } catch (ex) {
+                log.error("Unable to add search engine", ex);
+              }
+            }
+          });
+        }
+        if (param.Default) {
+          runOnce("setDefaultSearchEngine", () => {
+            let defaultEngine;
+            try {
+              defaultEngine = Services.search.getEngineByName(param.Default);
+              if (!defaultEngine) {
+                throw "No engine by that name could be found";
+              }
+            } catch (ex) {
+              log.error(`Search engine lookup failed when attempting to set ` +
+                        `the default engine. Requested engine was ` +
+                        `"${param.Default}".`, ex);
+            }
+            if (defaultEngine) {
+              try {
+                Services.search.currentEngine = defaultEngine;
+              } catch (ex) {
+                log.error("Unable to set the default search engine", ex);
+              }
+            }
+          });
+        }
+        if (param.PreventInstalls) {
+          manager.disallowFeature("installSearchEngine");
+        }
+      });
+    }
+  }
 };
 
 /*
@@ -452,6 +512,7 @@ function addAllowDenyPermissions(permissionName, allowList, blockList) {
  * @param {Functon} callback
  *        The callback to run only once.
  */
+ // eslint-disable-next-line no-unused-vars
 function runOnce(actionName, callback) {
   let prefName = `browser.policies.runonce.${actionName}`;
   if (Services.prefs.getBoolPref(prefName, false)) {

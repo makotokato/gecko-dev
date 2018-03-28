@@ -15,6 +15,9 @@ add_task(async function() {
   // Set a higher panel height in order to get full CodeMirror content
   await pushPref("devtools.toolbox.footer.height", 400);
 
+  // Async stacks aren't on by default in all builds
+  await pushPref("javascript.options.asyncstack", true);
+
   let { tab, monitor, toolbox } = await initNetMonitor(POST_DATA_URL);
   info("Starting test... ");
 
@@ -22,13 +25,11 @@ add_task(async function() {
   let Actions = windowRequire("devtools/client/netmonitor/src/actions/index");
   store.dispatch(Actions.batchEnable(false));
 
-  let waitForContentRequests = waitForNetworkEvents(monitor, 2);
-  await ContentTask.spawn(tab.linkedBrowser, {},
-    () => content.wrappedJSObject.performRequests());
-  await waitForContentRequests;
+  // Execute requests.
+  await performRequests(monitor, tab, 2);
 
   info("Clicking stack-trace tab and waiting for stack-trace panel to open");
-  let wait = waitForDOM(document, "#stack-trace-panel .frame-link", 4);
+  let wait = waitForDOM(document, "#stack-trace-panel .frame-link", 5);
   // Click on the first request
   EventUtils.sendMouseEvent({ type: "mousedown" },
     document.querySelector(".request-list-item"));
@@ -69,4 +70,3 @@ async function checkClickOnNode(toolbox, frameLinkNode) {
     "expected source url"
   );
 }
-

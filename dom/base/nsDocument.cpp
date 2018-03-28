@@ -230,9 +230,6 @@
 #include "nsITextControlElement.h"
 #include "nsIDOMNSEditableElement.h"
 #include "nsIEditor.h"
-#ifdef MOZ_OLD_STYLE
-#include "mozilla/css/StyleRule.h"
-#endif
 #include "nsIHttpChannelInternal.h"
 #include "nsISecurityConsoleMessage.h"
 #include "nsCharSeparatedTokenizer.h"
@@ -1324,27 +1321,11 @@ nsIDocument::SelectorCache::SelectorList::Reset()
     }
   } else {
     if (mGecko) {
-#ifdef MOZ_OLD_STYLE
-      delete mGecko;
-      mGecko = nullptr;
-#else
       MOZ_CRASH("old style system disabled");
-#endif
     }
   }
 }
 
-#ifdef MOZ_OLD_STYLE
-// CacheList takes ownership of aSelectorList.
-void nsIDocument::SelectorCache::CacheList(const nsAString& aSelector,
-                                           mozilla::UniquePtr<nsCSSSelectorList>&& aSelectorList)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  SelectorCacheKey* key = new SelectorCacheKey(aSelector);
-  mTable.Put(key->mKey, SelectorList(Move(aSelectorList)));
-  AddObject(key);
-}
-#endif
 
 void nsIDocument::SelectorCache::CacheList(
   const nsAString& aSelector,
@@ -1519,7 +1500,6 @@ nsIDocument::nsIDocument()
     mAsyncOnloadBlockCount(0),
     mCompatMode(eCompatibility_FullStandards),
     mReadyState(ReadyState::READYSTATE_UNINITIALIZED),
-    mStyleBackendType(StyleBackendType::None),
 #ifdef MOZILLA_INTERNAL_API
     mVisibilityState(dom::VisibilityState::Hidden),
 #else
@@ -1955,9 +1935,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
   }
 
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChannel)
-#ifdef MOZ_OLD_STYLE
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStyleAttrStyleSheet)
-#endif
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLayoutHistoryState)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOnloadBlocker)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFirstBaseNodeWithHref)
@@ -2178,13 +2155,9 @@ nsDocument::Init()
 
   NS_ASSERTION(OwnerDoc() == this, "Our nodeinfo is busted!");
 
-  UpdateStyleBackendType();
-
   // Set this when document is initialized and value stays the same for the
   // lifetime of the document.
-  mIsShadowDOMEnabled =
-    mStyleBackendType == StyleBackendType::Servo &&
-    nsContentUtils::IsShadowDOMEnabled();
+  mIsShadowDOMEnabled = nsContentUtils::IsShadowDOMEnabled();
 
   // If after creation the owner js global is not set for a document
   // we use the default compartment for this document, instead of creating
@@ -3711,7 +3684,6 @@ nsIDocument::SetBaseURI(nsIURI* aURI)
 URLExtraData*
 nsIDocument::DefaultStyleAttrURLData()
 {
-#ifdef MOZ_STYLO
   MOZ_ASSERT(NS_IsMainThread());
   nsIURI* baseURI = GetDocBaseURI();
   nsIURI* docURI = GetDocumentURI();
@@ -3723,10 +3695,6 @@ nsIDocument::DefaultStyleAttrURLData()
     mCachedURLData = new URLExtraData(baseURI, docURI, principal);
   }
   return mCachedURLData;
-#else
-  MOZ_CRASH("Should not be called for non-stylo build");
-  return nullptr;
-#endif
 }
 
 void
@@ -4052,10 +4020,8 @@ nsIDocument::DeleteShell()
   UpdateFrameRequestCallbackSchedulingState(oldShell);
   mStyleSetFilled = false;
 
-  if (IsStyledByServo()) {
-    ClearStaleServoData();
-    AssertNoStaleServoDataIn(static_cast<nsINode&>(*this));
-  }
+  ClearStaleServoData();
+  AssertNoStaleServoDataIn(static_cast<nsINode&>(*this));
 }
 
 void
@@ -4338,7 +4304,6 @@ void
 nsIDocument::AddOnDemandBuiltInUASheet(StyleSheet* aSheet)
 {
   MOZ_ASSERT(!mOnDemandBuiltInUASheets.Contains(aSheet));
-  MOZ_DIAGNOSTIC_ASSERT(aSheet->IsServo() == IsStyledByServo());
 
   // Prepend here so that we store the sheets in mOnDemandBuiltInUASheets in
   // the same order that they should end up in the style set.
@@ -4362,7 +4327,6 @@ nsIDocument::AddOnDemandBuiltInUASheet(StyleSheet* aSheet)
 void
 nsIDocument::AddStyleSheetToStyleSets(StyleSheet* aSheet)
 {
-  MOZ_DIAGNOSTIC_ASSERT(aSheet->IsServo() == IsStyledByServo());
   nsCOMPtr<nsIPresShell> shell = GetShell();
   if (shell) {
     shell->StyleSet()->AddDocStyleSheet(aSheet, this);
@@ -4417,7 +4381,6 @@ void
 nsIDocument::AddStyleSheet(StyleSheet* aSheet)
 {
   MOZ_ASSERT(aSheet);
-  MOZ_DIAGNOSTIC_ASSERT(aSheet->IsServo() == IsStyledByServo());
   mStyleSheets.AppendElement(aSheet);
   aSheet->SetAssociatedDocument(this, StyleSheet::OwnedByDocument);
 
@@ -4483,7 +4446,6 @@ nsIDocument::UpdateStyleSheets(nsTArray<RefPtr<StyleSheet>>& aOldSheets,
     // Now put the new one in its place.  If it's null, just ignore it.
     StyleSheet* newSheet = aNewSheets[i];
     if (newSheet) {
-      MOZ_DIAGNOSTIC_ASSERT(newSheet->IsServo() == IsStyledByServo());
       mStyleSheets.InsertElementAt(oldIndex, newSheet);
       newSheet->SetAssociatedDocument(this, StyleSheet::OwnedByDocument);
       if (newSheet->IsApplicable()) {
@@ -4501,7 +4463,6 @@ void
 nsIDocument::InsertStyleSheetAt(StyleSheet* aSheet, size_t aIndex)
 {
   MOZ_ASSERT(aSheet);
-  MOZ_DIAGNOSTIC_ASSERT(aSheet->IsServo() == IsStyledByServo());
 
   // FIXME(emilio): Stop touching DocumentOrShadowRoot's members directly, and use an
   // accessor.
@@ -4523,9 +4484,6 @@ nsIDocument::SetStyleSheetApplicableState(StyleSheet* aSheet, bool aApplicable)
   NS_PRECONDITION(aSheet, "null arg");
 
   // If we're actually in the document style sheet list
-  //
-  // FIXME(emilio): Shadow DOM.
-  MOZ_DIAGNOSTIC_ASSERT(aSheet->IsServo() == IsStyledByServo());
   if (mStyleSheets.IndexOf(aSheet) != mStyleSheets.NoIndex) {
     if (aApplicable) {
       AddStyleSheetToStyleSets(aSheet);
@@ -4742,7 +4700,7 @@ static void
 CheckIfContainsEMEContent(nsISupports* aSupports, void* aContainsEME)
 {
   nsCOMPtr<nsIContent> content(do_QueryInterface(aSupports));
-  if (auto mediaElem = HTMLMediaElement::FromContentOrNull(content)) {
+  if (auto mediaElem = HTMLMediaElement::FromNodeOrNull(content)) {
     bool* contains = static_cast<bool*>(aContainsEME);
     if (mediaElem->GetMediaKeys()) {
       *contains = true;
@@ -4763,7 +4721,7 @@ static void
 CheckIfContainsMSEContent(nsISupports* aSupports, void* aContainsMSE)
 {
   nsCOMPtr<nsIContent> content(do_QueryInterface(aSupports));
-  if (auto mediaElem = HTMLMediaElement::FromContentOrNull(content)) {
+  if (auto mediaElem = HTMLMediaElement::FromNodeOrNull(content)) {
     bool* contains = static_cast<bool*>(aContainsMSE);
     RefPtr<MediaSource> ms = mediaElem->GetMozMediaSourceObject();
     if (ms) {
@@ -4785,7 +4743,7 @@ static void
 NotifyActivityChanged(nsISupports *aSupports, void *aUnused)
 {
   nsCOMPtr<nsIContent> content(do_QueryInterface(aSupports));
-  if (auto mediaElem = HTMLMediaElement::FromContentOrNull(content)) {
+  if (auto mediaElem = HTMLMediaElement::FromNodeOrNull(content)) {
     mediaElem->NotifyOwnerDocumentActivityChanged();
   }
   nsCOMPtr<nsIObjectLoadingContent> objectLoadingContent(do_QueryInterface(aSupports));
@@ -5730,7 +5688,7 @@ nsIDocument::CreateElement(const nsAString& aTagName,
     const ElementCreationOptions& options =
       aOptions.GetAsElementCreationOptions();
 
-    if (CustomElementRegistry::IsCustomElementEnabled() &&
+    if (CustomElementRegistry::IsCustomElementEnabled(this) &&
         options.mIs.WasPassed()) {
       is = &options.mIs.Value();
     }
@@ -5779,7 +5737,7 @@ nsIDocument::CreateElementNS(const nsAString& aNamespaceURI,
   }
 
   const nsString* is = nullptr;
-  if (CustomElementRegistry::IsCustomElementEnabled() &&
+  if (CustomElementRegistry::IsCustomElementEnabled(this) &&
       aOptions.IsElementCreationOptions()) {
     const ElementCreationOptions& options = aOptions.GetAsElementCreationOptions();
     if (options.mIs.WasPassed()) {
@@ -6170,8 +6128,7 @@ nsIDocument::GetAnonymousElementByAttribute(nsIContent* aElement,
   if (!nodeList)
     return nullptr;
 
-  uint32_t length = 0;
-  nodeList->GetLength(&length);
+  uint32_t length = nodeList->Length();
 
   bool universalMatch = aAttrValue.EqualsLiteral("*");
 
@@ -7029,120 +6986,6 @@ nsDOMAttributeMap::BlastSubtreeToPieces(nsINode *aNode)
   }
 }
 
-enum class StyleDataType
-{
-  InlineStyle,
-  SMILOverride,
-  RestyleBits,
-  ServoData,
-};
-
-// Recursively check whether this node or its descendants contain any
-// pre-existing style declaration or any shared restyle flags.
-static EnumSet<StyleDataType>
-StyleDataTypesWithNode(nsINode* aNode)
-{
-  EnumSet<StyleDataType> result;
-  if (aNode->IsElement()) {
-    Element* elem = aNode->AsElement();
-    if (elem->GetInlineStyleDeclaration()) {
-      result += StyleDataType::InlineStyle;
-    }
-    if (elem->GetSMILOverrideStyleDeclaration()) {
-      result += StyleDataType::SMILOverride;
-    }
-    if (elem->HasAnyOfFlags(ELEMENT_SHARED_RESTYLE_BITS)) {
-      result += StyleDataType::RestyleBits;
-    }
-    if (elem->HasServoData()) {
-      result += StyleDataType::ServoData;
-    }
-  }
-  for (nsIContent* child = aNode->GetFirstChild();
-       child; child = child->GetNextSibling()) {
-    result += StyleDataTypesWithNode(child);
-  }
-  return result;
-}
-
-static void
-CheckCrossStyleBackendAdoption(nsIDocument* aOldDoc,
-                               nsIDocument* aNewDoc, nsINode* aAdoptedNode)
-{
-  EnumSet<StyleDataType> styleDataTypes = StyleDataTypesWithNode(aAdoptedNode);
-  if (styleDataTypes.isEmpty()) {
-    return;
-  }
-
-  // We are adopting node with pre-existing style data across style
-  // backend. We want some more information to help diagnose when that
-  // can happen.
-  nsAutoCString note;
-  nsIDocument* geckoDoc;
-  if (aOldDoc->GetStyleBackendType() == StyleBackendType::Servo) {
-    note.AppendLiteral("Servo -> Gecko");
-    geckoDoc = aNewDoc;
-  } else {
-    note.AppendLiteral("Gecko -> Servo");
-    geckoDoc = aOldDoc;
-  }
-  note.AppendLiteral(", with style data:");
-#define APPEND_STYLE_DATA_TYPE(type_)                   \
-  if (styleDataTypes.contains(StyleDataType::type_)) {  \
-    note.AppendLiteral(" " #type_);                     \
-  }
-  APPEND_STYLE_DATA_TYPE(InlineStyle)
-  APPEND_STYLE_DATA_TYPE(SMILOverride)
-  APPEND_STYLE_DATA_TYPE(RestyleBits)
-  APPEND_STYLE_DATA_TYPE(ServoData)
-#undef APPEND_STYLE_DATA_TYPE
-
-  note.AppendLiteral("\nGecko doc: ");
-  if (nsContentUtils::IsSystemPrincipal(geckoDoc->NodePrincipal())) {
-    note.AppendLiteral("system, ");
-  }
-  if (geckoDoc->IsXULDocument()) {
-    note.AppendLiteral("XUL, ");
-  }
-  note.AppendLiteral("content-type: ");
-  nsAutoString contentType;
-  geckoDoc->GetContentType(contentType);
-  AppendUTF16toUTF8(contentType, note);
-  if (nsIURI* geckoURI = geckoDoc->GetOriginalURI()) {
-    static const char* const INTERNAL_SCHEMES[] = {
-      "about",
-      "addons",
-      "chrome",
-      "resource",
-      "moz-extension",
-      "moz-icon",
-    };
-    note.AppendLiteral(", url: ");
-    bool internalScheme = false;
-    for (const char* scheme : INTERNAL_SCHEMES) {
-      if (nsContentUtils::SchemeIs(geckoURI, scheme)) {
-        internalScheme = true;
-        break;
-      }
-    }
-    if (internalScheme) {
-      nsAutoCString spec;
-      geckoURI->GetSpec(spec);
-      note.Append(spec);
-    } else {
-      nsAutoCString scheme;
-      geckoURI->GetScheme(scheme);
-      note.Append(scheme);
-      note.AppendLiteral(": (omitted)");
-    }
-  }
-  note.Append('\n');
-  CrashReporter::AppendAppNotesToCrashReport(note);
-
-  MOZ_CRASH("Must not adopt a node with pre-existing style data "
-            "into a document with different style backend");
-}
-
 nsINode*
 nsIDocument::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv)
 {
@@ -7258,10 +7101,6 @@ nsIDocument::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv)
   AutoJSContext cx;
   JS::Rooted<JSObject*> newScope(cx, nullptr);
   if (!sameDocument) {
-    if (MOZ_UNLIKELY(oldDocument->GetStyleBackendType() != GetStyleBackendType())) {
-      NS_WARNING("Adopting node across different style backend");
-      CheckCrossStyleBackendAdoption(oldDocument, this, adoptedNode);
-    }
     newScope = GetWrapper();
     if (!newScope && GetScopeObject() && GetScopeObject()->GetGlobalJSObject()) {
       // Make sure cx is in a semi-sane compartment before we call WrapNative.
@@ -8084,7 +7923,7 @@ nsIDocument::Sanitize()
   for (uint32_t i = 0; i < length; ++i) {
     NS_ASSERTION(nodes->Item(i), "null item in node list!");
 
-    RefPtr<HTMLInputElement> input = HTMLInputElement::FromContentOrNull(nodes->Item(i));
+    RefPtr<HTMLInputElement> input = HTMLInputElement::FromNodeOrNull(nodes->Item(i));
     if (!input)
       continue;
 
@@ -8111,7 +7950,7 @@ nsIDocument::Sanitize()
   for (uint32_t i = 0; i < length; ++i) {
     NS_ASSERTION(nodes->Item(i), "null item in nodelist");
 
-    HTMLFormElement* form = HTMLFormElement::FromContent(nodes->Item(i));
+    HTMLFormElement* form = HTMLFormElement::FromNode(nodes->Item(i));
     if (!form)
       continue;
 
@@ -8931,7 +8770,6 @@ nsDocument::CloneDocHelper(nsDocument* clone, bool aPreallocateChildren) const
   clone->mContentLanguage = mContentLanguage;
   clone->SetContentTypeInternal(GetContentTypeInternal());
   clone->mSecurityInfo = mSecurityInfo;
-  clone->mStyleBackendType = mStyleBackendType;
 
   // State from nsDocument
   clone->mType = mType;
@@ -10102,7 +9940,7 @@ nsIDocument::CaretPositionFromPoint(float aX, float aY)
   if (nodeIsAnonymous) {
     node = ptFrame->GetContent();
     nsIContent* nonanon = node->FindFirstNonChromeOnlyAccessContent();
-    HTMLTextAreaElement* textArea = HTMLTextAreaElement::FromContent(nonanon);
+    HTMLTextAreaElement* textArea = HTMLTextAreaElement::FromNode(nonanon);
     nsITextControlFrame* textFrame = do_QueryFrame(nonanon->GetPrimaryFrame());
     nsNumberControlFrame* numberFrame = do_QueryFrame(nonanon->GetPrimaryFrame());
     if (textFrame || numberFrame) {
@@ -12633,23 +12471,6 @@ nsIDocument::ReportHasScrollLinkedEffect()
                                   NS_LITERAL_CSTRING("Async Pan/Zoom"),
                                   this, nsContentUtils::eLAYOUT_PROPERTIES,
                                   "ScrollLinkedEffectFound2");
-}
-
-void
-nsIDocument::UpdateStyleBackendType()
-{
-  MOZ_ASSERT(mStyleBackendType == StyleBackendType::None,
-             "no need to call UpdateStyleBackendType now");
-
-  // Assume Gecko by default.
-  mStyleBackendType = StyleBackendType::Gecko;
-
-#ifdef MOZ_STYLO
-  if (nsLayoutUtils::StyloEnabled() &&
-      nsLayoutUtils::ShouldUseStylo(NodePrincipal())) {
-    mStyleBackendType = StyleBackendType::Servo;
-  }
-#endif
 }
 
 void

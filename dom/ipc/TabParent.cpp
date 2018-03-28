@@ -13,6 +13,7 @@
 #include "nsAccessibilityService.h"
 #endif
 #include "mozilla/BrowserElementParent.h"
+#include "mozilla/dom/ChromeMessageSender.h"
 #include "mozilla/dom/ContentBridgeParent.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/DataTransfer.h"
@@ -187,30 +188,30 @@ TabParent::~TabParent()
 }
 
 TabParent*
-TabParent::GetTabParentFromLayersId(uint64_t aLayersId)
+TabParent::GetTabParentFromLayersId(layers::LayersId aLayersId)
 {
   if (!sLayerToTabParentTable) {
     return nullptr;
   }
-  return sLayerToTabParentTable->Get(aLayersId);
+  return sLayerToTabParentTable->Get(uint64_t(aLayersId));
 }
 
 void
-TabParent::AddTabParentToTable(uint64_t aLayersId, TabParent* aTabParent)
+TabParent::AddTabParentToTable(layers::LayersId aLayersId, TabParent* aTabParent)
 {
   if (!sLayerToTabParentTable) {
     sLayerToTabParentTable = new LayerToTabParentTable();
   }
-  sLayerToTabParentTable->Put(aLayersId, aTabParent);
+  sLayerToTabParentTable->Put(uint64_t(aLayersId), aTabParent);
 }
 
 void
-TabParent::RemoveTabParentFromTable(uint64_t aLayersId)
+TabParent::RemoveTabParentFromTable(layers::LayersId aLayersId)
 {
   if (!sLayerToTabParentTable) {
     return;
   }
-  sLayerToTabParentTable->Remove(aLayersId);
+  sLayerToTabParentTable->Remove(uint64_t(aLayersId));
   if (sLayerToTabParentTable->Count() == 0) {
     delete sLayerToTabParentTable;
     sLayerToTabParentTable = nullptr;
@@ -459,7 +460,7 @@ TabParent::ActorDestroy(ActorDestroyReason why)
     frameLoader->DestroyComplete();
 
     if (why == AbnormalShutdown && os) {
-      os->NotifyObservers(NS_ISUPPORTS_CAST(nsIFrameLoader*, frameLoader),
+      os->NotifyObservers(ToSupports(frameLoader),
                           "oop-frameloader-crashed", nullptr);
       nsCOMPtr<nsIFrameLoaderOwner> owner = do_QueryInterface(frameElement);
       if (owner) {
@@ -633,7 +634,7 @@ TabParent::InitRenderFrame()
     if (frameLoader) {
       RenderFrameParent* renderFrame = new RenderFrameParent(frameLoader);
       MOZ_ASSERT(renderFrame->IsInitted());
-      uint64_t layersId = renderFrame->GetLayersId();
+      layers::LayersId layersId = renderFrame->GetLayersId();
       AddTabParentToTable(layersId, this);
       if (!SendPRenderFrameConstructor(renderFrame)) {
         return;
@@ -2331,14 +2332,6 @@ TabParent::GetFrom(nsFrameLoader* aFrameLoader)
 }
 
 /*static*/ TabParent*
-TabParent::GetFrom(nsIFrameLoader* aFrameLoader)
-{
-  if (!aFrameLoader)
-    return nullptr;
-  return GetFrom(static_cast<nsFrameLoader*>(aFrameLoader));
-}
-
-/*static*/ TabParent*
 TabParent::GetFrom(nsITabParent* aTabParent)
 {
   return static_cast<TabParent*>(aTabParent);
@@ -2634,7 +2627,7 @@ TabParent::AllocPRenderFrameParent()
 
   RenderFrameParent* rfp = new RenderFrameParent(frameLoader);
   if (rfp->IsInitted()) {
-    uint64_t layersId = rfp->GetLayersId();
+    layers::LayersId layersId = rfp->GetLayersId();
     AddTabParentToTable(layersId, this);
   }
   return rfp;
@@ -2668,7 +2661,7 @@ TabParent::SetRenderFrame(PRenderFrameParent* aRFParent)
 
   frameLoader->MaybeShowFrame();
 
-  uint64_t layersId = renderFrame->GetLayersId();
+  layers::LayersId layersId = renderFrame->GetLayersId();
   AddTabParentToTable(layersId, this);
 
   return true;
@@ -2676,7 +2669,7 @@ TabParent::SetRenderFrame(PRenderFrameParent* aRFParent)
 
 bool
 TabParent::GetRenderFrameInfo(TextureFactoryIdentifier* aTextureFactoryIdentifier,
-                              uint64_t* aLayersId)
+                              layers::LayersId* aLayersId)
 {
   RenderFrameParent* rfp = GetRenderFrame();
   if (!rfp) {
@@ -2793,7 +2786,7 @@ TabParent::RecvBrowserFrameOpenWindow(PBrowserParent* aOpener,
 {
   CreatedWindowInfo cwi;
   cwi.rv() = NS_OK;
-  cwi.layersId() = 0;
+  cwi.layersId() = LayersId{0};
   cwi.maxTouchPoints() = 0;
 
   BrowserElementParent::OpenWindowResult opened =
@@ -3474,7 +3467,7 @@ TabParent::StartApzAutoscroll(float aAnchorX, float aAnchorY,
 
   bool success = false;
   if (RenderFrameParent* renderFrame = GetRenderFrame()) {
-    uint64_t layersId = renderFrame->GetLayersId();
+    layers::LayersId layersId = renderFrame->GetLayersId();
     if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
       ScrollableLayerGuid guid{layersId, aPresShellId, aScrollId};
 
@@ -3502,7 +3495,7 @@ TabParent::StopApzAutoscroll(nsViewID aScrollId, uint32_t aPresShellId)
   }
 
   if (RenderFrameParent* renderFrame = GetRenderFrame()) {
-    uint64_t layersId = renderFrame->GetLayersId();
+    layers::LayersId layersId = renderFrame->GetLayersId();
     if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
       ScrollableLayerGuid guid{layersId, aPresShellId, aScrollId};
       widget->StopAsyncAutoscroll(guid);

@@ -22,7 +22,7 @@
  * have a defined ordering). Our display list is just one of a many possible linear
  * representations of this ordering.
  *
- * Each time a frame changes (gets a new style context, or has a size/position
+ * Each time a frame changes (gets a new ComputedStyle, or has a size/position
  * change), we schedule a paint (as we do currently), but also reord the frame that
  * changed.
  *
@@ -49,6 +49,7 @@ MarkFramesWithItemsAndImagesModified(nsDisplayList* aList)
       // whether we need to invalidate for a sync decode. If we don't, then
       // use the item's flags.
       DisplayItemData* data = FrameLayerBuilder::GetOldDataFor(i);
+      //XXX: handle webrender case
       bool invalidate = false;
       if (data &&
           data->GetGeometry()) {
@@ -199,7 +200,7 @@ void SwapAndRemove(nsTArray<T>& aArray, uint32_t aIndex)
     aArray[aIndex] = last;
   }
 
-  aArray.RemoveElementAt(aArray.Length() - 1);
+  aArray.RemoveLastElement();
 }
 
 static bool

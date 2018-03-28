@@ -23,10 +23,10 @@ using namespace mozilla::dom;
 // Class Methods
 nsSMILCSSProperty::nsSMILCSSProperty(nsCSSPropertyID aPropID,
                                      Element* aElement,
-                                     nsStyleContext* aBaseStyleContext)
+                                     ComputedStyle* aBaseComputedStyle)
   : mPropID(aPropID)
   , mElement(aElement)
-  , mBaseStyleContext(aBaseStyleContext)
+  , mBaseComputedStyle(aBaseComputedStyle)
 {
   MOZ_ASSERT(IsPropertyAnimatable(mPropID,
                aElement->OwnerDoc()->GetStyleBackendType()),
@@ -44,10 +44,10 @@ nsSMILCSSProperty::GetBaseValue() const
 
   // SPECIAL CASE: (a) Shorthands
   //               (b) 'display'
-  //               (c) No base style context
+  //               (c) No base ComputedStyle
   if (nsCSSProps::IsShorthand(mPropID) ||
       mPropID == eCSSProperty_display ||
-      !mBaseStyleContext) {
+      !mBaseComputedStyle) {
     // We can't look up the base (computed-style) value of shorthand
     // properties because they aren't guaranteed to have a consistent computed
     // value.
@@ -56,7 +56,7 @@ nsSMILCSSProperty::GetBaseValue() const
     // doing so involves clearing and resetting the property which can cause
     // frames to be recreated which we'd like to avoid.
     //
-    // Furthermore, if we don't (yet) have a base style context we obviously
+    // Furthermore, if we don't (yet) have a base ComputedStyle we obviously
     // can't resolve a base value.
     //
     // In any case, just return a dummy value (initialized with the right
@@ -67,23 +67,11 @@ nsSMILCSSProperty::GetBaseValue() const
   }
 
   AnimationValue computedValue;
-  if (mElement->IsStyledByServo()) {
-    computedValue.mServo =
-      Servo_ComputedValues_ExtractAnimationValue(mBaseStyleContext->AsServo(), mPropID)
-      .Consume();
-    if (!computedValue.mServo) {
-      return baseValue;
-    }
-  } else {
-#ifdef MOZ_OLD_STYLE
-    if (!StyleAnimationValue::ExtractComputedValue(mPropID,
-                                                   mBaseStyleContext->AsGecko(),
-                                                   computedValue.mGecko)) {
-      return baseValue;
-    }
-#else
-    MOZ_CRASH("old style system disabled");
-#endif
+  computedValue.mServo =
+    Servo_ComputedValues_ExtractAnimationValue(mBaseComputedStyle, mPropID)
+    .Consume();
+  if (!computedValue.mServo) {
+    return baseValue;
   }
 
   baseValue =

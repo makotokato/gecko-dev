@@ -60,7 +60,6 @@
 #include "nsISelection.h"
 #include "mozilla/dom/Selection.h"
 #include "nsGkAtoms.h"
-#include "nsIDOMRange.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMNodeList.h"
@@ -183,9 +182,6 @@
 #include "nsLayoutStylesheetCache.h"
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layers/FocusTarget.h"
-#ifdef MOZ_OLD_STYLE
-#include "nsStyleSet.h"
-#endif
 #include "mozilla/StyleSetHandle.h"
 #include "mozilla/StyleSetHandleInlines.h"
 #include "mozilla/StyleSheet.h"
@@ -612,12 +608,7 @@ VerifyStyleTree(nsPresContext* aPresContext, nsFrameManager* aFrameManager)
       NS_ERROR("stylo: cannot verify style tree with a ServoRestyleManager");
       return;
     }
-#ifdef MOZ_OLD_STYLE
-    nsIFrame* rootFrame = aFrameManager->GetRootFrame();
-    aPresContext->RestyleManager()->AsGecko()->DebugVerifyStyleTree(rootFrame);
-#else
     MOZ_CRASH("old style system disabled");
-#endif
   }
 }
 #define VERIFY_STYLE_TREE ::VerifyStyleTree(mPresContext, mFrameConstructor)
@@ -1349,11 +1340,11 @@ PresShell::Destroy()
   //   (b) before the mPresContext->DetachShell() below, so
   //       that when we clear the ArenaRefPtrs they'll still be able to
   //       get back to this PresShell to deregister themselves (e.g. note
-  //       how nsStyleContext::Arena returns the PresShell got from its
+  //       how ComputedStyle::Arena returns the PresShell got from its
   //       rule node's nsPresContext, which would return null if we'd already
   //       called mPresContext->DetachShell()), and
   //   (c) before the mStyleSet->BeginShutdown() call just below, so that
-  //       the nsStyleContexts don't complain they're being destroyed later
+  //       the ComputedStyles don't complain they're being destroyed later
   //       than the rule tree is.
   mFrameArena.ClearArenaRefPtrs();
 
@@ -2739,8 +2730,7 @@ PresShell::FrameNeedsReflow(nsIFrame *aFrame, IntrinsicDirty aIntrinsicDirty,
   subtrees.AppendElement(aFrame);
 
   do {
-    nsIFrame *subtreeRoot = subtrees.ElementAt(subtrees.Length() - 1);
-    subtrees.RemoveElementAt(subtrees.Length() - 1);
+    nsIFrame *subtreeRoot = subtrees.PopLastElement();
 
     // Grab |wasDirty| now so we can go ahead and update the bits on
     // subtreeRoot.
@@ -2790,8 +2780,7 @@ PresShell::FrameNeedsReflow(nsIFrame *aFrame, IntrinsicDirty aIntrinsicDirty,
       stack.AppendElement(subtreeRoot);
 
       do {
-        nsIFrame *f = stack.ElementAt(stack.Length() - 1);
-        stack.RemoveElementAt(stack.Length() - 1);
+        nsIFrame *f = stack.PopLastElement();
 
         if (f->IsPlaceholderFrame()) {
           nsIFrame *oof = nsPlaceholderFrame::GetRealFrameForPlaceholder(f);
@@ -2970,26 +2959,24 @@ PresShell::DestroyFramesForAndRestyle(Element* aElement)
   ++mChangeNestCount;
 
   const bool didReconstruct = FrameConstructor()->DestroyFramesFor(aElement);
-  if (aElement->IsStyledByServo()) {
-    if (aElement->GetFlattenedTreeParentNode()) {
-      // The element is still in the flat tree, but their children may not be
-      // anymore in a second.
-      //
-      // This is the case of a new shadow root or XBL binding about to be
-      // attached.
-      //
-      // Clear the style data from all the flattened tree descendants, but _not_
-      // from us, since otherwise we wouldn't see the reframe.
-      //
-      // FIXME(emilio): It'd be more ergonomic to just map the no data -> data
-      // case to a reframe from the style system.
-      ServoRestyleManager::ClearServoDataFromSubtree(
-          aElement, ServoRestyleManager::IncludeRoot::No);
-    } else {
-      // This is the case of an element that was redistributed but is no longer
-      // bound to any insertion point. Just forget about all the data.
-      ServoRestyleManager::ClearServoDataFromSubtree(aElement);
-    }
+  if (aElement->GetFlattenedTreeParentNode()) {
+    // The element is still in the flat tree, but their children may not be
+    // anymore in a second.
+    //
+    // This is the case of a new shadow root or XBL binding about to be
+    // attached.
+    //
+    // Clear the style data from all the flattened tree descendants, but _not_
+    // from us, since otherwise we wouldn't see the reframe.
+    //
+    // FIXME(emilio): It'd be more ergonomic to just map the no data -> data
+    // case to a reframe from the style system.
+    ServoRestyleManager::ClearServoDataFromSubtree(
+        aElement, ServoRestyleManager::IncludeRoot::No);
+  } else {
+    // This is the case of an element that was redistributed but is no longer
+    // bound to any insertion point. Just forget about all the data.
+    ServoRestyleManager::ClearServoDataFromSubtree(aElement);
   }
 
   auto changeHint = didReconstruct
@@ -3117,23 +3104,15 @@ PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll,
   // Search for an anchor element with a matching "name" attribute
   if (!content && mDocument->IsHTMLDocument()) {
     // Find a matching list of named nodes
-    nsCOMPtr<nsIDOMNodeList> list = mDocument->GetElementsByName(aAnchorName);
+    nsCOMPtr<nsINodeList> list = mDocument->GetElementsByName(aAnchorName);
     if (list) {
-      uint32_t i;
       // Loop through the named nodes looking for the first anchor
-      for (i = 0; true; i++) {
-        nsCOMPtr<nsIDOMNode> node;
-        rv = list->Item(i, getter_AddRefs(node));
-        if (!node) {  // End of list
+      uint32_t length = list->Length();
+      for (uint32_t i = 0; i < length; i++) {
+        nsIContent* node = list->Item(i);
+        if (node->IsHTMLElement(nsGkAtoms::a)) {
+          content = node;
           break;
-        }
-        // Ensure it's an anchor element
-        content = do_QueryInterface(node);
-        if (content) {
-          if (content->IsHTMLElement(nsGkAtoms::a)) {
-            break;
-          }
-          content = nullptr;
         }
       }
     }
@@ -3200,18 +3179,16 @@ PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll,
     // Even if select anchor pref is false, we must still move the
     // caret there. That way tabbing will start from the new
     // location
-    RefPtr<nsIDOMRange> jumpToRange = new nsRange(mDocument);
+    RefPtr<nsRange> jumpToRange = new nsRange(mDocument);
     while (content && content->GetFirstChild()) {
       content = content->GetFirstChild();
     }
-    nsCOMPtr<nsIDOMNode> node(do_QueryInterface(content));
-    NS_ASSERTION(node, "No nsIDOMNode for descendant of anchor");
-    jumpToRange->SelectNodeContents(node);
+    jumpToRange->SelectNodeContents(*content, IgnoreErrors());
     // Select the anchor
     RefPtr<Selection> sel = mSelection->GetSelection(SelectionType::eNormal);
     if (sel) {
-      sel->RemoveAllRanges();
-      sel->AddRange(jumpToRange);
+      sel->RemoveAllRanges(IgnoreErrors());
+      sel->AddRange(*jumpToRange, IgnoreErrors());
       if (!selectAnchor) {
         // Use a caret (collapsed selection) at the start of the anchor
         sel->CollapseToStart();
@@ -4288,7 +4265,7 @@ PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush)
     // Now those constructors or events might have posted restyle
     // events.  At the same time, we still need up-to-date style data.
     // In particular, reflow depends on style being completely up to
-    // date.  If it's not, then style context reparenting, which can
+    // date.  If it's not, then style reparenting, which can
     // happen during reflow, might suddenly pick up the new rules and
     // we'll end up with frames whose style doesn't match the frame
     // type.
@@ -4398,21 +4375,7 @@ PresShell::DocumentStatesChanged(nsIDocument* aDocument, EventStates aStateMask)
     if (mStyleSet->IsServo()) {
       mStyleSet->AsServo()->InvalidateStyleForDocumentStateChanges(aStateMask);
     } else {
-#ifdef MOZ_OLD_STYLE
-      if (Element* rootElement = aDocument->GetRootElement()) {
-        const bool needRestyle =
-          mStyleSet->AsGecko()->HasDocumentStateDependentStyle(
-            rootElement, aStateMask);
-        if (needRestyle) {
-          mPresContext->RestyleManager()->PostRestyleEvent(rootElement,
-                                                           eRestyle_Subtree,
-                                                           nsChangeHint(0));
-          VERIFY_STYLE_TREE;
-        }
-      }
-#else
       MOZ_CRASH("old style system disabled");
-#endif
     }
   }
 
@@ -4906,19 +4869,18 @@ static bool gDumpRangePaintList = false;
 #endif
 
 UniquePtr<RangePaintInfo>
-PresShell::CreateRangePaintInfo(nsIDOMRange* aRange,
+PresShell::CreateRangePaintInfo(nsRange* aRange,
                                 nsRect& aSurfaceRect,
                                 bool aForPrimarySelection)
 {
-  nsRange* range = static_cast<nsRange*>(aRange);
   nsIFrame* ancestorFrame;
   nsIFrame* rootFrame = GetRootFrame();
 
   // If the start or end of the range is the document, just use the root
   // frame, otherwise get the common ancestor of the two endpoints of the
   // range.
-  nsINode* startContainer = range->GetStartContainer();
-  nsINode* endContainer = range->GetEndContainer();
+  nsINode* startContainer = aRange->GetStartContainer();
+  nsINode* endContainer = aRange->GetEndContainer();
   nsIDocument* doc = startContainer->GetComposedDoc();
   if (startContainer == doc || endContainer == doc) {
     ancestorFrame = rootFrame;
@@ -4946,7 +4908,7 @@ PresShell::CreateRangePaintInfo(nsIDOMRange* aRange,
   }
 
   // get a display list containing the range
-  auto info = MakeUnique<RangePaintInfo>(range, ancestorFrame);
+  auto info = MakeUnique<RangePaintInfo>(aRange, ancestorFrame);
   info->mBuilder.SetIncludeAllOutOfFlows();
   if (aForPrimarySelection) {
     info->mBuilder.SetSelectedFramesOnly();
@@ -4954,7 +4916,7 @@ PresShell::CreateRangePaintInfo(nsIDOMRange* aRange,
   info->mBuilder.EnterPresShell(ancestorFrame);
 
   nsCOMPtr<nsIContentIterator> iter = NS_NewContentSubtreeIterator();
-  nsresult rv = iter->Init(range);
+  nsresult rv = iter->Init(aRange);
   if (NS_FAILED(rv)) {
     return nullptr;
   }
@@ -4990,7 +4952,7 @@ PresShell::CreateRangePaintInfo(nsIDOMRange* aRange,
   }
 #endif
 
-  nsRect rangeRect = ClipListToRange(&info->mBuilder, &info->mList, range);
+  nsRect rangeRect = ClipListToRange(&info->mBuilder, &info->mList, aRange);
 
   info->mBuilder.LeavePresShell(ancestorFrame, &info->mList);
 
@@ -5190,8 +5152,11 @@ PresShell::RenderNode(nsIDOMNode* aNode,
     return nullptr;
 
   RefPtr<nsRange> range = new nsRange(node);
-  if (NS_FAILED(range->SelectNode(aNode)))
+  IgnoredErrorResult rv;
+  range->SelectNode(*node, rv);
+  if (rv.Failed()) {
     return nullptr;
+  }
 
   UniquePtr<RangePaintInfo> info = CreateRangePaintInfo(range, area, false);
   if (info && !rangeItems.AppendElement(Move(info))) {
@@ -5219,7 +5184,7 @@ PresShell::RenderNode(nsIDOMNode* aNode,
 }
 
 already_AddRefed<SourceSurface>
-PresShell::RenderSelection(nsISelection* aSelection,
+PresShell::RenderSelection(Selection* aSelection,
                            const LayoutDeviceIntPoint aPoint,
                            LayoutDeviceIntRect* aScreenRect,
                            uint32_t aFlags)
@@ -5232,14 +5197,12 @@ PresShell::RenderSelection(nsISelection* aSelection,
   // iterate over each range and collect them into the rangeItems array.
   // This is done so that the size of selection can be determined so as
   // to allocate a surface area
-  int32_t numRanges;
-  aSelection->GetRangeCount(&numRanges);
+  uint32_t numRanges = aSelection->RangeCount();
   NS_ASSERTION(numRanges > 0, "RenderSelection called with no selection");
 
-  for (int32_t r = 0; r < numRanges; r++)
+  for (uint32_t r = 0; r < numRanges; r++)
   {
-    nsCOMPtr<nsIDOMRange> range;
-    aSelection->GetRangeAt(r, getter_AddRefs(range));
+    RefPtr<nsRange> range = aSelection->GetRangeAt(r);
 
     UniquePtr<RangePaintInfo> info = CreateRangePaintInfo(range, area, true);
     if (info && !rangeItems.AppendElement(Move(info))) {
@@ -5395,7 +5358,7 @@ void PresShell::UpdateCanvasBackground()
   // cache of that color.
   nsIFrame* rootStyleFrame = FrameConstructor()->GetRootElementStyleFrame();
   if (rootStyleFrame) {
-    nsStyleContext* bgStyle =
+    ComputedStyle* bgStyle =
       nsCSSRendering::FindRootFrameBackground(rootStyleFrame);
     // XXX We should really be passing the canvasframe, not the root element
     // style frame but we don't have access to the canvasframe here. It isn't
@@ -8270,8 +8233,7 @@ PresShell::GetCurrentItemAndPositionForElement(nsIDOMElement *aCurrentEl,
     int32_t currentIndex;
     multiSelect->GetCurrentIndex(&currentIndex);
     if (currentIndex >= 0) {
-      RefPtr<nsXULElement> xulElement =
-        nsXULElement::FromContent(focusedContent);
+      RefPtr<nsXULElement> xulElement = nsXULElement::FromNode(focusedContent);
       if (xulElement) {
         nsCOMPtr<nsIBoxObject> box = xulElement->GetBoxObject(IgnoreErrors());
         nsCOMPtr<nsITreeBoxObject> treeBox(do_QueryInterface(box));
@@ -9113,7 +9075,7 @@ PresShell::WindowSizeMoveDone()
 
 #ifdef MOZ_XUL
 /*
- * It's better to add stuff to the |DidSetStyleContext| method of the
+ * It's better to add stuff to the |DidSetComputedStyle| method of the
  * relevant frames than adding it here.  These methods should (ideally,
  * anyway) go away.
  */
@@ -9621,15 +9583,6 @@ CopySheetsIntoClone(StyleSetHandle aSet, StyleSetHandle aClone)
   }
 }
 
-#ifdef MOZ_OLD_STYLE
-nsStyleSet*
-PresShell::CloneStyleSet(nsStyleSet* aSet)
-{
-  nsStyleSet* clone = new nsStyleSet();
-  CopySheetsIntoClone(aSet, clone);
-  return clone;
-}
-#endif
 
 ServoStyleSet*
 PresShell::CloneStyleSet(ServoStyleSet* aSet)
@@ -9689,27 +9642,16 @@ PresShell::VerifyIncrementalReflow()
 
   // Create a new presentation shell to view the document. Use the
   // exact same style information that this document has.
-#ifdef MOZ_OLD_STYLE
-  nsAutoPtr<nsStyleSet> newGeckoSet;
-#endif
   nsAutoPtr<ServoStyleSet> newServoSet;
   StyleSetHandle newSet;
   if (mStyleSet->IsServo()) {
     newServoSet = CloneStyleSet(mStyleSet->AsServo());
     newSet = newServoSet;
   } else {
-#ifdef MOZ_OLD_STYLE
-    newGeckoSet = CloneStyleSet(mStyleSet->AsGecko());
-    newSet = newGeckoSet;
-#else
     MOZ_CRASH("old style system disabled");
-#endif
   }
   nsCOMPtr<nsIPresShell> sh = mDocument->CreateShell(cx, vm, newSet);
   NS_ENSURE_TRUE(sh, false);
-#ifdef MOZ_OLD_STYLE
-  newGeckoSet.forget();
-#endif
   newServoSet.forget();
   // Note that after we create the shell, we must make sure to destroy it
   sh->SetVerifyReflowEnable(false); // turn off verify reflow while we're reflowing the test frame tree
@@ -9770,19 +9712,19 @@ PresShell::VerifyIncrementalReflow()
 
 // Layout debugging hooks
 void
-PresShell::ListStyleContexts(FILE *out, int32_t aIndent)
+PresShell::ListComputedStyles(FILE *out, int32_t aIndent)
 {
   nsIFrame* rootFrame = GetRootFrame();
   if (rootFrame) {
-    rootFrame->StyleContext()->List(out, aIndent);
+    rootFrame->Style()->List(out, aIndent);
   }
 
-  // The root element's frame's style context is the root of a separate tree.
+  // The root element's frame's ComputedStyle is the root of a separate tree.
   Element* rootElement = mDocument->GetRootElement();
   if (rootElement) {
     nsIFrame* rootElementFrame = rootElement->GetPrimaryFrame();
     if (rootElementFrame) {
-      rootElementFrame->StyleContext()->List(out, aIndent);
+      rootElementFrame->Style()->List(out, aIndent);
     }
   }
 }
@@ -10439,11 +10381,7 @@ PresShell::AddSizeOfIncludingThis(nsWindowSizes& aSizes) const
     mFramesToDirty.ShallowSizeOfExcludingThis(mallocSizeOf);
 
   if (StyleSet()->IsGecko()) {
-#ifdef MOZ_OLD_STYLE
-    StyleSet()->AsGecko()->AddSizeOfIncludingThis(aSizes);
-#else
     MOZ_CRASH("old style system disabled");
-#endif
   } else {
     StyleSet()->AsServo()->AddSizeOfIncludingThis(aSizes);
   }
@@ -10644,14 +10582,7 @@ nsIPresShell::HasRuleProcessorUsedByMultipleStyleSets(uint32_t aSheetType,
 {
   *aRetVal = false;
   if (mStyleSet->IsGecko()) {
-#ifdef MOZ_OLD_STYLE
-    nsStyleSet* styleSet = mStyleSet->AsGecko();
-    // ServoStyleSets do not have rule processors.
-    SheetType type = ToSheetType(aSheetType);
-    *aRetVal = styleSet->HasRuleProcessorUsedByMultipleStyleSets(type);
-#else
     MOZ_CRASH("old style system disabled");
-#endif
   }
   return NS_OK;
 }

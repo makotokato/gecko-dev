@@ -19,7 +19,6 @@
 #include "nsIPresShell.h"
 #include "nsViewManager.h"
 #include "nsIDOMNode.h"
-#include "nsISelection.h"
 #include "nsISelectionPrivate.h"
 #include "nsPresContext.h"
 #include "nsIImageLoadingContent.h"
@@ -38,6 +37,7 @@
 #include "mozilla/dom/DataTransfer.h"
 #include "mozilla/dom/DragEvent.h"
 #include "mozilla/dom/MouseEventBinding.h"
+#include "mozilla/dom/Selection.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/Unused.h"
 #include "nsFrameLoader.h"
@@ -331,7 +331,7 @@ nsBaseDragService::InvokeDragSessionWithSelection(nsISelection* aSelection,
   NS_ENSURE_TRUE(mSuppressLevel == 0, NS_ERROR_FAILURE);
 
   mDataTransfer = aDataTransfer;
-  mSelection = aSelection;
+  mSelection = aSelection ? aSelection->AsSelection() : nullptr;
   mHasImage = true;
   mDragPopup = nullptr;
   mImage = nullptr;
@@ -680,7 +680,7 @@ nsBaseDragService::DrawDrag(nsIDOMNode* aDOMNode,
   // an image or canvas, fall through to RenderNode below.
   if (mImage) {
     nsCOMPtr<nsIContent> content = do_QueryInterface(dragNode);
-    HTMLCanvasElement *canvas = HTMLCanvasElement::FromContentOrNull(content);
+    HTMLCanvasElement *canvas = HTMLCanvasElement::FromNodeOrNull(content);
     if (canvas) {
       return DrawDragForImage(*aPresContext, nullptr, canvas, aScreenDragRect, aSurface);
     }

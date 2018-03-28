@@ -75,7 +75,8 @@ class Instance
              HandleWasmMemoryObject memory,
              SharedTableVector&& tables,
              Handle<FunctionVector> funcImports,
-             const ValVector& globalImports);
+             const ValVector& globalImportValues,
+             const WasmGlobalObjectVector& globalObjs);
     ~Instance();
     bool init(JSContext* cx);
     void trace(JSTracer* trc);
@@ -172,8 +173,8 @@ class Instance
 
 typedef UniquePtr<Instance> UniqueInstance;
 
-bool InitInstanceStaticData();
-void ShutDownInstanceStaticData();
+bool InitSignatureSet();
+void ReleaseSignatureSet();
 
 } // namespace wasm
 } // namespace js

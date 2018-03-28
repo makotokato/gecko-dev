@@ -485,19 +485,19 @@ JS_NewContext(uint32_t maxbytes, uint32_t maxNurseryBytes, JSRuntime* parentRunt
 JS_PUBLIC_API(JSContext*)
 JS_NewCooperativeContext(JSContext* siblingContext)
 {
-    return NewCooperativeContext(siblingContext);
+    MOZ_CRASH("Cooperative scheduling is unsupported");
 }
 
 JS_PUBLIC_API(void)
 JS_YieldCooperativeContext(JSContext* cx)
 {
-    YieldCooperativeContext(cx);
+    MOZ_CRASH("Cooperative scheduling is unsupported");
 }
 
 JS_PUBLIC_API(void)
 JS_ResumeCooperativeContext(JSContext* cx)
 {
-    ResumeCooperativeContext(cx);
+    MOZ_CRASH("Cooperative scheduling is unsupported");
 }
 
 JS_PUBLIC_API(void)
@@ -577,15 +577,6 @@ JS_PUBLIC_API(JSRuntime*)
 JS_GetRuntime(JSContext* cx)
 {
     return cx->runtime();
-}
-
-JS_PUBLIC_API(void)
-JS::SetSingleThreadedExecutionCallbacks(JSContext* cx,
-                                        BeginSingleThreadedExecutionCallback begin,
-                                        EndSingleThreadedExecutionCallback end)
-{
-    cx->runtime()->beginSingleThreadedExecutionCallback = begin;
-    cx->runtime()->endSingleThreadedExecutionCallback = end;
 }
 
 JS_PUBLIC_API(JS::ContextOptions&)
@@ -3965,7 +3956,6 @@ JS::TransitiveCompileOptions::copyPODTransitiveOptions(const TransitiveCompileOp
     canLazilyParse = rhs.canLazilyParse;
     strictOption = rhs.strictOption;
     extraWarningsOption = rhs.extraWarningsOption;
-    expressionClosuresOption = rhs.expressionClosuresOption;
     werrorOption = rhs.werrorOption;
     asmJSOption = rhs.asmJSOption;
     throwOnAsmJSValidationFailureOption = rhs.throwOnAsmJSValidationFailureOption;
@@ -4088,7 +4078,6 @@ JS::CompileOptions::CompileOptions(JSContext* cx)
 {
     strictOption = cx->options().strictMode();
     extraWarningsOption = cx->compartment()->behaviors().extraWarnings(cx);
-    expressionClosuresOption = cx->options().expressionClosures();
     isProbablySystemCode = cx->compartment()->isProbablySystemCode();
     werrorOption = cx->options().werror();
     if (!cx->options().asmJS())
@@ -7261,6 +7250,9 @@ JS_SetGlobalJitCompilerOption(JSContext* cx, JSJitCompilerOption opt, uint32_t v
             value = defaultValues.jumpThreshold;
         }
         jit::JitOptions.jumpThreshold = value;
+        break;
+      case JSJITCOMPILER_TRACK_OPTIMIZATIONS:
+        jit::JitOptions.disableOptimizationTracking = !value;
         break;
       case JSJITCOMPILER_SPECTRE_INDEX_MASKING:
         jit::JitOptions.spectreIndexMasking = !!value;

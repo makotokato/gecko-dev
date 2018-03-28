@@ -557,7 +557,7 @@ public:
     const IPC::Principal& aTriggeringPrincipal,
     const uint32_t& aReferrerPolicy) override;
 
-  static bool AllocateLayerTreeId(TabParent* aTabParent, uint64_t* aId);
+  static bool AllocateLayerTreeId(TabParent* aTabParent, layers::LayersId* aId);
 
   static void
   BroadcastBlobURLRegistration(const nsACString& aURI,
@@ -750,7 +750,7 @@ private:
   // Returns false if the process fails to start.
   bool LaunchSubprocess(hal::ProcessPriority aInitialPriority = hal::PROCESS_PRIORITY_FOREGROUND);
 
-  // Common initialization after sub process launch or adoption.
+  // Common initialization after sub process launch.
   void InitInternal(ProcessPriority aPriority);
 
   virtual ~ContentParent();
@@ -837,7 +837,7 @@ private:
 
   static bool AllocateLayerTreeId(ContentParent* aContent,
                                   TabParent* aTopLevel, const TabId& aTabId,
-                                  uint64_t* aId);
+                                  layers::LayersId* aId);
 
   /**
    * Get or create the corresponding content parent array to |aContentProcessType|.
@@ -848,6 +848,7 @@ private:
 
   mozilla::ipc::IPCResult RecvAddMemoryReport(const MemoryReport& aReport) override;
   mozilla::ipc::IPCResult RecvFinishMemoryReport(const uint32_t& aGeneration) override;
+  mozilla::ipc::IPCResult RecvAddPerformanceMetrics(const PerformanceInfo& aMetrics) override;
 
   virtual bool
   DeallocPJavaScriptParent(mozilla::jsipc::PJavaScriptParent*) override;
@@ -1105,10 +1106,10 @@ public:
 
   virtual mozilla::ipc::IPCResult RecvAllocateLayerTreeId(const ContentParentId& aCpId,
                                                           const TabId& aTabId,
-                                                          uint64_t* aId) override;
+                                                          layers::LayersId* aId) override;
 
   virtual mozilla::ipc::IPCResult RecvDeallocateLayerTreeId(const ContentParentId& aCpId,
-                                                            const uint64_t& aId) override;
+                                                            const layers::LayersId& aId) override;
 
   virtual mozilla::ipc::IPCResult RecvGraphicsError(const nsCString& aError) override;
 

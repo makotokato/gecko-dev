@@ -165,7 +165,7 @@ XPCOMUtils.defineLazyServiceGetters(this, {
 XPCOMUtils.defineLazyModuleGetters(this, {
   AppConstants: "resource://gre/modules/AppConstants.jsm",
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
-  DevToolsShim: "chrome://devtools-shim/content/DevToolsShim.jsm",
+  DevToolsShim: "chrome://devtools-startup/content/DevToolsShim.jsm",
   GlobalState: "resource:///modules/sessionstore/GlobalState.jsm",
   PrivacyFilter: "resource:///modules/sessionstore/PrivacyFilter.jsm",
   PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
@@ -451,7 +451,7 @@ var SessionStoreInternal = {
   // they get restored).
   _crashedBrowsers: new WeakSet(),
 
-  // A map (xul:browser -> nsIFrameLoader) that maps a browser to the last
+  // A map (xul:browser -> FrameLoader) that maps a browser to the last
   // associated frameLoader we heard about.
   _lastKnownFrameLoader: new WeakMap(),
 
@@ -2901,7 +2901,7 @@ var SessionStoreInternal = {
     // a flash of the about:tabcrashed page after selecting
     // the revived tab.
     aTab.removeAttribute("crashed");
-    browser.loadURI("about:blank", null, null);
+    browser.loadURI("about:blank");
 
     let data = TabState.collect(aTab);
     this.restoreTab(aTab, data, {
@@ -3426,7 +3426,8 @@ var SessionStoreInternal = {
                                   skipAnimation: true,
                                   noInitialLabel: true,
                                   userContextId,
-                                  skipBackgroundNotify: true });
+                                  skipBackgroundNotify: true,
+                                  bulkOrderedOpen: this._browserSetState });
 
         if (select) {
           let leftoverTab = tabbrowser.selectedTab;

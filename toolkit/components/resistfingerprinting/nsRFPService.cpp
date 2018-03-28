@@ -47,7 +47,7 @@ static mozilla::LazyLogModule gResistFingerprintingLog("nsResistFingerprinting")
 #define RESIST_FINGERPRINTING_PREF "privacy.resistFingerprinting"
 #define RFP_TIMER_PREF "privacy.reduceTimerPrecision"
 #define RFP_TIMER_VALUE_PREF "privacy.resistFingerprinting.reduceTimerPrecision.microseconds"
-#define RFP_TIMER_VALUE_DEFAULT 2000
+#define RFP_TIMER_VALUE_DEFAULT 100
 #define RFP_JITTER_VALUE_PREF "privacy.resistFingerprinting.reduceTimerPrecision.jitter"
 #define RFP_JITTER_VALUE_DEFAULT true
 #define RFP_SPOOFED_FRAMES_PER_SEC_PREF "privacy.resistFingerprinting.video_frames_per_sec"
@@ -376,12 +376,12 @@ nsRFPService::RandomMidpoint(long long aClampedTimeUSec,
 
     // If we don't have a seed, we need to get one.
     if(MOZ_UNLIKELY(!sSecretMidpointSeed)) {
+      nsCOMPtr<nsIRandomGenerator> randomGenerator =
+        do_GetService("@mozilla.org/security/random-generator;1", &rv);
+      if (NS_WARN_IF(NS_FAILED(rv))) { return rv; }
+
       StaticMutexAutoLock lock(sLock);
       if(MOZ_LIKELY(!sSecretMidpointSeed)) {
-        nsCOMPtr<nsIRandomGenerator> randomGenerator =
-            do_GetService("@mozilla.org/security/random-generator;1", &rv);
-        if (NS_WARN_IF(NS_FAILED(rv))) { return rv; }
-
         rv = randomGenerator->GenerateRandomBytes(kSeedSize, &sSecretMidpointSeed);
         if (NS_WARN_IF(NS_FAILED(rv))) { return rv; }
       }

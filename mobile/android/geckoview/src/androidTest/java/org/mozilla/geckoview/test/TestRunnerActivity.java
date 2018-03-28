@@ -1,3 +1,8 @@
+/* -*- Mode: Java; c-basic-offset: 4; tab-width: 4; indent-tabs-mode: nil; -*-
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.geckoview.test;
 
 import org.mozilla.gecko.mozglue.GeckoLoader;
@@ -34,9 +39,10 @@ public class TestRunnerActivity extends Activity {
         }
 
         @Override
-        public boolean onLoadRequest(GeckoSession session, String uri, int target) {
+        public void onLoadRequest(GeckoSession session, String uri,
+                                  int target, GeckoSession.Response<Boolean> response) {
             // Allow Gecko to load all URIs
-            return false;
+            response.respond(false);
         }
 
         @Override

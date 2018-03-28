@@ -18,7 +18,6 @@
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/URLPreloader.h"
 #include "nsIRunnable.h"
-#include "nsIUnicharStreamLoader.h"
 #include "nsSyncLoadService.h"
 #include "nsCOMPtr.h"
 #include "nsString.h"
@@ -39,9 +38,6 @@
 #include "nsIStyleSheetLinkingElement.h"
 #include "nsICSSLoaderObserver.h"
 #include "nsCSSParser.h"
-#ifdef MOZ_OLD_STYLE
-#include "mozilla/css/ImportRule.h"
-#endif
 #include "nsThreadUtils.h"
 #include "nsGkAtoms.h"
 #include "nsIThreadInternal.h"
@@ -139,7 +135,7 @@ static const char* const gStateStrings[] = {
 /********************************
  * SheetLoadData implementation *
  ********************************/
-NS_IMPL_ISUPPORTS(SheetLoadData, nsIUnicharStreamLoaderObserver, nsIRunnable,
+NS_IMPL_ISUPPORTS(SheetLoadData, nsIRunnable,
                   nsIThreadObserver)
 
 SheetLoadData::SheetLoadData(Loader* aLoader,
@@ -565,30 +561,6 @@ SheetLoadData::DetermineNonBOMEncoding(nsACString const& aSegment,
   return UTF_8_ENCODING;
 }
 
-/*
- * Encoding decision for the old style system
- */
-NS_IMETHODIMP
-SheetLoadData::OnDetermineCharset(nsIUnicharStreamLoader* aLoader,
-                                  nsISupports* aContext,
-                                  nsACString const& aSegment,
-                                  nsACString& aCharset)
-{
-  const Encoding* encoding;
-  size_t bomLength;
-  Tie(encoding, bomLength) = Encoding::ForBOM(aSegment);
-  Unused << bomLength;
-  if (!encoding) {
-    nsCOMPtr<nsIChannel> channel;
-    aLoader->GetChannel(getter_AddRefs(channel));
-    encoding = DetermineNonBOMEncoding(aSegment, channel);
-  }
-
-  encoding->Name(aCharset);
-  mEncoding = encoding;
-  return NS_OK;
-}
-
 already_AddRefed<nsIURI>
 SheetLoadData::GetReferrerURI()
 {
@@ -598,34 +570,6 @@ SheetLoadData::GetReferrerURI()
   if (!uri && mLoader->mDocument)
     uri = mLoader->mDocument->GetDocumentURI();
   return uri.forget();
-}
-
-/*
- * Load completion for the old style system.
- */
-NS_IMETHODIMP
-SheetLoadData::OnStreamComplete(nsIUnicharStreamLoader* aLoader,
-                                nsISupports* aContext,
-                                nsresult aStatus,
-                                const nsAString& aBuffer)
-{
-  nsCOMPtr<nsIChannel> channel;
-  aLoader->GetChannel(getter_AddRefs(channel));
-  nsCString bytes;
-  aLoader->GetRawBuffer(bytes);
-
-  nsresult rv = VerifySheetReadyToParse(aStatus, bytes, channel);
-  if (rv != NS_OK_PARSE_SHEET) {
-    return rv;
-  }
-
-  // NB: The aAllowAsync doesn't really matter here, because this path is only
-  // for the old style system.
-  bool completed;
-  rv = mLoader->ParseSheet(aBuffer, Span<const uint8_t>(), this,
-                           /* aAllowAsync = */ true, completed);
-  NS_ASSERTION(completed || !mSyncLoad, "sync load did not complete");
-  return rv;
 }
 
 /*
@@ -1118,11 +1062,7 @@ Loader::CreateSheet(nsIURI* aURI,
     }
 
     if (GetStyleBackendType() == StyleBackendType::Gecko) {
-#ifdef MOZ_OLD_STYLE
-      *aSheet = new CSSStyleSheet(aParsingMode, aCORSMode, aReferrerPolicy, sriMetadata);
-#else
       MOZ_CRASH("old style system disabled");
-#endif
     } else {
       *aSheet = new ServoStyleSheet(aParsingMode, aCORSMode, aReferrerPolicy, sriMetadata);
     }
@@ -1270,11 +1210,7 @@ Loader::InsertChildSheet(StyleSheet* aSheet,
   // cloned off of top-level sheets which were disabled
   aSheet->SetEnabled(true);
   if (aGeckoParentRule) {
-#ifdef MOZ_OLD_STYLE
-    aGeckoParentRule->SetSheet(aSheet->AsGecko()); // This sets the ownerRule on the sheet
-#else
     MOZ_CRASH("old style system disabled");
-#endif
   }
   aParentSheet->PrependStyleSheet(aSheet);
 
@@ -1324,23 +1260,10 @@ Loader::LoadSheet(SheetLoadData* aLoadData,
     NS_ASSERTION(aSheetState == eSheetNeedsParser,
                  "Sync loads can't reuse existing async loads");
 
-    // Create a nsIUnicharStreamLoader instance to which we will feed
+    // Create a StreamLoader instance to which we will feed
     // the data from the sync load.  Do this before creating the
     // channel to make error recovery simpler.
-    nsCOMPtr<nsIStreamListener> streamLoader;
-    if (aLoadData->mSheet->IsGecko()) {
-      nsCOMPtr<nsIUnicharStreamLoader> unicharStreamLoader;
-      rv = NS_NewUnicharStreamLoader(getter_AddRefs(unicharStreamLoader),
-                                     aLoadData);
-      streamLoader = unicharStreamLoader;
-      if (NS_FAILED(rv)) {
-        LOG_ERROR(("  Failed to create stream loader for sync load"));
-        SheetComplete(aLoadData, rv);
-        return rv;
-      }
-    } else {
-      streamLoader = new StreamLoader(aLoadData);
-    }
+    nsCOMPtr<nsIStreamListener> streamLoader = new StreamLoader(aLoadData);
 
     if (mDocument) {
       mozilla::net::PredictorLearn(aLoadData->mURI, mDocument->GetDocumentURI(),
@@ -1620,23 +1543,7 @@ Loader::LoadSheet(SheetLoadData* aLoadData,
   // We don't have to hold on to the stream loader.  The ownership
   // model is: Necko owns the stream loader, which owns the load data,
   // which owns us
-  nsCOMPtr<nsIStreamListener> streamLoader;
-  if (aLoadData->mSheet->IsGecko()) {
-    nsCOMPtr<nsIUnicharStreamLoader> unicharStreamLoader;
-    rv =
-      NS_NewUnicharStreamLoader(getter_AddRefs(unicharStreamLoader), aLoadData);
-    streamLoader = unicharStreamLoader;
-    if (NS_FAILED(rv)) {
-#ifdef DEBUG
-      mSyncCallback = false;
-#endif
-      LOG_ERROR(("  Failed to create stream loader"));
-      SheetComplete(aLoadData, rv);
-      return rv;
-    }
-  } else {
-    streamLoader = new StreamLoader(aLoadData);
-  }
+  nsCOMPtr<nsIStreamListener> streamLoader = new StreamLoader(aLoadData);
 
   if (mDocument) {
     mozilla::net::PredictorLearn(aLoadData->mURI, mDocument->GetDocumentURI(),
@@ -1679,50 +1586,9 @@ Loader::ParseSheet(const nsAString& aUTF16,
   if (ServoStyleSheet* sheet = aLoadData->mSheet->GetAsServo()) {
     return DoParseSheetServo(sheet, aUTF16, aUTF8, aLoadData, aAllowAsync, aCompleted);
   }
-#ifdef MOZ_OLD_STYLE
-  return DoParseSheetGecko(aLoadData->mSheet->AsGecko(), aUTF16, aUTF8, aLoadData, aCompleted);
-#else
     MOZ_CRASH("old style system disabled");
-#endif
 }
 
-#ifdef MOZ_OLD_STYLE
-nsresult
-Loader::DoParseSheetGecko(CSSStyleSheet* aSheet,
-                          const nsAString& aUTF16,
-                          Span<const uint8_t> aUTF8,
-                          SheetLoadData* aLoadData,
-                          bool& aCompleted)
-{
-  aLoadData->mIsBeingParsed = true;
-  nsCSSParser parser(this, aSheet);
-  nsresult rv = parser.ParseSheet(aUTF16,
-                                  aSheet->GetSheetURI(),
-                                  aSheet->GetBaseURI(),
-                                  aSheet->Principal(),
-                                  aLoadData,
-                                  aLoadData->mLineNumber);
-  aLoadData->mIsBeingParsed = false;
-  if (NS_FAILED(rv)) {
-    LOG_ERROR(("  Low-level error in parser!"));
-    SheetComplete(aLoadData, rv);
-    return rv;
-  }
-
-  NS_ASSERTION(aLoadData->mPendingChildren == 0 || !aLoadData->mSyncLoad,
-               "Sync load has leftover pending children!");
-
-  if (aLoadData->mPendingChildren == 0) {
-    LOG(("  No pending kids from parse"));
-    aCompleted = true;
-    SheetComplete(aLoadData, NS_OK);
-  }
-  // Otherwise, the children are holding strong refs to the data and
-  // will call SheetComplete() on it when they complete.
-
-  return NS_OK;
-}
-#endif
 
 nsresult
 Loader::DoParseSheetServo(ServoStyleSheet* aSheet,
@@ -2293,11 +2159,7 @@ Loader::LoadChildSheet(StyleSheet* aParentSheet,
   StyleSheetState state;
   if (aReusableSheets && aReusableSheets->FindReusableStyleSheet(aURL, sheet)) {
     if (aParentSheet->IsGecko()) {
-#ifdef MOZ_OLD_STYLE
-      aGeckoParentRule->SetSheet(sheet->AsGecko());
-#else
       MOZ_CRASH("old style system disabled");
-#endif
     }
     state = eSheetComplete;
   } else {

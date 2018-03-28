@@ -574,6 +574,13 @@ nsContentUtils::Init()
   NS_ENSURE_TRUE(sNameSpaceManager, NS_ERROR_OUT_OF_MEMORY);
 
   sXPConnect = nsXPConnect::XPConnect();
+  // We hold a strong ref to sXPConnect to ensure that it does not go away until
+  // nsLayoutStatics::Shutdown is happening.  Otherwise ~nsXPConnect can be
+  // triggered by xpcModuleDtor late in shutdown and cause crashes due to
+  // various stuff already being torn down by then.  Note that this means that
+  // we are effectively making sure that if we leak nsLayoutStatics then we also
+  // leak nsXPConnect.
+  NS_ADDREF(sXPConnect);
 
   sSecurityManager = nsScriptSecurityManager::GetScriptSecurityManager();
   if(!sSecurityManager)
@@ -1624,137 +1631,6 @@ nsContentUtils::GetBidiKeyboard()
   return sBidiKeyboard;
 }
 
-template <class OutputIterator>
-struct NormalizeNewlinesCharTraits {
-  public:
-    typedef typename OutputIterator::value_type value_type;
-
-  public:
-    explicit NormalizeNewlinesCharTraits(OutputIterator& aIterator) : mIterator(aIterator) { }
-    void writechar(typename OutputIterator::value_type aChar) {
-      *mIterator++ = aChar;
-    }
-
-  private:
-    OutputIterator mIterator;
-};
-
-template <class CharT>
-struct NormalizeNewlinesCharTraits<CharT*> {
-  public:
-    typedef CharT value_type;
-
-  public:
-    explicit NormalizeNewlinesCharTraits(CharT* aCharPtr) : mCharPtr(aCharPtr) { }
-    void writechar(CharT aChar) {
-      *mCharPtr++ = aChar;
-    }
-
-  private:
-    CharT* mCharPtr;
-};
-
-template <class OutputIterator>
-class CopyNormalizeNewlines
-{
-  public:
-    typedef typename OutputIterator::value_type value_type;
-
-  public:
-    explicit CopyNormalizeNewlines(OutputIterator* aDestination,
-                                   bool aLastCharCR = false) :
-      mLastCharCR(aLastCharCR),
-      mDestination(aDestination),
-      mWritten(0)
-    { }
-
-    uint32_t GetCharsWritten() {
-      return mWritten;
-    }
-
-    bool IsLastCharCR() {
-      return mLastCharCR;
-    }
-
-    void write(const typename OutputIterator::value_type* aSource, uint32_t aSourceLength) {
-
-      const typename OutputIterator::value_type* done_writing = aSource + aSourceLength;
-
-      // If the last source buffer ended with a CR...
-      if (mLastCharCR) {
-        // ..and if the next one is a LF, then skip it since
-        // we've already written out a newline
-        if (aSourceLength && (*aSource == value_type('\n'))) {
-          ++aSource;
-        }
-        mLastCharCR = false;
-      }
-
-      uint32_t num_written = 0;
-      while ( aSource < done_writing ) {
-        if (*aSource == value_type('\r')) {
-          mDestination->writechar('\n');
-          ++aSource;
-          // If we've reached the end of the buffer, record
-          // that we wrote out a CR
-          if (aSource == done_writing) {
-            mLastCharCR = true;
-          }
-          // If the next character is a LF, skip it
-          else if (*aSource == value_type('\n')) {
-            ++aSource;
-          }
-        }
-        else {
-          mDestination->writechar(*aSource++);
-        }
-        ++num_written;
-      }
-
-      mWritten += num_written;
-    }
-
-  private:
-    bool mLastCharCR;
-    OutputIterator* mDestination;
-    uint32_t mWritten;
-};
-
-// static
-uint32_t
-nsContentUtils::CopyNewlineNormalizedUnicodeTo(const nsAString& aSource,
-                                               uint32_t aSrcOffset,
-                                               char16_t* aDest,
-                                               uint32_t aLength,
-                                               bool& aLastCharCR)
-{
-  typedef NormalizeNewlinesCharTraits<char16_t*> sink_traits;
-
-  sink_traits dest_traits(aDest);
-  CopyNormalizeNewlines<sink_traits> normalizer(&dest_traits,aLastCharCR);
-  nsReadingIterator<char16_t> fromBegin, fromEnd;
-  copy_string(aSource.BeginReading(fromBegin).advance( int32_t(aSrcOffset) ),
-              aSource.BeginReading(fromEnd).advance( int32_t(aSrcOffset+aLength) ),
-              normalizer);
-  aLastCharCR = normalizer.IsLastCharCR();
-  return normalizer.GetCharsWritten();
-}
-
-// static
-uint32_t
-nsContentUtils::CopyNewlineNormalizedUnicodeTo(nsReadingIterator<char16_t>& aSrcStart, const nsReadingIterator<char16_t>& aSrcEnd, nsAString& aDest)
-{
-  typedef nsWritingIterator<char16_t> WritingIterator;
-  typedef NormalizeNewlinesCharTraits<WritingIterator> sink_traits;
-
-  WritingIterator iter;
-  aDest.BeginWriting(iter);
-  sink_traits dest_traits(iter);
-  CopyNormalizeNewlines<sink_traits> normalizer(&dest_traits);
-  copy_string(aSrcStart, aSrcEnd, normalizer);
-  return normalizer.GetCharsWritten();
-}
-
 /**
  * This is used to determine whether a character is in one of the classes
  * which CSS says should be part of the first-letter.  Currently, that is
@@ -2092,7 +1968,7 @@ nsContentUtils::Shutdown()
 
   NS_IF_RELEASE(sStringBundleService);
   NS_IF_RELEASE(sConsoleService);
-  sXPConnect = nullptr;
+  NS_IF_RELEASE(sXPConnect);
   NS_IF_RELEASE(sSecurityManager);
   NS_IF_RELEASE(sSystemPrincipal);
   NS_IF_RELEASE(sNullSubjectPrincipal);
@@ -3893,7 +3769,7 @@ nsContentUtils::ContentIsDraggable(nsIContent* aContent)
 {
   MOZ_ASSERT(aContent);
 
-  if (auto htmlElement = nsGenericHTMLElement::FromContent(aContent)) {
+  if (auto htmlElement = nsGenericHTMLElement::FromNode(aContent)) {
     if (htmlElement->Draggable()) {
       return true;
     }
@@ -5816,17 +5692,20 @@ void
 nsContentUtils::WarnScriptWasIgnored(nsIDocument* aDocument)
 {
   nsAutoString msg;
+  bool privateBrowsing = false;
+
   if (aDocument) {
     nsCOMPtr<nsIURI> uri = aDocument->GetDocumentURI();
     if (uri) {
       msg.Append(NS_ConvertUTF8toUTF16(uri->GetSpecOrDefault()));
       msg.AppendLiteral(" : ");
     }
+    privateBrowsing =
+      !!aDocument->NodePrincipal()->OriginAttributesRef().mPrivateBrowsingId;
   }
-  msg.AppendLiteral("Unable to run script because scripts are blocked internally.");
 
-  LogSimpleConsoleError(msg, "DOM",
-                        !!aDocument->NodePrincipal()->OriginAttributesRef().mPrivateBrowsingId);
+  msg.AppendLiteral("Unable to run script because scripts are blocked internally.");
+  LogSimpleConsoleError(msg, "DOM", privateBrowsing);
 }
 
 /* static */
@@ -7156,6 +7035,10 @@ nsContentUtils::PersistentLayerManagerForDocument(nsIDocument *aDoc)
 bool
 nsContentUtils::AllowXULXBLForPrincipal(nsIPrincipal* aPrincipal)
 {
+  if (!aPrincipal) {
+    return false;
+  }
+
   if (IsSystemPrincipal(aPrincipal)) {
     return true;
   }
@@ -10114,13 +9997,14 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
 
   MOZ_ASSERT_IF(aDefinition, isCustomElement);
 
+  bool customElementEnabled = CustomElementRegistry::IsCustomElementEnabled(nodeInfo->GetDocument());
+
   // https://dom.spec.whatwg.org/#concept-create-element
   // We only handle the "synchronous custom elements flag is set" now.
   // For the unset case (e.g. cloning a node), see bug 1319342 for that.
   // Step 4.
   CustomElementDefinition* definition = aDefinition;
-  if (CustomElementRegistry::IsCustomElementEnabled() && isCustomElement &&
-      !definition) {
+  if (customElementEnabled && isCustomElement && !definition) {
     MOZ_ASSERT(nodeInfo->NameAtom()->Equals(nodeInfo->LocalName()));
     definition =
       nsContentUtils::LookupCustomElementDefinition(nodeInfo->GetDocument(),
@@ -10227,7 +10111,7 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  if (CustomElementRegistry::IsCustomElementEnabled() && isCustomElement) {
+  if (customElementEnabled && isCustomElement) {
     (*aResult)->SetCustomElementData(new CustomElementData(typeAtom));
   }
 

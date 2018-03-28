@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ImageDocument.h"
+#include "mozilla/ComputedStyle.h"
 #include "mozilla/dom/DOMPrefs.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/ImageDocumentBinding.h"
@@ -26,7 +27,6 @@
 #include "imgINotificationObserver.h"
 #include "nsIPresShell.h"
 #include "nsPresContext.h"
-#include "nsStyleContext.h"
 #include "nsIChannel.h"
 #include "nsIContentPolicy.h"
 #include "nsContentPolicyUtils.h"
@@ -361,7 +361,7 @@ ImageDocument::ShrinkToFit()
     // displayed image height by getting .height on the HTMLImageElement.
     //
     // Hold strong ref, because Height() can run script.
-    RefPtr<HTMLImageElement> img = HTMLImageElement::FromContent(mImageContent);
+    RefPtr<HTMLImageElement> img = HTMLImageElement::FromNode(mImageContent);
     uint32_t imageHeight = img->Height();
     nsDOMTokenList* classList = img->ClassList();
     ErrorResult ignored;
@@ -382,7 +382,7 @@ ImageDocument::ShrinkToFit()
 #endif
 
   // Keep image content alive while changing the attributes.
-  RefPtr<HTMLImageElement> image = HTMLImageElement::FromContent(mImageContent);
+  RefPtr<HTMLImageElement> image = HTMLImageElement::FromNode(mImageContent);
 
   uint32_t newWidth = std::max(1, NSToCoordFloor(GetRatio() * mImageWidth));
   uint32_t newHeight = std::max(1, NSToCoordFloor(GetRatio() * mImageHeight));
@@ -639,7 +639,7 @@ ImageDocument::HandleEvent(nsIDOMEvent* aEvent)
       MouseEvent* event = aEvent->InternalDOMEvent()->AsMouseEvent();
       if (event) {
         RefPtr<HTMLImageElement> img =
-          HTMLImageElement::FromContent(mImageContent);
+          HTMLImageElement::FromNode(mImageContent);
         x = event->ClientX() - img->OffsetLeft();
         y = event->ClientY() - img->OffsetTop();
       }
@@ -732,7 +732,7 @@ ImageDocument::CreateSyntheticDocument()
 nsresult
 ImageDocument::CheckOverflowing(bool changeState)
 {
-  /* Create a scope so that the style context gets destroyed before we might
+  /* Create a scope so that the ComputedStyle gets destroyed before we might
    * call RebuildStyleData.  Also, holding onto pointers to the
    * presentation through style resolution is potentially dangerous.
    */

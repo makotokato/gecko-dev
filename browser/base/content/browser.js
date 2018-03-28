@@ -580,36 +580,6 @@ const gStoragePressureObserver = {
   }
 };
 
-/**
- * Given a starting docshell and a URI to look up, find the docshell the URI
- * is loaded in.
- * @param   aDocument
- *          A document to find instead of using just a URI - this is more specific.
- * @param   aDocShell
- *          The doc shell to start at
- * @param   aSoughtURI
- *          The URI that we're looking for
- * @returns The doc shell that the sought URI is loaded in. Can be in
- *          subframes.
- */
-function findChildShell(aDocument, aDocShell, aSoughtURI) {
-  aDocShell.QueryInterface(Ci.nsIWebNavigation);
-  aDocShell.QueryInterface(Ci.nsIInterfaceRequestor);
-  var doc = aDocShell.getInterface(Ci.nsIDOMDocument);
-  if ((aDocument && doc == aDocument) ||
-      (aSoughtURI && aSoughtURI.spec == aDocShell.currentURI.spec))
-    return aDocShell;
-
-  var node = aDocShell.QueryInterface(Ci.nsIDocShellTreeItem);
-  for (var i = 0; i < node.childCount; ++i) {
-    var docShell = node.getChildAt(i);
-    docShell = findChildShell(aDocument, docShell, aSoughtURI);
-    if (docShell)
-      return docShell;
-  }
-  return null;
-}
-
 var gPopupBlockerObserver = {
   handleEvent(aEvent) {
     if (aEvent.originalTarget != gBrowser.selectedBrowser)
@@ -1021,7 +991,7 @@ function handleUriInChrome(aBrowser, aUri) {
 
 // A shared function used by both remote and non-remote browser XBL bindings to
 // load a URI or redirect it to the correct process.
-function _loadURIWithFlags(browser, uri, params) {
+function _loadURI(browser, uri, params = {}) {
   let tab = gBrowser.getTabForBrowser(browser);
   // Preloaded browsers don't have tabs, so we ignore those.
   if (tab) {
@@ -1031,12 +1001,15 @@ function _loadURIWithFlags(browser, uri, params) {
   if (!uri) {
     uri = "about:blank";
   }
-  let triggeringPrincipal = params.triggeringPrincipal || null;
-  let flags = params.flags || 0;
-  let referrer = params.referrerURI;
-  let referrerPolicy = ("referrerPolicy" in params ? params.referrerPolicy :
-                        Ci.nsIHttpChannel.REFERRER_POLICY_UNSET);
-  let postData = params.postData;
+
+  let {
+    flags = Ci.nsIWebNavigation.LOAD_FLAGS_NONE,
+    referrerURI,
+    referrerPolicy = Ci.nsIHttpChannel.REFERRER_POLICY_UNSET,
+    triggeringPrincipal,
+    postData,
+    userContextId,
+  } = params || {};
 
   let currentRemoteType = browser.remoteType;
   let requiredRemoteType;
@@ -1082,12 +1055,12 @@ function _loadURIWithFlags(browser, uri, params) {
   }
   try {
     if (!mustChangeProcess) {
-      if (params.userContextId) {
-        browser.webNavigation.setOriginAttributesBeforeLoading({ userContextId: params.userContextId });
+      if (userContextId) {
+        browser.webNavigation.setOriginAttributesBeforeLoading({ userContextId });
       }
 
       browser.webNavigation.loadURIWithOptions(uri, flags,
-                                               referrer, referrerPolicy,
+                                               referrerURI, referrerPolicy,
                                                postData, null, null, triggeringPrincipal);
     } else {
       // Check if the current browser is allowed to unload.
@@ -1106,15 +1079,15 @@ function _loadURIWithFlags(browser, uri, params) {
           ? gSerializationHelper.serializeToString(triggeringPrincipal)
           : null,
         flags,
-        referrer: referrer ? referrer.spec : null,
+        referrer: referrerURI ? referrerURI.spec : null,
         referrerPolicy,
         remoteType: requiredRemoteType,
         postData,
         newFrameloader,
       };
 
-      if (params.userContextId) {
-        loadParams.userContextId = params.userContextId;
+      if (userContextId) {
+        loadParams.userContextId = userContextId;
       }
 
       LoadInOtherProcess(browser, loadParams);
@@ -1129,11 +1102,11 @@ function _loadURIWithFlags(browser, uri, params) {
       Cu.reportError(e);
       gBrowser.updateBrowserRemotenessByURL(browser, uri);
 
-      if (params.userContextId) {
-        browser.webNavigation.setOriginAttributesBeforeLoading({ userContextId: params.userContextId });
+      if (userContextId) {
+        browser.webNavigation.setOriginAttributesBeforeLoading({ userContextId });
       }
 
-      browser.webNavigation.loadURIWithOptions(uri, flags, referrer, referrerPolicy,
+      browser.webNavigation.loadURIWithOptions(uri, flags, referrerURI, referrerPolicy,
                                                postData, null, null, triggeringPrincipal);
     } else {
       throw e;
@@ -1230,7 +1203,21 @@ var gBrowserInit = {
       }
     }
 
+    new LightweightThemeConsumer(document);
+    CompactTheme.init();
+
     TabsInTitlebar.init();
+
+    if (window.matchMedia("(-moz-os-version: windows-win8)").matches &&
+        window.matchMedia("(-moz-windows-default-theme)").matches) {
+      let windowFrameColor = new Color(...ChromeUtils.import("resource:///modules/Windows8WindowFrameColor.jsm", {})
+                                            .Windows8WindowFrameColor.get());
+      // Default to black for foreground text.
+      if (!windowFrameColor.isContrastRatioAcceptable(new Color(0, 0, 0))) {
+        document.documentElement.setAttribute("darkwindowframe", "true");
+      }
+    }
+    ToolbarIconColor.init();
   },
 
   onDOMContentLoaded() {
@@ -1282,10 +1269,6 @@ var gBrowserInit = {
 
     gUIDensity.init();
 
-    if (AppConstants.CAN_DRAW_IN_TITLEBAR) {
-      gDragSpaceObserver.init();
-    }
-
     // Hack to ensure that the about:home favicon is loaded
     // instantaneously, to avoid flickering and improve perceived performance.
     this._callWithURIToLoad(uriToLoad => {
@@ -1298,7 +1281,7 @@ var gBrowserInit = {
 
     this._setInitialFocus();
 
-    gBrowser.tabContainer.updateVisibility();
+    window.TabBarVisibility.update();
     TabsInTitlebar.onDOMContentLoaded();
   },
 
@@ -1318,7 +1301,6 @@ var gBrowserInit = {
     LanguageDetectionListener.init();
     BrowserOnClick.init();
     FeedHandler.init();
-    CompactTheme.init();
     AboutCapabilitiesListener.init();
     TrackingProtection.init();
     CaptivePortalWatcher.init();
@@ -1361,24 +1343,11 @@ var gBrowserInit = {
     }
 
     // Misc. inits.
-    new LightweightThemeConsumer(document);
     TabletModeUpdater.init();
     CombinedStopReload.ensureInitialized();
     gPrivateBrowsingUI.init();
     BrowserPageActions.init();
     gAccessibilityServiceIndicator.init();
-
-    if (window.matchMedia("(-moz-os-version: windows-win8)").matches &&
-        window.matchMedia("(-moz-windows-default-theme)").matches) {
-      let windowFrameColor = new Color(...ChromeUtils.import("resource:///modules/Windows8WindowFrameColor.jsm", {})
-                                            .Windows8WindowFrameColor.get());
-      // Default to black for foreground text.
-      if (!windowFrameColor.isContrastRatioAcceptable(new Color(0, 0, 0))) {
-        document.documentElement.setAttribute("darkwindowframe", "true");
-      }
-    }
-
-    ToolbarIconColor.init();
 
     gRemoteControl.updateVisualCue(Marionette.running);
 
@@ -1491,9 +1460,6 @@ var gBrowserInit = {
     PanelUI.init();
 
     UpdateUrlbarSearchSplitterState();
-
-    // Enable/Disable auto-hide tabbar
-    gBrowser.tabContainer.updateVisibility();
 
     BookmarkingUI.init();
     AutoShowBookmarksToolbar.init();
@@ -1849,11 +1815,11 @@ var gBrowserInit = {
   onUnload() {
     gUIDensity.uninit();
 
-    if (AppConstants.CAN_DRAW_IN_TITLEBAR) {
-      gDragSpaceObserver.uninit();
-    }
-
     TabsInTitlebar.uninit();
+
+    ToolbarIconColor.uninit();
+
+    CompactTheme.uninit();
 
     // In certain scenarios it's possible for unload to be fired before onload,
     // (e.g. if the window is being closed after browser.js loads but before the
@@ -1888,8 +1854,6 @@ var gBrowserInit = {
 
     BookmarkingUI.uninit();
 
-    ToolbarIconColor.uninit();
-
     TabletModeUpdater.uninit();
 
     gTabletModePageCounter.finish();
@@ -1897,8 +1861,6 @@ var gBrowserInit = {
     BrowserOnClick.uninit();
 
     FeedHandler.uninit();
-
-    CompactTheme.uninit();
 
     AboutCapabilitiesListener.uninit();
 
@@ -3071,6 +3033,7 @@ var BrowserOnClick = {
   onCertError(browser, elementId, isTopFrame, location, securityInfoAsString, frameId) {
     let secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
     let securityInfo;
+    let sslStatus;
 
     switch (elementId) {
       case "exceptionDialogButton":
@@ -3079,8 +3042,8 @@ var BrowserOnClick = {
         }
 
         securityInfo = getSecurityInfo(securityInfoAsString);
-        let sslStatus = securityInfo.QueryInterface(Ci.nsISSLStatusProvider)
-                                    .SSLStatus;
+        sslStatus = securityInfo.QueryInterface(Ci.nsISSLStatusProvider)
+                                .SSLStatus;
         let params = { exceptionAdded: false,
                        sslStatus };
 
@@ -3117,12 +3080,28 @@ var BrowserOnClick = {
         }
 
         securityInfo = getSecurityInfo(securityInfoAsString);
+        sslStatus = securityInfo.QueryInterface(Ci.nsISSLStatusProvider)
+                                .SSLStatus;
         let errorInfo = getDetailedCertErrorInfo(location,
                                                  securityInfo);
+        let validityInfo = {
+          notAfter: sslStatus.serverCert.validity.notAfter,
+          notBefore: sslStatus.serverCert.validity.notBefore,
+          notAfterLocalTime: sslStatus.serverCert.validity.notAfterLocalTime,
+          notBeforeLocalTime: sslStatus.serverCert.validity.notBeforeLocalTime,
+        };
         browser.messageManager.sendAsyncMessage("CertErrorDetails", {
             code: securityInfo.errorCode,
             info: errorInfo,
-            frameId,
+            codeString: securityInfo.errorCodeString,
+            certIsUntrusted: sslStatus.isUntrusted,
+            certIsSelfSigned: sslStatus.serverCert.isSelfSigned,
+            certSubjectAltNames: sslStatus.serverCert.subjectAltNames,
+            validity: validityInfo,
+            url: location,
+            isDomainMismatch: sslStatus.isDomainMismatch,
+            isNotValidAtThisTime: sslStatus.isNotValidAtThisTime,
+            frameId
         });
         break;
 
@@ -3182,9 +3161,9 @@ var BrowserOnClick = {
     // Allow users to override and continue through to the site,
     // but add a notify bar as a reminder, so that they don't lose
     // track after, e.g., tab switching.
-    gBrowser.loadURIWithFlags(gBrowser.currentURI.spec,
-                              Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CLASSIFIER,
-                              null, null, null);
+    gBrowser.loadURI(gBrowser.currentURI.spec, {
+      flags: Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_CLASSIFIER,
+    });
 
     Services.perms.add(gBrowser.currentURI, "safe-browsing",
                        Ci.nsIPermissionManager.ALLOW_ACTION,
@@ -3307,13 +3286,13 @@ function BrowserReloadWithFlags(reloadFlags) {
     // If the remoteness has changed, the new browser doesn't have any
     // information of what was loaded before, so we need to load the previous
     // URL again.
-    gBrowser.loadURIWithFlags(url, reloadFlags);
+    gBrowser.loadURI(url, { flags: reloadFlags });
     return;
   }
 
   // Do this after the above case where we might flip remoteness.
   // Unfortunately, we'll count the remoteness flip case as a
-  // "newURL" load, since we're using loadURIWithFlags, but hopefully
+  // "newURL" load, since we're using loadURI, but hopefully
   // that's rare enough to not matter.
   maybeRecordAbandonmentTelemetry(gBrowser.selectedTab, "reload");
 
@@ -5351,8 +5330,8 @@ nsBrowserAccess.prototype = {
           let loadflags = isExternal ?
                             Ci.nsIWebNavigation.LOAD_FLAGS_FROM_EXTERNAL :
                             Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
-          gBrowser.loadURIWithFlags(aURI.spec, {
-            aTriggeringPrincipal,
+          gBrowser.loadURI(aURI.spec, {
+            triggeringPrincipal: aTriggeringPrincipal,
             flags: loadflags,
             referrerURI: referrer,
             referrerPolicy,
@@ -5632,38 +5611,6 @@ function displaySecurityInfo() {
   BrowserPageInfo(null, "securityTab");
 }
 
-// Adds additional drag space to the window by listening to
-// the corresponding preference.
-var gDragSpaceObserver = {
-  pref: "browser.tabs.extraDragSpace",
-
-  init() {
-    this.update();
-    Services.prefs.addObserver(this.pref, this);
-  },
-
-  uninit() {
-    Services.prefs.removeObserver(this.pref, this);
-  },
-
-  observe(aSubject, aTopic, aPrefName) {
-    if (aTopic != "nsPref:changed" || aPrefName != this.pref) {
-      return;
-    }
-
-    this.update();
-  },
-
-  update() {
-    if (Services.prefs.getBoolPref(this.pref)) {
-      document.documentElement.setAttribute("extradragspace", "true");
-    } else {
-      document.documentElement.removeAttribute("extradragspace");
-    }
-    TabsInTitlebar.updateAppearance(true);
-  },
-};
-
 // Updates the UI density (for touch and compact mode) based on the uidensity pref.
 var gUIDensity = {
   MODE_NORMAL: 0,
@@ -5740,7 +5687,7 @@ var gUIDensity = {
       }
     }
 
-    TabsInTitlebar.updateAppearance(true);
+    TabsInTitlebar.update();
     gBrowser.tabContainer.uiDensityChanged();
   },
 };
@@ -8437,14 +8384,14 @@ const gAccessibilityServiceIndicator = {
       [...document.querySelectorAll(".accessibility-indicator")].forEach(
         indicator => ["click", "keypress"].forEach(type =>
           indicator.addEventListener(type, this)));
-      TabsInTitlebar.updateAppearance(true);
+      TabsInTitlebar.update();
     } else if (this._active) {
       this._active = false;
       document.documentElement.removeAttribute("accessibilitymode");
       [...document.querySelectorAll(".accessibility-indicator")].forEach(
         indicator => ["click", "keypress"].forEach(type =>
           indicator.removeEventListener(type, this)));
-      TabsInTitlebar.updateAppearance(true);
+      TabsInTitlebar.update();
     }
   },
 

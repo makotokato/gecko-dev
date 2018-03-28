@@ -31,14 +31,17 @@ XPCOMUtils.defineLazyGetter(this, "Management", () => {
   return Management;
 });
 
-XPCOMUtils.defineLazyServiceGetter(this, "aomStartup",
-                                   "@mozilla.org/addons/addon-manager-startup;1",
-                                   "amIAddonManagerStartup");
-XPCOMUtils.defineLazyServiceGetter(this, "rdfService",
-                                   "@mozilla.org/rdf/rdf-service;1", "nsIRDFService");
-XPCOMUtils.defineLazyServiceGetter(this, "uuidGen",
-                                   "@mozilla.org/uuid-generator;1", "nsIUUIDGenerator");
+ChromeUtils.defineModuleGetter(this, "FileTestUtils",
+                               "resource://testing-common/FileTestUtils.jsm");
+ChromeUtils.defineModuleGetter(this, "HttpServer",
+                               "resource://testing-common/httpd.js");
 
+XPCOMUtils.defineLazyServiceGetters(this, {
+  aomStartup: ["@mozilla.org/addons/addon-manager-startup;1", "amIAddonManagerStartup"],
+  proxyService: ["@mozilla.org/network/protocol-proxy-service;1", "nsIProtocolProxyService"],
+  rdfService: ["@mozilla.org/rdf/rdf-service;1", "nsIRDFService"],
+  uuidGen: ["@mozilla.org/uuid-generator;1", "nsIUUIDGenerator"],
+});
 
 XPCOMUtils.defineLazyGetter(this, "AppInfo", () => {
   let AppInfo = {};
@@ -140,7 +143,9 @@ function escaped(strings, ...values) {
 class AddonsList {
   constructor(file) {
     this.extensions = [];
+    this.bootstrapped = [];
     this.themes = [];
+    this.xpis = [];
 
     if (!file.exists()) {
       return;
@@ -152,23 +157,27 @@ class AddonsList {
       let dir = loc.path && new nsFile(loc.path);
 
       for (let addon of Object.values(loc.addons)) {
-        if (addon.enabled && !addon.bootstrapped) {
-          let file;
-          if (dir) {
-            file = dir.clone();
-            try {
-              file.appendRelativePath(addon.path);
-            } catch (e) {
-              file = new nsFile(addon.path);
-            }
-          } else {
+        let file;
+        if (dir) {
+          file = dir.clone();
+          try {
+            file.appendRelativePath(addon.path);
+          } catch (e) {
             file = new nsFile(addon.path);
           }
+        } else {
+          file = new nsFile(addon.path);
+        }
 
+        this.xpis.push(file);
+
+        if (addon.enabled) {
           addon.type = addon.type || "extension";
 
           if (addon.type == "theme") {
             this.themes.push(file);
+          } else if (addon.bootstrapped) {
+            this.bootstrapped.push(file);
           } else {
             this.extensions.push(file);
           }
@@ -200,6 +209,10 @@ class AddonsList {
     return this.hasItem("themes", dir, id);
   }
 
+  hasBootstrapped(dir, id) {
+    return this.hasItem("bootstrapped", dir, id);
+  }
+
   hasExtension(dir, id) {
     return this.hasItem("extensions", dir, id);
   }
@@ -215,7 +228,16 @@ var AddonTestUtils = {
   usePrivilegedSignatures: true,
   overrideEntry: null,
 
+  maybeInit(testScope) {
+    if (this.testScope != testScope) {
+      this.init(testScope);
+    }
+  },
+
   init(testScope) {
+    if (this.testScope === testScope) {
+      return;
+    }
     this.testScope = testScope;
 
     // Get the profile directory for tests to use.
@@ -295,12 +317,27 @@ var AddonTestUtils = {
     testScope.registerCleanupFunction(() => {
       this.cleanupTempXPIs();
 
+      let ignoreEntries = new Set();
+      {
+        // FileTestUtils lazily creates a directory to hold the temporary files
+        // it creates. If that directory exists, ignore it.
+        let {value} = Object.getOwnPropertyDescriptor(FileTestUtils,
+                                                      "_globalTemporaryDirectory");
+        if (value) {
+          ignoreEntries.add(value.leafName);
+        }
+      }
+
       // Check that the temporary directory is empty
       var dirEntries = this.tempDir.directoryEntries
                            .QueryInterface(Ci.nsIDirectoryEnumerator);
       var entries = [];
-      while (dirEntries.hasMoreElements())
-        entries.push(dirEntries.nextFile.leafName);
+      while (dirEntries.hasMoreElements()) {
+        let {leafName} = dirEntries.nextFile;
+        if (!ignoreEntries.has(leafName)) {
+          entries.push(leafName);
+        }
+      }
       if (entries.length)
         throw new Error(`Found unexpected files in temporary directory: ${entries.join(", ")}`);
 
@@ -362,6 +399,63 @@ var AddonTestUtils = {
         Cu.reportError(e);
       }
     });
+  },
+
+  /**
+   * Creates a new HttpServer for testing, and begins listening on the
+   * specified port. Automatically shuts down the server when the test
+   * unit ends.
+   *
+   * @param {object} [options = {}]
+   *        The options object.
+   * @param {integer} [options.port = -1]
+   *        The port to listen on. If omitted, listen on a random
+   *        port. The latter is the preferred behavior.
+   * @param {sequence<string>?} [options.hosts = null]
+   *        A set of hosts to accept connections to. Support for this is
+   *        implemented using a proxy filter.
+   *
+   * @returns {HttpServer}
+   *        The HTTP server instance.
+   */
+  createHttpServer({port = -1, hosts} = {}) {
+    let server = new HttpServer();
+    server.start(port);
+
+    if (hosts) {
+      hosts = new Set(hosts);
+      const serverHost = "localhost";
+      const serverPort = server.identity.primaryPort;
+
+      for (let host of hosts) {
+        server.identity.add("http", host, 80);
+      }
+
+      const proxyFilter = {
+        proxyInfo: proxyService.newProxyInfo("http", serverHost, serverPort, 0, 4096, null),
+
+        applyFilter(service, channel, defaultProxyInfo, callback) {
+          if (hosts.has(channel.URI.host)) {
+            callback.onProxyFilterResult(this.proxyInfo);
+          } else {
+            callback.onProxyFilterResult(defaultProxyInfo);
+          }
+        },
+      };
+
+      proxyService.registerChannelFilter(proxyFilter, 0);
+      this.testScope.registerCleanupFunction(() => {
+        proxyService.unregisterChannelFilter(proxyFilter);
+      });
+    }
+
+    this.testScope.registerCleanupFunction(() => {
+      return new Promise(resolve => {
+        server.stop(resolve);
+      });
+    });
+
+    return server;
   },
 
   info(msg) {
@@ -599,13 +693,19 @@ var AddonTestUtils = {
 
     Services.obs.notifyObservers(null, "quit-application-granted");
     return MockAsyncShutdown.hook()
-      .then(() => {
+      .then(async () => {
         this.emit("addon-manager-shutdown");
 
         this.addonIntegrationService = null;
 
         // Load the add-ons list as it was after application shutdown
-        this.loadAddonsList();
+        await this.loadAddonsList();
+
+        // Flush the jar cache entries for each bootstrapped XPI so that
+        // we don't run into file locking issues on Windows.
+        for (let file of this.addonsList.xpis) {
+          Services.obs.notifyObservers(file, "flush-cache-entry");
+        }
 
         // Clear any crash report annotations
         this.appInfo.annotations = {};
@@ -726,7 +826,7 @@ var AddonTestUtils = {
 
     rdf += '<Description about="urn:mozilla:install-manifest">\n';
 
-    let props = ["id", "version", "type", "internalName", "updateURL", "updateKey",
+    let props = ["id", "version", "type", "internalName", "updateURL",
                  "optionsURL", "optionsType", "aboutURL", "iconURL", "icon64URL",
                  "skinnable", "bootstrap", "unpack", "strictCompatibility",
                  "hasEmbeddedWebExtension"];
@@ -889,6 +989,18 @@ var AddonTestUtils = {
   },
 
   /**
+   * Creates an XPI with the given files and installs it.
+   *
+   * @param {object} files
+   *        A files object as would be passed to {@see #createTempXPI}.
+   * @returns {Promise}
+   *        A promise which resolves when the add-on is installed.
+   */
+  promiseInstallXPI(files) {
+    return this.promiseInstallFile(this.createTempXPIFile(files));
+  },
+
+  /**
    * Creates an extension proxy file.
    * See: https://developer.mozilla.org/en-US/Add-ons/Setting_up_extension_development_environment#Firefox_extension_proxy_file
    *
@@ -943,7 +1055,16 @@ var AddonTestUtils = {
         let target = dir.clone();
         for (let part of entry.split("/"))
           target.append(part);
-        zip.extract(entry, target);
+        if (!target.parent.exists())
+          target.parent.create(Ci.nsIFile.DIRECTORY_TYPE, FileUtils.PERMS_DIRECTORY);
+        try {
+          zip.extract(entry, target);
+        } catch (e) {
+          if (e.result != Cr.NS_ERROR_FILE_DIR_NOT_EMPTY &&
+              !(target.exists() && target.isDirectory())) {
+            throw e;
+          }
+        }
         target.permissions |= FileUtils.PERMS_FILE;
       }
       zip.close();
@@ -1054,6 +1175,16 @@ var AddonTestUtils = {
       QueryInterface: XPCOMUtils.generateQI([Ci.nsIDirectoryServiceProvider]),
     };
     Services.dirsvc.registerProvider(dirProvider);
+
+    try {
+      Services.dirsvc.undefine(key);
+    } catch (e) {
+      // This throws if the key is not already registered, but that
+      // doesn't matter.
+      if (e.result != Cr.NS_ERROR_FAILURE) {
+        throw e;
+      }
+    }
   },
 
   /**
@@ -1157,15 +1288,25 @@ var AddonTestUtils = {
   },
 
   /**
+   * @property {number} updateReason
+   *        The default update reason for {@see promiseFindAddonUpdates}
+   *        calls. May be overwritten by tests which primarily check for
+   *        updates with a particular reason.
+   */
+  updateReason: AddonManager.UPDATE_WHEN_PERIODIC_UPDATE,
+
+  /**
    * Returns a promise that will be resolved when an add-on update check is
    * complete. The value resolved will be an AddonInstall if a new version was
    * found.
    *
    * @param {object} addon The add-on to find updates for.
    * @param {integer} reason The type of update to find.
+   * @param {Array} args Additional args to pass to `checkUpdates` after
+   *                     the update reason.
    * @return {Promise<object>} an object containing information about the update.
    */
-  promiseFindAddonUpdates(addon, reason = AddonManager.UPDATE_WHEN_PERIODIC_UPDATE) {
+  promiseFindAddonUpdates(addon, reason = AddonTestUtils.updateReason, ...args) {
     let equal = this.testScope.equal;
     return new Promise((resolve, reject) => {
       let result = {};
@@ -1211,7 +1352,7 @@ var AddonTestUtils = {
             reject(result);
           }
         }
-      }, reason);
+      }, reason, ...args);
     });
   },
 

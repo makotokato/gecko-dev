@@ -75,7 +75,7 @@ HistoryEngine.prototype = {
     this._log.debug("Checking if server sync ID ${newSyncID} matches existing",
                     { newSyncID });
     await PlacesSyncUtils.history.ensureCurrentSyncId(newSyncID);
-    super.setSyncIDPref(newSyncID); // Remove in bug 1443021.
+    await super.ensureCurrentSyncID(newSyncID); // Remove in bug 1443021.
     return newSyncID;
   },
 
@@ -91,12 +91,8 @@ HistoryEngine.prototype = {
   async resetLocalSyncID() {
     let newSyncID = await PlacesSyncUtils.history.resetSyncId();
     this._log.debug("Assigned new sync ID ${newSyncID}", { newSyncID });
-    await super.setSyncIDPref(newSyncID); // Remove in bug 1443021.
+    await super.ensureCurrentSyncID(newSyncID); // Remove in bug 1443021.
     return newSyncID;
-  },
-
-  setSyncIDPref(syncID) {
-    throw new Error("Use ensureCurrentSyncID or resetLocalSyncID");
   },
 
   async getLastSync() {
@@ -157,43 +153,13 @@ HistoryEngine.prototype = {
 
 function HistoryStore(name, engine) {
   Store.call(this, name, engine);
-
-  // Explicitly nullify our references to our cached services so we don't leak
-  Svc.Obs.add("places-shutdown", function() {
-    for (let query in this._stmts) {
-      let stmt = this._stmts[query];
-      stmt.finalize();
-    }
-    this._stmts = {};
-  }, this);
 }
+
 HistoryStore.prototype = {
   __proto__: Store.prototype,
 
-  __asyncHistory: null,
-
   // We try and only update this many visits at one time.
   MAX_VISITS_PER_INSERT: 500,
-
-  get _asyncHistory() {
-    if (!this.__asyncHistory) {
-      this.__asyncHistory = Cc["@mozilla.org/browser/history;1"]
-                              .getService(Ci.mozIAsyncHistory);
-    }
-    return this.__asyncHistory;
-  },
-
-  _stmts: {},
-  _getStmt(query) {
-    if (query in this._stmts) {
-      return this._stmts[query];
-    }
-
-    this._log.trace("Creating SQL statement: " + query);
-    let db = PlacesUtils.history.QueryInterface(Ci.nsPIPlacesDatabase)
-                        .DBConnection;
-    return this._stmts[query] = db.createAsyncStatement(query);
-  },
 
   // Some helper functions to handle GUIDs
   async setGUID(uri, guid) {

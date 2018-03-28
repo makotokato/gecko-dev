@@ -59,15 +59,9 @@ window._gBrowser = {
     messageManager.addMessageListener("Findbar:Keypress", this);
 
     XPCOMUtils.defineLazyPreferenceGetter(this, "animationsEnabled",
-      "toolkit.cosmeticAnimations.enabled", true);
+      "toolkit.cosmeticAnimations.enabled");
     XPCOMUtils.defineLazyPreferenceGetter(this, "schedulePressureDefaultCount",
-      "browser.schedulePressure.defaultCount", 3);
-    XPCOMUtils.defineLazyPreferenceGetter(this, "tabWarmingEnabled",
-      "browser.tabs.remote.warmup.enabled", false);
-    XPCOMUtils.defineLazyPreferenceGetter(this, "tabWarmingMax",
-      "browser.tabs.remote.warmup.maxTabs", 3);
-    XPCOMUtils.defineLazyPreferenceGetter(this, "tabWarmingUnloadDelay" /* ms */,
-      "browser.tabs.remote.warmup.unloadDelayMs", 2000);
+      "browser.schedulePressure.defaultCount");
 
     this._setupEventListeners();
   },
@@ -126,7 +120,7 @@ window._gBrowser = {
    */
   _browserBindingProperties: [
     "canGoBack", "canGoForward", "goBack", "goForward", "permitUnload",
-    "reload", "reloadWithFlags", "stop", "loadURI", "loadURIWithFlags",
+    "reload", "reloadWithFlags", "stop", "loadURI",
     "gotoIndex", "currentURI", "documentURI",
     "preferences", "imageDocument", "isRemoteBrowser", "messageManager",
     "getTabBrowser", "finder", "fastFind", "sessionHistory", "contentTitle",
@@ -352,20 +346,8 @@ window._gBrowser = {
   /**
    * throws exception for unknown schemes
    */
-  loadURI(aURI, aReferrerURI, aCharset) {
-    return this.selectedBrowser.loadURI(aURI, aReferrerURI, aCharset);
-  },
-
-  /**
-   * throws exception for unknown schemes
-   */
-  loadURIWithFlags(aURI, aFlags, aReferrerURI, aCharset, aPostData) {
-    // Note - the callee understands both:
-    // (a) loadURIWithFlags(aURI, aFlags, ...)
-    // (b) loadURIWithFlags(aURI, { flags: aFlags, ... })
-    // Forwarding it as (a) here actually supports both (a) and (b),
-    // so you can call us either way too.
-    return this.selectedBrowser.loadURIWithFlags(aURI, aFlags, aReferrerURI, aCharset, aPostData);
+  loadURI(aURI, aParams) {
+    return this.selectedBrowser.loadURI(aURI, aParams);
   },
 
   gotoIndex(aIndex) {
@@ -386,10 +368,6 @@ window._gBrowser = {
 
   get webNavigation() {
     return this.selectedBrowser.webNavigation;
-  },
-
-  get webBrowserFind() {
-    return this.selectedBrowser.webBrowserFind;
   },
 
   get webProgress() {
@@ -876,7 +854,7 @@ window._gBrowser = {
       docTitle = tab.getAttribute("label").replace(/\0/g, "");
     }
 
-    if (!docTitle || docTitle == this.tabContainer.emptyTabTitle)
+    if (!docTitle)
       docTitle = docElement.getAttribute("titledefault");
 
     var modifier = docElement.getAttribute("titlemodifier");
@@ -1504,7 +1482,7 @@ window._gBrowser = {
           Ci.nsIWebNavigation.LOAD_FLAGS_FIXUP_SCHEME_TYPOS;
       }
       try {
-        browser.loadURIWithFlags(aURIs[0], {
+        browser.loadURI(aURIs[0], {
           flags,
           postData: aPostDatas[0],
           triggeringPrincipal: aTriggeringPrincipal,
@@ -1797,7 +1775,6 @@ window._gBrowser = {
 
     browser.loadURI(BROWSER_NEW_TAB_URL);
     browser.docShellIsActive = false;
-    browser.renderLayers = true;
     browser._urlbarFocused = true;
 
     // Make sure the preloaded browser is loaded with desired zoom level
@@ -2167,6 +2144,7 @@ window._gBrowser = {
     var aNoInitialLabel;
     var aFocusUrlBar;
     var aName;
+    var aBulkOrderedOpen;
     if (arguments.length == 2 &&
         typeof arguments[1] == "object" &&
         !(arguments[1] instanceof Ci.nsIURI)) {
@@ -2198,6 +2176,7 @@ window._gBrowser = {
       aNoInitialLabel = params.noInitialLabel;
       aFocusUrlBar = params.focusUrlBar;
       aName = params.name;
+      aBulkOrderedOpen = params.bulkOrderedOpen;
     }
 
     // if we're adding tabs, we're past interrupt mode, ditch the owner
@@ -2304,7 +2283,7 @@ window._gBrowser = {
       t._tPos = position;
       this.tabContainer._setPositionalAttributes();
 
-      this.tabContainer.updateVisibility();
+      TabBarVisibility.update();
 
       // If we don't have a preferred remote type, and we have a remote
       // opener, use the opener's remote type.
@@ -2437,7 +2416,7 @@ window._gBrowser = {
       if (aDisallowInheritPrincipal)
         flags |= Ci.nsIWebNavigation.LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
       try {
-        b.loadURIWithFlags(aURI, {
+        b.loadURI(aURI, {
           flags,
           triggeringPrincipal: aTriggeringPrincipal,
           referrerURI: aNoReferrer ? null : aReferrerURI,
@@ -2450,19 +2429,22 @@ window._gBrowser = {
       }
     }
 
-    // If we're opening a tab related to the an existing tab, move it
-    // to a position after that tab.
-    if (openerTab &&
-        Services.prefs.getBoolPref("browser.tabs.insertRelatedAfterCurrent")) {
+    // Move the new tab after another tab if needed.
+    if (!aBulkOrderedOpen &&
+        ((openerTab &&
+          Services.prefs.getBoolPref("browser.tabs.insertRelatedAfterCurrent")) ||
+         Services.prefs.getBoolPref("browser.tabs.insertAfterCurrent"))) {
 
-      let lastRelatedTab = this._lastRelatedTabMap.get(openerTab);
-      let newTabPos = (lastRelatedTab || openerTab)._tPos + 1;
+      let lastRelatedTab = openerTab && this._lastRelatedTabMap.get(openerTab);
+      let newTabPos = (lastRelatedTab || openerTab || this.selectedTab)._tPos + 1;
+
       if (lastRelatedTab)
         lastRelatedTab.owner = null;
-      else
+      else if (openerTab)
         t.owner = openerTab;
       this.moveTabTo(t, newTabPos, true);
-      this._lastRelatedTabMap.set(openerTab, t);
+      if (openerTab)
+        this._lastRelatedTabMap.set(openerTab, t);
     }
 
     // This field is updated regardless if we actually animate
@@ -2775,7 +2757,7 @@ window._gBrowser = {
     if (newTab)
       this.addTab(BROWSER_NEW_TAB_URL, { skipAnimation: true });
     else
-      this.tabContainer.updateVisibility();
+      TabBarVisibility.update();
 
     // We're committed to closing the tab now.
     // Dispatch a notification.
@@ -4723,3 +4705,27 @@ var StatusPanel = {
   }
 };
 
+var TabBarVisibility = {
+  _initialUpdateDone: false,
+
+  update() {
+    let toolbar = document.getElementById("TabsToolbar");
+    let collapse = false;
+    if (gBrowser.tabs.length - gBrowser._removingTabs.length == 1) {
+      collapse = !window.toolbar.visible;
+    }
+
+    if (collapse == toolbar.collapsed && this._initialUpdateDone) {
+      return;
+    }
+    this._initialUpdateDone = true;
+
+    toolbar.collapsed = collapse;
+
+    document.getElementById("menu_closeWindow").hidden = collapse;
+    document.getElementById("menu_close").setAttribute("label",
+      gTabBrowserBundle.GetStringFromName(collapse ? "tabs.close" : "tabs.closeTab"));
+
+    TabsInTitlebar.allowedBy("tabs-visible", !collapse);
+  }
+};

@@ -14,7 +14,6 @@
 
 // Interfaces needed to be included
 #include "nsCopySupport.h"
-#include "nsIDOMUIEvent.h"
 #include "nsISelection.h"
 #include "nsISelectionController.h"
 #include "nsIDOMNode.h"
@@ -359,7 +358,7 @@ DragDataProducer::GetNodeString(nsIContent* inNode,
   RefPtr<nsRange> range = doc->CreateRange(IgnoreErrors());
   if (range) {
     range->SelectNode(*node, IgnoreErrors());
-    range->ToString(outNodeString);
+    range->ToString(outNodeString, IgnoreErrors());
   }
 }
 
@@ -509,7 +508,7 @@ DragDataProducer::Produce(DataTransfer* aDataTransfer,
       // set for linked images, and links
       nsCOMPtr<nsIContent> linkNode;
 
-      RefPtr<HTMLAreaElement> areaElem = HTMLAreaElement::FromContentOrNull(draggedNode);
+      RefPtr<HTMLAreaElement> areaElem = HTMLAreaElement::FromNodeOrNull(draggedNode);
       if (areaElem) {
         // use the alt text (or, if missing, the href) as the title
         areaElem->GetAttribute(NS_LITERAL_STRING("alt"), mTitleString);

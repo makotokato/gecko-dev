@@ -323,12 +323,12 @@ var PlacesUtils = {
   // Used to track the action that populated the clipboard.
   TYPE_X_MOZ_PLACE_ACTION: "text/x-moz-place-action",
 
-  EXCLUDE_FROM_BACKUP_ANNO: "places/excludeFromBackup",
   LMANNO_FEEDURI: "livemark/feedURI",
   LMANNO_SITEURI: "livemark/siteURI",
   POST_DATA_ANNO: "bookmarkProperties/POSTData",
   READ_ONLY_ANNO: "placesInternal/READ_ONLY",
   CHARSET_ANNO: "URIProperties/characterSet",
+  // Deprecated: This is only used for supporting import from older datasets.
   MOBILE_ROOT_ANNO: "mobile/bookmarksRoot",
 
   TOPIC_SHUTDOWN: "places-shutdown",
@@ -798,8 +798,7 @@ var PlacesUtils = {
     else if (PlacesUtils.nodeIsTagQuery(aNode)) {
       // RESULTS_AS_TAG_CONTENTS queries are similar to folder shortcuts
       // so we can still get the concrete itemId for them.
-      var queries = aNode.getQueries();
-      var folders = queries[0].getFolders();
+      let folders = aNode.query.getFolders();
       return folders[0];
     }
     return aNode.itemId;
@@ -947,6 +946,11 @@ var PlacesUtils = {
       case this.TYPE_X_MOZ_URL: {
         if (aFeedURI || PlacesUtils.nodeIsURI(aNode))
           return (aFeedURI || aNode.uri) + NEWLINE + aNode.title;
+        if (PlacesUtils.nodeIsContainer(aNode)) {
+          return PlacesUtils.getURLsForContainerNode(aNode)
+            .map(item => item.uri + "\n" + item.title)
+            .join("\n");
+        }
         return "";
       }
       case this.TYPE_HTML: {
@@ -1310,13 +1314,11 @@ var PlacesUtils = {
       return aNode;
 
     // Otherwise, get contents manually.
-    var queries = {}, options = {};
-    this.history.queryStringToQueries(aNode.uri, queries, {}, options);
+    var query = {}, options = {};
+    this.history.queryStringToQuery(aNode.uri, query, options);
     options.value.excludeItems = aExcludeItems;
     options.value.expandQueries = aExpandQueries;
-    return this.history.executeQueries(queries.value,
-                                       queries.value.length,
-                                       options.value).root;
+    return this.history.executeQuery(query.value, options.value).root;
   },
 
   /**
@@ -1385,7 +1387,11 @@ var PlacesUtils = {
     for (let i = 0; i < root.childCount; ++i) {
       let child = root.getChild(i);
       if (this.nodeIsURI(child))
-        urls.push({uri: child.uri, isBookmark: this.nodeIsBookmark(child)});
+        urls.push({
+          uri: child.uri,
+          isBookmark: this.nodeIsBookmark(child),
+          title: child.title,
+        });
     }
 
     if (!wasOpen) {

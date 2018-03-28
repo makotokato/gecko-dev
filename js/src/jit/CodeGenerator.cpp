@@ -175,11 +175,15 @@ typedef bool (*IonInICFn)(JSContext*, HandleScript, IonInIC*, HandleValue, Handl
 static const VMFunction IonInICInfo =
     FunctionInfo<IonInICFn>(IonInIC::update, "IonInIC::update");
 
-
 typedef bool (*IonInstanceOfICFn)(JSContext*, HandleScript, IonInstanceOfIC*,
                          HandleValue lhs, HandleObject rhs, bool* res);
 static const VMFunction IonInstanceOfInfo =
     FunctionInfo<IonInstanceOfICFn>(IonInstanceOfIC::update, "IonInstanceOfIC::update");
+
+typedef bool (*IonUnaryArithICFn)(JSContext* cx, HandleScript outerScript, IonUnaryArithIC* stub,
+                                    HandleValue val, MutableHandleValue res);
+static const VMFunction IonUnaryArithICInfo =
+    FunctionInfo<IonUnaryArithICFn>(IonUnaryArithIC::update, "IonUnaryArithIC::update");
 
 void
 CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool)
@@ -353,6 +357,22 @@ CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool)
 
         StoreRegisterTo(hasInstanceOfIC->output()).generate(this);
         restoreLiveIgnore(lir, StoreRegisterTo(hasInstanceOfIC->output()).clobbered());
+
+        masm.jump(ool->rejoin());
+        return;
+      }
+      case CacheKind::UnaryArith: {
+        IonUnaryArithIC* unaryArithIC = ic->asUnaryArithIC();
+
+        saveLive(lir);
+
+        pushArg(unaryArithIC->input());
+        icInfo_[cacheInfoIndex].icOffsetForPush = pushArgWithPatch(ImmWord(-1));
+        pushArg(ImmGCPtr(gen->info().script()));
+        callVM(IonUnaryArithICInfo, lir);
+
+        StoreValueTo(unaryArithIC->output()).generate(this);
+        restoreLiveIgnore(lir, StoreValueTo(unaryArithIC->output()).clobbered());
 
         masm.jump(ool->rejoin());
         return;
@@ -1915,7 +1935,7 @@ JitCompartment::generateRegExpMatcherStub(JSContext* cx)
     MOZ_ASSERT(ObjectElements::VALUES_PER_HEADER + RegExpObject::MaxPairCount ==
                gc::GetGCKindSlots(templateObject->asTenured().getAllocKind()));
 
-    MacroAssembler masm(cx);
+    StackMacroAssembler masm(cx);
 
     // The InputOutputData is placed above the return address on the stack.
     size_t inputOutputDataStartOffset = sizeof(void*);
@@ -2221,7 +2241,7 @@ JitCompartment::generateRegExpSearcherStub(JSContext* cx)
     Register temp2 = regs.takeAny();
     Register temp3 = regs.takeAny();
 
-    MacroAssembler masm(cx);
+    StackMacroAssembler masm(cx);
 
     // The InputOutputData is placed above the return address on the stack.
     size_t inputOutputDataStartOffset = sizeof(void*);
@@ -2360,7 +2380,7 @@ JitCompartment::generateRegExpTesterStub(JSContext* cx)
     Register lastIndex = RegExpTesterLastIndexReg;
     Register result = ReturnReg;
 
-    MacroAssembler masm(cx);
+    StackMacroAssembler masm(cx);
 
 #ifdef JS_USE_LINK_REGISTER
     masm.pushReturnAddress();
@@ -2760,22 +2780,14 @@ CodeGenerator::visitBinarySharedStub(LBinarySharedStub* lir)
 }
 
 void
-CodeGenerator::visitUnarySharedStub(LUnarySharedStub* lir)
+CodeGenerator::visitUnaryCache(LUnaryCache* lir)
 {
-    JSOp jsop = JSOp(*lir->mir()->resumePoint()->pc());
-    switch (jsop) {
-      case JSOP_BITNOT:
-      case JSOP_NEG:
-        emitSharedStub(ICStub::Kind::UnaryArith_Fallback, lir);
-        break;
-      case JSOP_CALLPROP:
-      case JSOP_GETPROP:
-      case JSOP_LENGTH:
-        emitSharedStub(ICStub::Kind::GetProp_Fallback, lir);
-        break;
-      default:
-        MOZ_CRASH("Unsupported jsop in shared stubs.");
-    }
+    LiveRegisterSet liveRegs = lir->safepoint()->liveRegs();
+    TypedOrValueRegister input = TypedOrValueRegister(ToValue(lir, LUnaryCache::Input));
+    ValueOperand output = ToOutValue(lir);
+
+    IonUnaryArithIC ic(liveRegs, input, output);
+    addIC(lir, allocateIC(ic));
 }
 
 void
@@ -5262,13 +5274,9 @@ CodeGenerator::visitCheckOverRecursed(LCheckOverRecursed* lir)
     CheckOverRecursedFailure* ool = new(alloc()) CheckOverRecursedFailure(lir);
     addOutOfLineCode(ool, lir->mir());
 
-    Register temp = ToRegister(lir->temp());
-
     // Conditional forward (unlikely) branch to failure.
-    const void* contextAddr = gen->compartment->zone()->addressOfJSContext();
-    masm.loadPtr(AbsoluteAddress(contextAddr), temp);
-    masm.branchStackPtrRhs(Assembler::AboveOrEqual,
-                           Address(temp, offsetof(JSContext, jitStackLimit)), ool->entry());
+    const void* limitAddr = gen->runtime->addressOfJitStackLimit();
+    masm.branchStackPtrRhs(Assembler::AboveOrEqual, AbsoluteAddress(limitAddr), ool->entry());
     masm.bind(ool->rejoin());
 }
 
@@ -7152,6 +7160,11 @@ CodeGenerator::visitWasmLoadGlobalVar(LWasmLoadGlobalVar* ins)
 
     Register tls = ToRegister(ins->tlsPtr());
     Address addr(tls, offsetof(wasm::TlsData, globalArea) + mir->globalDataOffset());
+    if (mir->isIndirect()) {
+        Register tmp = ToRegister(ins->addrTemp());
+        masm.loadPtr(addr, tmp);
+        addr = Address(tmp, 0);
+    }
     switch (type) {
       case MIRType::Int32:
         masm.load32(addr, ToRegister(ins->output()));
@@ -7190,6 +7203,11 @@ CodeGenerator::visitWasmStoreGlobalVar(LWasmStoreGlobalVar* ins)
 
     Register tls = ToRegister(ins->tlsPtr());
     Address addr(tls, offsetof(wasm::TlsData, globalArea) + mir->globalDataOffset());
+    if (mir->isIndirect()) {
+        Register tmp = ToRegister(ins->addrTemp());
+        masm.loadPtr(addr, tmp);
+        addr = Address(tmp, 0);
+    }
     switch (type) {
       case MIRType::Int32:
         masm.store32(ToRegister(ins->value()), addr);
@@ -7228,6 +7246,11 @@ CodeGenerator::visitWasmLoadGlobalVarI64(LWasmLoadGlobalVarI64* ins)
     Address addr(tls, offsetof(wasm::TlsData, globalArea) + mir->globalDataOffset());
 
     Register64 output = ToOutRegister64(ins);
+    if (mir->isIndirect()) {
+        Register tmp = ToRegister(ins->addrTemp());
+        masm.loadPtr(addr, tmp);
+        addr = Address(tmp, 0);
+    }
     masm.load64(addr, output);
 }
 
@@ -7241,6 +7264,11 @@ CodeGenerator::visitWasmStoreGlobalVarI64(LWasmStoreGlobalVarI64* ins)
     Address addr(tls, offsetof(wasm::TlsData, globalArea) + mir->globalDataOffset());
 
     Register64 value = ToRegister64(ins->value());
+    if (mir->isIndirect()) {
+        Register tmp = ToRegister(ins->addrTemp());
+        masm.loadPtr(addr, tmp);
+        addr = Address(tmp, 0);
+    }
     masm.store64(value, addr);
 }
 
@@ -8390,7 +8418,7 @@ CodeGenerator::visitSubstr(LSubstr* lir)
 JitCode*
 JitCompartment::generateStringConcatStub(JSContext* cx)
 {
-    MacroAssembler masm(cx);
+    StackMacroAssembler masm(cx);
 
     Register lhs = CallTempReg0;
     Register rhs = CallTempReg1;
@@ -10052,8 +10080,6 @@ CodeGenerator::generateWasm(wasm::SigIdDesc sigId, wasm::BytecodeOffset trapOffs
     if (!generateOutOfLineCode())
         return false;
 
-    masm.wasmEmitOldTrapOutOfLineCode();
-
     masm.flush();
     if (masm.oom())
         return false;
@@ -10173,11 +10199,6 @@ CodeGenerator::linkSharedStubs(JSContext* cx)
         switch (sharedStubs_[i].kind) {
           case ICStub::Kind::BinaryArith_Fallback: {
             ICBinaryArith_Fallback::Compiler stubCompiler(cx, ICStubCompiler::Engine::IonSharedIC);
-            stub = stubCompiler.getStub(&stubSpace_);
-            break;
-          }
-          case ICStub::Kind::UnaryArith_Fallback: {
-            ICUnaryArith_Fallback::Compiler stubCompiler(cx, ICStubCompiler::Engine::IonSharedIC);
             stub = stubCompiler.getStub(&stubSpace_);
             break;
           }
@@ -10302,7 +10323,7 @@ CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints)
         js_free(ionScript);
     });
 
-    Linker linker(masm, nogc);
+    Linker linker(masm);
     AutoFlushICache afc("IonLink");
     JitCode* code = linker.newCode(cx, CodeKind::Ion, !patchableBackedges_.empty());
     if (!code)
@@ -12899,12 +12920,8 @@ CodeGenerator::visitInterruptCheck(LInterruptCheck* lir)
 
     OutOfLineCode* ool = oolCallVM(InterruptCheckInfo, lir, ArgList(), StoreNothing());
 
-    Register temp = ToRegister(lir->temp());
-
-    const void* contextAddr = gen->compartment->zone()->addressOfJSContext();
-    masm.loadPtr(AbsoluteAddress(contextAddr), temp);
-    masm.branch32(Assembler::NotEqual, Address(temp, offsetof(JSContext, interrupt_)),
-                  Imm32(0), ool->entry());
+    const void* interruptAddr = gen->runtime->addressOfInterrupt();
+    masm.branch32(Assembler::NotEqual, AbsoluteAddress(interruptAddr), Imm32(0), ool->entry());
     masm.bind(ool->rejoin());
 }
 
@@ -12934,8 +12951,10 @@ CodeGenerator::visitWasmBoundsCheck(LWasmBoundsCheck* ins)
     const MWasmBoundsCheck* mir = ins->mir();
     Register ptr = ToRegister(ins->ptr());
     Register boundsCheckLimit = ToRegister(ins->boundsCheckLimit());
-    masm.wasmBoundsCheck(Assembler::AboveOrEqual, ptr, boundsCheckLimit,
-                         oldTrap(mir, wasm::Trap::OutOfBounds));
+    Label ok;
+    masm.wasmBoundsCheck(Assembler::Below, ptr, boundsCheckLimit, &ok);
+    masm.wasmTrap(wasm::Trap::OutOfBounds, mir->bytecodeOffset());
+    masm.bind(&ok);
 #endif
 }
 
@@ -12944,8 +12963,10 @@ CodeGenerator::visitWasmAlignmentCheck(LWasmAlignmentCheck* ins)
 {
     const MWasmAlignmentCheck* mir = ins->mir();
     Register ptr = ToRegister(ins->ptr());
-    masm.branchTest32(Assembler::NonZero, ptr, Imm32(mir->byteSize() - 1),
-                      oldTrap(mir, wasm::Trap::UnalignedAccess));
+    Label ok;
+    masm.branchTest32(Assembler::Zero, ptr, Imm32(mir->byteSize() - 1), &ok);
+    masm.wasmTrap(wasm::Trap::UnalignedAccess, mir->bytecodeOffset());
+    masm.bind(&ok);
 }
 
 void
@@ -13355,9 +13376,9 @@ CodeGenerator::visitFinishBoundFunctionInit(LFinishBoundFunctionInit* lir)
     Label notBoundTarget, loadName;
     masm.branchTest32(Assembler::Zero, temp1, Imm32(JSFunction::BOUND_FUN), &notBoundTarget);
     {
-        // Target's name atom doesn't contain the bound function prefix, so we
-        // need to call into the VM.
-        masm.branchTest32(Assembler::Zero, temp1,
+        // Call into the VM if the target's name atom contains the bound
+        // function prefix.
+        masm.branchTest32(Assembler::NonZero, temp1,
                           Imm32(JSFunction::HAS_BOUND_FUNCTION_NAME_PREFIX), slowPath);
 
         // We also take the slow path when target's length isn't an int32.

@@ -58,7 +58,7 @@ async function breakpointScopes(dbg, fixture, { line, column }, scopes) {
 async function expandAllScopes(dbg) {
   const scopes = await waitForElement(dbg, "scopes");
   const scopeElements = scopes.querySelectorAll(
-    `.tree-node[aria-level="0"][data-expandable="true"]:not([aria-expanded="true"])`
+    `.tree-node[aria-level="1"][data-expandable="true"]:not([aria-expanded="true"])`
   );
   const indices = Array.from(scopeElements, el => {
     return Array.prototype.indexOf.call(el.parentNode.childNodes, el);
@@ -92,6 +92,19 @@ add_task(async function() {
   await pushPref("devtools.debugger.features.map-scopes", true);
 
   const dbg = await initDebugger("doc-babel.html");
+
+  await breakpointScopes(dbg, "eval-source-maps", { line: 14, column: 4 }, [
+    "Block",
+    ["three", "5"],
+    ["two", "4"],
+    "Block",
+    ["three", "3"],
+    ["two", "2"],
+    "root",
+    ["one", "1"],
+    "Module",
+    "root()"
+  ]);
 
   await breakpointScopes(dbg, "for-of", { line: 5, column: 4 }, [
     "For",
@@ -160,7 +173,7 @@ add_task(async function() {
 
   // Babel 6's imports aren't fully mapped, so they show as unavailable.
   // The call-based ones work, but the single-identifier ones do not.
-  await breakpointScopes(dbg, "imported-bindings", { line: 17, column: 2 }, [
+  await breakpointScopes(dbg, "imported-bindings", { line: 20, column: 2 }, [
     "Module",
     ["aDefault", '"a-default"'],
     ["aDefault2", '"a-default2"'],
@@ -174,6 +187,7 @@ add_task(async function() {
     ["aNamespace", "{\u2026}"],
     ["aNamespace2", "{\u2026}"],
     ["aNamespace3", "{\u2026}"],
+    ["optimizedOut", "(optimized away)"],
     "root()"
   ]);
 
@@ -251,7 +265,30 @@ add_task(async function() {
     "thirdModuleScoped()"
   ]);
 
+  await breakpointScopes(dbg, "out-of-order-declarations", { line: 8, column: 4 }, [
+    "callback",
+    "fn()",
+    ["val", "undefined"],
+    "root",
+    ["callback", "(optimized away)"],
+    ["fn", "(optimized away)"],
+    ["val", "(optimized away)"],
+    "Module",
+
+    // This value is currently unmapped because import declarations don't map
+    // very well and ones at the end of the file map especially badly.
+    ["aDefault", "(unmapped)"],
+    ["root", "(optimized away)"],
+    ["val", "(optimized away)"],
+  ]);
+
   await breakpointScopes(dbg, "non-modules", { line: 7, column: 2 }, []);
+
+  await breakpointScopes(dbg, "flowtype-bindings", { line: 8, column: 2 }, [
+    "Module",
+    ["aConst", '"a-const"'],
+    "root()"
+  ]);
 
   await breakpointScopes(dbg, "switches", { line: 7, column: 6 }, [
     "Switch",
@@ -284,7 +321,7 @@ add_task(async function() {
     "root()"
   ]);
 
-  await breakpointScopes(dbg, "webpack-modules", { line: 17, column: 2 }, [
+  await breakpointScopes(dbg, "webpack-modules", { line: 20, column: 2 }, [
     "Module",
     ["aDefault", '"a-default"'],
     ["aDefault2", '"a-default2"'],
@@ -298,10 +335,11 @@ add_task(async function() {
     ["aNamespace", "{\u2026}"],
     ["aNamespace2", "{\u2026}"],
     ["aNamespace3", "{\u2026}"],
+    ["optimizedOut", "(optimized away)"],
     "root()"
   ]);
 
-  await breakpointScopes(dbg, "webpack-modules-es6", { line: 17, column: 2 }, [
+  await breakpointScopes(dbg, "webpack-modules-es6", { line: 20, column: 2 }, [
     "Module",
     ["aDefault", '"a-default"'],
     ["aDefault2", '"a-default2"'],
@@ -315,6 +353,7 @@ add_task(async function() {
     ["aNamespace", "{\u2026}"],
     ["aNamespace2", "{\u2026}"],
     ["aNamespace3", "{\u2026}"],
+    ["optimizedOut", "(optimized away)"],
     "root()"
   ]);
 

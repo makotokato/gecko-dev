@@ -54,7 +54,7 @@ class GeckoViewNavigation extends GeckoViewModule {
         this.browser.goForward();
         break;
       case "GeckoView:LoadUri":
-        const { uri, referrer, baseUri, flags } = aData;
+        const { uri, referrer, flags } = aData;
 
         let navFlags = 0;
 
@@ -75,9 +75,10 @@ class GeckoViewNavigation extends GeckoViewModule {
           navFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_POPUPS;
         }
 
-        this.browser.loadURIWithFlags(uri, navFlags, referrer || null,
-                                      baseUri ? Services.io.newURI(baseUri) : null,
-                                      /* nsIPrincipal */ null);
+        this.browser.loadURI(uri, {
+          flags: navFlags,
+          referrerURI: referrer,
+        });
         break;
       case "GeckoView:Reload":
         this.browser.reload();
@@ -151,9 +152,21 @@ class GeckoViewNavigation extends GeckoViewModule {
           " aWhere=" + aWhere +
           " aFlags=" + aFlags);
 
+    if (LoadURIDelegate.load(this.eventDispatcher, aUri, aWhere, aFlags,
+                             aTriggeringPrincipal)) {
+      // The app has handled the load, abort open-window handling.
+      Components.returnCode = Cr.NS_ERROR_ABORT;
+      return null;
+    }
+
     const browser = this.handleNewSession(aUri, aOpener, aWhere, aFlags,
                                           aTriggeringPrincipal);
-    return browser && browser.contentWindow;
+    if (!browser) {
+      Components.returnCode = Cr.NS_ERROR_ABORT;
+      return null;
+    }
+
+    return browser.contentWindow;
   }
 
   // nsIBrowserDOMWindow.
@@ -166,21 +179,34 @@ class GeckoViewNavigation extends GeckoViewModule {
           " aNextTabParentId=" + aNextTabParentId +
           " aName=" + aName);
 
-    const browser = this.handleNewSession(aUri, null, aWhere, aFlags, null);
-    if (browser) {
-      browser.setAttribute("nextTabParentId", aNextTabParentId);
+    if (LoadURIDelegate.load(this.eventDispatcher, aUri, aWhere, aFlags, null)) {
+      // The app has handled the load, abort open-window handling.
+      Components.returnCode = Cr.NS_ERROR_ABORT;
+      return null;
     }
 
+    const browser = this.handleNewSession(aUri, null, aWhere, aFlags, null);
+    if (!browser) {
+      Components.returnCode = Cr.NS_ERROR_ABORT;
+      return null;
+    }
+
+    browser.setAttribute("nextTabParentId", aNextTabParentId);
     return browser;
   }
 
   handleOpenUri(aUri, aOpener, aWhere, aFlags, aTriggeringPrincipal,
                 aNextTabParentId) {
-    let browser = this.browser;
+    debug("handleOpenUri: aUri=" + (aUri && aUri.spec) +
+          " aWhere=" + aWhere +
+          " aFlags=" + aFlags);
+
     if (LoadURIDelegate.load(this.eventDispatcher, aUri, aWhere, aFlags,
                              aTriggeringPrincipal)) {
-      return browser;
+      return null;
     }
+
+    let browser = this.browser;
 
     if (aWhere === Ci.nsIBrowserDOMWindow.OPEN_NEWWINDOW ||
         aWhere === Ci.nsIBrowserDOMWindow.OPEN_NEWTAB ||
@@ -188,6 +214,7 @@ class GeckoViewNavigation extends GeckoViewModule {
       browser = this.handleNewSession(aUri, aOpener, aWhere, aFlags,
                                       aTriggeringPrincipal);
     }
+
     if (!browser) {
       // Should we throw?
       return null;
@@ -260,6 +287,7 @@ class GeckoViewNavigation extends GeckoViewModule {
       uri: fixedURI.displaySpec,
       canGoBack: this.browser.canGoBack,
       canGoForward: this.browser.canGoForward,
+      isTopLevel: aWebProgress.isTopLevel,
     };
 
     debug("dispatch " + JSON.stringify(message));

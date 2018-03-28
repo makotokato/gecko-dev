@@ -13,6 +13,7 @@
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/CustomEvent.h"
+#include "mozilla/dom/ScriptSettings.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsPIDOMWindow.h"
 #include "nsIDocShell.h"
@@ -79,7 +80,6 @@ static const char kPrintingPromptService[] = "@mozilla.org/embedcomp/printingpro
 #include "nsIDocumentObserver.h"
 #include "nsISelectionListener.h"
 #include "nsISelectionPrivate.h"
-#include "nsIDOMRange.h"
 #include "nsContentCID.h"
 #include "nsLayoutCID.h"
 #include "nsContentUtils.h"
@@ -1630,14 +1630,17 @@ nsPrintJob::FirePrintingErrorEvent(nsresult aPrintError)
     NS_NewDOMCustomEvent(doc, nullptr, nullptr);
 
   MOZ_ASSERT(event);
-  nsCOMPtr<nsIWritableVariant> resultVariant = new nsVariant();
-  // nsresults are Uint32_t's, but XPConnect will interpret it as a double
-  // when any JS attempts to access it, and will therefore interpret it
-  // incorrectly. We preempt this by casting and setting as a double.
-  resultVariant->SetAsDouble(static_cast<double>(aPrintError));
 
-  event->InitCustomEvent(NS_LITERAL_STRING("PrintingError"), false, false,
-                         resultVariant);
+  AutoJSAPI jsapi;
+  if (!jsapi.Init(event->GetParentObject())) {
+    return;
+  }
+  JSContext* cx = jsapi.cx();
+
+  JS::Rooted<JS::Value> detail(cx,
+    JS::NumberValue(static_cast<double>(aPrintError)));
+  event->InitCustomEvent(cx, NS_LITERAL_STRING("PrintingError"), false, false,
+                         detail);
   event->SetTrusted(true);
 
   RefPtr<AsyncEventDispatcher> asyncDispatcher =
@@ -2162,13 +2165,13 @@ nsPrintJob::UpdateSelectionAndShrinkPrintObject(nsPrintObject* aPO,
   // Reset all existing selection ranges that might have been added by calling
   // this function before.
   if (selectionPS) {
-    selectionPS->RemoveAllRanges();
+    selectionPS->RemoveAllRanges(IgnoreErrors());
   }
   if (selection && selectionPS) {
     int32_t cnt = selection->RangeCount();
     int32_t inx;
     for (inx = 0; inx < cnt; ++inx) {
-        selectionPS->AddRange(selection->GetRangeAt(inx));
+      selectionPS->AddRange(*selection->GetRangeAt(inx), IgnoreErrors());
     }
   }
 
@@ -2589,7 +2592,7 @@ DeleteUnselectedNodes(nsIDocument* aOrigDoc, nsIDocument* aDoc)
                                        endOffset, getter_AddRefs(range));
 
     if (NS_SUCCEEDED(rv) && !range->Collapsed()) {
-      selection->AddRange(range);
+      selection->AddRange(*range, IgnoreErrors());
 
       // Unless we've already added an ellipsis at the start, if we ended mid
       // text node then add ellipsis.
@@ -2625,7 +2628,7 @@ DeleteUnselectedNodes(nsIDocument* aOrigDoc, nsIDocument* aDoc)
                                      bodyNode->GetChildCount(),
                                      getter_AddRefs(lastRange));
   if (NS_SUCCEEDED(rv) && !lastRange->Collapsed()) {
-    selection->AddRange(lastRange);
+    selection->AddRange(*lastRange, IgnoreErrors());
   }
 
   selection->DeleteFromDocument();
@@ -2761,7 +2764,7 @@ DocHasPrintCallbackCanvas(nsIDocument* aDoc, void* aData)
                                                        NS_LITERAL_STRING("canvas"));
   uint32_t canvasCount = canvases->Length(true);
   for (uint32_t i = 0; i < canvasCount; ++i) {
-    HTMLCanvasElement* canvas = HTMLCanvasElement::FromContentOrNull(canvases->Item(i, false));
+    HTMLCanvasElement* canvas = HTMLCanvasElement::FromNodeOrNull(canvases->Item(i, false));
     if (canvas && canvas->GetMozPrintCallback()) {
       // This subdocument has a print callback. Set result and return false to
       // stop iteration.

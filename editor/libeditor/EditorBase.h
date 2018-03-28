@@ -15,6 +15,7 @@
 #include "mozilla/SelectionState.h"     // for RangeUpdater, etc.
 #include "mozilla/StyleSheet.h"         // for StyleSheet
 #include "mozilla/TextEditRules.h"      // for TextEditRules
+#include "mozilla/TransactionManager.h" // for TransactionManager
 #include "mozilla/WeakPtr.h"            // for WeakPtr
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/Text.h"
@@ -49,9 +50,9 @@ class nsINode;
 class nsIPresShell;
 class nsISupports;
 class nsITransaction;
+class nsITransactionListener;
 class nsIWidget;
 class nsRange;
-class nsTransactionManager;
 
 namespace mozilla {
 class AddStyleSheetTransaction;
@@ -350,8 +351,9 @@ public:
    *                            container.  Otherwise, will insert the node
    *                            before child node referred by this.
    */
+  template<typename PT, typename CT>
   nsresult InsertNode(nsIContent& aContentToInsert,
-                      const EditorRawDOMPoint& aPointToInsert);
+                      const EditorDOMPointBase<PT, CT>& aPointToInsert);
 
   enum ECloneAttributes { eDontCloneAttributes, eCloneAttributes };
   already_AddRefed<Element> ReplaceContainer(Element* aOldContainer,
@@ -381,8 +383,9 @@ public:
    * @param aError              If succeed, returns no error.  Otherwise, an
    *                            error.
    */
+  template<typename PT, typename CT>
   already_AddRefed<nsIContent>
-  SplitNode(const EditorRawDOMPoint& aStartOfRightNode,
+  SplitNode(const EditorDOMPointBase<PT, CT>& aStartOfRightNode,
             ErrorResult& aResult);
 
   nsresult JoinNodes(nsINode& aLeftNode, nsINode& aRightNode);
@@ -520,8 +523,10 @@ protected:
    *                        child node referred by this.
    * @return                The created new element node.
    */
-  already_AddRefed<Element> CreateNode(nsAtom* aTag,
-                                       const EditorRawDOMPoint& aPointToInsert);
+  template<typename PT, typename CT>
+  already_AddRefed<Element>
+  CreateNode(nsAtom* aTag,
+             const EditorDOMPointBase<PT, CT>& aPointToInsert);
 
   /**
    * Create an aggregate transaction for delete selection.  The result may
@@ -905,28 +910,35 @@ public:
    * you want.  They start to search the result from next node of the given
    * node.
    */
-  nsIContent* GetNextNode(const EditorRawDOMPoint& aPoint)
+  template<typename PT, typename CT>
+  nsIContent* GetNextNode(const EditorDOMPointBase<PT, CT>& aPoint)
   {
     return GetNextNodeInternal(aPoint, false, true, false);
   }
-  nsIContent* GetNextElementOrText(const EditorRawDOMPoint& aPoint)
+  template<typename PT, typename CT>
+  nsIContent* GetNextElementOrText(const EditorDOMPointBase<PT, CT>& aPoint)
   {
     return GetNextNodeInternal(aPoint, false, false, false);
   }
-  nsIContent* GetNextEditableNode(const EditorRawDOMPoint& aPoint)
+  template<typename PT, typename CT>
+  nsIContent* GetNextEditableNode(const EditorDOMPointBase<PT, CT>& aPoint)
   {
     return GetNextNodeInternal(aPoint, true, true, false);
   }
-  nsIContent* GetNextNodeInBlock(const EditorRawDOMPoint& aPoint)
+  template<typename PT, typename CT>
+  nsIContent* GetNextNodeInBlock(const EditorDOMPointBase<PT, CT>& aPoint)
   {
     return GetNextNodeInternal(aPoint, false, true, true);
   }
-  nsIContent* GetNextElementOrTextInBlock(const EditorRawDOMPoint& aPoint)
+  template<typename PT, typename CT>
+  nsIContent* GetNextElementOrTextInBlock(
+                const EditorDOMPointBase<PT, CT>& aPoint)
   {
     return GetNextNodeInternal(aPoint, false, false, true);
   }
+  template<typename PT, typename CT>
   nsIContent* GetNextEditableNodeInBlock(
-                const EditorRawDOMPoint& aPoint)
+                const EditorDOMPointBase<PT, CT>& aPoint)
   {
     return GetNextNodeInternal(aPoint, true, true, true);
   }
@@ -1089,11 +1101,85 @@ public:
   bool ShouldHandleIMEComposition() const;
 
   /**
-   * Returns number of undo or redo items.  If TransactionManager returns
-   * unexpected error, returns -1.
+   * Returns number of undo or redo items.
    */
-  int32_t NumberOfUndoItems() const;
-  int32_t NumberOfRedoItems() const;
+  size_t NumberOfUndoItems() const
+  {
+    return mTransactionManager ? mTransactionManager->NumberOfUndoItems() : 0;
+  }
+  size_t NumberOfRedoItems() const
+  {
+    return mTransactionManager ? mTransactionManager->NumberOfRedoItems() : 0;
+  }
+
+  /**
+   * Returns true if this editor can store transactions for undo/redo.
+   */
+  bool IsUndoRedoEnabled() const
+  {
+    return !!mTransactionManager;
+  }
+
+  /**
+   * Return true if it's possible to undo/redo right now.
+   */
+  bool CanUndo() const
+  {
+    return IsUndoRedoEnabled() && NumberOfUndoItems() > 0;
+  }
+  bool CanRedo() const
+  {
+    return IsUndoRedoEnabled() && NumberOfRedoItems() > 0;
+  }
+
+  /**
+   * Enables or disables undo/redo feature.  Returns true if it succeeded,
+   * otherwise, e.g., we're undoing or redoing, returns false.
+   */
+  bool EnableUndoRedo(int32_t aMaxTransactionCount = -1)
+  {
+    if (!mTransactionManager) {
+      mTransactionManager = new TransactionManager();
+    }
+    return mTransactionManager->EnableUndoRedo(aMaxTransactionCount);
+  }
+  bool DisableUndoRedo()
+  {
+    if (!mTransactionManager) {
+      return true;
+    }
+    // XXX Even we clear the transaction manager, IsUndoRedoEnabled() keep
+    //     returning true...
+    return mTransactionManager->DisableUndoRedo();
+  }
+  bool ClearUndoRedo()
+  {
+    if (!mTransactionManager) {
+      return true;
+    }
+    return mTransactionManager->ClearUndoRedo();
+  }
+
+  /**
+   * Adds or removes transaction listener to or from the transaction manager.
+   * Note that TransactionManager does not check if the listener is in the
+   * array.  So, caller of AddTransactionListener() needs to manage if it's
+   * already been registered to the transaction manager.
+   */
+  bool AddTransactionListener(nsITransactionListener& aListener)
+  {
+    if (!mTransactionManager) {
+      return false;
+    }
+    return mTransactionManager->AddTransactionListener(aListener);
+  }
+  bool RemoveTransactionListener(nsITransactionListener& aListener)
+  {
+    if (!mTransactionManager) {
+      return false;
+    }
+    return mTransactionManager->RemoveTransactionListener(aListener);
+  }
 
   /**
    * From html rules code - migration in progress.
@@ -1182,9 +1268,10 @@ public:
    *                                    be good to insert something if the
    *                                    caller want to do it.
    */
+  template<typename PT, typename CT>
   SplitNodeResult
   SplitNodeDeep(nsIContent& aMostAncestorToSplit,
-                const EditorRawDOMPoint& aDeepestStartOfRightNode,
+                const EditorDOMPointBase<PT, CT>& aDeepestStartOfRightNode,
                 SplitAtEdges aSplitAtEdges);
 
   EditorDOMPoint JoinNodeDeep(nsIContent& aLeftNode,
@@ -1386,12 +1473,6 @@ public:
   }
 
   /**
-   * GetTransactionManager() returns transaction manager associated with the
-   * editor.  This may return nullptr if undo/redo hasn't been enabled.
-   */
-  already_AddRefed<nsITransactionManager> GetTransactionManager() const;
-
-  /**
    * Get the input event target. This might return null.
    */
   virtual already_AddRefed<nsIContent> GetInputEventTargetContent() = 0;
@@ -1501,7 +1582,7 @@ protected:
   // Reference to text services document for mInlineSpellChecker.
   RefPtr<TextServicesDocument> mTextServicesDocument;
 
-  RefPtr<nsTransactionManager> mTxnMgr;
+  RefPtr<TransactionManager> mTransactionManager;
   // Cached root node.
   nsCOMPtr<Element> mRootElement;
   // The form field as an event receiver.

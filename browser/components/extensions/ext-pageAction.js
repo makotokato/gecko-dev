@@ -85,14 +85,16 @@ this.pageAction = class extends ExtensionAPI {
 
     this.defaults.icon = await StartupCache.get(
       extension, ["pageAction", "default_icon"],
-      () => IconDetails.normalize({path: options.default_icon}, extension));
+      () => this.normalize({path: options.default_icon || ""}));
+
+    this.lastValues = new DefaultWeakMap(() => ({}));
 
     if (!this.browserPageAction) {
       this.browserPageAction = PageActions.addAction(new PageActions.Action({
         id: widgetId,
         extensionID: extension.id,
         title: this.defaults.title,
-        iconURL: this.getIconData(this.defaults.icon),
+        iconURL: this.defaults.icon,
         pinnedToUrlbar: true,
         disabled: !this.defaults.show,
         onCommand: (event, buttonNode) => {
@@ -160,6 +162,14 @@ this.pageAction = class extends ExtensionAPI {
     }
   }
 
+  normalize(details, context = null) {
+    let icon = IconDetails.normalize(details, this.extension, context);
+    if (!Object.keys(icon).length) {
+      icon = null;
+    }
+    return icon;
+  }
+
   // Updates the page action button in the given window to reflect the
   // properties of the currently selected tab:
   //
@@ -169,21 +179,27 @@ this.pageAction = class extends ExtensionAPI {
   updateButton(window) {
     let tab = window.gBrowser.selectedTab;
     let tabData = this.tabContext.get(tab);
-    let title = tabData.title || this.extension.name;
-    this.browserPageAction.setTitle(title, window);
-    this.browserPageAction.setTooltip(title, window);
+    let last = this.lastValues.get(window);
 
-    // At least one of "show" or "patternMatching" must be defined here.
-    let {show = tabData.patternMatching} = tabData;
-    this.browserPageAction.setDisabled(!show, window);
+    window.requestAnimationFrame(() => {
+      let title = tabData.title || this.extension.name;
+      if (last.title !== title) {
+        this.browserPageAction.setTitle(title, window);
+        last.title = title;
+      }
 
-    let iconURL;
-    if (typeof(tabData.icon) == "string") {
-      iconURL = IconDetails.escapeUrl(tabData.icon);
-    } else {
-      iconURL = this.getIconData(tabData.icon);
-    }
-    this.browserPageAction.setIconURL(iconURL, window);
+      let show = tabData.show != null ? tabData.show : tabData.patternMatching;
+      if (last.show !== show) {
+        this.browserPageAction.setDisabled(!show, window);
+        last.show = show;
+      }
+
+      let icon = tabData.icon;
+      if (last.icon !== icon) {
+        this.browserPageAction.setIconURL(icon, window);
+        last.icon = icon;
+      }
+    });
   }
 
   // Checks whether the tab action is shown when the specified tab becomes active.
@@ -207,18 +223,6 @@ this.pageAction = class extends ExtensionAPI {
     return tabData.patternMatching;
   }
 
-  getIconData(icons) {
-    let getIcon = size => {
-      let {icon} = IconDetails.getPreferredIcon(icons, this.extension, size);
-      // TODO: implement theme based icon for pageAction (Bug 1398156)
-      return IconDetails.escapeUrl(icon);
-    };
-    return {
-      "16": getIcon(16),
-      "32": getIcon(32),
-    };
-  }
-
   /**
    * Triggers this page action for the given window, with the same effects as
    * if it were clicked by a user.
@@ -228,9 +232,8 @@ this.pageAction = class extends ExtensionAPI {
    * @param {Window} window
    */
   triggerAction(window) {
-    let pageAction = pageActionMap.get(this.extension);
-    if (pageAction.getProperty(window.gBrowser.selectedTab, "show")) {
-      pageAction.handleClick(window);
+    if (this.isShown(window.gBrowser.selectedTab)) {
+      this.handleClick(window);
     }
   }
 
@@ -271,11 +274,23 @@ this.pageAction = class extends ExtensionAPI {
     // If it has no popup URL defined, we dispatch a click event, but do not
     // open a popup.
     if (popupURL) {
-      let popup = new PanelPopup(this.extension, window.document, popupURL,
-                                 this.browserStyle);
-      await popup.contentReady;
+      if (this.popupNode && this.popupNode.panel.state !== "closed") {
+        // The panel is being toggled closed.
+        TelemetryStopwatch.cancel(popupOpenTimingHistogram, this);
+        window.BrowserPageActions.togglePanelForAction(this.browserPageAction,
+                                                       this.popupNode.panel);
+        return;
+      }
+
+      this.popupNode = new PanelPopup(this.extension, window.document, popupURL,
+                                      this.browserStyle);
+      // Remove popupNode when it is closed.
+      this.popupNode.panel.addEventListener("popuphiding", () => {
+        this.popupNode = undefined;
+      }, {once: true});
+      await this.popupNode.contentReady;
       window.BrowserPageActions.togglePanelForAction(this.browserPageAction,
-                                                     popup.panel);
+                                                     this.popupNode.panel);
       TelemetryStopwatch.finish(popupOpenTimingHistogram, this);
     } else {
       TelemetryStopwatch.cancel(popupOpenTimingHistogram, this);
@@ -367,10 +382,8 @@ this.pageAction = class extends ExtensionAPI {
         setIcon(details) {
           let tab = tabTracker.getTab(details.tabId);
 
-          let icon = IconDetails.normalize(details, extension, context);
-          if (!Object.keys(icon).length) {
-            icon = null;
-          }
+          let icon = pageAction.normalize(details, context);
+
           pageAction.setProperty(tab, "icon", icon);
         },
 

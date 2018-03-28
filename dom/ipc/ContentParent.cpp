@@ -192,6 +192,7 @@
 #include "nsHostObjectProtocolHandler.h"
 #include "nsICaptivePortalService.h"
 #include "nsIObjectLoadingContent.h"
+#include "nsPerformanceMetrics.h"
 
 #include "nsIBidiKeyboard.h"
 
@@ -527,7 +528,7 @@ ScriptableCPInfo::GetTabCount(int32_t* aTabCount)
 }
 
 NS_IMETHODIMP
-ScriptableCPInfo::GetMessageManager(nsIMessageSender** aMessenger)
+ScriptableCPInfo::GetMessageManager(nsISupports** aMessenger)
 {
   *aMessenger = nullptr;
   if (!mContentParent) {
@@ -608,7 +609,6 @@ ContentParent::PreallocateProcess()
     return nullptr;
   }
 
-  process->Init();
   return process.forget();
 }
 
@@ -835,8 +835,6 @@ ContentParent::GetNewOrUsedBrowserProcess(const nsAString& aRemoteType,
     return nullptr;
   }
 
-  p->Init();
-
   contentParents.AppendElement(p);
   p->mActivateTS = TimeStamp::Now();
   return p.forget();
@@ -863,8 +861,6 @@ ContentParent::GetNewOrUsedJSPluginProcess(uint32_t aPluginID,
   if (!p->LaunchSubprocess(aPriority)) {
     return nullptr;
   }
-
-  p->Init();
 
   sJSPluginContentParents->Put(aPluginID, p);
 
@@ -1566,7 +1562,7 @@ ContentParent::ProcessingError(Result aCode, const char* aReason)
 
 /* static */
 bool
-ContentParent::AllocateLayerTreeId(TabParent* aTabParent, uint64_t* aId)
+ContentParent::AllocateLayerTreeId(TabParent* aTabParent, layers::LayersId* aId)
 {
   return AllocateLayerTreeId(aTabParent->Manager()->AsContentParent(),
                              aTabParent, aTabParent->GetTabId(), aId);
@@ -1576,7 +1572,7 @@ ContentParent::AllocateLayerTreeId(TabParent* aTabParent, uint64_t* aId)
 bool
 ContentParent::AllocateLayerTreeId(ContentParent* aContent,
                                    TabParent* aTopLevel, const TabId& aTabId,
-                                   uint64_t* aId)
+                                   layers::LayersId* aId)
 {
   GPUProcessManager* gpu = GPUProcessManager::Get();
 
@@ -1593,7 +1589,7 @@ ContentParent::AllocateLayerTreeId(ContentParent* aContent,
 
 mozilla::ipc::IPCResult
 ContentParent::RecvAllocateLayerTreeId(const ContentParentId& aCpId,
-                                       const TabId& aTabId, uint64_t* aId)
+                                       const TabId& aTabId, layers::LayersId* aId)
 {
   // Protect against spoofing by a compromised child. aCpId must either
   // correspond to the process that this ContentParent represents or be a
@@ -1618,7 +1614,7 @@ ContentParent::RecvAllocateLayerTreeId(const ContentParentId& aCpId,
 
 mozilla::ipc::IPCResult
 ContentParent::RecvDeallocateLayerTreeId(const ContentParentId& aCpId,
-                                         const uint64_t& aId)
+                                         const layers::LayersId& aId)
 {
   GPUProcessManager* gpu = GPUProcessManager::Get();
 
@@ -2012,8 +2008,7 @@ ContentParent::LaunchSubprocess(ProcessPriority aInitialPriority /* = PROCESS_PR
 
   // Set up the shared memory.
   base::SharedMemory shm;
-  if (!shm.Create("", /* read_only */ false, /* open_existing */ false,
-                  prefs.Length())) {
+  if (!shm.Create(prefs.Length())) {
     NS_ERROR("failed to create shared memory in the parent");
     MarkAsDead();
     return false;
@@ -2090,6 +2085,8 @@ ContentParent::LaunchSubprocess(ProcessPriority aInitialPriority /* = PROCESS_PR
     cpId.AppendInt(static_cast<uint64_t>(this->ChildID()));
     obs->NotifyObservers(static_cast<nsIObserver*>(this), "ipc:content-initializing", cpId.get());
   }
+
+  Init();
 
   return true;
 }
@@ -2301,11 +2298,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority)
   // Content processes have no permission to access profile directory, so we
   // send the file URL instead.
   StyleBackendType backendType =
-#ifdef MOZ_OLD_STYLE
-    StyleBackendType::Gecko;
-#else
     StyleBackendType::Servo;
-#endif
   StyleSheet* ucs = nsLayoutStylesheetCache::For(backendType)->UserContentSheet();
   if (ucs) {
     SerializeURI(ucs->GetSheetURI(), xpcomInit.userContentSheetURL());
@@ -3327,6 +3320,44 @@ ContentParent::RecvFinishMemoryReport(const uint32_t& aGeneration)
     mMemoryReportRequest = nullptr;
   }
   return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+ContentParent::RecvAddPerformanceMetrics(const PerformanceInfo& aMetrics)
+{
+#ifndef RELEASE_OR_BETA
+  // converting the data we get from a child as a notification
+  if (aMetrics.items().IsEmpty()) {
+      return IPC_OK();
+  }
+
+  nsCOMPtr<nsIMutableArray> xpItems = do_CreateInstance(NS_ARRAY_CONTRACTID);
+  if (NS_WARN_IF(!xpItems)) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+
+  for (uint32_t i = 0; i<aMetrics.items().Length(); i++) {
+       const CategoryDispatch& entry = aMetrics.items()[i];
+       nsCOMPtr<nsIPerformanceMetricsDispatchCategory> item =
+           new PerformanceMetricsDispatchCategory(entry.category(),
+                                                  entry.count());
+       xpItems->AppendElement(item);
+  }
+
+  nsCOMPtr<nsIPerformanceMetricsData> data =
+      new PerformanceMetricsData(aMetrics.pid(), aMetrics.wid(), aMetrics.pwid(),
+                                 aMetrics.host(), aMetrics.duration(),
+                                 aMetrics.worker(), xpItems);
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  if (!obs) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+  obs->NotifyObservers(data, "performance-metrics", nullptr);
+  return IPC_OK();
+#endif
+#ifdef RELEASE_OR_BETA
+  return IPC_OK();
+#endif
 }
 
 PCycleCollectWithLogsParent*
@@ -4772,7 +4803,7 @@ ContentParent::CommonCreateWindow(PBrowserParent* aThisTab,
     if (NS_SUCCEEDED(aResult) && frameLoaderOwner) {
       RefPtr<nsFrameLoader> frameLoader = frameLoaderOwner->GetFrameLoader();
       if (frameLoader) {
-        frameLoader->GetTabParent(getter_AddRefs(aNewTabParent));
+        aNewTabParent = frameLoader->GetTabParent();
       }
     } else if (NS_SUCCEEDED(aResult) && !frameLoaderOwner) {
       // Fall through to the normal window opening code path when there is no
@@ -4863,7 +4894,7 @@ ContentParent::RecvCreateWindow(PBrowserParent* aThisTab,
 
   // We always expect to open a new window here. If we don't, it's an error.
   cwi.windowOpened() = true;
-  cwi.layersId() = 0;
+  cwi.layersId() = LayersId{0};
   cwi.maxTouchPoints() = 0;
 
   // Make sure to resolve the resolver when this function exits, even if we

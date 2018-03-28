@@ -733,13 +733,6 @@ module.exports = baseAssignValue;
 
 /***/ }),
 
-/***/ 1153:
-/***/ (function(module, exports) {
-
-module.exports = "<!-- This Source Code Form is subject to the terms of the Mozilla Public - License, v. 2.0. If a copy of the MPL was not distributed with this - file, You can obtain one at http://mozilla.org/MPL/2.0/. --><svg viewBox=\"0 0 16 16\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M8,3L12,3L12,7L14,7L14,8L12,8L12,12L8,12L8,14L7,14L7,12L3,12L3,8L1,8L1,7L3,7L3,3L7,3L7,1L8,1L8,3ZM10,10L10,5L5,5L5,10L10,10Z\"></path></svg>"
-
-/***/ }),
-
 /***/ 116:
 /***/ (function(module, exports, __webpack_require__) {
 
@@ -1759,7 +1752,7 @@ module.exports = "<!-- This Source Code Form is subject to the terms of the Mozi
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // Dependencies
-const validProtocols = /^(http|https|ftp|data|javascript|resource|chrome):/i;
+const validProtocols = /^(http|https|ftp|data|resource|chrome):/i;
 const tokenSplitRegex = /(\s|\'|\"|\\)+/;
 const ELLIPSIS = "\u2026";
 const dom = __webpack_require__(1758);
@@ -2134,6 +2127,22 @@ function isURL(token) {
   }
 }
 
+/**
+ * Returns a new array in which `char` are interleaved between the original items.
+ *
+ * @param {Array} items
+ * @param {String} char
+ * @returns Array
+ */
+function interleave(items, char) {
+  return items.reduce((res, item, index) => {
+    if (index !== items.length - 1) {
+      return res.concat(item, char);
+    }
+    return res.concat(item);
+  }, []);
+}
+
 const ellipsisElement = span({
   key: "more",
   className: "more-ellipsis",
@@ -2141,6 +2150,7 @@ const ellipsisElement = span({
 }, ELLIPSIS);
 
 module.exports = {
+  interleave,
   isGrip,
   isURL,
   cropString,
@@ -2330,7 +2340,7 @@ function shouldPrettyPrint(source) {
   }
   const _isPretty = isPretty(source);
   const _isJavaScript = isJavaScript(source);
-  const isOriginal = (0, _devtoolsSourceMap.isOriginalId)(source.get("id"));
+  const isOriginal = (0, _devtoolsSourceMap.isOriginalId)(source.id);
   const hasSourceMap = source.get("sourceMapURL");
 
   if (_isPretty || isOriginal || hasSourceMap || !_isJavaScript) {
@@ -2351,8 +2361,8 @@ function shouldPrettyPrint(source) {
  * @static
  */
 function isJavaScript(source) {
-  const url = source.get("url");
-  const contentType = source.get("contentType");
+  const url = source.url;
+  const contentType = source.contentType;
   return url && /\.(jsm|js)?$/.test(trimUrlQuery(url)) || !!(contentType && contentType.includes("javascript"));
 }
 
@@ -2361,7 +2371,7 @@ function isJavaScript(source) {
  * @static
  */
 function isPretty(source) {
-  const url = source.get("url");
+  const url = source.url;
   return isPrettyURL(url);
 }
 
@@ -2370,7 +2380,7 @@ function isPrettyURL(url) {
 }
 
 function isThirdParty(source) {
-  const url = source.get("url");
+  const url = source.url;
   if (!source || !url) {
     return false;
   }
@@ -2685,7 +2695,6 @@ exports.toEditorPosition = toEditorPosition;
 exports.toEditorRange = toEditorRange;
 exports.toSourceLine = toSourceLine;
 exports.scrollToColumn = scrollToColumn;
-exports.toSourceLocation = toSourceLocation;
 exports.markText = markText;
 exports.lineAtHeight = lineAtHeight;
 exports.getSourceLocationFromMouseEvent = getSourceLocationFromMouseEvent;
@@ -2784,13 +2793,6 @@ function isVisible(codeMirror, top, left) {
   const inYView = withinBounds(top, scrollArea.top, scrollArea.top + scrollArea.clientHeight - fontHeight);
 
   return inXView && inYView;
-}
-
-function toSourceLocation(sourceId, location) {
-  return {
-    line: toSourceLine(sourceId, location.line),
-    column: (0, _wasm.isWasm)(sourceId) ? undefined : location.column
-  };
 }
 
 function markText(editor, className, { start, end }) {
@@ -3167,7 +3169,7 @@ function createPendingBreakpoint(bp) {
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.replaceOriginalVariableName = exports.getFramework = exports.hasSyntaxError = exports.clearSources = exports.setSource = exports.hasSource = exports.getEmptyLines = exports.isInvalidPauseLocation = exports.getNextStep = exports.clearASTs = exports.clearScopes = exports.clearSymbols = exports.findOutOfScopeLocations = exports.getScopes = exports.getSymbols = exports.getClosestExpression = exports.stopParserWorker = exports.startParserWorker = undefined;
+exports.replaceOriginalVariableName = exports.getPausePoints = exports.getFramework = exports.mapOriginalExpression = exports.hasSyntaxError = exports.clearSources = exports.setSource = exports.hasSource = exports.isInvalidPauseLocation = exports.getNextStep = exports.clearASTs = exports.clearScopes = exports.clearSymbols = exports.findOutOfScopeLocations = exports.getScopes = exports.getSymbols = exports.getClosestExpression = exports.stopParserWorker = exports.startParserWorker = undefined;
 
 var _devtoolsUtils = __webpack_require__(1363);
 
@@ -3188,12 +3190,13 @@ const clearScopes = exports.clearScopes = dispatcher.task("clearScopes");
 const clearASTs = exports.clearASTs = dispatcher.task("clearASTs");
 const getNextStep = exports.getNextStep = dispatcher.task("getNextStep");
 const isInvalidPauseLocation = exports.isInvalidPauseLocation = dispatcher.task("isInvalidPauseLocation");
-const getEmptyLines = exports.getEmptyLines = dispatcher.task("getEmptyLines");
 const hasSource = exports.hasSource = dispatcher.task("hasSource");
 const setSource = exports.setSource = dispatcher.task("setSource");
 const clearSources = exports.clearSources = dispatcher.task("clearSources");
 const hasSyntaxError = exports.hasSyntaxError = dispatcher.task("hasSyntaxError");
+const mapOriginalExpression = exports.mapOriginalExpression = dispatcher.task("mapOriginalExpression");
 const getFramework = exports.getFramework = dispatcher.task("getFramework");
+const getPausePoints = exports.getPausePoints = dispatcher.task("getPausePoints");
 const replaceOriginalVariableName = exports.replaceOriginalVariableName = dispatcher.task("replaceOriginalVariableName");
 
 /***/ }),
@@ -3722,11 +3725,11 @@ function getNewSelectedSourceId(state, availableTabs) {
     return "";
   }
 
-  const tabUrls = state.sources.tabs.toJS();
+  const tabUrls = state.sources.tabs;
   const leftNeighborIndex = Math.max(tabUrls.indexOf(selectedTabUrl) - 1, 0);
   const lastAvailbleTabIndex = availableTabs.size - 1;
   const newSelectedTabIndex = Math.min(leftNeighborIndex, lastAvailbleTabIndex);
-  const availableTab = availableTabs.toJS()[newSelectedTabIndex];
+  const availableTab = availableTabs.get(newSelectedTabIndex);
   const tabSource = getSourceByUrlInSources(state.sources.sources, availableTab);
 
   if (tabSource) {
@@ -3960,6 +3963,7 @@ const Accessor = __webpack_require__(1568);
 const Attribute = __webpack_require__(1569);
 const DateTime = __webpack_require__(1570);
 const Document = __webpack_require__(1571);
+const DocumentType = __webpack_require__(3614);
 const Event = __webpack_require__(1572);
 const Func = __webpack_require__(1573);
 const PromiseRep = __webpack_require__(1574);
@@ -3980,7 +3984,7 @@ const Grip = __webpack_require__(1409);
 // List of all registered template.
 // XXX there should be a way for extensions to register a new
 // or modify an existing rep.
-let reps = [RegExp, StyleSheet, Event, DateTime, CommentNode, ElementNode, TextNode, Attribute, Func, PromiseRep, ArrayRep, Document, Window, ObjectWithText, ObjectWithURL, ErrorRep, GripArray, GripMap, GripMapEntry, Grip, Undefined, Null, StringRep, Number, SymbolRep, InfinityRep, NaNRep, Accessor];
+let reps = [RegExp, StyleSheet, Event, DateTime, CommentNode, ElementNode, TextNode, Attribute, Func, PromiseRep, ArrayRep, Document, DocumentType, Window, ObjectWithText, ObjectWithURL, ErrorRep, GripArray, GripMap, GripMapEntry, Grip, Undefined, Null, StringRep, Number, SymbolRep, InfinityRep, NaNRep, Accessor];
 
 /**
  * Generic rep that is using for rendering native JS types or an object.
@@ -4039,6 +4043,7 @@ module.exports = {
     CommentNode,
     DateTime,
     Document,
+    DocumentType,
     ElementNode,
     ErrorRep,
     Event,
@@ -4557,8 +4562,7 @@ const {
 } = __webpack_require__(1353);
 const { MODE } = __webpack_require__(1357);
 
-const dom = __webpack_require__(1758);
-const { span } = dom;
+const { span } = __webpack_require__(1758);
 
 /**
  * Property for Obj (local JS objects), Grip (remote JS objects)
@@ -4608,17 +4612,18 @@ function PropRep(props) {
     }
     key = span({ "className": "nodeName" }, name);
   } else {
-    key = Rep(Object.assign({}, props, {
+    key = Rep({
+      ...props,
       className: "nodeName",
       object: name,
       mode: mode || MODE.TINY,
       defaultRep: Grip
-    }));
+    });
   }
 
   return [key, span({
     "className": "objectEqual"
-  }, equal), Rep(Object.assign({}, props))];
+  }, equal), Rep({ ...props })];
 }
 
 // Exports from this module
@@ -4783,9 +4788,11 @@ exports.hasSymbols = hasSymbols;
 exports.isSymbolsLoading = isSymbolsLoading;
 exports.isEmptyLineInSource = isEmptyLineInSource;
 exports.getEmptyLines = getEmptyLines;
+exports.getPausePoints = getPausePoints;
 exports.getOutOfScopeLocations = getOutOfScopeLocations;
 exports.getPreview = getPreview;
 exports.getSourceMetaData = getSourceMetaData;
+exports.hasSourceMetaData = hasSourceMetaData;
 exports.getInScopeLines = getInScopeLines;
 exports.isLineInScope = isLineInScope;
 
@@ -4796,6 +4803,8 @@ var I = _interopRequireWildcard(_immutable);
 var _makeRecord = __webpack_require__(1361);
 
 var _makeRecord2 = _interopRequireDefault(_makeRecord);
+
+var _ast = __webpack_require__(1638);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
@@ -4808,6 +4817,7 @@ function initialASTState() {
     outOfScopeLocations: null,
     inScopeLines: null,
     preview: null,
+    pausePoints: I.Map(),
     sourceMetaData: I.Map()
   })();
 }
@@ -4822,10 +4832,13 @@ function update(state = initialASTState(), action) {
         }
         return state.setIn(["symbols", source.id], action.value);
       }
-    case "SET_EMPTY_LINES":
+
+    case "SET_PAUSE_POINTS":
       {
-        const { source, emptyLines } = action;
-        return state.setIn(["emptyLines", source.id], emptyLines);
+        const { source, pausePoints } = action;
+        const emptyLines = (0, _ast.findEmptyLines)(source, pausePoints);
+
+        return state.setIn(["pausePoints", source.id], pausePoints).setIn(["emptyLines", source.id], emptyLines);
       }
 
     case "OUT_OF_SCOPE_LOCATIONS":
@@ -4897,7 +4910,7 @@ function hasSymbols(state, source) {
     return false;
   }
 
-  return !symbols.loading;
+  return !symbols.hasOwnProperty("loading");
 }
 
 function isSymbolsLoading(state, source) {
@@ -4906,20 +4919,28 @@ function isSymbolsLoading(state, source) {
     return false;
   }
 
-  return !!symbols.loading;
+  return symbols.hasOwnProperty("loading");
 }
 
 function isEmptyLineInSource(state, line, selectedSource) {
   const emptyLines = getEmptyLines(state, selectedSource);
-  return emptyLines.includes(line);
+  return emptyLines && emptyLines.includes(line);
 }
 
 function getEmptyLines(state, source) {
   if (!source) {
-    return [];
+    return null;
   }
 
-  return state.ast.getIn(["emptyLines", source.id]) || [];
+  return state.ast.getIn(["emptyLines", source.id]);
+}
+
+function getPausePoints(state, source) {
+  if (!source) {
+    return null;
+  }
+
+  return state.ast.getIn(["pausePoints", source.id]);
 }
 
 function getOutOfScopeLocations(state) {
@@ -4933,6 +4954,10 @@ function getPreview(state) {
 const emptySourceMetaData = {};
 function getSourceMetaData(state, sourceId) {
   return state.ast.getIn(["sourceMetaData", sourceId]) || emptySourceMetaData;
+}
+
+function hasSourceMetaData(state, sourceId) {
+  return state.ast.hasIn(["sourceMetaData", sourceId]);
 }
 
 function getInScopeLines(state) {
@@ -5391,9 +5416,11 @@ exports.getShouldIgnoreCaughtExceptions = getShouldIgnoreCaughtExceptions;
 exports.getCanRewind = getCanRewind;
 exports.getFrames = getFrames;
 exports.getGeneratedFrameScope = getGeneratedFrameScope;
+exports.getOriginalFrameScope = getOriginalFrameScope;
 exports.getFrameScopes = getFrameScopes;
 exports.getFrameScope = getFrameScope;
 exports.getSelectedScope = getSelectedScope;
+exports.getSelectedScopeMappings = getSelectedScopeMappings;
 exports.getSelectedFrameId = getSelectedFrameId;
 exports.getTopFrame = getTopFrame;
 exports.getDebuggeeUrl = getDebuggeeUrl;
@@ -5414,7 +5441,8 @@ const createPauseState = exports.createPauseState = () => ({
   selectedFrameId: undefined,
   frameScopes: {
     generated: {},
-    original: {}
+    original: {},
+    mappings: {}
   },
   loadedObjects: {},
   shouldPauseOnExceptions: _prefs.prefs.pauseOnExceptions,
@@ -5430,7 +5458,8 @@ const emptyPauseState = {
   frames: null,
   frameScopes: {
     generated: {},
-    original: {}
+    original: {},
+    mappings: {}
   },
   selectedFrameId: null,
   loadedObjects: {},
@@ -5493,12 +5522,17 @@ function update(state = createPauseState(), action) {
         const original = _extends({}, state.frameScopes.original, {
           [selectedFrameId]: {
             pending: status !== "done",
-            scope: value
+            scope: value && value.scope
           }
+        });
+
+        const mappings = _extends({}, state.frameScopes.mappings, {
+          [selectedFrameId]: value && value.mappings
         });
         return _extends({}, state, {
           frameScopes: _extends({}, state.frameScopes, {
-            original
+            original,
+            mappings
           })
         });
       }
@@ -5649,11 +5683,7 @@ function getGeneratedFrameScope(state, frameId) {
   return getFrameScopes(state).generated[frameId];
 }
 
-function getFrameScopes(state) {
-  return state.pause.frameScopes;
-}
-
-function getFrameScope(state, sourceId, frameId) {
+function getOriginalFrameScope(state, sourceId, frameId) {
   if (!frameId || !sourceId) {
     return null;
   }
@@ -5665,7 +5695,15 @@ function getFrameScope(state, sourceId, frameId) {
     return original;
   }
 
-  return getFrameScopes(state).generated[frameId];
+  return null;
+}
+
+function getFrameScopes(state) {
+  return state.pause.frameScopes;
+}
+
+function getFrameScope(state, sourceId, frameId) {
+  return getOriginalFrameScope(state, sourceId, frameId) || getGeneratedFrameScope(state, frameId);
 }
 
 function getSelectedScope(state) {
@@ -5673,6 +5711,15 @@ function getSelectedScope(state) {
   const frameId = getSelectedFrameId(state);
   const { scope } = getFrameScope(state, sourceRecord && sourceRecord.get("id"), frameId) || {};
   return scope || null;
+}
+
+function getSelectedScopeMappings(state) {
+  const frameId = getSelectedFrameId(state);
+  if (!frameId) {
+    return null;
+  }
+
+  return getFrameScopes(state).mappings[frameId];
 }
 
 function getSelectedFrameId(state) {
@@ -6062,7 +6109,7 @@ function toggleBreakpoint(line, column) {
     const state = getState();
     const selectedSource = (0, _selectors.getSelectedSource)(state);
     const bp = (0, _selectors.getBreakpointAtLocation)(state, { line, column });
-    const isEmptyLine = (0, _ast.isEmptyLineInSource)(state, line, selectedSource.toJS());
+    const isEmptyLine = (0, _ast.isEmptyLineInSource)(state, line, selectedSource);
 
     if (!bp && isEmptyLine || bp && bp.loading) {
       return;
@@ -6207,12 +6254,13 @@ function addExpression(input) {
       return;
     }
 
+    const expressionError = await parser.hasSyntaxError(input);
+
     const expression = (0, _selectors.getExpression)(getState(), input);
     if (expression) {
       return dispatch(evaluateExpression(expression));
     }
 
-    const expressionError = await parser.hasSyntaxError(input);
     dispatch({ type: "ADD_EXPRESSION", input, expressionError });
 
     const newExpression = (0, _selectors.getExpression)(getState(), input);
@@ -6270,7 +6318,7 @@ function deleteExpression(expression) {
  */
 function evaluateExpressions() {
   return async function ({ dispatch, getState, client }) {
-    const expressions = (0, _selectors.getExpressions)(getState()).toJS();
+    const expressions = (0, _selectors.getExpressions)(getState());
     for (const expression of expressions) {
       await dispatch(evaluateExpression(expression));
     }
@@ -6292,8 +6340,10 @@ function evaluateExpression(expression) {
       const source = (0, _selectors.getSource)(getState(), location.sourceId);
       const sourceId = source.get("id");
 
-      if (!(0, _devtoolsSourceMap.isGeneratedId)(sourceId)) {
-        input = await getMappedExpression({ sourceMaps }, generatedLocation, input);
+      const selectedSource = (0, _selectors.getSelectedSource)(getState());
+
+      if (selectedSource && !(0, _devtoolsSourceMap.isGeneratedId)(sourceId) && !(0, _devtoolsSourceMap.isGeneratedId)(selectedSource.get("id"))) {
+        input = await getMappedExpression({ getState, sourceMaps }, generatedLocation, input);
       }
     }
 
@@ -6311,8 +6361,13 @@ function evaluateExpression(expression) {
  * Gets information about original variable names from the source map
  * and replaces all posible generated names.
  */
-async function getMappedExpression({ sourceMaps }, generatedLocation, expression) {
-  return expression;
+async function getMappedExpression({ getState, sourceMaps }, generatedLocation, expression) {
+  const mappings = (0, _selectors.getSelectedScopeMappings)(getState());
+  if (!mappings) {
+    return expression;
+  }
+
+  return await parser.mapOriginalExpression(expression, mappings);
 }
 
 /***/ }),
@@ -6328,8 +6383,8 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.setSourceMetaData = setSourceMetaData;
 exports.setSymbols = setSymbols;
-exports.setEmptyLines = setEmptyLines;
 exports.setOutOfScopeLocations = setOutOfScopeLocations;
+exports.setPausePoints = setPausePoints;
 
 var _selectors = __webpack_require__(3590);
 
@@ -6345,13 +6400,8 @@ var _promise = __webpack_require__(1653);
 
 function setSourceMetaData(sourceId) {
   return async ({ dispatch, getState }) => {
-    const sourceRecord = (0, _selectors.getSource)(getState(), sourceId);
-    if (!sourceRecord) {
-      return;
-    }
-
-    const source = sourceRecord.toJS();
-    if (!source.text || source.isWasm) {
+    const source = (0, _selectors.getSource)(getState(), sourceId);
+    if (!source || !source.text || source.isWasm) {
       return;
     }
 
@@ -6368,46 +6418,19 @@ function setSourceMetaData(sourceId) {
 
 function setSymbols(sourceId) {
   return async ({ dispatch, getState }) => {
-    const sourceRecord = (0, _selectors.getSource)(getState(), sourceId);
-    if (!sourceRecord) {
-      return;
-    }
-
-    const source = sourceRecord.toJS();
-    if (!source.text || source.isWasm || (0, _selectors.hasSymbols)(getState(), source)) {
+    const source = (0, _selectors.getSource)(getState(), sourceId);
+    if (!source || !source.text || source.isWasm || (0, _selectors.hasSymbols)(getState(), source)) {
       return;
     }
 
     await dispatch({
       type: "SET_SYMBOLS",
-      source,
+      source: source.toJS(),
       [_promise.PROMISE]: (0, _parser.getSymbols)(source.id)
     });
 
-    dispatch(setEmptyLines(sourceId));
-    dispatch(setSourceMetaData(sourceId));
-  };
-}
-
-function setEmptyLines(sourceId) {
-  return async ({ dispatch, getState }) => {
-    const sourceRecord = (0, _selectors.getSource)(getState(), sourceId);
-    if (!sourceRecord) {
-      return;
-    }
-
-    const source = sourceRecord.toJS();
-    if (!source.text || source.isWasm) {
-      return;
-    }
-
-    const emptyLines = await (0, _parser.getEmptyLines)(source.id);
-
-    dispatch({
-      type: "SET_EMPTY_LINES",
-      source,
-      emptyLines
-    });
+    await dispatch(setPausePoints(sourceId));
+    await dispatch(setSourceMetaData(sourceId));
   };
 }
 
@@ -6431,6 +6454,24 @@ function setOutOfScopeLocations() {
     });
 
     dispatch((0, _setInScopeLines.setInScopeLines)());
+  };
+}
+
+function setPausePoints(sourceId) {
+  return async ({ dispatch, getState, client }) => {
+    const source = (0, _selectors.getSource)(getState(), sourceId);
+    if (!source || !source.text || source.isWasm) {
+      return;
+    }
+
+    const pausePoints = await (0, _parser.getPausePoints)(source.id);
+    await client.setPausePoints(source.id, pausePoints);
+
+    dispatch({
+      type: "SET_PAUSE_POINTS",
+      source: source.toJS(),
+      pausePoints
+    });
   };
 }
 
@@ -7219,6 +7260,7 @@ const PropTypes = __webpack_require__(20);
 
 // Dependencies
 const {
+  interleave,
   isGrip,
   wrapRender
 } = __webpack_require__(1353);
@@ -7283,7 +7325,7 @@ function GripRep(props) {
 
   return span(config, getTitleElement(props, object), span({
     className: "objectLeftBrace"
-  }, " { "), ...propsArray, span({
+  }, " { "), ...interleave(propsArray, ", "), span({
     className: "objectRightBrace"
   }, " }"));
 }
@@ -7338,11 +7380,12 @@ function propIterator(props, object, max) {
     return type == "boolean" || type == "number" || type == "string" && value.length != 0;
   });
 
-  let properties = object.preview ? object.preview.ownProperties : {};
+  let properties = object.preview ? object.preview.ownProperties || {} : {};
+
   let propertiesLength = getPropertiesLength(object);
 
   if (object.preview && object.preview.safeGetterValues) {
-    properties = Object.assign({}, properties, object.preview.safeGetterValues);
+    properties = { ...properties, ...object.preview.safeGetterValues };
   }
 
   let indexes = getPropIndexes(properties, max, isInterestingProp);
@@ -7366,7 +7409,8 @@ function propIterator(props, object, max) {
     const length = max - indexes.length;
 
     const symbolsProps = ownSymbols.slice(0, length).map(symbolItem => {
-      return PropRep(Object.assign({}, props, {
+      return PropRep({
+        ...props,
         mode: MODE.TINY,
         name: symbolItem,
         object: symbolItem.descriptor.value,
@@ -7374,7 +7418,7 @@ function propIterator(props, object, max) {
         defaultRep: Grip,
         title: null,
         suppressQuotes
-      }));
+      });
     });
 
     propsArray.push(...symbolsProps);
@@ -7392,23 +7436,7 @@ function propIterator(props, object, max) {
     }, "…"));
   }
 
-  return unfoldProps(propsArray);
-}
-
-function unfoldProps(items) {
-  return items.reduce((res, item, index) => {
-    if (Array.isArray(item)) {
-      res = res.concat(item);
-    } else {
-      res.push(item);
-    }
-
-    // Interleave commas between elements
-    if (index !== items.length - 1) {
-      res.push(", ");
-    }
-    return res;
-  }, []);
+  return propsArray;
 }
 
 /**
@@ -7432,7 +7460,8 @@ function getProps(componentProps, properties, indexes, suppressQuotes) {
     let name = propertiesKeys[i];
     let value = getPropValue(properties[name]);
 
-    return PropRep(Object.assign({}, componentProps, {
+    return PropRep({
+      ...componentProps,
       mode: MODE.TINY,
       name,
       object: value,
@@ -7440,7 +7469,7 @@ function getProps(componentProps, properties, indexes, suppressQuotes) {
       defaultRep: Grip,
       title: null,
       suppressQuotes
-    }));
+    });
   });
 }
 
@@ -7524,54 +7553,6 @@ let Grip = {
 
 // Exports from this module
 module.exports = Grip;
-
-/***/ }),
-
-/***/ 1410:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-var _svgInlineReact = __webpack_require__(1763);
-
-var _svgInlineReact2 = _interopRequireDefault(_svgInlineReact);
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-const React = __webpack_require__(0);
-const PropTypes = __webpack_require__(20);
-
-
-const svg = {
-  "open-inspector": __webpack_require__(1153),
-  "jump-definition": __webpack_require__(2012)
-};
-
-Svg.propTypes = {
-  className: PropTypes.string
-};
-
-function Svg(name, props) {
-  if (!svg[name]) {
-    throw new Error("Unknown SVG: " + name);
-  }
-  let className = name;
-  if (props && props.className) {
-    className = `${name} ${props.className}`;
-  }
-  if (name === "subSettings") {
-    className = "";
-  }
-  props = Object.assign({}, props, { className, src: svg[name] });
-  return React.createElement(_svgInlineReact2.default, props);
-}
-
-module.exports = Svg;
 
 /***/ }),
 
@@ -7749,7 +7730,10 @@ function containsPosition(a, b) {
 
 function findClosestScope(functions, location) {
   return functions.reduce((found, currNode) => {
-    if (currNode.name === "anonymous" || !containsPosition(currNode.location, location)) {
+    if (currNode.name === "anonymous" || !containsPosition(currNode.location, {
+      line: location.line,
+      column: location.column || 0
+    })) {
       return found;
     }
 
@@ -8874,64 +8858,6 @@ function createBreakpointLocation(location, actualLocation) {
 
 /***/ }),
 
-/***/ 1429:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.fromServerLocation = fromServerLocation;
-exports.toServerLocation = toServerLocation;
-exports.createFrame = createFrame;
-exports.createLoadedObject = createLoadedObject;
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-function fromServerLocation(serverLocation) {
-  if (serverLocation) {
-    return {
-      sourceId: serverLocation.scriptId,
-      line: serverLocation.lineNumber + 1,
-      column: serverLocation.columnNumber,
-      sourceUrl: ""
-    };
-  }
-}
-
-function toServerLocation(location) {
-  return {
-    scriptId: location.sourceId,
-    lineNumber: location.line - 1
-  };
-}
-
-function createFrame(frame) {
-  return {
-    id: frame.callFrameId,
-    displayName: frame.functionName,
-    scopeChain: frame.scopeChain,
-    generatedLocation: frame.location,
-    location: fromServerLocation(frame.location)
-  };
-}
-
-function createLoadedObject(serverObject, parentId) {
-  const { value, name } = serverObject;
-
-  return {
-    objectId: value.objectId,
-    parentId,
-    name,
-    value
-  };
-}
-
-/***/ }),
-
 /***/ 1430:
 /***/ (function(module, exports, __webpack_require__) {
 
@@ -9100,7 +9026,7 @@ async function prettyPrint({ source, url }) {
   return await _prettyPrint({
     url,
     indent,
-    sourceText: source.get("text")
+    sourceText: source.text
   });
 }
 
@@ -9204,10 +9130,10 @@ function searchSources(query) {
     await dispatch(addSearchQuery(query));
     dispatch(updateSearchStatus(_projectTextSearch.statusType.fetching));
     const sources = (0, _selectors.getSources)(getState());
-    const validSources = sources.valueSeq().filter(source => !(0, _selectors.hasPrettySource)(getState(), source.get("id")) && !(0, _source.isThirdParty)(source));
+    const validSources = sources.valueSeq().filter(source => !(0, _selectors.hasPrettySource)(getState(), source.id) && !(0, _source.isThirdParty)(source));
     for (const source of validSources) {
       await dispatch((0, _sources.loadSourceText)(source));
-      await dispatch(searchSource(source.get("id"), query));
+      await dispatch(searchSource(source.id, query));
     }
     dispatch(updateSearchStatus(_projectTextSearch.statusType.done));
   };
@@ -10279,8 +10205,7 @@ StringRep.propTypes = {
   member: PropTypes.string,
   object: PropTypes.object.isRequired,
   openLink: PropTypes.func,
-  className: PropTypes.string,
-  omitLinkHref: PropTypes.bool
+  className: PropTypes.string
 };
 
 function StringRep(props) {
@@ -10292,8 +10217,7 @@ function StringRep(props) {
     useQuotes = true,
     escapeWhitespace = true,
     member,
-    openLink,
-    omitLinkHref = true
+    openLink
   } = props;
 
   let text = object;
@@ -10321,7 +10245,7 @@ function StringRep(props) {
 
   if (!isLong) {
     if (containsURL(text)) {
-      return span(config, ...getLinkifiedElements(text, shouldCrop && cropLimit, omitLinkHref, openLink));
+      return span(config, ...getLinkifiedElements(text, shouldCrop && cropLimit, openLink));
     }
 
     // Cropping of longString has been handled before formatting.
@@ -10406,11 +10330,10 @@ function maybeCropString(opts, text) {
  *
  * @param {String} text: The actual string to linkify.
  * @param {Integer | null} cropLimit
- * @param {Boolean} omitLinkHref: Do not create an href attribute if true.
  * @param {Function} openLink: Function handling the link opening.
  * @returns {Array<String|ReactElement>}
  */
-function getLinkifiedElements(text, cropLimit, omitLinkHref, openLink) {
+function getLinkifiedElements(text, cropLimit, openLink) {
   const halfLimit = Math.ceil((cropLimit - ELLIPSIS.length) / 2);
   const startCropIndex = cropLimit ? halfLimit : null;
   const endCropIndex = cropLimit ? text.length - halfLimit : null;
@@ -10437,7 +10360,6 @@ function getLinkifiedElements(text, cropLimit, omitLinkHref, openLink) {
         items.push(a({
           className: "url",
           title: token,
-          href: omitLinkHref === true ? null : token,
           draggable: false,
           onClick: openLink ? e => {
             e.preventDefault();
@@ -10592,9 +10514,7 @@ function ArrayRep(props) {
     className: "arrayLeftBracket"
   }, brackets.left), ...items, span({
     className: "arrayRightBracket"
-  }, brackets.right), span({
-    className: "arrayProperties",
-    role: "group" }));
+  }, brackets.right));
 }
 
 function arrayIterator(props, array, max) {
@@ -10608,13 +10528,17 @@ function arrayIterator(props, array, max) {
     let item;
 
     try {
-      item = ItemRep(Object.assign({}, props, config, {
+      item = ItemRep({
+        ...props,
+        ...config,
         object: array[i]
-      }));
+      });
     } catch (exc) {
-      item = ItemRep(Object.assign({}, props, config, {
+      item = ItemRep({
+        ...props,
+        ...config,
         object: exc
-      }));
+      });
     }
     items.push(item);
   }
@@ -10646,10 +10570,11 @@ function ItemRep(props) {
     delim,
     mode
   } = props;
-  return span({}, Rep(Object.assign({}, props, {
+  return span({}, Rep({
+    ...props,
     object: object,
     mode: mode
-  })), delim);
+  }), delim);
 }
 
 function getLength(object) {
@@ -10725,6 +10650,7 @@ const PropTypes = __webpack_require__(20);
 
 const { lengthBubble } = __webpack_require__(2249);
 const {
+  interleave,
   getGripType,
   isGrip,
   wrapRender,
@@ -10735,6 +10661,7 @@ const { MODE } = __webpack_require__(1357);
 const dom = __webpack_require__(1758);
 const { span } = dom;
 const { ModePropType } = __webpack_require__(1448);
+const DEFAULT_TITLE = "Array";
 
 /**
  * Renders an array. The array is enclosed by left and right bracket
@@ -10793,20 +10720,11 @@ function GripArray(props) {
     "data-link-actor-id": object.actor,
     className: "objectBox objectBox-array" }, title, span({
     className: "arrayLeftBracket"
-  }, brackets.left), ...interleaveCommas(items), span({
+  }, brackets.left), ...interleave(items, ", "), span({
     className: "arrayRightBracket"
   }, brackets.right), span({
     className: "arrayProperties",
     role: "group" }));
-}
-
-function interleaveCommas(items) {
-  return items.reduce((res, item, index) => {
-    if (index !== items.length - 1) {
-      return res.concat(item, ", ");
-    }
-    return res.concat(item);
-  }, []);
 }
 
 function getLength(grip) {
@@ -10821,7 +10739,7 @@ function getTitle(props, object) {
   let objectLength = getLength(object);
   let isEmpty = objectLength === 0;
 
-  let title = props.title || object.class || "Array";
+  let title = props.title || object.class || DEFAULT_TITLE;
 
   const length = lengthBubble({
     object,
@@ -10832,22 +10750,23 @@ function getTitle(props, object) {
 
   if (props.mode === MODE.TINY) {
     if (isEmpty) {
-      return object.class === "Array" ? "" : span({
-        className: "objectTitle" }, title, " ");
+      if (object.class === DEFAULT_TITLE) {
+        return null;
+      }
+
+      return span({ className: "objectTitle" }, `${title} `);
     }
 
     let trailingSpace;
-    if (object.class === "Array") {
-      title = "";
+    if (object.class === DEFAULT_TITLE) {
+      title = null;
       trailingSpace = " ";
     }
 
-    return span({
-      className: "objectTitle" }, title, length, trailingSpace);
+    return span({ className: "objectTitle" }, title, length, trailingSpace);
   }
 
-  return span({
-    className: "objectTitle" }, title, length, " ");
+  return span({ className: "objectTitle" }, title, length, " ");
 }
 
 function getPreviewItems(grip) {
@@ -10897,12 +10816,13 @@ function arrayIterator(props, grip, max) {
     }
 
     if (res.length < max) {
-      res.push(Rep(Object.assign({}, props, {
+      res.push(Rep({
+        ...props,
         object,
         mode: MODE.TINY,
         // Do not propagate title to array items reps
         title: undefined
-      })));
+      }));
     }
 
     return res;
@@ -10993,13 +10913,14 @@ function GripMapEntry(props) {
 
   return span({
     className: "objectBox objectBox-map-entry"
-  }, ...PropRep(Object.assign({}, props, {
+  }, PropRep({
+    ...props,
     name: key,
     object: value,
     equal: " \u2192 ",
     title: null,
     suppressQuotes: false
-  })));
+  }));
 }
 
 function supportsObject(grip, noGrip = false) {
@@ -12201,15 +12122,9 @@ var _firefox = __webpack_require__(1500);
 
 var firefox = _interopRequireWildcard(_firefox);
 
-var _chrome = __webpack_require__(1507);
-
-var chrome = _interopRequireWildcard(_chrome);
-
 var _prefs = __webpack_require__(226);
 
 var _dbg = __webpack_require__(2246);
-
-var _devtoolsConfig = __webpack_require__(1355);
 
 var _bootstrap = __webpack_require__(1430);
 
@@ -12226,36 +12141,29 @@ function loadFromPrefs(actions) {
   }
 }
 
-function getClient(connection) {
-  const { tab: { clientType } } = connection;
-  return clientType == "firefox" ? firefox : chrome;
-}
-
 async function onConnect(connection, { services, toolboxActions }) {
   // NOTE: the landing page does not connect to a JS process
   if (!connection) {
     return;
   }
 
-  const client = getClient(connection);
-  const commands = client.clientCommands;
+  const commands = firefox.clientCommands;
   const { store, actions, selectors } = (0, _bootstrap.bootstrapStore)(commands, {
     services,
     toolboxActions
   });
 
   (0, _bootstrap.bootstrapWorkers)();
-  await client.onConnect(connection, actions);
+  await firefox.onConnect(connection, actions);
   await loadFromPrefs(actions);
 
-  if (!(0, _devtoolsConfig.isFirefoxPanel)()) {
-    (0, _dbg.setupHelper)({
-      store,
-      actions,
-      selectors,
-      client: client.clientCommands
-    });
-  }
+  (0, _dbg.setupHelper)({
+    store,
+    actions,
+    selectors,
+    connection,
+    client: firefox.clientCommands
+  });
 
   (0, _bootstrap.bootstrapApp)(store);
   return { store, actions, selectors, client: commands };
@@ -12365,11 +12273,10 @@ var _breakpoint = __webpack_require__(1364);
 
 var _create = __webpack_require__(1428);
 
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+let bpClients; /* This Source Code Form is subject to the terms of the Mozilla Public
+                * License, v. 2.0. If a copy of the MPL was not distributed with this
+                * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
-let bpClients;
 let threadClient;
 let tabTarget;
 let debuggerClient;
@@ -12383,6 +12290,10 @@ function setupCommands(dependencies) {
   bpClients = {};
 
   return { bpClients };
+}
+
+function sendPacket(packet, callback) {
+  debuggerClient.request(packet).then(callback);
 }
 
 function resume() {
@@ -12591,6 +12502,10 @@ function disablePrettyPrint(sourceId) {
   return sourceClient.disablePrettyPrint();
 }
 
+async function setPausePoints(sourceId, pausePoints) {
+  return sendPacket({ to: sourceId, type: "setPausePoints", pausePoints });
+}
+
 function interrupt() {
   return threadClient.interrupt();
 }
@@ -12650,7 +12565,9 @@ const clientCommands = {
   prettyPrint,
   disablePrettyPrint,
   fetchSources,
-  fetchWorkers
+  fetchWorkers,
+  sendPacket,
+  setPausePoints
 };
 
 exports.setupCommands = setupCommands;
@@ -12857,9 +12774,15 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.isSelectedFrameVisible = isSelectedFrameVisible;
 
+var _devtoolsSourceMap = __webpack_require__(1360);
+
 var _pause = __webpack_require__(1394);
 
 var _sources = __webpack_require__(1369);
+
+function visibleSourceId(location) {
+  return (0, _devtoolsSourceMap.isOriginalId)(location.sourceId) ? (0, _devtoolsSourceMap.originalToGeneratedId)(location.sourceId) : location.sourceId;
+}
 
 /*
  * Checks to if the selected frame's source is currently
@@ -12873,7 +12796,11 @@ function isSelectedFrameVisible(state) {
   const selectedLocation = (0, _sources.getSelectedLocation)(state);
   const selectedFrame = (0, _pause.getSelectedFrame)(state);
 
-  return selectedFrame && selectedLocation && selectedFrame.location.sourceId == selectedLocation.sourceId;
+  if (!selectedFrame || !selectedLocation) {
+    return false;
+  }
+
+  return visibleSourceId(selectedLocation) === visibleSourceId(selectedFrame.location);
 }
 
 /***/ }),
@@ -12978,317 +12905,6 @@ const clientEvents = {
 };
 
 exports.setupEvents = setupEvents;
-exports.clientEvents = clientEvents;
-
-/***/ }),
-
-/***/ 1507:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.clientEvents = exports.clientCommands = undefined;
-exports.onConnect = onConnect;
-
-var _commands = __webpack_require__(1508);
-
-var _events = __webpack_require__(1509);
-
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-async function onConnect(connection, actions) {
-  const { tabConnection, connTarget: { type } } = connection;
-  const { Debugger, Runtime, Page } = tabConnection;
-
-  Debugger.enable();
-  Debugger.setPauseOnExceptions({ state: "none" });
-  Debugger.setAsyncCallStackDepth({ maxDepth: 0 });
-
-  if (type == "chrome") {
-    Page.frameNavigated(_events.pageEvents.frameNavigated);
-    Page.frameStartedLoading(_events.pageEvents.frameStartedLoading);
-    Page.frameStoppedLoading(_events.pageEvents.frameStoppedLoading);
-  }
-
-  Debugger.scriptParsed(_events.clientEvents.scriptParsed);
-  Debugger.scriptFailedToParse(_events.clientEvents.scriptFailedToParse);
-  Debugger.paused(_events.clientEvents.paused);
-  Debugger.resumed(_events.clientEvents.resumed);
-
-  (0, _commands.setupCommands)({ Debugger, Runtime, Page });
-  (0, _events.setupEvents)({ actions, Page, type, Runtime });
-  return {};
-}
-
-exports.clientCommands = _commands.clientCommands;
-exports.clientEvents = _events.clientEvents;
-
-/***/ }),
-
-/***/ 1508:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.clientCommands = exports.setupCommands = undefined;
-
-var _create = __webpack_require__(1429);
-
-let debuggerAgent; /* This Source Code Form is subject to the terms of the Mozilla Public
-                    * License, v. 2.0. If a copy of the MPL was not distributed with this
-                    * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-let runtimeAgent;
-let pageAgent;
-
-function setupCommands({ Debugger, Runtime, Page }) {
-  debuggerAgent = Debugger;
-  runtimeAgent = Runtime;
-  pageAgent = Page;
-}
-
-function resume() {
-  return debuggerAgent.resume();
-}
-
-function stepIn() {
-  return debuggerAgent.stepInto();
-}
-
-function stepOver() {
-  return debuggerAgent.stepOver();
-}
-
-function stepOut() {
-  return debuggerAgent.stepOut();
-}
-
-function pauseOnExceptions(shouldPauseOnExceptions, shouldIgnoreCaughtExceptions) {
-  if (!shouldPauseOnExceptions) {
-    return debuggerAgent.setPauseOnExceptions({ state: "none" });
-  }
-  const state = shouldIgnoreCaughtExceptions ? "uncaught" : "all";
-  return debuggerAgent.setPauseOnExceptions({ state });
-}
-
-function breakOnNext() {
-  return debuggerAgent.pause();
-}
-
-function sourceContents(sourceId) {
-  return debuggerAgent.getScriptSource({ scriptId: sourceId }).then(({ scriptSource }) => ({
-    source: scriptSource,
-    contentType: null
-  }));
-}
-
-async function setBreakpoint(location, condition) {
-  const {
-    breakpointId,
-    serverLocation
-  } = await debuggerAgent.setBreakpoint({
-    location: (0, _create.toServerLocation)(location),
-    columnNumber: location.column
-  });
-
-  const actualLocation = (0, _create.fromServerLocation)(serverLocation) || location;
-
-  return {
-    id: breakpointId,
-    actualLocation: actualLocation
-  };
-}
-
-function removeBreakpoint(breakpointId) {
-  return debuggerAgent.removeBreakpoint({ breakpointId });
-}
-
-async function getProperties(object) {
-  const { result } = await runtimeAgent.getProperties({
-    objectId: object.objectId
-  });
-
-  const loadedObjects = result.map(_create.createLoadedObject);
-
-  return { loadedObjects };
-}
-
-function evaluate(script) {
-  return runtimeAgent.evaluate({ expression: script });
-}
-
-function debuggeeCommand(script) {
-  evaluate(script);
-  return Promise.resolve();
-}
-
-function navigate(url) {
-  return pageAgent.navigate({ url });
-}
-
-const clientCommands = {
-  resume,
-  stepIn,
-  stepOut,
-  stepOver,
-  pauseOnExceptions,
-  breakOnNext,
-  sourceContents,
-  setBreakpoint,
-  removeBreakpoint,
-  evaluate,
-  debuggeeCommand,
-  navigate,
-  getProperties
-};
-
-exports.setupCommands = setupCommands;
-exports.clientCommands = clientCommands;
-
-/***/ }),
-
-/***/ 1509:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.clientEvents = exports.pageEvents = exports.setupEvents = undefined;
-
-var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; }; /* This Source Code Form is subject to the terms of the Mozilla Public
-                                                                                                                                                                                                                                                                   * License, v. 2.0. If a copy of the MPL was not distributed with this
-                                                                                                                                                                                                                                                                   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-var _create = __webpack_require__(1429);
-
-let actions;
-let pageAgent;
-let clientType;
-let runtimeAgent;
-
-function setupEvents(dependencies) {
-  actions = dependencies.actions;
-  pageAgent = dependencies.Page;
-  clientType = dependencies.clientType;
-  runtimeAgent = dependencies.Runtime;
-}
-
-// Debugger Events
-function scriptParsed({
-  scriptId,
-  url,
-  startLine,
-  startColumn,
-  endLine,
-  endColumn,
-  executionContextId,
-  hash,
-  isContentScript,
-  isInternalScript,
-  isLiveEdit,
-  sourceMapURL,
-  hasSourceURL,
-  deprecatedCommentWasUsed
-}) {
-  if (isContentScript) {
-    return;
-  }
-
-  if (clientType == "node") {
-    sourceMapURL = undefined;
-  }
-
-  actions.newSource({
-    id: scriptId,
-    url,
-    sourceMapURL,
-    isPrettyPrinted: false
-  });
-}
-
-function scriptFailedToParse() {}
-
-async function paused({
-  callFrames,
-  reason,
-  data,
-  hitBreakpoints,
-  asyncStackTrace
-}) {
-  const frames = callFrames.map(_create.createFrame);
-  const frame = frames[0];
-  const why = _extends({ type: reason }, data);
-
-  const objectId = frame.scopeChain[0].object.objectId;
-  const { result } = await runtimeAgent.getProperties({
-    objectId
-  });
-
-  const loadedObjects = result.map(_create.createLoadedObject);
-
-  if (clientType == "chrome") {
-    pageAgent.configureOverlay({ message: "Paused in debugger.html" });
-  }
-
-  await actions.paused({ frame, why, frames, loadedObjects });
-}
-
-function resumed() {
-  if (clientType == "chrome") {
-    pageAgent.configureOverlay({ suspended: false });
-  }
-
-  actions.resumed();
-}
-
-function globalObjectCleared() {}
-
-// Page Events
-function frameNavigated(frame) {
-  actions.navigated();
-}
-
-function frameStartedLoading() {
-  actions.willNavigate();
-}
-
-function domContentEventFired() {}
-
-function loadEventFired() {}
-
-function frameStoppedLoading() {}
-
-const clientEvents = {
-  scriptParsed,
-  scriptFailedToParse,
-  paused,
-  resumed,
-  globalObjectCleared
-};
-
-const pageEvents = {
-  frameNavigated,
-  frameStartedLoading,
-  domContentEventFired,
-  loadEventFired,
-  frameStoppedLoading
-};
-
-exports.setupEvents = setupEvents;
-exports.pageEvents = pageEvents;
 exports.clientEvents = clientEvents;
 
 /***/ }),
@@ -13472,6 +13088,10 @@ var _actions2 = _interopRequireDefault(_actions);
 
 var _ShortcutsModal = __webpack_require__(1535);
 
+var _VisibilityHandler = __webpack_require__(3611);
+
+var _VisibilityHandler2 = _interopRequireDefault(_VisibilityHandler);
+
 var _selectors = __webpack_require__(3590);
 
 var _devtoolsModules = __webpack_require__(1376);
@@ -13520,9 +13140,11 @@ var _QuickOpenModal2 = _interopRequireDefault(_QuickOpenModal);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-const shortcuts = new _devtoolsModules.KeyShortcuts({ window }); /* This Source Code Form is subject to the terms of the Mozilla Public
-                                                                  * License, v. 2.0. If a copy of the MPL was not distributed with this
-                                                                  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+const shortcuts = new _devtoolsModules.KeyShortcuts({ window });
 
 const { appinfo } = _devtoolsModules.Services;
 
@@ -13722,14 +13344,18 @@ class App extends _react.Component {
   render() {
     const { quickOpenEnabled } = this.props;
     return _react2.default.createElement(
-      "div",
-      { className: "debugger" },
-      this.renderLayout(),
-      quickOpenEnabled === true && _react2.default.createElement(_QuickOpenModal2.default, {
-        shortcutsModalEnabled: this.state.shortcutsModalEnabled,
-        toggleShortcutsModal: () => this.toggleShortcutsModal()
-      }),
-      this.renderShortcutsModal()
+      _VisibilityHandler2.default,
+      null,
+      _react2.default.createElement(
+        "div",
+        { className: "debugger" },
+        this.renderLayout(),
+        quickOpenEnabled === true && _react2.default.createElement(_QuickOpenModal2.default, {
+          shortcutsModalEnabled: this.state.shortcutsModalEnabled,
+          toggleShortcutsModal: () => this.toggleShortcutsModal()
+        }),
+        this.renderShortcutsModal()
+      )
     );
   }
 }
@@ -13775,9 +13401,8 @@ exports.default = async function addBreakpoint(getState, client, sourceMaps, { b
   const state = getState();
 
   const source = (0, _selectors.getSource)(state, breakpoint.location.sourceId);
-  const sourceRecord = source.toJS();
-  const location = _extends({}, breakpoint.location, { sourceUrl: source.get("url") });
-  const generatedLocation = await (0, _sourceMaps.getGeneratedLocation)(state, sourceRecord, location, sourceMaps);
+  const location = _extends({}, breakpoint.location, { sourceUrl: source.url });
+  const generatedLocation = await (0, _sourceMaps.getGeneratedLocation)(state, source.toJS(), location, sourceMaps);
 
   (0, _breakpoint.assertLocation)(location);
   (0, _breakpoint.assertLocation)(generatedLocation);
@@ -13793,8 +13418,8 @@ exports.default = async function addBreakpoint(getState, client, sourceMaps, { b
   const newGeneratedLocation = actualLocation || generatedLocation;
   const newLocation = await sourceMaps.getOriginalLocation(newGeneratedLocation);
 
-  const symbols = (0, _selectors.getSymbols)(getState(), sourceRecord);
-  const astLocation = await (0, _breakpoint.getASTLocation)(sourceRecord, symbols, newLocation);
+  const symbols = (0, _selectors.getSymbols)(getState(), source);
+  const astLocation = await (0, _breakpoint.getASTLocation)(source, symbols, newLocation);
 
   const newBreakpoint = {
     id,
@@ -13902,7 +13527,7 @@ function createSyncData(id, pendingBreakpoint, location, generatedLocation, prev
 async function syncClientBreakpoint(getState, client, sourceMaps, sourceId, pendingBreakpoint) {
   (0, _breakpoint.assertPendingBreakpoint)(pendingBreakpoint);
 
-  const source = (0, _selectors.getSource)(getState(), sourceId).toJS();
+  const source = (0, _selectors.getSource)(getState(), sourceId);
   const generatedSourceId = sourceMaps.isOriginalId(sourceId) ? (0, _devtoolsSourceMap.originalToGeneratedId)(sourceId) : sourceId;
 
   const { location, astLocation } = pendingBreakpoint;
@@ -13910,7 +13535,7 @@ async function syncClientBreakpoint(getState, client, sourceMaps, sourceId, pend
 
   const scopedLocation = await makeScopedLocation(astLocation, previousLocation, source);
 
-  const scopedGeneratedLocation = await (0, _sourceMaps.getGeneratedLocation)(getState(), source, scopedLocation, sourceMaps);
+  const scopedGeneratedLocation = await (0, _sourceMaps.getGeneratedLocation)(getState(), source.toJS(), scopedLocation, sourceMaps);
 
   // this is the generatedLocation of the pending breakpoint, with
   // the source id updated to reflect the new connection
@@ -14004,7 +13629,7 @@ function SearchState() {
  * @memberof utils/source-search
  * @static
  */
-function getSearchState(cm, query, modifiers) {
+function getSearchState(cm, query) {
   const state = cm.state.search || (cm.state.search = new SearchState());
   return state;
 }
@@ -14110,11 +13735,11 @@ function doSearch(ctx, rev, query, keepSelection, modifiers) {
 
   return cm.operation(function () {
     if (!query || isWhitespace(query)) {
-      clearSearch(cm, query, modifiers);
+      clearSearch(cm, query);
       return;
     }
 
-    const state = getSearchState(cm, query, modifiers);
+    const state = getSearchState(cm, query);
     const isNewQuery = state.query !== query;
     state.query = query;
 
@@ -14144,7 +13769,7 @@ function searchNext(ctx, rev, query, newQuery, modifiers) {
   const { cm, ed } = ctx;
   let nextMatch;
   cm.operation(function () {
-    const state = getSearchState(cm, query, modifiers);
+    const state = getSearchState(cm, query);
     const pos = getCursorPos(newQuery, rev, state);
 
     if (!state.query) {
@@ -14181,8 +13806,8 @@ function searchNext(ctx, rev, query, newQuery, modifiers) {
  * @memberof utils/source-search
  * @static
  */
-function removeOverlay(ctx, query, modifiers) {
-  const state = getSearchState(ctx.cm, query, modifiers);
+function removeOverlay(ctx, query) {
+  const state = getSearchState(ctx.cm, query);
   ctx.cm.removeOverlay(state.overlay);
   const { line, ch } = ctx.cm.getCursor();
   ctx.cm.doc.setSelection({ line, ch }, { line, ch }, { scroll: false });
@@ -14194,8 +13819,8 @@ function removeOverlay(ctx, query, modifiers) {
  * @memberof utils/source-search
  * @static
  */
-function clearSearch(cm, query, modifiers) {
-  const state = getSearchState(cm, query, modifiers);
+function clearSearch(cm, query) {
+  const state = getSearchState(cm, query);
 
   state.results = [];
 
@@ -14213,7 +13838,7 @@ function clearSearch(cm, query, modifiers) {
  * @static
  */
 function find(ctx, query, keepSelection, modifiers) {
-  clearSearch(ctx.cm, query, modifiers);
+  clearSearch(ctx.cm, query);
   return doSearch(ctx, false, query, keepSelection, modifiers);
 }
 
@@ -14545,7 +14170,7 @@ var _ui = __webpack_require__(1385);
 function doSearch(query, editor) {
   return ({ getState, dispatch }) => {
     const selectedSource = (0, _selectors.getSelectedSource)(getState());
-    if (!selectedSource || !selectedSource.get("text")) {
+    if (!selectedSource || !selectedSource.text) {
       return;
     }
 
@@ -14584,13 +14209,13 @@ function searchContents(query, editor) {
     const modifiers = (0, _selectors.getFileSearchModifiers)(getState());
     const selectedSource = (0, _selectors.getSelectedSource)(getState());
 
-    if (!query || !editor || !selectedSource || !selectedSource.get("text") || !modifiers) {
+    if (!query || !editor || !selectedSource || !selectedSource.text || !modifiers) {
       return;
     }
 
     const ctx = { ed: editor, cm: editor.codeMirror };
     const _modifiers = modifiers.toJS();
-    const matches = await (0, _search.getMatches)(query, selectedSource.get("text"), _modifiers);
+    const matches = await (0, _search.getMatches)(query, selectedSource.text, _modifiers);
 
     const res = (0, _editor.find)(ctx, query, true, _modifiers);
     if (!res) {
@@ -14634,12 +14259,11 @@ function traverseResults(rev, editor) {
 
 function closeFileSearch(editor) {
   return ({ getState, dispatch }) => {
-    const modifiers = (0, _selectors.getFileSearchModifiers)(getState());
     const query = (0, _selectors.getFileSearchQuery)(getState());
 
-    if (editor && modifiers) {
+    if (editor) {
       const ctx = { ed: editor, cm: editor.codeMirror };
-      (0, _editor.removeOverlay)(ctx, query, modifiers.toJS());
+      (0, _editor.removeOverlay)(ctx, query);
     }
 
     dispatch(setFileSearchQuery(""));
@@ -15378,19 +15002,11 @@ var _propTypes = __webpack_require__(20);
 
 var _propTypes2 = _interopRequireDefault(_propTypes);
 
-var _svgInlineReact = __webpack_require__(1763);
-
-var _svgInlineReact2 = _interopRequireDefault(_svgInlineReact);
-
-var _arrow = __webpack_require__(2247);
-
-var _arrow2 = _interopRequireDefault(_arrow);
-
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-const { Component, createFactory, createElement } = _react2.default; /* This Source Code Form is subject to the terms of the Mozilla Public
-                                                                      * License, v. 2.0. If a copy of the MPL was not distributed with this
-                                                                      * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+const { Component, createFactory } = _react2.default; /* This Source Code Form is subject to the terms of the Mozilla Public
+                                                       * License, v. 2.0. If a copy of the MPL was not distributed with this
+                                                       * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 __webpack_require__(2248);
 
@@ -15420,9 +15036,8 @@ class ArrowExpander extends Component {
     if (expanded) {
       classNames.push("expanded");
     }
-    return createElement(_svgInlineReact2.default, {
-      className: classNames.join(" "),
-      src: _arrow2.default
+    return _reactDomFactories2.default.img({
+      className: classNames.join(" ")
     });
   }
 }
@@ -15480,7 +15095,7 @@ class TreeNode extends Component {
       className: "tree-node" + (focused ? " focused" : ""),
       onClick: this.props.onClick,
       role: "treeitem",
-      "aria-level": depth,
+      "aria-level": depth + 1,
       "aria-expanded": ariaExpanded,
       "data-expandable": this.props.isExpandable
     }, ...items);
@@ -16645,7 +16260,13 @@ var _react2 = _interopRequireDefault(_react);
 
 var _redux = __webpack_require__(3593);
 
+var _devtoolsContextmenu = __webpack_require__(1413);
+
 var _reactRedux = __webpack_require__(3592);
+
+var _clipboard = __webpack_require__(1388);
+
+var _function = __webpack_require__(1597);
 
 var _actions = __webpack_require__(1354);
 
@@ -16663,10 +16284,6 @@ var _lodash = __webpack_require__(2);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
 class Outline extends _react.Component {
   selectItem(location) {
     const { selectedSource, selectLocation } = this.props;
@@ -16676,6 +16293,45 @@ class Outline extends _react.Component {
     const selectedSourceId = selectedSource.get("id");
     const startLine = location.start.line;
     selectLocation({ sourceId: selectedSourceId, line: startLine });
+  }
+
+  onContextMenu(event, func) {
+    event.stopPropagation();
+    event.preventDefault();
+
+    const {
+      selectedSource,
+      getFunctionText,
+      flashLineRange,
+      selectedLocation
+    } = this.props;
+
+    const copyFunctionKey = L10N.getStr("copyFunction.accesskey");
+    const copyFunctionLabel = L10N.getStr("copyFunction.label");
+
+    if (!selectedSource) {
+      return;
+    }
+
+    const sourceLine = func.location.start.line;
+    const functionText = getFunctionText(sourceLine);
+
+    const copyFunctionItem = {
+      id: "node-menu-copy-function",
+      label: copyFunctionLabel,
+      accesskey: copyFunctionKey,
+      disabled: !functionText,
+      click: () => {
+        flashLineRange({
+          start: func.location.start.line,
+          end: func.location.end.line,
+          sourceId: selectedLocation.sourceId
+        });
+        return (0, _clipboard.copyToTheClipboard)(functionText);
+      }
+    };
+    const menuOptions = [copyFunctionItem];
+    (0, _devtoolsContextmenu.showMenu)(event, menuOptions);
   }
 
   renderPlaceholder() {
@@ -16704,7 +16360,8 @@ class Outline extends _react.Component {
       {
         key: `${name}:${location.start.line}:${location.start.column}`,
         className: "outline-list__element",
-        onClick: () => this.selectItem(location)
+        onClick: () => this.selectItem(location),
+        onContextMenu: e => this.onContextMenu(e, func)
       },
       _react2.default.createElement(
         "span",
@@ -16793,7 +16450,10 @@ class Outline extends _react.Component {
   }
 
   render() {
-    const { symbols } = this.props;
+    const { symbols, selectedSource } = this.props;
+    if (!selectedSource) {
+      return this.renderPlaceholder();
+    }
     if (!symbols || symbols.loading) {
       return this.renderLoading();
     }
@@ -16806,12 +16466,17 @@ class Outline extends _react.Component {
   }
 }
 
-exports.Outline = Outline;
+exports.Outline = Outline; /* This Source Code Form is subject to the terms of the Mozilla Public
+                            * License, v. 2.0. If a copy of the MPL was not distributed with this
+                            * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
 exports.default = (0, _reactRedux.connect)(state => {
   const selectedSource = (0, _selectors.getSelectedSource)(state);
   return {
     symbols: (0, _selectors.getSymbols)(state, selectedSource && selectedSource.toJS()),
-    selectedSource
+    selectedSource,
+    selectedLocation: (0, _selectors.getSelectedLocation)(state),
+    getFunctionText: line => (0, _function.findFunctionText)(line, selectedSource.toJS(), (0, _selectors.getSymbols)(state, selectedSource.toJS()))
   };
 }, dispatch => (0, _redux.bindActionCreators)(_actions2.default, dispatch))(Outline);
 
@@ -16877,6 +16542,16 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 // Dependencies
+const sourceTypes = {
+  coffee: "coffeescript",
+  js: "javascript",
+  jsx: "react",
+  ts: "typescript"
+};
+
+// Actions
+
+
 class SourcesTree extends _react.Component {
 
   constructor(props) {
@@ -16943,6 +16618,14 @@ class SourcesTree extends _react.Component {
     }
   }
 
+  renderEmptyElement(message) {
+    return _react2.default.createElement(
+      "div",
+      { className: "no-sources-message" },
+      message
+    );
+  }
+
   render() {
     const { expanded, projectRoot } = this.props;
     const {
@@ -16961,6 +16644,8 @@ class SourcesTree extends _react.Component {
       this.props.setExpandedState(expandedState);
     };
 
+    const isEmpty = sourceTree.contents.length === 0;
+
     const isCustomRoot = projectRoot !== "";
     let roots = () => sourceTree.contents;
 
@@ -16968,7 +16653,13 @@ class SourcesTree extends _react.Component {
 
     // The "sourceTree.contents[0]" check ensures that there are contents
     // A custom root with no existing sources will be ignored
-    if (isCustomRoot && sourceTree.contents[0]) {
+    if (isCustomRoot) {
+      let rootLabel = projectRoot.split("/").pop();
+      if (sourceTree.contents[0]) {
+        rootLabel = sourceTree.contents[0].name;
+        roots = () => sourceTree.contents[0].contents;
+      }
+
       clearProjectRootButton = _react2.default.createElement(
         "button",
         {
@@ -16981,13 +16672,15 @@ class SourcesTree extends _react.Component {
         _react2.default.createElement(
           "span",
           { className: "sources-clear-root-label" },
-          sourceTree.contents[0].name
+          rootLabel
         )
       );
-      roots = () => sourceTree.contents[0].contents;
     }
 
-    const isEmpty = sourceTree.contents.length === 0;
+    if (isEmpty && !isCustomRoot) {
+      return this.renderEmptyElement(L10N.getStr("sources.noSourcesAvailable"));
+    }
+
     const treeProps = {
       autoExpandAll: false,
       autoExpandDepth: expanded ? 0 : 1,
@@ -17008,14 +16701,6 @@ class SourcesTree extends _react.Component {
 
     const tree = _react2.default.createElement(_ManagedTree2.default, treeProps);
 
-    if (isEmpty) {
-      return _react2.default.createElement(
-        "div",
-        { className: "no-sources-message" },
-        L10N.getStr("sources.noSourcesAvailable")
-      );
-    }
-
     const onKeyDown = e => {
       if (e.keyCode === 13 && focusedItem) {
         this.selectItem(focusedItem);
@@ -17034,7 +16719,7 @@ class SourcesTree extends _react.Component {
         { className: "sources-clear-root-container" },
         clearProjectRootButton
       ) : null,
-      _react2.default.createElement(
+      isEmpty ? this.renderEmptyElement(L10N.getStr("sources.noSourcesAvailableRoot")) : _react2.default.createElement(
         "div",
         { className: "sources-list", onKeyDown: onKeyDown },
         tree
@@ -17042,8 +16727,6 @@ class SourcesTree extends _react.Component {
     );
   }
 }
-
-// Actions
 
 var _initialiseProps = function () {
   this.focusItem = item => {
@@ -17093,13 +16776,10 @@ var _initialiseProps = function () {
       if (source && source.get("isBlackBoxed")) {
         return _react2.default.createElement("img", { className: "blackBox" });
       }
-      const sourceType = {
-        coffee: "coffeescript",
-        js: "javascript",
-        jsx: "react",
-        ts: "typescript"
-      }[(0, _sourcesTree.getExtension)(source)];
-      return sourceType ? _react2.default.createElement(_Svg2.default, { className: "source-icon", name: sourceType }) : _react2.default.createElement("img", { className: "file" });
+
+      const sourceType = sourceTypes[(0, _sourcesTree.getExtension)(source)];
+      const classNames = (0, _classnames2.default)("source-icon", sourceType || "file");
+      return _react2.default.createElement("img", { className: classNames });
     }
 
     return _react2.default.createElement("img", { className: "folder" });
@@ -17392,7 +17072,7 @@ class Editor extends _react.PureComponent {
       } = this.props;
 
       // ignore right clicks in the gutter
-      if (ev.ctrlKey && ev.button === 0 || ev.which === 3 || selectedSource && selectedSource.get("isBlackBoxed") || !selectedSource) {
+      if (ev.ctrlKey && ev.button === 0 || ev.which === 3 || selectedSource && selectedSource.isBlackBoxed || !selectedSource) {
         return;
       }
 
@@ -17892,7 +17572,7 @@ class SourceFooter extends _react.PureComponent {
       return;
     }
 
-    const blackboxed = selectedSource.get("isBlackBoxed");
+    const blackboxed = selectedSource.isBlackBoxed;
 
     const tooltip = L10N.getStr("sourceFooter.blackbox");
     const type = "black-box";
@@ -17916,7 +17596,7 @@ class SourceFooter extends _react.PureComponent {
   blackBoxSummary() {
     const { selectedSource } = this.props;
 
-    if (!selectedSource || !selectedSource.get("isBlackBoxed")) {
+    if (!selectedSource || !selectedSource.isBlackBoxed) {
       return;
     }
 
@@ -18103,10 +17783,10 @@ class SearchBar extends _react.Component {
     };
 
     this.clearSearch = () => {
-      const { editor: ed, query, modifiers } = this.props;
-      if (ed && modifiers) {
+      const { editor: ed, query } = this.props;
+      if (ed) {
         const ctx = { ed, cm: ed.codeMirror };
-        (0, _editor.removeOverlay)(ctx, query, modifiers.toJS());
+        (0, _editor.removeOverlay)(ctx, query);
       }
     };
 
@@ -19147,13 +18827,14 @@ function propIterator(props, object, max) {
   const propertiesNames = Object.keys(object);
 
   const pushPropRep = (name, value) => {
-    elements.push(PropRep(Object.assign({}, props, {
+    elements.push(PropRep({
+      ...props,
       key: name,
       mode: MODE.TINY,
       name,
       object: value,
       equal: ": "
-    })));
+    }));
     propertiesNumber++;
 
     if (propertiesNumber < propertiesNames.length) {
@@ -19410,9 +19091,7 @@ function Accessor(props) {
   }
   const title = accessors.join(" & ");
 
-  return span({ className: "objectBox objectBox-accessor" }, span({
-    className: "objectTitle"
-  }, title));
+  return span({ className: "objectBox objectBox-accessor objectTitle" }, title);
 }
 
 function hasGetter(object) {
@@ -19606,7 +19285,7 @@ function Document(props) {
   return span({
     "data-link-actor-id": grip.actor,
     className: "objectBox objectBox-document"
-  }, getTitle(grip), location ? " " : null, location ? span({ className: "location" }, location) : null);
+  }, getTitle(grip), location ? span({ className: "location" }, ` ${location}`) : null);
 }
 
 function getLocation(grip) {
@@ -19673,16 +19352,18 @@ Event.propTypes = {
 };
 
 function Event(props) {
-  // Use `Object.assign` to keep `props` without changes because:
-  // 1. JSON.stringify/JSON.parse is slow.
-  // 2. Immutable.js is planned for the future.
-  let gripProps = Object.assign({}, props, {
-    title: getTitle(props)
-  });
-  gripProps.object = Object.assign({}, props.object);
-  gripProps.object.preview = Object.assign({}, props.object.preview);
+  let gripProps = {
+    ...props,
+    title: getTitle(props),
+    object: {
+      ...props.object,
+      preview: {
+        ...props.object.preview,
+        ownProperties: {}
+      }
+    }
+  };
 
-  gripProps.object.preview.ownProperties = {};
   if (gripProps.object.preview.target) {
     Object.assign(gripProps.object.preview.ownProperties, {
       target: gripProps.object.preview.target
@@ -19767,7 +19448,6 @@ const {
   wrapRender
 } = __webpack_require__(1353);
 const { MODE } = __webpack_require__(1357);
-const Svg = __webpack_require__(1410);
 
 const dom = __webpack_require__(1758);
 const { span } = dom;
@@ -19791,8 +19471,8 @@ function FunctionRep(props) {
 
   let jumpToDefinitionButton;
   if (onViewSourceInDebugger && grip.location && grip.location.url && !IGNORED_SOURCE_URLS.includes(grip.location.url)) {
-    jumpToDefinitionButton = Svg("jump-definition", {
-      element: "a",
+    jumpToDefinitionButton = dom.button({
+      className: "jump-definition",
       draggable: false,
       title: "Jump to definition",
       onClick: e => {
@@ -19836,14 +19516,12 @@ function getTitle(grip, props) {
   }, title);
 }
 
-// Decodes an anonymous naming scheme that
-// spider monkey implements based on "Naming Anonymous JavaScript Functions"
-// http://johnjbarton.github.io/nonymous/index.html
-const objectProperty = /([\w\d]+)$/;
-const arrayProperty = /\[(.*?)\]$/;
-const functionProperty = /([\w\d]+)[\/\.<]*?$/;
-const annonymousProperty = /([\w\d]+)\(\^\)$/;
-
+/**
+ * Returns a ReactElement representing the function name.
+ *
+ * @param {Object} grip : Function grip
+ * @param {Object} props: Function rep props
+ */
 function getFunctionName(grip, props = {}) {
   let { functionName } = props;
   let name;
@@ -19856,21 +19534,34 @@ function getFunctionName(grip, props = {}) {
   if (grip.displayName != undefined && functionName != undefined && grip.displayName != functionName) {
     name = functionName + ":" + grip.displayName;
   } else {
-    name = grip.userDisplayName || grip.displayName || grip.name || props.functionName || "";
-
-    const scenarios = [objectProperty, arrayProperty, functionProperty, annonymousProperty];
-
-    scenarios.some(reg => {
-      const match = reg.exec(name);
-      if (match) {
-        name = match[1];
-        return true;
-      }
-      return false;
-    });
+    name = cleanFunctionName(grip.userDisplayName || grip.displayName || grip.name || props.functionName || "");
   }
 
   return cropString(name, 100);
+}
+
+const objectProperty = /([\w\d]+)$/;
+const arrayProperty = /\[(.*?)\]$/;
+const functionProperty = /([\w\d]+)[\/\.<]*?$/;
+const annonymousProperty = /([\w\d]+)\(\^\)$/;
+
+/**
+ * Decodes an anonymous naming scheme that
+ * spider monkey implements based on "Naming Anonymous JavaScript Functions"
+ * http://johnjbarton.github.io/nonymous/index.html
+ *
+ * @param {String} name : Function name to clean up
+ * @returns String
+ */
+function cleanFunctionName(name) {
+  for (const reg of [objectProperty, arrayProperty, functionProperty, annonymousProperty]) {
+    const match = reg.exec(name);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return name;
 }
 
 function renderParams(props) {
@@ -19902,6 +19593,7 @@ function supportsObject(grip, noGrip = false) {
 module.exports = {
   rep: wrapRender(FunctionRep),
   supportsObject,
+  cleanFunctionName,
   // exported for testing purpose.
   getFunctionName
 };
@@ -19986,13 +19678,14 @@ function getProps(props, promiseState) {
 
   return keys.reduce((res, key, i) => {
     let object = promiseState[key];
-    res = res.concat(PropRep(Object.assign({}, props, {
+    res = res.concat(PropRep({
+      ...props,
       mode: MODE.TINY,
       name: `<${key}>`,
       object,
       equal: ": ",
       suppressQuotes: true
-    })));
+    }));
 
     // Interleave commas between elements
     if (i !== keys.length - 1) {
@@ -20236,7 +19929,6 @@ const {
 const { rep: StringRep } = __webpack_require__(1447);
 const { MODE } = __webpack_require__(1357);
 const nodeConstants = __webpack_require__(1449);
-const Svg = __webpack_require__(1410);
 
 const dom = __webpack_require__(1758);
 const { span } = dom;
@@ -20284,9 +19976,8 @@ function ElementNode(props) {
     }
 
     if (onInspectIconClick) {
-      inspectIcon = Svg("open-inspector", {
-        element: "a",
-        draggable: false,
+      inspectIcon = dom.button({
+        className: "open-inspector",
         // TODO: Localize this with "openNodeInInspector" when Bug 1317038 lands
         title: "Click to select the node in the inspector",
         onClick: e => onInspectIconClick(object, e)
@@ -20368,7 +20059,6 @@ const {
   wrapRender
 } = __webpack_require__(1353);
 const { MODE } = __webpack_require__(1357);
-const Svg = __webpack_require__(1410);
 
 const dom = __webpack_require__(1758);
 const { span } = dom;
@@ -20415,8 +20105,8 @@ function TextNode(props) {
     }
 
     if (onInspectIconClick) {
-      inspectIcon = Svg("open-inspector", {
-        element: "a",
+      inspectIcon = dom.button({
+        className: "open-inspector",
         draggable: false,
         // TODO: Localize this with "openNodeInInspector" when Bug 1317038 lands
         title: "Click to select the node in the inspector",
@@ -20476,6 +20166,7 @@ const {
   isGrip,
   wrapRender
 } = __webpack_require__(1353);
+const { cleanFunctionName } = __webpack_require__(1573);
 const { MODE } = __webpack_require__(1357);
 
 const dom = __webpack_require__(1758);
@@ -20510,21 +20201,81 @@ function ErrorRep(props) {
     name = "Error";
   }
 
-  let content = props.mode === MODE.TINY ? name : `${name}: ${preview.message}`;
+  const content = [];
+
+  if (props.mode === MODE.TINY) {
+    content.push(name);
+  } else {
+    content.push(`${name}: "${preview.message}"`);
+  }
 
   if (preview.stack && props.mode !== MODE.TINY) {
-    /*
-      * Since Reps are used in the JSON Viewer, we can't localize
-      * the "Stack trace" label (defined in debugger.properties as
-      * "variablesViewErrorStacktrace" property), until Bug 1317038 lands.
-      */
-    content = `${content}\nStack trace:\n${preview.stack}`;
+    content.push("\n", getStacktraceElements(preview));
   }
 
   return span({
     "data-link-actor-id": object.actor,
     className: "objectBox-stackTrace"
   }, content);
+}
+
+/**
+ * Returns a React element reprensenting the Error stacktrace, i.e. transform error.stack
+ * from:
+ *
+ * semicolon@debugger eval code:1:109
+ * jkl@debugger eval code:1:63
+ * asdf@debugger eval code:1:28
+ * @debugger eval code:1:227
+ *
+ * Into a column layout:
+ *
+ * semicolon  (<anonymous>:8:10)
+ * jkl        (<anonymous>:5:10)
+ * asdf       (<anonymous>:2:10)
+ *            (<anonymous>:11:1)
+ */
+function getStacktraceElements(preview) {
+  const stack = [];
+  preview.stack.split("\n").forEach((line, index) => {
+    if (!line) {
+      // Skip any blank lines
+      return;
+    }
+
+    let functionName;
+    let location;
+
+    // Given the input: "functionName@scriptLocation:2:100"
+    // Result:
+    // ["functionName@scriptLocation:2:100", "functionName", "scriptLocation:2:100"]
+    const result = line.match(/^(.*)@(.*)$/);
+    if (result && result.length === 3) {
+      functionName = result[1];
+
+      // If the resource was loaded by base-loader.js, the location looks like:
+      // resource://devtools/shared/base-loader.js -> resource://path/to/file.js .
+      // What's needed is only the last part after " -> ".
+      location = result[2].split(" -> ").pop();
+    }
+
+    if (!functionName) {
+      functionName = "<anonymous>";
+    }
+
+    stack.push(span({
+      key: "fn" + index,
+      className: "objectBox-stackTrace-fn"
+    }, cleanFunctionName(functionName)), span({
+      key: "location" + index,
+      className: "objectBox-stackTrace-location"
+    }, ` (${location})`));
+  });
+
+  return span({
+    key: "stack",
+    className: "objectBox-stackTrace-grid"
+  }, stack);
 }
 
 // Registration
@@ -20593,11 +20344,14 @@ function WindowRep(props) {
     return span(config, getTitle(object));
   }
 
-  return span(config, getTitle(object), " ", span({ className: "location" }, getLocation(object)));
+  return span(config, getTitle(object, true), span({ className: "location" }, getLocation(object)));
 }
 
-function getTitle(object) {
+function getTitle(object, trailingSpace) {
   let title = object.displayClass || object.class || "Window";
+  if (trailingSpace === true) {
+    title = `${title} `;
+  }
   return span({ className: "objectTitle" }, title);
 }
 
@@ -20658,7 +20412,7 @@ function ObjectWithText(props) {
   return span({
     "data-link-actor-id": grip.actor,
     className: "objectTitle objectBox objectBox-" + getType(grip)
-  }, getType(grip), " ", getDescription(grip));
+  }, `${getType(grip)} `, getDescription(grip));
 }
 
 function getType(grip) {
@@ -20770,6 +20524,7 @@ module.exports = {
 const { lengthBubble } = __webpack_require__(2249);
 const PropTypes = __webpack_require__(20);
 const {
+  interleave,
   isGrip,
   wrapRender,
   ellipsisElement
@@ -20778,8 +20533,7 @@ const PropRep = __webpack_require__(1381);
 const { MODE } = __webpack_require__(1357);
 const { ModePropType } = __webpack_require__(1448);
 
-const dom = __webpack_require__(1758);
-const { span } = dom;
+const { span } = __webpack_require__(1758);
 
 /**
  * Renders an map. A map is represented by a list of its
@@ -20818,7 +20572,7 @@ function GripMap(props) {
 
   return span(config, title, span({
     className: "objectLeftBrace"
-  }, " { "), ...propsArray, span({
+  }, " { "), ...interleave(propsArray, ", "), span({
     className: "objectRightBrace"
   }, " }"));
 }
@@ -20867,23 +20621,7 @@ function entriesIterator(props, object, max) {
     entries.push(ellipsisElement);
   }
 
-  return unfoldEntries(entries);
-}
-
-function unfoldEntries(items) {
-  return items.reduce((res, item, index) => {
-    if (Array.isArray(item)) {
-      res = res.concat(item);
-    } else {
-      res.push(item);
-    }
-
-    // Interleave commas between elements
-    if (index !== items.length - 1) {
-      res.push(", ");
-    }
-    return res;
-  }, []);
+  return entries;
 }
 
 /**
@@ -20978,397 +20716,32 @@ module.exports = {
 "use strict";
 
 
-var _devtoolsComponents = __webpack_require__(1441);
-
-var _devtoolsComponents2 = _interopRequireDefault(_devtoolsComponents);
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { Component, createFactory } = __webpack_require__(0);
-const PropTypes = __webpack_require__(20);
-const dom = __webpack_require__(1758);
+const { createElement, createFactory, PureComponent } = __webpack_require__(0);
+const { Provider } = __webpack_require__(3592);
+const ObjectInspector = createFactory(__webpack_require__(3615));
+const createStore = __webpack_require__(3618);
 
-const Tree = createFactory(_devtoolsComponents2.default.Tree);
-__webpack_require__(1325);
+class OI extends PureComponent {
 
-const classnames = __webpack_require__(175);
-
-const {
-  REPS: {
-    Rep,
-    Grip
-  }
-} = __webpack_require__(1372);
-const {
-  MODE
-} = __webpack_require__(1357);
-
-const Utils = __webpack_require__(1938);
-
-const {
-  getChildren,
-  getClosestGripNode,
-  getParent,
-  getValue,
-  nodeHasAccessors,
-  nodeHasProperties,
-  nodeIsDefaultProperties,
-  nodeIsFunction,
-  nodeIsGetter,
-  nodeIsMapEntry,
-  nodeIsMissingArguments,
-  nodeIsOptimizedOut,
-  nodeIsPrimitive,
-  nodeIsPrototype,
-  nodeIsSetter,
-  nodeIsUninitializedBinding,
-  nodeIsUnmappedBinding,
-  nodeIsUnscopedBinding,
-  nodeIsWindow
-} = Utils.node;
-
-const {
-  loadItemProperties
-} = Utils.loadProperties;
-
-// This implements a component that renders an interactive inspector
-// for looking at JavaScript objects. It expects descriptions of
-// objects from the protocol, and will dynamically fetch child
-// properties as objects are expanded.
-//
-// If you want to inspect a single object, pass the name and the
-// protocol descriptor of it:
-//
-//  ObjectInspector({
-//    name: "foo",
-//    desc: { writable: true, ..., { value: { actor: "1", ... }}},
-//    ...
-//  })
-//
-// If you want multiple top-level objects (like scopes), you can pass
-// an array of manually constructed nodes as `roots`:
-//
-//  ObjectInspector({
-//    roots: [{ name: ... }, ...],
-//    ...
-//  });
-
-// There are 3 types of nodes: a simple node with a children array, an
-// object that has properties that should be children when they are
-// fetched, and a primitive value that should be displayed with no
-// children.
-
-class ObjectInspector extends Component {
   constructor(props) {
-    super();
-    this.cachedNodes = new Map();
-
-    this.state = {
-      actors: new Set(),
-      expandedPaths: new Set(),
-      focusedItem: null,
-      loadedProperties: props.loadedProperties || new Map(),
-      loading: new Map()
-    };
-
-    const self = this;
-
-    self.getChildren = this.getChildren.bind(this);
-    self.renderTreeItem = this.renderTreeItem.bind(this);
-    self.setExpanded = this.setExpanded.bind(this);
-    self.focusItem = this.focusItem.bind(this);
-    self.getRoots = this.getRoots.bind(this);
+    super(props);
+    this.store = createStore(props);
   }
 
-  shouldComponentUpdate(nextProps, nextState) {
-    const {
-      expandedPaths,
-      loadedProperties
-    } = this.state;
-
-    if (this.props.roots !== nextProps.roots) {
-      // Since the roots changed, we assume the properties did as well. Thus we can clear
-      // the cachedNodes to avoid bugs and memory leaks.
-      this.cachedNodes.clear();
-      return true;
-    }
-
-    return expandedPaths.size !== nextState.expandedPaths.size || loadedProperties.size !== nextState.loadedProperties.size || [...expandedPaths].some(key => !nextState.expandedPaths.has(key));
-  }
-
-  componentWillUnmount() {
-    const { releaseActor } = this.props;
-    if (typeof releaseActor !== "function") {
-      return;
-    }
-
-    const { actors } = this.state;
-    for (let actor of actors) {
-      releaseActor(actor);
-    }
-  }
-
-  getChildren(item) {
-    const {
-      loadedProperties
-    } = this.state;
-    const { cachedNodes } = this;
-
-    return getChildren({
-      loadedProperties,
-      cachedNodes,
-      item
-    });
-  }
-
-  getRoots() {
-    return this.props.roots;
-  }
-
-  getKey(item) {
-    return item.path;
-  }
-
-  /**
-   * This function is responsible for expanding/collapsing a given node,
-   * which also means that it will check if we need to fetch properties,
-   * entries, prototype and symbols for the said node. If we do, it will call
-   * the appropriate ObjectClient functions, and change the state of the component
-   * with the results it gets from those functions.
-   */
-  async setExpanded(item, expand) {
-    if (nodeIsPrimitive(item)) {
-      return;
-    }
-
-    const {
-      loadedProperties
-    } = this.state;
-
-    const key = this.getKey(item);
-
-    this.setState((prevState, props) => {
-      const newPaths = new Set(prevState.expandedPaths);
-      if (expand === true) {
-        newPaths.add(key);
-      } else {
-        newPaths.delete(key);
-      }
-      return {
-        expandedPaths: newPaths
-      };
-    });
-
-    if (expand === true) {
-      const gripItem = getClosestGripNode(item);
-      const value = getValue(gripItem);
-      const path = item.path;
-
-      const onItemPropertiesLoaded = loadItemProperties(item, this.props.createObjectClient, loadedProperties);
-      if (onItemPropertiesLoaded !== null) {
-        this.setState((prevState, props) => {
-          const nextLoading = new Map(prevState.loading);
-          nextLoading.set(path, onItemPropertiesLoaded);
-          return {
-            loading: nextLoading
-          };
-        });
-
-        const properties = await onItemPropertiesLoaded;
-
-        this.setState((prevState, props) => {
-          const nextLoading = new Map(prevState.loading);
-          nextLoading.delete(path);
-
-          const isRoot = this.props.roots.some(root => {
-            const rootValue = getValue(root);
-            return rootValue && rootValue.actor === value.actor;
-          });
-
-          return {
-            actors: isRoot ? prevState.actors : new Set(prevState.actors).add(value.actor),
-            loadedProperties: new Map(prevState.loadedProperties).set(path, properties),
-            loading: nextLoading
-          };
-        });
-      }
-    }
-  }
-
-  focusItem(item) {
-    if (!this.props.disabledFocus && this.state.focusedItem !== item) {
-      this.setState({
-        focusedItem: item
-      });
-
-      if (this.props.onFocus) {
-        this.props.onFocus(item);
-      }
-    }
-  }
-
-  renderTreeItem(item, depth, focused, arrow, expanded) {
-    let objectValue;
-    let label = item.name;
-    let itemValue = getValue(item);
-
-    const isPrimitive = nodeIsPrimitive(item);
-
-    const unavailable = isPrimitive && itemValue && itemValue.hasOwnProperty && itemValue.hasOwnProperty("unavailable");
-
-    if (nodeIsUninitializedBinding(item)) {
-      objectValue = dom.span({ className: "unavailable" }, "(uninitialized)");
-    } else if (nodeIsUnmappedBinding(item)) {
-      objectValue = dom.span({ className: "unavailable" }, "(unmapped)");
-    } else if (nodeIsUnscopedBinding(item)) {
-      objectValue = dom.span({ className: "unavailable" }, "(unscoped)");
-    } else if (nodeIsOptimizedOut(item)) {
-      objectValue = dom.span({ className: "unavailable" }, "(optimized away)");
-    } else if (nodeIsMissingArguments(item) || unavailable) {
-      objectValue = dom.span({ className: "unavailable" }, "(unavailable)");
-    } else if (nodeIsFunction(item) && !nodeIsGetter(item) && !nodeIsSetter(item) && (this.props.mode === MODE.TINY || !this.props.mode)) {
-      objectValue = undefined;
-      label = this.renderGrip(item, Object.assign({}, this.props, {
-        functionName: label
-      }));
-    } else if (nodeHasProperties(item) || nodeHasAccessors(item) || nodeIsMapEntry(item) || isPrimitive) {
-      let repsProp = Object.assign({}, this.props);
-      if (depth > 0) {
-        repsProp.mode = this.props.mode === MODE.LONG ? MODE.SHORT : MODE.TINY;
-      }
-      if (expanded) {
-        repsProp.mode = MODE.TINY;
-      }
-
-      objectValue = this.renderGrip(item, repsProp);
-    }
-
-    const hasLabel = label !== null && typeof label !== "undefined";
-    const hasValue = typeof objectValue !== "undefined";
-
-    const {
-      onDoubleClick,
-      onLabelClick,
-      dimTopLevelWindow
-    } = this.props;
-
-    return dom.div({
-      className: classnames("node object-node", {
-        focused,
-        lessen: !expanded && (nodeIsDefaultProperties(item) || nodeIsPrototype(item) || dimTopLevelWindow === true && nodeIsWindow(item) && depth === 0)
-      }),
-      onClick: e => {
-        e.stopPropagation();
-        if (isPrimitive === false) {
-          this.setExpanded(item, !expanded);
-        }
-      },
-      onDoubleClick: onDoubleClick ? e => {
-        e.stopPropagation();
-        onDoubleClick(item, {
-          depth,
-          focused,
-          expanded
-        });
-      } : null
-    }, arrow, hasLabel ? dom.span({
-      className: "object-label",
-      onClick: onLabelClick ? event => {
-        event.stopPropagation();
-        onLabelClick(item, {
-          depth,
-          focused,
-          expanded,
-          setExpanded: this.setExpanded
-        });
-      } : null
-    }, label) : null, hasLabel && hasValue ? dom.span({ className: "object-delimiter" }, ": ") : null, hasValue ? objectValue : null);
-  }
-
-  renderGrip(item, props) {
-    const object = getValue(item);
-    return Rep(Object.assign({}, props, {
-      object,
-      mode: props.mode || MODE.TINY,
-      defaultRep: Grip
-    }));
+  getStore() {
+    return this.store;
   }
 
   render() {
-    const {
-      autoExpandDepth = 1,
-      autoExpandAll = true,
-      disabledFocus,
-      inline,
-      itemHeight = 20,
-      disableWrap = false
-    } = this.props;
-
-    const {
-      expandedPaths,
-      focusedItem
-    } = this.state;
-
-    let roots = this.getRoots();
-    if (roots.length === 1) {
-      const root = roots[0];
-      const name = root && root.name;
-      if (nodeIsPrimitive(root) && (name === null || typeof name === "undefined")) {
-        return this.renderGrip(root, this.props);
-      }
-    }
-
-    return Tree({
-      className: classnames({
-        inline,
-        nowrap: disableWrap,
-        "object-inspector": true
-      }),
-      autoExpandAll,
-      autoExpandDepth,
-      disabledFocus,
-      itemHeight,
-
-      isExpanded: item => expandedPaths.has(this.getKey(item)),
-      isExpandable: item => nodeIsPrimitive(item) === false,
-      focused: focusedItem,
-
-      getRoots: this.getRoots,
-      getParent,
-      getChildren: this.getChildren,
-      getKey: this.getKey,
-
-      onExpand: item => this.setExpanded(item, true),
-      onCollapse: item => this.setExpanded(item, false),
-      onFocus: this.focusItem,
-
-      renderItem: this.renderTreeItem
-    });
+    return createElement(Provider, { store: this.store }, ObjectInspector(this.props));
   }
 }
 
-ObjectInspector.displayName = "ObjectInspector";
-
-ObjectInspector.propTypes = {
-  autoExpandAll: PropTypes.bool,
-  autoExpandDepth: PropTypes.number,
-  disabledFocus: PropTypes.bool,
-  disableWrap: PropTypes.bool,
-  inline: PropTypes.bool,
-  roots: PropTypes.array,
-  itemHeight: PropTypes.number,
-  mode: PropTypes.oneOf(Object.values(MODE)),
-  createObjectClient: PropTypes.func.isRequired,
-  onFocus: PropTypes.func,
-  onDoubleClick: PropTypes.func,
-  onLabelClick: PropTypes.func
-};
-
-module.exports = ObjectInspector;
+module.exports = OI;
 
 /***/ }),
 
@@ -22509,7 +21882,7 @@ class GutterContextMenuComponent extends _react.Component {
     const line = (0, _editor.lineAtHeight)(props.editor, sourceId, event);
     const breakpoint = nextProps.breakpoints.find(bp => bp.location.line === line);
 
-    if (props.emptyLines.includes(line)) {
+    if (props.emptyLines && props.emptyLines.includes(line)) {
       return;
     }
 
@@ -22529,7 +21902,7 @@ exports.default = (0, _reactRedux.connect)(state => {
     breakpoints: (0, _selectors.getVisibleBreakpoints)(state),
     isPaused: (0, _selectors.isPaused)(state),
     contextMenu: (0, _selectors.getContextMenu)(state),
-    emptyLines: selectedSource ? (0, _selectors.getEmptyLines)(state, selectedSource.toJS()) : []
+    emptyLines: (0, _selectors.getEmptyLines)(state, selectedSource.toJS())
   };
 }, dispatch => (0, _redux.bindActionCreators)(_actions2.default, dispatch))(GutterContextMenuComponent);
 
@@ -22608,11 +21981,13 @@ function getMenuItems(event, {
   const blackboxKey = L10N.getStr("sourceFooter.blackbox.accesskey");
   const blackboxLabel = L10N.getStr("sourceFooter.blackbox");
   const unblackboxLabel = L10N.getStr("sourceFooter.unblackbox");
-  const toggleBlackBoxLabel = selectedSource.get("isBlackBoxed") ? unblackboxLabel : blackboxLabel;
+  const toggleBlackBoxLabel = selectedSource.isBlackBoxed ? unblackboxLabel : blackboxLabel;
   const copyFunctionKey = L10N.getStr("copyFunction.accesskey");
   const copyFunctionLabel = L10N.getStr("copyFunction.label");
   const copySourceKey = L10N.getStr("copySource.accesskey");
   const copySourceLabel = L10N.getStr("copySource");
+  const copyToClipboardKey = L10N.getStr("copyToClipboard.accesskey");
+  const copyToClipboardLabel = L10N.getStr("copyToClipboard.label");
   const copySourceUri2Key = L10N.getStr("copySourceUri2.accesskey");
   const copySourceUri2Label = L10N.getStr("copySourceUri2");
   const evaluateInConsoleLabel = L10N.getStr("evaluateInConsole.label");
@@ -22624,6 +21999,15 @@ function getMenuItems(event, {
   const watchExpressionLabel = L10N.getStr("expressions.label");
 
   // menu items
+
+  const copyToClipboardItem = {
+    id: "node-menu-copy-to-clipboard",
+    label: copyToClipboardLabel,
+    accesskey: copyToClipboardKey,
+    disabled: false,
+    click: () => (0, _clipboard.copyToTheClipboard)(selectedSource.text)
+  };
+
   const copySourceItem = {
     id: "node-menu-copy-source",
     label: copySourceLabel,
@@ -22637,7 +22021,7 @@ function getMenuItems(event, {
     label: copySourceUri2Label,
     accesskey: copySourceUri2Key,
     disabled: false,
-    click: () => (0, _clipboard.copyToTheClipboard)((0, _source.getRawSourceURL)(selectedSource.get("url")))
+    click: () => (0, _clipboard.copyToTheClipboard)((0, _source.getRawSourceURL)(selectedSource.url))
   };
 
   const sourceId = selectedSource.get("id");
@@ -22698,7 +22082,7 @@ function getMenuItems(event, {
   };
 
   // construct menu
-  const menuItems = [copySourceItem, copySourceUri2Item, copyFunctionItem, { type: "separator" }, jumpToMappedLocationItem, showSourceMenuItem, blackBoxMenuItem];
+  const menuItems = [copyToClipboardItem, copySourceItem, copySourceUri2Item, copyFunctionItem, { type: "separator" }, jumpToMappedLocationItem, showSourceMenuItem, blackBoxMenuItem];
 
   // conditionally added items
   // TODO: Find a new way to only add this for mapped sources?
@@ -23436,7 +22820,7 @@ function getBreakpointFilename(source) {
 
 function renderSourceLocation(source, line, column) {
   const filename = getBreakpointFilename(source);
-  const isWasm = source && source.get("isWasm");
+  const isWasm = source && source.isWasm;
   const columnVal = _prefs.features.columnBreakpoints && column ? `:${column}` : "";
   const bpLocation = isWasm ? `0x${line.toString(16).toUpperCase()}` : `${line}${columnVal}`;
 
@@ -23556,7 +22940,7 @@ function updateLocation(sources, frame, why, bp) {
   return localBP;
 }
 
-const _getBreakpoints = (0, _reselect.createSelector)(_selectors.getBreakpoints, _selectors.getSources, _selectors.getTopFrame, _selectors.getPauseReason, (breakpoints, sources, frame, why) => breakpoints.map(bp => updateLocation(sources, frame, why, bp)).filter(bp => bp.location.source && !bp.location.source.get("isBlackBoxed")));
+const _getBreakpoints = (0, _reselect.createSelector)(_selectors.getBreakpoints, _selectors.getSources, _selectors.getTopFrame, _selectors.getPauseReason, (breakpoints, sources, frame, why) => breakpoints.map(bp => updateLocation(sources, frame, why, bp)).filter(bp => bp.location.source && !bp.location.source.isBlackBoxed));
 
 exports.default = (0, _reactRedux.connect)((state, props) => ({ breakpoints: _getBreakpoints(state) }), dispatch => (0, _redux.bindActionCreators)(_actions2.default, dispatch))(Breakpoints);
 
@@ -23631,14 +23015,22 @@ class Expressions extends _react.Component {
     this.handleExistingSubmit = async (e, expression) => {
       e.preventDefault();
       e.stopPropagation();
+
       this.props.updateExpression(this.state.inputValue, expression);
     };
 
     this.handleNewSubmit = async e => {
+      const { inputValue } = this.state;
       e.preventDefault();
       e.stopPropagation();
-      this.props.addExpression(this.state.inputValue);
-      this.setState({ editing: false, editIndex: -1, inputValue: "" });
+
+      this.props.clearExpressionError();
+      await this.props.addExpression(this.state.inputValue);
+      this.setState({
+        editing: false,
+        editIndex: -1,
+        inputValue: this.props.expressionError ? inputValue : ""
+      });
     };
 
     this.renderExpression = (expression, index) => {
@@ -25300,33 +24692,49 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 
 class Scopes extends _react.PureComponent {
   constructor(props, ...args) {
-    const { why, selectedFrame, frameScopes } = props;
+    const {
+      why,
+      selectedFrame,
+      originalFrameScopes,
+      generatedFrameScopes
+    } = props;
 
     super(props, ...args);
 
     this.state = {
-      scopes: (0, _scopes.getScopes)(why, selectedFrame, frameScopes)
+      originalScopes: (0, _scopes.getScopes)(why, selectedFrame, originalFrameScopes),
+      generatedScopes: (0, _scopes.getScopes)(why, selectedFrame, generatedFrameScopes),
+      showOriginal: true
     };
   }
 
   componentWillReceiveProps(nextProps) {
-    const { isPaused, selectedFrame, frameScopes } = this.props;
+    const {
+      isPaused,
+      selectedFrame,
+      originalFrameScopes,
+      generatedFrameScopes
+    } = this.props;
     const isPausedChanged = isPaused !== nextProps.isPaused;
     const selectedFrameChanged = selectedFrame !== nextProps.selectedFrame;
-    const frameScopesChanged = frameScopes !== nextProps.frameScopes;
+    const originalFrameScopesChanged = originalFrameScopes !== nextProps.originalFrameScopes;
+    const generatedFrameScopesChanged = generatedFrameScopes !== nextProps.generatedFrameScopes;
 
-    if (isPausedChanged || selectedFrameChanged || frameScopesChanged) {
+    if (isPausedChanged || selectedFrameChanged || originalFrameScopesChanged || generatedFrameScopesChanged) {
       this.setState({
-        scopes: (0, _scopes.getScopes)(nextProps.why, nextProps.selectedFrame, nextProps.frameScopes)
+        originalScopes: (0, _scopes.getScopes)(nextProps.why, nextProps.selectedFrame, nextProps.originalFrameScopes),
+        generatedScopes: (0, _scopes.getScopes)(nextProps.why, nextProps.selectedFrame, nextProps.generatedFrameScopes)
       });
     }
   }
 
   render() {
     const { isPaused, isLoading } = this.props;
-    const { scopes } = this.state;
+    const { originalScopes, generatedScopes, showOriginal } = this.state;
 
-    if (scopes) {
+    const scopes = showOriginal && originalScopes || generatedScopes;
+
+    if (scopes && !isLoading) {
       return _react2.default.createElement(
         "div",
         { className: "pane scopes-list" },
@@ -25338,7 +24746,22 @@ class Scopes extends _react.PureComponent {
           disabledFocus: true,
           dimTopLevelWindow: true,
           createObjectClient: grip => (0, _firefox.createObjectClient)(grip)
-        })
+        }),
+        originalScopes ? _react2.default.createElement(
+          "div",
+          { className: "scope-type-toggle" },
+          _react2.default.createElement(
+            "a",
+            {
+              href: "",
+              onClick: e => {
+                e.preventDefault();
+                this.setState({ showOriginal: !showOriginal });
+              }
+            },
+            showOriginal ? L10N.getStr("scopes.toggleToGenerated") : L10N.getStr("scopes.toggleToOriginal")
+          )
+        ) : null
       );
     }
 
@@ -25369,14 +24792,26 @@ exports.default = (0, _reactRedux.connect)(state => {
   const selectedFrame = (0, _selectors.getSelectedFrame)(state);
   const selectedSource = (0, _selectors.getSelectedSource)(state);
 
-  const { scope: frameScopes, pending } = (0, _selectors.getFrameScope)(state, selectedSource && selectedSource.get("id"), selectedFrame && selectedFrame.id) || { scope: null, pending: false };
+  const {
+    scope: originalFrameScopes,
+    pending: originalPending
+  } = (0, _selectors.getOriginalFrameScope)(state, selectedSource && selectedSource.get("id"), selectedFrame && selectedFrame.id) || { scope: null, pending: false };
+
+  const {
+    scope: generatedFrameScopes,
+    pending: generatedPending
+  } = (0, _selectors.getGeneratedFrameScope)(state, selectedFrame && selectedFrame.id) || {
+    scope: null,
+    pending: false
+  };
 
   return {
     selectedFrame,
     isPaused: (0, _selectors.isPaused)(state),
-    isLoading: pending,
+    isLoading: generatedPending || originalPending,
     why: (0, _selectors.getPauseReason)(state),
-    frameScopes: frameScopes
+    originalFrameScopes,
+    generatedFrameScopes
   };
 }, dispatch => (0, _redux.bindActionCreators)(_actions2.default, dispatch))(Scopes);
 
@@ -25561,10 +24996,10 @@ class Tabs extends _react.PureComponent {
       const { selectSource } = this.props;
       const filename = (0, _source.getFilename)(source.toJS());
 
-      const onClick = () => selectSource(source.get("id"));
+      const onClick = () => selectSpecificSource(source.id);
       return _react2.default.createElement(
         "li",
-        { key: source.get("id"), onClick: onClick },
+        { key: source.id, onClick: onClick },
         _react2.default.createElement("img", { className: `dropdown-icon ${this.getIconClass(source)}` }),
         filename
       );
@@ -25608,7 +25043,7 @@ class Tabs extends _react.PureComponent {
     const hiddenTabs = (0, _tabs.getHiddenTabs)(tabSources, sourceTabEls);
 
     if ((0, _ui.isVisible)() && hiddenTabs.indexOf(selectedSource) !== -1) {
-      return moveTab(selectedSource.get("url"), 0);
+      return moveTab(selectedSource.url, 0);
     }
 
     this.setState({ hiddenTabs });
@@ -25624,7 +25059,7 @@ class Tabs extends _react.PureComponent {
     if ((0, _source.isPretty)(source)) {
       return "prettyPrint";
     }
-    if (source.get("isBlackBoxed")) {
+    if (source.isBlackBoxed) {
       return "blackBox";
     }
     return "file";
@@ -26193,6 +25628,8 @@ var _extends = Object.assign || function (target) { for (var i = 1; i < argument
 
 exports.mapScopes = mapScopes;
 
+var _lodash = __webpack_require__(2);
+
 var _selectors = __webpack_require__(3590);
 
 var _loadSourceText = __webpack_require__(1435);
@@ -26219,9 +25656,9 @@ function mapScopes(scopes, frame) {
 
     const sourceRecord = (0, _selectors.getSource)(getState(), frame.location.sourceId);
 
-    const shouldMapScopes = _prefs.features.mapScopes && !generatedSourceRecord.get("isWasm") && !sourceRecord.get("isPrettyPrinted") && !(0, _devtoolsSourceMap.isGeneratedId)(frame.location.sourceId);
+    const shouldMapScopes = _prefs.features.mapScopes && !generatedSourceRecord.isWasm && !sourceRecord.isPrettyPrinted && !(0, _devtoolsSourceMap.isGeneratedId)(frame.location.sourceId);
 
-    dispatch({
+    await dispatch({
       type: "MAP_SCOPES",
       frame,
       [_promise.PROMISE]: async function () {
@@ -26252,27 +25689,37 @@ async function buildMappedScopes(source, frame, scopes, sourceMaps, client) {
 
   const generatedAstBindings = buildGeneratedBindingList(scopes, generatedAstScopes, frame.this);
 
-  const mappedOriginalScopes = await Promise.all(Array.from(originalAstScopes, async item => {
+  const expressionLookup = {};
+  const mappedOriginalScopes = [];
+
+  for (const item of originalAstScopes) {
     const generatedBindings = {};
 
-    await Promise.all(Object.keys(item.bindings).map(async name => {
+    for (const name of Object.keys(item.bindings)) {
       const binding = item.bindings[name];
 
       const result = await findGeneratedBinding(sourceMaps, client, source, name, binding, generatedAstBindings);
 
       if (result) {
-        generatedBindings[name] = result;
-      }
-    }));
+        generatedBindings[name] = result.grip;
 
-    return _extends({}, item, {
+        if (binding.refs.length !== 0 &&
+        // These are assigned depth-first, so we don't want shadowed
+        // bindings in parent scopes overwriting the expression.
+        !Object.prototype.hasOwnProperty.call(expressionLookup, name)) {
+          expressionLookup[name] = result.expression;
+        }
+      }
+    }
+
+    mappedOriginalScopes.push(_extends({}, item, {
       generatedBindings
-    });
-  }));
+    }));
+  }
 
   const mappedGeneratedScopes = generateClientScope(scopes, mappedOriginalScopes);
 
-  return isReliableScope(mappedGeneratedScopes) ? mappedGeneratedScopes : null;
+  return isReliableScope(mappedGeneratedScopes) ? { mappings: expressionLookup, scope: mappedGeneratedScopes } : null;
 }
 
 /**
@@ -26376,7 +25823,10 @@ async function findGeneratedBinding(sourceMaps, client, source, name, originalBi
   }, null);
 
   if (genContent && genContent.desc) {
-    return genContent.desc;
+    return {
+      grip: genContent.desc,
+      expression: genContent.expression
+    };
   } else if (genContent) {
     // If there is no descriptor for 'this', then this is not the top-level
     // 'this' that the server gave us a binding for, and we can just ignore it.
@@ -26388,17 +25838,20 @@ async function findGeneratedBinding(sourceMaps, client, source, name, originalBi
     // means that the server scope information didn't match the scope
     // information from the DevTools parsed scopes.
     return {
-      configurable: false,
-      enumerable: true,
-      writable: false,
-      value: {
-        type: "unscoped",
-        unscoped: true,
+      grip: {
+        configurable: false,
+        enumerable: true,
+        writable: false,
+        value: {
+          type: "unscoped",
+          unscoped: true,
 
-        // HACK: Until support for "unscoped" lands in devtools-reps,
-        // this will make these show as (unavailable).
-        missingArguments: true
-      }
+          // HACK: Until support for "unscoped" lands in devtools-reps,
+          // this will make these show as (unavailable).
+          missingArguments: true
+        }
+      },
+      expression: null
     };
   }
 
@@ -26407,35 +25860,46 @@ async function findGeneratedBinding(sourceMaps, client, source, name, originalBi
   // of some scope, but the generated location is outside, leading
   // us to search for bindings that don't technically exist.
   return {
-    configurable: false,
-    enumerable: true,
-    writable: false,
-    value: {
-      type: "unmapped",
-      unmapped: true,
+    grip: {
+      configurable: false,
+      enumerable: true,
+      writable: false,
+      value: {
+        type: "unmapped",
+        unmapped: true,
 
-      // HACK: Until support for "unmapped" lands in devtools-reps,
-      // this will make these show as (unavailable).
-      missingArguments: true
-    }
+        // HACK: Until support for "unmapped" lands in devtools-reps,
+        // this will make these show as (unavailable).
+        missingArguments: true
+      }
+    },
+    expression: null
   };
 }
 
 function buildGeneratedBindingList(scopes, generatedAstScopes, thisBinding) {
-  const clientScopes = [];
-  for (let s = scopes; s; s = s.parent) {
-    clientScopes.push(s);
-  }
-
   // The server's binding data doesn't include general 'this' binding
   // information, so we manually inject the one 'this' binding we have into
   // the normal binding data we are working with.
   const frameThisOwner = generatedAstScopes.find(generated => "this" in generated.bindings);
 
-  const generatedBindings = clientScopes.reverse().map((s, i) => {
-    const generated = generatedAstScopes[generatedAstScopes.length - 1 - i];
-
+  const clientScopes = [];
+  for (let s = scopes; s; s = s.parent) {
     const bindings = s.bindings ? Object.assign({}, ...s.bindings.arguments, s.bindings.variables) : {};
+
+    clientScopes.push(bindings);
+  }
+
+  const generatedMainScopes = generatedAstScopes.slice(0, -2);
+  const generatedGlobalScopes = generatedAstScopes.slice(-2);
+
+  const clientMainScopes = clientScopes.slice(0, generatedMainScopes.length);
+  const clientGlobalScopes = clientScopes.slice(generatedMainScopes.length);
+
+  // Map the main parsed script body using the nesting hierarchy of the
+  // generated and client scopes.
+  const generatedBindings = generatedMainScopes.reduce((acc, generated, i) => {
+    const bindings = clientMainScopes[i];
 
     if (generated === frameThisOwner && thisBinding) {
       bindings.this = {
@@ -26443,31 +25907,42 @@ function buildGeneratedBindingList(scopes, generatedAstScopes, thisBinding) {
       };
     }
 
-    return {
-      generated,
-      client: _extends({}, s, {
-        bindings
-      })
-    };
-  }).slice(2).reduce((acc, { client: { bindings }, generated }) => {
-    // If the parser worker's result didn't match the client scopes,
-    // there might not be a generated scope that matches.
-    if (generated) {
-      for (const name of Object.keys(generated.bindings)) {
-        const { refs } = generated.bindings[name];
-        for (const loc of refs) {
-          acc.push({
+    for (const name of Object.keys(generated.bindings)) {
+      const { refs } = generated.bindings[name];
+      for (const loc of refs) {
+        acc.push({
+          name,
+          loc,
+          desc: bindings[name] || null
+        });
+      }
+    }
+    return acc;
+  }, []);
+
+  // Bindings in the global/lexical global of the generated code may or
+  // may not be the real global if the generated code is running inside
+  // of an evaled context. To handle this, we just look up the client scope
+  // hierarchy to find the closest binding with that name.
+  for (const generated of generatedGlobalScopes) {
+    for (const name of Object.keys(generated.bindings)) {
+      const { refs } = generated.bindings[name];
+      for (const loc of refs) {
+        const bindings = clientGlobalScopes.find(b => (0, _lodash.has)(b, name));
+
+        if (bindings) {
+          generatedBindings.push({
             name,
             loc,
-            desc: bindings[name] || null
+            desc: bindings[name]
           });
         }
       }
     }
-    return acc;
-  }, [])
+  }
+
   // Sort so we can binary-search.
-  .sort((a, b) => {
+  return generatedBindings.sort((a, b) => {
     const aStart = a.loc.start;
     const bStart = a.loc.start;
 
@@ -26476,8 +25951,6 @@ function buildGeneratedBindingList(scopes, generatedAstScopes, thisBinding) {
     }
     return aStart.line - bStart.line;
   });
-
-  return generatedBindings;
 }
 
 /***/ }),
@@ -26630,7 +26103,7 @@ function formatSymbol(symbol) {
 }
 
 function formatSymbols(symbols) {
-  if (!symbols) {
+  if (!symbols || symbols.loading) {
     return { variables: [], functions: [] };
   }
 
@@ -26660,13 +26133,13 @@ function formatShortcutResults() {
 
 function formatSources(sources) {
   return sources.valueSeq().filter(source => !(0, _source.isPretty)(source)).map(source => {
-    const sourcePath = (0, _source.getSourcePath)(source.get("url"));
+    const sourcePath = (0, _source.getSourcePath)(source.url);
     return {
       value: sourcePath,
-      title: sourcePath.split("/").pop(),
-      subtitle: (0, _utils.endTruncateStr)(sourcePath, 100),
-      id: source.get("id"),
-      url: source.get("url")
+      title: sourcePath.split("/").pop().split("?")[0],
+      subtitle: (0, _utils.endTruncateStr)(sourcePath, 100).replace(sourcePath.split("/").pop(), "").slice(1, -1),
+      id: source.id,
+      url: source.url
     };
   }).filter(({ value }) => value != "").toJS();
 }
@@ -26901,9 +26374,9 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.findBestMatchExpression = findBestMatchExpression;
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+exports.findEmptyLines = findEmptyLines;
+
+var _lodash = __webpack_require__(2);
 
 function findBestMatchExpression(symbols, tokenPos) {
   const { memberExpressions, identifiers } = symbols;
@@ -26916,7 +26389,25 @@ function findBestMatchExpression(symbols, tokenPos) {
     }
 
     return found;
-  }, {});
+  }, null);
+} /* This Source Code Form is subject to the terms of the Mozilla Public
+   * License, v. 2.0. If a copy of the MPL was not distributed with this
+   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+function findEmptyLines(selectedSource, pausePoints) {
+  if (!pausePoints || !selectedSource) {
+    return [];
+  }
+
+  const breakpoints = pausePoints.filter(point => point.types.breakpoint);
+  const breakpointLines = breakpoints.map(point => point.location.line);
+
+  if (!selectedSource.text) {
+    return [];
+  }
+  const lineCount = selectedSource.text.split("\n").length;
+  const sourceLines = (0, _lodash.range)(1, lineCount + 1);
+  return (0, _lodash.without)(sourceLines, ...breakpointLines);
 }
 
 /***/ }),
@@ -27260,10 +26751,6 @@ function paused(pauseInfo) {
       dispatch((0, _breakpoints.removeBreakpoint)(hiddenBreakpointLocation));
     }
 
-    if (!(0, _selectors.isEvaluatingExpression)(getState())) {
-      dispatch((0, _expressions.evaluateExpressions)());
-    }
-
     await dispatch((0, _.mapFrames)());
     const selectedFrame = (0, _selectors.getSelectedFrame)(getState());
 
@@ -27274,7 +26761,13 @@ function paused(pauseInfo) {
     }
 
     dispatch((0, _ui.togglePaneCollapse)("end", false));
-    dispatch((0, _fetchScopes.fetchScopes)());
+    await dispatch((0, _fetchScopes.fetchScopes)());
+
+    // Run after fetching scoping data so that it may make use of the sourcemap
+    // expression mappings for local variables.
+    if (!(0, _selectors.isEvaluatingExpression)(getState())) {
+      dispatch((0, _expressions.evaluateExpressions)());
+    }
   };
 }
 
@@ -27341,9 +26834,9 @@ var _commands = __webpack_require__(1637);
 
 function continueToHere(line) {
   return async function ({ dispatch, getState }) {
-    const source = (0, _selectors.getSelectedSource)(getState()).toJS();
+    const selectedSource = (0, _selectors.getSelectedSource)(getState());
 
-    if (!(0, _selectors.isPaused)(getState())) {
+    if (!(0, _selectors.isPaused)(getState()) || !selectedSource) {
       return;
     }
 
@@ -27358,7 +26851,7 @@ function continueToHere(line) {
     await dispatch((0, _breakpoints.addHiddenBreakpoint)({
       line,
       column: undefined,
-      sourceId: source.id
+      sourceId: selectedSource.id
     }));
 
     dispatch(action());
@@ -27850,6 +27343,7 @@ class QuickOpenModal extends _react.Component {
       }
 
       if (["ArrowUp", "ArrowDown"].includes(e.key)) {
+        e.preventDefault();
         return this.traverseResults(e);
       }
     };
@@ -27896,10 +27390,20 @@ class QuickOpenModal extends _react.Component {
       return results.map(result => {
         return _extends({}, result, {
           title: this.renderHighlight(result.title, (0, _path.basename)(newQuery), "title")
-        }, result.subtitle != null && !this.isSymbolSearch() ? {
-          subtitle: this.renderHighlight(result.subtitle, newQuery, "subtitle")
-        } : null);
+        });
       });
+    };
+
+    this.renderLoading = () => {
+      const { symbolsLoading } = this.props;
+
+      if ((this.isFunctionQuery() || this.isVariableQuery()) && symbolsLoading) {
+        return _react2.default.createElement(
+          "div",
+          { className: "loading-indicator" },
+          L10N.getStr("loadingText")
+        );
+      }
     };
 
     this.state = { results: null, selectedIndex: 0 };
@@ -27943,7 +27447,7 @@ class QuickOpenModal extends _react.Component {
   }
 
   render() {
-    const { enabled, query, symbols } = this.props;
+    const { enabled, query } = this.props;
     const { selectedIndex, results } = this.state;
 
     if (!enabled) {
@@ -27957,6 +27461,7 @@ class QuickOpenModal extends _react.Component {
       { "in": enabled, handleClose: this.closeModal },
       _react2.default.createElement(_SearchInput2.default, {
         query: query,
+        hasPrefix: true,
         count: this.getResultCount(),
         placeholder: L10N.getStr("sourceSearch.search"),
         summaryMsg: "",
@@ -27967,11 +27472,7 @@ class QuickOpenModal extends _react.Component {
         expanded: expanded,
         selectedItemId: expanded && items[selectedIndex] ? items[selectedIndex].id : ""
       }),
-      !symbols || symbols.functions.length == 0 && _react2.default.createElement(
-        "div",
-        { className: "loading-indicator" },
-        L10N.getStr("loadingText")
-      ),
+      this.renderLoading(),
       newResults && _react2.default.createElement(_ResultList2.default, _extends({
         key: "results",
         items: items,
@@ -27988,16 +27489,13 @@ exports.QuickOpenModal = QuickOpenModal; /* istanbul ignore next: ignoring testi
 
 function mapStateToProps(state) {
   const selectedSource = (0, _selectors.getSelectedSource)(state);
-  let symbols = null;
-  if (selectedSource != null) {
-    symbols = (0, _selectors.getSymbols)(state, selectedSource.toJS());
-  }
 
   return {
     enabled: (0, _selectors.getQuickOpenEnabled)(state),
     sources: (0, _quickOpen.formatSources)((0, _selectors.getSources)(state)),
     selectedSource,
-    symbols: (0, _quickOpen.formatSymbols)(symbols),
+    symbols: (0, _quickOpen.formatSymbols)((0, _selectors.getSymbols)(state, selectedSource)),
+    symbolsLoading: (0, _selectors.isSymbolsLoading)(state, selectedSource),
     query: (0, _selectors.getQuickOpenQuery)(state),
     searchType: (0, _selectors.getQuickOpenType)(state),
     tabs: (0, _selectors.getTabs)(state).toArray()
@@ -28112,7 +27610,7 @@ function fetchScopes() {
       [_promise.PROMISE]: client.getFrameScopes(frame)
     });
 
-    dispatch((0, _mapScopes.mapScopes)(scopes, frame));
+    await dispatch((0, _mapScopes.mapScopes)(scopes, frame));
   };
 } /* This Source Code Form is subject to the terms of the Mozilla Public
    * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -28576,7 +28074,7 @@ exports.log = log;
 
 var _devtoolsConfig = __webpack_require__(1355);
 
-const blacklist = ["SET_POPUP_OBJECT_PROPERTIES", "SET_SYMBOLS", "OUT_OF_SCOPE_LOCATIONS", "MAP_SCOPES", "ADD_SCOPES", "IN_SCOPE_LINES", "SET_EMPTY_LINES"];
+const blacklist = ["SET_POPUP_OBJECT_PROPERTIES", "SET_PAUSE_POINTS", "SET_SYMBOLS", "OUT_OF_SCOPE_LOCATIONS", "MAP_SCOPES", "ADD_SCOPES", "IN_SCOPE_LINES", "SET_EMPTY_LINES"];
 
 function cloneAction(action) {
   action = action || {};
@@ -30387,8 +29885,8 @@ const CHARACTER_LIMIT = 250;
 const _minifiedCache = new Map();
 
 function isMinified(source) {
-  if (_minifiedCache.has(source.get("id"))) {
-    return _minifiedCache.get(source.get("id"));
+  if (_minifiedCache.has(source.id)) {
+    return _minifiedCache.get(source.id);
   }
 
   let text = source.get("text");
@@ -30693,7 +30191,7 @@ var _expressions = __webpack_require__(1398);
 var _lodash = __webpack_require__(2);
 
 async function getReactProps(evaluate) {
-  const reactDisplayName = await evaluate("this._reactInternalInstance.getName()");
+  const reactDisplayName = await evaluate("this.hasOwnProperty('_reactInternalFiber') ? " + "this._reactInternalFiber.type.name : " + "this._reactInternalInstance.getName()");
 
   return {
     displayName: reactDisplayName.result
@@ -30776,7 +30274,7 @@ function updatePreview(target, editor) {
     }
 
     const source = (0, _selectors.getSelectedSource)(getState());
-    const symbols = (0, _selectors.getSymbols)(getState(), source.toJS());
+    const symbols = (0, _selectors.getSymbols)(getState(), source);
 
     let match;
     if (!symbols || symbols.loading) {
@@ -30790,6 +30288,11 @@ function updatePreview(target, editor) {
     }
 
     const { expression, location } = match;
+
+    if ((0, _preview.isConsole)(expression)) {
+      return;
+    }
+
     dispatch(setPreview(expression, location, tokenPos, cursorPos));
   };
 }
@@ -30805,7 +30308,7 @@ function setPreview(expression, location, tokenPos, cursorPos) {
         if (location && !(0, _devtoolsSourceMap.isGeneratedId)(sourceId)) {
           const generatedLocation = await sourceMaps.getGeneratedLocation(_extends({}, location.start, { sourceId }), source.toJS());
 
-          expression = await (0, _expressions.getMappedExpression)({ sourceMaps }, generatedLocation, expression);
+          expression = await (0, _expressions.getMappedExpression)({ sourceMaps, getState }, generatedLocation, expression);
         }
 
         const selectedFrame = (0, _selectors.getSelectedFrame)(getState());
@@ -31085,6 +30588,8 @@ var _extends = Object.assign || function (target) { for (var i = 1; i < argument
 
 exports.getScope = getScope;
 
+var _devtoolsReps = __webpack_require__(1408);
+
 var _getVariables = __webpack_require__(1765);
 
 var _utils = __webpack_require__(1766);
@@ -31139,7 +30644,8 @@ function getScope(scope, selectedFrame, frameScopes, why, scopeIndex) {
       return {
         name: title,
         path: key,
-        contents: vars
+        contents: vars,
+        type: _devtoolsReps.ObjectInspectorUtils.node.NODE_TYPES.BLOCK
       };
     }
   } else if (type === "object" && scope.object) {
@@ -31422,7 +30928,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 function createPrettySource(sourceId) {
   return async ({ dispatch, getState, sourceMaps }) => {
     const source = (0, _selectors.getSource)(getState(), sourceId);
-    const url = (0, _source.getPrettySourceURL)(source.get("url"));
+    const url = (0, _source.getPrettySourceURL)(source.url);
     const id = await sourceMaps.generatedToOriginalId(sourceId, url);
 
     const prettySource = {
@@ -31435,7 +30941,7 @@ function createPrettySource(sourceId) {
     dispatch({ type: "ADD_SOURCE", source: prettySource });
 
     const { code, mappings } = await (0, _prettyPrint.prettyPrint)({ source, url });
-    await sourceMaps.applySourceMap(source.get("id"), url, code, mappings);
+    await sourceMaps.applySourceMap(source.id, url, code, mappings);
 
     const loadedPrettySource = _extends({}, prettySource, {
       text: code,
@@ -31476,7 +30982,7 @@ function togglePrettyPrint(sourceId) {
     (0, _assert2.default)(sourceMaps.isGeneratedId(sourceId), "Pretty-printing only allowed on generated sources");
 
     const selectedLocation = (0, _selectors.getSelectedLocation)(getState());
-    const url = (0, _source.getPrettySourceURL)(source.get("url"));
+    const url = (0, _source.getPrettySourceURL)(source.url);
     const prettySource = (0, _selectors.getSourceByURL)(getState(), url);
 
     const options = {};
@@ -31493,7 +30999,7 @@ function togglePrettyPrint(sourceId) {
 
     await dispatch((0, _breakpoints.remapBreakpoints)(sourceId));
     await dispatch((0, _pause.mapFrames)());
-    await dispatch((0, _ast.setEmptyLines)(newPrettySource.id));
+    await dispatch((0, _ast.setPausePoints)(newPrettySource.id));
     await dispatch((0, _ast.setSymbols)(newPrettySource.id));
 
     return dispatch((0, _sources.selectLocation)(_extends({}, options.location, { sourceId: newPrettySource.id })));
@@ -31953,7 +31459,7 @@ function selectSourceURL(url, options = {}) {
   return async ({ dispatch, getState }) => {
     const source = (0, _selectors.getSourceByURL)(getState(), url);
     if (source) {
-      const sourceId = source.get("id");
+      const sourceId = source.id;
       const location = (0, _location.createLocation)(_extends({}, options.location, { sourceId }));
       // flow is unable to comprehend that if an options.location object
       // exists, that we have a valid Location object, and if it doesnt,
@@ -31976,10 +31482,10 @@ function selectSourceURL(url, options = {}) {
  * @memberof actions/sources
  * @static
  */
-function selectSource(sourceId, tabIndex = "") {
+function selectSource(sourceId) {
   return async ({ dispatch }) => {
     const location = (0, _location.createLocation)({ sourceId });
-    return await dispatch(selectLocation(location, tabIndex));
+    return await dispatch(selectLocation(location));
   };
 }
 
@@ -31987,7 +31493,7 @@ function selectSource(sourceId, tabIndex = "") {
  * @memberof actions/sources
  * @static
  */
-function selectLocation(location, tabIndex = "") {
+function selectLocation(location) {
   return async ({ dispatch, getState, client }) => {
     if (!client) {
       // No connection, do nothing. This happens when the debugger is
@@ -32011,7 +31517,6 @@ function selectLocation(location, tabIndex = "") {
     dispatch({
       type: "SELECT_SOURCE",
       source: source.toJS(),
-      tabIndex,
       location
     });
 
@@ -32024,7 +31529,7 @@ function selectLocation(location, tabIndex = "") {
     const sourceId = selectedSource.get("id");
     if (_prefs.prefs.autoPrettyPrint && !(0, _selectors.getPrettySource)(getState(), sourceId) && (0, _source.shouldPrettyPrint)(selectedSource) && (0, _source.isMinified)(selectedSource)) {
       await dispatch((0, _prettyPrint.togglePrettyPrint)(sourceId));
-      dispatch((0, _tabs.closeTab)(source.get("url")));
+      dispatch((0, _tabs.closeTab)(source.url));
     }
 
     dispatch((0, _ast.setSymbols)(sourceId));
@@ -32382,6 +31887,7 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.isImmutable = isImmutable;
 exports.isReactComponent = isReactComponent;
+exports.isConsole = isConsole;
 
 
 const IMMUTABLE_FIELDS = ["_root", "__ownerID", "__altered", "__hash"]; /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -32411,7 +31917,12 @@ function isReactComponent(result) {
     return;
   }
 
-  return Object.keys(ownProperties).includes("_reactInternalInstance");
+  return Object.keys(ownProperties).includes("_reactInternalInstance") || Object.keys(ownProperties).includes("_reactInternalFiber");
+}
+
+function isConsole(expression) {
+  return (/^console/.test(expression)
+  );
 }
 
 /***/ }),
@@ -32456,11 +31967,13 @@ module.exports = ReactPropTypesSecret;
 const client = __webpack_require__(1939);
 const loadProperties = __webpack_require__(2017);
 const node = __webpack_require__(1940);
+const selection = __webpack_require__(3616);
 
 module.exports = {
   client,
   loadProperties,
-  node
+  node,
+  selection
 };
 
 /***/ }),
@@ -32562,7 +32075,7 @@ const MAX_NUMERICAL_PROPERTIES = 100;
 
 const NODE_TYPES = {
   BUCKET: Symbol("[n…n]"),
-  DEFAULT_PROPERTIES: Symbol("[default properties]"),
+  DEFAULT_PROPERTIES: Symbol("<default properties>"),
   ENTRIES: Symbol("<entries>"),
   GET: Symbol("<get>"),
   GRIP: Symbol("GRIP"),
@@ -32574,7 +32087,8 @@ const NODE_TYPES = {
   PROXY_HANDLER: Symbol("<handler>"),
   PROXY_TARGET: Symbol("<target>"),
   SET: Symbol("<set>"),
-  PROTOTYPE: Symbol("__proto__")
+  PROTOTYPE: Symbol("<prototype>"),
+  BLOCK: Symbol("☲")
 };
 
 let WINDOW_PROPERTIES = {};
@@ -32720,6 +32234,10 @@ function nodeIsGetter(item) {
 
 function nodeIsSetter(item) {
   return getType(item) === NODE_TYPES.SET;
+}
+
+function nodeIsBlock(item) {
+  return getType(item) === NODE_TYPES.BLOCK;
 }
 
 function nodeHasAccessors(item) {
@@ -32911,7 +32429,7 @@ function makeDefaultPropsBucket(propertiesNames, parent, ownProperties) {
   let nodes = makeNodesForOwnProps(userPropertiesNames, parent, ownProperties);
 
   if (defaultProperties.length > 0) {
-    const defaultPropertiesNode = createNode(parent, "[default properties]", `${parentPath}/${SAFE_PATH_PREFIX}default`, null, NODE_TYPES.DEFAULT_PROPERTIES);
+    const defaultPropertiesNode = createNode(parent, "<default properties>", `${parentPath}/${SAFE_PATH_PREFIX}default`, null, NODE_TYPES.DEFAULT_PROPERTIES);
 
     const defaultNodes = defaultProperties.map((name, index) => createNode(defaultPropertiesNode, maybeEscapePropertyName(name), `${parentPath}/${SAFE_PATH_PREFIX}bucket${index}/${name}`, ownProperties[name]));
     nodes.push(setNodeChildren(defaultPropertiesNode, defaultNodes));
@@ -32935,7 +32453,7 @@ function makeNodesForProperties(objProps, parent) {
   const parentPath = parent.path;
   const parentValue = getValue(parent);
 
-  let allProperties = Object.assign({}, ownProperties, safeGetterValues);
+  let allProperties = { ...ownProperties, ...safeGetterValues };
 
   // Ignore properties that are neither non-concrete nor getters/setters.
   const propertiesNames = sortProperties(Object.keys(allProperties)).filter(name => {
@@ -32983,7 +32501,7 @@ function makeNodeForPrototype(objProps, parent) {
 
   // Add the prototype if it exists and is not null
   if (prototype && prototype.type !== "null") {
-    return createNode(parent, "__proto__", `${parent.path}/__proto__`, { value: prototype }, NODE_TYPES.PROTOTYPE);
+    return createNode(parent, "<prototype>", `${parent.path}/<prototype>`, { value: prototype }, NODE_TYPES.PROTOTYPE);
   }
 
   return null;
@@ -33172,6 +32690,7 @@ module.exports = {
   nodeHasChildren,
   nodeHasEntries,
   nodeHasProperties,
+  nodeIsBlock,
   nodeIsBucket,
   nodeIsDefaultProperties,
   nodeIsEntries,
@@ -33266,7 +32785,7 @@ function getSourceAnnotation(source, sourceMetaData) {
   if ((0, _source.isPretty)(source)) {
     return _react2.default.createElement("img", { className: "prettyPrint" });
   }
-  if (source.get("isBlackBoxed")) {
+  if (source.isBlackBoxed) {
     return _react2.default.createElement("img", { className: "blackBox" });
   }
 }
@@ -33301,6 +32820,12 @@ function getTabMenuItems() {
       id: "node-menu-show-source",
       label: L10N.getStr("sourceTabs.revealInTree"),
       accesskey: L10N.getStr("sourceTabs.revealInTree.accesskey"),
+      disabled: false
+    },
+    copyToClipboard: {
+      id: "node-menu-copy-to-clipboard",
+      label: L10N.getStr("copyToClipboard.label"),
+      accesskey: L10N.getStr("copyToClipboard.accesskey"),
       disabled: false
     },
     copySourceUri2: {
@@ -33762,13 +33287,6 @@ function highlightMatches(lineMatch) {
 
 /***/ }),
 
-/***/ 2012:
-/***/ (function(module, exports) {
-
-module.exports = "<!-- This Source Code Form is subject to the terms of the Mozilla Public - License, v. 2.0. If a copy of the MPL was not distributed with this - file, You can obtain one at http://mozilla.org/MPL/2.0/. --><svg viewBox=\"0 0 16 16\" xmlns=\"http://www.w3.org/2000/svg\"><g stroke-width=\"1\" fill=\"none\" fill-rule=\"evenodd\" stroke-linecap=\"round\"><g id=\"arrow\" transform=\"translate(1.000000, 3.000000)\"><path d=\"M4.5,0.5 L6.5,2.5\"></path><path d=\"M4.5,2.5 L6.5,4.5\" transform=\"translate(5.500000, 3.500000) scale(1, -1) translate(-5.500000, -3.500000) \"></path><path d=\"M6.00090144,2.5 C4.67806937,2.5 3.67938478,2.5 3.00484766,2.5 C1.99304199,2.5 1.01049805,3.5168457 0.993840144,4.52403846 C0.988750751,4.54723808 0.988750751,5.87097168 0.993840144,8.49523926\" id=\"Path-2\" stroke-linejoin=\"round\"></path></g><g id=\"content-lines\" transform=\"translate(9.000000, 2.000000)\"><path d=\"M1.5,3.5 L5.5,3.5\"></path><path d=\"M0.5,1.5 L5.5,1.5\"></path><path d=\"M0.5,5.5 L5.5,5.5\"></path></g></g></svg>"
-
-/***/ }),
-
 /***/ 2017:
 /***/ (function(module, exports, __webpack_require__) {
 
@@ -33804,59 +33322,56 @@ const {
 } = __webpack_require__(1940);
 
 function loadItemProperties(item, createObjectClient, loadedProperties) {
+  const gripItem = getClosestGripNode(item);
+  const value = getValue(gripItem);
+
   const [start, end] = item.meta ? [item.meta.startIndex, item.meta.endIndex] : [];
 
+  let promises = [];
   let objectClient;
-  const getObjectClient = () => {
-    if (objectClient) {
-      return objectClient;
-    }
+  const getObjectClient = () => objectClient || createObjectClient(value);
 
-    const gripItem = getClosestGripNode(item);
-    const value = getValue(gripItem);
-    return createObjectClient(value);
-  };
-
-  let loadingPromises = [];
   if (shouldLoadItemIndexedProperties(item, loadedProperties)) {
-    loadingPromises.push(enumIndexedProperties(getObjectClient(), start, end));
+    promises.push(enumIndexedProperties(getObjectClient(), start, end));
   }
 
   if (shouldLoadItemNonIndexedProperties(item, loadedProperties)) {
-    loadingPromises.push(enumNonIndexedProperties(getObjectClient(), start, end));
+    promises.push(enumNonIndexedProperties(getObjectClient(), start, end));
   }
 
   if (shouldLoadItemEntries(item, loadedProperties)) {
-    loadingPromises.push(enumEntries(getObjectClient(), start, end));
+    promises.push(enumEntries(getObjectClient(), start, end));
   }
 
   if (shouldLoadItemPrototype(item, loadedProperties)) {
-    loadingPromises.push(getPrototype(getObjectClient()));
+    promises.push(getPrototype(getObjectClient()));
   }
 
   if (shouldLoadItemSymbols(item, loadedProperties)) {
-    loadingPromises.push(enumSymbols(getObjectClient(), start, end));
+    promises.push(enumSymbols(getObjectClient(), start, end));
   }
 
-  if (loadingPromises.length === 0) {
-    return null;
+  return Promise.all(promises).then(mergeResponses);
+}
+
+function mergeResponses(responses) {
+  const data = {};
+
+  for (const response of responses) {
+    if (response.hasOwnProperty("ownProperties")) {
+      data.ownProperties = { ...data.ownProperties, ...response.ownProperties };
+    }
+
+    if (response.ownSymbols && response.ownSymbols.length > 0) {
+      data.ownSymbols = response.ownSymbols;
+    }
+
+    if (response.prototype) {
+      data.prototype = response.prototype;
+    }
   }
 
-  return Promise.all(loadingPromises).then(responses => responses.reduce((accumulator, res) => {
-    // Let's loop through the responses to build a single response object.
-    Object.entries(res).forEach(([k, v]) => {
-      if (accumulator.hasOwnProperty(k)) {
-        if (Array.isArray(accumulator[k])) {
-          accumulator[k].push(...v);
-        } else if (typeof accumulator[k] === "object") {
-          accumulator[k] = Object.assign({}, accumulator[k], v);
-        }
-      } else {
-        accumulator[k] = v;
-      }
-    });
-    return accumulator;
-  }, {}));
+  return data;
 }
 
 function shouldLoadItemIndexedProperties(item, loadedProperties = new Map()) {
@@ -33898,6 +33413,7 @@ function shouldLoadItemSymbols(item, loadedProperties = new Map()) {
 
 module.exports = {
   loadItemProperties,
+  mergeResponses,
   shouldLoadItemEntries,
   shouldLoadItemIndexedProperties,
   shouldLoadItemNonIndexedProperties,
@@ -33969,7 +33485,8 @@ class Tab extends _react.PureComponent {
       closeTabs,
       tabSources,
       showSource,
-      togglePrettyPrint
+      togglePrettyPrint,
+      selectedSource
     } = this.props;
 
     const otherTabs = tabSources.filter(t => t.get("id") !== tab);
@@ -34003,6 +33520,11 @@ class Tab extends _react.PureComponent {
     }, {
       item: _extends({}, tabMenuItems.closeAllTabs, { click: () => closeTabs(tabURLs) })
     }, { item: { type: "separator" } }, {
+      item: _extends({}, tabMenuItems.copyToClipboard, {
+        disabled: selectedSource.get("id") !== tab,
+        click: () => (0, _clipboard.copyToTheClipboard)(sourceTab.text)
+      })
+    }, {
       item: _extends({}, tabMenuItems.copySourceUri2, {
         click: () => (0, _clipboard.copyToTheClipboard)((0, _source.getRawSourceURL)(sourceTab.get("url")))
       })
@@ -34041,14 +33563,14 @@ class Tab extends _react.PureComponent {
     } = this.props;
     const src = source.toJS();
     const filename = (0, _source.getFilename)(src);
-    const sourceId = source.get("id");
+    const sourceId = source.id;
     const active = selectedSource && sourceId == selectedSource.get("id") && !this.isProjectSearchEnabled() && !this.isSourceSearchEnabled();
     const isPrettyCode = (0, _source.isPretty)(source);
     const sourceAnnotation = (0, _tabs.getSourceAnnotation)(source, sourceMetaData);
 
     function onClickClose(e) {
       e.stopPropagation();
-      closeTab(source.get("url"));
+      closeTab(source.url);
     }
 
     function handleTabClick(e) {
@@ -34057,7 +33579,7 @@ class Tab extends _react.PureComponent {
 
       // Accommodate middle click to close tab
       if (e.button === 1) {
-        return closeTab(source.get("url"));
+        return closeTab(source.url);
       }
 
       return selectSource(sourceId);
@@ -34096,7 +33618,7 @@ exports.default = (0, _reactRedux.connect)((state, props) => {
   return {
     tabSources: (0, _selectors.getSourcesForTabs)(state),
     selectedSource: selectedSource,
-    sourceMetaData: (0, _selectors.getSourceMetaData)(state, source.get("id")),
+    sourceMetaData: (0, _selectors.getSourceMetaData)(state, source.id),
     activeSearch: (0, _selectors.getActiveSearch)(state)
   };
 }, dispatch => (0, _redux.bindActionCreators)(_actions2.default, dispatch))(Tab);
@@ -34120,10 +33642,6 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.getTokenLocation = getTokenLocation;
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
 function getTokenLocation(codeMirror, tokenEl) {
   const { left, top, width, height } = tokenEl.getBoundingClientRect();
   const { line, ch } = codeMirror.coordsChar({
@@ -34135,7 +33653,9 @@ function getTokenLocation(codeMirror, tokenEl) {
     line: line + 1,
     column: ch
   };
-}
+} /* This Source Code Form is subject to the terms of the Mozilla Public
+   * License, v. 2.0. If a copy of the MPL was not distributed with this
+   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 /***/ }),
 
@@ -34212,6 +33732,10 @@ var timings = _interopRequireWildcard(_timings);
 
 var _prefs = __webpack_require__(226);
 
+var _devtoolsConfig = __webpack_require__(1355);
+
+var _pausePoints = __webpack_require__(3622);
+
 function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
 
 function findSource(dbg, url) {
@@ -34226,7 +33750,11 @@ function findSource(dbg, url) {
 }
 
 function sendPacket(dbg, packet, callback) {
-  dbg.connection.tabConnection.debuggerClient.request(packet).then(callback || console.log);
+  dbg.client.sendPacket(packet, callback || console.log);
+}
+
+function sendPacketToThread(dbg, packet, callback) {
+  sendPacket(dbg, _extends({ to: dbg.connection.tabConnection.threadClient.actor }, packet), callback);
 }
 
 function evaluate(dbg, expression, callback) {
@@ -34245,6 +33773,12 @@ function getCM() {
   return cm && cm.CodeMirror;
 }
 
+function _formatPausePoints(dbg, url) {
+  const source = dbg.helpers.findSource(url);
+  const pausePoints = dbg.selectors.getPausePoints(source);
+  console.log((0, _pausePoints.formatPausePoints)(source.text, pausePoints));
+}
+
 function setupHelper(obj) {
   const selectors = bindSelectors(obj);
   const actions = (0, _redux.bindActionCreators)(obj.actions, obj.store.dispatch);
@@ -34258,26 +33792,25 @@ function setupHelper(obj) {
     helpers: {
       findSource: url => findSource(dbg, url),
       evaluate: (expression, cbk) => evaluate(dbg, expression, cbk),
+      sendPacketToThread: (packet, cbk) => sendPacketToThread(dbg, packet, cbk),
       sendPacket: (packet, cbk) => sendPacket(dbg, packet, cbk)
+    },
+    formatters: {
+      pausePoints: url => _formatPausePoints(dbg, url)
     }
   });
 
   window.dbg = dbg;
 
-  console.group("Development Notes");
-  const baseUrl = "https://devtools-html.github.io/debugger.html";
-  const localDevelopmentUrl = `${baseUrl}/docs/dbg.html`;
-  console.log("Debugging Tips", localDevelopmentUrl);
-  console.log("dbg", window.dbg);
-  console.groupEnd();
+  if ((0, _devtoolsConfig.isDevelopment)()) {
+    console.group("Development Notes");
+    const baseUrl = "https://devtools-html.github.io/debugger.html";
+    const localDevelopmentUrl = `${baseUrl}/docs/dbg.html`;
+    console.log("Debugging Tips", localDevelopmentUrl);
+    console.log("dbg", window.dbg);
+    console.groupEnd();
+  }
 }
-
-/***/ }),
-
-/***/ 2247:
-/***/ (function(module, exports) {
-
-module.exports = "<!-- This Source Code Form is subject to the terms of the Mozilla Public - License, v. 2.0. If a copy of the MPL was not distributed with this - file, You can obtain one at http://mozilla.org/MPL/2.0/. --><svg viewBox=\"0 0 16 16\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M8 13.4c-.5 0-.9-.2-1.2-.6L.4 5.2C0 4.7-.1 4.3.2 3.7S1 3 1.6 3h12.8c.6 0 1.2.1 1.4.7.3.6.2 1.1-.2 1.6l-6.4 7.6c-.3.4-.7.5-1.2.5z\"></path></svg>"
 
 /***/ }),
 
@@ -34849,7 +34382,8 @@ async function mapBindingReferenceToDescriptor(binding, mapped) {
   if (mapped.start.line === binding.loc.start.line && (0, _locColumn.locColumn)(mapped.start) >= (0, _locColumn.locColumn)(binding.loc.start) - 1 && (0, _locColumn.locColumn)(mapped.start) <= (0, _locColumn.locColumn)(binding.loc.end)) {
     return {
       name: binding.name,
-      desc: binding.desc
+      desc: binding.desc,
+      expression: binding.name
     };
   }
 
@@ -34870,34 +34404,23 @@ async function mapImportDeclarationToDescriptor(binding, mapped) {
     return null;
   }
 
-  let desc = binding.desc;
-  if (desc && typeof desc.value === "object") {
-    if (desc.value.optimizedOut) {
-      // If the value was optimized out, we skip it entirely because there is
-      // a good chance that this means that this isn't the right binding. This
-      // allows us to catch cases like
-      //
-      //   var _mod = require(...);
-      //   var _mod2 = _interopRequire(_mod);
-      //
-      // where "_mod" is optimized out because it is only referenced once, and
-      // we want to continue searching to try to find "_mod2".
-      return null;
-    }
-
-    if (desc.value.type !== "object") {
-      // If we got a non-primitive descriptor but it isn't an object, then
-      // it's definitely not the namespace.
-      return null;
-    }
-
-    const objectClient = (0, _firefox.createObjectClient)(desc.value);
-    desc = (await objectClient.getProperty(mapped.importName)).descriptor;
-  }
+  const desc = await readDescriptorProperty(binding.desc, mapped.importName,
+  // If the value was optimized out or otherwise unavailable, we skip it
+  // entirely because there is a good chance that this means that this
+  // isn't the right binding. This allows us to catch cases like
+  //
+  //   var _mod = require(...);
+  //   var _mod2 = _interopRequire(_mod);
+  //
+  // where "_mod" is optimized out because it is only referenced once, and
+  // we want to continue searching to try to find "_mod2".
+  true);
+  const expression = `${binding.name}.${mapped.importName}`;
 
   return desc ? {
     name: binding.name,
-    desc
+    desc,
+    expression
   } : null;
 }
 
@@ -34942,6 +34465,7 @@ async function mapImportReferenceToDescriptor(binding, mapped) {
     return null;
   }
 
+  let expression = binding.name;
   let desc = binding.desc;
 
   if (binding.loc.type === "ref") {
@@ -34962,15 +34486,51 @@ async function mapImportReferenceToDescriptor(binding, mapped) {
         continue;
       }
 
-      const objectClient = (0, _firefox.createObjectClient)(desc.value);
-      desc = (await objectClient.getProperty(op.property)).descriptor;
+      desc = await readDescriptorProperty(desc, op.property);
+      expression += `.${op.property}`;
     }
   }
 
   return desc ? {
     name: binding.name,
-    desc
+    desc,
+    expression
   } : null;
+}
+
+async function readDescriptorProperty(desc, property, requireValidObject = false) {
+  if (!desc) {
+    return null;
+  }
+
+  if (typeof desc.value !== "object" || !desc.value) {
+    if (requireValidObject) {
+      return null;
+    }
+
+    // If accessing a property on a primitive type, just return 'undefined'
+    // as the value.
+    return {
+      value: {
+        type: "undefined"
+      }
+    };
+  }
+
+  // Note: The check for `.type` might already cover the optimizedOut case
+  // but not 100% sure, so just being cautious.
+  if (desc.value.type !== "object" || desc.value.optimizedOut) {
+    if (requireValidObject) {
+      return null;
+    }
+
+    // If we got a non-primitive descriptor but it isn't an object, then
+    // it's definitely not the namespace and it is probably an error.
+    return desc;
+  }
+
+  const objectClient = (0, _firefox.createObjectClient)(desc.value);
+  return (await objectClient.getProperty(property)).descriptor;
 }
 
 function mappingContains(mapped, item) {
@@ -37861,10 +37421,888 @@ function formatCopyName(frame) {
 
 /***/ }),
 
+/***/ 3611:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var _propTypes = __webpack_require__(20);
+
+var _propTypes2 = _interopRequireDefault(_propTypes);
+
+var _react = __webpack_require__(0);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/**
+ * Helper class to disable panel rendering when it is in background.
+ *
+ * Toolbox code hides the iframes when switching to another panel
+ * and triggers `visibilitychange` events.
+ *
+ * See devtools/client/framework/toolbox.js:setIframeVisible().
+ */
+
+class VisibilityHandler extends _react.Component {
+  static get propTypes() {
+    return {
+      children: _propTypes2.default.element.isRequired
+    };
+  }
+
+  constructor(props) {
+    super(props);
+    this.isVisible = true;
+    this.onVisibilityChange = this.onVisibilityChange.bind(this);
+  }
+
+  componentDidMount() {
+    window.addEventListener("visibilitychange", this.onVisibilityChange);
+  }
+
+  shouldComponentUpdate() {
+    return document.visibilityState == "visible";
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener("visibilitychange", this.onVisibilityChange);
+  }
+
+  onVisibilityChange() {
+    this.isVisible = false;
+    if (document.visibilityState == "visible") {
+      this.isVisible = true;
+    }
+    this.forceUpdate();
+  }
+
+  render() {
+    return this.isVisible ? this.props.children : null;
+  }
+}
+
+module.exports = VisibilityHandler;
+
+/***/ }),
+
+/***/ 3614:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+// ReactJS
+const PropTypes = __webpack_require__(20);
+
+// Reps
+const {
+  getGripType,
+  isGrip,
+  wrapRender
+} = __webpack_require__(1353);
+const dom = __webpack_require__(1758);
+const { span } = dom;
+
+/**
+ * Renders DOM documentType object.
+ */
+DocumentType.propTypes = {
+  object: PropTypes.object.isRequired
+};
+
+function DocumentType(props) {
+  const { object } = props;
+  let name = object && object.preview && object.preview.nodeName ? ` ${object.preview.nodeName}` : "";
+  return span({
+    "data-link-actor-id": props.object.actor,
+    className: "objectBox objectBox-document"
+  }, `<!DOCTYPE${name}>`);
+}
+
+// Registration
+function supportsObject(object, noGrip = false) {
+  if (noGrip === true || !isGrip(object)) {
+    return false;
+  }
+
+  const type = getGripType(object, noGrip);
+  return object.preview && type === "DocumentType";
+}
+
+// Exports from this module
+module.exports = {
+  rep: wrapRender(DocumentType),
+  supportsObject
+};
+
+/***/ }),
+
+/***/ 3615:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var _devtoolsComponents = __webpack_require__(1441);
+
+var _devtoolsComponents2 = _interopRequireDefault(_devtoolsComponents);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+const {
+  Component,
+  createFactory
+} = __webpack_require__(0);
+const dom = __webpack_require__(1758);
+const { connect } = __webpack_require__(3592);
+const { bindActionCreators } = __webpack_require__(3593);
+
+const Tree = createFactory(_devtoolsComponents2.default.Tree);
+__webpack_require__(1325);
+
+const classnames = __webpack_require__(175);
+
+const {
+  REPS: {
+    Rep,
+    Grip
+  }
+} = __webpack_require__(1372);
+const {
+  MODE
+} = __webpack_require__(1357);
+
+const Utils = __webpack_require__(1938);
+
+const {
+  getChildren,
+  getClosestGripNode,
+  getParent,
+  getValue,
+  nodeHasAccessors,
+  nodeHasProperties,
+  nodeIsBlock,
+  nodeIsDefaultProperties,
+  nodeIsFunction,
+  nodeIsGetter,
+  nodeIsMapEntry,
+  nodeIsMissingArguments,
+  nodeIsOptimizedOut,
+  nodeIsPrimitive,
+  nodeIsPrototype,
+  nodeIsSetter,
+  nodeIsUninitializedBinding,
+  nodeIsUnmappedBinding,
+  nodeIsUnscopedBinding,
+  nodeIsWindow
+} = Utils.node;
+
+// This implements a component that renders an interactive inspector
+// for looking at JavaScript objects. It expects descriptions of
+// objects from the protocol, and will dynamically fetch children
+// properties as objects are expanded.
+//
+// If you want to inspect a single object, pass the name and the
+// protocol descriptor of it:
+//
+//  ObjectInspector({
+//    name: "foo",
+//    desc: { writable: true, ..., { value: { actor: "1", ... }}},
+//    ...
+//  })
+//
+// If you want multiple top-level objects (like scopes), you can pass
+// an array of manually constructed nodes as `roots`:
+//
+//  ObjectInspector({
+//    roots: [{ name: ... }, ...],
+//    ...
+//  });
+
+// There are 3 types of nodes: a simple node with a children array, an
+// object that has properties that should be children when they are
+// fetched, and a primitive value that should be displayed with no
+// children.
+
+class ObjectInspector extends Component {
+  constructor(props) {
+    super();
+    this.cachedNodes = new Map();
+
+    const self = this;
+
+    self.getItemChildren = this.getItemChildren.bind(this);
+    self.renderTreeItem = this.renderTreeItem.bind(this);
+    self.setExpanded = this.setExpanded.bind(this);
+    self.focusItem = this.focusItem.bind(this);
+    self.getRoots = this.getRoots.bind(this);
+  }
+
+  shouldComponentUpdate(nextProps) {
+    const {
+      expandedPaths,
+      loadedProperties,
+      roots
+    } = this.props;
+
+    if (roots !== nextProps.roots) {
+      // Since the roots changed, we assume the properties did as well. Thus we can clear
+      // the cachedNodes to avoid bugs and memory leaks.
+      this.cachedNodes.clear();
+      return true;
+    }
+
+    return expandedPaths.size !== nextProps.expandedPaths.size || loadedProperties.size !== nextProps.loadedProperties.size || [...expandedPaths].some(key => !nextProps.expandedPaths.has(key));
+  }
+
+  componentWillUnmount() {
+    const { releaseActor } = this.props;
+    if (typeof releaseActor !== "function") {
+      return;
+    }
+
+    const { actors } = this.props;
+    for (let actor of actors) {
+      releaseActor(actor);
+    }
+  }
+
+  getItemChildren(item) {
+    const {
+      loadedProperties
+    } = this.props;
+    const { cachedNodes } = this;
+
+    return getChildren({
+      loadedProperties,
+      cachedNodes,
+      item
+    });
+  }
+
+  getRoots() {
+    return this.props.roots;
+  }
+
+  getNodeKey(item) {
+    return item.path || JSON.stringify(item);
+  }
+
+  setExpanded(item, expand) {
+    if (nodeIsPrimitive(item)) {
+      return;
+    }
+
+    const {
+      createObjectClient,
+      loadedProperties,
+      nodeExpand,
+      nodeCollapse,
+      roots
+    } = this.props;
+
+    if (expand === true) {
+      const gripItem = getClosestGripNode(item);
+      const value = getValue(gripItem);
+      const isRoot = value && roots.some(root => {
+        const rootValue = getValue(root);
+        return rootValue && rootValue.actor === value.actor;
+      });
+      const actor = isRoot || !value ? null : value.actor;
+      nodeExpand(item, actor, loadedProperties, createObjectClient);
+    } else {
+      nodeCollapse(item);
+    }
+  }
+
+  focusItem(item) {
+    const {
+      focusedItem,
+      onFocus
+    } = this.props;
+
+    if (focusedItem !== item && onFocus) {
+      onFocus(item);
+    }
+  }
+
+  getTreeItemLabelAndValue(item, depth, expanded) {
+    let label = item.name;
+    const isPrimitive = nodeIsPrimitive(item);
+
+    if (nodeIsOptimizedOut(item)) {
+      return {
+        label,
+        value: dom.span({ className: "unavailable" }, "(optimized away)")
+      };
+    }
+
+    if (nodeIsUninitializedBinding(item)) {
+      return {
+        label,
+        value: dom.span({ className: "unavailable" }, "(uninitialized)")
+      };
+    }
+
+    if (nodeIsUnmappedBinding(item)) {
+      return {
+        label,
+        value: dom.span({ className: "unavailable" }, "(unmapped)")
+      };
+    }
+
+    if (nodeIsUnscopedBinding(item)) {
+      return {
+        label,
+        value: dom.span({ className: "unavailable" }, "(unscoped)")
+      };
+    }
+
+    if (nodeIsOptimizedOut(item)) {
+      return {
+        label,
+        value: dom.span({ className: "unavailable" }, "(optimized away)")
+      };
+    }
+
+    const itemValue = getValue(item);
+    const unavailable = isPrimitive && itemValue && itemValue.hasOwnProperty && itemValue.hasOwnProperty("unavailable");
+
+    if (nodeIsMissingArguments(item) || unavailable) {
+      return {
+        label,
+        value: dom.span({ className: "unavailable" }, "(unavailable)")
+      };
+    }
+
+    if (nodeIsFunction(item) && !nodeIsGetter(item) && !nodeIsSetter(item) && (this.props.mode === MODE.TINY || !this.props.mode)) {
+      return {
+        label: this.renderGrip(item, {
+          ...this.props,
+          functionName: label
+        })
+      };
+    }
+
+    if (nodeHasProperties(item) || nodeHasAccessors(item) || nodeIsMapEntry(item) || isPrimitive) {
+      let repsProp = { ...this.props };
+      if (depth > 0) {
+        repsProp.mode = this.props.mode === MODE.LONG ? MODE.SHORT : MODE.TINY;
+      }
+      if (expanded) {
+        repsProp.mode = MODE.TINY;
+      }
+
+      return {
+        label,
+        value: this.renderGrip(item, repsProp)
+      };
+    }
+
+    return {
+      label
+    };
+  }
+
+  renderTreeItemLabel(label, item, depth, focused, expanded) {
+    if (label === null || typeof label === "undefined") {
+      return null;
+    }
+
+    const {
+      onLabelClick
+    } = this.props;
+
+    return dom.span({
+      className: "object-label",
+      onClick: onLabelClick ? event => {
+        event.stopPropagation();
+
+        // If the user selected text, bail out.
+        if (Utils.selection.documentHasSelection()) {
+          return;
+        }
+
+        onLabelClick(item, {
+          depth,
+          focused,
+          expanded,
+          setExpanded: this.setExpanded
+        });
+      } : undefined
+    }, label);
+  }
+
+  getTreeTopElementProps(item, depth, focused, expanded) {
+    const {
+      onDoubleClick,
+      dimTopLevelWindow
+    } = this.props;
+
+    let parentElementProps = {
+      className: classnames("node object-node", {
+        focused,
+        lessen: !expanded && (nodeIsDefaultProperties(item) || nodeIsPrototype(item) || dimTopLevelWindow === true && nodeIsWindow(item) && depth === 0),
+        block: nodeIsBlock(item)
+      }),
+      onClick: e => {
+        e.stopPropagation();
+
+        // If the user selected text, bail out.
+        if (Utils.selection.documentHasSelection()) {
+          return;
+        }
+
+        this.setExpanded(item, !expanded);
+      }
+    };
+
+    if (onDoubleClick) {
+      parentElementProps.onDoubleClick = e => {
+        e.stopPropagation();
+        onDoubleClick(item, {
+          depth,
+          focused,
+          expanded
+        });
+      };
+    }
+
+    return parentElementProps;
+  }
+
+  renderTreeItem(item, depth, focused, arrow, expanded) {
+    const { label, value } = this.getTreeItemLabelAndValue(item, depth, expanded);
+    const labelElement = this.renderTreeItemLabel(label, item, depth, focused, expanded);
+    const delimiter = value && labelElement ? dom.span({ className: "object-delimiter" }, ": ") : null;
+
+    return dom.div(this.getTreeTopElementProps(item, depth, focused, expanded), arrow, labelElement, delimiter, value);
+  }
+
+  renderGrip(item, props) {
+    const object = getValue(item);
+    return Rep({
+      ...props,
+      object,
+      mode: props.mode || MODE.TINY,
+      defaultRep: Grip
+    });
+  }
+
+  render() {
+    const {
+      autoExpandAll = true,
+      autoExpandDepth = 1,
+      disabledFocus,
+      disableWrap = false,
+      expandedPaths,
+      focusedItem,
+      inline
+    } = this.props;
+
+    let roots = this.getRoots();
+    if (roots.length === 1) {
+      const root = roots[0];
+      const name = root && root.name;
+      if (nodeIsPrimitive(root) && (name === null || typeof name === "undefined")) {
+        return this.renderGrip(root, this.props);
+      }
+    }
+
+    return Tree({
+      className: classnames({
+        inline,
+        nowrap: disableWrap,
+        "object-inspector": true
+      }),
+      autoExpandAll,
+      autoExpandDepth,
+      disabledFocus,
+
+      isExpanded: item => expandedPaths && expandedPaths.has(this.getNodeKey(item)),
+      isExpandable: item => nodeIsPrimitive(item) === false,
+      focused: focusedItem,
+
+      getRoots: this.getRoots,
+      getParent,
+      getChildren: this.getItemChildren,
+      getKey: this.getNodeKey,
+
+      onExpand: item => this.setExpanded(item, true),
+      onCollapse: item => this.setExpanded(item, false),
+      onFocus: this.focusItem,
+
+      renderItem: this.renderTreeItem
+    });
+  }
+}
+
+function mapStateToProps(state, props) {
+  return {
+    actors: state.actors,
+    expandedPaths: state.expandedPaths,
+    focusedItem: state.focusedItem,
+    loadedProperties: state.loadedProperties
+  };
+}
+
+function mapDispatchToProps(dispatch) {
+  return bindActionCreators(__webpack_require__(3617), dispatch);
+}
+
+module.exports = connect(mapStateToProps, mapDispatchToProps)(ObjectInspector);
+
+/***/ }),
+
+/***/ 3616:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+const { ELEMENT_NODE } = __webpack_require__(1449);
+
+function documentHasSelection() {
+  const selection = getSelection();
+  if (!selection) {
+    return false;
+  }
+
+  const {
+    anchorNode,
+    focusNode
+  } = selection;
+
+  // When clicking the arrow, which is an inline svg element, the selection do have a type
+  // of "Range". We need to have an explicit case when the anchor and the focus node are
+  // the same and they have an arrow ancestor.
+  if (focusNode && focusNode === anchorNode && focusNode.nodeType == ELEMENT_NODE && focusNode.closest(".arrow")) {
+    return false;
+  }
+
+  return selection.type === "Range";
+}
+
+module.exports = {
+  documentHasSelection
+};
+
+/***/ }),
+
+/***/ 3617:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+const {
+  loadItemProperties
+} = __webpack_require__(2017); /* This Source Code Form is subject to the terms of the Mozilla Public
+                                         * License, v. 2.0. If a copy of the MPL was not distributed with this
+                                         * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/**
+ * This action is responsible for expanding a given node,
+ * which also means that it will call the action responsible to fetch properties.
+ */
+function nodeExpand(node, actor, loadedProperties, createObjectClient) {
+  return async ({ dispatch }) => {
+    dispatch({
+      type: "NODE_EXPAND",
+      data: { node }
+    });
+    dispatch(nodeLoadProperties(node, actor, loadedProperties, createObjectClient));
+  };
+}
+
+function nodeCollapse(node) {
+  return {
+    type: "NODE_COLLAPSE",
+    data: { node }
+  };
+}
+
+function nodeFocus(node) {
+  return {
+    type: "NODE_FOCUS",
+    data: { node }
+  };
+}
+/*
+ * This action checks if we need to fetch properties, entries, prototype and symbols
+ * for a given node. If we do, it will call the appropriate ObjectClient functions.
+ */
+function nodeLoadProperties(item, actor, loadedProperties, createObjectClient) {
+  return async ({ dispatch }) => {
+    try {
+      const properties = await loadItemProperties(item, createObjectClient, loadedProperties);
+      if (Object.keys(properties).length > 0) {
+        dispatch(nodePropertiesLoaded(item, actor, properties));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+}
+
+function nodePropertiesLoaded(node, actor, properties) {
+  return {
+    type: "NODE_PROPERTIES_LOADED",
+    data: { node, actor, properties }
+  };
+}
+
+module.exports = {
+  nodeExpand,
+  nodeCollapse,
+  nodeFocus,
+  nodeLoadProperties,
+  nodePropertiesLoaded
+};
+
+/***/ }),
+
+/***/ 3618:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+const { applyMiddleware, createStore } = __webpack_require__(3593);
+const { thunk } = __webpack_require__(3619);
+const { waitUntilService } = __webpack_require__(3620);
+const reducer = __webpack_require__(3621);
+
+function createInitialState(overrides) {
+  return {
+    actors: new Set(),
+    expandedPaths: new Set(),
+    focusedItem: null,
+    loadedProperties: new Map(),
+    ...overrides
+  };
+}
+
+module.exports = props => {
+  const middlewares = [thunk];
+  if (props.injectWaitService) {
+    middlewares.push(waitUntilService);
+  }
+
+  return createStore(reducer, createInitialState(props), applyMiddleware(...middlewares));
+};
+
+/***/ }),
+
+/***/ 3619:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/**
+ * A middleware that allows thunks (functions) to be dispatched.
+ * If it's a thunk, it is called with `dispatch` and `getState`,
+ * allowing the action to create multiple actions (most likely
+ * asynchronously).
+ */
+function thunk({ dispatch, getState }) {
+  return next => action => {
+    return typeof action === "function" ? action({ dispatch, getState }) : next(action);
+  };
+}
+exports.thunk = thunk;
+
+/***/ }),
+
 /***/ 362:
 /***/ (function(module, exports) {
 
 module.exports = "<!-- This Source Code Form is subject to the terms of the Mozilla Public - License, v. 2.0. If a copy of the MPL was not distributed with this - file, You can obtain one at http://mozilla.org/MPL/2.0/. --><svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 20 16\" stroke=\"none\" fillrule=\"evenodd\"><rect x=\"3\" y=\"10\" width=\"3\" height=\"3\" rx=\"1\"></rect><rect x=\"12\" y=\"3\" width=\"2\" height=\"9\" rx=\"1\"></rect><rect transform=\"translate(13.000000, 7.500000) rotate(60.000000) translate(-13.000000, -7.500000) \" x=\"12\" y=\"3\" width=\"2\" height=\"9\" rx=\"1\"></rect><rect transform=\"translate(13.000000, 7.500000) rotate(-60.000000) translate(-13.000000, -7.500000) \" x=\"12\" y=\"3\" width=\"2\" height=\"9\" rx=\"1\"></rect></svg>"
+
+/***/ }),
+
+/***/ 3620:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+const WAIT_UNTIL_TYPE = "@@service/waitUntil";
+/**
+ * A middleware which acts like a service, because it is stateful
+ * and "long-running" in the background. It provides the ability
+ * for actions to install a function to be run once when a specific
+ * condition is met by an action coming through the system. Think of
+ * it as a thunk that blocks until the condition is met. Example:
+ *
+ * ```js
+ * const services = { WAIT_UNTIL: require('wait-service').NAME };
+ *
+ * { type: services.WAIT_UNTIL,
+ *   predicate: action => action.type === "ADD_ITEM",
+ *   run: (dispatch, getState, action) => {
+ *     // Do anything here. You only need to accept the arguments
+ *     // if you need them. `action` is the action that satisfied
+ *     // the predicate.
+ *   }
+ * }
+ * ```
+ */
+function waitUntilService({ dispatch, getState }) {
+  let pending = [];
+
+  function checkPending(action) {
+    const readyRequests = [];
+    const stillPending = [];
+
+    // Find the pending requests whose predicates are satisfied with
+    // this action. Wait to run the requests until after we update the
+    // pending queue because the request handler may synchronously
+    // dispatch again and run this service (that use case is
+    // completely valid).
+    for (const request of pending) {
+      if (request.predicate(action)) {
+        readyRequests.push(request);
+      } else {
+        stillPending.push(request);
+      }
+    }
+
+    pending = stillPending;
+    for (const request of readyRequests) {
+      request.run(dispatch, getState, action);
+    }
+  }
+
+  return next => action => {
+    if (action.type === WAIT_UNTIL_TYPE) {
+      pending.push(action);
+      return null;
+    }
+    const result = next(action);
+    checkPending(action);
+    return result;
+  };
+}
+
+module.exports = {
+  WAIT_UNTIL_TYPE,
+  waitUntilService
+};
+
+/***/ }),
+
+/***/ 3621:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+function reducer(state = {}, action) {
+  const {
+    type,
+    data
+  } = action;
+
+  const cloneState = overrides => ({ ...state, ...overrides });
+
+  if (type === "NODE_EXPAND") {
+    return cloneState({
+      expandedPaths: new Set(state.expandedPaths).add(data.node.path)
+    });
+  }
+
+  if (type === "NODE_COLLAPSE") {
+    const expandedPaths = new Set(state.expandedPaths);
+    expandedPaths.delete(data.node.path);
+    return cloneState({ expandedPaths });
+  }
+
+  if (type === "NODE_PROPERTIES_LOADED") {
+    return cloneState({
+      actors: data.actor ? new Set(state.actors || []).add(data.actor) : state.actors,
+      loadedProperties: new Map(state.loadedProperties).set(data.node.path, action.data.properties)
+    });
+  }
+
+  if (type === "NODE_FOCUS") {
+    return cloneState({
+      focusedItem: data.node
+    });
+  }
+
+  return state;
+} /* This Source Code Form is subject to the terms of the Mozilla Public
+   * License, v. 2.0. If a copy of the MPL was not distributed with this
+   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+
+module.exports = reducer;
+
+/***/ }),
+
+/***/ 3622:
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.formatPausePoints = formatPausePoints;
+
+var _lodash = __webpack_require__(2);
+
+function insertStrtAt(string, index, newString) {
+  const start = string.slice(0, index);
+  const end = string.slice(index);
+  return `${start}${newString}${end}`;
+}
+
+function formatPausePoints(text, nodes) {
+  nodes = (0, _lodash.reverse)((0, _lodash.sortBy)(nodes, ["location.line", "location.column"]));
+  const lines = text.split("\n");
+  nodes.forEach((node, index) => {
+    const { line, column } = node.location;
+    const { breakpoint, stepOver } = node.types;
+    const num = nodes.length - index;
+    const types = `${breakpoint ? "b" : ""}${stepOver ? "s" : ""}`;
+    lines[line - 1] = insertStrtAt(lines[line - 1], column, `/*${types} ${num}*/`);
+  });
+
+  return lines.join("\n");
+}
 
 /***/ }),
 
