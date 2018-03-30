@@ -12,7 +12,7 @@
 #include "mozilla/ComputedStyleInlines.h"
 #include "mozilla/DocumentStyleRootIterator.h"
 #include "mozilla/ServoBindings.h"
-#include "mozilla/ServoStyleSet.h"
+#include "mozilla/ServoStyleSetInlines.h"
 #include "mozilla/Unused.h"
 #include "mozilla/ViewportFrame.h"
 #include "mozilla/dom/ChildIterator.h"
@@ -316,7 +316,7 @@ ServoRestyleState::TableAwareParentFor(const nsIFrame* aChild)
 }
 
 ServoRestyleManager::ServoRestyleManager(nsPresContext* aPresContext)
-  : RestyleManager(StyleBackendType::Servo, aPresContext)
+  : RestyleManager(aPresContext)
   , mReentrantChanges(nullptr)
 {
 }
@@ -1151,7 +1151,7 @@ ServoRestyleManager::DoProcessPendingRestyles(ServoTraversalFlags aFlags)
   while (styleSet->StyleDocument(aFlags)) {
     ClearSnapshots();
 
-    nsStyleChangeList currentChanges(StyleBackendType::Servo);
+    nsStyleChangeList currentChanges;
     bool anyStyleChanged = false;
 
     // Recreate styles , and queue up change hints (which also handle lazy frame
@@ -1547,7 +1547,7 @@ ServoRestyleManager::ReparentComputedStyle(nsIFrame* aFrame)
 
 void
 ServoRestyleManager::DoReparentComputedStyle(nsIFrame* aFrame,
-                                            ServoStyleSet& aStyleSet)
+                                             ServoStyleSet& aStyleSet)
 {
   if (aFrame->IsBackdropFrame()) {
     // Style context of backdrop frame has no parent style, and thus we do not

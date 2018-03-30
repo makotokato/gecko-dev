@@ -19,6 +19,7 @@ namespace mozilla {
 namespace dom {
 class Element;
 } // namespace dom
+class ServoStyleSet;
 } // namespace mozilla
 class nsAttrValue;
 class nsAtom;
@@ -303,13 +304,7 @@ private:
                                    ServoRestyleState& aRestyleState,
                                    ServoPostTraversalFlags aFlags);
 
-  inline ServoStyleSet* StyleSet() const
-  {
-    MOZ_ASSERT(PresContext()->StyleSet()->IsServo(),
-               "ServoRestyleManager should only be used with a Servo-flavored "
-               "style backend");
-    return PresContext()->StyleSet()->AsServo();
-  }
+  inline ServoStyleSet* StyleSet() const { return PresContext()->StyleSet(); }
 
   const SnapshotTable& Snapshots() const { return mSnapshots; }
   void ClearSnapshots();

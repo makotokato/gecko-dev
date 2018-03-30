@@ -10,7 +10,6 @@
 #include "mozilla/css/SheetParsingMode.h"
 #include "mozilla/dom/CSSStyleSheetBinding.h"
 #include "mozilla/net/ReferrerPolicy.h"
-#include "mozilla/StyleBackendType.h"
 #include "mozilla/CORSMode.h"
 #include "mozilla/ServoUtils.h"
 #include "nsICSSLoaderObserver.h"
@@ -24,8 +23,8 @@ class nsCSSRuleProcessor;
 namespace mozilla {
 
 class CSSStyleSheet;
+class ServoStyleSet;
 class ServoStyleSheet;
-class StyleSetHandle;
 struct StyleSheetInfo;
 struct CSSStyleSheetInner;
 
@@ -49,7 +48,7 @@ class StyleSheet : public nsICSSLoaderObserver
                  , public nsWrapperCache
 {
 protected:
-  StyleSheet(StyleBackendType aType, css::SheetParsingMode aParsingMode);
+  explicit StyleSheet(css::SheetParsingMode aParsingMode);
   StyleSheet(const StyleSheet& aCopy,
              StyleSheet* aParentToUse,
              dom::CSSImportRule* aOwnerRuleToUse,
@@ -261,8 +260,8 @@ public:
   // it's owning media rule, plus it's used for the stylesheet media itself.
   void RuleChanged(css::Rule*);
 
-  void AddStyleSet(const StyleSetHandle& aStyleSet);
-  void DropStyleSet(const StyleSetHandle& aStyleSet);
+  void AddStyleSet(ServoStyleSet* aStyleSet);
+  void DropStyleSet(ServoStyleSet* aStyleSet);
 
   nsresult DeleteRuleFromGroup(css::GroupRule* aGroup, uint32_t aIndex);
   nsresult InsertRuleIntoGroup(const nsAString& aRule,
@@ -353,7 +352,6 @@ protected:
   // and/or useful in user sheets.
   css::SheetParsingMode mParsingMode;
 
-  const StyleBackendType mType;
   bool                  mDisabled;
 
   enum dirtyFlagAttributes {
@@ -371,7 +369,7 @@ protected:
   // StyleSheet clones.
   StyleSheetInfo* mInner;
 
-  nsTArray<StyleSetHandle> mStyleSets;
+  nsTArray<ServoStyleSet*> mStyleSets;
 
   friend class ::nsCSSRuleProcessor;
 

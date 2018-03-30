@@ -25,6 +25,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/TextEditor.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/dom/CharacterData.h"
 #include "mozilla/dom/DocumentType.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
@@ -205,7 +206,7 @@ nsINode::CreateSlots()
 }
 
 bool
-nsINode::IsEditableInternal() const
+nsINode::IsEditable() const
 {
   if (HasFlag(NODE_IS_EDITABLE)) {
     // The node is in an editable contentEditable subtree.
@@ -908,10 +909,12 @@ nsINode::IsEqualNode(nsINode* aOther)
       case CDATA_SECTION_NODE:
       case PROCESSING_INSTRUCTION_NODE:
       {
+        MOZ_ASSERT(node1->IsCharacterData());
+        MOZ_ASSERT(node2->IsCharacterData());
         string1.Truncate();
-        static_cast<nsIContent*>(node1)->AppendTextTo(string1);
+        static_cast<CharacterData*>(node1)->AppendTextTo(string1);
         string2.Truncate();
-        static_cast<nsIContent*>(node2)->AppendTextTo(string2);
+        static_cast<CharacterData*>(node2)->AppendTextTo(string2);
 
         if (!string1.Equals(string2)) {
           return false;
@@ -2486,14 +2489,12 @@ nsINode::Length() const
 }
 
 const RawServoSelectorList*
-nsINode::ParseServoSelectorList(
-  const nsAString& aSelectorString,
-  ErrorResult& aRv)
+nsINode::ParseSelectorList(const nsAString& aSelectorString,
+                           ErrorResult& aRv)
 {
   nsIDocument* doc = OwnerDoc();
 
-  nsIDocument::SelectorCache& cache =
-    doc->GetSelectorCache(mozilla::StyleBackendType::Servo);
+  nsIDocument::SelectorCache& cache = doc->GetSelectorCache();
   nsIDocument::SelectorCache::SelectorList* list =
     cache.GetList(aSelectorString);
   if (list) {
@@ -2506,12 +2507,13 @@ nsINode::ParseServoSelectorList(
       return nullptr;
     }
 
-    return list->AsServo();
+    return list->get();
   }
 
   NS_ConvertUTF16toUTF8 selectorString(aSelectorString);
 
-  auto* selectorList = Servo_SelectorList_Parse(&selectorString);
+  auto selectorList =
+    UniquePtr<RawServoSelectorList>(Servo_SelectorList_Parse(&selectorString));
   if (!selectorList) {
     aRv.ThrowDOMException(NS_ERROR_DOM_SYNTAX_ERR,
       NS_LITERAL_CSTRING("'") + selectorString +
@@ -2519,10 +2521,10 @@ nsINode::ParseServoSelectorList(
     );
   }
 
-  cache.CacheList(aSelectorString, UniquePtr<RawServoSelectorList>(selectorList));
-  return selectorList;
+  auto* ret = selectorList.get();
+  cache.CacheList(aSelectorString, Move(selectorList));
+  return ret;
 }
-
 
 namespace {
 struct SelectorMatchInfo {
@@ -2589,44 +2591,26 @@ struct ElementHolder {
 Element*
 nsINode::QuerySelector(const nsAString& aSelector, ErrorResult& aResult)
 {
-  return WithSelectorList<Element*>(
-    aSelector,
-    aResult,
-    [&](const RawServoSelectorList* aList) -> Element* {
-      if (!aList) {
-        return nullptr;
-      }
-      const bool useInvalidation = false;
-      return const_cast<Element*>(
-          Servo_SelectorList_QueryFirst(this, aList, useInvalidation));
-    },
-    [&](nsCSSSelectorList* aList) -> Element* {
-      MOZ_CRASH("old style system disabled");
-    }
-  );
+  const RawServoSelectorList* list = ParseSelectorList(aSelector, aResult);
+  if (!list) {
+    return nullptr;
+  }
+  const bool useInvalidation = false;
+  return const_cast<Element*>(
+    Servo_SelectorList_QueryFirst(this, list, useInvalidation));
 }
 
 already_AddRefed<nsINodeList>
 nsINode::QuerySelectorAll(const nsAString& aSelector, ErrorResult& aResult)
 {
   RefPtr<nsSimpleContentList> contentList = new nsSimpleContentList(this);
+  const RawServoSelectorList* list = ParseSelectorList(aSelector, aResult);
+  if (!list) {
+    return contentList.forget();
+  }
 
-  WithSelectorList<void>(
-    aSelector,
-    aResult,
-    [&](const RawServoSelectorList* aList) {
-      if (!aList) {
-        return;
-      }
-      const bool useInvalidation = false;
-      Servo_SelectorList_QueryAll(
-        this, aList, contentList.get(), useInvalidation);
-    },
-    [&](nsCSSSelectorList* aList) {
-      MOZ_CRASH("old style system disabled");
-    }
-  );
-
+  const bool useInvalidation = false;
+  Servo_SelectorList_QueryAll(this, list, contentList.get(), useInvalidation);
   return contentList.forget();
 }
 

@@ -27,7 +27,6 @@
 #include "mozilla/TouchEvents.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Unused.h"
-#include "mozilla/StyleBackendType.h"
 #include <algorithm>
 
 #ifdef XP_WIN
@@ -182,8 +181,7 @@
 #include "nsLayoutStylesheetCache.h"
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layers/FocusTarget.h"
-#include "mozilla/StyleSetHandle.h"
-#include "mozilla/StyleSetHandleInlines.h"
+#include "mozilla/ServoStyleSet.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/dom/ImageTracker.h"
@@ -604,11 +602,7 @@ static void
 VerifyStyleTree(nsPresContext* aPresContext, nsFrameManager* aFrameManager)
 {
   if (nsFrame::GetVerifyStyleTreeEnable()) {
-    if (aPresContext->RestyleManager()->IsServo()) {
-      NS_ERROR("stylo: cannot verify style tree with a ServoRestyleManager");
-      return;
-    }
-    MOZ_CRASH("old style system disabled");
+    NS_ERROR("stylo: cannot verify style tree with a ServoRestyleManager");
   }
 }
 #define VERIFY_STYLE_TREE ::VerifyStyleTree(mPresContext, mFrameConstructor)
@@ -910,7 +904,7 @@ PresShell::~PresShell()
 
   MOZ_ASSERT(mAllocatedPointers.IsEmpty(), "Some pres arena objects were not freed");
 
-  mStyleSet->Delete();
+  mStyleSet = nullptr;
   delete mFrameConstructor;
 
   mCurrentEventContent = nullptr;
@@ -926,7 +920,7 @@ void
 PresShell::Init(nsIDocument* aDocument,
                 nsPresContext* aPresContext,
                 nsViewManager* aViewManager,
-                StyleSetHandle aStyleSet)
+                UniquePtr<ServoStyleSet> aStyleSet)
 {
   NS_PRECONDITION(aDocument, "null ptr");
   NS_PRECONDITION(aPresContext, "null ptr");
@@ -957,12 +951,12 @@ PresShell::Init(nsIDocument* aDocument,
 
   // Bind the context to the presentation shell.
   mPresContext = aPresContext;
-  mPresContext->AttachShell(this, aStyleSet->BackendType());
+  mPresContext->AttachShell(this);
 
   // Now we can initialize the style set. Make sure to set the member before
   // calling Init, since various subroutines need to find the style set off
   // the PresContext during initialization.
-  mStyleSet = aStyleSet;
+  mStyleSet = Move(aStyleSet);
   mStyleSet->Init(aPresContext);
 
   // Notify our prescontext that it now has a compatibility mode.  Note that
@@ -1504,7 +1498,7 @@ PresShell::UpdatePreferenceStyles()
   // matter which pres context we pass in when it does need to be recreated.
   // (See nsPresContext::GetDocumentColorPreferences for how whether we
   // are a chrome origin image affects some pref styling information.)
-  auto cache = nsLayoutStylesheetCache::For(mStyleSet->BackendType());
+  auto cache = nsLayoutStylesheetCache::Singleton();
   RefPtr<StyleSheet> newPrefSheet =
     mPresContext->IsChromeOriginImage() ?
       cache->ChromePreferenceSheet(mPresContext) :
@@ -1518,7 +1512,7 @@ PresShell::UpdatePreferenceStyles()
 
   RemovePreferenceStyles();
 
-  mStyleSet->AppendStyleSheet(SheetType::User, newPrefSheet);
+  mStyleSet->AppendStyleSheet(SheetType::User, newPrefSheet->AsServo());
   mPrefStyleSheet = newPrefSheet;
 
   mStyleSet->EndUpdate();
@@ -1528,7 +1522,7 @@ void
 PresShell::RemovePreferenceStyles()
 {
   if (mPrefStyleSheet) {
-    mStyleSet->RemoveStyleSheet(SheetType::User, mPrefStyleSheet);
+    mStyleSet->RemoveStyleSheet(SheetType::User, mPrefStyleSheet->AsServo());
     mPrefStyleSheet = nullptr;
   }
 }
@@ -1547,18 +1541,17 @@ PresShell::AddUserSheet(StyleSheet* aSheet)
   mStyleSet->BeginUpdate();
 
   nsStyleSheetService* sheetService = nsStyleSheetService::gInstance;
-  nsTArray<RefPtr<StyleSheet>>& userSheets =
-    *sheetService->UserStyleSheets(mStyleSet->BackendType());
+  nsTArray<RefPtr<StyleSheet>>& userSheets = *sheetService->UserStyleSheets();
   // Iterate forwards when removing so the searches for RemoveStyleSheet are as
   // short as possible.
   for (StyleSheet* sheet : userSheets) {
-    mStyleSet->RemoveStyleSheet(SheetType::User, sheet);
+    mStyleSet->RemoveStyleSheet(SheetType::User, sheet->AsServo());
   }
 
   // Now iterate backwards, so that the order of userSheets will be the same as
   // the order of sheets from it in the style set.
   for (StyleSheet* sheet : Reversed(userSheets)) {
-    mStyleSet->PrependStyleSheet(SheetType::User, sheet);
+    mStyleSet->PrependStyleSheet(SheetType::User, sheet->AsServo());
   }
 
   mStyleSet->EndUpdate();
@@ -1570,7 +1563,7 @@ PresShell::AddAgentSheet(StyleSheet* aSheet)
 {
   // Make sure this does what nsDocumentViewer::CreateStyleSet does
   // wrt ordering.
-  mStyleSet->AppendStyleSheet(SheetType::Agent, aSheet);
+  mStyleSet->AppendStyleSheet(SheetType::Agent, aSheet->AsServo());
   RestyleForCSSRuleChanges();
 }
 
@@ -1582,9 +1575,10 @@ PresShell::AddAuthorSheet(StyleSheet* aSheet)
   StyleSheet* firstAuthorSheet =
     mDocument->GetFirstAdditionalAuthorSheet();
   if (firstAuthorSheet) {
-    mStyleSet->InsertStyleSheetBefore(SheetType::Doc, aSheet, firstAuthorSheet);
+    mStyleSet->InsertStyleSheetBefore(SheetType::Doc, aSheet->AsServo(),
+                                      firstAuthorSheet->AsServo());
   } else {
-    mStyleSet->AppendStyleSheet(SheetType::Doc, aSheet);
+    mStyleSet->AppendStyleSheet(SheetType::Doc, aSheet->AsServo());
   }
 
   RestyleForCSSRuleChanges();
@@ -1593,7 +1587,7 @@ PresShell::AddAuthorSheet(StyleSheet* aSheet)
 void
 PresShell::RemoveSheet(SheetType aType, StyleSheet* aSheet)
 {
-  mStyleSet->RemoveStyleSheet(aType, aSheet);
+  mStyleSet->RemoveStyleSheet(aType, aSheet->AsServo());
   RestyleForCSSRuleChanges();
 }
 
@@ -2944,12 +2938,69 @@ PresShell::CancelAllPendingReflows()
   ASSERT_REFLOW_SCHEDULED_STATE();
 }
 
+static bool
+DestroyFramesAndStyleDataFor(Element* aElement,
+                             nsPresContext& aPresContext,
+                             ServoRestyleManager::IncludeRoot aIncludeRoot)
+{
+  bool didReconstruct =
+    aPresContext.FrameConstructor()->DestroyFramesFor(aElement);
+  ServoRestyleManager::ClearServoDataFromSubtree(aElement, aIncludeRoot);
+  return didReconstruct;
+}
+
 void
-PresShell::DestroyFramesForAndRestyle(Element* aElement)
+nsIPresShell::SlotAssignmentWillChange(Element& aElement,
+                                       HTMLSlotElement* aOldSlot,
+                                       HTMLSlotElement* aNewSlot)
+{
+  MOZ_ASSERT(aOldSlot != aNewSlot);
+
+  if (MOZ_UNLIKELY(!mDidInitialize)) {
+    return;
+  }
+
+  // If the old slot is about to become empty, let layout know that it needs to
+  // do work.
+  if (aOldSlot && aOldSlot->AssignedNodes().Length() == 1) {
+    DestroyFramesForAndRestyle(aOldSlot);
+  }
+
+  // Ensure the new element starts off clean.
+  DestroyFramesAndStyleDataFor(&aElement,
+                               *mPresContext,
+                               ServoRestyleManager::IncludeRoot::Yes);
+
+  if (aNewSlot) {
+    // If the new slot will stop showing fallback content, we need to reframe it
+    // altogether.
+    if (aNewSlot->AssignedNodes().IsEmpty()) {
+      DestroyFramesForAndRestyle(aNewSlot);
+    // Otherwise we just care about the element, but we need to ensure that
+    // something takes care of traversing to the relevant slot, if needed.
+    } else if (aNewSlot->HasServoData() &&
+               !Servo_Element_IsDisplayNone(aNewSlot)) {
+      // Set the reframe bits...
+      aNewSlot->NoteDescendantsNeedFramesForServo();
+      aElement.SetFlags(NODE_NEEDS_FRAME);
+      // Now the style dirty bits. Note that we can't just do
+      // aElement.NoteDirtyForServo(), because the new slot is not setup yet.
+      aNewSlot->SetHasDirtyDescendantsForServo();
+      aNewSlot->NoteDirtySubtreeForServo();
+    }
+  }
+}
+
+void
+nsIPresShell::DestroyFramesForAndRestyle(Element* aElement)
 {
   MOZ_ASSERT(aElement);
-  NS_ENSURE_TRUE_VOID(mPresContext);
-  if (!mDidInitialize) {
+  if (MOZ_UNLIKELY(!mDidInitialize)) {
+    return;
+  }
+
+  if (!aElement->GetFlattenedTreeParentNode()) {
+    // Nothing to do here, the element already is out of the frame tree.
     return;
   }
 
@@ -2959,25 +3010,11 @@ PresShell::DestroyFramesForAndRestyle(Element* aElement)
   ++mChangeNestCount;
 
   const bool didReconstruct = FrameConstructor()->DestroyFramesFor(aElement);
-  if (aElement->GetFlattenedTreeParentNode()) {
-    // The element is still in the flat tree, but their children may not be
-    // anymore in a second.
-    //
-    // This is the case of a new shadow root or XBL binding about to be
-    // attached.
-    //
-    // Clear the style data from all the flattened tree descendants, but _not_
-    // from us, since otherwise we wouldn't see the reframe.
-    //
-    // FIXME(emilio): It'd be more ergonomic to just map the no data -> data
-    // case to a reframe from the style system.
-    ServoRestyleManager::ClearServoDataFromSubtree(
-        aElement, ServoRestyleManager::IncludeRoot::No);
-  } else {
-    // This is the case of an element that was redistributed but is no longer
-    // bound to any insertion point. Just forget about all the data.
-    ServoRestyleManager::ClearServoDataFromSubtree(aElement);
-  }
+
+  // Clear the style data from all the flattened tree descendants, but _not_
+  // from us, since otherwise we wouldn't see the reframe.
+  ServoRestyleManager::ClearServoDataFromSubtree(
+      aElement, ServoRestyleManager::IncludeRoot::No);
 
   auto changeHint = didReconstruct
     ? nsChangeHint(0)
@@ -4372,11 +4409,7 @@ PresShell::DocumentStatesChanged(nsIDocument* aDocument, EventStates aStateMask)
   MOZ_ASSERT(!aStateMask.IsEmpty());
 
   if (mDidInitialize) {
-    if (mStyleSet->IsServo()) {
-      mStyleSet->AsServo()->InvalidateStyleForDocumentStateChanges(aStateMask);
-    } else {
-      MOZ_CRASH("old style system disabled");
-    }
+    mStyleSet->InvalidateStyleForDocumentStateChanges(aStateMask);
   }
 
   if (aStateMask.HasState(NS_DOCUMENT_STATE_WINDOW_INACTIVE)) {
@@ -4588,50 +4621,6 @@ nsIPresShell::RestyleForCSSRuleChanges()
   }
 
   mStyleSet->InvalidateStyleForCSSRuleChanges();
-}
-
-void
-PresShell::RecordStyleSheetChange(StyleSheet* aStyleSheet,
-                                  StyleSheet::ChangeType aChangeType)
-{
-  // too bad we can't check that the update is UPDATE_STYLE
-  NS_ASSERTION(mUpdateCount != 0, "must be in an update");
-  MOZ_ASSERT(aStyleSheet->IsServo() == mStyleSet->IsServo());
-
-  mStyleSet->RecordStyleSheetChange(aStyleSheet, aChangeType);
-}
-
-void
-PresShell::StyleSheetAdded(StyleSheet* aStyleSheet,
-                           bool aDocumentSheet)
-{
-  // We only care when enabled sheets are added
-  NS_PRECONDITION(aStyleSheet, "Must have a style sheet!");
-
-  if (aStyleSheet->IsApplicable() && aStyleSheet->HasRules()) {
-    RecordStyleSheetChange(aStyleSheet, StyleSheet::ChangeType::Added);
-  }
-}
-
-void
-PresShell::StyleSheetRemoved(StyleSheet* aStyleSheet,
-                             bool aDocumentSheet)
-{
-  // We only care when enabled sheets are removed
-  NS_PRECONDITION(aStyleSheet, "Must have a style sheet!");
-
-  if (aStyleSheet->IsApplicable() && aStyleSheet->HasRules()) {
-    RecordStyleSheetChange(aStyleSheet, StyleSheet::ChangeType::Removed);
-  }
-}
-
-void
-PresShell::StyleSheetApplicableStateChanged(StyleSheet* aStyleSheet)
-{
-  if (aStyleSheet->HasRules()) {
-    RecordStyleSheetChange(
-        aStyleSheet, StyleSheet::ChangeType::ApplicableStateChanged);
-  }
 }
 
 nsresult
@@ -7045,23 +7034,29 @@ PresShell::HandleEvent(nsIFrame* aFrame,
       frame = pointerCapturingContent->GetPrimaryFrame();
 
       if (!frame) {
+        RefPtr<PresShell> shell =
+          GetShellForEventTarget(nullptr, pointerCapturingContent);
+        if (!shell) {
+          // If we can't process event for the capturing content, release
+          // the capture.
+          PointerEventHandler::ReleaseIfCaptureByDescendant(
+            pointerCapturingContent);
+          return NS_OK;
+        }
+
+        nsCOMPtr<nsIContent> overrideClickTarget =
+          GetOverrideClickTarget(aEvent, aFrame);
+
         // Dispatch events to the capturing content even it's frame is
         // destroyed.
         PointerEventHandler::DispatchPointerFromMouseOrTouch(
-          this, nullptr, pointerCapturingContent, aEvent, false,
+          shell, nullptr, pointerCapturingContent, aEvent, false,
           aEventStatus, nullptr);
 
-        RefPtr<PresShell> shell =
-          GetShellForEventTarget(nullptr, pointerCapturingContent);
-
-        if (!shell) {
-          // The capturing element could be changed when dispatch pointer
-          // events.
-          return NS_OK;
-        }
         return shell->HandleEventWithTarget(aEvent, nullptr,
                                             pointerCapturingContent,
-                                            aEventStatus, true);
+                                            aEventStatus, true, nullptr,
+                                            overrideClickTarget);
       }
     }
 
@@ -7192,6 +7187,7 @@ PresShell::HandleEvent(nsIFrame* aFrame,
       }
     }
 
+    nsCOMPtr<nsIContent> overrideClickTarget;
     if (PointerEventHandler::IsPointerEventEnabled()) {
       // Dispatch pointer events from the mouse or touch events. Regarding
       // pointer events from mouse, we should dispatch those pointer events to
@@ -7206,6 +7202,21 @@ PresShell::HandleEvent(nsIFrame* aFrame,
       // and do hit test for each point.
       nsIFrame* targetFrame =
         aEvent->mClass == eTouchEventClass ? aFrame : frame;
+
+      if (pointerCapturingContent) {
+        overrideClickTarget = GetOverrideClickTarget(aEvent, aFrame);
+        shell = GetShellForEventTarget(nullptr, pointerCapturingContent);
+        if (!shell) {
+          // If we can't process event for the capturing content, release
+          // the capture.
+          PointerEventHandler::ReleaseIfCaptureByDescendant(
+            pointerCapturingContent);
+          return NS_OK;
+        }
+
+        targetFrame = pointerCapturingContent->GetPrimaryFrame();
+        frame = targetFrame;
+      }
 
       AutoWeakFrame weakFrame(targetFrame);
       nsCOMPtr<nsIContent> targetContent;
@@ -7256,7 +7267,8 @@ PresShell::HandleEvent(nsIFrame* aFrame,
     // must have been captured by us or some ancestor shell and we
     // now ask the subshell to dispatch it normally.
     shell->PushCurrentEventInfo(frame, targetElement);
-    rv = shell->HandleEventInternal(aEvent, aEventStatus, true);
+    rv = shell->HandleEventInternal(aEvent, aEventStatus, true,
+                                    overrideClickTarget);
 #ifdef DEBUG
     shell->ShowEventTargetDebug();
 #endif
@@ -7413,7 +7425,8 @@ nsresult
 PresShell::HandleEventWithTarget(WidgetEvent* aEvent, nsIFrame* aFrame,
                                  nsIContent* aContent, nsEventStatus* aStatus,
                                  bool aIsHandlingNativeEvent,
-                                 nsIContent** aTargetContent)
+                                 nsIContent** aTargetContent,
+                                 nsIContent* aOverrideClickTarget)
 {
 #if DEBUG
   MOZ_ASSERT(!aFrame || aFrame->PresContext()->GetPresShell() == this,
@@ -7428,7 +7441,8 @@ PresShell::HandleEventWithTarget(WidgetEvent* aEvent, nsIFrame* aFrame,
   NS_ENSURE_STATE(!aContent || aContent->GetComposedDoc() == mDocument);
   AutoPointerEventTargetUpdater updater(this, aEvent, aFrame, aTargetContent);
   PushCurrentEventInfo(aFrame, aContent);
-  nsresult rv = HandleEventInternal(aEvent, aStatus, false);
+  nsresult rv =
+    HandleEventInternal(aEvent, aStatus, false, aOverrideClickTarget);
   PopCurrentEventInfo();
   return rv;
 }
@@ -7436,7 +7450,8 @@ PresShell::HandleEventWithTarget(WidgetEvent* aEvent, nsIFrame* aFrame,
 nsresult
 PresShell::HandleEventInternal(WidgetEvent* aEvent,
                                nsEventStatus* aStatus,
-                               bool aIsHandlingNativeEvent)
+                               bool aIsHandlingNativeEvent,
+                               nsIContent* aOverrideClickTarget)
 {
   RefPtr<EventStateManager> manager = mPresContext->EventStateManager();
   nsresult rv = NS_OK;
@@ -7608,7 +7623,8 @@ PresShell::HandleEventInternal(WidgetEvent* aEvent,
     // 1. Give event to event manager for pre event state changes and
     //    generation of synthetic events.
     rv = manager->PreHandleEvent(mPresContext, aEvent, mCurrentEventFrame,
-                                 mCurrentEventContent, aStatus);
+                                 mCurrentEventContent, aStatus,
+                                 aOverrideClickTarget);
 
     // 2. Give event to the DOM for third party and JS use.
     if (NS_SUCCEEDED(rv)) {
@@ -7662,7 +7678,8 @@ PresShell::HandleEventInternal(WidgetEvent* aEvent,
       //    generation of synthetic events.
       if (!mIsDestroying && NS_SUCCEEDED(rv)) {
         rv = manager->PostHandleEvent(mPresContext, aEvent,
-                                      GetCurrentEventFrame(), aStatus);
+                                      GetCurrentEventFrame(), aStatus,
+                                      aOverrideClickTarget);
       }
     }
 
@@ -8449,7 +8466,7 @@ PresShell::IsVisible()
 }
 
 nsresult
-PresShell::GetAgentStyleSheets(nsTArray<RefPtr<StyleSheet>>& aSheets)
+PresShell::GetAgentStyleSheets(nsTArray<RefPtr<ServoStyleSheet>>& aSheets)
 {
   aSheets.Clear();
   int32_t sheetCount = mStyleSet->SheetCount(SheetType::Agent);
@@ -8459,7 +8476,7 @@ PresShell::GetAgentStyleSheets(nsTArray<RefPtr<StyleSheet>>& aSheets)
   }
 
   for (int32_t i = 0; i < sheetCount; ++i) {
-    StyleSheet* sheet = mStyleSet->StyleSheetAt(SheetType::Agent, i);
+    ServoStyleSheet* sheet = mStyleSet->StyleSheetAt(SheetType::Agent, i);
     aSheets.AppendElement(sheet);
   }
 
@@ -8467,7 +8484,7 @@ PresShell::GetAgentStyleSheets(nsTArray<RefPtr<StyleSheet>>& aSheets)
 }
 
 nsresult
-PresShell::SetAgentStyleSheets(const nsTArray<RefPtr<StyleSheet>>& aSheets)
+PresShell::SetAgentStyleSheets(const nsTArray<RefPtr<ServoStyleSheet>>& aSheets)
 {
   return mStyleSet->ReplaceSheets(SheetType::Agent, aSheets);
 }
@@ -8475,13 +8492,13 @@ PresShell::SetAgentStyleSheets(const nsTArray<RefPtr<StyleSheet>>& aSheets)
 nsresult
 PresShell::AddOverrideStyleSheet(StyleSheet* aSheet)
 {
-  return mStyleSet->PrependStyleSheet(SheetType::Override, aSheet);
+  return mStyleSet->PrependStyleSheet(SheetType::Override, aSheet->AsServo());
 }
 
 nsresult
 PresShell::RemoveOverrideStyleSheet(StyleSheet* aSheet)
 {
-  return mStyleSet->RemoveStyleSheet(SheetType::Override, aSheet);
+  return mStyleSet->RemoveStyleSheet(SheetType::Override, aSheet->AsServo());
 }
 
 static void
@@ -9549,11 +9566,11 @@ FindTopFrame(nsIFrame* aRoot)
 #ifdef DEBUG
 
 static void
-CopySheetsIntoClone(StyleSetHandle aSet, StyleSetHandle aClone)
+CopySheetsIntoClone(ServoStyleSet* aSet, ServoStyleSet* aClone)
 {
   int32_t i, n = aSet->SheetCount(SheetType::Override);
   for (i = 0; i < n; i++) {
-    StyleSheet* ss = aSet->StyleSheetAt(SheetType::Override, i);
+    ServoStyleSheet* ss = aSet->StyleSheetAt(SheetType::Override, i);
     if (ss)
       aClone->AppendStyleSheet(SheetType::Override, ss);
   }
@@ -9570,25 +9587,25 @@ CopySheetsIntoClone(StyleSetHandle aSet, StyleSetHandle aClone)
 
   n = aSet->SheetCount(SheetType::User);
   for (i = 0; i < n; i++) {
-    StyleSheet* ss = aSet->StyleSheetAt(SheetType::User, i);
+    ServoStyleSheet* ss = aSet->StyleSheetAt(SheetType::User, i);
     if (ss)
       aClone->AppendStyleSheet(SheetType::User, ss);
   }
 
   n = aSet->SheetCount(SheetType::Agent);
   for (i = 0; i < n; i++) {
-    StyleSheet* ss = aSet->StyleSheetAt(SheetType::Agent, i);
+    ServoStyleSheet* ss = aSet->StyleSheetAt(SheetType::Agent, i);
     if (ss)
       aClone->AppendStyleSheet(SheetType::Agent, ss);
   }
 }
 
 
-ServoStyleSet*
+UniquePtr<ServoStyleSet>
 PresShell::CloneStyleSet(ServoStyleSet* aSet)
 {
-  ServoStyleSet* clone = new ServoStyleSet();
-  CopySheetsIntoClone(aSet, clone);
+  auto clone = MakeUnique<ServoStyleSet>();
+  CopySheetsIntoClone(aSet, clone.get());
   return clone;
 }
 
@@ -9642,17 +9659,10 @@ PresShell::VerifyIncrementalReflow()
 
   // Create a new presentation shell to view the document. Use the
   // exact same style information that this document has.
-  nsAutoPtr<ServoStyleSet> newServoSet;
-  StyleSetHandle newSet;
-  if (mStyleSet->IsServo()) {
-    newServoSet = CloneStyleSet(mStyleSet->AsServo());
-    newSet = newServoSet;
-  } else {
-    MOZ_CRASH("old style system disabled");
-  }
-  nsCOMPtr<nsIPresShell> sh = mDocument->CreateShell(cx, vm, newSet);
+  UniquePtr<ServoStyleSet> newSet = CloneStyleSet(StyleSet());
+
+  nsCOMPtr<nsIPresShell> sh = mDocument->CreateShell(cx, vm, Move(newSet));
   NS_ENSURE_TRUE(sh, false);
-  newServoSet.forget();
   // Note that after we create the shell, we must make sure to destroy it
   sh->SetVerifyReflowEnable(false); // turn off verify reflow while we're reflowing the test frame tree
   vm->SetPresShell(sh);
@@ -10380,11 +10390,7 @@ PresShell::AddSizeOfIncludingThis(nsWindowSizes& aSizes) const
     mApproximatelyVisibleFrames.ShallowSizeOfExcludingThis(mallocSizeOf) +
     mFramesToDirty.ShallowSizeOfExcludingThis(mallocSizeOf);
 
-  if (StyleSet()->IsGecko()) {
-    MOZ_CRASH("old style system disabled");
-  } else {
-    StyleSet()->AsServo()->AddSizeOfIncludingThis(aSizes);
-  }
+  StyleSet()->AddSizeOfIncludingThis(aSizes);
 
   aSizes.mLayoutTextRunsSize += SizeOfTextRuns(mallocSizeOf);
 
@@ -10581,9 +10587,6 @@ nsIPresShell::HasRuleProcessorUsedByMultipleStyleSets(uint32_t aSheetType,
                                                       bool* aRetVal)
 {
   *aRetVal = false;
-  if (mStyleSet->IsGecko()) {
-    MOZ_CRASH("old style system disabled");
-  }
   return NS_OK;
 }
 
@@ -10620,4 +10623,35 @@ PresShell::NotifyStyleSheetServiceSheetRemoved(StyleSheet* aSheet,
   }
 
   RemoveSheet(ToSheetType(aSheetType), aSheet);
+}
+
+nsIContent*
+PresShell::GetOverrideClickTarget(WidgetGUIEvent* aEvent,
+                                  nsIFrame* aFrame)
+{
+  if (aEvent->mMessage != eMouseUp) {
+    return nullptr;
+  }
+
+  MOZ_ASSERT(aEvent->mClass == eMouseEventClass);
+  WidgetMouseEvent* mouseEvent = aEvent->AsMouseEvent();
+
+  uint32_t flags = 0;
+  nsPoint eventPoint =
+    nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, aFrame);
+  if (mouseEvent->mIgnoreRootScrollFrame) {
+    flags |= INPUT_IGNORE_ROOT_SCROLL_FRAME;
+  }
+
+  nsIFrame* target =
+    FindFrameTargetedByInputEvent(aEvent, aFrame, eventPoint, flags);
+  if (!target) {
+    return nullptr;
+  }
+
+  nsIContent* overrideClickTarget = target->GetContent();
+  while (overrideClickTarget && !overrideClickTarget->IsElement()) {
+    overrideClickTarget = overrideClickTarget->GetFlattenedTreeParent();
+  }
+  return overrideClickTarget;
 }

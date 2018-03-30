@@ -12,7 +12,6 @@
 #ifndef nsStyleStruct_h___
 #define nsStyleStruct_h___
 
-#include "mozilla/ArenaObjectID.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/SheetType.h"
@@ -27,7 +26,6 @@
 #include "nsStyleCoord.h"
 #include "nsStyleConsts.h"
 #include "nsChangeHint.h"
-#include "nsPresContext.h"
 #include "nsTimingFunction.h"
 #include "nsCOMPtr.h"
 #include "nsCOMArray.h"
@@ -44,6 +42,7 @@ class nsIFrame;
 class nsIURI;
 class nsTextFrame;
 class imgIContainer;
+class nsPresContext;
 struct nsStyleVisibility;
 namespace mozilla {
 class ComputedStyle;
@@ -51,52 +50,6 @@ namespace dom {
 class ImageTracker;
 } // namespace dom
 } // namespace mozilla
-
-// Includes nsStyleStructID.
-#include "nsStyleStructFwd.h"
-
-// Bits for each struct.
-// NS_STYLE_INHERIT_BIT defined in nsStyleStructFwd.h
-#define NS_STYLE_INHERIT_MASK              0x000ffffff
-
-// Bits for inherited structs.
-#define NS_STYLE_INHERITED_STRUCT_MASK \
-  ((nsStyleStructID_size_t(1) << nsStyleStructID_Inherited_Count) - 1)
-// Bits for reset structs.
-#define NS_STYLE_RESET_STRUCT_MASK \
-  (((nsStyleStructID_size_t(1) << nsStyleStructID_Reset_Count) - 1) \
-   << nsStyleStructID_Inherited_Count)
-
-// Additional bits for ComputedStyle's mBits:
-// See ComputedStyle::HasTextDecorationLines
-#define NS_STYLE_HAS_TEXT_DECORATION_LINES 0x001000000
-// See ComputedStyle::HasPseudoElementData.
-#define NS_STYLE_HAS_PSEUDO_ELEMENT_DATA   0x002000000
-// See ComputedStyle::RelevantLinkIsVisited
-#define NS_STYLE_RELEVANT_LINK_VISITED     0x004000000
-// See ComputedStyle::IsStyleIfVisited
-#define NS_STYLE_IS_STYLE_IF_VISITED       0x008000000
-// See ComputedStyle::HasChildThatUsesGrandancestorStyle
-#define NS_STYLE_CHILD_USES_GRANDANCESTOR_STYLE 0x010000000
-// See ComputedStyle::IsShared
-#define NS_STYLE_IS_SHARED                 0x020000000
-// See ComputedStyle::AssertStructsNotUsedElsewhere
-// (This bit is currently only used in #ifdef DEBUG code.)
-#define NS_STYLE_IS_GOING_AWAY             0x040000000
-// See ComputedStyle::ShouldSuppressLineBreak
-#define NS_STYLE_SUPPRESS_LINEBREAK        0x080000000
-// See ComputedStyle::IsInDisplayNoneSubtree
-#define NS_STYLE_IN_DISPLAY_NONE_SUBTREE   0x100000000
-// See ComputedStyle::FindChildWithRules
-#define NS_STYLE_INELIGIBLE_FOR_SHARING    0x200000000
-// See ComputedStyle::HasChildThatUsesResetStyle
-#define NS_STYLE_HAS_CHILD_THAT_USES_RESET_STYLE 0x400000000
-// See ComputedStyle::IsTextCombined
-#define NS_STYLE_IS_TEXT_COMBINED          0x800000000
-// Whether a ComputedStyle is a Gecko or Servo context
-#define NS_STYLE_CONTEXT_IS_GECKO          0x1000000000
-// See ComputedStyle::GetPseudoEnum
-#define NS_STYLE_CONTEXT_TYPE_SHIFT        37
 
 namespace mozilla {
 
@@ -133,7 +86,6 @@ struct Position {
 
 } // namespace mozilla
 
-// The lifetime of these objects is managed by the presshell's arena.
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleFont
 {
   nsStyleFont(const nsFont& aFont, const nsPresContext* aContext);
@@ -160,13 +112,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleFont
    */
   static nscoord UnZoomText(nsPresContext* aPresContext, nscoord aSize);
   static already_AddRefed<nsAtom> GetLanguage(const nsPresContext* aPresContext);
-
-  void* operator new(size_t sz, nsStyleFont* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleFont, sz);
-  }
-  void Destroy(nsPresContext* aContext);
 
   void EnableZoom(nsPresContext* aContext, bool aEnable);
 
@@ -584,17 +529,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleColor
 
   nsChangeHint CalcDifference(const nsStyleColor& aNewData) const;
 
-  void* operator new(size_t sz, nsStyleColor* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleColor, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleColor();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleColor, this);
-  }
-
   // Don't add ANY members to this struct!  We can achieve caching in the rule
   // tree (rather than the style tree) by letting color stay by itself! -dwh
   nscolor mColor;                 // [inherited]
@@ -858,13 +792,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleBackground {
   void FinishStyle(nsPresContext*, const nsStyleBackground*);
   const static bool kHasFinishStyle = true;
 
-  void* operator new(size_t sz, nsStyleBackground* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleBackground, sz);
-  }
-  void Destroy(nsPresContext* aContext);
-
   nsChangeHint CalcDifference(const nsStyleBackground& aNewData) const;
 
   // Return the background color as nscolor.
@@ -901,13 +828,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleMargin
   void FinishStyle(nsPresContext*, const nsStyleMargin*) {}
   const static bool kHasFinishStyle = false;
 
-  void* operator new(size_t sz, nsStyleMargin* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleMargin, sz);
-  }
-  void Destroy(nsPresContext* aContext);
-
   nsChangeHint CalcDifference(const nsStyleMargin& aNewData) const;
 
   bool GetMargin(nsMargin& aMargin) const
@@ -939,13 +859,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePadding
   }
   void FinishStyle(nsPresContext*, const nsStylePadding*) {}
   const static bool kHasFinishStyle = false;
-
-  void* operator new(size_t sz, nsStylePadding* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStylePadding, sz);
-  }
-  void Destroy(nsPresContext* aContext);
 
   nsChangeHint CalcDifference(const nsStylePadding& aNewData) const;
 
@@ -1106,13 +1019,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleBorder
   // nsStyleBorder constructor call.
   void FinishStyle(nsPresContext*, const nsStyleBorder*);
   const static bool kHasFinishStyle = true;
-
-  void* operator new(size_t sz, nsStyleBorder* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleBorder, sz);
-  }
-  void Destroy(nsPresContext* aContext);
 
   nsChangeHint CalcDifference(const nsStyleBorder& aNewData) const;
 
@@ -1285,17 +1191,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleOutline
   void FinishStyle(nsPresContext*, const nsStyleOutline*) {}
   const static bool kHasFinishStyle = false;
 
-  void* operator new(size_t sz, nsStyleOutline* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleOutline, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleOutline();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleOutline, this);
-  }
-
   void RecalcData();
   nsChangeHint CalcDifference(const nsStyleOutline& aNewData) const;
 
@@ -1356,17 +1251,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleList
 
   void FinishStyle(nsPresContext*, const nsStyleList*);
   const static bool kHasFinishStyle = true;
-
-  void* operator new(size_t sz, nsStyleList* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleList, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleList();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleList, this);
-  }
 
   nsChangeHint CalcDifference(const nsStyleList& aNewData,
                               const nsStyleDisplay* aOldDisplay) const;
@@ -1558,17 +1442,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition
   ~nsStylePosition();
   void FinishStyle(nsPresContext*, const nsStylePosition*) {}
   const static bool kHasFinishStyle = false;
-
-  void* operator new(size_t sz, nsStylePosition* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStylePosition, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStylePosition();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStylePosition, this);
-  }
 
   nsChangeHint CalcDifference(const nsStylePosition& aNewData,
                               const nsStyleVisibility* aOldStyleVisibility) const;
@@ -1784,17 +1657,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleTextReset
   void FinishStyle(nsPresContext*, const nsStyleTextReset*) {}
   const static bool kHasFinishStyle = false;
 
-  void* operator new(size_t sz, nsStyleTextReset* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleTextReset, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleTextReset();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleTextReset, this);
-  }
-
   // Note the difference between this and
   // ComputedStyle::HasTextDecorationLines.
   bool HasTextDecorationLines() const {
@@ -1821,17 +1683,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleText
   ~nsStyleText();
   void FinishStyle(nsPresContext*, const nsStyleText*) {}
   const static bool kHasFinishStyle = false;
-
-  void* operator new(size_t sz, nsStyleText* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleText, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleText();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleText, this);
-  }
 
   nsChangeHint CalcDifference(const nsStyleText& aNewData) const;
 
@@ -2041,17 +1892,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleVisibility
   }
   void FinishStyle(nsPresContext*, const nsStyleVisibility*) {}
   const static bool kHasFinishStyle = false;
-
-  void* operator new(size_t sz, nsStyleVisibility* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleVisibility, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleVisibility();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleVisibility, this);
-  }
 
   nsChangeHint CalcDifference(const nsStyleVisibility& aNewData) const;
 
@@ -2349,17 +2189,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay
 
   void FinishStyle(nsPresContext*, const nsStyleDisplay*);
   const static bool kHasFinishStyle = true;
-
-  void* operator new(size_t sz, nsStyleDisplay* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleDisplay, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleDisplay();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleDisplay, this);
-  }
 
   nsChangeHint CalcDifference(const nsStyleDisplay& aNewData) const;
 
@@ -2745,17 +2574,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleTable
   void FinishStyle(nsPresContext*, const nsStyleTable*) {}
   const static bool kHasFinishStyle = false;
 
-  void* operator new(size_t sz, nsStyleTable* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleTable, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleTable();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleTable, this);
-  }
-
   nsChangeHint CalcDifference(const nsStyleTable& aNewData) const;
 
   uint8_t       mLayoutStrategy;// [reset] see nsStyleConsts.h NS_STYLE_TABLE_LAYOUT_*
@@ -2769,17 +2587,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleTableBorder
   ~nsStyleTableBorder();
   void FinishStyle(nsPresContext*, const nsStyleTableBorder*) {}
   const static bool kHasFinishStyle = false;
-
-  void* operator new(size_t sz, nsStyleTableBorder* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleTableBorder, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleTableBorder();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleTableBorder, this);
-  }
 
   nsChangeHint CalcDifference(const nsStyleTableBorder& aNewData) const;
 
@@ -2946,13 +2753,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleContent
   void FinishStyle(nsPresContext*, const nsStyleContent*);
   const static bool kHasFinishStyle = true;
 
-  void* operator new(size_t sz, nsStyleContent* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleContent, sz);
-  }
-  void Destroy(nsPresContext* aContext);
-
   nsChangeHint CalcDifference(const nsStyleContent& aNewData) const;
 
   uint32_t ContentCount() const { return mContents.Length(); } // [reset]
@@ -3017,17 +2817,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleUIReset
   void FinishStyle(nsPresContext*, const nsStyleUIReset*) {}
   const static bool kHasFinishStyle = false;
 
-  void* operator new(size_t sz, nsStyleUIReset* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleUIReset, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleUIReset();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleUIReset, this);
-  }
-
   nsChangeHint CalcDifference(const nsStyleUIReset& aNewData) const;
 
   mozilla::StyleUserSelect     mUserSelect;     // [reset](selection-style)
@@ -3071,17 +2860,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleUserInterface
   void FinishStyle(nsPresContext*, const nsStyleUserInterface*);
   const static bool kHasFinishStyle = true;
 
-  void* operator new(size_t sz, nsStyleUserInterface* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleUserInterface, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleUserInterface();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleUserInterface, this);
-  }
-
   nsChangeHint CalcDifference(const nsStyleUserInterface& aNewData) const;
 
   mozilla::StyleUserInput   mUserInput;       // [inherited]
@@ -3104,17 +2882,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleXUL
   void FinishStyle(nsPresContext*, const nsStyleXUL*) {}
   const static bool kHasFinishStyle = false;
 
-  void* operator new(size_t sz, nsStyleXUL* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleXUL, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleXUL();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleXUL, this);
-  }
-
   nsChangeHint CalcDifference(const nsStyleXUL& aNewData) const;
 
   float         mBoxFlex;               // [reset] see nsStyleConsts.h
@@ -3133,17 +2900,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleColumn
   ~nsStyleColumn();
   void FinishStyle(nsPresContext*, const nsStyleColumn*) {}
   const static bool kHasFinishStyle = false;
-
-  void* operator new(size_t sz, nsStyleColumn* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleColumn, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleColumn();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleColumn, this);
-  }
 
   nsChangeHint CalcDifference(const nsStyleColumn& aNewData) const;
 
@@ -3268,17 +3024,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleSVG
   ~nsStyleSVG();
   void FinishStyle(nsPresContext*, const nsStyleSVG*) {}
   const static bool kHasFinishStyle = false;
-
-  void* operator new(size_t sz, nsStyleSVG* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleSVG, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleSVG();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleSVG, this);
-  }
 
   nsChangeHint CalcDifference(const nsStyleSVG& aNewData) const;
 
@@ -3468,13 +3213,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleSVGReset
   void FinishStyle(nsPresContext*, const nsStyleSVGReset*);
   const static bool kHasFinishStyle = true;
 
-  void* operator new(size_t sz, nsStyleSVGReset* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleSVGReset, sz);
-  }
-  void Destroy(nsPresContext* aContext);
-
   nsChangeHint CalcDifference(const nsStyleSVGReset& aNewData) const;
 
   bool HasClipPath() const {
@@ -3511,17 +3249,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleVariables
   void FinishStyle(nsPresContext*, const nsStyleVariables*) {}
   const static bool kHasFinishStyle = false;
 
-  void* operator new(size_t sz, nsStyleVariables* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleVariables, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleVariables();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleVariables, this);
-  }
-
   nsChangeHint CalcDifference(const nsStyleVariables& aNewData) const;
 
 };
@@ -3533,17 +3260,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleEffects
   ~nsStyleEffects();
   void FinishStyle(nsPresContext*, const nsStyleEffects*) {}
   const static bool kHasFinishStyle = false;
-
-  void* operator new(size_t sz, nsStyleEffects* aSelf) { return aSelf; }
-  void* operator new(size_t sz, nsPresContext* aContext) {
-    return aContext->PresShell()->
-      AllocateByObjectID(mozilla::eArenaObjectID_nsStyleEffects, sz);
-  }
-  void Destroy(nsPresContext* aContext) {
-    this->~nsStyleEffects();
-    aContext->PresShell()->
-      FreeByObjectID(mozilla::eArenaObjectID_nsStyleEffects, this);
-  }
 
   nsChangeHint CalcDifference(const nsStyleEffects& aNewData) const;
 

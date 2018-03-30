@@ -37,7 +37,6 @@
 
 class nsAttrAndChildArray;
 class nsAttrChildContentList;
-struct nsCSSSelectorList;
 class nsDOMAttributeMap;
 class nsIAnimationObserver;
 class nsIContent;
@@ -511,6 +510,13 @@ public:
   mozilla::dom::Text* GetAsText();
   const mozilla::dom::Text* GetAsText() const;
 
+  /**
+   * Return this node as Text.  Asserts IsText().  This is defined inline in
+   * Text.h.
+   */
+  mozilla::dom::Text* AsText();
+  const mozilla::dom::Text* AsText() const;
+
   /*
    * Return whether the node is a ProcessingInstruction node.
    */
@@ -613,9 +619,11 @@ public:
   }
 
   /**
-   * This method returns the owner doc if the node is in the
-   * composed document (as defined in the Shadow DOM spec), otherwise
-   * it returns null.
+   * This method returns the owner document if the node is connected to it
+   * (as defined in the DOM spec), otherwise it returns null.
+   * In other words, returns non-null even in the case the node is in
+   * Shadow DOM, if there is a possibly shadow boundary crossing path from
+   * the node to its owner document.
    */
   nsIDocument* GetComposedDoc() const
   {
@@ -1215,14 +1223,7 @@ public:
     }
   }
 
-  bool IsEditable() const
-  {
-#ifdef MOZILLA_INTERNAL_API
-    return IsEditableInternal();
-#else
-    return IsEditableExternal();
-#endif
-  }
+  bool IsEditable() const;
 
   /**
    * Returns true if |this| is native anonymous (i.e. created by
@@ -1296,7 +1297,7 @@ public:
    */
   nsIContent* GetSelectionRootContent(nsIPresShell* aPresShell);
 
-  virtual nsINodeList* ChildNodes();
+  nsINodeList* ChildNodes();
   nsIContent* GetFirstChild() const { return mFirstChild; }
   nsIContent* GetLastChild() const
   {
@@ -1346,14 +1347,6 @@ public:
    * in HTMLInputElement with number type as increasing / decreasing its value.
    */
   virtual bool IsNodeApzAwareInternal() const;
-
-  // HTML elements named <shadow> may or may not be HTMLShadowElement.  This is
-  // a way to ask an element whether it's an HTMLShadowElement.
-  virtual bool IsHTMLShadowElement() const { return false; }
-
-  // Elements named <content> may or may not be HTMLContentElement.  This is a
-  // way to ask an element whether it's an HTMLContentElement.
-  virtual bool IsHTMLContentElement() const { return false; }
 
   void GetTextContent(nsAString& aTextContent,
                       mozilla::OOMReporter& aError)
@@ -1959,12 +1952,6 @@ protected:
    */
   void InvalidateChildNodes();
 
-  bool IsEditableInternal() const;
-  virtual bool IsEditableExternal() const
-  {
-    return IsEditableInternal();
-  }
-
   virtual void GetTextContentInternal(nsAString& aTextContent,
                                       mozilla::OOMReporter& aError);
   virtual void SetTextContentInternal(const nsAString& aTextContent,
@@ -2024,20 +2011,6 @@ protected:
                            bool aNotify, nsAttrAndChildArray& aChildArray);
 
   /**
-   * Parse the given selector string into an nsCSSSelectorList.
-   *
-   * A null return value with a non-failing aRv means the string only
-   * contained pseudo-element selectors.
-   *
-   * A failing aRv means the string was not a valid selector.
-   *
-   * Note that the selector list returned here is owned by the owner doc's
-   * selector cache.
-   */
-  nsCSSSelectorList* ParseSelectorList(const nsAString& aSelectorString,
-                                       mozilla::ErrorResult& aRv);
-
-  /**
    * Parse the given selector string into a servo SelectorList.
    *
    * Never returns null if aRv is not failing.
@@ -2045,27 +2018,8 @@ protected:
    * Note that the selector list returned here is owned by the owner doc's
    * selector cache.
    */
-  const RawServoSelectorList* ParseServoSelectorList(
-    const nsAString& aSelectorString,
-    mozilla::ErrorResult& aRv);
-
-  /**
-   * Parse the given selector string a SelectorList, depending on whether we're
-   * in a Servo or Gecko-backed document, and execute either aServoFunctor or
-   * aGeckoFunctor on it.
-   *
-   * Note that the selector list is owned by the owner doc's selector cache
-   * which can get expired, so you shouldn't keep it around for long.
-   */
-  template<typename Ret, typename ServoFunctor, typename GeckoFunctor>
-  Ret WithSelectorList(
-    const nsAString& aSelectorString,
-    mozilla::ErrorResult& aRv,
-    const ServoFunctor& aServoFunctor,
-    const GeckoFunctor& aGeckoFunctor)
-  {
-    return aServoFunctor(ParseServoSelectorList(aSelectorString, aRv));
-  }
+  const RawServoSelectorList* ParseSelectorList(const nsAString& aSelectorString,
+                                                mozilla::ErrorResult&);
 
 public:
   /* Event stuff that documents and elements share.  This needs to be

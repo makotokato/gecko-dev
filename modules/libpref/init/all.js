@@ -659,6 +659,9 @@ pref("media.cubeb.logging_level", "");
 // Cubeb sandbox (remoting) control
 #ifdef XP_LINUX
 pref("media.cubeb.sandbox", true);
+pref("media.audioipc.pool_size", 2);
+// 64 kB stack per pool thread.
+pref("media.audioipc.stack_size", 65536);
 #else
 pref("media.cubeb.sandbox", false);
 #endif
@@ -912,7 +915,12 @@ pref("gfx.webrender.enabled", false);
 #endif
 #ifdef XP_WIN
 pref("gfx.webrender.force-angle", true);
+pref("gfx.webrender.dcomp-win.enabled", true);
 pref("gfx.webrender.program-binary", true);
+#endif
+
+#ifdef XP_MACOSX
+pref("gfx.compositor.glcontext.opaque", false);
 #endif
 
 pref("gfx.webrender.highlight-painted-layers", false);
@@ -1156,7 +1164,6 @@ pref("devtools.commands.dir", "");
 // view source
 pref("view_source.syntax_highlight", true);
 pref("view_source.wrap_long_lines", false);
-pref("view_source.editor.external", false);
 pref("view_source.editor.path", "");
 // allows to add further arguments to the editor; use the %LINE% placeholder
 // for jumping to a specific line (e.g. "/line:%LINE%" or "--goto %LINE%")
@@ -5057,16 +5064,6 @@ pref("device.sensors.ambientLight.enabled", true);
 
 // Enable/Disable the device storage API for content
 pref("device.storage.enabled", false);
-
-// Toggle which thread the HTML5 parser uses for stream parsing
-pref("html5.offmainthread", true);
-// Time in milliseconds between the time a network buffer is seen and the
-// timer firing when the timer hasn't fired previously in this parse in the
-// off-the-main-thread HTML5 parser.
-pref("html5.flushtimer.initialdelay", 120);
-// Time in milliseconds between the time a network buffer is seen and the
-// timer firing when the timer has already fired previously in this parse.
-pref("html5.flushtimer.subsequentdelay", 120);
 
 // Push/Pop/Replace State prefs
 pref("browser.history.maxStateObjectSize", 655360);

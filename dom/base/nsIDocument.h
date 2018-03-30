@@ -50,7 +50,6 @@
 #include "mozilla/NotNull.h"
 #include "mozilla/SegmentedVector.h"
 #include "mozilla/ServoBindingTypes.h"
-#include "mozilla/StyleBackendType.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
@@ -121,7 +120,6 @@ class nsWindowSizes;
 class nsDOMCaretPosition;
 class nsViewportInfo;
 class nsIGlobalObject;
-struct nsCSSSelectorList;
 
 namespace mozilla {
 class AbstractThread;
@@ -131,7 +129,7 @@ class ErrorResult;
 class EventStates;
 class EventListenerManager;
 class PendingAnimationTracker;
-class StyleSetHandle;
+class ServoStyleSet;
 template<typename> class OwningNonNull;
 struct URLExtraData;
 
@@ -1182,9 +1180,10 @@ public:
    * method is responsible for calling BeginObservingDocument() on the
    * presshell if the presshell should observe document mutations.
    */
-  already_AddRefed<nsIPresShell> CreateShell(nsPresContext* aContext,
-                                             nsViewManager* aViewManager,
-                                             mozilla::StyleSetHandle aStyleSet);
+  already_AddRefed<nsIPresShell> CreateShell(
+    nsPresContext* aContext,
+    nsViewManager* aViewManager,
+    mozilla::UniquePtr<mozilla::ServoStyleSet> aStyleSet);
   void DeleteShell();
 
   nsIPresShell* GetShell() const
@@ -1500,112 +1499,46 @@ public:
   class SelectorCache final
     : public nsExpirationTracker<SelectorCacheKey, 4>
   {
-    public:
-      class SelectorList
-      {
-      public:
-        SelectorList()
-          : mIsServo(false)
-          , mGecko(nullptr)
-        {}
+  public:
+    using SelectorList = mozilla::UniquePtr<RawServoSelectorList>;
 
-        SelectorList(SelectorList&& aOther)
-        {
-          *this = mozilla::Move(aOther);
-        }
+    explicit SelectorCache(nsIEventTarget* aEventTarget);
 
-        SelectorList& operator=(SelectorList&& aOther)
-        {
-          Reset();
-          mIsServo = aOther.mIsServo;
-          if (mIsServo) {
-            mServo = aOther.mServo;
-            aOther.mServo = nullptr;
-          } else {
-            MOZ_CRASH("old style system disabled");
-          }
-          return *this;
-        }
+    void CacheList(const nsAString& aSelector, SelectorList aSelectorList)
+    {
+      MOZ_ASSERT(NS_IsMainThread());
+      SelectorCacheKey* key = new SelectorCacheKey(aSelector);
+      mTable.Put(key->mKey, Move(aSelectorList));
+      AddObject(key);
+    }
 
-        SelectorList(const SelectorList& aOther) = delete;
+    void NotifyExpired(SelectorCacheKey* aSelector) final;
 
-        explicit SelectorList(mozilla::UniquePtr<RawServoSelectorList>&& aList)
-          : mIsServo(true)
-          , mServo(aList.release())
-        {}
+    // We do not call MarkUsed because it would just slow down lookups and
+    // because we're OK expiring things after a few seconds even if they're
+    // being used.  Returns whether we actually had an entry for aSelector.
+    //
+    // If we have an entry and the selector list returned has a null
+    // RawServoSelectorList*, that indicates that aSelector has already been
+    // parsed and is not a syntactically valid selector.
+    SelectorList* GetList(const nsAString& aSelector)
+    {
+      return mTable.GetValue(aSelector);
+    }
 
+    ~SelectorCache();
 
-        ~SelectorList() {
-          Reset();
-        }
-
-        bool IsServo() const { return mIsServo; }
-        bool IsGecko() const { return !IsServo(); }
-
-        explicit operator bool() const
-        {
-          return IsServo() ? !!AsServo() : !!AsGecko();
-        }
-
-        nsCSSSelectorList* AsGecko() const
-        {
-          MOZ_ASSERT(IsGecko());
-          return mGecko;
-        }
-
-        RawServoSelectorList* AsServo() const
-        {
-          MOZ_ASSERT(IsServo());
-          return mServo;
-        }
-
-      private:
-        void Reset();
-
-        bool mIsServo;
-
-        union {
-          nsCSSSelectorList* mGecko;
-          RawServoSelectorList* mServo;
-        };
-      };
-
-      explicit SelectorCache(nsIEventTarget* aEventTarget);
-
-      // CacheList takes ownership of aSelectorList.
-      void CacheList(const nsAString& aSelector,
-                     mozilla::UniquePtr<nsCSSSelectorList>&& aSelectorList);
-      void CacheList(const nsAString& aSelector,
-                     mozilla::UniquePtr<RawServoSelectorList>&& aSelectorList);
-
-      virtual void NotifyExpired(SelectorCacheKey* aSelector) override;
-
-      // We do not call MarkUsed because it would just slow down lookups and
-      // because we're OK expiring things after a few seconds even if they're
-      // being used.  Returns whether we actually had an entry for aSelector.
-      //
-      // If we have an entry and the selector list returned has a null
-      // nsCSSSelectorList*/RawServoSelectorList*, that indicates that aSelector
-      // has already been parsed and is not a syntactically valid selector.
-      SelectorList* GetList(const nsAString& aSelector)
-      {
-        return mTable.GetValue(aSelector);
-      }
-
-      ~SelectorCache();
-
-    private:
-      nsDataHashtable<nsStringHashKey, SelectorList> mTable;
+  private:
+    nsDataHashtable<nsStringHashKey, SelectorList> mTable;
   };
 
-  SelectorCache& GetSelectorCache(mozilla::StyleBackendType aBackendType) {
-    mozilla::UniquePtr<SelectorCache>& cache =
-      aBackendType == mozilla::StyleBackendType::Servo
-        ? mServoSelectorCache : mGeckoSelectorCache;
-    if (!cache) {
-      cache.reset(new SelectorCache(EventTargetFor(mozilla::TaskCategory::Other)));
+  SelectorCache& GetSelectorCache() {
+    if (!mSelectorCache) {
+      mSelectorCache =
+        mozilla::MakeUnique<SelectorCache>(
+          EventTargetFor(mozilla::TaskCategory::Other));
     }
-    return *cache;
+    return *mSelectorCache;
   }
   // Get the root <html> element, or return null if there isn't one (e.g.
   // if the root isn't <html>)
@@ -1735,11 +1668,6 @@ public:
    */
   mozilla::css::Loader* CSSLoader() const {
     return mCSSLoader;
-  }
-
-  mozilla::StyleBackendType GetStyleBackendType() const
-  {
-    return mozilla::StyleBackendType::Servo;
   }
 
   /**
@@ -3737,7 +3665,7 @@ protected:
       const nsTArray<RefPtr<mozilla::StyleSheet>>& aSheets,
       mozilla::SheetType aType);
   void ResetStylesheetsToURI(nsIURI* aURI);
-  void FillStyleSet(mozilla::StyleSetHandle aStyleSet);
+  void FillStyleSet(mozilla::ServoStyleSet* aStyleSet);
   void AddStyleSheetToStyleSets(mozilla::StyleSheet* aSheet);
   void RemoveStyleSheetFromStyleSets(mozilla::StyleSheet* aSheet);
   void NotifyStyleSheetAdded(mozilla::StyleSheet* aSheet, bool aDocumentSheet);
@@ -3755,10 +3683,7 @@ private:
 
   // Lazy-initialization to have mDocGroup initialized in prior to the
   // SelectorCaches.
-  // FIXME(emilio): We can use a single cache when all CSSOM methods are
-  // implemented for the Servo backend.
-  mozilla::UniquePtr<SelectorCache> mServoSelectorCache;
-  mozilla::UniquePtr<SelectorCache> mGeckoSelectorCache;
+  mozilla::UniquePtr<SelectorCache> mSelectorCache;
 
 protected:
   friend class nsDocumentOnStack;
@@ -4264,6 +4189,8 @@ protected:
 private:
   nsCString mContentType;
 protected:
+  // For document.write() we may need a different content type than mContentType.
+  nsCString mContentTypeForWriteCalls;
 
   // The document's security info
   nsCOMPtr<nsISupports> mSecurityInfo;

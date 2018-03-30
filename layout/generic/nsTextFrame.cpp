@@ -66,8 +66,7 @@
 #include "nsLineBreaker.h"
 #include "nsIFrameInlines.h"
 #include "mozilla/intl/WordBreaker.h"
-#include "mozilla/StyleSetHandle.h"
-#include "mozilla/StyleSetHandleInlines.h"
+#include "mozilla/ServoStyleSet.h"
 #include "mozilla/layers/LayersMessages.h"
 #include "mozilla/layers/WebRenderLayerManager.h"
 #include "mozilla/layers/WebRenderBridgeChild.h"
@@ -4057,20 +4056,6 @@ nsTextPaintStyle::GetSystemFieldBackgroundColor()
   return mSystemFieldBackgroundColor;
 }
 
-static Element*
-FindElementAncestorForMozSelection(nsIContent* aContent)
-{
-  NS_ENSURE_TRUE(aContent, nullptr);
-  while (aContent && aContent->IsInNativeAnonymousSubtree()) {
-    aContent = aContent->GetBindingParent();
-  }
-  NS_ASSERTION(aContent, "aContent isn't in non-anonymous tree?");
-  while (aContent && !aContent->IsElement()) {
-    aContent = aContent->GetParent();
-  }
-  return aContent ? aContent->AsElement() : nullptr;
-}
-
 bool
 nsTextPaintStyle::InitSelectionColorsAndShadow()
 {
@@ -4089,25 +4074,15 @@ nsTextPaintStyle::InitSelectionColorsAndShadow()
 
   mInitSelectionColorsAndShadow = true;
 
-  nsIFrame* nonGeneratedAncestor = nsLayoutUtils::GetNonGeneratedAncestor(mFrame);
-  Element* selectionElement =
-    FindElementAncestorForMozSelection(nonGeneratedAncestor->GetContent());
-
-  if (selectionElement &&
-      selectionStatus == nsISelectionController::SELECTION_ON) {
-    RefPtr<ComputedStyle> sc =
-      mPresContext->StyleSet()->
-        ProbePseudoElementStyle(selectionElement,
-                                CSSPseudoElementType::mozSelection,
-                                mFrame->Style());
-    // Use -moz-selection pseudo class.
-    if (sc) {
+  if (selectionStatus == nsISelectionController::SELECTION_ON) {
+    // Use ::selection pseudo class.
+    if (RefPtr<ComputedStyle> style = mFrame->ComputeSelectionStyle()) {
       mSelectionBGColor =
-        sc->GetVisitedDependentColor(&nsStyleBackground::mBackgroundColor);
+        style->GetVisitedDependentColor(&nsStyleBackground::mBackgroundColor);
       mSelectionTextColor =
-        sc->GetVisitedDependentColor(&nsStyleText::mWebkitTextFillColor);
+        style->GetVisitedDependentColor(&nsStyleText::mWebkitTextFillColor);
       mHasSelectionShadow = true;
-      mSelectionShadow = sc->StyleText()->mTextShadow;
+      mSelectionShadow = style->StyleText()->mTextShadow;
       return true;
     }
   }
@@ -4923,7 +4898,7 @@ nsTextFrame::CharacterDataChanged(const CharacterDataChangeInfo& aInfo)
   return NS_OK;
 }
 
-class nsDisplayText : public nsCharClipDisplayItem {
+class nsDisplayText final : public nsCharClipDisplayItem {
 public:
   nsDisplayText(nsDisplayListBuilder* aBuilder, nsTextFrame* aFrame,
                 const Maybe<bool>& aIsSelected);
@@ -7681,9 +7656,8 @@ nsTextFrame::SetSelectedRange(uint32_t aStart, uint32_t aEnd, bool aSelected,
       bool didHaveOverflowingSelection =
         (f->GetStateBits() & TEXT_SELECTION_UNDERLINE_OVERFLOWED) != 0;
       nsRect r(nsPoint(0, 0), GetSize());
-      bool willHaveOverflowingSelection =
-        aSelected && f->CombineSelectionUnderlineRect(presContext, r);
-      if (didHaveOverflowingSelection || willHaveOverflowingSelection) {
+      if (didHaveOverflowingSelection ||
+          (aSelected && f->CombineSelectionUnderlineRect(presContext, r))) {
         presContext->PresShell()->FrameNeedsReflow(f,
                                                    nsIPresShell::eStyleChange,
                                                    NS_FRAME_IS_DIRTY);

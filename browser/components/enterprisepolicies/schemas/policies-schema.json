@@ -185,6 +185,14 @@
       "type": "boolean"
     },
 
+    "DisableTelemetry": {
+      "description": "Turns off telemetry.",
+      "first_available": "60.0",
+      "enterprise_only": true,
+
+      "type": "boolean"
+    },
+
     "DisplayBookmarksToolbar": {
       "description": "Causes the bookmarks toolbar to be displayed by default.",
       "first_available": "60.0",
@@ -220,6 +228,34 @@
         }
       },
       "required": ["Value"]
+    },
+
+    "Extensions": {
+      "description": "Install, uninstall or lock extensions. The Install option takes URLs or paths as parameters. The Uninstall and Locked options take extension IDs.",
+      "first_available": "60.0",
+      "enterprise_only": true,
+
+      "type": "object",
+      "properties": {
+        "Install" : {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "Uninstall" : {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "Locked" : {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     },
 
     "FlashPlugin": {

@@ -14,7 +14,6 @@
 #include "mozilla/GuardObjects.h"
 #include "nsCOMPtr.h"
 #include "nsDebug.h"
-#include "nsIDOMNode.h"
 #include "nsIEditor.h"
 #include "nscore.h"
 
@@ -544,18 +543,6 @@ public:
   static bool IsDescendantOf(const nsINode& aNode,
                              const nsINode& aParent,
                              EditorDOMPoint* aOutPoint);
-};
-
-class EditorHookUtils final
-{
-public:
-  static bool DoInsertionHook(nsIDOMDocument* aDoc, nsIDOMEvent* aEvent,
-                              nsITransferable* aTrans);
-
-private:
-  static nsresult GetHookEnumeratorFromDocument(
-                    nsIDOMDocument*aDoc,
-                    nsISimpleEnumerator** aEnumerator);
 };
 
 } // namespace mozilla

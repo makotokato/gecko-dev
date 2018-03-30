@@ -176,7 +176,6 @@
 #include "nsDocShellEnumerator.h"
 #include "nsDocShellLoadInfo.h"
 #include "nsDocShellLoadTypes.h"
-#include "nsDocShellTransferableHooks.h"
 #include "nsDOMCID.h"
 #include "nsDOMNavigationTiming.h"
 #include "nsDSURIContentListener.h"
@@ -629,11 +628,6 @@ nsDocShell::GetInterface(const nsIID& aIID, void** aSink)
     GetEditingSession(getter_AddRefs(es));
     es.forget(aSink);
     return *aSink ? NS_OK : NS_NOINTERFACE;
-  } else if (aIID.Equals(NS_GET_IID(nsIClipboardDragDropHookList)) &&
-             NS_SUCCEEDED(EnsureTransferableHookData())) {
-    *aSink = mTransferableHookData;
-    NS_ADDREF((nsISupports*)*aSink);
-    return NS_OK;
   } else if (aIID.Equals(NS_GET_IID(nsISelectionDisplay))) {
     nsIPresShell* shell = GetPresShell();
     if (shell) {
@@ -5510,8 +5504,6 @@ nsDocShell::Destroy()
 
   mEditorData = nullptr;
 
-  mTransferableHookData = nullptr;
-
   // Save the state of the current document, before destroying the window.
   // This is needed to capture the state of a frameset when the new document
   // causes the frameset to be destroyed...
@@ -9544,27 +9536,24 @@ nsDocShell::InternalLoad(nsIURI* aURI,
       requestingContext = requestingElement;
     }
 
+    // Ideally we should use the same loadinfo as within DoURILoad which
+    // should match this one when both are applicable.
+    nsCOMPtr<nsPIDOMWindowOuter> loadingWindow = mScriptGlobal->AsOuter();
+    nsCOMPtr<nsILoadInfo> secCheckLoadInfo =
+      new LoadInfo(loadingWindow,
+                   aTriggeringPrincipal,
+                   requestingContext,
+                   nsILoadInfo::SEC_ONLY_FOR_EXPLICIT_CONTENTSEC_CHECK);
+
     // Since Content Policy checks are performed within docShell as well as
     // the ContentSecurityManager we need a reliable way to let certain
-    // nsIContentPolicy consumers ignore duplicate calls. Let's use the 'extra'
-    // argument to pass a specific identifier.
-    nsCOMPtr<nsISupportsString> extraStr =
-      do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    NS_NAMED_LITERAL_STRING(msg, "conPolCheckFromDocShell");
-    rv = extraStr->SetData(msg);
-    NS_ENSURE_SUCCESS(rv, rv);
+    // nsIContentPolicy consumers ignore duplicate calls.
+    secCheckLoadInfo->SetSkipContentPolicyCheckForWebRequest(true);
 
     int16_t shouldLoad = nsIContentPolicy::ACCEPT;
-    rv = NS_CheckContentLoadPolicy(contentType,
-                                   aURI,
-                                   // This is a top-level load, so the loading
-                                   // principal is null.
-                                   nullptr,
-                                   aTriggeringPrincipal,
-                                   requestingContext,
+    rv = NS_CheckContentLoadPolicy(aURI,
+                                   secCheckLoadInfo,
                                    EmptyCString(),  // mime guess
-                                   extraStr,  // extra
                                    &shouldLoad);
 
     if (NS_FAILED(rv) || NS_CP_REJECTED(shouldLoad)) {
@@ -12997,18 +12986,6 @@ nsDocShell::EnsureEditorData()
   }
 
   return mEditorData ? NS_OK : NS_ERROR_NOT_AVAILABLE;
-}
-
-nsresult
-nsDocShell::EnsureTransferableHookData()
-{
-  MOZ_ASSERT(!mIsBeingDestroyed);
-
-  if (!mTransferableHookData) {
-    mTransferableHookData = new nsTransferableHookData();
-  }
-
-  return NS_OK;
 }
 
 nsresult

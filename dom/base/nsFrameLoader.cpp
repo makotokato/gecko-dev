@@ -169,7 +169,6 @@ nsFrameLoader::nsFrameLoader(Element* aOwner, nsPIDOMWindowOuter* aOpener,
   , mRemoteBrowser(nullptr)
   , mChildID(0)
   , mJSPluginID(aJSPluginID)
-  , mEventMode(FrameLoaderBinding::EVENT_MODE_NORMAL_DISPATCH)
   , mBrowserChangingProcessBlockers(nullptr)
   , mDepthTooGreat(false)
   , mIsTopLevelContent(false)
@@ -906,13 +905,9 @@ nsFrameLoader::MarginsChanged(uint32_t aMarginWidth,
   // There's a cached property declaration block
   // that needs to be updated
   if (nsIDocument* doc = mDocShell->GetDocument()) {
-    // We don't need to do anything for Gecko here because
-    // we plan to RebuildAllStyleData anyway.
-    if (doc->GetStyleBackendType() == StyleBackendType::Servo) {
-      for (nsINode* cur = doc; cur; cur = cur->GetNextNode()) {
-        if (cur->IsHTMLElement(nsGkAtoms::body)) {
-          static_cast<HTMLBodyElement*>(cur)->ClearMappedServoStyle();
-        }
+    for (nsINode* cur = doc; cur; cur = cur->GetNextNode()) {
+      if (cur->IsHTMLElement(nsGkAtoms::body)) {
+        static_cast<HTMLBodyElement*>(cur)->ClearMappedServoStyle();
       }
     }
   }

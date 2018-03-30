@@ -75,7 +75,7 @@ public:
     return mInheritedTransform;
   }
 
-  gfx::Matrix4x4 GetTransformForScrollData() const;
+  const Maybe<gfx::Matrix4x4>& GetTransformForScrollData() const;
 
   bool AffectsClipPositioning() const { return mAffectsClipPositioning; }
 
@@ -85,6 +85,7 @@ private:
   gfx::Matrix mInheritedTransform;
   bool mAffectsClipPositioning;
   Maybe<gfx::Matrix4x4> mTransformForScrollData;
+  bool mIsPreserve3D;
 };
 
 } // namespace layers

@@ -26,8 +26,8 @@
 #include "mozilla/ComputedStyle.h"
 #include "nsFontMetrics.h"
 #include "nsITimer.h"
-#include "mozilla/StyleSetHandle.h"
-#include "mozilla/StyleSetHandleInlines.h"
+#include "mozilla/ServoStyleSet.h"
+#include "mozilla/dom/Text.h"
 #include "nsPIBoxObject.h"
 #include "nsLayoutUtils.h"
 #include "nsPIListBoxObject.h"
@@ -733,9 +733,9 @@ nsListBoxBodyFrame::ComputeIntrinsicISize(nsBoxLayoutState& aBoxLayoutState)
         gfxContext* rendContext = aBoxLayoutState.GetRenderingContext();
         if (rendContext) {
           nsAutoString value;
-          for (nsIContent* text = child->GetFirstChild();
-               text; text = text->GetNextSibling()) {
-            if (text->IsNodeOfType(nsINode::eTEXT)) {
+          for (nsIContent* content = child->GetFirstChild();
+               content; content = content->GetNextSibling()) {
+            if (Text* text = content->GetAsText()) {
               text->AppendTextTo(value);
             }
           }

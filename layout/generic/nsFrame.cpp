@@ -768,14 +768,6 @@ nsFrame::DestroyFrom(nsIFrame* aDestructRoot, PostDestroyData& aPostDestroyData)
   if (IsPrimaryFrame()) {
     // This needs to happen before we clear our Properties() table.
     ActiveLayerTracker::TransferActivityToContent(this, mContent);
-
-    // Unfortunately, we need to do this for all frames being reframed
-    // and not only those whose current style involves CSS transitions,
-    // because what matters is whether the new style (not the old)
-    // specifies CSS transitions.
-    if (presContext->RestyleManager()->IsGecko()) {
-      MOZ_CRASH("old style system disabled");
-    }
   }
 
   if (HasCSSAnimations() || HasCSSTransitions() ||
@@ -2185,14 +2177,42 @@ public:
 private:
   Color ComputeColor() const;
 
+  static Color ComputeColorFromSelectionStyle(ComputedStyle&);
+  static Color ApplyTransparencyIfNecessary(nscolor);
+
   int16_t mSelectionValue;
 };
+
+Color
+nsDisplaySelectionOverlay::ApplyTransparencyIfNecessary(nscolor aColor)
+{
+  // If it has already alpha, leave it like that.
+  if (NS_GET_A(aColor) != 255) {
+    return ToDeviceColor(aColor);
+  }
+
+  // NOTE(emilio): Blink and WebKit do something slightly different here, and
+  // blend the color with white instead, both for overlays and text backgrounds.
+  auto color = Color::FromABGR(aColor);
+  color.a = 0.5;
+  return ToDeviceColor(color);
+}
+
+Color
+nsDisplaySelectionOverlay::ComputeColorFromSelectionStyle(ComputedStyle& aStyle)
+{
+  return ApplyTransparencyIfNecessary(
+    aStyle.GetVisitedDependentColor(&nsStyleBackground::mBackgroundColor));
+}
 
 Color
 nsDisplaySelectionOverlay::ComputeColor() const
 {
   LookAndFeel::ColorID colorID;
   if (mSelectionValue == nsISelectionController::SELECTION_ON) {
+    if (RefPtr<ComputedStyle> style = mFrame->ComputeSelectionStyle()) {
+      return ComputeColorFromSelectionStyle(*style);
+    }
     colorID = LookAndFeel::eColorID_TextSelectBackground;
   } else if (mSelectionValue == nsISelectionController::SELECTION_ATTENTION) {
     colorID = LookAndFeel::eColorID_TextSelectBackgroundAttention;
@@ -2200,9 +2220,8 @@ nsDisplaySelectionOverlay::ComputeColor() const
     colorID = LookAndFeel::eColorID_TextSelectBackgroundDisabled;
   }
 
-  Color c = Color::FromABGR(LookAndFeel::GetColor(colorID, NS_RGB(255, 255, 255)));
-  c.a = .5;
-  return ToDeviceColor(c);
+  return ApplyTransparencyIfNecessary(
+    LookAndFeel::GetColor(colorID, NS_RGB(255, 255, 255)));
 }
 
 void nsDisplaySelectionOverlay::Paint(nsDisplayListBuilder* aBuilder,
@@ -2235,6 +2254,34 @@ nsDisplaySelectionOverlay::CreateWebRenderCommands(mozilla::wr::DisplayListBuild
   return true;
 }
 
+static Element*
+FindElementAncestorForMozSelection(nsIContent* aContent)
+{
+  NS_ENSURE_TRUE(aContent, nullptr);
+  while (aContent && aContent->IsInNativeAnonymousSubtree()) {
+    aContent = aContent->GetBindingParent();
+  }
+  NS_ASSERTION(aContent, "aContent isn't in non-anonymous tree?");
+  while (aContent && !aContent->IsElement()) {
+    aContent = aContent->GetParent();
+  }
+  return aContent ? aContent->AsElement() : nullptr;
+}
+
+
+already_AddRefed<ComputedStyle>
+nsIFrame::ComputeSelectionStyle() const
+{
+  Element* element = FindElementAncestorForMozSelection(GetContent());
+  if (!element) {
+    return nullptr;
+  }
+  RefPtr<ComputedStyle> sc =
+    PresContext()->StyleSet()->ProbePseudoElementStyle(
+      element, CSSPseudoElementType::mozSelection, Style());
+  return sc.forget();
+}
+
 /********************************************************
 * Refreshes each content's frame
 *********************************************************/
@@ -2244,25 +2291,23 @@ nsFrame::DisplaySelectionOverlay(nsDisplayListBuilder*   aBuilder,
                                  nsDisplayList*          aList,
                                  uint16_t                aContentType)
 {
-  if (!IsSelected() || !IsVisibleForPainting(aBuilder))
+  if (!IsSelected() || !IsVisibleForPainting(aBuilder)) {
     return;
+  }
 
-  nsPresContext* presContext = PresContext();
-  nsIPresShell *shell = presContext->PresShell();
-  if (!shell)
+  int16_t displaySelection = PresShell()->GetSelectionFlags();
+  if (!(displaySelection & aContentType)) {
     return;
-
-  int16_t displaySelection = shell->GetSelectionFlags();
-  if (!(displaySelection & aContentType))
-    return;
+  }
 
   const nsFrameSelection* frameSelection = GetConstFrameSelection();
   int16_t selectionValue = frameSelection->GetDisplaySelection();
 
-  if (selectionValue <= nsISelectionController::SELECTION_HIDDEN)
+  if (selectionValue <= nsISelectionController::SELECTION_HIDDEN) {
     return; // selection is hidden or off
+  }
 
-  nsIContent *newContent = mContent->GetParent();
+  nsIContent* newContent = mContent->GetParent();
 
   //check to see if we are anonymous content
   int32_t offset = 0;
@@ -2272,8 +2317,8 @@ nsFrame::DisplaySelectionOverlay(nsDisplayListBuilder*   aBuilder,
   }
 
   //look up to see what selection(s) are on this frame
-  UniquePtr<SelectionDetails> details
-    = frameSelection->LookUpSelection(newContent, offset, 1, false);
+  UniquePtr<SelectionDetails> details =
+    frameSelection->LookUpSelection(newContent, offset, 1, false);
   if (!details)
     return;
 
@@ -2781,9 +2826,15 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
   nsRect visibleRect = aBuilder->GetVisibleRect();
   nsRect dirtyRect = aBuilder->GetDirtyRect();
 
-  bool extend3DContext = Extend3DContext(disp, effectSet);
+  const bool isTransformed = IsTransformed(disp);
+  const bool hasPerspective = isTransformed && HasPerspective(disp);
+  const bool extend3DContext = Extend3DContext(disp, effectSet);
+  const bool combines3DTransformWithAncestors =
+    (extend3DContext || isTransformed) && Combines3DTransformWithAncestors(disp);
+  const bool childrenHavePerspective = ChildrenHavePerspective(disp);
+
   Maybe<nsDisplayListBuilder::AutoPreserves3DContext> autoPreserves3DContext;
-  if (extend3DContext && !Combines3DTransformWithAncestors(disp)) {
+  if (extend3DContext && !combines3DTransformWithAncestors) {
     // Start a new preserves3d context to keep informations on
     // nsDisplayListBuilder.
     autoPreserves3DContext.emplace(aBuilder);
@@ -2803,15 +2854,11 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
   // We need to make sure we build all of them for them to be consistent, so
   // rebuild all items if we have perspective. Bug 1431249 should remove
   // this requirement.
-  if (aBuilder->IsRetainingDisplayList() &&
-      ChildrenHavePerspective(disp)) {
+  if (aBuilder->IsRetainingDisplayList() && childrenHavePerspective) {
     dirtyRect = visibleRect;
     aBuilder->MarkFrameModifiedDuringBuilding(this);
   }
 
-  bool inTransform = aBuilder->IsInTransform();
-  bool isTransformed = IsTransformed(disp);
-  bool hasPerspective = HasPerspective(disp);
   // reset blend mode so we can keep track if this stacking context needs have
   // a nsDisplayBlendContainer. Set the blend mode back when the routine exits
   // so we keep track if the parent stacking context needs a container too.
@@ -2820,6 +2867,7 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
 
   nsRect visibleRectOutsideTransform = visibleRect;
   bool allowAsyncAnimation = false;
+  bool inTransform = aBuilder->IsInTransform();
   if (isTransformed) {
     const nsRect overflow = GetVisualOverflowRectRelativeToSelf();
     nsDisplayTransform::PrerenderDecision decision =
@@ -2841,7 +2889,7 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
 
       // If we're in preserve-3d then grab the dirty rect that was given to the root
       // and transform using the combined transform.
-      if (Combines3DTransformWithAncestors(disp)) {
+      if (combines3DTransformWithAncestors) {
         visibleRect = dirtyRect = aBuilder->GetPreserves3DRect();
       }
 
@@ -2980,7 +3028,7 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
     nsDisplayListBuilder::AutoInTransformSetter
       inTransformSetter(aBuilder, inTransform);
     nsDisplayListBuilder::AutoSaveRestorePerspectiveIndex
-      perspectiveIndex(aBuilder, this);
+      perspectiveIndex(aBuilder, childrenHavePerspective);
     nsDisplayListBuilder::AutoFilterASRSetter
       filterASRSetter(aBuilder, usingFilter);
 
@@ -3511,12 +3559,6 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
                !aBuilder->GetIncludeAllOutOfFlows(),
                "It should be held for painting to window");
 
-    if (child->HasPerspective()) {
-      // We need to allocate a perspective index before a potential early
-      // return below.
-      aBuilder->AllocatePerspectiveItemIndex();
-    }
-
     if (!DescendIntoChild(aBuilder, child, visible, dirty)) {
       return;
     }
@@ -3545,7 +3587,7 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     return;
   }
 
-  bool isSVG = (child->GetStateBits() & NS_FRAME_SVG_LAYOUT);
+  const bool isSVG = child->GetStateBits() & NS_FRAME_SVG_LAYOUT;
 
   // It is raised if the control flow strays off the common path.
   // The common path is the most common one of THE COMMON CASE
@@ -3555,15 +3597,15 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
   // true if this is a real or pseudo stacking context
   bool pseudoStackingContext =
     (aFlags & DISPLAY_CHILD_FORCE_PSEUDO_STACKING_CONTEXT) != 0;
-  awayFromCommonPath |= pseudoStackingContext;
-  if (!isSVG &&
+
+  if (!pseudoStackingContext &&
+      !isSVG &&
       (aFlags & DISPLAY_CHILD_INLINE) &&
       !child->IsFrameOfType(eLineParticipant)) {
     // child is a non-inline frame in an inline context, i.e.,
     // it acts like inline-block or inline-table. Therefore it is a
     // pseudo-stacking-context.
     pseudoStackingContext = true;
-    awayFromCommonPath = true;
   }
 
   nsDisplayListBuilder::OutOfFlowDisplayData* savedOutOfFlowData = nullptr;
@@ -3602,16 +3644,8 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
       visible.SetEmpty();
       dirty.SetEmpty();
     }
+
     pseudoStackingContext = true;
-    awayFromCommonPath = true;
-  }
-
-  const nsStyleDisplay* disp = child->StyleDisplay();
-
-  if (child->HasPerspective(disp)) {
-    // We need to allocate a perspective index before a potential early
-    // return below.
-    aBuilder->AllocatePerspectiveItemIndex();
   }
 
   NS_ASSERTION(!child->IsPlaceholderFrame(),
@@ -3622,11 +3656,9 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     return;
   }
 
-  if (aBuilder->GetIncludeAllOutOfFlows() &&
-      (child->GetStateBits() & NS_FRAME_OUT_OF_FLOW)) {
+  if (aBuilder->GetIncludeAllOutOfFlows() && isPlaceholder) {
     visible = child->GetVisualOverflowRect();
     dirty = child->GetVisualOverflowRect();
-    awayFromCommonPath = true;
   } else if (!DescendIntoChild(aBuilder, child, visible, dirty)) {
     return;
   }
@@ -3653,22 +3685,28 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
   // Child is composited if it's transformed, partially transparent, or has
   // SVG effects or a blend mode..
   EffectSet* effectSet = EffectSet::GetEffectSet(child);
+  const nsStyleDisplay* disp = child->StyleDisplay();
   const nsStyleEffects* effects = child->StyleEffects();
   const nsStylePosition* pos = child->StylePosition();
-  bool isVisuallyAtomic = child->IsVisuallyAtomic(effectSet, disp, effects);
-  bool isPositioned = disp->IsAbsPosContainingBlock(child);
-  bool isStackingContext = child->IsStackingContext(disp, pos, isPositioned, isVisuallyAtomic) ||
-                           (aFlags & DISPLAY_CHILD_FORCE_STACKING_CONTEXT);
 
-  if (isVisuallyAtomic || isPositioned || (!isSVG && disp->IsFloating(child)) ||
-      ((effects->mClipFlags & NS_STYLE_CLIP_RECT) &&
-       IsSVGContentWithCSSClip(child)) ||
-       disp->mIsolation != NS_STYLE_ISOLATION_AUTO ||
-       (disp->mWillChangeBitField & NS_STYLE_WILL_CHANGE_STACKING_CONTEXT) ||
-      (aFlags & DISPLAY_CHILD_FORCE_STACKING_CONTEXT)) {
+  const bool isVisuallyAtomic =
+    child->IsVisuallyAtomic(effectSet, disp, effects);
+
+  const bool isPositioned =
+    disp->IsAbsPosContainingBlock(child);
+
+  const bool isStackingContext =
+    child->IsStackingContext(disp, pos, isPositioned, isVisuallyAtomic) ||
+    (aFlags & DISPLAY_CHILD_FORCE_STACKING_CONTEXT);
+
+  if (pseudoStackingContext || isStackingContext || isPositioned ||
+      (!isSVG && disp->IsFloating(child)) ||
+      (isSVG && (effects->mClipFlags & NS_STYLE_CLIP_RECT) &&
+       IsSVGContentWithCSSClip(child))) {
     pseudoStackingContext = true;
     awayFromCommonPath = true;
   }
+
   NS_ASSERTION(!isStackingContext || pseudoStackingContext,
                "Stacking contexts must also be pseudo-stacking-contexts");
 
@@ -3699,7 +3737,6 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     // instead since we know we won't render anything, and the inner out-of-flow
     // frame will setup the correct clip for itself.
     clipState.SetClipChainForContainingBlockDescendants(nullptr);
-    awayFromCommonPath = true;
   }
 
   // Setup clipping for the parent's overflow:-moz-hidden-unscrollable,
@@ -4253,7 +4290,7 @@ nsFrame::HandlePress(nsPresContext* aPresContext,
   // starting a new selection since the user may be trying to
   // drag the selected region to some other app.
 
-  if (GetContent()->IsSelectionDescendant())
+  if (GetContent() && GetContent()->IsSelectionDescendant())
   {
     bool inSelection = false;
     UniquePtr<SelectionDetails> details

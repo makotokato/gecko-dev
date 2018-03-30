@@ -13,9 +13,10 @@
 #include "mozilla/EventForwards.h"
 #include "mozilla/FlushType.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/ServoStyleSet.h"
 #include "mozilla/StaticPtr.h"
-#include "mozilla/StyleSetHandle.h"
 #include "mozilla/StyleSheet.h"
+#include "mozilla/UniquePtr.h"
 #include "mozilla/WeakPtr.h"
 #include "GeckoProfiler.h"
 #include "gfxPoint.h"
@@ -56,7 +57,7 @@ class nsCanvasFrame;
 class nsCaret;
 namespace mozilla {
 class AccessibleCaretEventHub;
-class CSSStyleSheet;
+class ServoStyleSheet;
 } // namespace mozilla
 class nsFrameSelection;
 class nsFrameManager;
@@ -95,6 +96,7 @@ class EventStates;
 
 namespace dom {
 class Element;
+class HTMLSlotElement;
 class Touch;
 class Selection;
 class ShadowRoot;
@@ -278,7 +280,7 @@ public:
   }
 #endif
 
-  mozilla::StyleSetHandle StyleSet() const { return mStyleSet; }
+  mozilla::ServoStyleSet* StyleSet() const { return mStyleSet.get(); }
 
   nsCSSFrameConstructor* FrameConstructor() const { return mFrameConstructor; }
 
@@ -524,7 +526,18 @@ public:
    *
    * Note that this may destroy frames for an ancestor instead.
    */
-  virtual void DestroyFramesForAndRestyle(mozilla::dom::Element* aElement) = 0;
+  void DestroyFramesForAndRestyle(mozilla::dom::Element* aElement);
+
+  /**
+   * Handles all the layout stuff needed when the slot assignment for an element
+   * is about to change.
+   *
+   * Only called when the slot attribute of the element changes, the rest of
+   * the changes should be handled in ShadowRoot.
+   */
+  void SlotAssignmentWillChange(mozilla::dom::Element& aElement,
+                                mozilla::dom::HTMLSlotElement* aOldSlot,
+                                mozilla::dom::HTMLSlotElement* aNewSlot);
 
   void PostRecreateFramesFor(mozilla::dom::Element* aElement);
   void RestyleForAnimation(mozilla::dom::Element* aElement,
@@ -915,7 +928,8 @@ public:
                                  nsIContent* aContent,
                                  nsEventStatus* aStatus,
                                  bool aIsHandlingNativeEvent = false,
-                                 nsIContent** aTargetContent = nullptr) = 0;
+                                 nsIContent** aTargetContent = nullptr,
+                                 nsIContent* aOverrideClickTarget = nullptr) = 0;
 
   /**
    * Dispatch event to content only (NOT full processing)
@@ -993,13 +1007,13 @@ public:
    * Get the set of agent style sheets for this presentation
    */
   virtual nsresult GetAgentStyleSheets(
-      nsTArray<RefPtr<mozilla::StyleSheet>>& aSheets) = 0;
+      nsTArray<RefPtr<mozilla::ServoStyleSheet>>& aSheets) = 0;
 
   /**
    * Replace the set of agent style sheets
    */
   virtual nsresult SetAgentStyleSheets(
-      const nsTArray<RefPtr<mozilla::StyleSheet>>& aSheets) = 0;
+      const nsTArray<RefPtr<mozilla::ServoStyleSheet>>& aSheets) = 0;
 
   /**
    * Add an override style sheet for this presentation
@@ -1694,7 +1708,7 @@ protected:
   // we must share ownership.
   nsCOMPtr<nsIDocument>     mDocument;
   RefPtr<nsPresContext>   mPresContext;
-  mozilla::StyleSetHandle   mStyleSet;      // [OWNS]
+  mozilla::UniquePtr<mozilla::ServoStyleSet> mStyleSet;
   nsCSSFrameConstructor*    mFrameConstructor; // [OWNS]
   nsViewManager*           mViewManager;   // [WEAK] docViewer owns it so I don't have to
   nsPresArena               mFrameArena;

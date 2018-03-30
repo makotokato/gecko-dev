@@ -99,8 +99,6 @@
 #include "mozilla/dom/HTMLBodyElement.h"
 #include "imgIContainer.h"
 #include "nsComputedDOMStyle.h"
-#include "mozilla/StyleSetHandle.h"
-#include "mozilla/StyleSetHandleInlines.h"
 #include "ReferrerPolicy.h"
 #include "mozilla/dom/HTMLLabelElement.h"
 #include "mozilla/dom/HTMLInputElement.h"
@@ -1161,33 +1159,24 @@ nsGenericHTMLElement::ParseScrollingValue(const nsAString& aString,
 static inline void
 MapLangAttributeInto(const nsMappedAttributes* aAttributes, GenericSpecifiedValues* aData)
 {
-  if (!aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Font) |
-                                       NS_STYLE_INHERIT_BIT(Text))) {
-    return;
-  }
-
   const nsAttrValue* langValue = aAttributes->GetAttr(nsGkAtoms::lang);
   if (!langValue) {
     return;
   }
   MOZ_ASSERT(langValue->Type() == nsAttrValue::eAtom);
-  if (aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Font))) {
-    aData->SetIdentAtomValueIfUnset(eCSSProperty__x_lang,
-                                    langValue->GetAtomValue());
-  }
-  if (aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Text))) {
-    if (!aData->PropertyIsSet(eCSSProperty_text_emphasis_position)) {
-      const nsAtom* lang = langValue->GetAtomValue();
-      if (nsStyleUtil::MatchesLanguagePrefix(lang, u"zh")) {
-        aData->SetKeywordValue(eCSSProperty_text_emphasis_position,
-                               NS_STYLE_TEXT_EMPHASIS_POSITION_DEFAULT_ZH);
-      } else if (nsStyleUtil::MatchesLanguagePrefix(lang, u"ja") ||
-                 nsStyleUtil::MatchesLanguagePrefix(lang, u"mn")) {
-        // This branch is currently no part of the spec.
-        // See bug 1040668 comment 69 and comment 75.
-        aData->SetKeywordValue(eCSSProperty_text_emphasis_position,
-                               NS_STYLE_TEXT_EMPHASIS_POSITION_DEFAULT);
-      }
+  aData->SetIdentAtomValueIfUnset(eCSSProperty__x_lang,
+                                  langValue->GetAtomValue());
+  if (!aData->PropertyIsSet(eCSSProperty_text_emphasis_position)) {
+    const nsAtom* lang = langValue->GetAtomValue();
+    if (nsStyleUtil::MatchesLanguagePrefix(lang, u"zh")) {
+      aData->SetKeywordValue(eCSSProperty_text_emphasis_position,
+                             NS_STYLE_TEXT_EMPHASIS_POSITION_DEFAULT_ZH);
+    } else if (nsStyleUtil::MatchesLanguagePrefix(lang, u"ja") ||
+               nsStyleUtil::MatchesLanguagePrefix(lang, u"mn")) {
+      // This branch is currently no part of the spec.
+      // See bug 1040668 comment 69 and comment 75.
+      aData->SetKeywordValue(eCSSProperty_text_emphasis_position,
+                             NS_STYLE_TEXT_EMPHASIS_POSITION_DEFAULT);
     }
   }
 }
@@ -1199,20 +1188,18 @@ void
 nsGenericHTMLElement::MapCommonAttributesIntoExceptHidden(const nsMappedAttributes* aAttributes,
                                                           GenericSpecifiedValues* aData)
 {
-  if (aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(UserInterface))) {
-    if (!aData->PropertyIsSet(eCSSProperty__moz_user_modify)) {
-      const nsAttrValue* value =
-        aAttributes->GetAttr(nsGkAtoms::contenteditable);
-      if (value) {
-        if (value->Equals(nsGkAtoms::_empty, eCaseMatters) ||
-            value->Equals(nsGkAtoms::_true, eIgnoreCase)) {
+  if (!aData->PropertyIsSet(eCSSProperty__moz_user_modify)) {
+    const nsAttrValue* value =
+      aAttributes->GetAttr(nsGkAtoms::contenteditable);
+    if (value) {
+      if (value->Equals(nsGkAtoms::_empty, eCaseMatters) ||
+          value->Equals(nsGkAtoms::_true, eIgnoreCase)) {
+        aData->SetKeywordValue(eCSSProperty__moz_user_modify,
+                               StyleUserModify::ReadWrite);
+      }
+      else if (value->Equals(nsGkAtoms::_false, eIgnoreCase)) {
           aData->SetKeywordValue(eCSSProperty__moz_user_modify,
-                                 StyleUserModify::ReadWrite);
-        }
-        else if (value->Equals(nsGkAtoms::_false, eIgnoreCase)) {
-            aData->SetKeywordValue(eCSSProperty__moz_user_modify,
-                                   StyleUserModify::ReadOnly);
-        }
+                                 StyleUserModify::ReadOnly);
       }
     }
   }
@@ -1226,11 +1213,9 @@ nsGenericHTMLElement::MapCommonAttributesInto(const nsMappedAttributes* aAttribu
 {
   MapCommonAttributesIntoExceptHidden(aAttributes, aData);
 
-  if (aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Display))) {
-    if (!aData->PropertyIsSet(eCSSProperty_display)) {
-      if (aAttributes->IndexOfAttr(nsGkAtoms::hidden) >= 0) {
-        aData->SetKeywordValue(eCSSProperty_display, StyleDisplay::None);
-      }
+  if (!aData->PropertyIsSet(eCSSProperty_display)) {
+    if (aAttributes->IndexOfAttr(nsGkAtoms::hidden) >= 0) {
+      aData->SetKeywordValue(eCSSProperty_display, StyleDisplay::None);
     }
   }
 }
@@ -1287,26 +1272,24 @@ void
 nsGenericHTMLElement::MapImageAlignAttributeInto(const nsMappedAttributes* aAttributes,
                                                  GenericSpecifiedValues* aData)
 {
-  if (aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Display))) {
-    const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::align);
-    if (value && value->Type() == nsAttrValue::eEnum) {
-      int32_t align = value->GetEnumValue();
-      if (!aData->PropertyIsSet(eCSSProperty_float_)) {
-        if (align == NS_STYLE_TEXT_ALIGN_LEFT) {
-          aData->SetKeywordValue(eCSSProperty_float_, StyleFloat::Left);
-        } else if (align == NS_STYLE_TEXT_ALIGN_RIGHT) {
-          aData->SetKeywordValue(eCSSProperty_float_, StyleFloat::Right);
-        }
+  const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::align);
+  if (value && value->Type() == nsAttrValue::eEnum) {
+    int32_t align = value->GetEnumValue();
+    if (!aData->PropertyIsSet(eCSSProperty_float_)) {
+      if (align == NS_STYLE_TEXT_ALIGN_LEFT) {
+        aData->SetKeywordValue(eCSSProperty_float_, StyleFloat::Left);
+      } else if (align == NS_STYLE_TEXT_ALIGN_RIGHT) {
+        aData->SetKeywordValue(eCSSProperty_float_, StyleFloat::Right);
       }
-      if (!aData->PropertyIsSet(eCSSProperty_vertical_align)) {
-        switch (align) {
-        case NS_STYLE_TEXT_ALIGN_LEFT:
-        case NS_STYLE_TEXT_ALIGN_RIGHT:
-          break;
-        default:
-          aData->SetKeywordValue(eCSSProperty_vertical_align, align);
-          break;
-        }
+    }
+    if (!aData->PropertyIsSet(eCSSProperty_vertical_align)) {
+      switch (align) {
+      case NS_STYLE_TEXT_ALIGN_LEFT:
+      case NS_STYLE_TEXT_ALIGN_RIGHT:
+        break;
+      default:
+        aData->SetKeywordValue(eCSSProperty_vertical_align, align);
+        break;
       }
     }
   }
@@ -1316,13 +1299,11 @@ void
 nsGenericHTMLElement::MapDivAlignAttributeInto(const nsMappedAttributes* aAttributes,
                                                GenericSpecifiedValues* aData)
 {
-  if (aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Text))) {
-    if (!aData->PropertyIsSet(eCSSProperty_text_align)) {
-      // align: enum
-      const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::align);
-      if (value && value->Type() == nsAttrValue::eEnum)
-        aData->SetKeywordValue(eCSSProperty_text_align, value->GetEnumValue());
-    }
+  if (!aData->PropertyIsSet(eCSSProperty_text_align)) {
+    // align: enum
+    const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::align);
+    if (value && value->Type() == nsAttrValue::eEnum)
+      aData->SetKeywordValue(eCSSProperty_text_align, value->GetEnumValue());
   }
 }
 
@@ -1330,13 +1311,11 @@ void
 nsGenericHTMLElement::MapVAlignAttributeInto(const nsMappedAttributes* aAttributes,
                                              GenericSpecifiedValues* aData)
 {
-  if (aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Display))) {
-    if (!aData->PropertyIsSet(eCSSProperty_vertical_align)) {
-      // align: enum
-      const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::valign);
-      if (value && value->Type() == nsAttrValue::eEnum)
-        aData->SetKeywordValue(eCSSProperty_vertical_align, value->GetEnumValue());
-    }
+  if (!aData->PropertyIsSet(eCSSProperty_vertical_align)) {
+    // align: enum
+    const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::valign);
+    if (value && value->Type() == nsAttrValue::eEnum)
+      aData->SetKeywordValue(eCSSProperty_vertical_align, value->GetEnumValue());
   }
 }
 
@@ -1344,9 +1323,6 @@ void
 nsGenericHTMLElement::MapImageMarginAttributeInto(const nsMappedAttributes* aAttributes,
                                                   GenericSpecifiedValues* aData)
 {
-  if (!aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Margin)))
-    return;
-
   const nsAttrValue* value;
 
   // hspace: value
@@ -1386,10 +1362,6 @@ void
 nsGenericHTMLElement::MapWidthAttributeInto(const nsMappedAttributes* aAttributes,
                                             GenericSpecifiedValues* aData)
 {
-  if (!aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Position))) {
-    return;
-  }
-
   // width: value
   if (!aData->PropertyIsSet(eCSSProperty_width)) {
     const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::width);
@@ -1407,9 +1379,6 @@ void
 nsGenericHTMLElement::MapHeightAttributeInto(const nsMappedAttributes* aAttributes,
                                              GenericSpecifiedValues* aData)
 {
-  if (!aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Position)))
-    return;
-
   // height: value
   if (!aData->PropertyIsSet(eCSSProperty_height)) {
     const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::height);
@@ -1435,9 +1404,6 @@ void
 nsGenericHTMLElement::MapImageBorderAttributeInto(const nsMappedAttributes* aAttributes,
                                                   GenericSpecifiedValues* aData)
 {
-  if (!(aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Border))))
-    return;
-
   // border: pixels
   const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::border);
   if (!value)
@@ -1472,11 +1438,7 @@ nsGenericHTMLElement::MapBackgroundInto(const nsMappedAttributes* aAttributes,
                                         GenericSpecifiedValues* aData)
 {
 
-  if (!aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Background)))
-    return;
-
-  if (!aData->PropertyIsSet(eCSSProperty_background_image) &&
-      !aData->ShouldIgnoreColors()) {
+  if (!aData->PropertyIsSet(eCSSProperty_background_image)) {
     // background
     nsAttrValue* value =
       const_cast<nsAttrValue*>(aAttributes->GetAttr(nsGkAtoms::background));
@@ -1490,11 +1452,7 @@ void
 nsGenericHTMLElement::MapBGColorInto(const nsMappedAttributes* aAttributes,
                                      GenericSpecifiedValues* aData)
 {
-  if (!aData->ShouldComputeStyleStruct(NS_STYLE_INHERIT_BIT(Background)))
-    return;
-
-  if (!aData->PropertyIsSet(eCSSProperty_background_color) &&
-      !aData->ShouldIgnoreColors()) {
+  if (!aData->PropertyIsSet(eCSSProperty_background_color)) {
     const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::bgcolor);
     nscolor color;
     if (value && value->GetColorValue(color)) {
@@ -2959,13 +2917,7 @@ nsGenericHTMLElement::NewURIFromString(const nsAString& aURISpec,
 static bool
 IsOrHasAncestorWithDisplayNone(Element* aElement, nsIPresShell* aPresShell)
 {
-  if (aPresShell->StyleSet()->IsServo()) {
-    return !aElement->HasServoData() || Servo_Element_IsDisplayNone(aElement);
-  }
-
-  MOZ_CRASH("Old style system disabled");
-
-  return false;
+  return !aElement->HasServoData() || Servo_Element_IsDisplayNone(aElement);
 }
 
 void
