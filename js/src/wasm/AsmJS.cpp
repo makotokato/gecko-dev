@@ -3345,10 +3345,10 @@ CheckModuleLevelName(ModuleValidator& m, ParseNode* usepn, PropertyName* name)
 static bool
 CheckFunctionHead(ModuleValidator& m, ParseNode* fn)
 {
+    MOZ_ASSERT(!fn->pn_funbox->hasExprBody());
+
     if (fn->pn_funbox->hasRest())
         return m.fail(fn, "rest args not allowed");
-    if (fn->pn_funbox->isExprBody())
-        return m.fail(fn, "expression closures not allowed");
     if (fn->pn_funbox->hasDestructuringArgs)
         return m.fail(fn, "destructuring args not allowed");
     return true;
@@ -7207,14 +7207,16 @@ ParseFunction(ModuleValidator& m, ParseNode** fnOut, unsigned* line)
                                                     FunctionAsyncKind::SyncFunction);
     if (!funbox)
         return false;
-    funbox->initWithEnclosingParseContext(outerpc, frontend::Statement);
+    funbox->initWithEnclosingParseContext(outerpc, FunctionSyntaxKind::Statement);
 
     Directives newDirectives = directives;
     SourceParseContext funpc(&m.parser(), funbox, &newDirectives);
     if (!funpc.init())
         return false;
 
-    if (!m.parser().functionFormalParametersAndBody(InAllowed, YieldIsName, &fn, Statement)) {
+    if (!m.parser().functionFormalParametersAndBody(InAllowed, YieldIsName, &fn,
+                                                    FunctionSyntaxKind::Statement))
+    {
         if (anyChars.hadError() || directives == newDirectives)
             return false;
 

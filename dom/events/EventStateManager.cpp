@@ -58,7 +58,6 @@
 #include "nsPluginFrame.h"
 #include "nsMenuPopupFrame.h"
 
-#include "nsIDOMXULElement.h"
 #include "nsIObserverService.h"
 #include "nsIDocShell.h"
 #include "nsIMozBrowserFrame.h"
@@ -292,8 +291,10 @@ EventStateManager::EventStateManager()
   : mLockCursor(0)
   , mLastFrameConsumedSetCursor(false)
   , mCurrentTarget(nullptr)
-    // init d&d gesture state machine variables
-  , mGestureDownPoint(0,0)
+  // init d&d gesture state machine variables
+  , mGestureDownPoint(0, 0)
+  , mGestureModifiers{}
+  , mGestureDownButtons{}
   , mPresContext(nullptr)
   , mLClickCount(0)
   , mMClickCount(0)
@@ -722,7 +723,9 @@ EventStateManager::PreHandleEvent(nsPresContext* aPresContext,
     // that ClearFrameRefs() has been called and it cleared out
     // |mCurrentTarget|. As a result, we should pass |mCurrentTarget|
     // into UpdateCursor().
-    GenerateDragGesture(aPresContext, mouseEvent);
+    if (!mInTouchDrag) {
+      GenerateDragGesture(aPresContext, mouseEvent);
+    }
     UpdateCursor(aPresContext, aEvent, mCurrentTarget, aStatus);
 
     UpdateLastRefPointOfMouseEvent(mouseEvent);

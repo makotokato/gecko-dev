@@ -602,6 +602,8 @@ pref("media.mediasource.webm.enabled", true);
 #endif
 pref("media.mediasource.webm.audio.enabled", true);
 
+pref("media.av1.enabled", false);
+
 // Use new MediaFormatReader architecture for plain ogg.
 pref("media.flac.enabled", true);
 pref("media.ogg.flac.enabled", true);
@@ -665,6 +667,8 @@ pref("media.audioipc.stack_size", 65536);
 #else
 pref("media.cubeb.sandbox", false);
 #endif
+
+pref("media.webaudio.audiocontextoptions-samplerate.enabled", true);
 
 // Set to true to force demux/decode warnings to be treated as errors.
 pref("media.playback.warnings-as-errors", false);
@@ -838,8 +842,8 @@ pref("gfx.downloadable_fonts.otl_validation", true);
 // to render fonts (Linux/Gtk and Android).
 pref("gfx.downloadable_fonts.keep_color_bitmaps", false);
 
-// Whether to preserve OpenType variation tables in fonts (bypassing OTS)
-pref("gfx.downloadable_fonts.keep_variation_tables", true);
+// Whether to validate OpenType variation tables in fonts
+pref("gfx.downloadable_fonts.validate_variation_tables", true);
 
 #ifdef ANDROID
 pref("gfx.bundled_fonts.enabled", true);
@@ -873,8 +877,6 @@ pref("gfx.font_rendering.graphite.enabled", true);
 #ifdef XP_WIN
 pref("gfx.font_rendering.directwrite.use_gdi_table_loading", true);
 #endif
-
-pref("gfx.font_rendering.opentype_svg.enabled", true);
 
 #ifdef XP_WIN
 // comma separated list of backends to use in order of preference
@@ -1075,91 +1077,15 @@ pref("toolkit.asyncshutdown.crash_timeout", 180000); // 3 minutes
 // Extra logging for AsyncShutdown barriers and phases
 pref("toolkit.asyncshutdown.log", false);
 
-// Tells if DevTools have been explicitely enabled by the user.
-// This pref allows to disable all features related to DevTools
-// for users that never use them.
-// Until bug 1361080 lands, we always consider them enabled.
-pref("devtools.enabled", true);
-
-// Enable deprecation warnings.
-pref("devtools.errorconsole.deprecation_warnings", true);
-
-#ifdef NIGHTLY_BUILD
-// Don't show the Browser Toolbox prompt on local builds / nightly
-pref("devtools.debugger.prompt-connection", false, sticky);
-#else
-pref("devtools.debugger.prompt-connection", true, sticky);
-#endif
-
 #ifdef MOZILLA_OFFICIAL
-// Disable debugging chrome
-pref("devtools.chrome.enabled", false, sticky);
-// Disable remote debugging connections
-pref("devtools.debugger.remote-enabled", false, sticky);
 // enable JS dump() function.
 pref("browser.dom.window.dump.enabled", false, sticky);
 #else
-// In local builds, enable the browser toolbox by default
-pref("devtools.chrome.enabled", true, sticky);
-pref("devtools.debugger.remote-enabled", true, sticky);
 pref("browser.dom.window.dump.enabled", true, sticky);
 #endif
 
-
-// Disable remote debugging protocol logging
-pref("devtools.debugger.log", false);
-pref("devtools.debugger.log.verbose", false);
-
-pref("devtools.debugger.remote-port", 6000);
-pref("devtools.debugger.remote-websocket", false);
-// Force debugger server binding on the loopback interface
-pref("devtools.debugger.force-local", true);
-// Block tools from seeing / interacting with certified apps
-pref("devtools.debugger.forbid-certified-apps", true);
-
-// Limit for intercepted response bodies (1 MB)
-// Possible values:
-// 0 => the response body has no limit
-// n => represents max number of bytes stored
-pref("devtools.netmonitor.responseBodyLimit", 1048576);
-
-// DevTools default color unit
-pref("devtools.defaultColorUnit", "authored");
-
-// Used for devtools debugging
-pref("devtools.dump.emit", false);
-
 // Controls whether EventEmitter module throws dump message on each emit
 pref("toolkit.dump.emit", false);
-
-// Disable device discovery logging
-pref("devtools.discovery.log", false);
-// Whether to scan for DevTools devices via WiFi
-pref("devtools.remote.wifi.scan", true);
-// Client must complete TLS handshake within this window (ms)
-pref("devtools.remote.tls-handshake-timeout", 10000);
-
-// URL of the remote JSON catalog used for device simulation
-pref("devtools.devices.url", "https://code.cdn.mozilla.net/devices/devices.json");
-
-// Display the introductory text
-pref("devtools.gcli.hideIntro", false);
-
-// How eager are we to show help: never=1, sometimes=2, always=3
-pref("devtools.gcli.eagerHelper", 2);
-
-// Alias to the script URLs for inject command.
-pref("devtools.gcli.jquerySrc", "https://cdnjs.cloudflare.com/ajax/libs/jquery/2.2.1/jquery.min.js");
-pref("devtools.gcli.lodashSrc", "https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.6.1/lodash.min.js");
-pref("devtools.gcli.underscoreSrc", "https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js");
-
-// Set imgur upload client ID
-pref("devtools.gcli.imgurClientID", '0df414e888d7240');
-// Imgur's upload URL
-pref("devtools.gcli.imgurUploadURL", "https://api.imgur.com/3/image");
-
-// GCLI commands directory
-pref("devtools.commands.dir", "");
 
 // view source
 pref("view_source.syntax_highlight", true);
@@ -1345,9 +1271,6 @@ pref("dom.timeout.enable_budget_timer_throttling", true);
 // Don't use new input types
 pref("dom.experimental_forms", false);
 
-// Enable <input type=number>:
-pref("dom.forms.number", true);
-
 // Enable <input type=color> by default. It will be turned off for remaining
 // platforms which don't have a color picker implemented yet.
 pref("dom.forms.color", true);
@@ -1437,7 +1360,7 @@ pref("privacy.resistFingerprinting.autoDeclineNoUserInputCanvasPrompts", true);
 //   File.lastModified, audioContext.currentTime, canvas.captureStream.currentTime
 pref("privacy.reduceTimerPrecision", true);
 // Dynamically tune the resolution of the timer reduction for both of the two above prefs
-pref("privacy.resistFingerprinting.reduceTimerPrecision.microseconds", 100);
+pref("privacy.resistFingerprinting.reduceTimerPrecision.microseconds", 1000);
 // Enable jittering the clock one precision value forward
 pref("privacy.resistFingerprinting.reduceTimerPrecision.jitter", true);
 // Lower the priority of network loads for resources on the tracking protection list.
@@ -1521,16 +1444,6 @@ pref("javascript.options.mem.gc_incremental_slice_ms", 5);
 
 // JSGC_COMPACTING_ENABLED
 pref("javascript.options.mem.gc_compacting", true);
-
-pref("javascript.options.mem.log", false);
-pref("javascript.options.mem.notify", false);
-pref("javascript.options.gc_on_memory_pressure", true);
-pref("javascript.options.compact_on_user_inactive", true);
-#ifdef NIGHTLY_BUILD
-pref("javascript.options.compact_on_user_inactive_delay", 15000); // ms
-#else
-pref("javascript.options.compact_on_user_inactive_delay", 300000); // ms
-#endif
 
 // JSGC_HIGH_FREQUENCY_TIME_LIMIT
 pref("javascript.options.mem.gc_high_frequency_time_limit_ms", 1000);
@@ -1968,13 +1881,6 @@ pref("network.websocket.delay-failed-reconnects", true);
 // Server-Sent Events
 // Equal to the DEFAULT_RECONNECTION_TIME_VALUE value in nsEventSource.cpp
 pref("dom.server-events.default-reconnection-time", 5000); // in milliseconds
-
-// If false, remote JAR files that are served with a content type other than
-// application/java-archive or application/x-jar will not be opened
-// by the jar channel.
-pref("network.jar.open-unsafe-types", false);
-// If true, loading remote JAR files using the jar: protocol will be prevented.
-pref("network.jar.block-remote-files", true);
 
 // This preference, if true, causes all UTF-8 domain names to be normalized to
 // punycode.  The intention is to allow UTF-8 domain names as input, but never
@@ -2618,6 +2524,11 @@ pref("security.notification_enable_delay", 500);
 pref("security.csp.enable", true);
 pref("security.csp.experimentalEnabled", false);
 pref("security.csp.enableStrictDynamic", true);
+
+#if defined(DEBUG) && !defined(ANDROID)
+pref("csp.content_privileged_about_uris_without_csp", "blank,cache,certerror,checkerboard,credits,home,logo,neterror,newtab,printpreview,rights,srcdoc,studies");
+#endif
+
 #ifdef NIGHTLY_BUILD
 pref("security.csp.enable_violation_events", true);
 #else
@@ -2668,6 +2579,8 @@ pref("security.allow_chrome_frames_inside_content", false);
 // Services security settings
 pref("services.settings.server", "https://firefox.settings.services.mozilla.com/v1");
 pref("services.settings.changes.path", "/buckets/monitor/collections/changes/records");
+pref("services.settings.default_bucket", "main");
+pref("services.settings.default_signer", "");
 
 // Blocklist preferences
 pref("extensions.blocklist.enabled", true);
@@ -2929,20 +2842,6 @@ pref("layout.selection.caret_style", 0);
 // pref to report CSS errors to the error console
 pref("layout.css.report_errors", true);
 
-// Should the :visited selector ever match (otherwise :link matches instead)?
-pref("layout.css.visited_links_enabled", true);
-
-// Pref to control whether @-moz-document rules are enabled in content pages.
-pref("layout.css.moz-document.content.enabled",  false);
-
-// Pref to control whether @-moz-document url-prefix() is parsed in content
-// pages. Only effective when layout.css.moz-document.content.enabled is false.
-#ifdef EARLY_BETA_OR_EARLIER
-pref("layout.css.moz-document.url-prefix-hack.enabled", false);
-#else
-pref("layout.css.moz-document.url-prefix-hack.enabled", true);
-#endif
-
 #ifdef NIGHTLY_BUILD
 pref("layout.css.getPropertyCSSValue.enabled", false);
 #else
@@ -3026,26 +2925,6 @@ pref("layout.css.float-logical-values.enabled", true);
 // Is support for the CSS4 image-orientation property enabled?
 pref("layout.css.image-orientation.enabled", true);
 
-// Is support for the font-display @font-face descriptor enabled?
-pref("layout.css.font-display.enabled", true);
-
-// Is support for variation fonts enabled?
-pref("layout.css.font-variations.enabled", true);
-
-// Is support for the frames() timing function enabled?
-#ifdef RELEASE_OR_BETA
-pref("layout.css.frames-timing.enabled", false);
-#else
-pref("layout.css.frames-timing.enabled", true);
-#endif
-
-// Are we emulating -moz-{inline}-box layout using CSS flexbox?
-// (This pref only takes effect in prerelease builds, so we only
-// bother specifying a default in prerelease builds as well.)
-#ifndef RELEASE_OR_BETA
-pref("layout.css.emulate-moz-box-with-flex", false);
-#endif
-
 // Is the paint-order property supported for HTML text?
 // (It is always supported for SVG.)
 pref("layout.css.paint-order.enabled", true);
@@ -3057,17 +2936,6 @@ pref("layout.css.prefixes.transitions", true);
 pref("layout.css.prefixes.animations", true);
 pref("layout.css.prefixes.box-sizing", true);
 pref("layout.css.prefixes.font-features", true);
-
-// Is -moz-prefixed gradient functions enabled?
-pref("layout.css.prefixes.gradients", true);
-
-// Are webkit-prefixed properties & property-values supported?
-pref("layout.css.prefixes.webkit", true);
-
-// Are "-webkit-{min|max}-device-pixel-ratio" media queries supported?
-// (Note: this pref has no effect if the master 'layout.css.prefixes.webkit'
-// pref is set to false.)
-pref("layout.css.prefixes.device-pixel-ratio-webkit", false);
 
 // Is support for background-blend-mode enabled?
 pref("layout.css.background-blend-mode.enabled", true);
@@ -3093,9 +2961,6 @@ pref("layout.css.all-shorthand.enabled", true);
 
 // Is support for CSS overflow-clip-box enabled for non-UA sheets?
 pref("layout.css.overflow-clip-box.enabled", false);
-
-// Is support for CSS "grid-template-{columns,rows}: subgrid X" enabled?
-pref("layout.css.grid-template-subgrid-value.enabled", false);
 
 // Is support for CSS contain enabled?
 pref("layout.css.contain.enabled", false);
@@ -3136,13 +3001,6 @@ pref("layout.css.shape-outside.enabled", false);
 
 // Is support for document.fonts enabled?
 pref("layout.css.font-loading-api.enabled", true);
-
-// Should stray control characters be rendered visibly?
-#ifdef RELEASE_OR_BETA
-pref("layout.css.control-characters.visible", false);
-#else
-pref("layout.css.control-characters.visible", true);
-#endif
 
 // Is support for column-span enabled?
 pref("layout.css.column-span.enabled", false);
@@ -3717,7 +3575,7 @@ pref("ui.mouse.radius.inputSource.touchOnly", true);
 
 #ifdef XP_WIN
 
-pref("font.name-list.emoji", "Segoe UI Emoji, EmojiOne Mozilla");
+pref("font.name-list.emoji", "Segoe UI Emoji, Twemoji Mozilla");
 
 pref("font.name-list.serif.ar", "Times New Roman");
 pref("font.name-list.sans-serif.ar", "Segoe UI, Tahoma, Arial");
@@ -4387,7 +4245,7 @@ pref("print.print_in_color", true);
 
 // fontconfig doesn't support emoji yet
 // https://lists.freedesktop.org/archives/fontconfig/2016-October/005842.html
-pref("font.name-list.emoji", "EmojiOne Mozilla");
+pref("font.name-list.emoji", "Twemoji Mozilla");
 
 pref("font.name-list.serif.ar", "serif");
 pref("font.name-list.sans-serif.ar", "sans-serif");
@@ -5097,6 +4955,8 @@ pref("extensions.webextensions.protocol.remote", true);
 // Disable tab hiding API by default.
 pref("extensions.webextensions.tabhide.enabled", false);
 
+pref("extensions.webextensions.background-delayed-startup", false);
+
 // Report Site Issue button
 pref("extensions.webcompat-reporter.newIssueEndpoint", "https://webcompat.com/issues/new");
 #if defined(MOZ_DEV_EDITION) || defined(NIGHTLY_BUILD)
@@ -5128,11 +4988,6 @@ pref("alerts.useSystemBackend", true);
 
 // DOM full-screen API.
 pref("full-screen-api.enabled", false);
-#ifdef RELEASE_OR_BETA
-pref("full-screen-api.unprefix.enabled", false);
-#else
-pref("full-screen-api.unprefix.enabled", true);
-#endif
 pref("full-screen-api.allow-trusted-requests-only", true);
 // whether to prevent the top level widget from going fullscreen
 pref("full-screen-api.ignore-widgets", false);
@@ -5261,11 +5116,6 @@ pref("media.ondevicechange.fakeDeviceChangeEvent.enabled", false);
 // those platforms we don't handle touch events anyway so it's conceptually
 // a no-op.
 pref("layout.css.touch_action.enabled", true);
-
-// Enables some assertions in ComputedStyle that are too expensive
-// for general use, but might be useful to enable for specific tests.
-// This only has an effect in DEBUG-builds.
-pref("layout.css.expensive-style-struct-assertions.enabled", false);
 
 #if defined(MOZ_WIDGET_ANDROID)
 // Network Information API
@@ -5458,8 +5308,8 @@ pref("network.trr.confirmationNS", "example.com");
 // hardcode the resolution of the hostname in network.trr.uri instead of
 // relying on the system resolver to do it for you
 pref("network.trr.bootstrapAddress", "");
-// TRR blacklist entry expire time (in seconds). Default is 72 hours.
-pref("network.trr.blacklist-duration", 259200);
+// TRR blacklist entry expire time (in seconds). Default is 20 minutes.
+pref("network.trr.blacklist-duration", 1200);
 // Single TRR request timeout, in milliseconds
 pref("network.trr.request-timeout", 3000);
 // Allow AAAA entries to be used "early", before the A results are in
@@ -5634,10 +5484,6 @@ pref("layout.accessiblecaret.use_long_tap_injector", false);
 
 // By default, carets become tilt only when they are overlapping.
 pref("layout.accessiblecaret.always_tilt", false);
-
-// By default, carets always show when scrolling (either panning for zooming)
-// the page.
-pref("layout.accessiblecaret.always_show_when_scrolling", true);
 
 // Selection change notifications generated by Javascript hide
 // AccessibleCarets and close UI interaction by default.
@@ -5826,9 +5672,6 @@ pref("memory.report_concurrency", 10);
 // Add Mozilla AudioChannel APIs.
 pref("media.useAudioChannelAPI", false);
 
-// Expose Request.context. Currently disabled since the spec is in flux.
-pref("dom.requestcontext.enabled", false);
-
 pref("toolkit.pageThumbs.screenSizeDivisor", 7);
 pref("toolkit.pageThumbs.minWidth", 0);
 pref("toolkit.pageThumbs.minHeight", 0);
@@ -5887,6 +5730,9 @@ pref("security.data_uri.unique_opaque_origin", true);
 // Please note that manually entering a data: URI in the
 // URL-Bar will not be blocked when flipping this pref.
 pref("security.data_uri.block_toplevel_data_uri_navigations", true);
+
+// If true, all FTP subresource loads will be blocked.
+pref("security.block_ftp_subresources", true);
 
 // Enable Storage API for all platforms except Android.
 #if !defined(MOZ_WIDGET_ANDROID)
@@ -5977,3 +5823,7 @@ pref("layers.omtp.dump-capture", false);
 // a content to view.  This is mostly intended to prevent infinite
 // loops with faulty converters involved.
 pref("general.document_open_conversion_depth_limit", 20);
+
+// If true, touchstart and touchmove listeners on window, document,
+// documentElement and document.body are passive by default.
+pref("dom.event.default_to_passive_touch_listeners", false);

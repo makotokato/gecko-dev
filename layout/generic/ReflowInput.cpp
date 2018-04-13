@@ -54,15 +54,32 @@ static eNormalLineHeightControl sNormalLineHeightControl = eUninitialized;
 
 // Initialize a <b>root</b> reflow state with a rendering context to
 // use for measuring things.
-ReflowInput::ReflowInput(nsPresContext*       aPresContext,
-                                     nsIFrame*            aFrame,
-                                     gfxContext*          aRenderingContext,
-                                     const LogicalSize&   aAvailableSpace,
-                                     uint32_t             aFlags)
+ReflowInput::ReflowInput(nsPresContext* aPresContext,
+                         nsIFrame* aFrame,
+                         gfxContext* aRenderingContext,
+                         const LogicalSize& aAvailableSpace,
+                         uint32_t aFlags)
   : SizeComputationInput(aFrame, aRenderingContext)
+  , mCBReflowInput{ nullptr }
+  , mFrameType{}
   , mBlockDelta(0)
   , mOrthogonalLimit(NS_UNCONSTRAINEDSIZE)
+  , mAvailableWidth{}
+  , mAvailableHeight{}
+  , mComputedWidth{}
+  , mComputedHeight{}
+  , mComputedMinWidth{}
+  , mComputedMaxWidth{}
+  , mComputedMinHeight{}
+  , mComputedMaxHeight{}
   , mContainingBlockSize(mWritingMode)
+  , mStyleDisplay{ nullptr }
+  , mStyleVisibility{ nullptr }
+  , mStylePosition{ nullptr }
+  , mStyleBorder{ nullptr }
+  , mStyleMargin{ nullptr }
+  , mStylePadding{ nullptr }
+  , mStyleText{ nullptr }
   , mReflowDepth(0)
 {
   NS_PRECONDITION(aRenderingContext, "no rendering context");
@@ -172,17 +189,33 @@ SizeComputationInput::SizeComputationInput(nsIFrame *aFrame,
 // Initialize a reflow state for a child frame's reflow. Some state
 // is copied from the parent reflow state; the remaining state is
 // computed.
-ReflowInput::ReflowInput(
-                     nsPresContext*           aPresContext,
-                     const ReflowInput& aParentReflowInput,
-                     nsIFrame*                aFrame,
-                     const LogicalSize&       aAvailableSpace,
-                     const LogicalSize*       aContainingBlockSize,
-                     uint32_t                 aFlags)
+ReflowInput::ReflowInput(nsPresContext* aPresContext,
+                         const ReflowInput& aParentReflowInput,
+                         nsIFrame* aFrame,
+                         const LogicalSize& aAvailableSpace,
+                         const LogicalSize* aContainingBlockSize,
+                         uint32_t aFlags)
   : SizeComputationInput(aFrame, aParentReflowInput.mRenderingContext)
+  , mCBReflowInput{ nullptr }
+  , mFrameType{}
   , mBlockDelta(0)
   , mOrthogonalLimit(NS_UNCONSTRAINEDSIZE)
+  , mAvailableWidth{}
+  , mAvailableHeight{}
+  , mComputedWidth{}
+  , mComputedHeight{}
+  , mComputedMinWidth{}
+  , mComputedMaxWidth{}
+  , mComputedMinHeight{}
+  , mComputedMaxHeight{}
   , mContainingBlockSize(mWritingMode)
+  , mStyleDisplay{ nullptr }
+  , mStyleVisibility{ nullptr }
+  , mStylePosition{ nullptr }
+  , mStyleBorder{ nullptr }
+  , mStyleMargin{ nullptr }
+  , mStylePadding{ nullptr }
+  , mStyleText{ nullptr }
   , mFlags(aParentReflowInput.mFlags)
   , mReflowDepth(aParentReflowInput.mReflowDepth + 1)
 {
@@ -2531,7 +2564,7 @@ static void
 UpdateProp(nsIFrame* aFrame,
            const FramePropertyDescriptor<nsMargin>* aProperty,
            bool aNeeded,
-           nsMargin& aNewValue)
+           const nsMargin& aNewValue)
 {
   if (aNeeded) {
     nsMargin* propValue = aFrame->GetProperty(aProperty);
@@ -2566,10 +2599,10 @@ SizeComputationInput::InitOffsets(WritingMode aWM,
   // XXX fix to provide 0,0 for the top&bottom margins for
   // inline-non-replaced elements
   bool needMarginProp = ComputeMargin(aWM, aPercentBasis);
-  // XXX We need to include 'auto' horizontal margins in this too!
-  // ... but if we did that, we'd need to fix nsFrame::GetUsedMargin
-  // to use it even when the margins are all zero (since sometimes
-  // they get treated as auto)
+  // Note that ComputeMargin() simplistically resolves 'auto' margins to 0.
+  // In formatting contexts where this isn't correct, some later code will
+  // need to update the UsedMargin() property with the actual resolved value.
+  // One example of this is ::CalculateBlockSideMargins().
   ::UpdateProp(mFrame, nsIFrame::UsedMarginProperty(), needMarginProp,
                ComputedPhysicalMargin());
 
@@ -2800,7 +2833,16 @@ ReflowInput::CalculateBlockSideMargins(LayoutFrameType aFrameType)
   } else if (isAutoEndMargin) {
     margin.IEnd(cbWM) += availMarginSpace;
   }
-  SetComputedLogicalMargin(margin.ConvertTo(mWritingMode, cbWM));
+  LogicalMargin marginInOurWM = margin.ConvertTo(mWritingMode, cbWM);
+  SetComputedLogicalMargin(marginInOurWM);
+
+  if (isAutoStartMargin || isAutoEndMargin) {
+    // Update the UsedMargin property if we were tracking it already.
+    nsMargin* propValue = mFrame->GetProperty(nsIFrame::UsedMarginProperty());
+    if (propValue) {
+      *propValue = marginInOurWM.GetPhysicalMargin(mWritingMode);
+    }
+  }
 }
 
 #define NORMAL_LINE_HEIGHT_FACTOR 1.2f    // in term of emHeight
@@ -2841,6 +2883,7 @@ GetNormalLineHeight(nsFontMetrics* aFontMetrics)
 
 static inline nscoord
 ComputeLineHeight(ComputedStyle* aComputedStyle,
+                  nsPresContext* aPresContext,
                   nscoord aBlockBSize,
                   float aFontSizeInflation)
 {
@@ -2874,7 +2917,7 @@ ComputeLineHeight(ComputedStyle* aComputedStyle,
   }
 
   RefPtr<nsFontMetrics> fm = nsLayoutUtils::
-    GetFontMetricsForComputedStyle(aComputedStyle, aFontSizeInflation);
+    GetFontMetricsForComputedStyle(aComputedStyle, aPresContext, aFontSizeInflation);
   return GetNormalLineHeight(fm);
 }
 
@@ -2885,20 +2928,27 @@ ReflowInput::CalcLineHeight() const
     nsLayoutUtils::IsNonWrapperBlock(mFrame) ? ComputedBSize() :
     (mCBReflowInput ? mCBReflowInput->ComputedBSize() : NS_AUTOHEIGHT);
 
-  return CalcLineHeight(mFrame->GetContent(), mFrame->Style(), blockBSize,
+  return CalcLineHeight(mFrame->GetContent(),
+                        mFrame->Style(),
+                        mFrame->PresContext(),
+                        blockBSize,
                         nsLayoutUtils::FontSizeInflationFor(mFrame));
 }
 
 /* static */ nscoord
 ReflowInput::CalcLineHeight(nsIContent* aContent,
-                                  ComputedStyle* aComputedStyle,
-                                  nscoord aBlockBSize,
-                                  float aFontSizeInflation)
+                            ComputedStyle* aComputedStyle,
+                            nsPresContext* aPresContext,
+                            nscoord aBlockBSize,
+                            float aFontSizeInflation)
 {
   NS_PRECONDITION(aComputedStyle, "Must have a ComputedStyle");
 
   nscoord lineHeight =
-    ComputeLineHeight(aComputedStyle, aBlockBSize, aFontSizeInflation);
+    ComputeLineHeight(aComputedStyle,
+                      aPresContext,
+                      aBlockBSize,
+                      aFontSizeInflation);
 
   NS_ASSERTION(lineHeight >= 0, "ComputeLineHeight screwed up");
 

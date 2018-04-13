@@ -30,8 +30,6 @@ from taskgraph.util.schema import (
 )
 from taskgraph.util.scriptworker import (
     BALROG_ACTIONS,
-    get_balrog_action_scope,
-    get_balrog_server_scope,
     get_release_config,
 )
 from voluptuous import Any, Required, Optional, Extra
@@ -458,7 +456,7 @@ task_description_schema = Schema({
         Required('implementation'): 'beetmover',
 
         # the maximum time to run, in seconds
-        Required('max-run-time'): int,
+        Required('max-run-time', default=600): int,
 
         # locale key, if this is a locale beetmover job
         Optional('locale'): basestring,
@@ -534,19 +532,10 @@ task_description_schema = Schema({
 
     }, {
         Required('implementation'): 'push-apk',
-
-        # list of artifact URLs for the artifacts that should be beetmoved
         Required('upstream-artifacts'): [{
-            # taskId of the task with the artifact
             Required('taskId'): taskref_or_string,
-
-            # type of signing task (for CoT)
             Required('taskType'): basestring,
-
-            # Paths to the artifacts to sign
             Required('paths'): [basestring],
-
-            # Artifact is optional to run the task
             Optional('optional', default=False): bool,
         }],
 
@@ -554,6 +543,21 @@ task_description_schema = Schema({
         Required('google-play-track'): Any('production', 'beta', 'alpha', 'rollout', 'invalid'),
         Required('commit'): bool,
         Optional('rollout-percentage'): Any(int, None),
+    }, {
+        Required('implementation'): 'push-snap',
+        Required('upstream-artifacts'): [{
+            Required('taskId'): taskref_or_string,
+            Required('taskType'): basestring,
+            Required('paths'): [basestring],
+        }],
+    }, {
+        Required('implementation'): 'sign-and-push-addons',
+        Required('channel'): Any('listed', 'unlisted'),
+        Required('upstream-artifacts'): [{
+            Required('taskId'): taskref_or_string,
+            Required('taskType'): basestring,
+            Required('paths'): [basestring],
+        }],
     }, {
         Required('implementation'): 'shipit',
         Required('release-name'): basestring,
@@ -1043,10 +1047,6 @@ def build_balrog_payload(config, task, task_def):
     worker = task['worker']
     release_config = get_release_config(config)
 
-    server_scope = get_balrog_server_scope(config)
-    action_scope = get_balrog_action_scope(config, action=worker['balrog-action'])
-    task_def['scopes'] = [server_scope, action_scope]
-
     if worker['balrog-action'] == 'submit-locale':
         task_def['payload'] = {
             'upstreamArtifacts':  worker['upstream-artifacts']
@@ -1107,12 +1107,21 @@ def build_push_apk_payload(config, task, task_def):
 
     task_def['payload'] = {
         'commit': worker['commit'],
-        'upstreamArtifacts':  worker['upstream-artifacts'],
+        'upstreamArtifacts': worker['upstream-artifacts'],
         'google_play_track': worker['google-play-track'],
     }
 
     if worker.get('rollout-percentage', None):
         task_def['payload']['rollout_percentage'] = worker['rollout-percentage']
+
+
+@payload_builder('push-snap')
+def build_push_snap_payload(config, task, task_def):
+    worker = task['worker']
+
+    task_def['payload'] = {
+        'upstreamArtifacts':  worker['upstream-artifacts'],
+    }
 
 
 @payload_builder('shipit')
@@ -1121,6 +1130,16 @@ def build_ship_it_payload(config, task, task_def):
 
     task_def['payload'] = {
         'release_name': worker['release-name']
+    }
+
+
+@payload_builder('sign-and-push-addons')
+def build_sign_and_push_addons_payload(config, task, task_def):
+    worker = task['worker']
+
+    task_def['payload'] = {
+        'channel': worker['channel'],
+        'upstreamArtifacts': worker['upstream-artifacts'],
     }
 
 

@@ -116,7 +116,17 @@ public:
   // Structure that stores the current state of a float manager for
   // Save/Restore purposes.
   struct SavedState {
-    explicit SavedState() {}
+    explicit SavedState()
+      : mFloatInfoCount{}
+      , mLineLeft{}
+      , mBlockStart{}
+      , mPushedLeftFloatPastBreak{ false }
+      , mPushedRightFloatPastBreak{ false }
+      , mSplitLeftFloatAcrossBreak{ false }
+      , mSplitRightFloatAcrossBreak{ false }
+    {
+    }
+
   private:
     uint32_t mFloatInfoCount;
     nscoord mLineLeft, mBlockStart;
@@ -344,6 +354,7 @@ private:
   class RoundedBoxShapeInfo;
   class EllipseShapeInfo;
   class PolygonShapeInfo;
+  class ImageShapeInfo;
 
   struct FloatInfo {
     nsIFrame *const mFrame;

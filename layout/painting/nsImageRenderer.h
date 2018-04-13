@@ -33,8 +33,12 @@ struct CSSSizeOrRatio
 {
   CSSSizeOrRatio()
     : mRatio(0, 0)
+    , mWidth{}
+    , mHeight{}
     , mHasWidth(false)
-    , mHasHeight(false) {}
+    , mHasHeight(false)
+  {
+  }
 
   bool CanComputeConcreteSize() const
   {
@@ -253,6 +257,14 @@ public:
                            uint8_t              aIndex,
                            const mozilla::Maybe<nsSize>& aSVGViewportSize,
                            const bool           aHasIntrinsicRatio);
+
+  /**
+   * Draw the image to aRenderingContext which can be used to define the
+   * float area in the presence of "shape-outside: <image>".
+   */
+  ImgDrawResult
+  DrawShapeImage(nsPresContext* aPresContext,
+                 gfxContext& aRenderingContext);
 
   bool IsRasterImage();
   bool IsAnimatedImage();

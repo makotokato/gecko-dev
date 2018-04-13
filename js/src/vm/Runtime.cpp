@@ -281,7 +281,7 @@ JSRuntime::destroyRuntime()
          * Finish any in-progress GCs first. This ensures the parseWaitingOnGC
          * list is empty in CancelOffThreadParses.
          */
-        JSContext* cx = TlsContext.get();
+        JSContext* cx = mainContextFromOwnThread();
         if (JS::IsIncrementalGCInProgress(cx))
             FinishGC(cx);
 
@@ -418,10 +418,8 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
             rtSizes->scriptData += mallocSizeOf(r.front());
     }
 
-    if (jitRuntime_) {
+    if (jitRuntime_)
         jitRuntime_->execAlloc().addSizeOfCode(&rtSizes->code);
-        jitRuntime_->backedgeExecAlloc().addSizeOfCode(&rtSizes->code);
-    }
 
     rtSizes->wasmRuntime += wasmInstances.lock()->sizeOfExcludingThis(mallocSizeOf);
 }
@@ -436,7 +434,7 @@ InvokeInterruptCallback(JSContext* cx)
 
     // A worker thread may have requested an interrupt after finishing an Ion
     // compilation.
-    jit::AttachFinishedCompilations(cx->zone()->group(), cx);
+    jit::AttachFinishedCompilations(cx);
 
     // Important: Additional callbacks can occur inside the callback handler
     // if it re-enters the JS engine. The embedding must ensure that the
@@ -506,14 +504,12 @@ JSContext::requestInterrupt(InterruptMode mode)
     if (mode == JSContext::RequestInterruptUrgent) {
         // If this interrupt is urgent (slow script dialog for instance), take
         // additional steps to interrupt corner cases where the above fields are
-        // not regularly polled. Wake ilooping Ion code, irregexp JIT code and
-        // Atomics.wait()
+        // not regularly polled. Wake Atomics.wait() and irregexp JIT code.
         interruptRegExpJit_ = true;
         FutexThread::lock();
         if (fx.isWaiting())
             fx.wake(FutexThread::WakeForJSInterrupt);
         fx.unlock();
-        jit::InterruptRunningCode(this);
         wasm::InterruptRunningCode(this);
     }
 }
@@ -808,7 +804,7 @@ JSRuntime::clearUsedByHelperThread(Zone* zone)
     MOZ_ASSERT(zone->group()->usedByHelperThread());
     zone->group()->clearUsedByHelperThread();
     numActiveHelperThreadZones--;
-    JSContext* cx = TlsContext.get();
+    JSContext* cx = mainContextFromOwnThread();
     if (gc.fullGCForAtomsRequested() && cx->canCollectAtoms())
         gc.triggerFullGCForAtoms(cx);
 }

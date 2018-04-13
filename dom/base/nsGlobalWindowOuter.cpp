@@ -1054,11 +1054,6 @@ nsGlobalWindowOuter::CleanUp()
   mChromeEventHandler = nullptr; // Forces Release
   mParentTarget = nullptr;
 
-  nsGlobalWindowInner* inner = GetCurrentInnerWindowInternal();
-  if (inner) {
-    inner->CleanUp();
-  }
-
   mArguments = nullptr;
 
   if (mIdleTimer) {
@@ -1855,6 +1850,15 @@ nsGlobalWindowOuter::SetNewDocument(nsIDocument* aDocument,
                                              currentInner->mPerformance->GetDOMTiming(),
                                              currentInner->mPerformance->GetChannel());
         }
+
+        // Rebind DETH objects to the new global created by document.open().
+        // XXX: Is this correct?  We should consider if the spec and our
+        //      implementation should change to match other browsers by
+        //      just reusing the current window.  (Bug 1449992)
+        currentInner->ForEachEventTargetObject(
+          [&] (DOMEventTargetHelper* aDETH, bool* aDoneOut) {
+            aDETH->BindToOwner(newInnerWindow->AsGlobal());
+          });
       }
 
       // Don't free objects on our current inner window if it's going to be
@@ -1999,14 +2003,6 @@ nsGlobalWindowOuter::SetNewDocument(nsIDocument* aDocument,
 
       rv = newInnerWindow->ExecutionReady();
       NS_ENSURE_SUCCESS(rv, rv);
-    }
-
-    // If the document comes from a JAR, check if the channel was determined
-    // to be unsafe. If so, permanently disable script on the compartment by
-    // calling Block() and throwing away the key.
-    nsCOMPtr<nsIJARChannel> jarChannel = do_QueryInterface(aDocument->GetChannel());
-    if (jarChannel && jarChannel->GetIsUnsafe()) {
-      xpc::Scriptability::Get(newInnerGlobal).Block();
     }
 
     if (mArguments) {
@@ -2328,24 +2324,12 @@ nsGlobalWindowOuter::UpdateParentTarget()
 }
 
 EventTarget*
-nsGlobalWindowOuter::GetTargetForDOMEvent()
-{
-  return GetOuterWindowInternal();
-}
-
-EventTarget*
 nsGlobalWindowOuter::GetTargetForEventTargetChain()
 {
   return GetCurrentInnerWindowInternal();
 }
 
-nsresult
-nsGlobalWindowOuter::WillHandleEvent(EventChainPostVisitor& aVisitor)
-{
-  return NS_OK;
-}
-
-nsresult
+void
 nsGlobalWindowOuter::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
   MOZ_CRASH("The outer window should not be part of an event path");
@@ -2596,10 +2580,10 @@ nsGlobalWindowOuter::GetNavigator()
   FORWARD_TO_INNER(Navigator, (), nullptr);
 }
 
-nsIDOMScreen*
+nsScreen*
 nsGlobalWindowOuter::GetScreen()
 {
-  FORWARD_TO_INNER(GetScreen, (), nullptr);
+  FORWARD_TO_INNER(GetScreen, (IgnoreErrors()), nullptr);
 }
 
 void
@@ -3708,10 +3692,9 @@ nsGlobalWindowOuter::CheckSecurityLeftAndTop(int32_t* aLeft, int32_t* aTop,
 
     nsCOMPtr<nsIBaseWindow> treeOwner = GetTreeOwnerWindow();
 
-    nsCOMPtr<nsIDOMScreen> screen = GetScreen();
+    RefPtr<nsScreen> screen = GetScreen();
 
     if (treeOwner && screen) {
-      int32_t screenLeft, screenTop, screenWidth, screenHeight;
       int32_t winLeft, winTop, winWidth, winHeight;
 
       // Get the window size
@@ -3726,9 +3709,9 @@ nsGlobalWindowOuter::CheckSecurityLeftAndTop(int32_t* aLeft, int32_t* aTop,
 
       // Get the screen dimensions
       // XXX This should use nsIScreenManager once it's fully fleshed out.
-      screen->GetAvailLeft(&screenLeft);
-      screen->GetAvailWidth(&screenWidth);
-      screen->GetAvailHeight(&screenHeight);
+      int32_t screenLeft = screen->GetAvailLeft(IgnoreErrors());
+      int32_t screenWidth = screen->GetAvailWidth(IgnoreErrors());
+      int32_t screenHeight = screen->GetAvailHeight(IgnoreErrors());
 #if defined(XP_MACOSX)
       /* The mac's coordinate system is different from the assumed Windows'
          system. It offsets by the height of the menubar so that a window
@@ -3737,9 +3720,9 @@ nsGlobalWindowOuter::CheckSecurityLeftAndTop(int32_t* aLeft, int32_t* aTop,
          the Avail... coordinates is overloaded. Here we allow a window
          to be placed at (0,0) because it does make sense to do so.
       */
-      screen->GetTop(&screenTop);
+      int32_t screenTop = screen->GetTop(IgnoreErrors());
 #else
-      screen->GetAvailTop(&screenTop);
+      int32_t screenTop = screen->GetAvailTop(IgnoreErrors());
 #endif
 
       if (aLeft) {
@@ -3888,10 +3871,7 @@ nsGlobalWindowOuter::DispatchResizeEvent(const CSSIntSize& aSize)
   nsCOMPtr<EventTarget> target = do_QueryInterface(GetOuterWindow());
   domEvent->SetTarget(target);
 
-  bool defaultActionEnabled = true;
-  target->DispatchEvent(domEvent, &defaultActionEnabled);
-
-  return defaultActionEnabled;
+  return target->DispatchEvent(*domEvent, CallerType::System, IgnoreErrors());
 }
 
 static already_AddRefed<nsIDocShellTreeItem>
@@ -4171,6 +4151,7 @@ FullscreenTransitionTask::Run()
                                          this);
   } else if (stage == eEnd) {
     PROFILER_ADD_MARKER("Fullscreen transition end");
+    mWidget->CleanupFullscreenTransition();
   }
   return NS_OK;
 }
@@ -5432,8 +5413,7 @@ nsGlobalWindowOuter::FirePopupBlockedEvent(nsIDocument* aDoc,
 
   event->SetTrusted(true);
 
-  bool defaultActionEnabled;
-  aDoc->DispatchEvent(event, &defaultActionEnabled);
+  aDoc->DispatchEvent(*event);
 }
 
 // static
@@ -6223,8 +6203,7 @@ nsGlobalWindowOuter::LeaveModalState()
     event->InitEvent(NS_LITERAL_STRING("endmodalstate"), true, false);
     event->SetTrusted(true);
     event->WidgetEventPtr()->mFlags.mOnlyChromeDispatch = true;
-    bool dummy;
-    topWin->DispatchEvent(event, &dummy);
+    topWin->DispatchEvent(*event);
   }
 }
 
@@ -6472,74 +6451,21 @@ nsGlobalWindowOuter::GetOwnerGlobalForBindings()
   return this;
 }
 
-NS_IMETHODIMP
-nsGlobalWindowOuter::RemoveEventListener(const nsAString& aType,
-                                         nsIDOMEventListener* aListener,
-                                         bool aUseCapture)
+bool
+nsGlobalWindowOuter::DispatchEvent(Event& aEvent,
+                                   CallerType aCallerType,
+                                   ErrorResult& aRv)
 {
-  FORWARD_TO_INNER(RemoveEventListener, (aType, aListener, aUseCapture), NS_OK);
+  FORWARD_TO_INNER(DispatchEvent, (aEvent, aCallerType, aRv), false);
 }
 
-NS_IMPL_REMOVE_SYSTEM_EVENT_LISTENER(nsGlobalWindowOuter)
-
-NS_IMETHODIMP
-nsGlobalWindowOuter::DispatchEvent(nsIDOMEvent* aEvent, bool* aRetVal)
+bool
+nsGlobalWindowOuter::ComputeDefaultWantsUntrusted(ErrorResult& aRv)
 {
-  FORWARD_TO_INNER(DispatchEvent, (aEvent, aRetVal), NS_OK);
-}
-
-NS_IMETHODIMP
-nsGlobalWindowOuter::AddEventListener(const nsAString& aType,
-                                      nsIDOMEventListener *aListener,
-                                      bool aUseCapture, bool aWantsUntrusted,
-                                      uint8_t aOptionalArgc)
-{
-  FORWARD_TO_INNER_CREATE(AddEventListener,
-                          (aType, aListener, aUseCapture, aWantsUntrusted, aOptionalArgc),
-                          NS_ERROR_UNEXPECTED);
-}
-
-void
-nsGlobalWindowOuter::AddEventListener(const nsAString& aType,
-                                      EventListener* aListener,
-                                      const AddEventListenerOptionsOrBoolean& aOptions,
-                                      const Nullable<bool>& aWantsUntrusted,
-                                      ErrorResult& aRv)
-{
-  if (mInnerWindow && !nsContentUtils::CanCallerAccess(mInnerWindow)) {
-    aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
-    return;
-  }
-
-  FORWARD_TO_INNER_CREATE(AddEventListener,
-                          (aType, aListener, aOptions, aWantsUntrusted, aRv),);
-}
-
-NS_IMETHODIMP
-nsGlobalWindowOuter::AddSystemEventListener(const nsAString& aType,
-                                            nsIDOMEventListener *aListener,
-                                            bool aUseCapture,
-                                            bool aWantsUntrusted,
-                                            uint8_t aOptionalArgc)
-{
-  NS_ASSERTION(!aWantsUntrusted || aOptionalArgc > 1,
-               "Won't check if this is chrome, you want to set "
-               "aWantsUntrusted to false or make the aWantsUntrusted "
-               "explicit by making optional_argc non-zero.");
-
-  if (mInnerWindow &&
-      !nsContentUtils::LegacyIsCallerNativeCode() &&
-      !nsContentUtils::CanCallerAccess(mInnerWindow)) {
-    return NS_ERROR_DOM_SECURITY_ERR;
-  }
-
-  if (!aWantsUntrusted &&
-      (aOptionalArgc < 2 && !nsContentUtils::IsChromeDoc(mDoc))) {
-    aWantsUntrusted = true;
-  }
-
-  return NS_AddSystemEventListener(this, aType, aListener, aUseCapture,
-                                   aWantsUntrusted);
+  // It's OK that we just return false here on failure to create an
+  // inner.  GetOrCreateListenerManager() will likewise fail, and then
+  // we won't be adding any listeners anyway.
+  FORWARD_TO_INNER_CREATE(ComputeDefaultWantsUntrusted, (aRv), false);
 }
 
 EventListenerManager*
@@ -6552,19 +6478,6 @@ EventListenerManager*
 nsGlobalWindowOuter::GetExistingListenerManager() const
 {
   FORWARD_TO_INNER(GetExistingListenerManager, (), nullptr);
-}
-
-nsIScriptContext*
-nsGlobalWindowOuter::GetContextForEventHandlers(nsresult* aRv)
-{
-  *aRv = NS_ERROR_UNEXPECTED;
-
-  nsIScriptContext* scx;
-  if ((scx = GetContext())) {
-    *aRv = NS_OK;
-    return scx;
-  }
-  return nullptr;
 }
 
 //*****************************************************************************
@@ -7535,18 +7448,24 @@ nsGlobalWindowOuter::SetBrowserDOMWindowOuter(nsIBrowserDOMWindow* aBrowserWindo
   mChromeFields.mBrowserDOMWindow = aBrowserWindow;
 }
 
-NS_IMETHODIMP
-nsGlobalWindowOuter::GetMessageManager(nsIMessageBroadcaster** aManager)
+ChromeMessageBroadcaster*
+nsGlobalWindowOuter::GetMessageManager()
 {
-  FORWARD_TO_INNER(GetMessageManager, (aManager), NS_ERROR_UNEXPECTED);
+  if (!mInnerWindow) {
+    NS_WARNING("No inner window available!");
+    return nullptr;
+  }
+  return GetCurrentInnerWindowInternal()->MessageManager();
 }
 
-NS_IMETHODIMP
-nsGlobalWindowOuter::GetGroupMessageManager(const nsAString& aGroup,
-                                            nsIMessageBroadcaster** aManager)
+ChromeMessageBroadcaster*
+nsGlobalWindowOuter::GetGroupMessageManager(const nsAString& aGroup)
 {
-  MOZ_RELEASE_ASSERT(IsChromeWindow());
-  FORWARD_TO_INNER(GetGroupMessageManager, (aGroup, aManager), NS_ERROR_UNEXPECTED);
+  if (!mInnerWindow) {
+    NS_WARNING("No inner window available!");
+    return nullptr;
+  }
+  return GetCurrentInnerWindowInternal()->GetGroupMessageManager(aGroup);
 }
 
 void
@@ -7749,6 +7668,7 @@ nsGlobalWindowOuter::AbstractMainThreadFor(TaskCategory aCategory)
 
 nsGlobalWindowOuter::TemporarilyDisableDialogs::TemporarilyDisableDialogs(
   nsGlobalWindowOuter* aWindow MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
+  : mSavedDialogsEnabled{ false }
 {
   MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 

@@ -12,9 +12,8 @@
 #include "mozilla/DocumentStyleRootIterator.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/LookAndFeel.h"
-#include "mozilla/RestyleManagerInlines.h"
 #include "mozilla/ServoBindings.h"
-#include "mozilla/ServoRestyleManager.h"
+#include "mozilla/RestyleManager.h"
 #include "mozilla/ServoStyleRuleMap.h"
 #include "mozilla/ServoTypes.h"
 #include "mozilla/StyleAnimationValue.h"
@@ -84,7 +83,7 @@ class MOZ_RAII AutoPrepareTraversal
 public:
   explicit AutoPrepareTraversal(ServoStyleSet* aSet)
     // For markers for animations, we have already set the markers in
-    // ServoRestyleManager::PostRestyleEventForAnimations so that we don't need
+    // RestyleManager::PostRestyleEventForAnimations so that we don't need
     // to care about animation restyles here.
     : mTimelineMarker(aSet->mDocument->GetDocShell(), false)
     , mSetInServoTraversal(aSet)
@@ -104,7 +103,6 @@ ServoStyleSet::ServoStyleSet()
   , mAuthorStyleDisabled(false)
   , mStylistState(StylistState::NotDirty)
   , mUserFontSetUpdateGeneration(0)
-  , mUserFontCacheUpdateGeneration(0)
   , mNeedsRestyleAfterEnsureUniqueInner(false)
 {
 }
@@ -171,33 +169,19 @@ ServoStyleSet::Init(nsPresContext* aPresContext)
 
 template<typename Functor>
 void
-EnumerateShadowRootsInSubtree(const nsINode& aRoot, const Functor& aCb)
-{
-  for (const nsINode* cur = &aRoot; cur; cur = cur->GetNextNode()) {
-    if (!cur->IsElement()) {
-      continue;
-    }
-
-    auto* shadowRoot = cur->AsElement()->GetShadowRoot();
-    if (!shadowRoot) {
-      continue;
-    }
-
-    aCb(*shadowRoot);
-    EnumerateShadowRootsInSubtree(*shadowRoot, aCb);
-  }
-}
-
-// FIXME(emilio): We may want a faster way to do this.
-template<typename Functor>
-void
 EnumerateShadowRoots(const nsIDocument& aDoc, const Functor& aCb)
 {
   if (!aDoc.IsShadowDOMEnabled()) {
     return;
   }
 
-  EnumerateShadowRootsInSubtree(aDoc, aCb);
+  const nsIDocument::ShadowRootSet& shadowRoots = aDoc.ComposedShadowRoots();
+  for (auto iter = shadowRoots.ConstIter(); !iter.Done(); iter.Next()) {
+    ShadowRoot* root = iter.Get()->GetKey();
+    MOZ_ASSERT(root);
+    MOZ_DIAGNOSTIC_ASSERT(root->IsComposedDocParticipant());
+    aCb(*root);
+  }
 }
 
 void
@@ -215,7 +199,7 @@ ServoStyleSet::InvalidateStyleForCSSRuleChanges()
 {
   MOZ_ASSERT(StylistNeedsUpdate());
   if (nsPresContext* pc = GetPresContext()) {
-    pc->RestyleManager()->AsServo()->PostRestyleEventForCSSRuleChanges();
+    pc->RestyleManager()->PostRestyleEventForCSSRuleChanges();
   }
 }
 
@@ -259,11 +243,9 @@ ServoStyleSet::InvalidateStyleForDocumentStateChanges(EventStates aStatesChanged
     nonDocumentStyles.AppendElement(aShadowRoot.ServoStyles());
   });
 
-  // FIXME(emilio): When bug 1425759 is fixed we need to enumerate ShadowRoots
-  // too.
-  mDocument->BindingManager()->EnumerateBoundContentBindings(
-    [&](nsXBLBinding* aBinding) {
-      if (auto* authorStyles = aBinding->PrototypeBinding()->GetServoStyles()) {
+  mDocument->BindingManager()->EnumerateBoundContentProtoBindings(
+    [&](nsXBLPrototypeBinding* aProto) {
+      if (auto* authorStyles = aProto->GetServoStyles()) {
         nonDocumentStyles.AppendElement(authorStyles);
       }
       return true;
@@ -295,9 +277,9 @@ ServoStyleSet::MediumFeaturesChanged(MediaFeatureChangeReason aReason)
   });
 
   // FIXME(emilio): This is broken for XBL. See bug 1406875.
-  mDocument->BindingManager()->EnumerateBoundContentBindings(
-    [&](nsXBLBinding* aBinding) {
-      if (auto* authorStyles = aBinding->PrototypeBinding()->GetServoStyles()) {
+  mDocument->BindingManager()->EnumerateBoundContentProtoBindings(
+    [&](nsXBLPrototypeBinding* aProto) {
+      if (auto* authorStyles = aProto->GetServoStyles()) {
         nonDocumentStyles.AppendElement(authorStyles);
       }
       return true;
@@ -433,7 +415,7 @@ const ServoElementSnapshotTable&
 ServoStyleSet::Snapshots()
 {
   MOZ_ASSERT(GetPresContext(), "Styling a document without a shell?");
-  return GetPresContext()->RestyleManager()->AsServo()->Snapshots();
+  return GetPresContext()->RestyleManager()->Snapshots();
 }
 
 void
@@ -467,25 +449,9 @@ ServoStyleSet::PreTraverseSync()
     // Ensure that the @font-face data is not stale
     uint64_t generation = userFontSet->GetGeneration();
     if (generation != mUserFontSetUpdateGeneration) {
+      mDocument->GetFonts()->CacheFontLoadability();
       presContext->DeviceContext()->UpdateFontCacheUserFonts(userFontSet);
       mUserFontSetUpdateGeneration = generation;
-    }
-
-    // Ensure that the FontFaceSet's cached document principal is up to date.
-    FontFaceSet* fontFaceSet =
-      static_cast<FontFaceSet::UserFontSet*>(userFontSet)->GetFontFaceSet();
-    fontFaceSet->UpdateStandardFontLoadPrincipal();
-    bool principalChanged = fontFaceSet->HasStandardFontLoadPrincipalChanged();
-
-    // Ensure that the user font cache holds up-to-date data on whether
-    // our font set is allowed to re-use fonts from the cache.
-    uint32_t cacheGeneration = gfxUserFontSet::UserFontCache::Generation();
-    if (principalChanged) {
-      gfxUserFontSet::UserFontCache::ClearAllowedFontSets(userFontSet);
-    }
-    if (cacheGeneration != mUserFontCacheUpdateGeneration || principalChanged) {
-      gfxUserFontSet::UserFontCache::UpdateAllowedFontSets(userFontSet);
-      mUserFontCacheUpdateGeneration = cacheGeneration;
     }
   }
 
@@ -1151,7 +1117,7 @@ ServoStyleSet::SetStylistStyleSheetsDirty()
     // XBL sheets don't have a pres context, but invalidating the restyle
     // generation in that case is handled by SetXBLStyleSheetsDirty in the
     // "master" stylist.
-    presContext->RestyleManager()->AsServo()->IncrementUndisplayedRestyleGeneration();
+    presContext->RestyleManager()->IncrementUndisplayedRestyleGeneration();
   }
 }
 
@@ -1164,7 +1130,7 @@ ServoStyleSet::SetStylistXBLStyleSheetsDirty()
   // elements, since we don't know if any of the style sheet change that we
   // do would affect undisplayed elements.
   MOZ_ASSERT(GetPresContext());
-  GetPresContext()->RestyleManager()->AsServo()->IncrementUndisplayedRestyleGeneration();
+  GetPresContext()->RestyleManager()->IncrementUndisplayedRestyleGeneration();
 }
 
 void
@@ -1314,12 +1280,12 @@ ServoStyleSet::EnsureUniqueInnerOnCSSSheets()
     }
   });
 
-  mDocument->BindingManager()->EnumerateBoundContentBindings(
-      [&](nsXBLBinding* aBinding) {
+  mDocument->BindingManager()->EnumerateBoundContentProtoBindings(
+      [&](nsXBLPrototypeBinding* aProto) {
         AutoTArray<StyleSheet*, 3> sheets;
-        aBinding->PrototypeBinding()->AppendStyleSheetsTo(sheets);
+        aProto->AppendStyleSheetsTo(sheets);
         for (auto* sheet : sheets) {
-          queue.AppendElement(MakePair(sheet, SheetOwner { aBinding->PrototypeBinding() }));
+          queue.AppendElement(MakePair(sheet, SheetOwner { aProto }));
         }
         return true;
       });
@@ -1453,7 +1419,7 @@ ServoStyleSet::ResolveStyleLazilyInternal(Element* aElement,
                                mRawSet.get()).Consume();
   }
 
-  MOZ_DIAGNOSTIC_ASSERT(computedValues->PresContext() == GetPresContext() ||
+  MOZ_DIAGNOSTIC_ASSERT(computedValues->PresContextForFrame() == GetPresContext() ||
                         aElement->OwnerDoc()->GetBFCacheEntry());
 
   return computedValues.forget();
@@ -1467,7 +1433,7 @@ ServoStyleSet::AppendFontFaceRules(nsTArray<nsFontFaceRuleContainer>& aArray)
   return true;
 }
 
-nsCSSCounterStyleRule*
+const RawServoCounterStyleRule*
 ServoStyleSet::CounterStyleRuleForName(nsAtom* aName)
 {
   MOZ_ASSERT(!StylistNeedsUpdate());
@@ -1508,7 +1474,7 @@ ServoStyleSet::UpdateStylist()
     Element* root = mDocument->GetRootElement();
     const ServoElementSnapshotTable* snapshots = nullptr;
     if (nsPresContext* pc = GetPresContext()) {
-      snapshots = &pc->RestyleManager()->AsServo()->Snapshots();
+      snapshots = &pc->RestyleManager()->Snapshots();
     }
     Servo_StyleSet_FlushStyleSheets(mRawSet.get(), root, snapshots);
   }
@@ -1520,9 +1486,9 @@ ServoStyleSet::UpdateStylist()
       Servo_AuthorStyles_Flush(aShadowRoot.ServoStyles(), mRawSet.get());
     });
 
-    mDocument->BindingManager()->EnumerateBoundContentBindings(
-      [&](nsXBLBinding* aBinding) {
-        if (auto* authorStyles = aBinding->PrototypeBinding()->GetServoStyles()) {
+    mDocument->BindingManager()->EnumerateBoundContentProtoBindings(
+      [&](nsXBLPrototypeBinding* aProto) {
+        if (auto* authorStyles = aProto->GetServoStyles()) {
           Servo_AuthorStyles_Flush(authorStyles, mRawSet.get());
         }
         return true;

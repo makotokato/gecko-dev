@@ -193,10 +193,10 @@ gfxPlatformGtk::UpdateFontList()
 // out a more general list
 static const char kFontDejaVuSans[] = "DejaVu Sans";
 static const char kFontDejaVuSerif[] = "DejaVu Serif";
-static const char kFontEmojiOneMozilla[] = "EmojiOne Mozilla";
 static const char kFontFreeSans[] = "FreeSans";
 static const char kFontFreeSerif[] = "FreeSerif";
 static const char kFontTakaoPGothic[] = "TakaoPGothic";
+static const char kFontTwemojiMozilla[] = "Twemoji Mozilla";
 static const char kFontDroidSansFallback[] = "Droid Sans Fallback";
 static const char kFontWenQuanYiMicroHei[] = "WenQuanYi Micro Hei";
 static const char kFontNanumGothic[] = "NanumGothic";
@@ -212,7 +212,7 @@ gfxPlatformGtk::GetCommonFallbackFonts(uint32_t aCh, uint32_t aNextCh,
            (aNextCh != kVariationSelector15 &&
             emoji == EmojiPresentation::EmojiDefault)) {
             // if char is followed by VS16, try for a color emoji glyph
-            aFontList.AppendElement(kFontEmojiOneMozilla);
+            aFontList.AppendElement(kFontTwemojiMozilla);
         }
     }
 
@@ -520,6 +520,16 @@ gfxPlatformGtk::GetPlatformCMSOutputProfile(void *&mem, size_t &size)
 #endif
 }
 
+bool
+gfxPlatformGtk::CheckVariationFontSupport()
+{
+  // Although there was some variation/multiple-master support in FreeType
+  // in older versions, it seems too incomplete/unstable for us to use
+  // until at least 2.7.1.
+  FT_Int major, minor, patch;
+  FT_Library_Version(GetFTLibrary(), &major, &minor, &patch);
+  return major * 1000000 + minor * 1000 + patch >= 2007001;
+}
 
 #ifdef GL_PROVIDER_GLX
 

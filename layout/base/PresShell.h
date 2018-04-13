@@ -244,8 +244,6 @@ public:
   void WillPaintWindow() override;
   void DidPaintWindow() override;
   void ScheduleViewManagerFlush(PaintType aType = PAINT_DEFAULT) override;
-  void DispatchSynthMouseMove(WidgetGUIEvent* aEvent,
-                              bool aFlushOnHoverChange) override;
   void ClearMouseCaptureOnView(nsView* aView) override;
   bool IsVisible() override;
 
@@ -320,7 +318,6 @@ public:
   void ListComputedStyles(FILE *out, int32_t aIndent = 0) override;
 
   void ListStyleSheets(FILE *out, int32_t aIndent = 0) override;
-  void VerifyStyleTree() override;
 #endif
 
   static LazyLogModule gLog;

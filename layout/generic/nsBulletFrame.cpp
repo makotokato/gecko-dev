@@ -204,6 +204,7 @@ public:
   BulletRenderer(imgIContainer* image, const nsRect& dest)
     : mImage(image)
     , mDest(dest)
+    , mColor{}
     , mListStyleType(NS_STYLE_LIST_STYLE_NONE)
   {
     MOZ_ASSERT(IsImageType());
@@ -525,7 +526,7 @@ BulletRenderer::CreateWebRenderCommandsForImage(nsDisplayItem* aItem,
     return true;  // Nothing to do
   }
 
-  wr::LayoutRect dest = aSc.ToRelativeLayoutRect(destRect);
+  wr::LayoutRect dest = wr::ToRoundedLayoutRect(destRect);
 
   aBuilder.PushImage(dest,
                      dest,
@@ -545,7 +546,7 @@ BulletRenderer::CreateWebRenderCommandsForPath(nsDisplayItem* aItem,
                                                nsDisplayListBuilder* aDisplayListBuilder)
 {
   MOZ_ASSERT(IsPathType());
-  wr::LayoutRect dest = aSc.ToRelativeLayoutRect(mPathRect);
+  wr::LayoutRect dest = wr::ToRoundedLayoutRect(mPathRect);
   auto color = wr::ToColorF(ToDeviceColor(mColor));
   bool isBackfaceVisible = !aItem->BackfaceIsHidden();
   switch (mListStyleType) {

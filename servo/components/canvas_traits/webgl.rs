@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use euclid::Size2D;
-use nonzero::NonZero;
+use nonzero::NonZeroU32;
 use offscreen_gl_context::{GLContextAttributes, GLLimits};
 use serde_bytes::ByteBuf;
 use std::fmt;
@@ -170,14 +170,14 @@ pub enum WebGLCommand {
     BufferSubData(u32, isize, ByteBuf),
     Clear(u32),
     ClearColor(f32, f32, f32, f32),
-    ClearDepth(f64),
+    ClearDepth(f32),
     ClearStencil(i32),
     ColorMask(bool, bool, bool, bool),
     CullFace(u32),
     FrontFace(u32),
     DepthFunc(u32),
     DepthMask(bool),
-    DepthRange(f64, f64),
+    DepthRange(f32, f32),
     Enable(u32),
     Disable(u32),
     CompileShader(WebGLShaderId, String),
@@ -205,7 +205,6 @@ pub enum WebGLCommand {
     EnableVertexAttribArray(u32),
     FramebufferRenderbuffer(u32, u32, u32, Option<WebGLRenderbufferId>),
     FramebufferTexture2D(u32, u32, u32, Option<WebGLTextureId>, i32),
-    GetBufferParameter(u32, u32, WebGLSender<i32>),
     GetExtensions(WebGLSender<String>),
     GetParameter(u32, WebGLSender<WebGLResult<WebGLParameter>>),
     GetTexParameter(u32, u32, WebGLSender<i32>),
@@ -281,13 +280,13 @@ pub enum WebGLCommand {
 macro_rules! define_resource_id_struct {
     ($name:ident) => {
         #[derive(Clone, Copy, Eq, Hash, PartialEq)]
-        pub struct $name(NonZero<u32>);
+        pub struct $name(NonZeroU32);
 
         impl $name {
             #[allow(unsafe_code)]
             #[inline]
             pub unsafe fn new(id: u32) -> Self {
-                $name(NonZero::new_unchecked(id))
+                $name(NonZeroU32::new_unchecked(id))
             }
 
             #[inline]
@@ -479,7 +478,6 @@ impl fmt::Debug for WebGLCommand {
             EnableVertexAttribArray(..) => "EnableVertexAttribArray",
             FramebufferRenderbuffer(..) => "FramebufferRenderbuffer",
             FramebufferTexture2D(..) => "FramebufferTexture2D",
-            GetBufferParameter(..) => "GetBufferParameter",
             GetExtensions(..) => "GetExtensions",
             GetParameter(..) => "GetParameter",
             GetTexParameter(..) => "GetTexParameter",

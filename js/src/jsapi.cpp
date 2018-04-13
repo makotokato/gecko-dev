@@ -459,16 +459,6 @@ JS_GetBoundFunctionTarget(JSFunction* fun)
 
 /************************************************************************/
 
-#ifdef DEBUG
-JS_FRIEND_API(bool)
-JS::isGCEnabled()
-{
-    return !TlsContext.get()->suppressGC;
-}
-#else
-JS_FRIEND_API(bool) JS::isGCEnabled() { return true; }
-#endif
-
 JS_PUBLIC_API(JSContext*)
 JS_NewContext(uint32_t maxbytes, uint32_t maxNurseryBytes, JSRuntime* parentRuntime)
 {
@@ -1339,17 +1329,18 @@ JS::CurrentGlobalOrNull(JSContext* cx)
     return cx->global();
 }
 
-JS_PUBLIC_API(Value)
-JS::detail::ComputeThis(JSContext* cx, Value* vp)
+JS_PUBLIC_API(bool)
+JS::detail::ComputeThis(JSContext* cx, Value* vp, MutableHandleObject thisObject)
 {
     AssertHeapIsIdle();
     assertSameCompartment(cx, JSValueArray(vp, 2));
 
     MutableHandleValue thisv = MutableHandleValue::fromMarkedLocation(&vp[1]);
     if (!BoxNonStrictThis(cx, thisv, thisv))
-        return NullValue();
+        return false;
 
-    return thisv;
+    thisObject.set(&thisv.toObject());
+    return true;
 }
 
 JS_PUBLIC_API(void*)
@@ -7281,9 +7272,6 @@ JS_SetGlobalJitCompilerOption(JSContext* cx, JSJitCompilerOption opt, uint32_t v
       case JSJITCOMPILER_WASM_DELAY_TIER2:
         jit::JitOptions.wasmDelayTier2 = !!value;
         break;
-      case JSJITCOMPILER_ION_INTERRUPT_WITHOUT_SIGNAL:
-        jit::JitOptions.ionInterruptWithoutSignals = !!value;
-        break;
 #ifdef DEBUG
       case JSJITCOMPILER_FULL_DEBUG_CHECKS:
         jit::JitOptions.fullDebugChecks = !!value;
@@ -7328,9 +7316,6 @@ JS_GetGlobalJitCompilerOption(JSContext* cx, JSJitCompilerOption opt, uint32_t* 
         break;
       case JSJITCOMPILER_WASM_FOLD_OFFSETS:
         *valueOut = jit::JitOptions.wasmFoldOffsets ? 1 : 0;
-        break;
-      case JSJITCOMPILER_ION_INTERRUPT_WITHOUT_SIGNAL:
-        *valueOut = jit::JitOptions.ionInterruptWithoutSignals ? 1 : 0;
         break;
 #ifdef DEBUG
       case JSJITCOMPILER_FULL_DEBUG_CHECKS:

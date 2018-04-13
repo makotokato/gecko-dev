@@ -81,10 +81,33 @@ ShadowRoot::~ShadowRoot()
     host->RemoveMutationObserver(this);
   }
 
+  if (IsComposedDocParticipant()) {
+    OwnerDoc()->RemoveComposedDocShadowRoot(*this);
+  }
+
+  MOZ_DIAGNOSTIC_ASSERT(!OwnerDoc()->IsComposedDocShadowRoot(*this));
+
   UnsetFlags(NODE_IS_IN_SHADOW_TREE);
 
   // nsINode destructor expects mSubtreeRoot == this.
   SetSubtreeRootPointer(this);
+}
+
+void
+ShadowRoot::SetIsComposedDocParticipant(bool aIsComposedDocParticipant)
+{
+  bool changed = mIsComposedDocParticipant != aIsComposedDocParticipant;
+  mIsComposedDocParticipant = aIsComposedDocParticipant;
+  if (!changed) {
+    return;
+  }
+
+  nsIDocument* doc = OwnerDoc();
+  if (IsComposedDocParticipant()) {
+    doc->AddComposedDocShadowRoot(*this);
+  } else {
+    doc->RemoveComposedDocShadowRoot(*this);
+  }
 }
 
 JSObject*
@@ -411,7 +434,7 @@ ShadowRoot::RemoveFromIdTable(Element* aElement, nsAtom* aId)
   }
 }
 
-nsresult
+void
 ShadowRoot::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
   aVisitor.mCanHandle = true;
@@ -433,7 +456,7 @@ ShadowRoot::GetEventTargetParent(EventChainPreVisitor& aVisitor)
         ? win->GetParentTarget() : nullptr;
 
       aVisitor.SetParentTarget(parentTarget, true);
-      return NS_OK;
+      return;
     }
   }
 
@@ -444,8 +467,6 @@ ShadowRoot::GetEventTargetParent(EventChainPreVisitor& aVisitor)
   if (content && content->GetBindingParent() == shadowHost) {
     aVisitor.mEventTargetAtParent = shadowHost;
   }
-
-  return NS_OK;
 }
 
 ShadowRoot::SlotAssignment

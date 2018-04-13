@@ -156,14 +156,14 @@ this.sessions = class extends ExtensionAPI {
           let {tab, encodedKey} =
             getTabParams(extension.id, key, tabId);
 
-          SessionStore.setTabValue(tab, encodedKey, JSON.stringify(value));
+          SessionStore.setCustomTabValue(tab, encodedKey, JSON.stringify(value));
         },
 
         async getTabValue(tabId, key) {
           let {tab, encodedKey} =
             getTabParams(extension.id, key, tabId);
 
-          let value = SessionStore.getTabValue(tab, encodedKey);
+          let value = SessionStore.getCustomTabValue(tab, encodedKey);
           if (value) {
             return JSON.parse(value);
           }
@@ -175,7 +175,7 @@ this.sessions = class extends ExtensionAPI {
           let {tab, encodedKey} =
             getTabParams(extension.id, key, tabId);
 
-          SessionStore.deleteTabValue(tab, encodedKey);
+          SessionStore.deleteCustomTabValue(tab, encodedKey);
         },
 
         setWindowValue(windowId, key, value) {
@@ -204,15 +204,19 @@ this.sessions = class extends ExtensionAPI {
           SessionStore.deleteWindowValue(win, encodedKey);
         },
 
-        onChanged: new EventManager(context, "sessions.onChanged", fire => {
-          let observer = () => {
-            fire.async();
-          };
+        onChanged: new EventManager({
+          context,
+          name: "sessions.onChanged",
+          register: fire => {
+            let observer = () => {
+              fire.async();
+            };
 
-          Services.obs.addObserver(observer, SS_ON_CLOSED_OBJECTS_CHANGED);
-          return () => {
-            Services.obs.removeObserver(observer, SS_ON_CLOSED_OBJECTS_CHANGED);
-          };
+            Services.obs.addObserver(observer, SS_ON_CLOSED_OBJECTS_CHANGED);
+            return () => {
+              Services.obs.removeObserver(observer, SS_ON_CLOSED_OBJECTS_CHANGED);
+            };
+          },
         }).api(),
       },
     };

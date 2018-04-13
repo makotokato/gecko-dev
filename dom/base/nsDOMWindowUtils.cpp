@@ -1727,6 +1727,18 @@ nsDOMWindowUtils::NeedsFlush(int32_t aFlushType, bool* aResult)
 }
 
 NS_IMETHODIMP
+nsDOMWindowUtils::FlushLayoutWithoutThrottledAnimations()
+{
+  nsCOMPtr<nsIDocument> doc = GetDocument();
+  if (doc) {
+    doc->FlushPendingNotifications(
+      ChangesToFlush(FlushType::Layout, false /* flush animations */));
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDOMWindowUtils::GetRootBounds(nsISupports** aResult)
 {
   nsIDocument* doc = GetDocument();
@@ -3594,7 +3606,7 @@ nsDOMWindowUtils::GetMillisSinceLastUserInput(double* aMillisSinceLastUserInput)
 {
   TimeStamp lastInput = EventStateManager::LatestUserInputStart();
   if (lastInput.IsNull()) {
-    *aMillisSinceLastUserInput = 0;
+    *aMillisSinceLastUserInput = -1.0f;
     return NS_OK;
   }
 
@@ -3700,7 +3712,8 @@ nsDOMWindowUtils::DispatchEventToChromeOnly(nsIDOMEventTarget* aTarget,
   *aRetVal = false;
   NS_ENSURE_STATE(aTarget && aEvent);
   aEvent->WidgetEventPtr()->mFlags.mOnlyChromeDispatch = true;
-  aTarget->DispatchEvent(aEvent, aRetVal);
+  *aRetVal = EventTarget::From(aTarget)->
+    DispatchEvent(*aEvent->InternalDOMEvent(), CallerType::System, IgnoreErrors());
   return NS_OK;
 }
 

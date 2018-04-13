@@ -124,6 +124,26 @@ var PaymentTestUtils = {
       };
     },
 
+    getShippingAddresses: () => {
+      let doc = content.document;
+      let addressPicker =
+        doc.querySelector("address-picker[selected-state-key='selectedShippingAddress']");
+      let select = addressPicker.querySelector("rich-select");
+      let popupBox = Cu.waiveXrays(select).popupBox;
+      let options = Array.from(popupBox.children).map(option => {
+        return {
+          guid: option.guid,
+          country: option.country,
+          selected: option.selected,
+        };
+      });
+      let selectedOptionIndex = options.findIndex(item => item.selected);
+      return {
+        selectedOptionIndex,
+        options,
+      };
+    },
+
     selectShippingAddressByCountry: country => {
       let doc = content.document;
       let addressPicker =
@@ -170,6 +190,17 @@ var PaymentTestUtils = {
       // Unwaive to access the ChromeOnly `setUserInput` API.
       // setUserInput dispatches changes events.
       Cu.unwaiveXrays(picker.securityCodeInput).setUserInput(securityCode);
+    },
+  },
+
+  DialogContentUtils: {
+    waitForState: async (content, stateCheckFn, msg) => {
+      const {
+        ContentTaskUtils,
+      } = ChromeUtils.import("resource://testing-common/ContentTaskUtils.jsm", {});
+      let {requestStore} = Cu.waiveXrays(content.document.querySelector("payment-dialog"));
+      await ContentTaskUtils.waitForCondition(() => stateCheckFn(requestStore.getState()), msg);
+      return requestStore.getState();
     },
   },
 

@@ -38,6 +38,8 @@
 #include <utility>
 #include "X11UndefineNone.h"
 
+#include "mozilla/dom/AnimationEffectReadOnlyBinding.h" // for PlaybackDirection
+
 class nsIFrame;
 class nsIURI;
 class nsTextFrame;
@@ -59,7 +61,11 @@ struct Position {
   Coord mXPosition, mYPosition;
 
   // Initialize nothing
-  Position() {}
+  Position()
+    : mXPosition{}
+    , mYPosition{}
+  {
+  }
 
   // Sets both mXPosition and mYPosition to the given percent value for the
   // initial property-value (e.g. 0.0f for "0% 0%", or 0.5f for "50% 50%")
@@ -614,7 +620,11 @@ struct nsStyleImageLayers {
     bool DependsOnPositioningAreaSize(const nsStyleImage& aImage) const;
 
     // Initialize nothing
-    Size() {}
+    Size()
+      : mWidthType{ '\0' }
+      , mHeightType{ '\0' }
+    {
+    }
 
     // Initialize to initial values
     void SetInitialValues();
@@ -629,7 +639,11 @@ struct nsStyleImageLayers {
     mozilla::StyleImageLayerRepeat mXRepeat, mYRepeat;
 
     // Initialize nothing
-    Repeat() {}
+    Repeat()
+      : mXRepeat{ mozilla::StyleImageLayerRepeat::NoRepeat }
+      , mYRepeat{ mozilla::StyleImageLayerRepeat::NoRepeat }
+    {
+    }
 
     bool IsInitialValue() const {
       return mXRepeat == mozilla::StyleImageLayerRepeat::Repeat &&
@@ -893,7 +907,15 @@ struct nsCSSShadowItem
   bool mHasColor; // Whether mColor should be used
   bool mInset;
 
-  nsCSSShadowItem() : mHasColor(false) {
+  nsCSSShadowItem()
+    : mXOffset{}
+    , mYOffset{}
+    , mRadius{}
+    , mSpread{}
+    , mColor{}
+    , mHasColor(false)
+    , mInset{ false }
+  {
     MOZ_COUNT_CTOR(nsCSSShadowItem);
   }
   ~nsCSSShadowItem() {
@@ -1917,7 +1939,12 @@ namespace mozilla {
 
 struct StyleTransition
 {
-  StyleTransition() { /* leaves uninitialized; see also SetInitialValues */ }
+  StyleTransition()
+    : mDuration{ 0.0 }
+    , mDelay{ 0.0 }
+    , mProperty{ eCSSProperty_UNKNOWN }
+  { /* leaves uninitialized; see also SetInitialValues */
+  }
   explicit StyleTransition(const StyleTransition& aCopy);
 
   void SetInitialValues();
@@ -1969,7 +1996,15 @@ private:
 
 struct StyleAnimation
 {
-  StyleAnimation() { /* leaves uninitialized; see also SetInitialValues */ }
+  StyleAnimation()
+    : mDuration{ 0.0 }
+    , mDelay{ 0.0 }
+    , mDirection{ dom::PlaybackDirection::Normal }
+    , mFillMode{ dom::FillMode::None }
+    , mPlayState{ '\0' }
+    , mIterationCount{ 0.0 }
+  { /* leaves uninitialized; see also SetInitialValues */
+  }
   explicit StyleAnimation(const StyleAnimation& aCopy);
 
   void SetInitialValues();
@@ -2144,6 +2179,11 @@ struct StyleShapeSource final
     MOZ_ASSERT(mType == StyleShapeSourceType::Image, "Wrong shape source type!");
     return mShapeImage;
   }
+
+  // Iff we have "shape-outside:<image>" with an image URI (not a gradient),
+  // this method returns the corresponding imgIRequest*. Else, returns
+  // null.
+  imgIRequest* GetShapeImageData() const;
 
   void SetShapeImage(UniquePtr<nsStyleImage> aShapeImage);
 
@@ -2611,6 +2651,11 @@ enum nsStyleContentType {
   eStyleContentType_Uninitialized
 };
 
+struct nsStyleContentAttr {
+  RefPtr<nsAtom> mName; // Non-null.
+  RefPtr<nsAtom> mNamespaceURL; // May be null.
+};
+
 class nsStyleContentData
 {
 public:
@@ -2634,10 +2679,15 @@ public:
 
   char16_t* GetString() const
   {
-    MOZ_ASSERT(mType == eStyleContentType_String ||
-               mType == eStyleContentType_Attr);
+    MOZ_ASSERT(mType == eStyleContentType_String);
     return mContent.mString;
   }
+
+  const nsStyleContentAttr* GetAttr() const {
+    MOZ_ASSERT(mType == eStyleContentType_Attr);
+    MOZ_ASSERT(mContent.mAttr);
+    return mContent.mAttr;
+   }
 
   struct CounterFunction
   {
@@ -2690,8 +2740,7 @@ public:
 
   void SetString(nsStyleContentType aType, const char16_t* aString)
   {
-    MOZ_ASSERT(aType == eStyleContentType_String ||
-               aType == eStyleContentType_Attr);
+    MOZ_ASSERT(aType == eStyleContentType_String);
     MOZ_ASSERT(aString);
     MOZ_ASSERT(mType == eStyleContentType_Uninitialized,
                "should only initialize nsStyleContentData once");
@@ -2726,6 +2775,7 @@ private:
   nsStyleContentType mType;
   union {
     char16_t *mString;
+    nsStyleContentAttr* mAttr;
     nsStyleImageRequest* mImage;
     CounterFunction* mCounters;
   } mContent;
@@ -2911,7 +2961,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleColumn
 
   uint32_t     mColumnCount; // [reset] see nsStyleConsts.h
   nsStyleCoord mColumnWidth; // [reset] coord, auto
-  nsStyleCoord mColumnGap;   // [reset] coord, normal
+  nsStyleCoord mColumnGap;   // [reset] <length-percentage> | normal
 
   mozilla::StyleComplexColor mColumnRuleColor; // [reset]
   uint8_t      mColumnRuleStyle;  // [reset]
@@ -3237,20 +3287,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleSVGReset
   uint8_t          mDominantBaseline; // [reset] see nsStyleConsts.h
   uint8_t          mVectorEffect;     // [reset] see nsStyleConsts.h
   uint8_t          mMaskType;         // [reset] see nsStyleConsts.h
-};
-
-// XXX This can be removed once the old style system is gone.
-struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleVariables
-{
-  nsStyleVariables();
-  explicit nsStyleVariables(const nsPresContext* aContext);
-  nsStyleVariables(const nsStyleVariables& aSource);
-  ~nsStyleVariables();
-  void FinishStyle(nsPresContext*, const nsStyleVariables*) {}
-  const static bool kHasFinishStyle = false;
-
-  nsChangeHint CalcDifference(const nsStyleVariables& aNewData) const;
-
 };
 
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleEffects

@@ -104,6 +104,10 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
   this._win = contentWindow;
   this.frameId = frameId;
 
+  // Map of the available DevTools WebExtensions:
+  //   Map<extensionUUID, extensionName>
+  this._webExtensions = new Map();
+
   this._toolPanels = new Map();
   this._inspectorExtensionSidebars = new Map();
   this._telemetry = new Telemetry();
@@ -123,7 +127,7 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
   this._toolUnregistered = this._toolUnregistered.bind(this);
   this._onWillNavigate = this._onWillNavigate.bind(this);
   this._refreshHostTitle = this._refreshHostTitle.bind(this);
-  this._toggleNoAutohide = this._toggleNoAutohide.bind(this);
+  this.toggleNoAutohide = this.toggleNoAutohide.bind(this);
   this.showFramesMenu = this.showFramesMenu.bind(this);
   this.handleKeyDownOnFramesButton = this.handleKeyDownOnFramesButton.bind(this);
   this.showFramesMenuOnKeyDown = this.showFramesMenuOnKeyDown.bind(this);
@@ -141,12 +145,7 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
   this._onBrowserMessage = this._onBrowserMessage.bind(this);
   this._showDevEditionPromo = this._showDevEditionPromo.bind(this);
   this._updateTextBoxMenuItems = this._updateTextBoxMenuItems.bind(this);
-  this._onBottomHostMinimized = this._onBottomHostMinimized.bind(this);
-  this._onBottomHostMaximized = this._onBottomHostMaximized.bind(this);
-  this._onToolSelectWhileMinimized = this._onToolSelectWhileMinimized.bind(this);
   this._onPerformanceFrontEvent = this._onPerformanceFrontEvent.bind(this);
-  this._onBottomHostWillChange = this._onBottomHostWillChange.bind(this);
-  this._toggleMinimizeMode = this._toggleMinimizeMode.bind(this);
   this._onToolbarFocus = this._onToolbarFocus.bind(this);
   this._onToolbarArrowKeypress = this._onToolbarArrowKeypress.bind(this);
   this._onPickerClick = this._onPickerClick.bind(this);
@@ -157,6 +156,7 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
   this._onNewSelectedNodeFront = this._onNewSelectedNodeFront.bind(this);
   this._updatePickerButton = this._updatePickerButton.bind(this);
   this.selectTool = this.selectTool.bind(this);
+  this.toggleSplitConsole = this.toggleSplitConsole.bind(this);
 
   this._target.on("close", this.destroy);
 
@@ -492,7 +492,7 @@ Toolbox.prototype = {
       this._componentMount = this.doc.getElementById("toolbox-toolbar-mount");
 
       this._mountReactComponent();
-      this._buildDockButtons();
+      this._buildDockOptions();
       this._buildOptions();
       this._buildTabs();
       this._applyCacheSettings();
@@ -512,7 +512,7 @@ Toolbox.prototype = {
       this.webconsolePanel.height = Services.prefs.getIntPref(SPLITCONSOLE_HEIGHT_PREF);
       this.webconsolePanel.addEventListener("resize", this._saveSplitConsoleHeight);
 
-      let buttonsPromise = this._buildButtons();
+      this._buildButtons();
 
       this._pingTelemetry();
 
@@ -526,18 +526,16 @@ Toolbox.prototype = {
 
       // Start rendering the toolbox toolbar before selecting the tool, as the tools
       // can take a few hundred milliseconds seconds to start up.
-      // But wait for toolbar buttons to be set before updating this react component.
-      buttonsPromise.then(() => {
-        // Delay React rendering as Toolbox.open and buttonsPromise are synchronous.
-        // Even if this involve promises, this is synchronous. Toolbox.open already loads
-        // react modules and freeze the event loop for a significant time.
-        // requestIdleCallback allows releasing it to allow user events to be processed.
-        // Use 16ms maximum delay to allow one frame to be rendered at 60FPS
-        // (1000ms/60FPS=16ms)
-        this.win.requestIdleCallback(() => {
-          this.component.setCanRender();
-        }, {timeout: 16});
-      });
+      //
+      // Delay React rendering as Toolbox.open is synchronous.
+      // Even if this involve promises, it is synchronous. Toolbox.open already loads
+      // react modules and freeze the event loop for a significant time.
+      // requestIdleCallback allows releasing it to allow user events to be processed.
+      // Use 16ms maximum delay to allow one frame to be rendered at 60FPS
+      // (1000ms/60FPS=16ms)
+      this.win.requestIdleCallback(() => {
+        this.component.setCanRender();
+      }, {timeout: 16});
 
       await this.selectTool(this._defaultToolId);
 
@@ -546,11 +544,15 @@ Toolbox.prototype = {
       let splitConsolePromise = promise.resolve();
       if (Services.prefs.getBoolPref(SPLITCONSOLE_ENABLED_PREF)) {
         splitConsolePromise = this.openSplitConsole();
+        this._telemetry.addEventProperty(
+          "devtools.main", "open", "tools", null, "splitconsole", true);
+      } else {
+        this._telemetry.addEventProperty(
+          "devtools.main", "open", "tools", null, "splitconsole", false);
       }
 
       await promise.all([
         splitConsolePromise,
-        buttonsPromise,
         framesPromise
       ]);
 
@@ -701,6 +703,17 @@ Toolbox.prototype = {
     }
   },
 
+  // Return HostType string for telemetry
+  _getTelemetryHostString: function() {
+    switch (this.hostType) {
+      case Toolbox.HostType.BOTTOM: return "bottom";
+      case Toolbox.HostType.SIDE: return "side";
+      case Toolbox.HostType.WINDOW: return "window";
+      case Toolbox.HostType.CUSTOM: return "other";
+      default: return "bottom";
+    }
+  },
+
   _pingTelemetry: function() {
     this._telemetry.toolOpened("toolbox");
 
@@ -712,6 +725,14 @@ Toolbox.prototype = {
     // "What proportion of users use which themes?"
     let currentTheme = Services.prefs.getCharPref("devtools.theme");
     this._telemetry.logKeyedScalar(CURRENT_THEME_SCALAR, currentTheme, 1);
+
+    this._telemetry.preparePendingEvent(
+      "devtools.main", "open", "tools", null,
+      ["entrypoint", "first_panel", "host", "splitconsole", "width"]
+    );
+    this._telemetry.addEventProperty(
+      "devtools.main", "open", "tools", null, "host", this._getTelemetryHostString()
+    );
   },
 
   /**
@@ -824,10 +845,7 @@ Toolbox.prototype = {
       } else {
         this.selectTool("options");
       }
-      // Prevent the opening of bookmarks window on toolbox.options.key
-      event.preventDefault();
     };
-    this.shortcuts.on(L10N.getStr("toolbox.options.key"), selectOptions);
     this.shortcuts.on(L10N.getStr("toolbox.help.key"), selectOptions);
   },
 
@@ -891,11 +909,6 @@ Toolbox.prototype = {
                    this.selectPreviousTool();
                    event.preventDefault();
                  });
-    this.shortcuts.on(L10N.getStr("toolbox.minimize.key"),
-                 event => {
-                   this._toggleMinimizeMode();
-                   event.preventDefault();
-                 });
     this.shortcuts.on(L10N.getStr("toolbox.toggleHost.key"),
                  event => {
                    this.switchToPreviousHost();
@@ -920,23 +933,8 @@ Toolbox.prototype = {
 
   // Called whenever the chrome send a message
   _onBrowserMessage: function(event) {
-    if (!event.data) {
-      return;
-    }
-    switch (event.data.name) {
-      case "switched-host":
-        this._onSwitchedHost(event.data);
-        break;
-      case "host-minimized":
-        if (this.hostType == Toolbox.HostType.BOTTOM) {
-          this._onBottomHostMinimized();
-        }
-        break;
-      case "host-maximized":
-        if (this.hostType == Toolbox.HostType.BOTTOM) {
-          this._onBottomHostMaximized();
-        }
-        break;
+    if (event.data && event.data.name === "switched-host") {
+      this._onSwitchedHost(event.data);
     }
   },
 
@@ -1073,26 +1071,16 @@ Toolbox.prototype = {
   },
 
   /**
-   * Build the buttons for changing hosts. Called every time
+   * Build the options for changing hosts. Called every time
    * the host changes.
    */
-  _buildDockButtons: function() {
+  _buildDockOptions: function() {
     if (!this._target.isLocalTab) {
-      this.component.setDockButtonsEnabled(false);
+      this.component.setDockOptionsEnabled(false);
       return;
     }
 
-    // Bottom-type host can be minimized, add a button for this.
-    if (this.hostType == Toolbox.HostType.BOTTOM) {
-      this.component.setCanMinimize(true);
-
-      // Maximize again when a tool gets selected.
-      this.on("before-select", this._onToolSelectWhileMinimized);
-      // Maximize and stop listening before the host type changes.
-      this.once("host-will-change", this._onBottomHostWillChange);
-    }
-
-    this.component.setDockButtonsEnabled(true);
+    this.component.setDockOptionsEnabled(true);
     this.component.setCanCloseToolbox(this.hostType !== Toolbox.HostType.WINDOW);
 
     let sideEnabled = Services.prefs.getBoolPref(this._prefs.SIDE_ENABLED);
@@ -1115,20 +1103,6 @@ Toolbox.prototype = {
     this.component.setHostTypes(hostTypes);
   },
 
-  _onBottomHostMinimized: function() {
-    this.component.setMinimizeState("minimized");
-  },
-
-  _onBottomHostMaximized: function() {
-    this.component.setMinimizeState("maximized");
-  },
-
-  _onToolSelectWhileMinimized: function() {
-    this.postMessage({
-      name: "maximize-host"
-    });
-  },
-
   postMessage: function(msg) {
     // We sometime try to send messages in middle of destroy(), where the
     // toolbox iframe may already be detached and no longer have a parent.
@@ -1140,33 +1114,10 @@ Toolbox.prototype = {
     }
   },
 
-  _onBottomHostWillChange: function() {
-    this.postMessage({
-      name: "maximize-host"
-    });
-
-    this.off("before-select", this._onToolSelectWhileMinimized);
-  },
-
-  _toggleMinimizeMode: function() {
-    if (this.hostType !== Toolbox.HostType.BOTTOM) {
-      return;
-    }
-
-    // Calculate the height to which the host should be minimized so the
-    // tabbar is still visible.
-    let toolbarHeight = this._componentMount.getBoxQuads({box: "content"})[0].bounds
-                                                                             .height;
-    this.postMessage({
-      name: "toggle-minimize-mode",
-      toolbarHeight
-    });
-  },
-
   /**
    * Initiate ToolboxTabs React component and all it's properties. Do the initial render.
    */
-  _buildTabs: function() {
+  _buildTabs: async function() {
     // Get the initial list of tab definitions. This list can be amended at a later time
     // by tools registering themselves.
     const definitions = gDevTools.getToolDefinitionArray();
@@ -1176,9 +1127,11 @@ Toolbox.prototype = {
     this.panelDefinitions = definitions.filter(definition =>
       definition.isTargetSupported(this._target) && definition.id !== "options");
 
-    this.optionsDefinition = definitions.find(({id}) => id === "options");
-    // The options tool is treated slightly differently, and is in a different area.
-    this.component.setOptionsPanel(definitions.find(({id}) => id === "options"));
+    // Do async lookup of disable pop-up auto-hide state.
+    if (this.disableAutohideAvailable) {
+      let disable = await this._isDisableAutohideEnabled();
+      this.component.setDisableAutohide(disable);
+    }
   },
 
   _mountReactComponent: function() {
@@ -1187,9 +1140,10 @@ Toolbox.prototype = {
       L10N,
       currentToolId: this.currentToolId,
       selectTool: this.selectTool,
+      toggleSplitConsole: this.toggleSplitConsole,
+      toggleNoAutohide: this.toggleNoAutohide,
       closeToolbox: this.destroy,
       focusButton: this._onToolbarFocus,
-      toggleMinimizeMode: this._toggleMinimizeMode,
       toolbox: this
     });
 
@@ -1259,12 +1213,11 @@ Toolbox.prototype = {
   /**
    * Add buttons to the UI as specified in devtools/client/definitions.js
    */
-  async _buildButtons() {
+  _buildButtons() {
     // Beyond the normal preference filtering
     this.toolbarButtons = [
       this._buildPickerButton(),
       this._buildFrameButton(),
-      await this._buildNoAutoHideButton()
     ];
 
     ToolboxButtons.forEach(definition => {
@@ -1290,25 +1243,6 @@ Toolbox.prototype = {
     });
 
     return this.frameButton;
-  },
-
-  /**
-   * Button that disables/enables auto-hiding XUL pop-ups. When enabled, XUL
-   * pop-ups will not automatically close when they lose focus.
-   */
-  async _buildNoAutoHideButton() {
-    this.autohideButton = this._createButtonState({
-      id: "command-button-noautohide",
-      description: L10N.getStr("toolbox.noautohide.tooltip"),
-      onClick: this._toggleNoAutohide,
-      isTargetSupported: target => target.chrome
-    });
-
-    this._isDisableAutohideEnabled().then(enabled => {
-      this.autohideButton.isChecked = enabled;
-    });
-
-    return this.autohideButton;
   },
 
   /**
@@ -1871,8 +1805,6 @@ Toolbox.prototype = {
    *        The id of the tool to switch to
    */
   selectTool: function(id) {
-    this.emit("before-select", id);
-
     if (this.currentToolId == id) {
       let panel = this._toolPanels.get(id);
       if (panel) {
@@ -1986,6 +1918,7 @@ Toolbox.prototype = {
     }
 
     return this.loadTool("webconsole").then(() => {
+      this.component.setIsSplitConsoleActive(true);
       this.emit("split-console");
       this.focusConsoleInput();
     });
@@ -2001,6 +1934,7 @@ Toolbox.prototype = {
     this._splitConsole = false;
     Services.prefs.setBoolPref(SPLITCONSOLE_ENABLED_PREF, false);
     this._refreshConsoleDisplay();
+    this.component.setIsSplitConsoleActive(false);
     this.emit("split-console");
 
     if (this._lastFocusedElement) {
@@ -2039,10 +1973,9 @@ Toolbox.prototype = {
   selectNextTool: function() {
     let definitions = this.component.panelDefinitions;
     const index = definitions.findIndex(({id}) => id === this.currentToolId);
-    let definition = definitions[index + 1];
-    if (!definition) {
-      definition = index === -1 ? definitions[0] : this.optionsDefinition;
-    }
+    let definition = index === -1 || index >= definitions.length - 1
+                     ? definitions[0]
+                     : definitions[index + 1];
     return this.selectTool(definition.id);
   },
 
@@ -2052,12 +1985,9 @@ Toolbox.prototype = {
   selectPreviousTool: function() {
     let definitions = this.component.panelDefinitions;
     const index = definitions.findIndex(({id}) => id === this.currentToolId);
-    let definition = definitions[index - 1];
-    if (!definition) {
-      definition = index === -1
-        ? definitions[definitions.length - 1]
-        : this.optionsDefinition;
-    }
+    let definition = index === -1 || index < 1
+                     ? definitions[definitions.length - 1]
+                     : definitions[index - 1];
     return this.selectTool(definition.id);
   },
 
@@ -2153,20 +2083,28 @@ Toolbox.prototype = {
     });
   },
 
-  async _toggleNoAutohide() {
+  // Is the disable auto-hide of pop-ups feature available in this context?
+  get disableAutohideAvailable() {
+    return this._target.chrome;
+  },
+
+  async toggleNoAutohide() {
     let front = await this.preferenceFront;
     let toggledValue = !(await this._isDisableAutohideEnabled());
 
     front.setBoolPref(DISABLE_AUTOHIDE_PREF, toggledValue);
 
-    this.autohideButton.isChecked = toggledValue;
+    if (this.disableAutohideAvailable) {
+      this.component.setDisableAutohide(toggledValue);
+    }
     this._autohideHasBeenToggled = true;
   },
 
   async _isDisableAutohideEnabled() {
-    // Ensure that the tools are open, and the button is visible.
+    // Ensure that the tools are open and the feature is available in this
+    // context.
     await this.isOpen;
-    if (!this.autohideButton.isVisible) {
+    if (!this.disableAutohideAvailable) {
       return false;
     }
 
@@ -2429,7 +2367,7 @@ Toolbox.prototype = {
   _onSwitchedHost: function({ hostType }) {
     this._hostType = hostType;
 
-    this._buildDockButtons();
+    this._buildDockOptions();
     this._addKeysToWindow();
 
     // We blurred the tools at start of switchHost, but also when clicking on
@@ -3153,5 +3091,62 @@ Toolbox.prototype = {
     }
 
     return netPanel.panelWin.Netmonitor.fetchResponseContent(requestId);
-  }
+  },
+
+  // Support management of installed WebExtensions that provide a devtools_page.
+
+  /**
+   * List the subset of the active WebExtensions which have a devtools_page (used by
+   * toolbox-options.js to create the list of the tools provided by the enabled
+   * WebExtensions).
+   * @see devtools/client/framework/toolbox-options.js
+   */
+  listWebExtensions: function() {
+    // Return the array of the enabled webextensions (we can't use the prefs list here,
+    // because some of them may be disabled by the Addon Manager and still have a devtools
+    // preference).
+    return Array.from(this._webExtensions).map(([uuid, {name, pref}]) => {
+      return {uuid, name, pref};
+    });
+  },
+
+  /**
+   * Add a WebExtension to the list of the active extensions (given the extension UUID,
+   * a unique id assigned to an extension when it is installed, and its name),
+   * and emit a "webextension-registered" event to allow toolbox-options.js
+   * to refresh the listed tools accordingly.
+   * @see browser/components/extensions/ext-devtools.js
+   */
+  registerWebExtension: function(extensionUUID, {name, pref}) {
+    // Ensure that an installed extension (active in the AddonManager) which
+    // provides a devtools page is going to be listed in the toolbox options
+    // (and refresh its name if it was already listed).
+    this._webExtensions.set(extensionUUID, {name, pref});
+    this.emit("webextension-registered", extensionUUID);
+  },
+
+  /**
+   * Remove an active WebExtension from the list of the active extensions (given the
+   * extension UUID, a unique id assigned to an extension when it is installed, and its
+   * name), and emit a "webextension-unregistered" event to allow toolbox-options.js
+   * to refresh the listed tools accordingly.
+   * @see browser/components/extensions/ext-devtools.js
+   */
+  unregisterWebExtension: function(extensionUUID) {
+    // Ensure that an extension that has been disabled/uninstalled from the AddonManager
+    // is going to be removed from the toolbox options.
+    this._webExtensions.delete(extensionUUID);
+    this.emit("webextension-unregistered", extensionUUID);
+  },
+
+  /**
+   * A helper function which returns true if the extension with the given UUID is listed
+   * as active for the toolbox and has its related devtools about:config preference set
+   * to true.
+   * @see browser/components/extensions/ext-devtools.js
+   */
+  isWebExtensionEnabled: function(extensionUUID) {
+    let extInfo = this._webExtensions.get(extensionUUID);
+    return extInfo && Services.prefs.getBoolPref(extInfo.pref, false);
+  },
 };

@@ -71,7 +71,7 @@ typedef Handle<WasmTableObject*> HandleWasmTableObject;
 typedef MutableHandle<WasmTableObject*> MutableHandleWasmTableObject;
 
 class WasmGlobalObject;
-typedef GCVector<HeapPtr<WasmGlobalObject*>, 8, SystemAllocPolicy> WasmGlobalObjectVector;
+typedef GCVector<WasmGlobalObject*, 0, SystemAllocPolicy> WasmGlobalObjectVector;
 typedef Rooted<WasmGlobalObject*> RootedWasmGlobalObject;
 
 namespace wasm {
@@ -2011,6 +2011,7 @@ class DebugFrame
 
     bool hasCachedSavedFrame() const { return hasCachedSavedFrame_; }
     void setHasCachedSavedFrame() { hasCachedSavedFrame_ = true; }
+    void clearHasCachedSavedFrame() { hasCachedSavedFrame_ = false; }
 
     // DebugFrame is accessed directly by JIT code.
 

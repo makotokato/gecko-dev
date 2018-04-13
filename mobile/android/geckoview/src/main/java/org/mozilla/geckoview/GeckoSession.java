@@ -6,6 +6,8 @@
 
 package org.mozilla.geckoview;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -29,6 +31,7 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.res.Resources;
 import android.database.Cursor;
+import android.graphics.RectF;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
@@ -40,6 +43,7 @@ import android.os.SystemClock;
 import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
 import android.support.annotation.NonNull;
+import android.support.annotation.StringDef;
 import android.util.Base64;
 import android.util.Log;
 
@@ -99,6 +103,7 @@ public class GeckoSession extends LayerSession
                 "GeckoView:DOMTitleChanged",
                 "GeckoView:DOMWindowFocus",
                 "GeckoView:DOMWindowClose",
+                "GeckoView:ExternalResponse",
                 "GeckoView:FullScreenEnter",
                 "GeckoView:FullScreenExit"
             }
@@ -130,6 +135,8 @@ public class GeckoSession extends LayerSession
                     delegate.onFullScreen(GeckoSession.this, true);
                 } else if ("GeckoView:FullScreenExit".equals(event)) {
                     delegate.onFullScreen(GeckoSession.this, false);
+                } else if ("GeckoView:ExternalResponse".equals(event)) {
+                    delegate.onExternalResponse(GeckoSession.this, new WebResponseInfo(message));
                 }
             }
         };
@@ -193,8 +200,12 @@ public class GeckoSession extends LayerSession
                                     throw new IllegalArgumentException("Must use an unopened GeckoSession instance");
                                 }
 
-                                session.open(null);
-                                callback.sendSuccess(session.getId());
+                                if (GeckoSession.this.mWindow == null) {
+                                    callback.sendError("Session is not attached to a window");
+                                } else {
+                                    session.open(GeckoSession.this.mWindow.runtime);
+                                    callback.sendSuccess(session.getId());
+                                }
                             }
                         });
                 }
@@ -331,11 +342,63 @@ public class GeckoSession extends LayerSession
             }
         };
 
+    private final GeckoSessionHandler<SelectionActionDelegate> mSelectionActionDelegate =
+        new GeckoSessionHandler<SelectionActionDelegate>(
+            "GeckoViewSelectionAction", this,
+            new String[] {
+                "GeckoView:HideSelectionAction",
+                "GeckoView:ShowSelectionAction",
+            }
+        ) {
+            @Override
+            public void handleMessage(final SelectionActionDelegate delegate,
+                                      final String event,
+                                      final GeckoBundle message,
+                                      final EventCallback callback) {
+                if ("GeckoView:ShowSelectionAction".equals(event)) {
+                    final SelectionActionDelegate.Selection selection =
+                            new SelectionActionDelegate.Selection(message);
+
+                    final String[] actions = message.getStringArray("actions");
+                    final int seqNo = message.getInt("seqNo");
+                    final Response<String> response = new Response<String>() {
+                        @Override
+                        public void respond(final String action) {
+                            final GeckoBundle response = new GeckoBundle(2);
+                            response.putString("id", action);
+                            response.putInt("seqNo", seqNo);
+                            callback.sendSuccess(response);
+                        }
+                    };
+
+                    delegate.onShowActionRequest(GeckoSession.this, selection,
+                                                 actions, response);
+
+                } else if ("GeckoView:HideSelectionAction".equals(event)) {
+                    final String reasonString = message.getString("reason");
+                    final int reason;
+                    if ("invisibleselection".equals(reasonString)) {
+                        reason = SelectionActionDelegate.HIDE_REASON_INVISIBLE_SELECTION;
+                    } else if ("presscaret".equals(reasonString)) {
+                        reason = SelectionActionDelegate.HIDE_REASON_ACTIVE_SELECTION;
+                    } else if ("scroll".equals(reasonString)) {
+                        reason = SelectionActionDelegate.HIDE_REASON_ACTIVE_SCROLL;
+                    } else if ("visibilitychange".equals(reasonString)) {
+                        reason = SelectionActionDelegate.HIDE_REASON_NO_SELECTION;
+                    } else {
+                        throw new IllegalArgumentException();
+                    }
+
+                    delegate.onHideAction(GeckoSession.this, reason);
+                }
+            }
+        };
+
     /* package */ int handlersCount;
 
     private final GeckoSessionHandler<?>[] mSessionHandlers = new GeckoSessionHandler<?>[] {
         mContentHandler, mNavigationHandler, mProgressHandler, mScrollHandler,
-        mTrackingProtectionHandler, mPermissionHandler
+        mTrackingProtectionHandler, mPermissionHandler, mSelectionActionDelegate
     };
 
     private static class PermissionCallback implements
@@ -408,10 +471,13 @@ public class GeckoSession extends LayerSession
     private final Listener mListener = new Listener();
 
     /* package */ static final class Window extends JNIObject implements IInterface {
+        public final GeckoRuntime runtime;
         private NativeQueue mNativeQueue;
         private Binder mBinder;
 
-        public Window(final NativeQueue nativeQueue) {
+        public Window(final @NonNull GeckoRuntime runtime,
+                      final @NonNull NativeQueue nativeQueue) {
+            this.runtime = runtime;
             mNativeQueue = nativeQueue;
         }
 
@@ -559,7 +625,7 @@ public class GeckoSession extends LayerSession
         this(null);
     }
 
-    public GeckoSession(final GeckoSessionSettings settings) {
+    public GeckoSession(final @Nullable GeckoSessionSettings settings) {
         mSettings = new GeckoSessionSettings(settings, this);
         mListener.registerListeners();
 
@@ -568,7 +634,15 @@ public class GeckoSession extends LayerSession
         }
     }
 
-    private void transferFrom(final Window window, final GeckoSessionSettings settings,
+    /* package */ @Nullable GeckoRuntime getRuntime() {
+        if (mWindow == null) {
+            return null;
+        }
+        return mWindow.runtime;
+    }
+
+    private void transferFrom(final Window window,
+                              final GeckoSessionSettings settings,
                               final String id) {
         if (isOpen()) {
             throw new IllegalStateException("Session is open");
@@ -642,43 +716,6 @@ public class GeckoSession extends LayerSession
         }
     };
 
-    /**
-     * Preload GeckoSession by starting Gecko in the background, if Gecko is not already running.
-     *
-     * @param context Activity or Application Context for starting GeckoSession.
-     */
-    public static void preload(final @NonNull Context context) {
-        preload(context, /* geckoArgs */ null,
-                /* extras */ null, /* multiprocess */ false);
-    }
-
-    /**
-     * Preload GeckoSession by starting Gecko with the specified arguments in the background,
-     * if Gecko is not already running.
-     *
-     * @param context Activity or Application Context for starting GeckoSession.
-     * @param geckoArgs Arguments to be passed to Gecko, if Gecko is not already running.
-     * @param multiprocess True if child process in multiprocess mode should be preloaded.
-     */
-    public static void preload(final @NonNull Context context,
-                               final @Nullable String[] geckoArgs,
-                               final @Nullable Bundle extras,
-                               final boolean multiprocess) {
-        final Context appContext = context.getApplicationContext();
-        if (!appContext.equals(GeckoAppShell.getApplicationContext())) {
-            GeckoAppShell.setApplicationContext(appContext);
-        }
-
-        if (GeckoThread.isLaunched()) {
-            return;
-        }
-
-        final int flags = multiprocess ? GeckoThread.FLAG_PRELOAD_CHILD : 0;
-        if (GeckoThread.initMainProcess(/* profile */ null, geckoArgs, extras, flags)) {
-            GeckoThread.launch();
-        }
-    }
-
     public boolean isOpen() {
         return mWindow != null;
     }
@@ -698,30 +735,24 @@ public class GeckoSession extends LayerSession
      *
      * Call this when you are ready to use a GeckoSession instance.
      *
-     * @param appContext An application context
+     * @param runtime The Gecko runtime to attach this session to.
      */
-    public void open(final @Nullable Context appContext) {
+    public void open(final @NonNull GeckoRuntime runtime) {
         ThreadUtils.assertOnUiThread();
 
         if (isOpen()) {
             throw new IllegalStateException("Session is open");
         }
 
-        if (appContext != null) {
-            final boolean multiprocess =
-                    mSettings.getBoolean(GeckoSessionSettings.USE_MULTIPROCESS);
-            preload(appContext, /* geckoArgs */ null, /* extras */ null, multiprocess);
-        }
-
-        openWindow();
+        openWindow(runtime);
     }
 
-    private void openWindow() {
+    private void openWindow(final @NonNull GeckoRuntime runtime) {
         final String chromeUri = mSettings.getString(GeckoSessionSettings.CHROME_URI);
         final int screenId = mSettings.getInt(GeckoSessionSettings.SCREEN_ID);
         final boolean isPrivate = mSettings.getBoolean(GeckoSessionSettings.USE_PRIVATE_MODE);
 
-        mWindow = new Window(mNativeQueue);
+        mWindow = new Window(runtime, mNativeQueue);
 
         onWindowChanged(WINDOW_OPEN, /* inProgress */ true);
 
@@ -1126,6 +1157,24 @@ public class GeckoSession extends LayerSession
      */
     public PromptDelegate getPromptDelegate() {
         return mPromptDelegate;
+    }
+
+    /**
+     * Set the current selection action delegate for this GeckoSession.
+     *
+     * @param delegate SelectionActionDelegate instance or null to unset.
+     */
+    public void setSelectionActionDelegate(@Nullable SelectionActionDelegate delegate) {
+        mSelectionActionDelegate.setDelegate(delegate, this);
+    }
+
+    /**
+     * Get the current selection action delegate for this GeckoSession.
+     *
+     * @return SelectionActionDelegate instance or null if not set.
+     */
+    public @Nullable SelectionActionDelegate getSelectionActionDelegate() {
+        return mSelectionActionDelegate.getDelegate();
     }
 
     private static class PromptCallback implements
@@ -1614,6 +1663,43 @@ public class GeckoSession extends LayerSession
         return ContentDelegate.ELEMENT_TYPE_NONE;
     }
 
+    /**
+     * WebResponseInfo contains information about a single web response.
+     */
+    public class WebResponseInfo {
+        /**
+         * The URI of the response. Cannot be null.
+         */
+        public final String uri;
+
+        /**
+         * The content type (mime type) of the response. May be null.
+         */
+        public final String contentType;
+
+        /**
+         * The content length of the response. May be 0 if unknokwn.
+         */
+        public final long contentLength;
+
+        /**
+         * The filename obtained from the content disposition, if any.
+         * May be null.
+         */
+        public final String filename;
+
+        /* package */ WebResponseInfo(GeckoBundle message) {
+            uri = message.getString("uri");
+            if (uri == null) {
+                throw new IllegalArgumentException("URI cannot be null");
+            }
+
+            contentType = message.getString("contentType");
+            contentLength = message.getLong("contentLength");
+            filename = message.getString("filename");
+        }
+    }
+
     public interface ContentDelegate {
         @IntDef({ELEMENT_TYPE_NONE, ELEMENT_TYPE_IMAGE, ELEMENT_TYPE_VIDEO,
                  ELEMENT_TYPE_AUDIO})
@@ -1673,6 +1759,192 @@ public class GeckoSession extends LayerSession
         void onContextMenu(GeckoSession session, int screenX, int screenY,
                            String uri, @ElementType int elementType,
                            String elementSrc);
+
+        /**
+         * This is fired when there is a response that cannot be handled
+         * by Gecko (e.g., a download).
+         *
+         * @param session the GeckoSession that received the external response.
+         * @param response the WebResponseInfo for the external response
+         */
+        void onExternalResponse(GeckoSession session, WebResponseInfo response);
+    }
+
+    public interface SelectionActionDelegate {
+        @IntDef(flag = true, value = {FLAG_IS_COLLAPSED,
+                                      FLAG_IS_EDITABLE})
+        @interface Flag {}
+
+        /**
+         * The selection is collapsed at a single position.
+         */
+        final int FLAG_IS_COLLAPSED = 1;
+        /**
+         * The selection is inside editable content such as an input element or
+         * contentEditable node.
+         */
+        final int FLAG_IS_EDITABLE = 2;
+        /**
+         * The selection is inside a password field.
+         */
+        final int FLAG_IS_PASSWORD = 4;
+
+        @StringDef({ACTION_CUT,
+                    ACTION_COPY,
+                    ACTION_DELETE,
+                    ACTION_PASTE,
+                    ACTION_SELECT_ALL,
+                    ACTION_UNSELECT,
+                    ACTION_COLLAPSE_TO_START,
+                    ACTION_COLLAPSE_TO_END})
+        @interface Action {}
+
+        /**
+         * Copy onto the clipboard then delete the selected content. Selection
+         * must be editable.
+         */
+        final String ACTION_CUT = "org.mozilla.geckoview.CUT";
+        /**
+         * Copy the selected content onto the clipboard.
+         */
+        final String ACTION_COPY = "org.mozilla.geckoview.COPY";
+        /**
+         * Delete the selected content. Selection must be editable.
+         */
+        final String ACTION_DELETE = "org.mozilla.geckoview.DELETE";
+        /**
+         * Replace the selected content with the clipboard content. Selection
+         * must be editable.
+         */
+        final String ACTION_PASTE = "org.mozilla.geckoview.PASTE";
+        /**
+         * Select the entire content of the document or editor.
+         */
+        final String ACTION_SELECT_ALL = "org.mozilla.geckoview.SELECT_ALL";
+        /**
+         * Clear the current selection. Selection must not be editable.
+         */
+        final String ACTION_UNSELECT = "org.mozilla.geckoview.UNSELECT";
+        /**
+         * Collapse the current selection to its start position.
+         * Selection must be editable.
+         */
+        final String ACTION_COLLAPSE_TO_START = "org.mozilla.geckoview.COLLAPSE_TO_START";
+        /**
+         * Collapse the current selection to its end position.
+         * Selection must be editable.
+         */
+        final String ACTION_COLLAPSE_TO_END = "org.mozilla.geckoview.COLLAPSE_TO_END";
+
+        /**
+         * Represents attributes of a selection.
+         */
+        class Selection {
+            /**
+             * Flags describing the current selection, as a bitwise combination
+             * of the {@link #FLAG_IS_COLLAPSED FLAG_*} constants.
+             */
+            public final @Flag int flags;
+
+            /**
+             * Text content of the current selection. An empty string indicates the selection
+             * is collapsed or the selection cannot be represented as plain text.
+             */
+            public final String text;
+
+            /**
+             * The bounds of the current selection in client coordinates. Use {@link
+             * GeckoSession#getClientToScreenMatrix} to perform transformation to screen
+             * coordinates.
+             */
+            public final RectF clientRect;
+
+            /* package */ Selection(final GeckoBundle bundle) {
+                flags = (bundle.getBoolean("collapsed") ?
+                         SelectionActionDelegate.FLAG_IS_COLLAPSED : 0) |
+                        (bundle.getBoolean("editable") ?
+                         SelectionActionDelegate.FLAG_IS_EDITABLE : 0) |
+                        (bundle.getBoolean("password") ?
+                         SelectionActionDelegate.FLAG_IS_PASSWORD : 0);
+                text = bundle.getString("selection");
+
+                final GeckoBundle rectBundle = bundle.getBundle("clientRect");
+                if (rectBundle == null) {
+                    clientRect = null;
+                } else {
+                    clientRect = new RectF((float) rectBundle.getDouble("left"),
+                                           (float) rectBundle.getDouble("top"),
+                                           (float) rectBundle.getDouble("right"),
+                                           (float) rectBundle.getDouble("bottom"));
+                }
+            }
+        }
+
+        /**
+         * Selection actions are available. Selection actions become available when the
+         * user selects some content in the document or editor. Inside an editor,
+         * selection actions can also become available when the user explicitly requests
+         * editor action UI, for example by tapping on the caret handle.
+         *
+         * In response to this callback, applications typically display a toolbar
+         * containing the selection actions. To perform a certain action, pass the Action
+         * object back through the response parameter, which may be used multiple times to
+         * perform multiple actions at once.
+         *
+         * Once a {@link #onHideAction} call (with particular reasons) or another {@link
+         * #onShowActionRequest} call is received, any previously received actions are no
+         * longer unavailable.
+         *
+         * @param session The GeckoSession that initiated the callback.
+         * @param selection Current selection attributes.
+         * @param actions Array of built-in actions available; possible values
+         * come from the {@link #ACTION_CUT ACTION_*} constants.
+         * @param response Callback object for performing built-in actions. For example,
+         * {@code response.respond(actions[0])} performs the first action. May be used
+         * multiple times to perform multiple actions at once.
+         */
+        void onShowActionRequest(GeckoSession session, Selection selection,
+                                 @Action String[] actions, Response<String> response);
+
+        @IntDef({HIDE_REASON_NO_SELECTION,
+                 HIDE_REASON_INVISIBLE_SELECTION,
+                 HIDE_REASON_ACTIVE_SELECTION,
+                 HIDE_REASON_ACTIVE_SCROLL})
+        @interface HideReason {}
+
+        /**
+         * Actions are no longer available due to the user clearing the selection.
+         */
+        final int HIDE_REASON_NO_SELECTION = 0;
+        /**
+         * Actions are no longer available due to the user moving the selection becoming
+         * out of view. Previous actions are still available after a callback with this
+         * reason.
+         */
+        final int HIDE_REASON_INVISIBLE_SELECTION = 1;
+        /**
+         * Actions are no longer available due to the user actively changing the
+         * selection. {@link #onShowActionRequest} may be called again once the user has
+         * set a selection, if the new selection has available actions.
+         */
+        final int HIDE_REASON_ACTIVE_SELECTION = 2;
+        /**
+         * Actions are no longer available due to the user actively scrolling the page.
+         * {@link #onShowActionRequest} may be called again once the user has stopped
+         * scrolling the page, if the selection is still visible. Until then, previous
+         * actions are still available after a callback with this reason.
+         */
+        final int HIDE_REASON_ACTIVE_SCROLL = 3;
+
+        /**
+         * Previous actions are no longer available due to the user interacting with the
+         * page. Applications typically hide the action toolbar in response.
+         *
+         * @param session The GeckoSession that initiated the callback.
+         * @param reason The reason that actions are no longer available, as one of the
+         * {@link #HIDE_REASON_NO_SELECTION HIDE_REASON_*} constants.
+         */
+        void onHideAction(GeckoSession session, @HideReason int reason);
     }
 
     /**

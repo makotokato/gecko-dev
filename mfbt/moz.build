@@ -12,6 +12,7 @@ TEST_DIRS += ['tests']
 Library('mfbt')
 
 EXPORTS.mozilla = [
+    'Algorithm.h',
     'Alignment.h',
     'AllocPolicy.h',
     'AlreadyAddRefed.h',
@@ -89,6 +90,7 @@ EXPORTS.mozilla = [
     'StaticAnalysisFunctions.h',
     'TaggedAnonymousMemory.h',
     'TemplateLib.h',
+    'TextUtils.h',
     'ThreadLocal.h',
     'ThreadSafeWeakPtr.h',
     'ToString.h',

@@ -1896,6 +1896,8 @@ CacheIRCompiler::emitTruncateDoubleToUInt32()
     masm.bind(&truncateABICall);
     LiveRegisterSet save(GeneralRegisterSet::Volatile(), liveVolatileFloatRegs());
     save.takeUnchecked(FloatReg0);
+    // Bug 1451976
+    save.takeUnchecked(FloatReg0.asSingle());
     masm.PushRegsInMask(save);
 
     masm.setupUnalignedABICall(res);
@@ -2826,6 +2828,8 @@ CacheIRCompiler::emitMegamorphicLoadSlotByValueResult()
     masm.jump(failure->label());
 
     masm.bind(&ok);
+    if (JitOptions.spectreJitToCxxCalls)
+        masm.speculationBarrier();
     masm.setFramePushed(framePushed);
     masm.loadTypedOrValue(Address(masm.getStackPointer(), 0), output);
     masm.adjustStack(sizeof(Value));

@@ -182,6 +182,12 @@ this.pageAction = class extends ExtensionAPI {
     let last = this.lastValues.get(window);
 
     window.requestAnimationFrame(() => {
+      // If we get called just before shutdown, we might have been destroyed by
+      // this point.
+      if (!this.browserPageAction) {
+        return;
+      }
+
       let title = tabData.title || this.extension.name;
       if (last.title !== title) {
         this.browserPageAction.setTitle(title, window);
@@ -340,16 +346,21 @@ this.pageAction = class extends ExtensionAPI {
 
     return {
       pageAction: {
-        onClicked: new InputEventManager(context, "pageAction.onClicked", fire => {
-          let listener = (evt, tab) => {
-            context.withPendingBrowser(tab.linkedBrowser, () =>
-              fire.sync(tabManager.convert(tab)));
-          };
+        onClicked: new EventManager({
+          context,
+          name: "pageAction.onClicked",
+          inputHandling: true,
+          register: fire => {
+            let listener = (evt, tab) => {
+              context.withPendingBrowser(tab.linkedBrowser, () =>
+                fire.sync(tabManager.convert(tab)));
+            };
 
-          pageAction.on("click", listener);
-          return () => {
-            pageAction.off("click", listener);
-          };
+            pageAction.on("click", listener);
+            return () => {
+              pageAction.off("click", listener);
+            };
+          },
         }).api(),
 
         show(tabId) {

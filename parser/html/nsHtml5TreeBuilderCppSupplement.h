@@ -13,13 +13,27 @@
 #include "mozilla/UniquePtr.h"
 
 nsHtml5TreeBuilder::nsHtml5TreeBuilder(nsHtml5OplessBuilder* aBuilder)
-  : scriptingEnabled(false)
+  : mode{}
+  , originalMode{}
+  , framesetOk{ false }
+  , tokenizer{ nullptr }
+  , scriptingEnabled(false)
+  , needToDropLF{ false }
   , fragment(false)
   , contextName(nullptr)
   , contextNamespace(kNameSpaceID_None)
   , contextNode(nullptr)
+  , templateModePtr{}
+  , stackNodesIdx{}
+  , numStackNodes{}
+  , currentPtr{}
+  , listPtr{}
   , formPointer(nullptr)
   , headPointer(nullptr)
+  , deepTreeSurrogateParent{ nullptr }
+  , charBufferLen{}
+  , quirks{ false }
+  , isSrcdocDocument{ false }
   , mBuilder(aBuilder)
   , mViewSource(nullptr)
   , mOpSink(nullptr)
@@ -38,13 +52,27 @@ nsHtml5TreeBuilder::nsHtml5TreeBuilder(nsHtml5OplessBuilder* aBuilder)
 
 nsHtml5TreeBuilder::nsHtml5TreeBuilder(nsAHtml5TreeOpSink* aOpSink,
                                        nsHtml5TreeOpStage* aStage)
-  : scriptingEnabled(false)
+  : mode{}
+  , originalMode{}
+  , framesetOk{ false }
+  , tokenizer{ nullptr }
+  , scriptingEnabled(false)
+  , needToDropLF{ false }
   , fragment(false)
   , contextName(nullptr)
   , contextNamespace(kNameSpaceID_None)
   , contextNode(nullptr)
+  , templateModePtr{}
+  , stackNodesIdx{}
+  , numStackNodes{}
+  , currentPtr{}
+  , listPtr{}
   , formPointer(nullptr)
   , headPointer(nullptr)
+  , deepTreeSurrogateParent{ nullptr }
+  , charBufferLen{}
+  , quirks{ false }
+  , isSrcdocDocument{ false }
   , mBuilder(nullptr)
   , mViewSource(nullptr)
   , mOpSink(aOpSink)
@@ -1308,7 +1336,7 @@ nsHtml5TreeBuilder::MaybeComplainAboutCharset(const char* aMsgId,
 }
 
 void
-nsHtml5TreeBuilder::TryToDisableEncodingMenu()
+nsHtml5TreeBuilder::TryToEnableEncodingMenu()
 {
   if (MOZ_UNLIKELY(mBuilder)) {
     MOZ_ASSERT_UNREACHABLE("Must never disable encoding menu with builder.");
@@ -1316,7 +1344,7 @@ nsHtml5TreeBuilder::TryToDisableEncodingMenu()
   }
   nsHtml5TreeOperation* treeOp = mOpQueue.AppendElement();
   NS_ASSERTION(treeOp, "Tree op allocation failed.");
-  treeOp->Init(eTreeOpDisableEncodingMenu);
+  treeOp->Init(eTreeOpEnableEncodingMenu);
 }
 
 void

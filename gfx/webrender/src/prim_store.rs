@@ -7,6 +7,7 @@ use api::{DeviceIntRect, DeviceIntSize, DevicePixelScale, Epoch, ExtendMode, Fon
 use api::{FilterOp, GlyphInstance, GlyphKey, GradientStop, ImageKey, ImageRendering, ItemRange, ItemTag};
 use api::{LayerPoint, LayerRect, LayerSize, LayerToWorldTransform, LayerVector2D};
 use api::{PipelineId, PremultipliedColorF, Shadow, YuvColorSpace, YuvFormat};
+use batch::BrushImageSourceKind;
 use border::{BorderCornerInstance, BorderEdgeKind};
 use box_shadow::BLUR_SAMPLE_SCALE;
 use clip_scroll_tree::{ClipChainIndex, ClipScrollNodeIndex, CoordinateSystemId};
@@ -20,10 +21,10 @@ use gpu_cache::{GpuBlockData, GpuCache, GpuCacheAddress, GpuCacheHandle, GpuData
                 ToGpuBlocks};
 use gpu_types::{ClipChainRectIndex};
 use picture::{PictureCompositeMode, PicturePrimitive};
-use render_task::{BlitSource, RenderTask, RenderTaskCacheKey, RenderTaskCacheKeyKind};
-use render_task::RenderTaskId;
+use render_task::{BlitSource, RenderTask, RenderTaskCacheKey};
+use render_task::{RenderTaskCacheKeyKind, RenderTaskId};
 use renderer::{MAX_VERTEX_TEXTURE_WIDTH};
-use resource_cache::{CacheItem, ImageProperties, ImageRequest, ResourceCache};
+use resource_cache::{CacheItem, ImageProperties, ImageRequest};
 use segment::SegmentBuilder;
 use std::{mem, usize};
 use std::sync::Arc;
@@ -201,11 +202,21 @@ pub enum BrushKind {
     Clear,
     Picture {
         pic_index: PictureIndex,
+        // What kind of texels to sample from the
+        // picture (e.g color or alpha mask).
+        source_kind: BrushImageSourceKind,
+        // A local space offset to apply when drawing
+        // this picture.
+        local_offset: LayerVector2D,
     },
     Image {
         request: ImageRequest,
         current_epoch: Epoch,
         alpha_type: AlphaType,
+        stretch_size: LayerSize,
+        tile_spacing: LayerSize,
+        source: ImageSource,
+        sub_rect: Option<DeviceIntRect>,
     },
     YuvImage {
         yuv_key: [ImageKey; 3],
@@ -237,11 +248,14 @@ impl BrushKind {
     fn supports_segments(&self) -> bool {
         match *self {
             BrushKind::Solid { .. } |
-            BrushKind::Picture { .. } |
             BrushKind::Image { .. } |
             BrushKind::YuvImage { .. } |
             BrushKind::RadialGradient { .. } |
             BrushKind::LinearGradient { .. } => true,
+
+            // TODO(gw): Allow batch.rs to add segment instances
+            //           for Picture primitives.
+            BrushKind::Picture { .. } => false,
 
             BrushKind::Clear => false,
         }
@@ -317,10 +331,16 @@ impl BrushPrimitive {
         }
     }
 
-    pub fn new_picture(pic_index: PictureIndex) -> BrushPrimitive {
+    pub fn new_picture(
+        pic_index: PictureIndex,
+        source_kind: BrushImageSourceKind,
+        local_offset: LayerVector2D,
+    ) -> BrushPrimitive {
         BrushPrimitive {
             kind: BrushKind::Picture {
                 pic_index,
+                source_kind,
+                local_offset,
             },
             segment_desc: None,
         }
@@ -329,19 +349,12 @@ impl BrushPrimitive {
     fn write_gpu_blocks(
         &self,
         request: &mut GpuDataRequest,
-        pictures: &[PicturePrimitive],
     ) {
         // has to match VECS_PER_SPECIFIC_BRUSH
         match self.kind {
-            BrushKind::Picture { pic_index } => {
-                pictures[pic_index.0].write_gpu_blocks(request);
-            }
-            BrushKind::YuvImage { .. } => {
-            }
-            BrushKind::Image { .. } => {
-                request.push([0.0; 4]);
-                request.push(PremultipliedColorF::WHITE);
-            }
+            BrushKind::Picture { .. } |
+            BrushKind::YuvImage { .. } |
+            BrushKind::Image { .. } => {}
             BrushKind::Solid { color } => {
                 request.push(color.premultiplied());
             }
@@ -624,7 +637,6 @@ pub struct TextRunPrimitiveCpu {
     pub font: FontInstance,
     pub offset: LayerVector2D,
     pub glyph_range: ItemRange<GlyphInstance>,
-    pub glyph_count: usize,
     pub glyph_keys: Vec<GlyphKey>,
     pub glyph_gpu_blocks: Vec<GpuBlockData>,
     pub shadow: bool,
@@ -650,11 +662,10 @@ impl TextRunPrimitiveCpu {
 
     fn prepare_for_render(
         &mut self,
-        resource_cache: &mut ResourceCache,
         device_pixel_scale: DevicePixelScale,
         transform: Option<LayerToWorldTransform>,
         display_list: &BuiltDisplayList,
-        gpu_cache: &mut GpuCache,
+        frame_building_state: &mut FrameBuildingState,
     ) {
         let font = self.get_font(device_pixel_scale, transform);
 
@@ -693,7 +704,12 @@ impl TextRunPrimitiveCpu {
             }
         }
 
-        resource_cache.request_glyphs(font, &self.glyph_keys, gpu_cache);
+        frame_building_state.resource_cache
+                            .request_glyphs(font,
+                                            &self.glyph_keys,
+                                            frame_building_state.gpu_cache,
+                                            frame_building_state.render_tasks,
+                                            frame_building_state.special_render_passes);
     }
 
     fn write_gpu_blocks(&self, request: &mut GpuDataRequest) {
@@ -959,7 +975,6 @@ impl PrimitiveContainer {
                     },
                     offset: info.offset + shadow.offset,
                     glyph_range: info.glyph_range,
-                    glyph_count: info.glyph_count,
                     glyph_keys: info.glyph_keys.clone(),
                     glyph_gpu_blocks: Vec::new(),
                     shadow: true,
@@ -1038,7 +1053,7 @@ impl PrimitiveStore {
         frame_output_pipeline_id: Option<PipelineId>,
         apply_local_clip_rect: bool,
     ) -> PictureIndex {
-        let pic = PicturePrimitive::new_image(
+        let picture = PicturePrimitive::new_image(
             composite_mode,
             is_in_3d_context,
             pipeline_id,
@@ -1047,10 +1062,9 @@ impl PrimitiveStore {
             apply_local_clip_rect,
         );
 
-        let pic_index = PictureIndex(self.pictures.len());
-        self.pictures.push(pic);
-
-        pic_index
+        let picture_index = PictureIndex(self.pictures.len());
+        self.pictures.push(picture);
+        picture_index
     }
 
     pub fn add_primitive(
@@ -1168,11 +1182,10 @@ impl PrimitiveStore {
                 // The transform only makes sense for screen space rasterization
                 let transform = Some(prim_run_context.scroll_node.world_content_transform.into());
                 text.prepare_for_render(
-                    frame_state.resource_cache,
                     frame_context.device_pixel_scale,
                     transform,
                     pic_context.display_list,
-                    frame_state.gpu_cache,
+                    frame_state,
                 );
             }
             PrimitiveKind::Image => {
@@ -1233,6 +1246,7 @@ impl PrimitiveStore {
                                 },
                                 frame_state.gpu_cache,
                                 frame_state.render_tasks,
+                                None,
                                 |render_tasks| {
                                     // We need to render the image cache this frame,
                                     // so will need access to the source texture.
@@ -1288,11 +1302,12 @@ impl PrimitiveStore {
                 let brush = &mut self.cpu_brushes[metadata.cpu_prim_index.0];
 
                 match brush.kind {
-                    BrushKind::Image { request, ref mut current_epoch, .. } => {
+                    BrushKind::Image { request, sub_rect, ref mut current_epoch, ref mut source, .. } => {
                         let image_properties = frame_state
                             .resource_cache
                             .get_image_properties(request.key);
 
+                        // Set if we need to request the source image from the cache this frame.
                         if let Some(image_properties) = image_properties {
                             // See if this image has been updated since we last hit this code path.
                             // If so, we need to update the opacity.
@@ -1300,12 +1315,88 @@ impl PrimitiveStore {
                                 *current_epoch = image_properties.epoch;
                                 metadata.opacity.is_opaque = image_properties.descriptor.is_opaque;
                             }
+
+                            // Work out whether this image is a normal / simple type, or if
+                            // we need to pre-render it to the render task cache.
+                            if let Some(rect) = sub_rect {
+                                *source = ImageSource::Cache {
+                                    // Size in device-pixels we need to allocate in render task cache.
+                                    size: rect.size,
+                                    item: CacheItem::invalid(),
+                                };
+                            }
+
+                            let mut request_source_image = false;
+
+                            // Every frame, for cached items, we need to request the render
+                            // task cache item. The closure will be invoked on the first
+                            // time through, and any time the render task output has been
+                            // evicted from the texture cache.
+                            match *source {
+                                ImageSource::Cache { size, ref mut item } => {
+                                    let image_cache_key = ImageCacheKey {
+                                        request,
+                                        texel_rect: sub_rect,
+                                    };
+
+                                    // Request a pre-rendered image task.
+                                    *item = frame_state.resource_cache.request_render_task(
+                                        RenderTaskCacheKey {
+                                            size,
+                                            kind: RenderTaskCacheKeyKind::Image(image_cache_key),
+                                        },
+                                        frame_state.gpu_cache,
+                                        frame_state.render_tasks,
+                                        None,
+                                        |render_tasks| {
+                                            // We need to render the image cache this frame,
+                                            // so will need access to the source texture.
+                                            request_source_image = true;
+
+                                            // Create a task to blit from the texture cache to
+                                            // a normal transient render task surface. This will
+                                            // copy only the sub-rect, if specified.
+                                            let cache_to_target_task = RenderTask::new_blit(
+                                                size,
+                                                BlitSource::Image { key: image_cache_key },
+                                            );
+                                            let cache_to_target_task_id = render_tasks.add(cache_to_target_task);
+
+                                            // Create a task to blit the rect from the child render
+                                            // task above back into the right spot in the persistent
+                                            // render target cache.
+                                            let target_to_cache_task = RenderTask::new_blit(
+                                                size,
+                                                BlitSource::RenderTask {
+                                                    task_id: cache_to_target_task_id,
+                                                },
+                                            );
+                                            let target_to_cache_task_id = render_tasks.add(target_to_cache_task);
+
+                                            // Hook this into the render task tree at the right spot.
+                                            pic_state.tasks.push(target_to_cache_task_id);
+
+                                            // Pass the image opacity, so that the cached render task
+                                            // item inherits the same opacity properties.
+                                            (target_to_cache_task_id, image_properties.descriptor.is_opaque)
+                                        }
+                                    );
+
+                                }
+                                ImageSource::Default => {
+                                    // Normal images just reference the source texture each frame.
+                                    request_source_image = true;
+                                }
+                            }
+
+                            if request_source_image {
+                                frame_state.resource_cache.request_image(
+                                    request,
+                                    frame_state.gpu_cache,
+                                );
+                            }
                         }
 
-                        frame_state.resource_cache.request_image(
-                            request,
-                            frame_state.gpu_cache,
-                        );
                     }
                     BrushKind::YuvImage { format, yuv_key, image_rendering, .. } => {
                         let channel_num = format.get_plane_num();
@@ -1347,16 +1438,42 @@ impl PrimitiveStore {
                             );
                         }
                     }
-                    BrushKind::Picture { pic_index } => {
-                        self.pictures[pic_index.0]
-                            .prepare_for_render(
-                                prim_index,
-                                metadata,
-                                pic_state_for_children,
-                                pic_state,
-                                frame_context,
-                                frame_state,
-                            );
+                    BrushKind::Picture { pic_index, source_kind, .. } => {
+                        let pic = &mut self.pictures[pic_index.0];
+                        // If this picture is referenced by multiple brushes,
+                        // we only want to prepare it once per frame. It
+                        // should be prepared for the main color pass.
+                        // TODO(gw): Make this a bit more explicit - perhaps
+                        //           we could mark which brush::picture is
+                        //           the owner of the picture, vs the shadow
+                        //           which is just referencing it.
+                        match source_kind {
+                            BrushImageSourceKind::Color => {
+                                pic.prepare_for_render(
+                                    prim_index,
+                                    metadata,
+                                    pic_state_for_children,
+                                    pic_state,
+                                    frame_context,
+                                    frame_state,
+                                );
+                            }
+                            BrushImageSourceKind::ColorAlphaMask => {
+                                // Since we will always visit the shadow
+                                // brush first, use this to clear out the
+                                // render tasks from the previous frame.
+                                // This ensures that if the primary brush
+                                // is found to be non-visible, then we
+                                // won't try to draw the drop-shadow either.
+                                // This isn't quite correct - it can result
+                                // in clipping artifacts if the image is
+                                // off-screen, but the drop-shadow is
+                                // partially visible - we can fix this edge
+                                // case as a follow up.
+                                pic.surface = None;
+                                pic.secondary_render_task_id = None;
+                            }
+                        }
                     }
                     BrushKind::Solid { .. } |
                     BrushKind::Clear => {}
@@ -1385,7 +1502,7 @@ impl PrimitiveStore {
                 }
                 PrimitiveKind::Brush => {
                     let brush = &self.cpu_brushes[metadata.cpu_prim_index.0];
-                    brush.write_gpu_blocks(&mut request, &self.pictures);
+                    brush.write_gpu_blocks(&mut request);
                     match brush.segment_desc {
                         Some(ref segment_desc) => {
                             for segment in &segment_desc.segments {
@@ -1425,11 +1542,20 @@ impl PrimitiveStore {
                 if !brush.kind.supports_segments() {
                     return;
                 }
-                if metadata.local_rect.size.area() <= MIN_BRUSH_SPLIT_AREA {
-                    return;
-                }
             }
         }
+
+        // If the brush is small, we generally want to skip building segments
+        // and just draw it as a single primitive with clip mask. However,
+        // if the clips are purely rectangles that have no per-fragment
+        // clip masks, we will segment anyway. This allows us to completely
+        // skip allocating a clip mask in these cases.
+        let is_large = metadata.local_rect.size.area() > MIN_BRUSH_SPLIT_AREA;
+
+        // TODO(gw): We should probably detect and store this on each
+        //           ClipSources instance, to avoid having to iterate
+        //           the clip sources here.
+        let mut rect_clips_only = true;
 
         let mut segment_builder = SegmentBuilder::new(
             metadata.local_rect,
@@ -1439,9 +1565,10 @@ impl PrimitiveStore {
 
         // If this primitive is clipped by clips from a different coordinate system, then we
         // need to apply a clip mask for the entire primitive.
-        let mut clip_mask_kind = match has_clips_from_other_coordinate_systems {
-            true => BrushClipMaskKind::Global,
-            false => BrushClipMaskKind::Individual,
+        let mut clip_mask_kind = if has_clips_from_other_coordinate_systems {
+            BrushClipMaskKind::Global
+        } else {
+            BrushClipMaskKind::Individual
         };
 
         // Segment the primitive on all the local-space clip sources that we can.
@@ -1454,12 +1581,16 @@ impl PrimitiveStore {
             for &(ref clip, _) in &local_clips.clips {
                 let (local_clip_rect, radius, mode) = match *clip {
                     ClipSource::RoundedRectangle(rect, radii, clip_mode) => {
+                        rect_clips_only = false;
+
                         (rect, Some(radii), clip_mode)
                     }
-                    ClipSource::Rectangle(rect) => {
-                        (rect, None, ClipMode::Clip)
+                    ClipSource::Rectangle(rect, mode) => {
+                        (rect, None, mode)
                     }
                     ClipSource::BoxShadow(ref info) => {
+                        rect_clips_only = false;
+
                         // For inset box shadows, we can clip out any
                         // pixels that are inside the shadow region
                         // and are beyond the inner rect, as they can't
@@ -1487,6 +1618,8 @@ impl PrimitiveStore {
                     ClipSource::BorderCorner(..) |
                     ClipSource::LineDecoration(..) |
                     ClipSource::Image(..) => {
+                        rect_clips_only = false;
+
                         // TODO(gw): We can easily extend the segment builder
                         //           to support these clip sources in the
                         //           future, but they are rarely used.
@@ -1518,32 +1651,34 @@ impl PrimitiveStore {
             }
         }
 
-        match brush.segment_desc {
-            Some(ref mut segment_desc) => {
-                segment_desc.clip_mask_kind = clip_mask_kind;
-            }
-            None => {
-                // TODO(gw): We can probably make the allocation
-                //           patterns of this and the segment
-                //           builder significantly better, by
-                //           retaining it across primitives.
-                let mut segments = Vec::new();
+        if is_large || rect_clips_only {
+            match brush.segment_desc {
+                Some(ref mut segment_desc) => {
+                    segment_desc.clip_mask_kind = clip_mask_kind;
+                }
+                None => {
+                    // TODO(gw): We can probably make the allocation
+                    //           patterns of this and the segment
+                    //           builder significantly better, by
+                    //           retaining it across primitives.
+                    let mut segments = Vec::new();
 
-                segment_builder.build(|segment| {
-                    segments.push(
-                        BrushSegment::new(
-                            segment.rect.origin,
-                            segment.rect.size,
-                            segment.has_mask,
-                            segment.edge_flags,
-                        ),
-                    );
-                });
+                    segment_builder.build(|segment| {
+                        segments.push(
+                            BrushSegment::new(
+                                segment.rect.origin,
+                                segment.rect.size,
+                                segment.has_mask,
+                                segment.edge_flags,
+                            ),
+                        );
+                    });
 
-                brush.segment_desc = Some(BrushSegmentDescriptor {
-                    segments,
-                    clip_mask_kind,
-                });
+                    brush.segment_desc = Some(BrushSegmentDescriptor {
+                        segments,
+                        clip_mask_kind,
+                    });
+                }
             }
         }
     }
@@ -1659,7 +1794,7 @@ impl PrimitiveStore {
         let transform = &prim_run_context.scroll_node.world_content_transform;
         let extra_clip =  {
             let metadata = &self.cpu_metadata[prim_index.0];
-            metadata.clip_sources.as_ref().map(|ref clip_sources| {
+            metadata.clip_sources.as_ref().map(|clip_sources| {
                 let prim_clips = frame_state.clip_store.get_mut(clip_sources);
                 prim_clips.update(
                     frame_state.gpu_cache,
@@ -1797,7 +1932,7 @@ impl PrimitiveStore {
         // local space, which may force us to render this item on a larger
         // picture target, if being composited.
         if let PrimitiveKind::Brush = prim_kind {
-            if let BrushKind::Picture { pic_index } = self.cpu_brushes[cpu_prim_index.0].kind {
+            if let BrushKind::Picture { pic_index, local_offset, .. } = self.cpu_brushes[cpu_prim_index.0].kind {
                 let pic_context_for_children = {
                     let pic = &mut self.pictures[pic_index.0];
 
@@ -1852,7 +1987,11 @@ impl PrimitiveStore {
                 pic.runs = pic_context_for_children.prim_runs;
 
                 let metadata = &mut self.cpu_metadata[prim_index.0];
-                metadata.local_rect = pic.update_local_rect(result);
+                // Store local rect of the picture for this brush,
+                // also applying any local offset for the instance.
+                metadata.local_rect = pic
+                    .update_local_rect(result)
+                    .translate(&local_offset);
             }
         }
 
@@ -2080,7 +2219,7 @@ fn convert_clip_chain_to_clip_vector(
             *combined_inner_rect = if !node.screen_inner_rect.is_empty() {
                 // If this clip's inner area contains the area of the primitive clipped
                 // by previous clips, then it's not going to affect rendering in any way.
-                if node.screen_inner_rect.contains_rect(&combined_outer_rect) {
+                if node.screen_inner_rect.contains_rect(combined_outer_rect) {
                     return None;
                 }
                 combined_inner_rect.intersection(&node.screen_inner_rect)

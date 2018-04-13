@@ -44,17 +44,8 @@ typedef Maybe<ExternalImageId> MaybeExternalImageId;
 typedef Maybe<FontInstanceOptions> MaybeFontInstanceOptions;
 typedef Maybe<FontInstancePlatformOptions> MaybeFontInstancePlatformOptions;
 
-inline WindowId NewWindowId(uint64_t aId) {
-  WindowId id;
-  id.mHandle = aId;
-  return id;
-}
-
-inline Epoch NewEpoch(uint32_t aEpoch) {
-  Epoch e;
-  e.mHandle = aEpoch;
-  return e;
-}
+/* Generate a brand new window id and return it. */
+WindowId NewWindowId();
 
 inline DebugFlags NewDebugFlags(uint32_t aFlags) {
   DebugFlags flags;
@@ -349,6 +340,12 @@ static inline wr::LayoutRect ToLayoutRect(const mozilla::LayoutDeviceIntRect& re
   return ToLayoutRect(IntRectToRect(rect));
 }
 
+static inline wr::LayoutRect ToRoundedLayoutRect(const mozilla::LayoutDeviceRect& aRect) {
+  auto rect = aRect;
+  rect.Round();
+  return wr::ToLayoutRect(rect);
+}
+
 static inline wr::LayoutSize ToLayoutSize(const mozilla::LayoutDeviceSize& size)
 {
   wr::LayoutSize ls;
@@ -601,7 +598,9 @@ struct Vec<uint8_t> {
     src.SetEmpty();
   }
 
-  explicit Vec(mozilla::ipc::ByteBuf&& aSrc) {
+  explicit Vec(mozilla::ipc::ByteBuf&& aSrc)
+    : inner{}
+  {
     Assign_WrVecU8(inner, std::move(aSrc));
   }
 

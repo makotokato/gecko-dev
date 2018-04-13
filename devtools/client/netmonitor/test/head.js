@@ -63,6 +63,7 @@ const CURL_UTILS_URL = EXAMPLE_URL + "html_curl-utils.html";
 const SEND_BEACON_URL = EXAMPLE_URL + "html_send-beacon.html";
 const CORS_URL = EXAMPLE_URL + "html_cors-test-page.html";
 const PAUSE_URL = EXAMPLE_URL + "html_pause-test-page.html";
+const OPEN_REQUEST_IN_TAB_URL = EXAMPLE_URL + "html_open-request-in-tab.html";
 
 const SIMPLE_SJS = EXAMPLE_URL + "sjs_simple-test-server.sjs";
 const SIMPLE_UNSORTED_COOKIES_SJS = EXAMPLE_URL + "sjs_simple-unsorted-cookies-test-server.sjs";
@@ -73,6 +74,7 @@ const SORTING_SJS = EXAMPLE_URL + "sjs_sorting-test-server.sjs";
 const HTTPS_REDIRECT_SJS = EXAMPLE_URL + "sjs_https-redirect-test-server.sjs";
 const CORS_SJS_PATH = "/browser/devtools/client/netmonitor/test/sjs_cors-test-server.sjs";
 const HSTS_SJS = EXAMPLE_URL + "sjs_hsts-test-server.sjs";
+const METHOD_SJS = EXAMPLE_URL + "sjs_method-test-server.sjs";
 
 const HSTS_BASE_URL = EXAMPLE_URL;
 const HSTS_PAGE_URL = CUSTOM_GET_URL;
@@ -491,7 +493,8 @@ function verifyRequestItemTarget(document, requestList, requestItem, method,
     let value = target.querySelector(".requests-list-status-code")
                       .getAttribute("data-status-code");
     let codeValue = target.querySelector(".requests-list-status-code").textContent;
-    let tooltip = target.querySelector(".requests-list-status").getAttribute("title");
+    let tooltip = target.querySelector(".requests-list-status-code")
+                        .getAttribute("title");
     info("Displayed status: " + value);
     info("Displayed code: " + codeValue);
     info("Tooltip status: " + tooltip);

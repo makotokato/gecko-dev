@@ -408,7 +408,7 @@ private:
   ~nsGlobalWindowObserver() = default;
 
   // This reference is non-owning and safe because it's cleared by
-  // nsGlobalWindowInner::CleanUp().
+  // nsGlobalWindowInner::FreeInnerObjects().
   nsGlobalWindowInner* MOZ_NON_OWNING_REF mWindow;
 };
 
@@ -469,7 +469,7 @@ public:
   nsresult Cancel() override;
   void SetDeadline(TimeStamp aDeadline) override;
 
-  bool IsCancelled() const { return !mWindow || mWindow->InnerObjectsFreed(); }
+  bool IsCancelled() const { return !mWindow || mWindow->IsDying(); }
   // Checks if aRequest shouldn't execute in the current idle period
   // since it has been queued from a chained call to
   // requestIdleCallback from within a running idle callback.
@@ -790,7 +790,7 @@ nsGlobalWindowInner::RequestIdleCallback(JSContext* aCx,
 {
   AssertIsOnMainThread();
 
-  if (mInnerObjectsFreed) {
+  if (IsDying()) {
    return 0;
   }
 
@@ -867,8 +867,6 @@ public:
 
   void Call()
   {
-    MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
-
     ErrorResult error;
     JS::Rooted<JS::Value> returnVal(RootingCx());
     mCallback->Call(&returnVal, error);
@@ -919,7 +917,6 @@ nsGlobalWindowInner::nsGlobalWindowInner(nsGlobalWindowOuter *aOuterWindow)
     mSerial(0),
     mIdleRequestCallbackCounter(1),
     mIdleRequestExecutor(nullptr),
-    mCleanedUp(false),
     mDialogAbuseCount(0),
     mAreDialogsEnabled(true),
     mObservingDidRefresh(false),
@@ -1066,7 +1063,9 @@ nsGlobalWindowInner::~nsGlobalWindowInner()
     mCleanMessageManager = false;
   }
 
-  DisconnectEventTargetObjects();
+  // In most cases this should already have been called, but call it again
+  // here to catch any corner cases.
+  FreeInnerObjects();
 
   if (sInnerWindowsById) {
     MOZ_ASSERT(sInnerWindowsById->Get(mWindowID),
@@ -1105,11 +1104,6 @@ nsGlobalWindowInner::~nsGlobalWindowInner()
   Telemetry::Accumulate(Telemetry::INNERWINDOWS_WITH_MUTATION_LISTENERS,
                         mMutationBits ? 1 : 0);
 
-  if (mListenerManager) {
-    mListenerManager->Disconnect();
-    mListenerManager = nullptr;
-  }
-
   // An inner window is destroyed, pull it out of the outer window's
   // list if inner windows.
 
@@ -1123,12 +1117,6 @@ nsGlobalWindowInner::~nsGlobalWindowInner()
   }
 
   // We don't have to leave the tab group if we are an inner window.
-
-  // While CleanUp generally seems to be intended to clean up outers, we've
-  // historically called it for both. Changing this would probably involve
-  // auditing all of the references that inners and outers can have, and
-  // separating the handling into CleanUp() and FreeInnerObjects.
-  CleanUp();
 
   nsCOMPtr<nsIDeviceSensors> ac = do_GetService(NS_DEVICE_SENSORS_CONTRACTID);
   if (ac)
@@ -1163,110 +1151,13 @@ nsGlobalWindowInner::CleanupCachedXBLHandlers()
 }
 
 void
-nsGlobalWindowInner::CleanUp()
-{
-  // Guarantee idempotence.
-  if (mCleanedUp)
-    return;
-  mCleanedUp = true;
-
-  StartDying();
-
-  DisconnectEventTargetObjects();
-
-  if (mObserver) {
-    nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
-    if (os) {
-      os->RemoveObserver(mObserver, NS_IOSERVICE_OFFLINE_STATUS_TOPIC);
-      os->RemoveObserver(mObserver, MEMORY_PRESSURE_OBSERVER_TOPIC);
-    }
-
-    RefPtr<StorageNotifierService> sns = StorageNotifierService::GetOrCreate();
-    if (sns) {
-     sns->Unregister(mObserver);
-    }
-
-    if (mIdleService) {
-      mIdleService->RemoveIdleObserver(mObserver, MIN_IDLE_NOTIFICATION_TIME_S);
-    }
-
-    Preferences::RemoveObserver(mObserver, "intl.accept_languages");
-
-    // Drop its reference to this dying window, in case for some bogus reason
-    // the object stays around.
-    mObserver->Forget();
-  }
-
-  if (mNavigator) {
-    mNavigator->Invalidate();
-    mNavigator = nullptr;
-  }
-
-  mScreen = nullptr;
-  mMenubar = nullptr;
-  mToolbar = nullptr;
-  mLocationbar = nullptr;
-  mPersonalbar = nullptr;
-  mStatusbar = nullptr;
-  mScrollbars = nullptr;
-  mHistory = nullptr;
-  mCustomElements = nullptr;
-  mApplicationCache = nullptr;
-  mIndexedDB = nullptr;
-
-  mConsole = nullptr;
-
-  mAudioWorklet = nullptr;
-  mPaintWorklet = nullptr;
-
-  mExternal = nullptr;
-  mInstallTrigger = nullptr;
-
-  mPerformance = nullptr;
-
-#ifdef MOZ_WEBSPEECH
-  mSpeechSynthesis = nullptr;
-#endif
-
-#if defined(MOZ_WIDGET_ANDROID)
-  mOrientationChangeObserver = nullptr;
-#endif
-
-  mChromeEventHandler = nullptr; // Forces Release
-  mParentTarget = nullptr;
-
-  DisableGamepadUpdates();
-  mHasGamepad = false;
-  DisableVRUpdates();
-  mHasVREvents = false;
-  mHasVRDisplayActivateEvents = false;
-  DisableIdleCallbackRequests();
-
-  if (mCleanMessageManager) {
-    MOZ_ASSERT(mIsChrome, "only chrome should have msg manager cleaned");
-    if (mChromeFields.mMessageManager) {
-      mChromeFields.mMessageManager->Disconnect();
-    }
-  }
-
-  CleanupCachedXBLHandlers();
-
-  for (uint32_t i = 0; i < mAudioContexts.Length(); ++i) {
-    mAudioContexts[i]->Shutdown();
-  }
-  mAudioContexts.Clear();
-
-  if (mIdleTimer) {
-    mIdleTimer->Cancel();
-    mIdleTimer = nullptr;
-  }
-
-  mIntlUtils = nullptr;
-}
-
-void
 nsGlobalWindowInner::FreeInnerObjects()
 {
+  if (IsDying()) {
+    return;
+  }
+  StartDying();
+
   // Make sure that this is called before we null out the document and
   // other members that the window destroyed observers could
   // re-create.
@@ -1274,8 +1165,6 @@ nsGlobalWindowInner::FreeInnerObjects()
   if (auto* reporter = nsWindowMemoryReporter::Get()) {
     reporter->ObserveDOMWindowDetached(this);
   }
-
-  mInnerObjectsFreed = true;
 
   // Kill all of the workers for this window.
   CancelWorkersForWindow(this);
@@ -1309,9 +1198,7 @@ nsGlobalWindowInner::FreeInnerObjects()
     mNavigator = nullptr;
   }
 
-  if (mScreen) {
-    mScreen = nullptr;
-  }
+  mScreen = nullptr;
 
 #if defined(MOZ_WIDGET_ANDROID)
   mOrientationChangeObserver = nullptr;
@@ -1379,6 +1266,63 @@ nsGlobalWindowInner::FreeInnerObjects()
   // that the Promises can resolve.
   CallDocumentFlushedResolvers();
   mObservingDidRefresh = false;
+
+  DisconnectEventTargetObjects();
+
+  if (mObserver) {
+    nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+    if (os) {
+      os->RemoveObserver(mObserver, NS_IOSERVICE_OFFLINE_STATUS_TOPIC);
+      os->RemoveObserver(mObserver, MEMORY_PRESSURE_OBSERVER_TOPIC);
+    }
+
+    RefPtr<StorageNotifierService> sns = StorageNotifierService::GetOrCreate();
+    if (sns) {
+     sns->Unregister(mObserver);
+    }
+
+    if (mIdleService) {
+      mIdleService->RemoveIdleObserver(mObserver, MIN_IDLE_NOTIFICATION_TIME_S);
+    }
+
+    Preferences::RemoveObserver(mObserver, "intl.accept_languages");
+
+    // Drop its reference to this dying window, in case for some bogus reason
+    // the object stays around.
+    mObserver->Forget();
+  }
+
+  mMenubar = nullptr;
+  mToolbar = nullptr;
+  mLocationbar = nullptr;
+  mPersonalbar = nullptr;
+  mStatusbar = nullptr;
+  mScrollbars = nullptr;
+
+  mConsole = nullptr;
+
+  mAudioWorklet = nullptr;
+  mPaintWorklet = nullptr;
+
+  mExternal = nullptr;
+  mInstallTrigger = nullptr;
+
+  mPerformance = nullptr;
+
+#ifdef MOZ_WEBSPEECH
+  mSpeechSynthesis = nullptr;
+#endif
+
+  mParentTarget = nullptr;
+
+  if (mCleanMessageManager) {
+    MOZ_ASSERT(mIsChrome, "only chrome should have msg manager cleaned");
+    if (mChromeFields.mMessageManager) {
+      mChromeFields.mMessageManager->Disconnect();
+    }
+  }
+
+  mIntlUtils = nullptr;
 }
 
 //*****************************************************************************
@@ -2003,19 +1947,7 @@ nsGlobalWindowInner::GetTargetForDOMEvent()
   return GetOuterWindowInternal();
 }
 
-EventTarget*
-nsGlobalWindowInner::GetTargetForEventTargetChain()
-{
-  return this;
-}
-
-nsresult
-nsGlobalWindowInner::WillHandleEvent(EventChainPostVisitor& aVisitor)
-{
-  return NS_OK;
-}
-
-nsresult
+void
 nsGlobalWindowInner::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
   EventMessage msg = aVisitor.mEvent->mMessage;
@@ -2054,8 +1986,6 @@ nsGlobalWindowInner::GetEventTargetParent(EventChainPreVisitor& aVisitor)
        aVisitor.mEvent->HasDragEventMessage())) {
     mAddActiveEventFuzzTime = false;
   }
-
-  return NS_OK;
 }
 
 bool
@@ -2313,15 +2243,6 @@ nsGlobalWindowInner::GetScreen(ErrorResult& aError)
   }
 
   return mScreen;
-}
-
-nsIDOMScreen*
-nsGlobalWindowInner::GetScreen()
-{
-  ErrorResult dummy;
-  nsIDOMScreen* screen = GetScreen(dummy);
-  dummy.SuppressException();
-  return screen;
 }
 
 nsHistory*
@@ -2635,11 +2556,11 @@ nsPIDOMWindowInner::TryToCacheTopInnerWindow()
     return;
   }
 
-  MOZ_ASSERT(!mInnerObjectsFreed);
+  nsGlobalWindowInner* window = nsGlobalWindowInner::Cast(this);
+
+  MOZ_ASSERT(!window->IsDying());
 
   mHasTriedToCacheTopInnerWindow = true;
-
-  nsGlobalWindowInner* window = nsGlobalWindowInner::Cast(this);
 
   MOZ_ASSERT(window);
 
@@ -2913,10 +2834,8 @@ const InterfaceShimEntry kInterfaceShimMap[] =
   { "nsIDOMMouseEvent", "MouseEvent" },
   { "nsIDOMMouseScrollEvent", "MouseScrollEvent" },
   { "nsIDOMMutationEvent", "MutationEvent" },
-  { "nsIDOMSimpleGestureEvent", "SimpleGestureEvent" },
   { "nsIDOMUIEvent", "UIEvent" },
   { "nsIDOMHTMLMediaElement", "HTMLMediaElement" },
-  { "nsIDOMOfflineResourceList", "OfflineResourceList" },
   { "nsIDOMRange", "Range" },
   { "nsIDOMSVGLength", "SVGLength" },
   // Think about whether Ci.nsINodeFilter can just go away for websites!
@@ -4548,30 +4467,21 @@ nsGlobalWindowInner::GetOwnerGlobalForBindings()
   return nsPIDOMWindowOuter::GetFromCurrentInner(this);
 }
 
-NS_IMETHODIMP
-nsGlobalWindowInner::RemoveEventListener(const nsAString& aType,
-                                         nsIDOMEventListener* aListener,
-                                         bool aUseCapture)
-{
-  if (RefPtr<EventListenerManager> elm = GetExistingListenerManager()) {
-    elm->RemoveEventListener(aType, aListener, aUseCapture);
-  }
-  return NS_OK;
-}
-
-NS_IMPL_REMOVE_SYSTEM_EVENT_LISTENER(nsGlobalWindowInner)
-
-NS_IMETHODIMP
-nsGlobalWindowInner::DispatchEvent(nsIDOMEvent* aEvent, bool* aRetVal)
+bool
+nsGlobalWindowInner::DispatchEvent(Event& aEvent,
+                                   CallerType aCallerType,
+                                   ErrorResult& aRv)
 {
   if (!IsCurrentInnerWindow()) {
     NS_WARNING("DispatchEvent called on non-current inner window, dropping. "
                "Please check the window in the caller instead.");
-    return NS_ERROR_FAILURE;
+    aRv.Throw(NS_ERROR_FAILURE);
+    return false;
   }
 
   if (!mDoc) {
-    return NS_ERROR_FAILURE;
+    aRv.Throw(NS_ERROR_FAILURE);
+    return false;
   }
 
   // Obtain a presentation shell
@@ -4579,76 +4489,18 @@ nsGlobalWindowInner::DispatchEvent(nsIDOMEvent* aEvent, bool* aRetVal)
 
   nsEventStatus status = nsEventStatus_eIgnore;
   nsresult rv = EventDispatcher::DispatchDOMEvent(ToSupports(this), nullptr,
-                                                  aEvent, presContext, &status);
-
-  *aRetVal = (status != nsEventStatus_eConsumeNoDefault);
-  return rv;
+                                                  &aEvent, presContext, &status);
+  bool retval = !aEvent.DefaultPrevented(aCallerType);
+  if (NS_FAILED(rv)) {
+    aRv.Throw(rv);
+  }
+  return retval;
 }
 
-NS_IMETHODIMP
-nsGlobalWindowInner::AddEventListener(const nsAString& aType,
-                                      nsIDOMEventListener *aListener,
-                                      bool aUseCapture, bool aWantsUntrusted,
-                                      uint8_t aOptionalArgc)
+bool
+nsGlobalWindowInner::ComputeDefaultWantsUntrusted(ErrorResult& aRv)
 {
-  NS_ASSERTION(!aWantsUntrusted || aOptionalArgc > 1,
-               "Won't check if this is chrome, you want to set "
-               "aWantsUntrusted to false or make the aWantsUntrusted "
-               "explicit by making optional_argc non-zero.");
-
-  if (!aWantsUntrusted &&
-      (aOptionalArgc < 2 && !nsContentUtils::IsChromeDoc(mDoc))) {
-    aWantsUntrusted = true;
-  }
-
-  EventListenerManager* manager = GetOrCreateListenerManager();
-  NS_ENSURE_STATE(manager);
-  manager->AddEventListener(aType, aListener, aUseCapture, aWantsUntrusted);
-  return NS_OK;
-}
-
-void
-nsGlobalWindowInner::AddEventListener(const nsAString& aType,
-                                      EventListener* aListener,
-                                      const AddEventListenerOptionsOrBoolean& aOptions,
-                                      const Nullable<bool>& aWantsUntrusted,
-                                      ErrorResult& aRv)
-{
-  bool wantsUntrusted;
-  if (aWantsUntrusted.IsNull()) {
-    wantsUntrusted = !nsContentUtils::IsChromeDoc(mDoc);
-  } else {
-    wantsUntrusted = aWantsUntrusted.Value();
-  }
-
-  EventListenerManager* manager = GetOrCreateListenerManager();
-  if (!manager) {
-    aRv.Throw(NS_ERROR_UNEXPECTED);
-    return;
-  }
-
-  manager->AddEventListener(aType, aListener, aOptions, wantsUntrusted);
-}
-
-NS_IMETHODIMP
-nsGlobalWindowInner::AddSystemEventListener(const nsAString& aType,
-                                            nsIDOMEventListener *aListener,
-                                            bool aUseCapture,
-                                            bool aWantsUntrusted,
-                                            uint8_t aOptionalArgc)
-{
-  NS_ASSERTION(!aWantsUntrusted || aOptionalArgc > 1,
-               "Won't check if this is chrome, you want to set "
-               "aWantsUntrusted to false or make the aWantsUntrusted "
-               "explicit by making optional_argc non-zero.");
-
-  if (!aWantsUntrusted &&
-      (aOptionalArgc < 2 && !nsContentUtils::IsChromeDoc(mDoc))) {
-    aWantsUntrusted = true;
-  }
-
-  return NS_AddSystemEventListener(this, aType, aListener, aUseCapture,
-                                   aWantsUntrusted);
+  return !nsContentUtils::IsChromeDoc(mDoc);
 }
 
 EventListenerManager*
@@ -4666,13 +4518,6 @@ EventListenerManager*
 nsGlobalWindowInner::GetExistingListenerManager() const
 {
   return mListenerManager;
-}
-
-nsIScriptContext*
-nsGlobalWindowInner::GetContextForEventHandlers(nsresult* aRv)
-{
-  *aRv = NS_ERROR_UNEXPECTED;
-  FORWARD_TO_OUTER(GetContextForEventHandlers, (aRv), nullptr);
 }
 
 //*****************************************************************************
@@ -4790,7 +4635,7 @@ nsGlobalWindowInner::SetFocusedNode(nsIContent* aNode,
     return;
   }
 
-  if (mCleanedUp) {
+  if (IsDying()) {
     NS_ASSERTION(!aNode, "Trying to focus cleaned up window!");
     aNode = nullptr;
     aNeedsFocus = false;
@@ -4845,7 +4690,7 @@ nsGlobalWindowInner::ShouldShowFocusRing()
 bool
 nsGlobalWindowInner::TakeFocus(bool aFocus, uint32_t aFocusMethod)
 {
-  if (mCleanedUp) {
+  if (IsDying()) {
     return false;
   }
 
@@ -4977,8 +4822,9 @@ nsGlobalWindowInner::FireHashchange(const nsAString &aOldURL,
 
   event->SetTrusted(true);
 
-  bool dummy;
-  return DispatchEvent(event, &dummy);
+  ErrorResult rv;
+  DispatchEvent(*event, rv);
+  return rv.StealNSResult();
 }
 
 nsresult
@@ -5022,8 +4868,9 @@ nsGlobalWindowInner::DispatchSyncPopState()
   event->SetTrusted(true);
   event->SetTarget(this);
 
-  bool dummy; // default action
-  return DispatchEvent(event, &dummy);
+  ErrorResult err;
+  DispatchEvent(*event, err);
+  return err.StealNSResult();
 }
 
 // Find an nsICanvasFrame under aFrame.  Only search the principal
@@ -6057,8 +5904,9 @@ nsGlobalWindowInner::Observe(nsISupports* aSubject, const char* aTopic,
     event->InitEvent(NS_LITERAL_STRING("languagechange"), false, false);
     event->SetTrusted(true);
 
-    bool dummy;
-    return DispatchEvent(event, &dummy);
+    ErrorResult rv;
+    DispatchEvent(*event, rv);
+    return rv.StealNSResult();
   }
 
   NS_WARNING("unrecognized topic in nsGlobalWindowInner::Observe");
@@ -6156,8 +6004,7 @@ nsGlobalWindowInner::ObserveStorageNotification(StorageEvent* aEvent,
     internalEvent->mFlags.mOnlyChromeDispatch = true;
   }
 
-  bool defaultActionEnabled;
-  DispatchEvent(clonedEvent, &defaultActionEnabled);
+  DispatchEvent(*clonedEvent);
 }
 
 already_AddRefed<StorageEvent>
@@ -7256,12 +7103,11 @@ nsGlobalWindowInner::DispatchVRDisplayActivate(uint32_t aDisplayID,
       // to be used in response to link traversal, user request (chrome UX), and
       // HMD mounting detection sensors.
       event->SetTrusted(true);
-      bool defaultActionEnabled;
       // VRDisplay.requestPresent normally requires a user gesture; however, an
       // exception is made to allow it to be called in response to vrdisplayactivate
       // during VR link traversal.
       display->StartHandlingVRNavigationEvent();
-      Unused << DispatchEvent(event, &defaultActionEnabled);
+      DispatchEvent(*event);
       display->StopHandlingVRNavigationEvent();
       // Once we dispatch the event, we must not access any members as an event
       // listener can do anything, including closing windows.
@@ -7295,8 +7141,7 @@ nsGlobalWindowInner::DispatchVRDisplayDeactivate(uint32_t aDisplayID,
                                     NS_LITERAL_STRING("vrdisplaydeactivate"),
                                     init);
       event->SetTrusted(true);
-      bool defaultActionEnabled;
-      Unused << DispatchEvent(event, &defaultActionEnabled);
+      DispatchEvent(*event);
       // Once we dispatch the event, we must not access any members as an event
       // listener can do anything, including closing windows.
       return;
@@ -7326,8 +7171,7 @@ nsGlobalWindowInner::DispatchVRDisplayConnect(uint32_t aDisplayID)
                                     NS_LITERAL_STRING("vrdisplayconnect"),
                                     init);
       event->SetTrusted(true);
-      bool defaultActionEnabled;
-      Unused << DispatchEvent(event, &defaultActionEnabled);
+      DispatchEvent(*event);
       // Once we dispatch the event, we must not access any members as an event
       // listener can do anything, including closing windows.
       return;
@@ -7357,8 +7201,7 @@ nsGlobalWindowInner::DispatchVRDisplayDisconnect(uint32_t aDisplayID)
                                     NS_LITERAL_STRING("vrdisplaydisconnect"),
                                     init);
       event->SetTrusted(true);
-      bool defaultActionEnabled;
-      Unused << DispatchEvent(event, &defaultActionEnabled);
+      DispatchEvent(*event);
       // Once we dispatch the event, we must not access any members as an event
       // listener can do anything, including closing windows.
       return;
@@ -7387,8 +7230,7 @@ nsGlobalWindowInner::DispatchVRDisplayPresentChange(uint32_t aDisplayID)
                                     NS_LITERAL_STRING("vrdisplaypresentchange"),
                                     init);
       event->SetTrusted(true);
-      bool defaultActionEnabled;
-      Unused << DispatchEvent(event, &defaultActionEnabled);
+      DispatchEvent(*event);
       // Once we dispatch the event, we must not access any members as an event
       // listener can do anything, including closing windows.
       return;
@@ -7762,49 +7604,27 @@ nsGlobalWindowInner::NotifyDefaultButtonLoaded(Element& aDefaultButton,
 #endif
 }
 
-NS_IMETHODIMP
-nsGlobalWindowInner::GetMessageManager(nsIMessageBroadcaster** aManager)
-{
-  ErrorResult rv;
-  NS_IF_ADDREF(*aManager = GetMessageManager(rv));
-  return rv.StealNSResult();
-}
-
 ChromeMessageBroadcaster*
-nsGlobalWindowInner::GetMessageManager(ErrorResult& aError)
+nsGlobalWindowInner::MessageManager()
 {
   MOZ_ASSERT(IsChromeWindow());
   if (!mChromeFields.mMessageManager) {
-    nsCOMPtr<nsIMessageBroadcaster> globalMM =
-      do_GetService("@mozilla.org/globalmessagemanager;1");
-    mChromeFields.mMessageManager =
-      new ChromeMessageBroadcaster(static_cast<nsFrameMessageManager*>(globalMM.get()));
+    RefPtr<ChromeMessageBroadcaster> globalMM =
+      nsFrameMessageManager::GetGlobalMessageManager();
+    mChromeFields.mMessageManager = new ChromeMessageBroadcaster(globalMM);
   }
   return mChromeFields.mMessageManager;
 }
 
-NS_IMETHODIMP
-nsGlobalWindowInner::GetGroupMessageManager(const nsAString& aGroup,
-                                            nsIMessageBroadcaster** aManager)
-{
-  MOZ_RELEASE_ASSERT(IsChromeWindow());
-  ErrorResult rv;
-  NS_IF_ADDREF(*aManager = GetGroupMessageManager(aGroup, rv));
-  return rv.StealNSResult();
-}
-
 ChromeMessageBroadcaster*
-nsGlobalWindowInner::GetGroupMessageManager(const nsAString& aGroup,
-                                            ErrorResult& aError)
+nsGlobalWindowInner::GetGroupMessageManager(const nsAString& aGroup)
 {
   MOZ_ASSERT(IsChromeWindow());
 
   RefPtr<ChromeMessageBroadcaster> messageManager =
     mChromeFields.mGroupMessageManagers.LookupForAdd(aGroup).OrInsert(
-      [this, &aError] () {
-        nsFrameMessageManager* parent = GetMessageManager(aError);
-
-        return new ChromeMessageBroadcaster(parent);
+      [this] () {
+        return new ChromeMessageBroadcaster(MessageManager());
       });
   return messageManager;
 }
@@ -8314,7 +8134,6 @@ nsPIDOMWindowInner::nsPIDOMWindowInner(nsPIDOMWindowOuter *aOuterWindow)
   mMayHaveSelectionChangeEventListener(false),
   mMayHaveMouseEnterLeaveEventListener(false),
   mMayHavePointerEnterLeaveEventListener(false),
-  mInnerObjectsFreed(false),
   mAudioCaptured(false),
   mOuterWindow(aOuterWindow),
   // Make sure no actual window ends up with mWindowID == 0

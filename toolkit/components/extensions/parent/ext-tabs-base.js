@@ -75,7 +75,7 @@ class TabBase {
    * @param {BaseContext} context
    *        The context through which to send the message.
    * @param {string} messageName
-   *        The name of the messge to send.
+   *        The name of the message to send.
    * @param {object} [data = {}]
    *        Arbitrary, structured-clonable message data to send.
    * @param {object} [options]
@@ -399,6 +399,16 @@ class TabBase {
   }
 
   /**
+   * @property {boolean} highlighted
+   *        Alias for `active`.
+   *        @readonly
+   *        @abstract
+   */
+  get highlighted() {
+    return this.active;
+  }
+
+  /**
    * @property {boolean} selected
    *        An alias for `active`.
    *        @readonly
@@ -557,7 +567,7 @@ class TabBase {
   /**
    * Converts this tab object to a JSON-compatible object containing the values
    * of its properties which the extension is permitted to access, in the format
-   * requried to be returned by WebExtension APIs.
+   * required to be returned by WebExtension APIs.
    *
    * @param {Tab} [fallbackTab]
    *        A tab to retrieve geometry data from if the lazy geometry data for
@@ -814,7 +824,7 @@ class WindowBase {
 
   /**
    * Converts this window object to a JSON-compatible object which may be
-   * returned to an extension, in the format requried to be returned by
+   * returned to an extension, in the format required to be returned by
    * WebExtension APIs.
    *
    * @param {object} [getInfo]
@@ -1042,6 +1052,18 @@ class WindowBase {
   get activeTab() {
     throw new Error("Not implemented");
   }
+
+  /**
+   * Returns the window's tab at the specified index.
+   *
+   * @param {integer} index
+   *        The index of the desired tab.
+   *
+   * @returns {TabBase|undefined}
+   */
+  getTabAtIndex(index) {
+    throw new Error("Not implemented");
+  }
   /* eslint-enable valid-jsdoc */
 }
 
@@ -1112,7 +1134,7 @@ Object.assign(WindowBase, {WINDOW_ID_NONE, WINDOW_ID_CURRENT});
  */
 
 /**
- * An object containg basic, extension-independent information about the window
+ * An object containing basic, extension-independent information about the window
  * and tab that a XUL <browser> belongs to.
  *
  * @typedef {Object} BrowserData
@@ -1368,7 +1390,7 @@ class WindowTrackerBase extends EventEmitter {
    * @returns {DOMWindow|null}
    */
   getCurrentWindow(context) {
-    return context.currentWindow || this.topWindow;
+    return (context && context.currentWindow) || this.topWindow;
   }
 
   /**
@@ -1379,22 +1401,30 @@ class WindowTrackerBase extends EventEmitter {
    * @param {BaseContext} context
    *        The extension context for which the matching is being performed.
    *        Used to determine the current window for relevant properties.
+   * @param {boolean} [strict = true]
+   *        If false, undefined will be returned instead of throwing an error
+   *        in case no window exists with the given ID.
    *
-   * @returns {DOMWindow}
+   * @returns {DOMWindow|undefined}
    * @throws {ExtensionError}
-   *        If no window exists with the given ID.
+   *        If no window exists with the given ID and `strict` is true.
    */
-  getWindow(id, context) {
+  getWindow(id, context, strict = true) {
     if (id === WINDOW_ID_CURRENT) {
       return this.getCurrentWindow(context);
     }
 
-    for (let window of this.browserWindows(true)) {
-      if (this.getId(window) === id) {
-        return window;
-      }
+    let window = Services.wm.getOuterWindowWithId(id);
+    if (window && !window.closed && (window.document.readyState !== "complete"
+        || this.isBrowserWindow(window))) {
+      // Tolerate incomplete windows because isBrowserWindow is only reliable
+      // once the window is fully loaded.
+      return window;
     }
-    throw new ExtensionError(`Invalid window ID: ${id}`);
+
+    if (strict) {
+      throw new ExtensionError(`Invalid window ID: ${id}`);
+    }
   }
 
   /**
@@ -1531,7 +1561,7 @@ class WindowTrackerBase extends EventEmitter {
   }
 
   /**
-   * Add an event listener to be called whenever the given DOM event is recieved
+   * Add an event listener to be called whenever the given DOM event is received
    * at the top level of any browser window.
    *
    * @param {string} type
@@ -1767,7 +1797,7 @@ class TabManagerBase {
 
   /**
    * Converts the given native tab to a JSON-compatible object, in the format
-   * requried to be returned by WebExtension APIs, which may be safely passed to
+   * required to be returned by WebExtension APIs, which may be safely passed to
    * extension code.
    *
    * @param {NativeTab} nativeTab
@@ -1800,10 +1830,28 @@ class TabManagerBase {
    * @returns {Iterator<TabBase>}
    */
   * query(queryInfo = null, context = null) {
-    for (let window of this.extension.windowManager.query(queryInfo, context)) {
-      for (let tab of window.getTabs()) {
-        if (!queryInfo || tab.matches(queryInfo)) {
-          yield tab;
+    function* candidates(windowWrapper) {
+      if (queryInfo) {
+        let {active, highlighted, index} = queryInfo;
+        if (active === true || highlighted === true) {
+          yield windowWrapper.activeTab;
+          return;
+        }
+        if (index != null) {
+          let tabWrapper = windowWrapper.getTabAtIndex(index);
+          if (tabWrapper) {
+            yield tabWrapper;
+          }
+          return;
+        }
+      }
+      yield* windowWrapper.getTabs();
+    }
+    let windowWrappers = this.extension.windowManager.query(queryInfo, context);
+    for (let windowWrapper of windowWrappers) {
+      for (let tabWrapper of candidates(windowWrapper)) {
+        if (!queryInfo || tabWrapper.matches(queryInfo)) {
+          yield tabWrapper;
         }
       }
     }
@@ -1855,7 +1903,7 @@ class WindowManagerBase {
 
   /**
    * Converts the given browser window to a JSON-compatible object, in the
-   * format requried to be returned by WebExtension APIs, which may be safely
+   * format required to be returned by WebExtension APIs, which may be safely
    * passed to extension code.
    *
    * @param {DOMWindow} window
@@ -1901,9 +1949,29 @@ class WindowManagerBase {
    * @returns {Iterator<WindowBase>}
    */
   * query(queryInfo = null, context = null) {
-    for (let window of this.getAll()) {
-      if (!queryInfo || window.matches(queryInfo, context)) {
-        yield window;
+    function* candidates(windowManager) {
+      if (queryInfo) {
+        let {currentWindow, windowId, lastFocusedWindow} = queryInfo;
+        if (currentWindow === true && windowId == null) {
+          windowId = WINDOW_ID_CURRENT;
+        }
+        if (windowId != null) {
+          let window = global.windowTracker.getWindow(windowId, context, false);
+          if (window) {
+            yield windowManager.getWrapper(window);
+          }
+          return;
+        }
+        if (lastFocusedWindow === true) {
+          yield windowManager.getWrapper(global.windowTracker.topWindow);
+          return;
+        }
+      }
+      yield* windowManager.getAll();
+    }
+    for (let windowWrapper of candidates(this)) {
+      if (!queryInfo || windowWrapper.matches(queryInfo, context)) {
+        yield windowWrapper;
       }
     }
   }

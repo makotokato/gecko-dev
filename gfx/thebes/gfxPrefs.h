@@ -472,7 +472,7 @@ private:
   DECL_GFX_PREF(Once, "gfx.direct3d11.break-on-error",         Direct3D11BreakOnError, bool, false);
   DECL_GFX_PREF(Once, "gfx.direct3d11.sleep-on-create-device", Direct3D11SleepOnCreateDevice, int32_t, 0);
   DECL_GFX_PREF(Live, "gfx.downloadable_fonts.keep_color_bitmaps", KeepColorBitmaps, bool, false);
-  DECL_GFX_PREF(Live, "gfx.downloadable_fonts.keep_variation_tables", KeepVariationTables, bool, false);
+  DECL_GFX_PREF(Live, "gfx.downloadable_fonts.validate_variation_tables", ValidateVariationTables, bool, true);
   DECL_GFX_PREF(Live, "gfx.downloadable_fonts.otl_validation", ValidateOTLTables, bool, true);
   DECL_GFX_PREF(Live, "gfx.draw-color-bars",                   CompositorDrawColorBars, bool, false);
   DECL_GFX_PREF(Once, "gfx.e10s.hide-plugins-for-scroll",      HidePluginsForScroll, bool, true);
@@ -507,6 +507,7 @@ private:
   DECL_GFX_PREF(Once, "gfx.vsync.compositor.unobserve-count",  CompositorUnobserveCount, int32_t, 10);
 
   DECL_GFX_PREF(Once, "gfx.webrender.all",                     WebRenderAll, bool, false);
+  DECL_GFX_PREF(Once, "gfx.webrender.async-scene-build",       WebRenderAsyncSceneBuild, bool, false);
   DECL_GFX_PREF(Once, "gfx.webrender.enabled",                 WebRenderEnabledDoNotUseDirectly, bool, false);
   DECL_OVERRIDE_PREF(Live, "gfx.webrender.blob-images",        WebRenderBlobImages, gfxPrefs::WebRenderAll());
   DECL_GFX_PREF(Live, "gfx.webrender.blob.invalidation",       WebRenderBlobInvalidation, bool, false);

@@ -49,7 +49,7 @@
 #include "nsContainerFrame.h"
 #include "nsStyleUtil.h"
 
-#include "nsPresState.h"
+#include "mozilla/PresState.h"
 #include "nsILayoutHistoryState.h"
 
 #include "nsHTMLParts.h"
@@ -546,17 +546,16 @@ nsGenericHTMLElement::CheckHandleEventForAnchorsPreconditions(
          IsHTMLElement(nsGkAtoms::area);
 }
 
-nsresult
+void 
 nsGenericHTMLElement::GetEventTargetParentForAnchors(EventChainPreVisitor& aVisitor)
 {
-  nsresult rv = nsGenericHTMLElementBase::GetEventTargetParent(aVisitor);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsGenericHTMLElementBase::GetEventTargetParent(aVisitor);
 
   if (!CheckHandleEventForAnchorsPreconditions(aVisitor)) {
-    return NS_OK;
+    return;
   }
 
-  return GetEventTargetParentForLinks(aVisitor);
+  GetEventTargetParentForLinks(aVisitor);
 }
 
 nsresult
@@ -922,11 +921,7 @@ nsGenericHTMLElement::ParseBackgroundAttribute(int32_t aNamespaceID,
     if (NS_FAILED(rv)) {
       return false;
     }
-
-    mozilla::css::URLValue *url =
-      new mozilla::css::URLValue(uri, aValue, baseURI, doc->GetDocumentURI(),
-                                 NodePrincipal());
-    aResult.SetTo(url, &aValue);
+    aResult.SetTo(uri, &aValue);
     return true;
   }
 
@@ -1932,7 +1927,7 @@ nsGenericHTMLFormElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
                                             aNotify);
 }
 
-nsresult
+void
 nsGenericHTMLFormElement::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
   if (aVisitor.mEvent->IsTrusted() && (aVisitor.mEvent->mMessage == eFocus ||
@@ -1941,7 +1936,7 @@ nsGenericHTMLFormElement::GetEventTargetParent(EventChainPreVisitor& aVisitor)
     // PreHandleEvent to prevent it breaks event target chain creation.
     aVisitor.mWantsPreHandleEvent = true;
   }
-  return nsGenericHTMLElement::GetEventTargetParent(aVisitor);
+  nsGenericHTMLElement::GetEventTargetParent(aVisitor);
 }
 
 nsresult
@@ -2757,7 +2752,7 @@ nsGenericHTMLFormElementWithState::GenerateStateKey()
   return NS_OK;
 }
 
-nsPresState*
+PresState*
 nsGenericHTMLFormElementWithState::GetPrimaryPresState()
 {
   if (mStateKey.IsEmpty()) {
@@ -2771,10 +2766,11 @@ nsGenericHTMLFormElementWithState::GetPrimaryPresState()
   }
 
   // Get the pres state for this key, if it doesn't exist, create one.
-  nsPresState* result = history->GetState(mStateKey);
+  PresState* result = history->GetState(mStateKey);
   if (!result) {
-    result = new nsPresState();
-    history->AddState(mStateKey, result);
+    UniquePtr<PresState> newState = NewPresState();
+    result = newState.get();
+    history->AddState(mStateKey, Move(newState));
   }
 
   return result;
@@ -2816,9 +2812,8 @@ nsGenericHTMLFormElementWithState::RestoreFormControlState()
     return false;
   }
 
-  nsPresState *state;
   // Get the pres state for this key
-  state = history->GetState(mStateKey);
+  PresState* state = history->GetState(mStateKey);
   if (state) {
     bool result = RestoreState(state);
     history->RemoveState(mStateKey);

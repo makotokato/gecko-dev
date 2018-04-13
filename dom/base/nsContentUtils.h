@@ -82,7 +82,6 @@ class nsIInterfaceRequestor;
 class nsIIOService;
 class nsILoadInfo;
 class nsILoadGroup;
-class nsIMessageBroadcaster;
 class nsNameSpaceManager;
 class nsIObserver;
 class nsIParser;
@@ -129,6 +128,7 @@ class EventListenerManager;
 class HTMLEditor;
 
 namespace dom {
+class ChromeMessageBroadcaster;
 struct CustomElementDefinition;
 class DocumentFragment;
 class Element;
@@ -229,7 +229,8 @@ public:
   // Check whether the caller is system if you know you're on the main thread.
   static bool IsSystemCaller(JSContext* aCx);
 
-  // Check whether the caller is system if you might be on a worker thread.
+  // Check whether the caller is system if you might be on a worker or worklet
+  // thread.
   static bool ThreadsafeIsSystemCaller(JSContext* aCx);
 
   // In the traditional Gecko architecture, both C++ code and untrusted JS code
@@ -710,7 +711,7 @@ public:
    * Returns true if |aName| is a valid name to be registered via
    * customElements.define.
    */
-  static bool IsCustomElementName(nsAtom* aName);
+  static bool IsCustomElementName(nsAtom* aName, uint32_t aNameSpaceID);
 
   static nsresult CheckQName(const nsAString& aQualifiedName,
                              bool aNamespaceAware = true,
@@ -1990,6 +1991,8 @@ public:
    * run anything else, when this function returns false, but this is ok.
    */
   static bool IsSafeToRunScript() {
+    MOZ_ASSERT(NS_IsMainThread(),
+               "This static variable only makes sense on the main thread!");
     return sScriptBlockerCount == 0;
   }
 
@@ -2044,11 +2047,7 @@ public:
   static nsresult ProcessViewportInfo(nsIDocument *aDocument,
                                       const nsAString &viewportInfo);
 
-  static nsIScriptContext* GetContextForEventHandlers(nsINode* aNode,
-                                                      nsresult* aRv);
-
   static JSContext *GetCurrentJSContext();
-  static JSContext *GetCurrentJSContextForThread();
 
   /**
    * Case insensitive comparison between two strings. However it only ignores
@@ -3343,7 +3342,7 @@ private:
                                                                       mozilla::dom::AutocompleteInfo& aInfo,
                                                                       bool aGrantAllValidValue = false);
 
-  static bool CallOnAllRemoteChildren(nsIMessageBroadcaster* aManager,
+  static bool CallOnAllRemoteChildren(mozilla::dom::ChromeMessageBroadcaster* aManager,
                                       CallOnRemoteChildFunction aCallback,
                                       void* aArg);
 

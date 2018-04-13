@@ -1256,6 +1256,9 @@ MediaRecorder::MediaRecorder(DOMMediaStream& aSourceMediaStream,
   : DOMEventTargetHelper(aOwnerWindow)
   , mAudioNodeOutput(0)
   , mState(RecordingState::Inactive)
+  , mAudioBitsPerSecond{}
+  , mVideoBitsPerSecond{}
+  , mBitsPerSecond{}
 {
   MOZ_ASSERT(aOwnerWindow);
   mDOMStream = &aSourceMediaStream;
@@ -1269,6 +1272,9 @@ MediaRecorder::MediaRecorder(AudioNode& aSrcAudioNode,
   : DOMEventTargetHelper(aOwnerWindow)
   , mAudioNodeOutput(aSrcOutput)
   , mState(RecordingState::Inactive)
+  , mAudioBitsPerSecond{}
+  , mVideoBitsPerSecond{}
+  , mBitsPerSecond{}
 {
   MOZ_ASSERT(aOwnerWindow);
 
@@ -1615,8 +1621,9 @@ MediaRecorder::CreateAndDispatchBlobEvent(Blob* aBlob)
                            NS_LITERAL_STRING("dataavailable"),
                            init);
   event->SetTrusted(true);
-  bool dummy;
-  return DispatchEvent(event, &dummy);
+  ErrorResult rv;
+  DispatchEvent(*event, rv);
+  return rv.StealNSResult();
 }
 
 void
@@ -1632,9 +1639,9 @@ MediaRecorder::DispatchSimpleEvent(const nsAString & aStr)
   event->InitEvent(aStr, false, false);
   event->SetTrusted(true);
 
-  bool dummy;
-  rv = DispatchEvent(event, &dummy);
-  if (NS_FAILED(rv)) {
+  IgnoredErrorResult res;
+  DispatchEvent(*event, res);
+  if (res.Failed()) {
     NS_ERROR("Failed to dispatch the event!!!");
     return;
   }
@@ -1678,9 +1685,9 @@ MediaRecorder::NotifyError(nsresult aRv)
     this, NS_LITERAL_STRING("error"), init);
   event->SetTrusted(true);
 
-  bool dummy;
-  rv = DispatchEvent(event, &dummy);
-  if (NS_FAILED(rv)) {
+  IgnoredErrorResult res;
+  DispatchEvent(*event, res);
+  if (res.Failed()) {
     NS_ERROR("Failed to dispatch the error event!!!");
   }
 }

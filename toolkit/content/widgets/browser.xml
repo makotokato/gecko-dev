@@ -8,11 +8,11 @@
           xmlns="http://www.mozilla.org/xbl"
           xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
 
-  <binding id="browser" extends="xul:browser">
+  <binding id="browser">
     <content clickthrough="never">
       <children/>
     </content>
-    <implementation type="application/javascript" implements="nsIObserver, nsIDOMEventListener, nsIMessageListener, nsIBrowser">
+    <implementation type="application/javascript" implements="nsIObserver, nsIBrowser">
       <property name="autoscrollEnabled">
         <getter>
           <![CDATA[

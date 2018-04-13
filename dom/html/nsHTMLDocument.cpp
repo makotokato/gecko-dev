@@ -106,7 +106,6 @@
 #include "mozilla/dom/Selection.h"
 #include "nsCharsetSource.h"
 #include "nsIStringBundle.h"
-#include "nsDOMClassInfo.h"
 #include "nsFocusManager.h"
 #include "nsIFrame.h"
 #include "nsIContent.h"
@@ -2888,6 +2887,9 @@ nsHTMLDocument::ExecCommand(const nsAString& commandID,
     nsCOMPtr<nsIDocShell> docShell(mDocumentContainer);
     if (docShell) {
       nsresult res = docShell->DoCommand(cmdToDispatch.get());
+      if (res == NS_SUCCESS_DOM_NO_OPERATION) {
+        return false;
+      }
       return NS_SUCCEEDED(res);
     }
     return false;

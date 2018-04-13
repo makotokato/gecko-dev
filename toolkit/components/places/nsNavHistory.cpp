@@ -270,7 +270,6 @@ const int32_t nsNavHistory::kGetInfoIndex_VisitType = 17;
 
 PLACES_FACTORY_SINGLETON_IMPLEMENTATION(nsNavHistory, gHistoryService)
 
-
 nsNavHistory::nsNavHistory()
   : mBatchLevel(0)
   , mBatchDBTransaction(nullptr)
@@ -281,6 +280,28 @@ nsNavHistory::nsNavHistory()
   , mEmbedVisits(EMBED_VISITS_INITIAL_CACHE_LENGTH)
   , mHistoryEnabled(true)
   , mNumVisitsForFrecency(10)
+  , mFirstBucketCutoffInDays{}
+  , mSecondBucketCutoffInDays{}
+  , mThirdBucketCutoffInDays{}
+  , mFourthBucketCutoffInDays{}
+  , mFirstBucketWeight{}
+  , mSecondBucketWeight{}
+  , mThirdBucketWeight{}
+  , mFourthBucketWeight{}
+  , mDefaultWeight{}
+  , mEmbedVisitBonus{}
+  , mFramedLinkVisitBonus{}
+  , mLinkVisitBonus{}
+  , mTypedVisitBonus{}
+  , mBookmarkVisitBonus{}
+  , mDownloadVisitBonus{}
+  , mPermRedirectVisitBonus{}
+  , mTempRedirectVisitBonus{}
+  , mRedirectSourceVisitBonus{}
+  , mDefaultVisitBonus{}
+  , mUnvisitedBookmarkBonus{}
+  , mUnvisitedTypedBonus{}
+  , mReloadVisitBonus{}
   , mTagsFolder(-1)
   , mDaysOfHistory(-1)
   , mLastCachedStartOfDay(INT64_MAX)
@@ -1119,9 +1140,7 @@ static
 bool NeedToFilterResultSet(const RefPtr<nsNavHistoryQuery>& aQuery,
                            nsNavHistoryQueryOptions *aOptions)
 {
-  uint16_t resultType = aOptions->ResultType();
-  return resultType == nsINavHistoryQueryOptions::RESULTS_AS_TAG_CONTENTS ||
-         aOptions->ExcludeQueries();
+  return aOptions->ExcludeQueries();
 }
 
 // ** Helper class for ConstructQueryString **/
@@ -1130,7 +1149,8 @@ class PlacesSQLQueryBuilder
 {
 public:
   PlacesSQLQueryBuilder(const nsCString& aConditions,
-                        nsNavHistoryQueryOptions* aOptions,
+                        const RefPtr<nsNavHistoryQuery>& aQuery,
+                        const RefPtr<nsNavHistoryQueryOptions>& aOptions,
                         bool aUseLimit,
                         nsNavHistory::StringHash& aAddParams,
                         bool aHasSearchTerms);
@@ -1173,12 +1193,14 @@ private:
   nsCString mGroupBy;
   bool mHasDateColumns;
   bool mSkipOrderBy;
+
   nsNavHistory::StringHash& mAddParams;
 };
 
 PlacesSQLQueryBuilder::PlacesSQLQueryBuilder(
     const nsCString& aConditions,
-    nsNavHistoryQueryOptions* aOptions,
+    const RefPtr<nsNavHistoryQuery>& aQuery,
+    const RefPtr<nsNavHistoryQueryOptions>& aOptions,
     bool aUseLimit,
     nsNavHistory::StringHash& aAddParams,
     bool aHasSearchTerms)
@@ -1194,6 +1216,11 @@ PlacesSQLQueryBuilder::PlacesSQLQueryBuilder(
 , mAddParams(aAddParams)
 {
   mHasDateColumns = (mQueryType == nsINavHistoryQueryOptions::QUERY_TYPE_BOOKMARKS);
+  // Force the default sorting mode for tag queries.
+  if (mSortingMode == nsINavHistoryQueryOptions::SORT_BY_NONE &&
+      aQuery->Tags().Length() > 0) {
+    mSortingMode = nsINavHistoryQueryOptions::SORT_BY_TITLE_ASCENDING;
+  }
 }
 
 nsresult
@@ -1222,7 +1249,6 @@ PlacesSQLQueryBuilder::Select()
   switch (mResultType)
   {
     case nsINavHistoryQueryOptions::RESULTS_AS_URI:
-    case nsINavHistoryQueryOptions::RESULTS_AS_TAG_CONTENTS:
       rv = SelectAsURI();
       NS_ENSURE_SUCCESS(rv, rv);
       break;
@@ -1243,7 +1269,7 @@ PlacesSQLQueryBuilder::Select()
       NS_ENSURE_SUCCESS(rv, rv);
       break;
 
-    case nsINavHistoryQueryOptions::RESULTS_AS_TAG_QUERY:
+    case nsINavHistoryQueryOptions::RESULTS_AS_TAGS_ROOT:
       rv = SelectAsTag();
       NS_ENSURE_SUCCESS(rv, rv);
       break;
@@ -1291,59 +1317,27 @@ PlacesSQLQueryBuilder::SelectAsURI()
       break;
 
     case nsINavHistoryQueryOptions::QUERY_TYPE_BOOKMARKS:
-      if (mResultType == nsINavHistoryQueryOptions::RESULTS_AS_TAG_CONTENTS) {
-        // Order-by clause is hardcoded because we need to discard duplicates
-        // in FilterResultSet. We will retain only the last modified item,
-        // so we are ordering by place id and last modified to do a faster
-        // filtering.
-        mSkipOrderBy = true;
 
-        GetTagsSqlFragment(history->GetTagsFolder(),
-                           NS_LITERAL_CSTRING("b2.fk"),
-                           mHasSearchTerms,
-                           tagsSqlFragment);
-
-        mQueryString = NS_LITERAL_CSTRING(
-          "SELECT b2.fk, h.url, b2.title AS page_title, "
-            "h.rev_host, h.visit_count, h.last_visit_date, null, b2.id, "
-            "b2.dateAdded, b2.lastModified, b2.parent, ") +
-            tagsSqlFragment + NS_LITERAL_CSTRING(", h.frecency, h.hidden, h.guid, "
-            "null, null, null, b2.guid, b2.position, b2.type, b2.fk "
-          "FROM moz_bookmarks b2 "
-          "JOIN (SELECT b.fk "
-                "FROM moz_bookmarks b "
-                // ADDITIONAL_CONDITIONS will filter on parent.
-                "WHERE b.type = 1 {ADDITIONAL_CONDITIONS} "
-                ") AS seed ON b2.fk = seed.fk "
-          "JOIN moz_places h ON h.id = b2.fk "
-          "WHERE NOT EXISTS ( "
-            "SELECT id FROM moz_bookmarks WHERE id = b2.parent AND parent = ") +
+      GetTagsSqlFragment(history->GetTagsFolder(),
+                          NS_LITERAL_CSTRING("b.fk"),
+                          mHasSearchTerms,
+                          tagsSqlFragment);
+      mQueryString = NS_LITERAL_CSTRING(
+        "SELECT b.fk, h.url, b.title AS page_title, "
+          "h.rev_host, h.visit_count, h.last_visit_date, null, b.id, "
+          "b.dateAdded, b.lastModified, b.parent, ") +
+          tagsSqlFragment + NS_LITERAL_CSTRING(", h.frecency, h.hidden, h.guid,"
+          "null, null, null, b.guid, b.position, b.type, b.fk "
+        "FROM moz_bookmarks b "
+        "JOIN moz_places h ON b.fk = h.id "
+        "WHERE NOT EXISTS "
+            "(SELECT id FROM moz_bookmarks "
+              "WHERE id = b.parent AND parent = ") +
                 nsPrintfCString("%" PRId64, history->GetTagsFolder()) +
-          NS_LITERAL_CSTRING(") "
-          "ORDER BY b2.fk DESC, b2.lastModified DESC");
-      }
-      else {
-        GetTagsSqlFragment(history->GetTagsFolder(),
-                           NS_LITERAL_CSTRING("b.fk"),
-                           mHasSearchTerms,
-                           tagsSqlFragment);
-        mQueryString = NS_LITERAL_CSTRING(
-          "SELECT b.fk, h.url, b.title AS page_title, "
-            "h.rev_host, h.visit_count, h.last_visit_date, null, b.id, "
-            "b.dateAdded, b.lastModified, b.parent, ") +
-            tagsSqlFragment + NS_LITERAL_CSTRING(", h.frecency, h.hidden, h.guid,"
-            "null, null, null, b.guid, b.position, b.type, b.fk "
-          "FROM moz_bookmarks b "
-          "JOIN moz_places h ON b.fk = h.id "
-          "WHERE NOT EXISTS "
-              "(SELECT id FROM moz_bookmarks "
-                "WHERE id = b.parent AND parent = ") +
-                  nsPrintfCString("%" PRId64, history->GetTagsFolder()) +
-              NS_LITERAL_CSTRING(") "
-              "AND NOT h.url_hash BETWEEN hash('place', 'prefix_lo') AND "
-                                         "hash('place', 'prefix_hi') "
-            "{ADDITIONAL_CONDITIONS}");
-      }
+            NS_LITERAL_CSTRING(") "
+            "AND NOT h.url_hash BETWEEN hash('place', 'prefix_lo') AND "
+                                        "hash('place', 'prefix_hi') "
+          "{ADDITIONAL_CONDITIONS}");
       break;
 
     default:
@@ -1654,14 +1648,15 @@ PlacesSQLQueryBuilder::SelectAsTag()
   // other history queries.
   mHasDateColumns = true;
 
+  // TODO (Bug 1449939): This is likely wrong, since the tag name should
+  // probably be urlencoded, and we have no util for that in SQL, yet.
+  // We could encode the tag when the user sets it though.
   mQueryString = nsPrintfCString(
-    "SELECT null, 'place:folder=' || id || '&queryType=%d&type=%d', "
+    "SELECT null, 'place:tag=' || title, "
            "title, null, null, null, null, null, dateAdded, "
            "lastModified, null, null, null, null, null, null "
     "FROM moz_bookmarks "
     "WHERE parent = %" PRId64,
-    nsINavHistoryQueryOptions::QUERY_TYPE_BOOKMARKS,
-    nsINavHistoryQueryOptions::RESULTS_AS_TAG_CONTENTS,
     history->GetTagsFolder()
   );
 
@@ -1746,7 +1741,7 @@ PlacesSQLQueryBuilder::SelectAsLeftPane()
     nsINavHistoryQueryOptions::SORT_BY_DATE_DESCENDING,
     nsINavHistoryService::TRANSITION_DOWNLOAD,
     nsINavHistoryQueryOptions::SORT_BY_DATE_DESCENDING,
-    nsINavHistoryQueryOptions::RESULTS_AS_TAG_QUERY,
+    nsINavHistoryQueryOptions::RESULTS_AS_TAGS_ROOT,
     nsINavHistoryQueryOptions::SORT_BY_TITLE_ASCENDING,
     nsINavHistoryQueryOptions::RESULTS_AS_ROOTS_QUERY);
   return NS_OK;
@@ -2001,6 +1996,11 @@ nsNavHistory::ConstructQueryString(
     return NS_OK;
   }
 
+  // If the query is a tag query, the type is bookmarks.
+  if (!aQuery->Tags().IsEmpty()) {
+    aOptions->SetQueryType(nsNavHistoryQueryOptions::QUERY_TYPE_BOOKMARKS);
+  }
+
   nsAutoCString conditions;
   nsCString queryClause;
   rv = QueryToSelectClause(aQuery, aOptions, &queryClause);
@@ -2016,7 +2016,7 @@ nsNavHistory::ConstructQueryString(
   // using FilterResultSet()
   bool useLimitClause = !NeedToFilterResultSet(aQuery, aOptions);
 
-  PlacesSQLQueryBuilder queryStringBuilder(conditions, aOptions,
+  PlacesSQLQueryBuilder queryStringBuilder(conditions, aQuery, aOptions,
                                            useLimitClause, aAddParams,
                                            hasSearchTerms);
   rv = queryStringBuilder.GetQueryString(queryString);
@@ -3037,8 +3037,9 @@ nsNavHistory::QueryToSelectClause(const RefPtr<nsNavHistoryQuery>& aQuery,
         clause.Str(",");
     }
     clause.Str(")");
-    if (!aQuery->TagsAreNot())
+    if (!aQuery->TagsAreNot()) {
       clause.Str("GROUP BY bms.fk HAVING count(*) >=").Param(":tag_count");
+    }
     clause.Str(")");
   }
 
@@ -3056,28 +3057,24 @@ nsNavHistory::QueryToSelectClause(const RefPtr<nsNavHistoryQuery>& aQuery,
   const nsTArray<int64_t>& folders = aQuery->Folders();
   if (folders.Length() > 0) {
     aOptions->SetQueryType(nsNavHistoryQueryOptions::QUERY_TYPE_BOOKMARKS);
-
-    nsTArray<int64_t> includeFolders;
-    includeFolders.AppendElements(folders);
-
-    nsNavBookmarks* bookmarks = nsNavBookmarks::GetBookmarksService();
-    NS_ENSURE_STATE(bookmarks);
-
-    for (nsTArray<int64_t>::size_type i = 0; i < folders.Length(); ++i) {
-      nsTArray<int64_t> subFolders;
-      if (NS_FAILED(bookmarks->GetDescendantFolders(folders[i], subFolders)))
-        continue;
-      includeFolders.AppendElements(subFolders);
-    }
-
-    clause.Condition("b.parent IN(");
-    for (nsTArray<int64_t>::size_type i = 0; i < includeFolders.Length(); ++i) {
-      clause.Str(nsPrintfCString("%" PRId64, includeFolders[i]).get());
-      if (i < includeFolders.Length() - 1) {
+    clause.Condition("b.parent IN( "
+                       "WITH RECURSIVE parents(id) AS ( "
+                         "VALUES ");
+    for (uint32_t i = 0; i < folders.Length(); ++i) {
+      nsPrintfCString param("(:parent%d_)", i);
+      clause.Param(param.get());
+      if (i < folders.Length() - 1) {
         clause.Str(",");
       }
     }
-    clause.Str(")");
+    clause.Str(          "UNION ALL "
+                         "SELECT b2.id "
+                         "FROM moz_bookmarks b2 "
+                         "JOIN parents p ON b2.parent = p.id "
+                         "WHERE b2.type = 2 "
+                       ") "
+                       "SELECT id FROM parents "
+                     ")");
   }
 
   if (excludeQueries) {
@@ -3206,6 +3203,14 @@ nsNavHistory::BindQueryClauseParameters(mozIStorageBaseStatement* statement,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
+  // folders
+  const nsTArray<int64_t>& folders = aQuery->Folders();
+  for (uint32_t i = 0; i < folders.Length(); ++i) {
+    nsPrintfCString paramName("parent%d_", i);
+    rv = statement->BindInt64ByName(paramName, folders[i]);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
   return NS_OK;
 }
 
@@ -3300,19 +3305,9 @@ nsNavHistory::FilterResultSet(nsNavHistoryQueryResultNode* aQueryNode,
   nsTArray<nsString> terms;
   ParseSearchTermsFromQuery(aQuery, &terms);
 
-  uint16_t resultType = aOptions->ResultType();
   bool excludeQueries = aOptions->ExcludeQueries();
   for (int32_t nodeIndex = 0; nodeIndex < aSet.Count(); nodeIndex++) {
     if (excludeQueries && aSet[nodeIndex]->IsQuery()) {
-      continue;
-    }
-
-    // RESULTS_AS_TAG_CONTENTS returns a set ordered by place_id and
-    // lastModified. The set may contain duplicate, and to remove them we can
-    // just retain the first result.
-    if (resultType == nsINavHistoryQueryOptions::RESULTS_AS_TAG_CONTENTS &&
-        (!aSet[nodeIndex]->IsURI() ||
-         (nodeIndex > 0 && aSet[nodeIndex]->mURI == aSet[nodeIndex-1]->mURI))) {
       continue;
     }
 
@@ -3465,6 +3460,12 @@ nsNavHistory::RowToResult(mozIStorageValueArray* aRow,
   nsAutoCString url;
   nsresult rv = aRow->GetUTF8String(kGetInfoIndex_URL, url);
   NS_ENSURE_SUCCESS(rv, rv);
+  // In case of data corruption URL may be null, but our UI code prefers an
+  // empty string.
+  if (url.IsVoid()) {
+    MOZ_ASSERT(false, "Found a NULL url in moz_places");
+    url.SetIsVoid(false);
+  }
 
   // title
   nsAutoCString title;
@@ -3530,8 +3531,8 @@ nsNavHistory::RowToResult(mozIStorageValueArray* aRow,
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (itemId != -1 ||
-        aOptions->ResultType() == nsNavHistoryQueryOptions::RESULTS_AS_TAG_QUERY) {
-      // RESULTS_AS_TAG_QUERY has date columns
+        aOptions->ResultType() == nsNavHistoryQueryOptions::RESULTS_AS_TAGS_ROOT) {
+      // RESULTS_AS_TAGS_ROOT has date columns
       resultNode->mDateAdded = aRow->AsInt64(kGetInfoIndex_ItemDateAdded);
       resultNode->mLastModified = aRow->AsInt64(kGetInfoIndex_ItemLastModified);
       if (resultNode->IsFolder()) {
@@ -3544,8 +3545,7 @@ nsNavHistory::RowToResult(mozIStorageValueArray* aRow,
 
     resultNode.forget(aResult);
     return rv;
-  } else if (aOptions->ResultType() == nsNavHistoryQueryOptions::RESULTS_AS_URI ||
-             aOptions->ResultType() == nsNavHistoryQueryOptions::RESULTS_AS_TAG_CONTENTS) {
+  } else if (aOptions->ResultType() == nsNavHistoryQueryOptions::RESULTS_AS_URI) {
     RefPtr<nsNavHistoryResultNode> resultNode =
       new nsNavHistoryResultNode(url, title, accessCount, time);
 
@@ -3971,11 +3971,6 @@ GetSimpleBookmarksQueryFolder(const RefPtr<nsNavHistoryQuery>& aQuery,
   if (aQuery->Tags().Length() > 0)
     return 0;
   if (aOptions->MaxResults() > 0)
-    return 0;
-
-  // RESULTS_AS_TAG_CONTENTS is quite similar to a folder shortcut, but it must
-  // not be treated like that, since it needs all query options.
-  if (aOptions->ResultType() == nsINavHistoryQueryOptions::RESULTS_AS_TAG_CONTENTS)
     return 0;
 
   // Don't care about onlyBookmarked flag, since specifying a bookmark

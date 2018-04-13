@@ -47,7 +47,6 @@
 #include "nsIDocShellTreeItem.h"
 #include "nsCOMArray.h"
 #include "nsQueryObject.h"
-#include "nsDOMClassInfo.h"
 #include "mozilla/Services.h"
 #include "nsScreen.h"
 #include "ChildIterator.h"
@@ -83,6 +82,7 @@
 #include "mozilla/dom/ServiceWorkerManager.h"
 #include "imgLoader.h"
 
+#include "nsAboutProtocolUtils.h"
 #include "nsCanvasFrame.h"
 #include "nsContentCID.h"
 #include "nsError.h"
@@ -270,7 +270,7 @@
 #include "nsIURIClassifier.h"
 #include "nsIURIMutator.h"
 #include "mozilla/DocumentStyleRootIterator.h"
-#include "mozilla/ServoRestyleManager.h"
+#include "mozilla/RestyleManager.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "nsHTMLTags.h"
 
@@ -1429,12 +1429,10 @@ nsIDocument::nsIDocument()
     mIsTopLevelContentDocument(false),
     mIsContentDocument(false),
     mDidCallBeginLoad(false),
-    mBufferingCSPViolations(false),
     mAllowPaymentRequest(false),
     mEncodingMenuDisabled(false),
     mIsShadowDOMEnabled(false),
     mIsSVGGlyphsDocument(false),
-    mAllowUnsafeHTML(false),
     mInDestructor(false),
     mIsGoingAway(false),
     mInXBLUpdate(false),
@@ -2368,6 +2366,10 @@ nsIDocument::ResetToURI(nsIURI* aURI,
         SetPrincipal(principal);
       }
     }
+  }
+
+  if (mFontFaceSet) {
+    mFontFaceSet->RefreshStandardFontLoadPrincipal();
   }
 
   // Refresh the principal on the compartment.
@@ -3674,6 +3676,7 @@ nsIDocument::SetDocumentCharacterSet(NotNull<const Encoding*> aEncoding)
 {
   if (mCharacterSet != aEncoding) {
     mCharacterSet = aEncoding;
+    mEncodingMenuDisabled = aEncoding == UTF_8_ENCODING;
 
     if (nsPresContext* context = GetPresContext()) {
       context->DispatchCharSetChange(aEncoding);
@@ -5311,9 +5314,100 @@ nsIDocument::DispatchContentLoadedEvents()
   UnblockOnload(true);
 }
 
+#if defined(DEBUG) && !defined(ANDROID)
+// We want to get to a point where all about: pages ship with a CSP. This
+// assertion ensures that we can not deploy new about: pages without a CSP.
+// Initially we will whitelist legacy about: pages which not yet have a CSP
+// attached, but ultimately that whitelist should disappear.
+// Please note that any about: page should not use inline JS or inline CSS,
+// and instead should load JS and CSS from an external file (*.js, *.css)
+// which allows us to apply a strong CSP omitting 'unsafe-inline'. Ideally,
+// the CSP allows precisely the resources that need to be loaded; but it
+// should at least be as strong as:
+// <meta http-equiv="Content-Security-Policy" content="default-src chrome:"/>
+static void
+AssertContentPrivilegedAboutPageHasCSP(nsIURI* aDocumentURI, nsIPrincipal* aPrincipal)
+{
+  // Curently we can't serialize the CSP, hence we only assert if
+  // running in the content process.
+  if (!XRE_IsContentProcess()) {
+    return;
+  }
+
+  // Check if we are loading an about: URI at all
+  bool isAboutURI =
+    (NS_SUCCEEDED(aDocumentURI->SchemeIs("about", &isAboutURI)) && isAboutURI);
+
+  if (!isAboutURI) {
+    return;
+  }
+
+  // Check if we are loading a content-privileged about: URI
+  nsCOMPtr<nsIAboutModule> aboutModule;
+  nsresult rv = NS_GetAboutModule(aDocumentURI, getter_AddRefs(aboutModule));
+  NS_ENSURE_SUCCESS_VOID(rv);
+
+  uint32_t aboutModuleFlags = 0;
+  rv = aboutModule->GetURIFlags(aDocumentURI, &aboutModuleFlags);
+  NS_ENSURE_SUCCESS_VOID(rv);
+
+  if (!(aboutModuleFlags & nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT)) {
+    return;
+  }
+
+  // Potentially init the legacy whitelist of about URIs without a CSP.
+  static StaticAutoPtr<nsTArray<nsCString>> sLegacyAboutPagesWithNoCSP;
+  if (!sLegacyAboutPagesWithNoCSP) {
+    sLegacyAboutPagesWithNoCSP = new nsTArray<nsCString>();
+    nsAutoCString legacyAboutPages;
+    Preferences::GetCString("csp.content_privileged_about_uris_without_csp",
+      legacyAboutPages);
+    for (const nsACString& hostString : legacyAboutPages.Split(',')) {
+      // please note that for the actual whitelist we only store the path of
+      // about: URI. Let's reassemble the full about URI here so we don't
+      // have to remove query arguments later.
+      nsCString aboutURI;
+      aboutURI.AppendLiteral("about:");
+      aboutURI.Append(hostString);
+      sLegacyAboutPagesWithNoCSP->AppendElement(aboutURI);
+    }
+    ClearOnShutdown(&sLegacyAboutPagesWithNoCSP);
+  }
+
+  // Check if the about URI is whitelisted
+  nsAutoCString aboutSpec;
+  aDocumentURI->GetSpec(aboutSpec);
+  for (auto& legacyPageEntry : *sLegacyAboutPagesWithNoCSP) {
+    // please note that we perform a substring match here on purpose,
+    // so we don't have to deal and parse out all the query arguments
+    // the various about pages rely on.
+    if (aboutSpec.Find(legacyPageEntry) == 0) {
+      return;
+    }
+  }
+
+  nsCOMPtr<nsIContentSecurityPolicy> csp;
+  aPrincipal->GetCsp(getter_AddRefs(csp));
+  nsAutoString parsedPolicyStr;
+  if (csp) {
+    uint32_t policyCount = 0;
+     csp->GetPolicyCount(&policyCount);
+     if (policyCount > 0) {
+       csp->GetPolicyString(0, parsedPolicyStr);
+     }
+  }
+  MOZ_ASSERT(parsedPolicyStr.Find("default-src") >= 0,
+    "about: page must contain a CSP including default-src");
+}
+#endif
+
 void
 nsDocument::EndLoad()
 {
+#if defined(DEBUG) && !defined(ANDROID)
+  AssertContentPrivilegedAboutPageHasCSP(mDocumentURI, NodePrincipal());
+#endif
+
   // EndLoad may have been called without a matching call to BeginLoad, in the
   // case of a failed parse (for example, due to timeout). In such a case, we
   // still want to execute part of this code to do appropriate cleanup, but we
@@ -5860,13 +5954,6 @@ nsIDocument::CreateAttributeNS(const nsAString& aNamespaceURI,
   RefPtr<Attr> attribute = new Attr(nullptr, nodeInfo.forget(),
                                     EmptyString());
   return attribute.forget();
-}
-
-bool
-nsIDocument::AllowUnsafeHTML() const
-{
-  return (!nsContentUtils::IsSystemPrincipal(NodePrincipal()) ||
-          mAllowUnsafeHTML);
 }
 
 void
@@ -7378,7 +7465,7 @@ nsDocument::GetExistingListenerManager() const
   return mListenerManager;
 }
 
-nsresult
+void
 nsDocument::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
   if (mDocGroup && aVisitor.mEvent->mMessage != eVoidEvent &&
@@ -7397,7 +7484,6 @@ nsDocument::GetEventTargetParent(EventChainPreVisitor& aVisitor)
     aVisitor.SetParentTarget(
       window ? window->GetTargetForEventTargetChain() : nullptr, false);
   }
-  return NS_OK;
 }
 
 already_AddRefed<Event>
@@ -8643,6 +8729,8 @@ nsIDocument::DestroyElementMaps()
 #endif
   mStyledLinks.Clear();
   mIdentifierMap.Clear();
+  mComposedShadowRoots.Clear();
+  mResponsiveContent.Clear();
   IncrementExpandoGeneration(*this);
 }
 
@@ -12606,6 +12694,8 @@ namespace {
 struct PrefStore
 {
   PrefStore()
+    : mFlashBlockEnabled{ false }
+    , mPluginsHttpOnly{ false }
   {
     Preferences::AddBoolVarCache(&mFlashBlockEnabled,
                                  "plugins.flashBlock.enabled");
@@ -13103,7 +13193,7 @@ nsIDocument::ClearStaleServoData()
 {
   DocumentStyleRootIterator iter(this);
   while (Element* root = iter.GetNextStyleRoot()) {
-    ServoRestyleManager::ClearServoDataFromSubtree(root);
+    RestyleManager::ClearServoDataFromSubtree(root);
   }
 }
 

@@ -274,7 +274,6 @@ var gMenuBuilder = {
         item.tabManager.addActiveTabPermission();
       }
 
-      let tab = contextData.tab && item.tabManager.convert(contextData.tab);
       let info = item.getClickInfo(contextData, wasChecked);
 
       const map = {shiftKey: "Shift", altKey: "Alt", metaKey: "Command", ctrlKey: "Ctrl"};
@@ -295,7 +294,7 @@ var gMenuBuilder = {
         actionFor(item.extension).triggerAction(win);
       }
 
-      item.extension.emit("webext-menu-menuitem-click", info, tab);
+      item.extension.emit("webext-menu-menuitem-click", info, contextData.tab);
     });
 
     // Don't publish the ID of the root because the root element is
@@ -814,40 +813,48 @@ this.menusInternal = class extends ExtensionAPI {
         gMenuBuilder.rebuildMenu(extension);
       },
 
-      onShown: new EventManager(context, "menus.onShown", fire => {
-        let listener = (event, menuIds, contextData) => {
-          let info = {
-            menuIds,
-            contexts: Array.from(getMenuContexts(contextData)),
-          };
+      onShown: new EventManager({
+        context,
+        name: "menus.onShown",
+        register: fire => {
+          let listener = (event, menuIds, contextData) => {
+            let info = {
+              menuIds,
+              contexts: Array.from(getMenuContexts(contextData)),
+            };
 
-          // The menus.onShown event is fired before the user has consciously
-          // interacted with an extension, so we require permissions before
-          // exposing sensitive contextual data.
-          let includeSensitiveData =
+            // The menus.onShown event is fired before the user has consciously
+            // interacted with an extension, so we require permissions before
+            // exposing sensitive contextual data.
+            let includeSensitiveData =
             extension.tabManager.hasActiveTabPermission(contextData.tab) ||
             extension.whiteListedHosts.matches(contextData.inFrame ? contextData.frameUrl : contextData.pageUrl);
 
-          addMenuEventInfo(info, contextData, includeSensitiveData);
+            addMenuEventInfo(info, contextData, includeSensitiveData);
 
-          let tab = extension.tabManager.convert(contextData.tab);
-          fire.sync(info, tab);
-        };
-        gOnShownSubscribers.add(extension);
-        extension.on("webext-menu-shown", listener);
-        return () => {
-          gOnShownSubscribers.delete(extension);
-          extension.off("webext-menu-shown", listener);
-        };
+            let tab = extension.tabManager.convert(contextData.tab);
+            fire.sync(info, tab);
+          };
+          gOnShownSubscribers.add(extension);
+          extension.on("webext-menu-shown", listener);
+          return () => {
+            gOnShownSubscribers.delete(extension);
+            extension.off("webext-menu-shown", listener);
+          };
+        },
       }).api(),
-      onHidden: new EventManager(context, "menus.onHidden", fire => {
-        let listener = () => {
-          fire.sync();
-        };
-        extension.on("webext-menu-hidden", listener);
-        return () => {
-          extension.off("webext-menu-hidden", listener);
-        };
+      onHidden: new EventManager({
+        context,
+        name: "menus.onHidden",
+        register: fire => {
+          let listener = () => {
+            fire.sync();
+          };
+          extension.on("webext-menu-hidden", listener);
+          return () => {
+            extension.off("webext-menu-hidden", listener);
+          };
+        },
       }).api(),
     };
 
@@ -884,17 +891,22 @@ this.menusInternal = class extends ExtensionAPI {
           }
         },
 
-        onClicked: new EventManager(context, "menusInternal.onClicked", fire => {
-          let listener = (event, info, tab) => {
-            let {linkedBrowser} = tab || tabTracker.activeTab;
-            context.withPendingBrowser(linkedBrowser,
-                                       () => fire.sync(info, tab));
-          };
+        onClicked: new EventManager({
+          context,
+          name: "menusInternal.onClicked",
+          register: fire => {
+            let listener = (event, info, nativeTab) => {
+              let {linkedBrowser} = nativeTab || tabTracker.activeTab;
+              let tab = nativeTab && extension.tabManager.convert(nativeTab);
+              context.withPendingBrowser(linkedBrowser,
+                                         () => fire.sync(info, tab));
+            };
 
-          extension.on("webext-menu-menuitem-click", listener);
-          return () => {
-            extension.off("webext-menu-menuitem-click", listener);
-          };
+            extension.on("webext-menu-menuitem-click", listener);
+            return () => {
+              extension.off("webext-menu-menuitem-click", listener);
+            };
+          },
         }).api(),
       },
     };

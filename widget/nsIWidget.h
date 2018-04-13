@@ -165,6 +165,7 @@ enum nsTransparencyMode {
   eTransparencyTransparent, // Parts of the window may be transparent
   eTransparencyGlass,       // Transparent parts of the window have Vista AeroGlass effect applied
   eTransparencyBorderlessGlass // As above, but without a border around the opaque areas when there would otherwise be one with eTransparencyGlass
+  // If you add to the end here, you must update the serialization code in WidgetMessageUtils.h
 };
 
 /**
@@ -1211,6 +1212,11 @@ class nsIWidget : public nsISupports
                                              uint16_t aDuration,
                                              nsISupports* aData,
                                              nsIRunnable* aCallback) = 0;
+
+    /**
+      * Perform any actions needed after the fullscreen transition has ended.
+      */
+    virtual void CleanupFullscreenTransition() = 0;
 
     /**
      * Return the screen the widget is in, or null if we don't know.

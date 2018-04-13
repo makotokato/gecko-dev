@@ -63,7 +63,7 @@
 #include "mozilla/dom/TouchEvent.h"
 #include "mozilla/dom/ShadowRoot.h"
 #include "mozilla/dom/XULCommandEvent.h"
-#include "mozilla/dom/WorkerPrivate.h"
+#include "mozilla/dom/WorkerCommon.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventListenerManager.h"
 #include "mozilla/EventStateManager.h"
@@ -2379,11 +2379,10 @@ nsContentUtils::IsSystemCaller(JSContext* aCx)
 bool
 nsContentUtils::ThreadsafeIsSystemCaller(JSContext* aCx)
 {
-  if (NS_IsMainThread()) {
-    return IsSystemCaller(aCx);
-  }
+  CycleCollectedJSContext* ccjscx = CycleCollectedJSContext::Get();
+  MOZ_ASSERT(ccjscx->Context() == aCx);
 
-  return GetWorkerPrivateFromContext(aCx)->UsesSystemPrincipal();
+  return ccjscx->IsSystemCaller();
 }
 
 // static
@@ -3194,8 +3193,13 @@ nsContentUtils::NewURIWithDocumentCharset(nsIURI** aResult,
 
 // static
 bool
-nsContentUtils::IsCustomElementName(nsAtom* aName)
+nsContentUtils::IsCustomElementName(nsAtom* aName, uint32_t aNameSpaceID)
 {
+  // Allow non-dashed names in XUL for XBL to Custom Element migrations.
+  if (aNameSpaceID == kNameSpaceID_XUL) {
+    return true;
+  }
+
   // A valid custom element name is a sequence of characters name which
   // must match the PotentialCustomElementName production:
   // PotentialCustomElementName ::= [a-z] (PCENChar)* '-' (PCENChar)*
@@ -4414,7 +4418,7 @@ static
 nsresult GetEventAndTarget(nsIDocument* aDoc, nsISupports* aTarget,
                            const nsAString& aEventName,
                            bool aCanBubble, bool aCancelable,
-                           bool aTrusted, nsIDOMEvent** aEvent,
+                           bool aTrusted, Event** aEvent,
                            EventTarget** aTargetOut)
 {
   nsCOMPtr<EventTarget> target(do_QueryInterface(aTarget));
@@ -4468,7 +4472,7 @@ nsContentUtils::DispatchEvent(nsIDocument* aDoc, nsISupports* aTarget,
                               bool aTrusted, bool* aDefaultAction,
                               bool aOnlyChromeDispatch)
 {
-  nsCOMPtr<nsIDOMEvent> event;
+  RefPtr<Event> event;
   nsCOMPtr<EventTarget> target;
   nsresult rv = GetEventAndTarget(aDoc, aTarget, aEventName, aCanBubble,
                                   aCancelable, aTrusted, getter_AddRefs(event),
@@ -4476,8 +4480,12 @@ nsContentUtils::DispatchEvent(nsIDocument* aDoc, nsISupports* aTarget,
   NS_ENSURE_SUCCESS(rv, rv);
   event->WidgetEventPtr()->mFlags.mOnlyChromeDispatch = aOnlyChromeDispatch;
 
-  bool dummy;
-  return target->DispatchEvent(event, aDefaultAction ? aDefaultAction : &dummy);
+  ErrorResult err;
+  bool doDefault = target->DispatchEvent(*event, CallerType::System, err);
+  if (aDefaultAction) {
+    *aDefaultAction = doDefault;
+  }
+  return err.StealNSResult();
 }
 
 // static
@@ -4522,7 +4530,7 @@ nsContentUtils::DispatchChromeEvent(nsIDocument *aDoc,
                                     bool* aDefaultAction)
 {
 
-  nsCOMPtr<nsIDOMEvent> event;
+  RefPtr<Event> event;
   nsCOMPtr<EventTarget> target;
   nsresult rv = GetEventAndTarget(aDoc, aTarget, aEventName, aCanBubble,
                                   aCancelable, true, getter_AddRefs(event),
@@ -4537,12 +4545,13 @@ nsContentUtils::DispatchChromeEvent(nsIDocument *aDoc,
   if (!piTarget)
     return NS_ERROR_INVALID_ARG;
 
-  bool defaultActionEnabled;
-  rv = piTarget->DispatchEvent(event, &defaultActionEnabled);
+  ErrorResult err;
+  bool defaultActionEnabled =
+    piTarget->DispatchEvent(*event, CallerType::System, err);
   if (aDefaultAction) {
     *aDefaultAction = defaultActionEnabled;
   }
-  return rv;
+  return err.StealNSResult();
 }
 
 /* static */
@@ -5091,7 +5100,8 @@ nsContentUtils::ParseFragmentHTML(const nsAString& aSourceBuffer,
   // If this is a chrome-privileged document, create a fragment first, and
   // sanitize it before insertion.
   RefPtr<DocumentFragment> fragment;
-  if (aSanitize != NeverSanitize && !aTargetNode->OwnerDoc()->AllowUnsafeHTML()) {
+  if (aSanitize != NeverSanitize &&
+      IsSystemPrincipal(aTargetNode->NodePrincipal())) {
     fragment = new DocumentFragment(aTargetNode->OwnerDoc()->NodeInfoManager());
     target = fragment;
   }
@@ -5198,7 +5208,8 @@ nsContentUtils::ParseFragmentXML(const nsAString& aSourceBuffer,
 
   // If this is a chrome-privileged document, sanitize the fragment before
   // returning.
-  if (aSanitize != NeverSanitize && !aDocument->AllowUnsafeHTML()) {
+  if (aSanitize != NeverSanitize &&
+      IsSystemPrincipal(aDocument->NodePrincipal())) {
     // Don't fire mutation events for nodes removed by the sanitizer.
     nsAutoScriptBlockerSuppressNodeRemoved scriptBlocker;
 
@@ -6052,55 +6063,14 @@ nsContentUtils::URIIsLocalFile(nsIURI *aURI)
 }
 
 /* static */
-nsIScriptContext*
-nsContentUtils::GetContextForEventHandlers(nsINode* aNode,
-                                           nsresult* aRv)
-{
-  *aRv = NS_OK;
-  bool hasHadScriptObject = true;
-  nsIScriptGlobalObject* sgo =
-    aNode->OwnerDoc()->GetScriptHandlingObject(hasHadScriptObject);
-  // It is bad if the document doesn't have event handling context,
-  // but it used to have one.
-  if (!sgo && hasHadScriptObject) {
-    *aRv = NS_ERROR_UNEXPECTED;
-    return nullptr;
-  }
-
-  if (sgo) {
-    nsIScriptContext* scx = sgo->GetContext();
-    // Bad, no context from script global object!
-    if (!scx) {
-      *aRv = NS_ERROR_UNEXPECTED;
-      return nullptr;
-    }
-    return scx;
-  }
-
-  return nullptr;
-}
-
-/* static */
 JSContext *
 nsContentUtils::GetCurrentJSContext()
 {
-  MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(IsInitialized());
   if (!IsJSAPIActive()) {
     return nullptr;
   }
   return danger::GetJSContext();
-}
-
-/* static */
-JSContext *
-nsContentUtils::GetCurrentJSContextForThread()
-{
-  MOZ_ASSERT(IsInitialized());
-  if (MOZ_LIKELY(NS_IsMainThread())) {
-    return GetCurrentJSContext();
-  }
-  return GetCurrentWorkerThreadJSContext();
 }
 
 template<typename StringType, typename CharType>
@@ -6607,10 +6577,9 @@ nsContentUtils::DispatchXULCommand(nsIContent* aTarget,
     return aShell->HandleDOMEventWithTarget(aTarget, xulCommand, &status);
   }
 
-  nsCOMPtr<EventTarget> target = do_QueryInterface(aTarget);
-  NS_ENSURE_STATE(target);
-  bool dummy;
-  return target->DispatchEvent(xulCommand, &dummy);
+  ErrorResult rv;
+  aTarget->DispatchEvent(*xulCommand, rv);
+  return rv.StealNSResult();
 }
 
 // static
@@ -7771,20 +7740,18 @@ nsContentUtils::GetHostOrIPv6WithBrackets(nsIURI* aURI, nsAString& aHost)
 }
 
 bool
-nsContentUtils::CallOnAllRemoteChildren(nsIMessageBroadcaster* aManager,
+nsContentUtils::CallOnAllRemoteChildren(ChromeMessageBroadcaster* aManager,
                                         CallOnRemoteChildFunction aCallback,
                                         void* aArg)
 {
-  uint32_t tabChildCount = 0;
-  aManager->GetChildCount(&tabChildCount);
+  uint32_t tabChildCount = aManager->ChildCount();
   for (uint32_t j = 0; j < tabChildCount; ++j) {
-    nsCOMPtr<nsIMessageListenerManager> childMM;
-    aManager->GetChildAt(j, getter_AddRefs(childMM));
+    RefPtr<MessageListenerManager> childMM = aManager->GetChildAt(j);
     if (!childMM) {
       continue;
     }
 
-    nsCOMPtr<nsIMessageBroadcaster> nonLeafMM = do_QueryInterface(childMM);
+    RefPtr<ChromeMessageBroadcaster> nonLeafMM = ChromeMessageBroadcaster::From(childMM);
     if (nonLeafMM) {
       if (CallOnAllRemoteChildren(nonLeafMM, aCallback, aArg)) {
         return true;
@@ -7792,10 +7759,7 @@ nsContentUtils::CallOnAllRemoteChildren(nsIMessageBroadcaster* aManager,
       continue;
     }
 
-    nsCOMPtr<nsIMessageSender> tabMM = do_QueryInterface(childMM);
-
-    mozilla::dom::ipc::MessageManagerCallback* cb =
-     static_cast<nsFrameMessageManager*>(tabMM.get())->GetCallback();
+    mozilla::dom::ipc::MessageManagerCallback* cb = childMM->GetCallback();
     if (cb) {
       nsFrameLoader* fl = static_cast<nsFrameLoader*>(cb);
       TabParent* remote = TabParent::GetFrom(fl);
@@ -7815,10 +7779,9 @@ nsContentUtils::CallOnAllRemoteChildren(nsPIDOMWindowOuter* aWindow,
                                         CallOnRemoteChildFunction aCallback,
                                         void* aArg)
 {
-  nsCOMPtr<nsIDOMChromeWindow> chromeWindow(do_QueryInterface(aWindow));
-  if (chromeWindow) {
-    nsCOMPtr<nsIMessageBroadcaster> windowMM;
-    chromeWindow->GetMessageManager(getter_AddRefs(windowMM));
+  nsGlobalWindowOuter* window = nsGlobalWindowOuter::Cast(aWindow);
+  if (window->IsChromeWindow()) {
+    RefPtr<ChromeMessageBroadcaster> windowMM = window->GetMessageManager();
     if (windowMM) {
       CallOnAllRemoteChildren(windowMM, aCallback, aArg);
     }
@@ -9927,9 +9890,8 @@ nsContentUtils::TryToUpgradeElement(Element* aElement)
   if (definition) {
     nsContentUtils::EnqueueUpgradeReaction(aElement, definition);
   } else {
-    // Add an unresolved custom element that is a candidate for
-    // upgrade when a custom element is connected to the document.
-    // We will make sure it's shadow-including tree order in bug 1326028.
+    // Add an unresolved custom element that is a candidate for upgrade when a
+    // custom element is connected to the document.
     nsContentUtils::RegisterUnresolvedElement(aElement, typeAtom);
   }
 }
@@ -9984,9 +9946,9 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
   if (nodeInfo->NamespaceEquals(kNameSpaceID_XHTML)) {
     tag = nsHTMLTags::CaseSensitiveAtomTagToId(name);
     isCustomElementName = (tag == eHTMLTag_userdefined &&
-                           nsContentUtils::IsCustomElementName(name));
+                           nsContentUtils::IsCustomElementName(name, kNameSpaceID_XHTML));
   } else {
-    isCustomElementName = nsContentUtils::IsCustomElementName(name);
+    isCustomElementName = nsContentUtils::IsCustomElementName(name, kNameSpaceID_XUL);
   }
 
   RefPtr<nsAtom> tagAtom = nodeInfo->NameAtom();
@@ -10133,12 +10095,12 @@ nsContentUtils::LookupCustomElementDefinition(nsIDocument* aDoc,
     return nullptr;
   }
 
-  nsCOMPtr<nsPIDOMWindowInner> window(aDoc->GetInnerWindow());
+  nsPIDOMWindowInner* window = aDoc->GetInnerWindow();
   if (!window) {
     return nullptr;
   }
 
-  RefPtr<CustomElementRegistry> registry(window->CustomElements());
+  CustomElementRegistry* registry = window->CustomElements();
   if (!registry) {
     return nullptr;
   }
@@ -10170,7 +10132,7 @@ nsContentUtils::UnregisterUnresolvedElement(Element* aElement)
 {
   MOZ_ASSERT(aElement);
 
-  RefPtr<nsAtom> typeAtom =
+  nsAtom* typeAtom =
     aElement->GetCustomElementData()->GetCustomElementType();
   nsIDocument* doc = aElement->OwnerDoc();
   nsPIDOMWindowInner* window(doc->GetInnerWindow());
@@ -10178,7 +10140,7 @@ nsContentUtils::UnregisterUnresolvedElement(Element* aElement)
     return;
   }
 
-  RefPtr<CustomElementRegistry> registry(window->CustomElements());
+  CustomElementRegistry* registry = window->CustomElements();
   if (!registry) {
     return;
   }

@@ -335,6 +335,12 @@ CustomElementRegistry::LookupCustomElementDefinition(JSContext* aCx,
 void
 CustomElementRegistry::RegisterUnresolvedElement(Element* aElement, nsAtom* aTypeName)
 {
+  // We don't have a use-case for a Custom Element inside NAC, and continuing
+  // here causes performance issues for NAC + XBL anonymous content.
+  if (aElement->IsInNativeAnonymousSubtree()) {
+    return;
+  }
+
   mozilla::dom::NodeInfo* info = aElement->NodeInfo();
 
   // Candidate may be a custom element through extension,
@@ -349,26 +355,33 @@ CustomElementRegistry::RegisterUnresolvedElement(Element* aElement, nsAtom* aTyp
     return;
   }
 
-  nsTArray<nsWeakPtr>* unresolved = mCandidatesMap.LookupOrAdd(typeName);
-  nsWeakPtr* elem = unresolved->AppendElement();
-  *elem = do_GetWeakReference(aElement);
+  nsTHashtable<nsRefPtrHashKey<nsIWeakReference>>* unresolved =
+    mCandidatesMap.LookupOrAdd(typeName);
+  nsWeakPtr elem = do_GetWeakReference(aElement);
+  unresolved->PutEntry(elem);
 }
 
 void
 CustomElementRegistry::UnregisterUnresolvedElement(Element* aElement,
                                                    nsAtom* aTypeName)
 {
-  nsTArray<nsWeakPtr>* candidates;
+  nsIWeakReference* weak = aElement->GetExistingWeakReference();
+  if (!weak) {
+    return;
+  }
+
+#ifdef DEBUG
+  {
+    nsWeakPtr weakPtr = do_GetWeakReference(aElement);
+    MOZ_ASSERT(weak == weakPtr.get(),
+               "do_GetWeakReference should reuse the existing nsIWeakReference.");
+  }
+#endif
+
+  nsTHashtable<nsRefPtrHashKey<nsIWeakReference>>* candidates = nullptr;
   if (mCandidatesMap.Get(aTypeName, &candidates)) {
     MOZ_ASSERT(candidates);
-    // We don't need to iterate the candidates array and remove the element from
-    // the array for performance reason. It'll be handled by bug 1396620.
-    for (size_t i = 0; i < candidates->Length(); ++i) {
-      nsCOMPtr<Element> elem = do_QueryReferent(candidates->ElementAt(i));
-      if (elem && elem.get() == aElement) {
-        candidates->RemoveElementAt(i);
-      }
-    }
+    candidates->RemoveEntry(weak);
   }
 }
 
@@ -481,7 +494,8 @@ namespace {
 class CandidateFinder
 {
 public:
-  CandidateFinder(nsTArray<nsWeakPtr>&& aCandidates, nsIDocument* aDoc);
+  CandidateFinder(nsTHashtable<nsRefPtrHashKey<nsIWeakReference>>& aCandidates,
+                  nsIDocument* aDoc);
   nsTArray<nsCOMPtr<Element>> OrderedCandidates();
 
 private:
@@ -491,14 +505,14 @@ private:
   nsInterfaceHashtable<nsPtrHashKey<Element>, Element> mCandidates;
 };
 
-CandidateFinder::CandidateFinder(nsTArray<nsWeakPtr>&& aCandidates,
+CandidateFinder::CandidateFinder(nsTHashtable<nsRefPtrHashKey<nsIWeakReference>>& aCandidates,
                                  nsIDocument* aDoc)
   : mDoc(aDoc)
-  , mCandidates(aCandidates.Length())
+  , mCandidates(aCandidates.Count())
 {
   MOZ_ASSERT(mDoc);
-  for (auto& candidate : aCandidates) {
-    nsCOMPtr<Element> elem = do_QueryReferent(candidate);
+  for (auto iter = aCandidates.Iter(); !iter.Done(); iter.Next()) {
+    nsCOMPtr<Element> elem = do_QueryReferent(iter.Get()->GetKey());
     if (!elem) {
       continue;
     }
@@ -575,13 +589,13 @@ CustomElementRegistry::UpgradeCandidates(nsAtom* aKey,
     return;
   }
 
-  nsAutoPtr<nsTArray<nsWeakPtr>> candidates;
+  nsAutoPtr<nsTHashtable<nsRefPtrHashKey<nsIWeakReference>>> candidates;
   if (mCandidatesMap.Remove(aKey, &candidates)) {
     MOZ_ASSERT(candidates);
     CustomElementReactionsStack* reactionsStack =
       docGroup->CustomElementReactionsStack();
 
-    CandidateFinder finder(Move(*candidates), mWindow->GetExtantDoc());
+    CandidateFinder finder(*candidates, mWindow->GetExtantDoc());
     for (auto& elem : finder.OrderedCandidates()) {
       reactionsStack->EnqueueUpgradeReaction(elem, aDefinition);
     }
@@ -682,8 +696,10 @@ CustomElementRegistry::Define(const nsAString& aName,
    * 2. If name is not a valid custom element name, then throw a "SyntaxError"
    *    DOMException and abort these steps.
    */
+  nsIDocument* doc = mWindow->GetExtantDoc();
+  uint32_t nameSpaceID = doc ? doc->GetDefaultNamespaceID() : kNameSpaceID_XHTML;
   RefPtr<nsAtom> nameAtom(NS_Atomize(aName));
-  if (!nsContentUtils::IsCustomElementName(nameAtom)) {
+  if (!nsContentUtils::IsCustomElementName(nameAtom, nameSpaceID)) {
     aRv.Throw(NS_ERROR_DOM_SYNTAX_ERR);
     return;
   }
@@ -725,7 +741,7 @@ CustomElementRegistry::Define(const nsAString& aName,
   nsAutoString localName(aName);
   if (aOptions.mExtends.WasPassed()) {
     RefPtr<nsAtom> extendsAtom(NS_Atomize(aOptions.mExtends.Value()));
-    if (nsContentUtils::IsCustomElementName(extendsAtom)) {
+    if (nsContentUtils::IsCustomElementName(extendsAtom, nameSpaceID)) {
       aRv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
       return;
     }
@@ -965,7 +981,9 @@ CustomElementRegistry::WhenDefined(const nsAString& aName, ErrorResult& aRv)
   }
 
   RefPtr<nsAtom> nameAtom(NS_Atomize(aName));
-  if (!nsContentUtils::IsCustomElementName(nameAtom)) {
+  nsIDocument* doc = mWindow->GetExtantDoc();
+  uint32_t nameSpaceID = doc ? doc->GetDefaultNamespaceID() : kNameSpaceID_XHTML;
+  if (!nsContentUtils::IsCustomElementName(nameAtom, nameSpaceID)) {
     promise->MaybeReject(NS_ERROR_DOM_SYNTAX_ERR);
     return promise.forget();
   }

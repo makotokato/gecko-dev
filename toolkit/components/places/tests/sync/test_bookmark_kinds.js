@@ -20,7 +20,7 @@ add_task(async function test_livemarks() {
         }],
       }],
     });
-    await buf.store(shuffle([{
+    await storeRecords(buf, shuffle([{
       id: "menu",
       type: "folder",
       children: ["livemarkAAAA"],
@@ -49,7 +49,7 @@ add_task(async function test_livemarks() {
     });
 
     info("Make remote changes");
-    await buf.store(shuffle([{
+    await storeRecords(buf, shuffle([{
       id: "livemarkAAAA",
       type: "livemark",
       title: "A (remote)",
@@ -269,7 +269,6 @@ add_task(async function test_queries() {
       parentGuid: PlacesUtils.bookmarks.tagsGuid,
       title: "a-tag",
     });
-    let tagid = await PlacesUtils.promiseItemId(tag.guid);
 
     await PlacesTestUtils.markBookmarksAsSynced();
 
@@ -277,35 +276,42 @@ add_task(async function test_queries() {
       guid: PlacesUtils.bookmarks.menuGuid,
       children: [
         {
-          // this entry has a folder= query param for a folder that exists.
+          // this entry has a tag= query param for a tag that exists.
           guid: "queryAAAAAAA",
           type: PlacesUtils.bookmarks.TYPE_BOOKMARK,
           title: "TAG_QUERY query",
-          url: `place:type=6&sort=14&maxResults=10&folder=${tagid}`,
+          url: `place:tag=a-tag&&sort=14&maxResults=10`,
         },
         {
-          // this entry has a folder= query param for a folder that doesn't exist.
+          // this entry has a tag= query param for a tag that doesn't exist.
           guid: "queryBBBBBBB",
           type: PlacesUtils.bookmarks.TYPE_BOOKMARK,
           title: "TAG_QUERY query but invalid folder id",
-          url: `place:type=6&sort=14&maxResults=10&folder=12345`,
+          url: `place:tag=b-tag&sort=14&maxResults=10`,
         },
         {
-          // this entry has no folder= query param.
+          // this entry has no tag= query param.
           guid: "queryCCCCCCC",
           type: PlacesUtils.bookmarks.TYPE_BOOKMARK,
           title: "TAG_QUERY without a folder at all",
-          url: "place:type=6&sort=14&maxResults=10",
+          url: "place:sort=14&maxResults=10",
         },
-
-        ],
+        {
+          // this entry has only a tag= query.
+          guid: "queryDDDDDDD",
+          type: PlacesUtils.bookmarks.TYPE_BOOKMARK,
+          title: "TAG_QUERY without a folder at all",
+          url: "place:tag=a-tag",
+        },
+      ],
     });
 
     info("Create records to upload");
     let changes = await buf.apply();
     Assert.strictEqual(changes.queryAAAAAAA.cleartext.folderName, tag.title);
-    Assert.strictEqual(changes.queryBBBBBBB.cleartext.folderName, undefined);
+    Assert.strictEqual(changes.queryBBBBBBB.cleartext.folderName, "b-tag");
     Assert.strictEqual(changes.queryCCCCCCC.cleartext.folderName, undefined);
+    Assert.strictEqual(changes.queryDDDDDDD.cleartext.folderName, tag.title);
   } finally {
     await PlacesUtils.bookmarks.eraseEverything();
     await PlacesSyncUtils.bookmarks.reset();
@@ -328,7 +334,7 @@ add_task(async function test_mismatched_but_compatible_folder_types() {
   await PlacesTestUtils.markBookmarksAsSynced();
 
   info("Make remote changes");
-  await buf.store([{
+  await storeRecords(buf, [{
     "id": "l1nZZXfB8nC7",
     "type": "livemark",
     "siteUri": "http://sneglehode.wordpress.com/",
@@ -364,9 +370,9 @@ add_task(async function test_mismatched_but_incompatible_folder_types() {
     // expecting to see a kind-mismatch event.
     if (value == "kind-mismatch" &&
         extra.local && typeof extra.local == "string" &&
-        extra.local == SyncedBookmarksMirror.KIND.LIVEMARK &&
+        extra.local == "livemark" &&
         extra.remote && typeof extra.remote == "string" &&
-        extra.remote == SyncedBookmarksMirror.KIND.FOLDER) {
+        extra.remote == "folder") {
       sawMismatchEvent = true;
     }
   };
@@ -389,7 +395,7 @@ add_task(async function test_mismatched_but_incompatible_folder_types() {
     await PlacesTestUtils.markBookmarksAsSynced();
 
     info("Make remote changes");
-    await buf.store([{
+    await storeRecords(buf, [{
       "id": "livemarkAAAA",
       "type": "folder",
       "title": "not really a Livemark",
@@ -437,7 +443,7 @@ add_task(async function test_different_but_compatible_bookmark_types() {
     Assert.equal(changes.bookmarkBBBB.cleartext.type, "query");
 
     // Now pretend that same records are already on the server.
-    await buf.store([{
+    await storeRecords(buf, [{
       id: "menu",
       type: "folder",
       children: ["bookmarkAAAA", "bookmarkBBBB"],
@@ -485,9 +491,9 @@ add_task(async function test_incompatible_types() {
     // expecting to see a kind-mismatch event.
     if (value == "kind-mismatch" &&
         extra.local && typeof extra.local == "string" &&
-        extra.local == SyncedBookmarksMirror.KIND.BOOKMARK &&
+        extra.local == "bookmark" &&
         extra.remote && typeof extra.remote == "string" &&
-        extra.remote == SyncedBookmarksMirror.KIND.FOLDER) {
+        extra.remote == "folder") {
       sawMismatchEvent = true;
     }
   };
@@ -510,7 +516,7 @@ add_task(async function test_incompatible_types() {
 
     // Now pretend that same records are already on the server with incompatible
     // types.
-    await buf.store([{
+    await storeRecords(buf, [{
       id: "menu",
       type: "folder",
       children: ["AAAAAAAAAAAA"],

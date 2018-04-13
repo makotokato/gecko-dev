@@ -10460,29 +10460,40 @@ var Catalog = function CatalogClosure() {
           currentIndex = 1;
       for (var i = 0, ii = this.numPages; i < ii; i++) {
         if (i in nums) {
-          var labelDict = nums[i];
+          const labelDict = nums[i];
           if (!(0, _primitives.isDict)(labelDict)) {
             throw new _util.FormatError('The PageLabel is not a dictionary.');
           }
-          var type = labelDict.get('Type');
-          if (type && !(0, _primitives.isName)(type, 'PageLabel')) {
+          if (labelDict.has('Type') && !(0, _primitives.isName)(labelDict.get('Type'), 'PageLabel')) {
             throw new _util.FormatError('Invalid type in PageLabel dictionary.');
           }
-          var s = labelDict.get('S');
-          if (s && !(0, _primitives.isName)(s)) {
-            throw new _util.FormatError('Invalid style in PageLabel dictionary.');
+          if (labelDict.has('S')) {
+            const s = labelDict.get('S');
+            if (!(0, _primitives.isName)(s)) {
+              throw new _util.FormatError('Invalid style in PageLabel dictionary.');
+            }
+            style = s.name;
+          } else {
+            style = null;
           }
-          style = s ? s.name : null;
-          var p = labelDict.get('P');
-          if (p && !(0, _util.isString)(p)) {
-            throw new _util.FormatError('Invalid prefix in PageLabel dictionary.');
+          if (labelDict.has('P')) {
+            const p = labelDict.get('P');
+            if (!(0, _util.isString)(p)) {
+              throw new _util.FormatError('Invalid prefix in PageLabel dictionary.');
+            }
+            prefix = (0, _util.stringToPDFString)(p);
+          } else {
+            prefix = '';
           }
-          prefix = p ? (0, _util.stringToPDFString)(p) : '';
-          var st = labelDict.get('St');
-          if (st && !(Number.isInteger(st) && st >= 1)) {
-            throw new _util.FormatError('Invalid start in PageLabel dictionary.');
+          if (labelDict.has('St')) {
+            const st = labelDict.get('St');
+            if (!(Number.isInteger(st) && st >= 1)) {
+              throw new _util.FormatError('Invalid start in PageLabel dictionary.');
+            }
+            currentIndex = st;
+          } else {
+            currentIndex = 1;
           }
-          currentIndex = st || 1;
         }
         switch (style) {
           case 'D':
@@ -10510,9 +10521,9 @@ var Catalog = function CatalogClosure() {
             if (style) {
               throw new _util.FormatError(`Invalid style "${style}" in PageLabel dictionary.`);
             }
+            currentLabel = '';
         }
         pageLabels[i] = prefix + currentLabel;
-        currentLabel = '';
         currentIndex++;
       }
       return pageLabels;
@@ -12928,7 +12939,7 @@ var JpxImage = function JpxImageClosure() {
               cod.selectiveArithmeticCodingBypass = !!(blockStyle & 1);
               cod.resetContextProbabilities = !!(blockStyle & 2);
               cod.terminationOnEachCodingPass = !!(blockStyle & 4);
-              cod.verticalyStripe = !!(blockStyle & 8);
+              cod.verticallyStripe = !!(blockStyle & 8);
               cod.predictableTermination = !!(blockStyle & 16);
               cod.segmentationSymbolUsed = !!(blockStyle & 32);
               cod.reversibleTransformation = data[j++];
@@ -12953,8 +12964,8 @@ var JpxImage = function JpxImageClosure() {
               if (cod.terminationOnEachCodingPass) {
                 unsupported.push('terminationOnEachCodingPass');
               }
-              if (cod.verticalyStripe) {
-                unsupported.push('verticalyStripe');
+              if (cod.verticallyStripe) {
+                unsupported.push('verticallyStripe');
               }
               if (cod.predictableTermination) {
                 unsupported.push('predictableTermination');
@@ -21101,8 +21112,8 @@ exports.PostScriptCompiler = PostScriptCompiler;
 "use strict";
 
 
-var pdfjsVersion = '2.0.447';
-var pdfjsBuild = 'c0b22da0';
+var pdfjsVersion = '2.0.480';
+var pdfjsBuild = 'a7a034d8';
 var pdfjsCoreWorker = __w_pdfjs_require__(20);
 exports.WorkerMessageHandler = pdfjsCoreWorker.WorkerMessageHandler;
 
@@ -21303,7 +21314,7 @@ var WorkerMessageHandler = {
     var cancelXHRs = null;
     var WorkerTasks = [];
     let apiVersion = docParams.apiVersion;
-    let workerVersion = '2.0.447';
+    let workerVersion = '2.0.480';
     if (apiVersion !== null && apiVersion !== workerVersion) {
       throw new Error(`The API version "${apiVersion}" does not match ` + `the Worker version "${workerVersion}".`);
     }
@@ -32346,7 +32357,7 @@ var CMapFactory = function CMapFactoryClosure() {
   }
   function parseCMap(cMap, lexer, fetchBuiltInCMap, useCMap) {
     var previous;
-    var embededUseCMap;
+    var embeddedUseCMap;
     objLoop: while (true) {
       try {
         var obj = lexer.getObj();
@@ -32365,7 +32376,7 @@ var CMapFactory = function CMapFactoryClosure() {
               break objLoop;
             case 'usecmap':
               if ((0, _primitives.isName)(previous)) {
-                embededUseCMap = previous.name;
+                embeddedUseCMap = previous.name;
               }
               break;
             case 'begincodespacerange':
@@ -32393,8 +32404,8 @@ var CMapFactory = function CMapFactoryClosure() {
         continue;
       }
     }
-    if (!useCMap && embededUseCMap) {
-      useCMap = embededUseCMap;
+    if (!useCMap && embeddedUseCMap) {
+      useCMap = embeddedUseCMap;
     }
     if (useCMap) {
       return extendCMap(cMap, fetchBuiltInCMap, useCMap);

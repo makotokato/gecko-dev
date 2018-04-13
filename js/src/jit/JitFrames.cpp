@@ -931,7 +931,7 @@ TraceIonJSFrame(JSTracer* trc, const JSJitFrameIter& frame)
 
         if (v != Value::fromTagAndPayload(tag, rawPayload)) {
             // GC moved the value, replace the stored payload.
-            rawPayload = *v.payloadUIntPtr();
+            rawPayload = v.toNunboxPayload();
             WriteAllocation(frame, &payload, rawPayload);
         }
     }
@@ -975,7 +975,7 @@ TraceBailoutFrame(JSTracer* trc, const JSJitFrameIter& frame)
 }
 
 static void
-UpdateIonJSFrameForMinorGC(const JSJitFrameIter& frame)
+UpdateIonJSFrameForMinorGC(JSRuntime* rt, const JSJitFrameIter& frame)
 {
     // Minor GCs may move slots/elements allocated in the nursery. Update
     // any slots/elements pointers stored in this frame.
@@ -991,7 +991,7 @@ UpdateIonJSFrameForMinorGC(const JSJitFrameIter& frame)
         ionScript = frame.ionScriptFromCalleeToken();
     }
 
-    Nursery& nursery = ionScript->method()->zone()->group()->nursery();
+    Nursery& nursery = rt->gc.nursery();
 
     const SafepointIndex* si = ionScript->getSafepointIndex(frame.returnAddressToFp());
     SafepointReader safepoint(ionScript, si);
@@ -1311,11 +1311,11 @@ void
 UpdateJitActivationsForMinorGC(JSRuntime* rt)
 {
     MOZ_ASSERT(JS::CurrentThreadIsHeapMinorCollecting());
-    JSContext* cx = TlsContext.get();
+    JSContext* cx = rt->mainContextFromOwnThread();
     for (JitActivationIterator activations(cx); !activations.done(); ++activations) {
         for (OnlyJSJitFrameIter iter(activations); !iter.done(); ++iter) {
             if (iter.frame().type() == JitFrame_IonJS)
-                UpdateIonJSFrameForMinorGC(iter.frame());
+                UpdateIonJSFrameForMinorGC(rt, iter.frame());
         }
     }
 }
@@ -1893,8 +1893,10 @@ SnapshotIterator::initInstructionResults(MaybeReadFallback& fallback)
         // same reason, we need to recompile without optimizing away the
         // observable stack slots.  The script would later be recompiled to have
         // support for Argument objects.
-        if (fallback.consequence == MaybeReadFallback::Fallback_Invalidate)
-            ionScript_->invalidate(cx, /* resetUses = */ false, "Observe recovered instruction.");
+        if (fallback.consequence == MaybeReadFallback::Fallback_Invalidate) {
+            ionScript_->invalidate(cx, fallback.frame->script(), /* resetUses = */ false,
+                                   "Observe recovered instruction.");
+        }
 
         // Register the list of result on the activation.  We need to do that
         // before we initialize the list such as if any recover instruction

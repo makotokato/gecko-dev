@@ -20,6 +20,7 @@
 #include "mozilla/Sprintf.h"
 
 //Interfaces needed to be included
+#include "nsGlobalWindowOuter.h"
 #include "nsIAppShell.h"
 #include "nsIAppShellService.h"
 #include "nsIServiceManager.h"
@@ -27,9 +28,8 @@
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMElement.h"
-#include "nsIDOMXULElement.h"
 #include "nsPIDOMWindow.h"
-#include "nsIDOMScreen.h"
+#include "nsScreen.h"
 #include "nsIEmbeddingSiteWindow.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -240,8 +240,7 @@ NS_IMETHODIMP nsXULWindow::SetZLevel(uint32_t aLevel)
 
         event->SetTrusted(true);
 
-        bool defaultActionEnabled;
-        doc->DispatchEvent(event, &defaultActionEnabled);
+        doc->DispatchEvent(*event);
       }
     }
   }
@@ -361,16 +360,18 @@ GetOuterToInnerSizeDifferenceInCSSPixels(nsIWidget* aWindow)
   return RoundedToInt(devPixelSize / aWindow->GetDefaultScale());
 }
 
-uint32_t
-nsXULWindow::GetOuterToInnerHeightDifferenceInCSSPixels()
+NS_IMETHODIMP
+nsXULWindow::GetOuterToInnerHeightDifferenceInCSSPixels(uint32_t* aResult)
 {
-  return GetOuterToInnerSizeDifferenceInCSSPixels(mWindow).height;
+  *aResult = GetOuterToInnerSizeDifferenceInCSSPixels(mWindow).height;
+  return NS_OK;
 }
 
-uint32_t
-nsXULWindow::GetOuterToInnerWidthDifferenceInCSSPixels()
+NS_IMETHODIMP
+nsXULWindow::GetOuterToInnerWidthDifferenceInCSSPixels(uint32_t* aResult)
 {
-  return GetOuterToInnerSizeDifferenceInCSSPixels(mWindow).width;
+  *aResult = GetOuterToInnerSizeDifferenceInCSSPixels(mWindow).width;
+  return NS_OK;
 }
 
 nsTArray<RefPtr<mozilla::LiveResizeListener>>
@@ -1028,23 +1029,25 @@ NS_IMETHODIMP nsXULWindow::EnsureAuthPrompter()
 
 NS_IMETHODIMP nsXULWindow::GetAvailScreenSize(int32_t* aAvailWidth, int32_t* aAvailHeight)
 {
-  nsresult rv;
-
   nsCOMPtr<mozIDOMWindowProxy> domWindow;
   GetWindowDOMWindow(getter_AddRefs(domWindow));
   NS_ENSURE_STATE(domWindow);
 
-  auto* window = nsPIDOMWindowOuter::From(domWindow);
-  NS_ENSURE_STATE(window);
+  auto* window = nsGlobalWindowOuter::Cast(domWindow);
 
-  nsCOMPtr<nsIDOMScreen> screen = window->GetScreen();
+  RefPtr<nsScreen> screen = window->GetScreen();
   NS_ENSURE_STATE(screen);
 
-  rv = screen->GetAvailWidth(aAvailWidth);
-  NS_ENSURE_SUCCESS(rv, rv);
+  ErrorResult rv;
+  *aAvailWidth = screen->GetAvailWidth(rv);
+  if (NS_WARN_IF(rv.Failed())) {
+    return rv.StealNSResult();
+  }
 
-  rv = screen->GetAvailHeight(aAvailHeight);
-  NS_ENSURE_SUCCESS(rv, rv);
+  *aAvailHeight = screen->GetAvailHeight(rv);
+  if (NS_WARN_IF(rv.Failed())) {
+    return rv.StealNSResult();
+  }
 
   return NS_OK;
 }

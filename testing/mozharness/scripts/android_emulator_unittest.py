@@ -379,9 +379,11 @@ class AndroidEmulatorTest(TestingMixin, EmulatorMixin, BaseScript, MozbaseMixin)
 
     def _query_package_name(self):
         if self.app_name is None:
-            # For convenience, assume geckoview_example when install target
-            # looks like geckoview.
-            if 'geckoview' in self.installer_path:
+            # For convenience, assume geckoview.test/geckoview_example when install
+            # target looks like geckoview.
+            if 'androidTest' in self.installer_path:
+                self.app_name = 'org.mozilla.geckoview.test'
+            elif 'geckoview' in self.installer_path:
                 self.app_name = 'org.mozilla.geckoview_example'
         if self.app_name is None:
             # Find appname from package-name.txt - assumes download-and-extract
@@ -826,13 +828,9 @@ class AndroidEmulatorTest(TestingMixin, EmulatorMixin, BaseScript, MozbaseMixin)
                     self.buildbot_status(tbpl_status, level=log_level)
                     self.log_verify_status(verify_args[-1], tbpl_status, log_level)
                 else:
-                    self._dump_emulator_log()
                     self.buildbot_status(tbpl_status, level=log_level)
                     self.log("The %s suite: %s ran with return status: %s" %
                              (suite_category, suite, tbpl_status), level=log_level)
-
-        if len(verify_args) > 0:
-            self._dump_emulator_log()
 
     @PostScriptAction('run-tests')
     def stop_emulator(self, action, success=None):

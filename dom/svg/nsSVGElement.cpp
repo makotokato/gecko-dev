@@ -57,7 +57,6 @@
 #include "mozilla/DeclarationBlockInlines.h"
 #include "mozilla/Unused.h"
 #include "mozilla/RestyleManager.h"
-#include "mozilla/RestyleManagerInlines.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -119,9 +118,7 @@ nsSVGElement::DidAnimateClass()
   if (shell) {
     nsPresContext* presContext = shell->GetPresContext();
     if (presContext) {
-      presContext->RestyleManager()
-                 ->AsServo()
-                 ->ClassAttributeWillBeChangedBySMIL(this);
+      presContext->RestyleManager()->ClassAttributeWillBeChangedBySMIL(this);
     }
   }
 
@@ -1119,8 +1116,7 @@ nsSVGElement::IsSVGFocusable(bool* aIsFocusable, int32_t* aTabIndex)
   }
 
   // If a tabindex is specified at all, or the default tabindex is 0, we're focusable
-  *aIsFocusable =
-    tabIndex >= 0 || HasAttr(kNameSpaceID_None, nsGkAtoms::tabindex);
+  *aIsFocusable = tabIndex >= 0 || HasAttr(nsGkAtoms::tabindex);
 
   return false;
 }
@@ -2464,7 +2460,7 @@ nsSVGElement::RecompileScriptEventListeners()
     }
 
     nsAutoString value;
-    GetAttr(kNameSpaceID_None, attr, value);
+    GetAttr(attr, value);
     SetEventHandler(GetEventNameForAttr(attr), value, true);
   }
 }

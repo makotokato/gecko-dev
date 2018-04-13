@@ -14,6 +14,7 @@
 #include "nsIDOMNode.h"
 #include "mozilla/dom/NodeInfo.h"            // member (in nsCOMPtr)
 #include "nsIVariant.h"             // for use in GetUserData()
+#include "nsIWeakReference.h"
 #include "nsNodeInfoManager.h"      // for use in NodePrincipal()
 #include "nsPropertyTable.h"        // for typedefs
 #include "nsTObserverArray.h"       // for member
@@ -51,7 +52,6 @@ class nsIPresShell;
 class nsIPrincipal;
 class nsIURI;
 class nsNodeSupportsWeakRefTearoff;
-class nsNodeWeakReference;
 class nsDOMMutationObserver;
 class nsRange;
 class nsWindowSizes;
@@ -262,6 +262,30 @@ private:
 
   // This value is incremented on every mutation, for the life of the process.
   static uint64_t sGeneration;
+};
+
+/**
+ * A class that implements nsIWeakReference
+ */
+class nsNodeWeakReference final : public nsIWeakReference
+{
+public:
+  explicit nsNodeWeakReference(nsINode* aNode);
+
+  // nsISupports
+  NS_DECL_ISUPPORTS
+
+  // nsIWeakReference
+  NS_DECL_NSIWEAKREFERENCE
+  size_t SizeOfOnlyThis(mozilla::MallocSizeOf aMallocSizeOf) const override;
+
+  void NoticeNodeDestruction()
+  {
+    mObject = nullptr;
+  }
+
+private:
+  ~nsNodeWeakReference();
 };
 
 // This should be used for any nsINode sub-class that has fields of its own
@@ -1029,19 +1053,19 @@ public:
   virtual mozilla::EventListenerManager*
     GetOrCreateListenerManager() override;
 
-  using mozilla::dom::EventTarget::RemoveEventListener;
-  using nsIDOMEventTarget::AddEventListener;
-  virtual void AddEventListener(const nsAString& aType,
-                                mozilla::dom::EventListener* aListener,
-                                const mozilla::dom::AddEventListenerOptionsOrBoolean& aOptions,
-                                const mozilla::dom::Nullable<bool>& aWantsUntrusted,
-                                mozilla::ErrorResult& aRv) override;
-  using nsIDOMEventTarget::AddSystemEventListener;
+  bool ComputeDefaultWantsUntrusted(mozilla::ErrorResult& aRv) final;
 
   virtual bool IsApzAware() const override;
 
   virtual nsPIDOMWindowOuter* GetOwnerGlobalForBindings() override;
   virtual nsIGlobalObject* GetOwnerGlobal() const override;
+
+  using mozilla::dom::EventTarget::DispatchEvent;
+  bool DispatchEvent(mozilla::dom::Event& aEvent,
+                     mozilla::dom::CallerType aCallerType,
+                     mozilla::ErrorResult& aRv) override;
+
+  nsresult PostHandleEvent(mozilla::EventChainPostVisitor& aVisitor) override;
 
   /**
    * Adds a mutation observer to be notified when this node, or any of its
@@ -1573,9 +1597,6 @@ private:
     // Set if the element might have any kind of anonymous content children,
     // which would not be found through the element's children list.
     ElementMayHaveAnonymousChildren,
-    // Set if this node has at some point (and may still have)
-    // display:none or display:contents children.
-    NodeMayHaveChildrenWithLayoutBoxesDisabled,
     // Guard value
     BooleanFlagCount
   };
@@ -1700,19 +1721,6 @@ public:
 
   void SetMayHaveAnonymousChildren() { SetBoolFlag(ElementMayHaveAnonymousChildren); }
   bool MayHaveAnonymousChildren() const { return GetBoolFlag(ElementMayHaveAnonymousChildren); }
-
-  void SetMayHaveChildrenWithLayoutBoxesDisabled()
-  {
-    SetBoolFlag(NodeMayHaveChildrenWithLayoutBoxesDisabled);
-  }
-  void UnsetMayHaveChildrenWithLayoutBoxesDisabled()
-  {
-    ClearBoolFlag(NodeMayHaveChildrenWithLayoutBoxesDisabled);
-  }
-  bool MayHaveChildrenWithLayoutBoxesDisabled() const
-  {
-    return GetBoolFlag(NodeMayHaveChildrenWithLayoutBoxesDisabled);
-  }
 
 protected:
   void SetParentIsContent(bool aValue) { SetBoolFlag(ParentIsContent, aValue); }
@@ -1914,6 +1922,11 @@ public:
   mozilla::UniquePtr<mozilla::LinkedList<nsRange>>& GetCommonAncestorRangesPtr()
   {
     return Slots()->mCommonAncestorRanges;
+  }
+
+  nsIWeakReference* GetExistingWeakReference()
+  {
+    return HasSlots() ? GetExistingSlots()->mWeakReference : nullptr;
   }
 
 protected:

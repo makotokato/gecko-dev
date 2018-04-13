@@ -49,10 +49,6 @@
 #include "nsNodeUtils.h"
 #include "nsJSUtils.h"
 
-// Nasty hack.  Maybe we could move some of the classinfo utility methods
-// (e.g. WrapNative) over to nsContentUtils?
-#include "nsDOMClassInfo.h"
-
 #include "mozilla/DeferredFinalize.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/ScriptSettings.h"
@@ -110,6 +106,7 @@ nsXBLBinding::nsXBLBinding(nsXBLPrototypeBinding* aBinding)
   , mUsingContentXBLScope(false)
   , mIsShadowRootBinding(false)
   , mPrototypeBinding(aBinding)
+  , mBoundElement{ nullptr }
 {
   NS_ASSERTION(mPrototypeBinding, "Must have a prototype binding!");
   // Grab a ref to the document info so the prototype binding won't die
@@ -117,12 +114,14 @@ nsXBLBinding::nsXBLBinding(nsXBLPrototypeBinding* aBinding)
 }
 
 // Constructor used by web components.
-nsXBLBinding::nsXBLBinding(ShadowRoot* aShadowRoot, nsXBLPrototypeBinding* aBinding)
-  : mMarkedForDeath(false),
-    mUsingContentXBLScope(false),
-    mIsShadowRootBinding(true),
-    mPrototypeBinding(aBinding),
-    mContent(aShadowRoot)
+nsXBLBinding::nsXBLBinding(ShadowRoot* aShadowRoot,
+                           nsXBLPrototypeBinding* aBinding)
+  : mMarkedForDeath(false)
+  , mUsingContentXBLScope(false)
+  , mIsShadowRootBinding(true)
+  , mPrototypeBinding(aBinding)
+  , mContent(aShadowRoot)
+  , mBoundElement{ nullptr }
 {
   NS_ASSERTION(mPrototypeBinding, "Must have a prototype binding!");
   // Grab a ref to the document info so the prototype binding won't die

@@ -90,21 +90,22 @@ public:
   NS_DECL_NSIEVENTTARGET_FULL
 
   explicit WebSocketImpl(WebSocket* aWebSocket)
-  : mWebSocket(aWebSocket)
-  , mIsServerSide(false)
-  , mSecure(false)
-  , mOnCloseScheduled(false)
-  , mFailed(false)
-  , mDisconnectingOrDisconnected(false)
-  , mCloseEventWasClean(false)
-  , mCloseEventCode(nsIWebSocketChannel::CLOSE_ABNORMAL)
-  , mScriptLine(0)
-  , mScriptColumn(0)
-  , mInnerWindowID(0)
-  , mPrivateBrowsing(false)
-  , mIsMainThread(true)
-  , mMutex("WebSocketImpl::mMutex")
-  , mWorkerShuttingDown(false)
+    : mWebSocket(aWebSocket)
+    , mIsServerSide(false)
+    , mSecure(false)
+    , mOnCloseScheduled(false)
+    , mFailed(false)
+    , mDisconnectingOrDisconnected(false)
+    , mCloseEventWasClean(false)
+    , mCloseEventCode(nsIWebSocketChannel::CLOSE_ABNORMAL)
+    , mPort{}
+    , mScriptLine(0)
+    , mScriptColumn(0)
+    , mInnerWindowID(0)
+    , mPrivateBrowsing(false)
+    , mIsMainThread(true)
+    , mMutex("WebSocketImpl::mMutex")
+    , mWorkerShuttingDown(false)
   {
     if (!NS_IsMainThread()) {
       mIsMainThread = false;
@@ -1924,8 +1925,9 @@ WebSocket::CreateAndDispatchSimpleEvent(const nsAString& aName)
   event->InitEvent(aName, false, false);
   event->SetTrusted(true);
 
-  bool dummy;
-  return DispatchEvent(event, &dummy);
+  ErrorResult err;
+  DispatchEvent(*event, err);
+  return err.StealNSResult();
 }
 
 nsresult
@@ -2008,8 +2010,9 @@ WebSocket::CreateAndDispatchMessageEvent(const nsACString& aData,
                           Sequence<OwningNonNull<MessagePort>>());
   event->SetTrusted(true);
 
-  bool dummy;
-  return DispatchEvent(static_cast<Event*>(event), &dummy);
+  ErrorResult err;
+  DispatchEvent(*event, err);
+  return err.StealNSResult();
 }
 
 nsresult
@@ -2043,8 +2046,9 @@ WebSocket::CreateAndDispatchCloseEvent(bool aWasClean,
     CloseEvent::Constructor(this, CLOSE_EVENT_STRING, init);
   event->SetTrusted(true);
 
-  bool dummy;
-  return DispatchEvent(event, &dummy);
+  ErrorResult err;
+  DispatchEvent(*event, err);
+  return err.StealNSResult();
 }
 
 nsresult

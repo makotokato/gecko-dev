@@ -16,32 +16,32 @@
 using namespace mozilla;
 
 /* static */ xptiInterfaceEntry*
-xptiInterfaceEntry::Create(const XPTInterfaceDirectoryEntry* aEntry,
+xptiInterfaceEntry::Create(const XPTInterfaceDescriptor* aIface,
                            xptiTypelibGuts* aTypelib)
 {
     void* place = XPT_CALLOC8(gXPTIStructArena, sizeof(xptiInterfaceEntry));
     if (!place) {
         return nullptr;
     }
-    return new (place) xptiInterfaceEntry(aEntry, aTypelib);
+    return new (place) xptiInterfaceEntry(aIface, aTypelib);
 }
 
-xptiInterfaceEntry::xptiInterfaceEntry(const XPTInterfaceDirectoryEntry* aEntry,
+xptiInterfaceEntry::xptiInterfaceEntry(const XPTInterfaceDescriptor* aIface,
                                        xptiTypelibGuts* aTypelib)
-    : mIID(aEntry->mIID)
-    , mDescriptor(aEntry->mInterfaceDescriptor)
+    : mIID(aIface->mIID)
+    , mDescriptor(aIface)
     , mTypelib(aTypelib)
     , mParent(nullptr)
     , mInfo(nullptr)
     , mMethodBaseIndex(0)
     , mConstantBaseIndex(0)
     , mFlags(0)
-    , mName(aEntry->mName)
+    , mName(aIface->Name())
 {
     SetResolvedState(PARTIALLY_RESOLVED);
-    SetScriptableFlag(mDescriptor->IsScriptable());
-    SetBuiltinClassFlag(mDescriptor->IsBuiltinClass());
-    SetMainProcessScriptableOnlyFlag(mDescriptor->IsMainProcessScriptableOnly());
+    SetScriptableFlag(aIface->IsScriptable());
+    SetBuiltinClassFlag(aIface->IsBuiltinClass());
+    SetMainProcessScriptableOnlyFlag(aIface->IsMainProcessScriptableOnly());
 }
 
 bool
@@ -85,7 +85,7 @@ xptiInterfaceEntry::ResolveLocked()
         } else {
             for (uint16_t idx = 0; idx < mDescriptor->mNumMethods; ++idx) {
                 const nsXPTMethodInfo* method = static_cast<const nsXPTMethodInfo*>(
-                    mDescriptor->mMethodDescriptors + idx);
+                    &mDescriptor->Method(idx));
                 if (method->IsNotXPCOM()) {
                     SetHasNotXPCOMFlag();
                     break;
@@ -189,7 +189,7 @@ xptiInterfaceEntry::GetMethodInfo(uint16_t index, const nsXPTMethodInfo** info)
 
     // else...
     *info = static_cast<const nsXPTMethodInfo*>
-        (&mDescriptor->mMethodDescriptors[index - mMethodBaseIndex]);
+        (&mDescriptor->Method(index - mMethodBaseIndex));
     return NS_OK;
 }
 
@@ -204,7 +204,7 @@ xptiInterfaceEntry::GetMethodInfoForName(const char* methodName, uint16_t *index
     for(uint16_t i = 0; i < mDescriptor->mNumMethods; ++i)
     {
         const nsXPTMethodInfo* info;
-        info = static_cast<const nsXPTMethodInfo*>(&mDescriptor->mMethodDescriptors[i]);
+        info = static_cast<const nsXPTMethodInfo*>(&mDescriptor->Method(i));
         if (PL_strcmp(methodName, info->GetName()) == 0) {
             *index = i + mMethodBaseIndex;
             *result = info;
@@ -239,7 +239,7 @@ xptiInterfaceEntry::GetConstant(uint16_t index, JS::MutableHandleValue constant,
         return NS_ERROR_INVALID_ARG;
     }
 
-    const auto& c = mDescriptor->mConstDescriptors[index - mConstantBaseIndex];
+    const auto& c = mDescriptor->Const(index - mConstantBaseIndex);
     AutoJSContext cx;
     JS::Rooted<JS::Value> v(cx);
     v.setUndefined();
@@ -272,7 +272,7 @@ xptiInterfaceEntry::GetConstant(uint16_t index, JS::MutableHandleValue constant,
     }
 
     constant.set(v);
-    *name = ToNewCString(nsDependentCString(c.mName));
+    *name = ToNewCString(nsDependentCString(c.Name()));
 
     return NS_OK;
 }
@@ -301,7 +301,7 @@ xptiInterfaceEntry::GetInterfaceIndexForParam(uint16_t methodIndex,
     const XPTTypeDescriptor *td = &param->mType;
 
     while (td->Tag() == TD_ARRAY) {
-        td = td->ArrayElementType(mDescriptor);
+        td = td->ArrayElementType();
     }
 
     if (td->Tag() != TD_INTERFACE_TYPE) {
@@ -365,45 +365,6 @@ xptiInterfaceEntry::GetShimForParam(uint16_t methodIndex,
 }
 
 nsresult
-xptiInterfaceEntry::GetInfoForParam(uint16_t methodIndex,
-                                    const nsXPTParamInfo *param,
-                                    nsIInterfaceInfo** info)
-{
-    xptiInterfaceEntry* entry;
-    nsresult rv = GetEntryForParam(methodIndex, param, &entry);
-    if (NS_FAILED(rv)) {
-        RefPtr<ShimInterfaceInfo> shim = GetShimForParam(methodIndex, param);
-        if (!shim) {
-            return rv;
-        }
-
-        shim.forget(info);
-        return NS_OK;
-    }
-
-    *info = entry->InterfaceInfo().take();
-
-    return NS_OK;
-}
-
-nsresult
-xptiInterfaceEntry::GetIIDForParam(uint16_t methodIndex,
-                                   const nsXPTParamInfo* param, nsIID** iid)
-{
-    xptiInterfaceEntry* entry;
-    nsresult rv = GetEntryForParam(methodIndex, param, &entry);
-    if (NS_FAILED(rv)) {
-        RefPtr<ShimInterfaceInfo> shim = GetShimForParam(methodIndex, param);
-        if (!shim) {
-            return rv;
-        }
-
-        return shim->GetInterfaceIID(iid);
-    }
-    return entry->GetIID(iid);
-}
-
-nsresult
 xptiInterfaceEntry::GetIIDForParamNoAlloc(uint16_t methodIndex,
                                           const nsXPTParamInfo * param,
                                           nsIID *iid)
@@ -441,7 +402,7 @@ xptiInterfaceEntry::GetTypeInArray(const nsXPTParamInfo* param,
             NS_ERROR("bad dimension");
             return NS_ERROR_INVALID_ARG;
         }
-        td = td->ArrayElementType(mDescriptor);
+        td = td->ArrayElementType();
     }
 
     *type = td;
@@ -549,7 +510,7 @@ xptiInterfaceEntry::GetInterfaceIsArgNumberForParam(uint16_t methodIndex,
     const XPTTypeDescriptor *td = &param->mType;
 
     while (td->Tag() == TD_ARRAY) {
-        td = td->ArrayElementType(mDescriptor);
+        td = td->ArrayElementType();
     }
 
     if (td->Tag() != TD_INTERFACE_IS_TYPE) {

@@ -139,6 +139,12 @@ WorkerGlobalScope::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
   MOZ_CRASH("We should never get here!");
 }
 
+void
+WorkerGlobalScope::NoteTerminating()
+{
+  DisconnectEventTargetObjects();
+}
+
 already_AddRefed<Console>
 WorkerGlobalScope::GetConsole(ErrorResult& aRv)
 {
@@ -747,6 +753,8 @@ public:
   explicit ReportFetchListenerWarningRunnable(const nsString& aScope)
     : mozilla::Runnable("ReportFetchListenerWarningRunnable")
     , mScope(NS_ConvertUTF16toUTF8(aScope))
+    , mLine{}
+    , mColumn{}
   {
     WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
     MOZ_ASSERT(workerPrivate);
@@ -788,18 +796,10 @@ ServiceWorkerGlobalScope::SetOnfetch(mozilla::dom::EventHandlerNonNull* aCallbac
 }
 
 void
-ServiceWorkerGlobalScope::AddEventListener(
-                          const nsAString& aType,
-                          dom::EventListener* aListener,
-                          const dom::AddEventListenerOptionsOrBoolean& aOptions,
-                          const dom::Nullable<bool>& aWantsUntrusted,
-                          ErrorResult& aRv)
+ServiceWorkerGlobalScope::EventListenerAdded(const nsAString& aType)
 {
   MOZ_ASSERT(mWorkerPrivate);
   mWorkerPrivate->AssertIsOnWorkerThread();
-
-  DOMEventTargetHelper::AddEventListener(aType, aListener, aOptions,
-                                         aWantsUntrusted, aRv);
 
   if (!aType.EqualsLiteral("fetch")) {
     return;
@@ -810,9 +810,7 @@ ServiceWorkerGlobalScope::AddEventListener(
     mWorkerPrivate->DispatchToMainThread(r.forget());
   }
 
-  if (!aRv.Failed()) {
-    mWorkerPrivate->SetFetchHandlerWasAdded();
-  }
+  mWorkerPrivate->SetFetchHandlerWasAdded();
 }
 
 namespace {

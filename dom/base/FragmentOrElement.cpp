@@ -24,7 +24,7 @@
 #include "mozilla/EventListenerManager.h"
 #include "mozilla/EventStates.h"
 #include "mozilla/HTMLEditor.h"
-#include "mozilla/ServoRestyleManager.h"
+#include "mozilla/RestyleManager.h"
 #include "mozilla/TextEditor.h"
 #include "mozilla/URLExtraData.h"
 #include "mozilla/dom/Attr.h"
@@ -611,34 +611,6 @@ FragmentOrElement::Children()
 
 //----------------------------------------------------------------------
 
-
-NS_IMPL_ISUPPORTS(nsNodeWeakReference,
-                  nsIWeakReference)
-
-nsNodeWeakReference::~nsNodeWeakReference()
-{
-  nsINode* node = static_cast<nsINode*>(mObject);
-
-  if (node) {
-    NS_ASSERTION(node->Slots()->mWeakReference == this,
-                 "Weak reference has wrong value");
-    node->Slots()->mWeakReference = nullptr;
-  }
-}
-
-NS_IMETHODIMP
-nsNodeWeakReference::QueryReferentFromScript(const nsIID& aIID, void** aInstancePtr)
-{
-  return QueryReferent(aIID, aInstancePtr);
-}
-
-size_t
-nsNodeWeakReference::SizeOfOnlyThis(mozilla::MallocSizeOf aMallocSizeOf) const
-{
-  return aMallocSizeOf(this);
-}
-
-
 NS_IMPL_CYCLE_COLLECTION(nsNodeSupportsWeakRefTearoff, mNode)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsNodeSupportsWeakRefTearoff)
@@ -895,7 +867,7 @@ FindChromeAccessOnlySubtreeOwner(EventTarget* aTarget)
   return node.forget();
 }
 
-nsresult
+void
 nsIContent::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
   //FIXME! Document how this event retargeting works, Bug 329124.
@@ -975,7 +947,7 @@ nsIContent::GetEventTargetParent(EventChainPreVisitor& aVisitor)
               aVisitor.SetParentTarget(nullptr, false);
               // Event should not propagate to non-anon content.
               aVisitor.mCanHandle = isAnonForEvents;
-              return NS_OK;
+              return;
             }
           }
         }
@@ -1079,7 +1051,7 @@ nsIContent::GetEventTargetParent(EventChainPreVisitor& aVisitor)
             // being false, but in Shadow DOM case mTarget really should
             // point to a node in Shadow DOM.
             aVisitor.mEvent->mTarget = aVisitor.mTargetInKnownToBeHandledScope;
-            return NS_OK;
+            return;
           }
 
           // Part of step 5. Retargeting target has happened already higher
@@ -1123,7 +1095,7 @@ nsIContent::GetEventTargetParent(EventChainPreVisitor& aVisitor)
             // being false, but in Shadow DOM case mTarget really should
             // point to a node in Shadow DOM.
             aVisitor.mEvent->mTarget = aVisitor.mTargetInKnownToBeHandledScope;
-            return NS_OK;
+            return;
           } else {
             // Step 11.6
             aVisitor.mRetargetedRelatedTarget = retargetedRelatedTarget;
@@ -1137,8 +1109,6 @@ nsIContent::GetEventTargetParent(EventChainPreVisitor& aVisitor)
     // Inform that we're about to exit the current scope.
     aVisitor.mRelatedTargetRetargetedInCurrentScope = false;
   }
-
-  return NS_OK;
 }
 
 bool

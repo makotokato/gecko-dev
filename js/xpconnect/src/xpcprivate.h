@@ -177,7 +177,6 @@ class Exception;
 #define XPC_DYING_NATIVE_PROTO_MAP_LENGTH        8
 #define XPC_NATIVE_INTERFACE_MAP_LENGTH         32
 #define XPC_NATIVE_SET_MAP_LENGTH               32
-#define XPC_THIS_TRANSLATOR_MAP_LENGTH           4
 #define XPC_WRAPPER_MAP_LENGTH                   8
 
 /***************************************************************************/
@@ -299,10 +298,8 @@ class XPCRootSetElem
 public:
     XPCRootSetElem()
     {
-#ifdef DEBUG
         mNext = nullptr;
         mSelfp = nullptr;
-#endif
     }
 
     ~XPCRootSetElem()
@@ -416,6 +413,8 @@ public:
 
     size_t SizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf);
 
+    bool IsSystemCaller() const override;
+
     AutoMarkingPtr** GetAutoRootsAdr() {return &mAutoRoots;}
 
     nsresult GetPendingResult() { return mPendingResult; }
@@ -465,6 +464,7 @@ public:
         IDX_MESSAGE                 ,
         IDX_LASTINDEX               ,
         IDX_THEN                    ,
+        IDX_ISINSTANCE              ,
         IDX_TOTAL_COUNT // just a count of the above
     };
 
@@ -549,9 +549,6 @@ public:
 
     NativeSetMap* GetNativeSetMap() const
         {return mNativeSetMap;}
-
-    IID2ThisTranslatorMap* GetThisTranslatorMap() const
-        {return mThisTranslatorMap;}
 
     XPCWrappedNativeProtoMap* GetDyingWrappedNativeProtoMap() const
         {return mDyingWrappedNativeProtoMap;}
@@ -654,7 +651,6 @@ private:
     IID2NativeInterfaceMap*  mIID2NativeInterfaceMap;
     ClassInfo2NativeSetMap*  mClassInfo2NativeSetMap;
     NativeSetMap*            mNativeSetMap;
-    IID2ThisTranslatorMap*   mThisTranslatorMap;
     XPCWrappedNativeProtoMap* mDyingWrappedNativeProtoMap;
     bool mGCIsRunning;
     nsTArray<nsISupports*> mNativesToReleaseArray;
@@ -1099,7 +1095,14 @@ public:
         {mIndexInInterface = index;}
 
     /* default ctor - leave random contents */
-    XPCNativeMember()  {MOZ_COUNT_CTOR(XPCNativeMember);}
+    XPCNativeMember()
+      : mName{}
+      , mIndex{}
+      , mFlags{}
+      , mIndexInInterface{}
+    {
+      MOZ_COUNT_CTOR(XPCNativeMember);
+    }
     ~XPCNativeMember() {MOZ_COUNT_DTOR(XPCNativeMember);}
 
 private:
@@ -2628,6 +2631,7 @@ struct GlobalProperties {
     bool URL : 1;
     bool URLSearchParams : 1;
     bool XMLHttpRequest : 1;
+    bool XMLSerializer : 1;
 
     // Ad-hoc property names we implement.
     bool atob : 1;

@@ -301,16 +301,16 @@ var SessionStore = {
     SessionStoreInternal.deleteWindowValue(aWindow, aKey);
   },
 
-  getTabValue: function ss_getTabValue(aTab, aKey) {
-    return SessionStoreInternal.getTabValue(aTab, aKey);
+  getCustomTabValue(aTab, aKey) {
+    return SessionStoreInternal.getCustomTabValue(aTab, aKey);
   },
 
-  setTabValue: function ss_setTabValue(aTab, aKey, aStringValue) {
-    SessionStoreInternal.setTabValue(aTab, aKey, aStringValue);
+  setCustomTabValue(aTab, aKey, aStringValue) {
+    SessionStoreInternal.setCustomTabValue(aTab, aKey, aStringValue);
   },
 
-  deleteTabValue: function ss_deleteTabValue(aTab, aKey) {
-    SessionStoreInternal.deleteTabValue(aTab, aKey);
+  deleteCustomTabValue(aTab, aKey) {
+    SessionStoreInternal.deleteCustomTabValue(aTab, aKey);
   },
 
   getLazyTabValue(aTab, aKey) {
@@ -429,7 +429,6 @@ Object.freeze(SessionStore);
 
 var SessionStoreInternal = {
   QueryInterface: XPCOMUtils.generateQI([
-    Ci.nsIDOMEventListener,
     Ci.nsIObserver,
     Ci.nsISupportsWeakReference
   ]),
@@ -999,7 +998,7 @@ var SessionStoreInternal = {
   /* ........ Window Event Handlers .............. */
 
   /**
-   * Implement nsIDOMEventListener for handling various window and tab events
+   * Implement EventListener for handling various window and tab events
    */
   handleEvent: function ssi_handleEvent(aEvent) {
     let win = aEvent.currentTarget.ownerGlobal;
@@ -2334,6 +2333,9 @@ var SessionStoreInternal = {
   },
 
   getTabState: function ssi_getTabState(aTab) {
+    if (!aTab || !aTab.ownerGlobal) {
+      throw Components.Exception("Need a valid tab", Cr.NS_ERROR_INVALID_ARG);
+    }
     if (!aTab.ownerGlobal.__SSi) {
       throw Components.Exception("Default view is not tracked", Cr.NS_ERROR_INVALID_ARG);
     }
@@ -2360,7 +2362,7 @@ var SessionStoreInternal = {
     }
 
     let window = aTab.ownerGlobal;
-    if (!("__SSi" in window)) {
+    if (!window || !("__SSi" in window)) {
       throw Components.Exception("Window is not tracked", Cr.NS_ERROR_INVALID_ARG);
     }
 
@@ -2375,6 +2377,9 @@ var SessionStoreInternal = {
   },
 
   duplicateTab: function ssi_duplicateTab(aWindow, aTab, aDelta = 0, aRestoreImmediately = true) {
+    if (!aTab || !aTab.ownerGlobal) {
+      throw Components.Exception("Need a valid tab", Cr.NS_ERROR_INVALID_ARG);
+    }
     if (!aTab.ownerGlobal.__SSi) {
       throw Components.Exception("Default view is not tracked", Cr.NS_ERROR_INVALID_ARG);
     }
@@ -2589,13 +2594,13 @@ var SessionStoreInternal = {
     this.saveStateDelayed(aWindow);
   },
 
-  getTabValue: function ssi_getTabValue(aTab, aKey) {
+  getCustomTabValue(aTab, aKey) {
     return (aTab.__SS_extdata || {})[aKey] || "";
   },
 
-  setTabValue: function ssi_setTabValue(aTab, aKey, aStringValue) {
+  setCustomTabValue(aTab, aKey, aStringValue) {
     if (typeof aStringValue != "string") {
-      throw new TypeError("setTabValue only accepts string values");
+      throw new TypeError("setCustomTabValue only accepts string values");
     }
 
     // If the tab hasn't been restored, then set the data there, otherwise we
@@ -2608,7 +2613,7 @@ var SessionStoreInternal = {
     this.saveStateDelayed(aTab.ownerGlobal);
   },
 
-  deleteTabValue: function ssi_deleteTabValue(aTab, aKey) {
+  deleteCustomTabValue(aTab, aKey) {
     if (aTab.__SS_extdata && aKey in aTab.__SS_extdata) {
       delete aTab.__SS_extdata[aKey];
       this.saveStateDelayed(aTab.ownerGlobal);
@@ -3427,7 +3432,7 @@ var SessionStoreInternal = {
                                   noInitialLabel: true,
                                   userContextId,
                                   skipBackgroundNotify: true,
-                                  bulkOrderedOpen: this._browserSetState });
+                                  bulkOrderedOpen: true });
 
         if (select) {
           let leftoverTab = tabbrowser.selectedTab;
@@ -3508,10 +3513,6 @@ var SessionStoreInternal = {
     arrowScrollbox.smoothScroll = smoothScroll;
 
     TelemetryStopwatch.finish("FX_SESSION_RESTORE_RESTORE_WINDOW_MS");
-    if (Services.prefs.getIntPref("browser.tabs.restorebutton") != 0 ) {
-      Services.telemetry.scalarAdd("browser.session.restore.number_of_tabs", winData.tabs.length);
-      Services.telemetry.scalarAdd("browser.session.restore.number_of_win", 1);
-    }
 
     this._setWindowStateReady(aWindow);
 
@@ -4343,23 +4344,41 @@ var SessionStoreInternal = {
       }
     }
 
-    var dimension;
-    switch (aAttribute) {
-    case "width":
-      dimension = aWindow.outerWidth;
-      break;
-    case "height":
-      dimension = aWindow.outerHeight;
-      break;
-    default:
-      dimension = aAttribute in aWindow ? aWindow[aAttribute] : "";
-      break;
+    // We want to persist the size / position in normal state, so that
+    // we can restore to them even if the window is currently maximized
+    // or minimized. However, attributes on window object only reflect
+    // the current state of the window, so when it isn't in the normal
+    // sizemode, their values aren't what we want the window to restore
+    // to. In that case, try to read from the attributes of the root
+    // element first instead.
+    if (aWindow.windowState != aWindow.STATE_NORMAL) {
+      let docElem = aWindow.document.documentElement;
+      let attr = parseInt(docElem.getAttribute(aAttribute), 10);
+      if (attr) {
+        if (aAttribute != "width" && aAttribute != "height") {
+          return attr;
+        }
+        // Width and height attribute report the inner size, but we want
+        // to store the outer size, so add the difference.
+        let xulWin = aWindow.getInterface(Ci.nsIDocShell)
+                            .treeOwner
+                            .QueryInterface(Ci.nsIInterfaceRequestor)
+                            .getInterface(Ci.nsIXULWindow);
+        let diff = aAttribute == "width"
+          ? xulWin.outerToInnerWidthDifferenceInCSSPixels
+          : xulWin.outerToInnerHeightDifferenceInCSSPixels;
+        return attr + diff;
+      }
     }
 
-    if (aWindow.windowState == aWindow.STATE_NORMAL) {
-      return dimension;
+    switch (aAttribute) {
+    case "width":
+      return aWindow.outerWidth;
+    case "height":
+      return aWindow.outerHeight;
+    default:
+      return aAttribute in aWindow ? aWindow[aAttribute] : "";
     }
-    return aWindow.document.documentElement.getAttribute(aAttribute) || dimension;
   },
 
   /**

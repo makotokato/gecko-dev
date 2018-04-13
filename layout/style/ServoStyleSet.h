@@ -33,7 +33,6 @@ namespace dom {
 class Element;
 class ShadowRoot;
 } // namespace dom
-class ServoRestyleManager;
 class ServoStyleSheet;
 struct Keyframe;
 class ServoElementSnapshotTable;
@@ -42,7 +41,6 @@ class ServoStyleRuleMap;
 class StyleSheet;
 } // namespace mozilla
 class gfxFontFeatureValueSet;
-class nsCSSCounterStyleRule;
 class nsIContent;
 class nsIDocument;
 class nsPresContext;
@@ -84,7 +82,7 @@ MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(OriginFlags)
  */
 class ServoStyleSet
 {
-  friend class ServoRestyleManager;
+  friend class RestyleManager;
   typedef ServoElementSnapshotTable SnapshotTable;
 
 public:
@@ -360,7 +358,7 @@ public:
 
   bool AppendFontFaceRules(nsTArray<nsFontFaceRuleContainer>& aArray);
 
-  nsCSSCounterStyleRule* CounterStyleRuleForName(nsAtom* aName);
+  const RawServoCounterStyleRule* CounterStyleRuleForName(nsAtom* aName);
 
   // Get all the currently-active font feature values set.
   already_AddRefed<gfxFontFeatureValueSet> BuildFontFeatureValueSet();
@@ -577,7 +575,6 @@ private:
   bool mAuthorStyleDisabled;
   StylistState mStylistState;
   uint64_t mUserFontSetUpdateGeneration;
-  uint32_t mUserFontCacheUpdateGeneration;
 
   bool mNeedsRestyleAfterEnsureUniqueInner;
 

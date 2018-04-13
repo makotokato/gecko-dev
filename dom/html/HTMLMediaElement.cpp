@@ -1808,6 +1808,7 @@ void HTMLMediaElement::AbortExistingLoads()
   mPendingEncryptedInitData.Reset();
   mWaitingForKey = NOT_WAITING_FOR_KEY;
   mSourcePointer = nullptr;
+  mAttemptPlayUponLoadedMetadata = false;
 
   mTags = nullptr;
 
@@ -3616,7 +3617,8 @@ HTMLMediaElement::MozCaptureStream(ErrorResult& aRv)
   }
 
   MediaStreamGraph* graph =
-    MediaStreamGraph::GetInstance(graphDriverType, window);
+    MediaStreamGraph::GetInstance(graphDriverType, window,
+                                  MediaStreamGraph::REQUEST_DEFAULT_SAMPLE_RATE);
 
   RefPtr<DOMMediaStream> stream =
     CaptureStreamInternal(StreamCaptureBehavior::CONTINUE_WHEN_ENDED,
@@ -3649,7 +3651,8 @@ HTMLMediaElement::MozCaptureStreamUntilEnded(ErrorResult& aRv)
   }
 
   MediaStreamGraph* graph =
-    MediaStreamGraph::GetInstance(graphDriverType, window);
+    MediaStreamGraph::GetInstance(graphDriverType, window,
+                                  MediaStreamGraph::REQUEST_DEFAULT_SAMPLE_RATE);
 
   RefPtr<DOMMediaStream> stream =
     CaptureStreamInternal(StreamCaptureBehavior::FINISH_WHEN_ENDED,
@@ -3954,7 +3957,7 @@ HTMLMediaElement::NotifyXPCOMShutdown()
 already_AddRefed<Promise>
 HTMLMediaElement::Play(ErrorResult& aRv)
 {
-  LOG(LogLevel::Debug, ("%p Play() called by JS", this));
+  LOG(LogLevel::Debug, ("%p Play() called by JS readyState=%d", this, mReadyState));
 
   if (mAudioChannelWrapper && mAudioChannelWrapper->IsPlaybackBlocked()) {
     MaybeDoLoad();
@@ -3993,7 +3996,12 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
   // 4.8.12.8 - Step 1:
   // If the media element is not allowed to play, return a promise rejected
   // with a "NotAllowedError" DOMException and abort these steps.
-  if (!IsAllowedToPlay()) {
+  // Note: IsAllowedToPlay() needs to know whether there is an audio track
+  // in the resource, and for that we need to be at readyState HAVE_METADATA
+  // or above. So only reject here if we're at readyState HAVE_METADATA. If
+  // we're below that, we'll we delay fulfilling the play promise until we've
+  // reached readyState >= HAVE_METADATA below.
+  if (mReadyState >= HAVE_METADATA && !IsAllowedToPlay()) {
     // NOTE: for promise-based-play, will return a rejected promise here.
     LOG(LogLevel::Debug,
         ("%p Play() promise rejected because not allowed to play.", this));
@@ -4051,21 +4059,30 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
       SetCurrentTime(0);
     }
     if (!mPausedForInactiveDocumentOrChannel) {
-      nsresult rv = mDecoder->Play();
-      if (NS_FAILED(rv)) {
-        // We don't need to remove the _promise_ from _mPendingPlayPromises_ here.
-        // If something wrong between |mPendingPlayPromises.AppendElement(promise);|
-        // and here, the _promise_ should already have been rejected. Otherwise,
-        // the _promise_ won't be returned to JS at all, so just leave it in the
-        // _mPendingPlayPromises_ and let it be resolved/rejected with the
-        // following actions and the promise-resolution won't be observed at all.
-        LOG(LogLevel::Debug,
-            ("%p Play() promise rejected because failed to play MediaDecoder.",
-             this));
-        aRv.Throw(rv);
-        return nullptr;
+      if (mReadyState < HAVE_METADATA) {
+        // We don't know whether the autoplay policy will allow us to play yet,
+        // as we don't yet know whether the media has audio tracks. So delay
+        // starting playback until we've loaded metadata.
+        mAttemptPlayUponLoadedMetadata = true;
+      } else {
+        nsresult rv = mDecoder->Play();
+        if (NS_FAILED(rv)) {
+          // We don't need to remove the _promise_ from _mPendingPlayPromises_ here.
+          // If something wrong between |mPendingPlayPromises.AppendElement(promise);|
+          // and here, the _promise_ should already have been rejected. Otherwise,
+          // the _promise_ won't be returned to JS at all, so just leave it in the
+          // _mPendingPlayPromises_ and let it be resolved/rejected with the
+          // following actions and the promise-resolution won't be observed at all.
+          LOG(LogLevel::Debug,
+              ("%p Play() promise rejected because failed to play MediaDecoder.",
+              this));
+          aRv.Throw(rv);
+          return nullptr;
+        }
       }
     }
+  } else if (mReadyState < HAVE_METADATA) {
+    mAttemptPlayUponLoadedMetadata = true;
   }
 
   if (mCurrentPlayRangeStart == -1.0) {
@@ -4213,11 +4230,12 @@ HTMLMediaElement::OutputMediaStream::~OutputMediaStream()
   }
 }
 
-nsresult
+void
 HTMLMediaElement::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
   if (!this->Controls() || !aVisitor.mEvent->mFlags.mIsTrusted) {
-    return nsGenericHTMLElement::GetEventTargetParent(aVisitor);
+    nsGenericHTMLElement::GetEventTargetParent(aVisitor);
+    return;
   }
 
   HTMLInputElement* el = nullptr;
@@ -4239,7 +4257,7 @@ HTMLMediaElement::GetEventTargetParent(EventChainPreVisitor& aVisitor)
     case eMouseDown:
     case eMouseUp:
       aVisitor.mCanHandle = false;
-      return NS_OK;
+      return;
 
     // The *move events however are only comsumed when the range input is being
     // dragged.
@@ -4258,12 +4276,14 @@ HTMLMediaElement::GetEventTargetParent(EventChainPreVisitor& aVisitor)
       }
       if (el && el->IsDraggingRange()) {
         aVisitor.mCanHandle = false;
-        return NS_OK;
+        return;
       }
-      return nsGenericHTMLElement::GetEventTargetParent(aVisitor);
+      nsGenericHTMLElement::GetEventTargetParent(aVisitor);
+      return;
 
     default:
-      return nsGenericHTMLElement::GetEventTargetParent(aVisitor);
+      nsGenericHTMLElement::GetEventTargetParent(aVisitor);
+      return;
   }
 }
 
@@ -4921,7 +4941,7 @@ HTMLMediaElement::FinishDecoderSetup(MediaDecoder* aDecoder)
   }
 
   nsresult rv = NS_OK;
-  if (!mPaused) {
+  if (!mPaused && !mAttemptPlayUponLoadedMetadata) {
     SetPlayedOrSeeked(true);
     if (!mPausedForInactiveDocumentOrChannel) {
       rv = mDecoder->Play();
@@ -5213,26 +5233,30 @@ void HTMLMediaElement::EndSrcMediaStreamPlayback()
 }
 
 static already_AddRefed<AudioTrack>
-CreateAudioTrack(AudioStreamTrack* aStreamTrack)
+CreateAudioTrack(AudioStreamTrack* aStreamTrack,
+                 nsIGlobalObject* aOwnerGlobal)
 {
   nsAutoString id;
   nsAutoString label;
   aStreamTrack->GetId(id);
   aStreamTrack->GetLabel(label, CallerType::System);
 
-  return MediaTrackList::CreateAudioTrack(id, NS_LITERAL_STRING("main"),
+  return MediaTrackList::CreateAudioTrack(aOwnerGlobal,
+                                          id, NS_LITERAL_STRING("main"),
                                           label, EmptyString(), true);
 }
 
 static already_AddRefed<VideoTrack>
-CreateVideoTrack(VideoStreamTrack* aStreamTrack)
+CreateVideoTrack(VideoStreamTrack* aStreamTrack,
+                 nsIGlobalObject* aOwnerGlobal)
 {
   nsAutoString id;
   nsAutoString label;
   aStreamTrack->GetId(id);
   aStreamTrack->GetLabel(label, CallerType::System);
 
-  return MediaTrackList::CreateVideoTrack(id, NS_LITERAL_STRING("main"),
+  return MediaTrackList::CreateVideoTrack(aOwnerGlobal,
+                                          id, NS_LITERAL_STRING("main"),
                                           label, EmptyString(),
                                           aStreamTrack);
 }
@@ -5256,14 +5280,16 @@ HTMLMediaElement::NotifyMediaStreamTrackAdded(const RefPtr<MediaStreamTrack>& aT
 #endif
 
   if (AudioStreamTrack* t = aTrack->AsAudioStreamTrack()) {
-    RefPtr<AudioTrack> audioTrack = CreateAudioTrack(t);
+    RefPtr<AudioTrack> audioTrack =
+      CreateAudioTrack(t, AudioTracks()->GetOwnerGlobal());
     AudioTracks()->AddTrack(audioTrack);
   } else if (VideoStreamTrack* t = aTrack->AsVideoStreamTrack()) {
     // TODO: Fix this per the spec on bug 1273443.
     if (!IsVideo()) {
       return;
     }
-    RefPtr<VideoTrack> videoTrack = CreateVideoTrack(t);
+    RefPtr<VideoTrack> videoTrack =
+      CreateVideoTrack(t, VideoTracks()->GetOwnerGlobal());
     VideoTracks()->AddTrack(videoTrack);
     // New MediaStreamTrack added, set the new added video track as selected
     // video track when there is no selected track.
@@ -5925,6 +5951,15 @@ HTMLMediaElement::ChangeReadyState(nsMediaReadyState aState)
       mReadyState >= HAVE_FUTURE_DATA) {
     DispatchAsyncEvent(NS_LITERAL_STRING("canplay"));
     if (!mPaused) {
+      if (mAttemptPlayUponLoadedMetadata && mDecoder) {
+        mAttemptPlayUponLoadedMetadata = false;
+        if (IsAllowedToPlay()) {
+          mDecoder->Play();
+        } else {
+          AsyncRejectPendingPlayPromises(NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR);
+          mPaused = true;
+        }
+      }
       NotifyAboutPlaying();
     }
   }
@@ -6045,6 +6080,7 @@ void HTMLMediaElement::CheckAutoplayDataReady()
     if (mCurrentPlayRangeStart == -1.0) {
       mCurrentPlayRangeStart = CurrentTime();
     }
+    MOZ_ASSERT(!mAttemptPlayUponLoadedMetadata);
     mDecoder->Play();
   } else if (mSrcStream) {
     SetPlayedOrSeeked(true);
@@ -6382,6 +6418,7 @@ void HTMLMediaElement::SuspendOrResumeElement(bool aPauseElement, bool aSuspendE
       if (mDecoder) {
         mDecoder->Resume();
         if (!mPaused && !mDecoder->IsEnded()) {
+          MOZ_ASSERT(!mAttemptPlayUponLoadedMetadata);
           mDecoder->Play();
         }
       }
@@ -7391,7 +7428,8 @@ HTMLMediaElement::AudioCaptureStreamChange(bool aCapture)
 
     uint64_t id = window->WindowID();
     MediaStreamGraph* msg =
-      MediaStreamGraph::GetInstance(MediaStreamGraph::AUDIO_THREAD_DRIVER, window);
+      MediaStreamGraph::GetInstance(MediaStreamGraph::AUDIO_THREAD_DRIVER, window,
+                                    MediaStreamGraph::REQUEST_DEFAULT_SAMPLE_RATE);
 
     if (GetSrcMediaStream()) {
       mCaptureStreamPort = msg->ConnectToCaptureStream(id, GetSrcMediaStream());
@@ -7658,8 +7696,10 @@ HTMLMediaElement::ConstructMediaTracks(const MediaInfo* aInfo)
   AudioTrackList* audioList = AudioTracks();
   if (audioList && aInfo->HasAudio()) {
     const TrackInfo& info = aInfo->mAudio;
-    RefPtr<AudioTrack> track = MediaTrackList::CreateAudioTrack(
-    info.mId, info.mKind, info.mLabel, info.mLanguage, info.mEnabled);
+    RefPtr<AudioTrack> track =
+      MediaTrackList::CreateAudioTrack(audioList->GetOwnerGlobal(), info.mId,
+                                       info.mKind, info.mLabel, info.mLanguage,
+                                       info.mEnabled);
 
     audioList->AddTrack(track);
   }
@@ -7667,8 +7707,9 @@ HTMLMediaElement::ConstructMediaTracks(const MediaInfo* aInfo)
   VideoTrackList* videoList = VideoTracks();
   if (videoList && aInfo->HasVideo()) {
     const TrackInfo& info = aInfo->mVideo;
-    RefPtr<VideoTrack> track = MediaTrackList::CreateVideoTrack(
-    info.mId, info.mKind, info.mLabel, info.mLanguage);
+    RefPtr<VideoTrack> track =
+      MediaTrackList::CreateVideoTrack(videoList->GetOwnerGlobal(), info.mId,
+                                       info.mKind, info.mLabel, info.mLanguage);
 
     videoList->AddTrack(track);
     track->SetEnabledInternal(info.mEnabled, MediaTrack::FIRE_NO_EVENTS);

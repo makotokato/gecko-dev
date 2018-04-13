@@ -106,7 +106,8 @@ const char* const XPCJSRuntime::mStrings[] = {
     "stack",                // IDX_STACK
     "message",              // IDX_MESSAGE
     "lastIndex",            // IDX_LASTINDEX
-    "then"                  // IDX_THEN
+    "then",                 // IDX_THEN
+    "isInstance",           // IDX_ISINSTANCE
 };
 
 /***************************************************************************/
@@ -1050,9 +1051,6 @@ XPCJSRuntime::Shutdown(JSContext* cx)
 
     delete mNativeSetMap;
     mNativeSetMap = nullptr;
-
-    delete mThisTranslatorMap;
-    mThisTranslatorMap = nullptr;
 
     delete mDyingWrappedNativeProtoMap;
     mDyingWrappedNativeProtoMap = nullptr;
@@ -2565,9 +2563,6 @@ AccumulateTelemetryCallback(int id, uint32_t sample, const char* key)
       case JS_TELEMETRY_GC_PRETENURE_COUNT:
         Telemetry::Accumulate(Telemetry::GC_PRETENURE_COUNT, sample);
         break;
-      case JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT:
-        Telemetry::Accumulate(Telemetry::JS_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT, sample);
-        break;
       case JS_TELEMETRY_PRIVILEGED_PARSER_COMPILE_LAZY_AFTER_MS:
         Telemetry::Accumulate(Telemetry::JS_PRIVILEGED_PARSER_COMPILE_LAZY_AFTER_MS, sample);
         break;
@@ -2749,20 +2744,24 @@ static const JSWrapObjectCallbacks WrapObjectCallbacks = {
 };
 
 XPCJSRuntime::XPCJSRuntime(JSContext* aCx)
- : CycleCollectedJSRuntime(aCx),
-   mWrappedJSMap(JSObject2WrappedJSMap::newMap(XPC_JS_MAP_LENGTH)),
-   mWrappedJSClassMap(IID2WrappedJSClassMap::newMap(XPC_JS_CLASS_MAP_LENGTH)),
-   mIID2NativeInterfaceMap(IID2NativeInterfaceMap::newMap(XPC_NATIVE_INTERFACE_MAP_LENGTH)),
-   mClassInfo2NativeSetMap(ClassInfo2NativeSetMap::newMap(XPC_NATIVE_SET_MAP_LENGTH)),
-   mNativeSetMap(NativeSetMap::newMap(XPC_NATIVE_SET_MAP_LENGTH)),
-   mThisTranslatorMap(IID2ThisTranslatorMap::newMap(XPC_THIS_TRANSLATOR_MAP_LENGTH)),
-   mDyingWrappedNativeProtoMap(XPCWrappedNativeProtoMap::newMap(XPC_DYING_NATIVE_PROTO_MAP_LENGTH)),
-   mGCIsRunning(false),
-   mNativesToReleaseArray(),
-   mDoingFinalization(false),
-   mVariantRoots(nullptr),
-   mWrappedJSRoots(nullptr),
-   mAsyncSnowWhiteFreer(new AsyncFreeSnowWhite())
+  : CycleCollectedJSRuntime(aCx)
+  , mWrappedJSMap(JSObject2WrappedJSMap::newMap(XPC_JS_MAP_LENGTH))
+  , mWrappedJSClassMap(IID2WrappedJSClassMap::newMap(XPC_JS_CLASS_MAP_LENGTH))
+  , mIID2NativeInterfaceMap(
+      IID2NativeInterfaceMap::newMap(XPC_NATIVE_INTERFACE_MAP_LENGTH))
+  , mClassInfo2NativeSetMap(
+      ClassInfo2NativeSetMap::newMap(XPC_NATIVE_SET_MAP_LENGTH))
+  , mNativeSetMap(NativeSetMap::newMap(XPC_NATIVE_SET_MAP_LENGTH))
+  , mDyingWrappedNativeProtoMap(
+      XPCWrappedNativeProtoMap::newMap(XPC_DYING_NATIVE_PROTO_MAP_LENGTH))
+  , mGCIsRunning(false)
+  , mNativesToReleaseArray()
+  , mDoingFinalization(false)
+  , mVariantRoots(nullptr)
+  , mWrappedJSRoots(nullptr)
+  , mPrevGCSliceCallback{ nullptr }
+  , mPrevDoCycleCollectionCallback{ nullptr }
+  , mAsyncSnowWhiteFreer(new AsyncFreeSnowWhite())
 {
     MOZ_COUNT_CTOR_INHERITED(XPCJSRuntime, CycleCollectedJSRuntime);
 }
@@ -2946,9 +2945,6 @@ XPCJSRuntime::DebugDump(int16_t depth)
         XPC_LOG_ALWAYS(("mClassInfo2NativeSetMap @ %p with %d sets(s)",
                         mClassInfo2NativeSetMap,
                         mClassInfo2NativeSetMap->Count()));
-
-        XPC_LOG_ALWAYS(("mThisTranslatorMap @ %p with %d translator(s)",
-                        mThisTranslatorMap, mThisTranslatorMap->Count()));
 
         XPC_LOG_ALWAYS(("mNativeSetMap @ %p with %d sets(s)",
                         mNativeSetMap, mNativeSetMap->Count()));

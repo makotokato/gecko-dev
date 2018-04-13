@@ -232,6 +232,7 @@ ProxyMessenger = {
       if (this.ports.has(messageManager)) {
         this.ports.set(event.detail.messageManager, this.ports.get(messageManager));
         this.ports.delete(messageManager);
+        event.detail.addEventListener("SwapDocShells", this, {once: true});
       }
     }
   },
@@ -429,10 +430,6 @@ GlobalManager = {
   getExtension(extensionId) {
     return this.extensionMap.get(extensionId);
   },
-
-  injectInObject(context, isChromeCompat, dest) {
-    SchemaAPIManager.generateAPIs(context, context.extension.apis, dest);
-  },
 };
 
 /**
@@ -512,7 +509,6 @@ class ProxyContextParent extends BaseContext {
 defineLazyGetter(ProxyContextParent.prototype, "apiCan", function() {
   let obj = {};
   let can = new CanOfAPIs(this, this.extension.apiManager, obj);
-  GlobalManager.injectInObject(this, false, obj);
   return can;
 });
 
@@ -587,9 +583,13 @@ class ExtensionPageContextParent extends ProxyContextParent {
     this.xulBrowser = browser;
   }
 
+  unload() {
+    super.unload();
+    this.extension.views.delete(this);
+  }
+
   shutdown() {
     apiManager.emit("page-shutdown", this);
-    this.extension.views.delete(this);
     super.shutdown();
   }
 }
@@ -1438,7 +1438,7 @@ let IconDetails = {
         let ctx = canvas.getContext("2d");
         let dSize = size * browserWindow.devicePixelRatio;
 
-        // Scales the image while maintaing width to height ratio.
+        // Scales the image while maintaining width to height ratio.
         // If the width and height differ, the image is centered using the
         // smaller of the two dimensions.
         let dWidth, dHeight, dx, dy;

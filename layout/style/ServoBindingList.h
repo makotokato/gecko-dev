@@ -37,6 +37,9 @@ SERVO_BINDING_FUNC(Servo_Element_GetPseudoComputedValues,
 SERVO_BINDING_FUNC(Servo_Element_IsDisplayNone,
                    bool,
                    RawGeckoElementBorrowed element)
+SERVO_BINDING_FUNC(Servo_Element_IsDisplayContents,
+                   bool,
+                   RawGeckoElementBorrowed element)
 SERVO_BINDING_FUNC(Servo_Element_IsPrimaryStyleReusedViaRuleNode,
                    bool,
                    RawGeckoElementBorrowed element)
@@ -131,7 +134,8 @@ SERVO_BINDING_FUNC(Servo_StyleSet_GetKeyframesForName, bool,
 SERVO_BINDING_FUNC(Servo_StyleSet_GetFontFaceRules, void,
                    RawServoStyleSetBorrowed set,
                    RawGeckoFontFaceRuleListBorrowedMut list)
-SERVO_BINDING_FUNC(Servo_StyleSet_GetCounterStyleRule, nsCSSCounterStyleRule*,
+SERVO_BINDING_FUNC(Servo_StyleSet_GetCounterStyleRule,
+                   const RawServoCounterStyleRule*,
                    RawServoStyleSetBorrowed set, nsAtom* name)
 // This function may return nullptr or gfxFontFeatureValueSet with zero reference.
 SERVO_BINDING_FUNC(Servo_StyleSet_BuildFontFeatureValueSet,
@@ -262,13 +266,11 @@ BASIC_RULE_FUNCS(Page)
 GROUP_RULE_FUNCS(Supports)
 GROUP_RULE_FUNCS(Document)
 BASIC_RULE_FUNCS(FontFeatureValues)
+BASIC_RULE_FUNCS(FontFace)
+BASIC_RULE_FUNCS(CounterStyle)
 #undef GROUP_RULE_FUNCS
 #undef BASIC_RULE_FUNCS
 #undef BASIC_RULE_FUNCS_WITHOUT_GETTER
-SERVO_BINDING_FUNC(Servo_CssRules_GetFontFaceRuleAt, nsCSSFontFaceRule*,
-                   ServoCssRulesBorrowed rules, uint32_t index)
-SERVO_BINDING_FUNC(Servo_CssRules_GetCounterStyleRuleAt, nsCSSCounterStyleRule*,
-                   ServoCssRulesBorrowed rules, uint32_t index)
 SERVO_BINDING_FUNC(Servo_StyleRule_GetStyle, RawServoDeclarationBlockStrong,
                    RawServoStyleRuleBorrowed rule)
 SERVO_BINDING_FUNC(Servo_StyleRule_SetStyle, void,
@@ -343,6 +345,55 @@ SERVO_BINDING_FUNC(Servo_FontFeatureValuesRule_GetFontFamily, void,
 SERVO_BINDING_FUNC(Servo_FontFeatureValuesRule_GetValueText, void,
                    RawServoFontFeatureValuesRuleBorrowed rule,
                    nsAString* result)
+SERVO_BINDING_FUNC(Servo_FontFaceRule_CreateEmpty, RawServoFontFaceRuleStrong)
+SERVO_BINDING_FUNC(Servo_FontFaceRule_Clone, RawServoFontFaceRuleStrong,
+                   RawServoFontFaceRuleBorrowed rule)
+SERVO_BINDING_FUNC(Servo_FontFaceRule_GetSourceLocation, void,
+                   RawServoFontFaceRuleBorrowed rule,
+                   uint32_t* line, uint32_t* column)
+SERVO_BINDING_FUNC(Servo_FontFaceRule_Length, uint32_t,
+                   RawServoFontFaceRuleBorrowed rule)
+SERVO_BINDING_FUNC(Servo_FontFaceRule_IndexGetter, nsCSSFontDesc,
+                   RawServoFontFaceRuleBorrowed rule, uint32_t index)
+SERVO_BINDING_FUNC(Servo_FontFaceRule_GetDeclCssText, void,
+                   RawServoFontFaceRuleBorrowed rule, nsAString* result)
+SERVO_BINDING_FUNC(Servo_FontFaceRule_GetDescriptor, void,
+                   RawServoFontFaceRuleBorrowed rule,
+                   nsCSSFontDesc desc, nsCSSValueBorrowedMut result)
+SERVO_BINDING_FUNC(Servo_FontFaceRule_GetDescriptorCssText, void,
+                   RawServoFontFaceRuleBorrowed rule,
+                   nsCSSFontDesc desc, nsAString* result)
+SERVO_BINDING_FUNC(Servo_FontFaceRule_SetDescriptor, bool,
+                   RawServoFontFaceRuleBorrowed rule,
+                   nsCSSFontDesc desc, const nsACString* value,
+                   RawGeckoURLExtraData* data)
+SERVO_BINDING_FUNC(Servo_FontFaceRule_ResetDescriptor, void,
+                   RawServoFontFaceRuleBorrowed rule,
+                   nsCSSFontDesc desc)
+SERVO_BINDING_FUNC(Servo_CounterStyleRule_GetName, nsAtom*,
+                   RawServoCounterStyleRuleBorrowed rule)
+SERVO_BINDING_FUNC(Servo_CounterStyleRule_SetName, bool,
+                   RawServoCounterStyleRuleBorrowed rule,
+                   const nsACString* name)
+SERVO_BINDING_FUNC(Servo_CounterStyleRule_GetGeneration, uint32_t,
+                   RawServoCounterStyleRuleBorrowed rule)
+SERVO_BINDING_FUNC(Servo_CounterStyleRule_GetSystem, uint8_t,
+                   RawServoCounterStyleRuleBorrowed rule)
+SERVO_BINDING_FUNC(Servo_CounterStyleRule_GetExtended, nsAtom*,
+                   RawServoCounterStyleRuleBorrowed rule)
+SERVO_BINDING_FUNC(Servo_CounterStyleRule_GetFixedFirstValue, int32_t,
+                   RawServoCounterStyleRuleBorrowed rule)
+SERVO_BINDING_FUNC(Servo_CounterStyleRule_GetFallback, nsAtom*,
+                   RawServoCounterStyleRuleBorrowed rule)
+SERVO_BINDING_FUNC(Servo_CounterStyleRule_GetDescriptor, void,
+                   RawServoCounterStyleRuleBorrowed rule,
+                   nsCSSCounterDesc desc, nsCSSValueBorrowedMut result)
+SERVO_BINDING_FUNC(Servo_CounterStyleRule_GetDescriptorCssText, void,
+                   RawServoCounterStyleRuleBorrowed rule,
+                   nsCSSCounterDesc desc, nsAString* result)
+SERVO_BINDING_FUNC(Servo_CounterStyleRule_SetDescriptor, bool,
+                   RawServoCounterStyleRuleBorrowed rule,
+                   nsCSSCounterDesc desc, const nsACString* value)
 
 // Animations API
 SERVO_BINDING_FUNC(Servo_ParseProperty,
@@ -788,9 +839,10 @@ SERVO_BINDING_FUNC(Servo_ComputeColor, bool,
                    nscolor* result_color,
                    bool* was_current_color,
                    mozilla::css::Loader* loader)
-SERVO_BINDING_FUNC(Servo_ParseIntersectionObserverRootMargin, bool,
-                   const nsAString* value,
-                   nsCSSRect* result);
+SERVO_BINDING_FUNC(Servo_IntersectionObserverRootMargin_Parse, bool,
+                   const nsAString* value, nsStyleSides* result)
+SERVO_BINDING_FUNC(Servo_IntersectionObserverRootMargin_ToString, void,
+                   const nsStyleSides* rect, nsAString* result)
 // Returning false means the parsed transform contains relative lengths or
 // percentage value, so we cannot compute the matrix. In this case, we keep
 // |result| and |contains_3d_transform| as-is.
@@ -798,18 +850,6 @@ SERVO_BINDING_FUNC(Servo_ParseTransformIntoMatrix, bool,
                    const nsAString* value,
                    bool* contains_3d_transform,
                    RawGeckoGfxMatrix4x4* result);
-SERVO_BINDING_FUNC(Servo_ParseCounterStyleName, nsAtom*,
-                   const nsACString* value);
-SERVO_BINDING_FUNC(Servo_ParseCounterStyleDescriptor, bool,
-                   nsCSSCounterDesc aDescriptor,
-                   const nsACString* aValue,
-                   RawGeckoURLExtraData* aURLExtraData,
-                   nsCSSValue* aResult);
-SERVO_BINDING_FUNC(Servo_ParseFontDescriptor, bool,
-                   nsCSSFontDesc desc_id,
-                   const nsAString* value,
-                   RawGeckoURLExtraData* data,
-                   nsCSSValueBorrowedMut);
 SERVO_BINDING_FUNC(Servo_ParseFontShorthandForMatching, bool,
                    const nsAString* value,
                    RawGeckoURLExtraData* data,
@@ -820,6 +860,8 @@ SERVO_BINDING_FUNC(Servo_ParseFontShorthandForMatching, bool,
 
 SERVO_BINDING_FUNC(Servo_Property_IsShorthand, bool,
                    const nsACString* name, bool* found);
+SERVO_BINDING_FUNC(Servo_Property_IsInherited, bool,
+                   const nsACString* name);
 SERVO_BINDING_FUNC(Servo_PseudoClass_GetStates, uint64_t,
                    const nsACString* name)
 

@@ -77,6 +77,8 @@
 #include "nsIRedirectHistoryEntry.h"
 #include "nsICertBlocklist.h"
 #include "nsICertOverrideService.h"
+#include "nsQueryObject.h"
+#include "mozIThirdPartyUtil.h"
 
 #include <limits>
 
@@ -1659,8 +1661,7 @@ private:
         nsresult rv = mTaskQueue->Dispatch(runnable.forget());
         NS_ENSURE_SUCCESS(rv, rv);
 
-        rv = lock.Wait();
-        NS_ENSURE_SUCCESS(rv, rv);
+        lock.Wait();
 
         mCompleted = true;
         return mAsyncResult;
@@ -2108,6 +2109,60 @@ NS_HasBeenCrossOrigin(nsIChannel* aChannel, bool aReport)
   }
 
   return NS_FAILED(loadingPrincipal->CheckMayLoad(uri, aReport, dataInherits));
+}
+
+bool
+NS_IsSafeTopLevelNav(nsIChannel* aChannel)
+{
+  if (!aChannel) {
+    return false;
+  }
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->GetLoadInfo();
+  if (!loadInfo) {
+    return false;
+  }
+  if (loadInfo->GetExternalContentPolicyType() != nsIContentPolicy::TYPE_DOCUMENT) {
+    return false;
+  }
+  RefPtr<HttpBaseChannel> baseChan = do_QueryObject(aChannel);
+  if (!baseChan) {
+    return false;
+  }
+  nsHttpRequestHead *requestHead = baseChan->GetRequestHead();
+  if (!requestHead) {
+    return false;
+  }
+  return requestHead->IsSafeMethod();
+}
+
+bool NS_IsSameSiteForeign(nsIChannel* aChannel, nsIURI* aHostURI)
+{
+  if (!aChannel) {
+    return false;
+  }
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->GetLoadInfo();
+  if (!loadInfo) {
+    return false;
+  }
+  nsCOMPtr<nsIURI> uri;
+  if (loadInfo->GetExternalContentPolicyType() == nsIContentPolicy::TYPE_DOCUMENT) {
+    // for loads of TYPE_DOCUMENT we query the hostURI from the triggeringPricnipal
+    // which returns the URI of the document that caused the navigation.
+    loadInfo->TriggeringPrincipal()->GetURI(getter_AddRefs(uri));
+  }
+  else {
+    uri = aHostURI;
+  }
+
+  nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil =
+    do_GetService(THIRDPARTYUTIL_CONTRACTID);
+  if (!thirdPartyUtil) {
+    return false;
+  }
+
+  bool isForeign = false;
+  thirdPartyUtil->IsThirdPartyChannel(aChannel, uri, &isForeign);
+  return isForeign;
 }
 
 bool

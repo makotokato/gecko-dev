@@ -81,13 +81,12 @@ SVGAElement::ElementHasHref() const
 //----------------------------------------------------------------------
 // nsINode methods
 
-nsresult
+void
 SVGAElement::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
-  nsresult rv = Element::GetEventTargetParent(aVisitor);
-  NS_ENSURE_SUCCESS(rv, rv);
+  Element::GetEventTargetParent(aVisitor);
 
-  return GetEventTargetParentForLinks(aVisitor);
+  GetEventTargetParentForLinks(aVisitor);
 }
 
 nsresult
@@ -108,15 +107,15 @@ SVGAElement::Target()
 }
 
 void
-SVGAElement::GetDownload(nsAString & aDownload)
+SVGAElement::GetDownload(nsAString& aDownload)
 {
-  GetAttr(kNameSpaceID_None, nsGkAtoms::download, aDownload);
+  GetAttr(nsGkAtoms::download, aDownload);
 }
 
 void
-SVGAElement::SetDownload(const nsAString & aDownload, ErrorResult& rv)
+SVGAElement::SetDownload(const nsAString& aDownload, ErrorResult& rv)
 {
-  rv = SetAttr(kNameSpaceID_None, nsGkAtoms::download, aDownload, true);
+  SetAttr(nsGkAtoms::download, aDownload, rv);
 }
 
 //----------------------------------------------------------------------

@@ -53,6 +53,7 @@ StackingContextHelper::StackingContextHelper(const StackingContextHelper& aParen
   }
 
   mBuilder->PushStackingContext(wr::ToLayoutRect(aBounds),
+                                nullptr,
                                 aAnimation,
                                 aOpacityPtr,
                                 aTransformPtr,
@@ -72,14 +73,6 @@ StackingContextHelper::~StackingContextHelper()
   if (mBuilder) {
     mBuilder->PopStackingContext();
   }
-}
-
-wr::LayoutRect
-StackingContextHelper::ToRelativeLayoutRect(const LayoutDeviceRect& aRect) const
-{
-  auto rect = aRect;
-  rect.Round();
-  return wr::ToLayoutRect(rect);
 }
 
 const Maybe<gfx::Matrix4x4>&

@@ -155,10 +155,13 @@ public:
     void StartTimer(uint32_t aTimeout);
     void StopTimer();
 
-    explicit ConnectionData(Dashboard *target)
+    explicit ConnectionData(Dashboard* target)
+      : mPort{}
+      , mProtocol{ nullptr }
+      , mTimeout{}
     {
-        mEventTarget = nullptr;
-        mDashboard = target;
+      mEventTarget = nullptr;
+      mDashboard = target;
     }
 
     nsCOMPtr<nsISocketTransport> mSocket;
@@ -299,7 +302,10 @@ public:
     NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_NSIDNSLISTENER
 
-    LookupHelper() {
+    LookupHelper()
+      : mEventTarget{ nullptr }
+      , mStatus{ NS_ERROR_NOT_INITIALIZED }
+    {
     }
 
     nsresult ConstructAnswer(LookupArgument *aArgument);
@@ -768,9 +774,9 @@ Dashboard::GetDNSCacheEntries(DnsData *dnsData)
         }
 
         if (dnsData->mData[i].family == PR_AF_INET6) {
-            CopyASCIItoUTF16("ipv6", entry.mFamily);
+            entry.mFamily.AssignLiteral(u"ipv6");
         } else {
-            CopyASCIItoUTF16("ipv4", entry.mFamily);
+            entry.mFamily.AssignLiteral(u"ipv4");
         }
     }
 

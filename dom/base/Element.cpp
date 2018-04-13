@@ -69,7 +69,7 @@
 #include "mozilla/EventStates.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/MouseEvents.h"
-#include "mozilla/ServoRestyleManager.h"
+#include "mozilla/RestyleManager.h"
 #include "mozilla/SizeOfState.h"
 #include "mozilla/TextEditor.h"
 #include "mozilla/TextEvents.h"
@@ -1196,7 +1196,7 @@ Element::AttachShadow(const ShadowRootInit& aInit, ErrorResult& aError)
    *    then throw a "NotSupportedError" DOMException.
    */
   nsAtom* nameAtom = NodeInfo()->NameAtom();
-  if (!(nsContentUtils::IsCustomElementName(nameAtom) ||
+  if (!(nsContentUtils::IsCustomElementName(nameAtom, NodeInfo()->NamespaceID()) ||
         nameAtom == nsGkAtoms::article ||
         nameAtom == nsGkAtoms::aside ||
         nameAtom == nsGkAtoms::blockquote ||
@@ -1250,7 +1250,6 @@ Element::AttachShadowInternal(ShadowRootMode aMode, ErrorResult& aError)
   if (nsIDocument* doc = GetComposedDoc()) {
     if (nsIPresShell* shell = doc->GetShell()) {
       shell->DestroyFramesForAndRestyle(this);
-      MOZ_ASSERT(!shell->FrameConstructor()->GetDisplayContentsStyleFor(this));
     }
   }
   MOZ_ASSERT(!GetPrimaryFrame());
@@ -1703,10 +1702,9 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
 
   UpdateEditableState(false);
 
-  // If we had a pre-existing XBL binding,
-  // we might have anonymous children that also need to be told that they are
-  // moving.
-  if (HasFlag(NODE_MAY_BE_IN_BINDING_MNGR) && !GetShadowRoot()) {
+  // If we had a pre-existing XBL binding, we might have anonymous children that
+  // also need to be told that they are moving.
+  if (HasFlag(NODE_MAY_BE_IN_BINDING_MNGR)) {
     nsXBLBinding* binding =
       OwnerDoc()->BindingManager()->GetBindingWithContent(this);
 
@@ -1768,8 +1766,7 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
   }
 
   // Call BindToTree on shadow root children.
-  ShadowRoot* shadowRoot = GetShadowRoot();
-  if (shadowRoot) {
+  if (ShadowRoot* shadowRoot = GetShadowRoot()) {
     shadowRoot->SetIsComposedDocParticipant(IsInComposedDoc());
     for (nsIContent* child = shadowRoot->GetFirstChild(); child;
          child = child->GetNextSibling()) {
@@ -1989,11 +1986,9 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
   }
 
   if (document) {
-    // Notify XBL- & nsIAnonymousContentCreator-generated
-    // anonymous content that the document is changing.
-    // Unlike XBL, bindings for web components shadow DOM
-    // do not get uninstalled.
-    if (HasFlag(NODE_MAY_BE_IN_BINDING_MNGR) && !GetShadowRoot()) {
+    if (HasFlag(NODE_MAY_BE_IN_BINDING_MNGR)) {
+      // Notify XBL- & nsIAnonymousContentCreator-generated anonymous content
+      // that the document is changing.
       nsContentUtils::AddScriptRunner(
         new RemoveFromBindingManagerRunnable(
           document->BindingManager(), this, document));
@@ -2018,9 +2013,8 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
           nsContentUtils::EnqueueLifecycleCallback(nsIDocument::eDisconnected,
                                                    this);
         } else {
-          // Remove an unresolved custom element that is a candidate for
-          // upgrade when a custom element is disconnected.
-          // We will make sure it's shadow-including tree order in bug 1326028.
+          // Remove an unresolved custom element that is a candidate for upgrade
+          // when a custom element is disconnected.
           nsContentUtils::UnregisterUnresolvedElement(this);
         }
       }
@@ -3233,7 +3227,7 @@ Element::CheckHandleEventForLinksPrecondition(EventChainVisitor& aVisitor,
   return IsLink(aURI);
 }
 
-nsresult
+void
 Element::GetEventTargetParentForLinks(EventChainPreVisitor& aVisitor)
 {
   // Optimisation: return early if this event doesn't interest us.
@@ -3245,16 +3239,14 @@ Element::GetEventTargetParentForLinks(EventChainPreVisitor& aVisitor)
   case eBlur:
     break;
   default:
-    return NS_OK;
+    return;
   }
 
   // Make sure we meet the preconditions before continuing
   nsCOMPtr<nsIURI> absURI;
   if (!CheckHandleEventForLinksPrecondition(aVisitor, getter_AddRefs(absURI))) {
-    return NS_OK;
+    return;
   }
-
-  nsresult rv = NS_OK;
 
   // We do the status bar updates in GetEventTargetParent so that the status bar
   // gets updated even if the event is consumed before we have a chance to set
@@ -3280,19 +3272,18 @@ Element::GetEventTargetParentForLinks(EventChainPreVisitor& aVisitor)
     aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
     MOZ_FALLTHROUGH;
   case eBlur:
-    rv = LeaveLink(aVisitor.mPresContext);
-    if (NS_SUCCEEDED(rv)) {
-      aVisitor.mEvent->mFlags.mMultipleActionsPrevented = true;
+    {
+      nsresult rv = LeaveLink(aVisitor.mPresContext);
+      if (NS_SUCCEEDED(rv)) {
+        aVisitor.mEvent->mFlags.mMultipleActionsPrevented = true;
+      }
+      break;
     }
-    break;
 
   default:
     // switch not in sync with the optimization switch earlier in this function
     NS_NOTREACHED("switch statements not in sync");
-    return NS_ERROR_UNEXPECTED;
   }
-
-  return rv;
 }
 
 nsresult
@@ -4308,7 +4299,7 @@ Element::SetCustomElementData(CustomElementData* aData)
   #if DEBUG
     nsAtom* name = NodeInfo()->NameAtom();
     nsAtom* type = aData->GetCustomElementType();
-    if (nsContentUtils::IsCustomElementName(name)) {
+    if (nsContentUtils::IsCustomElementName(name, NodeInfo()->NamespaceID())) {
       MOZ_ASSERT(type == name);
     } else {
       MOZ_ASSERT(type != name);

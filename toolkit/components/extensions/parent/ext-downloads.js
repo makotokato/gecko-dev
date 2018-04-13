@@ -148,7 +148,7 @@ class DownloadItem {
 }
 
 
-// DownloadMap maps back and forth betwen the numeric identifiers used in
+// DownloadMap maps back and forth between the numeric identifiers used in
 // the downloads WebExtension API and a Download object from the Downloads jsm.
 // TODO Bug 1247794: make id and extension info persistent
 const DownloadMap = new class extends EventEmitter {
@@ -519,13 +519,19 @@ this.downloads = class extends ExtensionAPI {
               return target;
             }
 
+            const window = Services.wm.getMostRecentWindow("navigator:browser");
+            const basename = OS.Path.basename(target);
+            const ext = basename.match(/\.([^.]+)$/);
+
             // Setup the file picker Save As dialog.
             const picker = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
-            const window = Services.wm.getMostRecentWindow("navigator:browser");
             picker.init(window, null, Ci.nsIFilePicker.modeSave);
             picker.displayDirectory = new FileUtils.File(dir);
             picker.appendFilters(Ci.nsIFilePicker.filterAll);
-            picker.defaultString = OS.Path.basename(target);
+            picker.defaultString = basename;
+
+            // Configure a default file extension, used as fallback on Windows.
+            picker.defaultExtension = ext && ext[1];
 
             // Open the dialog and resolve/reject with the result.
             return new Promise((resolve, reject) => {
@@ -759,60 +765,72 @@ this.downloads = class extends ExtensionAPI {
         //   ...
         // }
 
-        onChanged: new EventManager(context, "downloads.onChanged", fire => {
-          const handler = (what, item) => {
-            let changes = {};
-            const noundef = val => (val === undefined) ? null : val;
-            DOWNLOAD_ITEM_CHANGE_FIELDS.forEach(fld => {
-              if (item[fld] != item.prechange[fld]) {
-                changes[fld] = {
-                  previous: noundef(item.prechange[fld]),
-                  current: noundef(item[fld]),
-                };
+        onChanged: new EventManager({
+          context,
+          name: "downloads.onChanged",
+          register: fire => {
+            const handler = (what, item) => {
+              let changes = {};
+              const noundef = val => (val === undefined) ? null : val;
+              DOWNLOAD_ITEM_CHANGE_FIELDS.forEach(fld => {
+                if (item[fld] != item.prechange[fld]) {
+                  changes[fld] = {
+                    previous: noundef(item.prechange[fld]),
+                    current: noundef(item[fld]),
+                  };
+                }
+              });
+              if (Object.keys(changes).length > 0) {
+                changes.id = item.id;
+                fire.async(changes);
               }
-            });
-            if (Object.keys(changes).length > 0) {
-              changes.id = item.id;
-              fire.async(changes);
-            }
-          };
+            };
 
-          let registerPromise = DownloadMap.getDownloadList().then(() => {
-            DownloadMap.on("change", handler);
-          });
-          return () => {
-            registerPromise.then(() => {
-              DownloadMap.off("change", handler);
+            let registerPromise = DownloadMap.getDownloadList().then(() => {
+              DownloadMap.on("change", handler);
             });
-          };
+            return () => {
+              registerPromise.then(() => {
+                DownloadMap.off("change", handler);
+              });
+            };
+          },
         }).api(),
 
-        onCreated: new EventManager(context, "downloads.onCreated", fire => {
-          const handler = (what, item) => {
-            fire.async(item.serialize());
-          };
-          let registerPromise = DownloadMap.getDownloadList().then(() => {
-            DownloadMap.on("create", handler);
-          });
-          return () => {
-            registerPromise.then(() => {
-              DownloadMap.off("create", handler);
+        onCreated: new EventManager({
+          context,
+          name: "downloads.onCreated",
+          register: fire => {
+            const handler = (what, item) => {
+              fire.async(item.serialize());
+            };
+            let registerPromise = DownloadMap.getDownloadList().then(() => {
+              DownloadMap.on("create", handler);
             });
-          };
+            return () => {
+              registerPromise.then(() => {
+                DownloadMap.off("create", handler);
+              });
+            };
+          },
         }).api(),
 
-        onErased: new EventManager(context, "downloads.onErased", fire => {
-          const handler = (what, item) => {
-            fire.async(item.id);
-          };
-          let registerPromise = DownloadMap.getDownloadList().then(() => {
-            DownloadMap.on("erase", handler);
-          });
-          return () => {
-            registerPromise.then(() => {
-              DownloadMap.off("erase", handler);
+        onErased: new EventManager({
+          context,
+          name: "downloads.onErased",
+          register: fire => {
+            const handler = (what, item) => {
+              fire.async(item.id);
+            };
+            let registerPromise = DownloadMap.getDownloadList().then(() => {
+              DownloadMap.on("erase", handler);
             });
-          };
+            return () => {
+              registerPromise.then(() => {
+                DownloadMap.off("erase", handler);
+              });
+            };
+          },
         }).api(),
 
         onDeterminingFilename: ignoreEvent(context, "downloads.onDeterminingFilename"),

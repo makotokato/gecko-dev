@@ -146,7 +146,6 @@ function serializeNode(aNode, aIsLivemark) {
   data.instanceId = PlacesUtils.instanceId;
 
   let guid = aNode.bookmarkGuid;
-  let grandParentId;
 
   // Some nodes, e.g. the unfiled/menu/toolbar ones can have a virtual guid, so
   // we ignore any that are a folder shortcut. These will be handled below.
@@ -155,11 +154,6 @@ function serializeNode(aNode, aIsLivemark) {
     if (aNode.parent) {
       data.parent = aNode.parent.itemId;
       data.parentGuid = aNode.parent.bookmarkGuid;
-    }
-
-    let grandParent = aNode.parent && aNode.parent.parent;
-    if (grandParent) {
-      grandParentId = grandParent.itemId;
     }
 
     data.dateAdded = aNode.dateAdded;
@@ -172,46 +166,24 @@ function serializeNode(aNode, aIsLivemark) {
 
   if (PlacesUtils.nodeIsURI(aNode)) {
     // Check for url validity.
-    NetUtil.newURI(aNode.uri);
-
-    // Tag root accepts only folder nodes, not URIs.
-    if (data.parent == PlacesUtils.tagsFolderId)
-      throw new Error("Unexpected node type");
-
+    new URL(aNode.uri);
     data.type = PlacesUtils.TYPE_X_MOZ_PLACE;
     data.uri = aNode.uri;
-
     if (aNode.tags)
       data.tags = aNode.tags;
-  } else if (PlacesUtils.nodeIsContainer(aNode)) {
-    // Tag containers accept only uri nodes.
-    if (grandParentId == PlacesUtils.tagsFolderId)
-      throw new Error("Unexpected node type");
-
-    let concreteId = PlacesUtils.getConcreteItemId(aNode);
-    if (concreteId != -1) {
-      // This is a bookmark or a tag container.
-      if (PlacesUtils.nodeIsQuery(aNode) || concreteId != aNode.itemId) {
-        // This is a folder shortcut.
-        data.type = PlacesUtils.TYPE_X_MOZ_PLACE;
-        data.uri = aNode.uri;
-        data.concreteId = concreteId;
-        data.concreteGuid = PlacesUtils.getConcreteItemGuid(aNode);
-      } else {
-        // This is a bookmark folder.
-        data.type = PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER;
-      }
-    } else {
-      // This is a grouped container query, dynamically generated.
+  } else if (PlacesUtils.nodeIsFolder(aNode)) {
+    if (aNode.type == Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER_SHORTCUT) {
       data.type = PlacesUtils.TYPE_X_MOZ_PLACE;
       data.uri = aNode.uri;
+      data.concreteId = PlacesUtils.getConcreteItemId(aNode);
+      data.concreteGuid = PlacesUtils.getConcreteItemGuid(aNode);
+    } else {
+      data.type = PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER;
     }
+  } else if (PlacesUtils.nodeIsQuery(aNode)) {
+    data.type = PlacesUtils.TYPE_X_MOZ_PLACE;
+    data.uri = aNode.uri;
   } else if (PlacesUtils.nodeIsSeparator(aNode)) {
-    // Tag containers don't accept separators.
-    if (data.parent == PlacesUtils.tagsFolderId ||
-        grandParentId == PlacesUtils.tagsFolderId)
-      throw new Error("Unexpected node type");
-
     data.type = PlacesUtils.TYPE_X_MOZ_PLACE_SEPARATOR;
   }
 
@@ -354,7 +326,6 @@ var PlacesUtils = {
 
   LMANNO_FEEDURI: "livemark/feedURI",
   LMANNO_SITEURI: "livemark/siteURI",
-  POST_DATA_ANNO: "bookmarkProperties/POSTData",
   READ_ONLY_ANNO: "placesInternal/READ_ONLY",
   CHARSET_ANNO: "URIProperties/characterSet",
   // Deprecated: This is only used for supporting import from older datasets.
@@ -782,9 +753,20 @@ var PlacesUtils = {
    * @returns true if the node is a tag container, false otherwise
    */
   nodeIsTagQuery: function PU_nodeIsTagQuery(aNode) {
-    return aNode.type == Ci.nsINavHistoryResultNode.RESULT_TYPE_QUERY &&
-           asQuery(aNode).queryOptions.resultType ==
-             Ci.nsINavHistoryQueryOptions.RESULTS_AS_TAG_CONTENTS;
+    if (aNode.type != Ci.nsINavHistoryResultNode.RESULT_TYPE_QUERY)
+      return false;
+    // Direct child of RESULTS_AS_TAGS_ROOT.
+    let parent = aNode.parent;
+    if (parent && PlacesUtils.asQuery(parent).queryOptions.resultType ==
+                    Ci.nsINavHistoryQueryOptions.RESULTS_AS_TAGS_ROOT)
+      return true;
+    // We must also support the right pane of the Library, when the tag query
+    // is the root node. Unfortunately this is also valid for any tag query
+    // selected in the left pane that is not a direct child of RESULTS_AS_TAGS_ROOT.
+    if (!parent && aNode == aNode.parentResult.root &&
+        PlacesUtils.asQuery(aNode).query.tags.length == 1)
+      return true;
+    return false;
   },
 
   /**
@@ -822,15 +804,8 @@ var PlacesUtils = {
    * node.itemId, but for folder-shortcuts that's node.folderItemId.
    */
   getConcreteItemId: function PU_getConcreteItemId(aNode) {
-    if (aNode.type == Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER_SHORTCUT)
-      return asQuery(aNode).folderItemId;
-    else if (PlacesUtils.nodeIsTagQuery(aNode)) {
-      // RESULTS_AS_TAG_CONTENTS queries are similar to folder shortcuts
-      // so we can still get the concrete itemId for them.
-      let folders = aNode.query.getFolders();
-      return folders[0];
-    }
-    return aNode.itemId;
+    return aNode.type == Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER_SHORTCUT ?
+             asQuery(aNode).folderItemId : aNode.itemId;
   },
 
   /**
@@ -841,8 +816,6 @@ var PlacesUtils = {
    * @param aNode
    *        a result node.
    * @return the concrete item-guid for aNode.
-   * @note unlike getConcreteItemId, this doesn't allow retrieving the guid of a
-   *       ta container.
    */
   getConcreteItemGuid(aNode) {
     if (aNode.type == Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER_SHORTCUT)
@@ -1753,7 +1726,7 @@ var PlacesUtils = {
       }
 
       switch (type) {
-        case Ci.nsINavBookmarksService.TYPE_BOOKMARK:
+        case PlacesUtils.bookmarks.TYPE_BOOKMARK:
           item.type = PlacesUtils.TYPE_X_MOZ_PLACE;
           // If this throws due to an invalid url, the item will be skipped.
           item.uri = NetUtil.newURI(aRow.getResultByName("url")).spec;
@@ -1764,7 +1737,7 @@ var PlacesUtils = {
             item.postData = entry.postData;
           }
           break;
-        case Ci.nsINavBookmarksService.TYPE_FOLDER:
+        case PlacesUtils.bookmarks.TYPE_FOLDER:
           item.type = PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER;
           // Mark root folders.
           if (itemId == PlacesUtils.placesRootId)
@@ -1778,11 +1751,11 @@ var PlacesUtils = {
           else if (itemId == PlacesUtils.mobileFolderId)
             item.root = "mobileFolder";
           break;
-        case Ci.nsINavBookmarksService.TYPE_SEPARATOR:
+        case PlacesUtils.bookmarks.TYPE_SEPARATOR:
           item.type = PlacesUtils.TYPE_X_MOZ_PLACE_SEPARATOR;
           break;
         default:
-          Cu.reportError("Unexpected bookmark type");
+          Cu.reportError(`Unexpected bookmark type ${type}`);
           break;
       }
       return item;

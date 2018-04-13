@@ -65,6 +65,9 @@ class nsDOMStringMap;
 namespace mozilla {
 class DeclarationBlock;
 class TextEditor;
+namespace css {
+  struct URLValue;
+} // namespace css
 namespace dom {
   struct AnimationFilter;
   struct ScrollIntoViewOptions;
@@ -723,7 +726,8 @@ public:
    * Get the current value of the attribute. This returns a form that is
    * suitable for passing back into SetAttr.
    *
-   * @param aNameSpaceID the namespace of the attr
+   * @param aNameSpaceID the namespace of the attr (defaults to
+                         kNameSpaceID_None in the overload that omits this arg)
    * @param aName the name of the attr
    * @param aResult the value (may legitimately be the empty string) [OUT]
    * @returns true if the attribute was set (even when set to empty string)
@@ -733,14 +737,26 @@ public:
    */
   bool GetAttr(int32_t aNameSpaceID, nsAtom* aName, nsAString& aResult) const;
 
+  bool GetAttr(nsAtom* aName, nsAString& aResult) const
+  {
+    return GetAttr(kNameSpaceID_None, aName, aResult);
+  }
+
   /**
    * Determine if an attribute has been set (empty string or otherwise).
    *
-   * @param aNameSpaceId the namespace id of the attribute
+   * @param aNameSpaceId the namespace id of the attribute (defaults to
+                         kNameSpaceID_None in the overload that omits this arg)
    * @param aAttr the attribute name
    * @return whether an attribute exists
    */
   inline bool HasAttr(int32_t aNameSpaceID, nsAtom* aName) const;
+
+  bool HasAttr(nsAtom* aAttr) const
+  {
+    return HasAttr(kNameSpaceID_None, aAttr);
+  }
+
   /**
    * Test whether this Element's given attribute has the given value.  If the
    * attribute is not set at all, this will return false.
@@ -1906,7 +1922,7 @@ protected:
   /**
    * Handle status bar updates before they can be cancelled.
    */
-  nsresult GetEventTargetParentForLinks(EventChainPreVisitor& aVisitor);
+  void GetEventTargetParentForLinks(EventChainPreVisitor& aVisitor);
 
   /**
    * Handle default actions for link event if the event isn't consumed yet.

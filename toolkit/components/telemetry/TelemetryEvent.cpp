@@ -25,6 +25,7 @@
 #include "TelemetryCommon.h"
 #include "TelemetryEvent.h"
 #include "TelemetryEventData.h"
+#include "TelemetryScalar.h"
 #include "ipc/TelemetryIPCAccumulator.h"
 
 using mozilla::StaticMutex;
@@ -126,12 +127,12 @@ struct EventKey {
 
 struct DynamicEventInfo {
   DynamicEventInfo(const nsACString& category, const nsACString& method,
-                   const nsACString& object, nsTArray<nsCString>&& extra_keys,
+                   const nsACString& object, nsTArray<nsCString>& extra_keys,
                    bool recordOnRelease)
     : category(category)
     , method(method)
     , object(object)
-    , extra_keys(Move(extra_keys))
+    , extra_keys(extra_keys)
     , recordOnRelease(recordOnRelease)
   {}
 
@@ -380,7 +381,7 @@ CanRecordEvent(const StaticMutexAutoLock& lock, const EventKey& eventKey,
     }
   }
 
-  return gEnabledCategories.GetEntry(GetCategory(lock, eventKey));
+  return true;
 }
 
 bool
@@ -469,14 +470,24 @@ RecordEvent(const StaticMutexAutoLock& lock, ProcessID processType,
     return RecordEventResult::ExpiredEvent;
   }
 
+  // Check whether the extra keys passed are valid.
+  if (!CheckExtraKeysValid(*eventKey, extra)) {
+    return RecordEventResult::InvalidExtraKey;
+  }
+
   // Check whether we can record this event.
   if (!CanRecordEvent(lock, *eventKey, processType)) {
     return RecordEventResult::Ok;
   }
 
-  // Check whether the extra keys passed are valid.
-  if (!CheckExtraKeysValid(*eventKey, extra)) {
-    return RecordEventResult::InvalidExtraKey;
+  // Count the number of times this event has been recorded, even if its
+  // category does not have recording enabled.
+  TelemetryScalar::SummarizeEvent(UniqueEventName(category, method, object),
+                                  processType, eventKey->dynamic);
+
+  // Check whether this event's category has recording enabled
+  if (!gEnabledCategories.GetEntry(GetCategory(lock, *eventKey))) {
+    return RecordEventResult::Ok;
   }
 
   // Add event record.
@@ -1066,7 +1077,7 @@ TelemetryEvent::RegisterEvents(const nsACString& aCategory,
         // We defer the actual registration here in case any other event description is invalid.
         // In that case we don't need to roll back any partial registration.
         DynamicEventInfo info{aCategory, method, object,
-                              Move(extra_keys), recordOnRelease};
+                              extra_keys, recordOnRelease};
         newEventInfos.AppendElement(info);
         newEventExpired.AppendElement(expired);
       }

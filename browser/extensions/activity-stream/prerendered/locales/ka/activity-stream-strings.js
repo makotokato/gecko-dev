@@ -11,7 +11,7 @@ window.gActivityStreamStrings = {
   "type_label_recommended": "პოპულარული",
   "type_label_pocket": "შენახულია Pocket-ში",
   "menu_action_bookmark": "ჩანიშვნა",
-  "menu_action_remove_bookmark": "სანიშნებიდან ამოღება",
+  "menu_action_remove_bookmark": "სანიშნებიდან ამოშლა",
   "menu_action_open_new_window": "ახალ ფანჯარაში გახსნა",
   "menu_action_open_private_window": "ახალ პირად ფანჯარაში გახსნა",
   "menu_action_dismiss": "დამალვა",
@@ -35,7 +35,7 @@ window.gActivityStreamStrings = {
   "prefs_section_rows_option": "{num} რიგად;{num} რიგად",
   "prefs_search_header": "საძიებო ველი",
   "prefs_topsites_description": "ხშირად მონახულებული საიტები",
-  "prefs_topstories_description": "მაღალი ხარისხის მასალა, რომელიც შეიძლება გამოგრჩენოდათ",
+  "prefs_topstories_description2": "Great content from around the web, personalized for you",
   "prefs_topstories_show_sponsored_label": "მასალის მომწოდებელი {provider}",
   "prefs_topstories_sponsored_learn_more": "იხილეთ ვრცლად",
   "prefs_highlights_description": "თქვენ მიერ შენახული ან ბოლოს მონახულებული საიტები",
@@ -82,12 +82,13 @@ window.gActivityStreamStrings = {
   "manual_migration_import_button": "ახლავე გადმოტანა",
   "error_fallback_default_info": "სამწუხაროდ, შიგთავსის ჩატვირთვისას რაღაც ხარვეზი წარმოიქმნა.",
   "error_fallback_default_refresh_suggestion": "განაახლეთ გვერდი და სცადეთ ხელახლა.",
-  "section_menu_action_remove_section": "ამ ნაწილის ამოღება",
+  "section_menu_action_remove_section": "ამ ნაწილის მოცილება",
   "section_menu_action_collapse_section": "ამ ნაწილის აკეცვა",
   "section_menu_action_expand_section": "ამ ნაწილის გაშლა",
   "section_menu_action_manage_section": "გვერდის ნაწილების მართვა",
   "section_menu_action_add_topsite": "რჩეული საიტის დამატება",
   "section_menu_action_move_up": "აწევა",
   "section_menu_action_move_down": "ჩამოწევა",
-  "section_menu_action_privacy_notice": "პირადი მონაცემების დაცვის განაცხადი"
+  "section_menu_action_privacy_notice": "პირადი მონაცემების დაცვის განაცხადი",
+  "prefs_topstories_description": "მაღალი ხარისხის მასალა, რომელიც შეიძლება გამოგრჩენოდათ"
 };

@@ -422,12 +422,19 @@ NS_INTERFACE_MAP_END_INHERITING(DOMMediaStream)
 
 DOMMediaStream::DOMMediaStream(nsPIDOMWindowInner* aWindow,
                                MediaStreamTrackSourceGetter* aTrackSourceGetter)
-  : mLogicalStreamStartTime(0), mWindow(aWindow),
-    mInputStream(nullptr), mOwnedStream(nullptr), mPlaybackStream(nullptr),
-    mTracksPendingRemoval(0), mTrackSourceGetter(aTrackSourceGetter),
-    mPlaybackTrackListener(MakeAndAddRef<PlaybackTrackListener>(this)),
-    mTracksCreated(false), mNotifiedOfMediaStreamGraphShutdown(false),
-    mActive(false), mSetInactiveOnFinish(false)
+  : mLogicalStreamStartTime(0)
+  , mWindow(aWindow)
+  , mInputStream(nullptr)
+  , mOwnedStream(nullptr)
+  , mPlaybackStream(nullptr)
+  , mTracksPendingRemoval(0)
+  , mTrackSourceGetter(aTrackSourceGetter)
+  , mPlaybackTrackListener(MakeAndAddRef<PlaybackTrackListener>(this))
+  , mTracksCreated(false)
+  , mNotifiedOfMediaStreamGraphShutdown(false)
+  , mActive(false)
+  , mSetInactiveOnFinish(false)
+  , mCORSMode{ CORS_NONE }
 {
   nsresult rv;
   nsCOMPtr<nsIUUIDGenerator> uuidgen =
@@ -559,7 +566,8 @@ DOMMediaStream::Constructor(const GlobalObject& aGlobal,
   if (!newStream->GetPlaybackStream()) {
     MOZ_ASSERT(aTracks.IsEmpty());
     MediaStreamGraph* graph =
-      MediaStreamGraph::GetInstance(MediaStreamGraph::SYSTEM_THREAD_DRIVER, ownerWindow);
+      MediaStreamGraph::GetInstance(MediaStreamGraph::SYSTEM_THREAD_DRIVER, ownerWindow,
+                                    MediaStreamGraph::REQUEST_DEFAULT_SAMPLE_RATE);
     newStream->InitPlaybackStreamCommon(graph);
   }
 
@@ -600,7 +608,8 @@ DOMMediaStream::CountUnderlyingStreams(const GlobalObject& aGlobal, ErrorResult&
     return nullptr;
   }
 
-  MediaStreamGraph* graph = MediaStreamGraph::GetInstanceIfExists(window);
+  MediaStreamGraph* graph = MediaStreamGraph::GetInstanceIfExists(window,
+                                                MediaStreamGraph::REQUEST_DEFAULT_SAMPLE_RATE);
   if (!graph) {
     p->MaybeResolve(0);
     return p.forget();

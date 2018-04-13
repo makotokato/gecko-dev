@@ -85,7 +85,9 @@ static_assert(sizeof(js::NurseryChunk) == gc::ChunkSize,
 inline void
 js::NurseryChunk::poisonAndInit(JSRuntime* rt)
 {
-    JS_POISON(this, JS_FRESH_NURSERY_PATTERN, ChunkSize);
+    MOZ_MAKE_MEM_UNDEFINED(this, ChunkSize);
+
+    JS_POISON(this, JS_FRESH_NURSERY_PATTERN, ChunkSize, MemCheckKind::MakeUndefined);
 
     new (&trailer) gc::ChunkTrailer(rt, &rt->gc.storeBuffer());
 }
@@ -93,7 +95,11 @@ js::NurseryChunk::poisonAndInit(JSRuntime* rt)
 inline void
 js::NurseryChunk::poisonAfterSweep()
 {
-    JS_POISON(this, JS_SWEPT_NURSERY_PATTERN, ChunkSize);
+    // We can poison the same chunk more than once, so first make sure memory
+    // sanitizers will let us poison it.
+    MOZ_MAKE_MEM_UNDEFINED(this, ChunkSize);
+
+    JS_POISON(this, JS_SWEPT_NURSERY_PATTERN, ChunkSize, MemCheckKind::MakeNoAccess);
 }
 
 /* static */ inline js::NurseryChunk*
@@ -381,7 +387,7 @@ js::Nursery::allocate(size_t size)
     void* thing = (void*)position();
     position_ = position() + size;
 
-    JS_EXTRA_POISON(thing, JS_ALLOCATED_NURSERY_PATTERN, size);
+    JS_EXTRA_POISON(thing, JS_ALLOCATED_NURSERY_PATTERN, size, MemCheckKind::MakeUndefined);
 
 #ifdef JS_GC_ZEAL
     if (runtime()->gc.hasZealMode(ZealMode::CheckNursery)) {
@@ -684,20 +690,19 @@ IsFullStoreBufferReason(JS::gcreason::Reason reason)
 void
 js::Nursery::collect(JS::gcreason::Reason reason)
 {
-    MOZ_ASSERT(!TlsContext.get()->suppressGC);
+    JSRuntime* rt = runtime();
+    MOZ_ASSERT(!rt->mainContextFromOwnThread()->suppressGC);
 
     if (!isEnabled() || isEmpty()) {
         // Our barriers are not always exact, and there may be entries in the
         // storebuffer even when the nursery is disabled or empty. It's not safe
         // to keep these entries as they may refer to tenured cells which may be
         // freed after this point.
-        runtime()->gc.storeBuffer().clear();
+        rt->gc.storeBuffer().clear();
     }
 
     if (!isEnabled())
         return;
-
-    JSRuntime* rt = runtime();
 
 #ifdef JS_GC_ZEAL
     if (rt->gc.hasZealMode(ZealMode::CheckNursery)) {
@@ -744,7 +749,7 @@ js::Nursery::collect(JS::gcreason::Reason reason)
         IsFullStoreBufferReason(reason);
 
     if (shouldPretenure) {
-        JSContext* cx = TlsContext.get();
+        JSContext* cx = rt->mainContextFromOwnThread();
         for (auto& entry : tenureCounts.entries) {
             if (entry.count >= 3000) {
                 ObjectGroup* group = entry.group;

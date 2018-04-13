@@ -857,6 +857,12 @@ interface nsIDOMWindowUtils : nsISupports {
   bool needsFlush(in long aFlushtype);
 
   /**
+   * Flush pending layout-type notification without flushing throttled
+   * animations.
+   */
+  void flushLayoutWithoutThrottledAnimations();
+
+  /**
    * Returns the bounds of the window's currently loaded document. This will
    * generally be (0, 0, pageWidth, pageHeight) but in some cases (e.g. RTL
    * documents) may have a negative left value.
@@ -1649,7 +1655,8 @@ interface nsIDOMWindowUtils : nsISupports {
   readonly attribute boolean isHandlingUserInput;
 
   /**
-   * Returns milliseconds elapsed since last user input was started
+   * Returns milliseconds elapsed since last user input was started.
+   * Returns -1 if there wasn't any previous user input.
    *
    * This relies on EventStateManager::LatestUserInputStart()
    */

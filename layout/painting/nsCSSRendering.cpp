@@ -77,7 +77,14 @@ static int gFrameTreeLockCount = 0;
 struct InlineBackgroundData
 {
   InlineBackgroundData()
-      : mFrame(nullptr), mLineContainer(nullptr)
+    : mFrame(nullptr)
+    , mLineContainer(nullptr)
+    , mContinuationPoint{}
+    , mUnbrokenMeasure{}
+    , mLineContinuationPoint{}
+    , mPIStartBorderData{}
+    , mBidiEnabled{ false }
+    , mVertical{ false }
   {
   }
 
@@ -2745,7 +2752,7 @@ nsCSSRendering::PaintStyleImageLayerWithSC(const PaintBGParams& aParams,
     NS_FOR_VISIBLE_IMAGE_LAYERS_BACK_TO_FRONT_WITH_RANGE(i, layers, startLayer,
                                                          count) {
       aParams.frame->AssociateImage(layers.mLayers[i].mImage,
-                                    &aParams.presCtx);
+                                    &aParams.presCtx, 0);
     }
   }
 

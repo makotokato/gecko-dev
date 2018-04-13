@@ -13,8 +13,6 @@
 #include "gfxFontFeatures.h"
 #include "nsAnimationManager.h"
 #include "nsAttrValueInlines.h"
-#include "nsCSSCounterStyleRule.h"
-#include "nsCSSFontFaceRule.h"
 #include "nsCSSFrameConstructor.h"
 #include "nsCSSProps.h"
 #include "nsCSSParser.h"
@@ -58,7 +56,7 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ServoElementSnapshot.h"
-#include "mozilla/ServoRestyleManager.h"
+#include "mozilla/RestyleManager.h"
 #include "mozilla/SizeOfState.h"
 #include "mozilla/StyleAnimationValue.h"
 #include "mozilla/SystemGroup.h"
@@ -205,13 +203,6 @@ ServoComputedData::ServoComputedData(
   PodAssign(this, aValue.mPtr);
 }
 
-const nsStyleVariables*
-ServoComputedData::GetStyleVariables() const
-{
-  MOZ_CRASH("ServoComputedData::GetStyleVariables should never need to be "
-            "called");
-}
-
 MOZ_DEFINE_MALLOC_ENCLOSING_SIZE_OF(ServoStyleStructsMallocEnclosingSizeOf)
 
 void
@@ -230,10 +221,8 @@ ServoComputedData::AddSizeOfExcludingThis(nsWindowSizes& aSizes) const
     aSizes.mStyleSizes.NS_STYLE_SIZES_FIELD(name_) += \
       ServoStyleStructsMallocEnclosingSizeOf(p##name_); \
   }
-  #define STYLE_STRUCT_LIST_IGNORE_VARIABLES
 #include "nsStyleStructList.h"
 #undef STYLE_STRUCT
-#undef STYLE_STRUCT_LIST_IGNORE_VARIABLES
 
   if (visited_style.mPtr && !aSizes.mState.HaveSeenPtr(visited_style.mPtr)) {
     visited_style.mPtr->AddSizeOfIncludingThis(
@@ -353,7 +342,7 @@ Gecko_GetImplementedPseudo(RawGeckoElementBorrowed aElement)
 uint32_t
 Gecko_CalcStyleDifference(ComputedStyleBorrowed aOldStyle,
                           ComputedStyleBorrowed aNewStyle,
-                          bool* aAnyStyleChanged,
+                          bool* aAnyStyleStructChanged,
                           bool* aOnlyResetStructsChanged)
 {
   MOZ_ASSERT(aOldStyle);
@@ -365,7 +354,7 @@ Gecko_CalcStyleDifference(ComputedStyleBorrowed aOldStyle,
       const_cast<mozilla::ComputedStyle*>(aNewStyle),
       &equalStructs);
 
-  *aAnyStyleChanged = equalStructs != NS_STYLE_INHERIT_MASK;
+  *aAnyStyleStructChanged = equalStructs != NS_STYLE_INHERIT_MASK;
 
   const uint32_t kInheritStructsMask =
     NS_STYLE_INHERIT_MASK & ~NS_STYLE_RESET_STRUCT_MASK;
@@ -637,8 +626,8 @@ Gecko_UpdateAnimations(RawGeckoElementBorrowed aElement,
     MOZ_ASSERT(aOldComputedData);
     presContext->TransitionManager()->
       UpdateTransitions(const_cast<dom::Element*>(aElement), pseudoType,
-                        aOldComputedData,
-                        aComputedData);
+                        *aOldComputedData,
+                        *aComputedData);
   }
 
   if (aTasks & UpdateAnimationsTasks::EffectProperties) {
@@ -2578,82 +2567,12 @@ Gecko_CSSKeywordString(nsCSSKeyword aKeyword, uint32_t* aLength)
   return value.get();
 }
 
-nsCSSFontFaceRule*
-Gecko_CSSFontFaceRule_Create(uint32_t aLine, uint32_t aColumn)
-{
-  RefPtr<nsCSSFontFaceRule> rule = new nsCSSFontFaceRule(aLine, aColumn);
-  return rule.forget().take();
-}
-
-nsCSSFontFaceRule*
-Gecko_CSSFontFaceRule_Clone(const nsCSSFontFaceRule* aRule)
-{
-  RefPtr<css::Rule> rule = aRule->Clone();
-  return static_cast<nsCSSFontFaceRule*>(rule.forget().take());
-}
-
-void
-Gecko_CSSFontFaceRule_GetCssText(const nsCSSFontFaceRule* aRule,
-                                 nsAString* aResult)
-{
-  // GetCSSText serializes nsCSSValues, which have a heap write
-  // hazard when dealing with color values (nsCSSKeywords::AddRefTable)
-  // We only serialize on the main thread; assert to convince the analysis
-  // and prevent accidentally calling this elsewhere
-  MOZ_ASSERT(NS_IsMainThread());
-
-  aRule->GetCssText(*aResult);
-}
-
 void
 Gecko_AddPropertyToSet(nsCSSPropertyIDSetBorrowedMut aPropertySet,
                        nsCSSPropertyID aProperty)
 {
   aPropertySet->AddProperty(aProperty);
 }
-
-int32_t
-Gecko_RegisterNamespace(nsAtom* aNamespace)
-{
-  int32_t id;
-
-  MOZ_ASSERT(NS_IsMainThread());
-
-  nsAutoString str;
-  aNamespace->ToString(str);
-  nsresult rv = nsContentUtils::NameSpaceManager()->RegisterNameSpace(str, id);
-
-  if (NS_FAILED(rv)) {
-    return -1;
-  }
-  return id;
-}
-
-NS_IMPL_FFI_REFCOUNTING(nsCSSFontFaceRule, CSSFontFaceRule);
-
-nsCSSCounterStyleRule*
-Gecko_CSSCounterStyle_Create(nsAtom* aName)
-{
-  RefPtr<nsCSSCounterStyleRule> rule = new nsCSSCounterStyleRule(aName, 0, 0);
-  return rule.forget().take();
-}
-
-nsCSSCounterStyleRule*
-Gecko_CSSCounterStyle_Clone(const nsCSSCounterStyleRule* aRule)
-{
-  RefPtr<css::Rule> rule = aRule->Clone();
-  return static_cast<nsCSSCounterStyleRule*>(rule.forget().take());
-}
-
-void
-Gecko_CSSCounterStyle_GetCssText(const nsCSSCounterStyleRule* aRule,
-                                 nsAString* aResult)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  aRule->GetCssText(*aResult);
-}
-
-NS_IMPL_FFI_REFCOUNTING(nsCSSCounterStyleRule, CSSCounterStyleRule);
 
 NS_IMPL_THREADSAFE_FFI_REFCOUNTING(nsCSSValueSharedList, CSSValueSharedList);
 
@@ -2753,7 +2672,11 @@ Gecko_ReportUnexpectedCSSError(ErrorReporter* reporter,
                                uint32_t lineNumber,
                                uint32_t colNumber)
 {
-  MOZ_ASSERT(NS_IsMainThread());
+  if (!reporter->ShouldReportErrors()) {
+    return;
+  }
+
+  MOZ_RELEASE_ASSERT(NS_IsMainThread());
 
   if (prefix) {
     if (prefixParam) {

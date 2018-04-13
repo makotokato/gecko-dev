@@ -16,6 +16,7 @@
 #include "nsDataDocumentContentPolicy.h"
 #include "nsNoDataProtocolContentPolicy.h"
 #include "nsDOMCID.h"
+#include "nsFrameMessageManager.h"
 #include "nsHTMLContentSerializer.h"
 #include "nsHTMLParts.h"
 #include "nsIComponentManager.h"
@@ -56,7 +57,6 @@
 #include "mozilla/dom/XPathEvaluator.h"
 
 #include "mozilla/dom/DOMParser.h"
-#include "nsDOMSerializer.h"
 
 // view stuff
 #include "nsContentCreatorFunctions.h"
@@ -124,11 +124,6 @@ class nsIDocumentLoaderFactory;
   0x0DE2FBFA, 0x6B7F, 0x11D7, {0xBB, 0xBA, 0x00, 0x03, 0x93, 0x8A, 0x9D, 0x96} }
 
 #include "nsIBoxObject.h"
-
-#ifdef MOZ_XUL
-#include "inDOMView.h"
-#endif /* MOZ_XUL */
-
 #include "inDeepTreeWalker.h"
 
 #ifdef MOZ_XUL
@@ -203,7 +198,6 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(HTMLEditor)
 already_AddRefed<nsIPresentationService> NS_CreatePresentationService();
 
 // Factory Constructor
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsDOMSerializer)
 typedef nsHostObjectURI::Mutator nsHostObjectURIMutator;
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsHostObjectURIMutator)
 NS_GENERIC_FACTORY_CONSTRUCTOR(DOMParser)
@@ -323,9 +317,9 @@ nsresult NS_NewTextEncoder(nsIDocumentEncoder** aResult);
 nsresult NS_NewContentPolicy(nsIContentPolicy** aResult);
 
 nsresult NS_NewEventListenerService(nsIEventListenerService** aResult);
-nsresult NS_NewGlobalMessageManager(nsIMessageBroadcaster** aResult);
-nsresult NS_NewParentProcessMessageManager(nsIMessageBroadcaster** aResult);
-nsresult NS_NewChildProcessMessageManager(nsISyncMessageSender** aResult);
+nsresult NS_NewGlobalMessageManager(nsISupports** aResult);
+nsresult NS_NewParentProcessMessageManager(nsISupports** aResult);
+nsresult NS_NewChildProcessMessageManager(nsISupports** aResult);
 
 nsresult NS_NewXULControllers(nsISupports* aOuter, REFNSIID aIID, void** aResult);
 
@@ -377,9 +371,6 @@ MAKE_CTOR(CreateNewScrollBoxObject,     nsIBoxObject,           NS_NewScrollBoxO
 MAKE_CTOR(CreateNewTreeBoxObject,       nsIBoxObject,           NS_NewTreeBoxObject)
 #endif // MOZ_XUL
 
-#ifdef MOZ_XUL
-NS_GENERIC_FACTORY_CONSTRUCTOR(inDOMView)
-#endif
 NS_GENERIC_FACTORY_CONSTRUCTOR(inDeepTreeWalker)
 
 MAKE_CTOR2(CreateContentViewer,           nsIContentViewer,            NS_NewContentViewer)
@@ -404,9 +395,9 @@ MAKE_CTOR(CreateXULDocument,              nsIDocument,                 NS_NewXUL
 #endif
 MAKE_CTOR(CreateContentDLF,               nsIDocumentLoaderFactory,    NS_NewContentDocumentLoaderFactory)
 MAKE_CTOR(CreateEventListenerService,     nsIEventListenerService,     NS_NewEventListenerService)
-MAKE_CTOR(CreateGlobalMessageManager,     nsIMessageBroadcaster,       NS_NewGlobalMessageManager)
-MAKE_CTOR(CreateParentMessageManager,     nsIMessageBroadcaster,       NS_NewParentProcessMessageManager)
-MAKE_CTOR(CreateChildMessageManager,      nsISyncMessageSender,        NS_NewChildProcessMessageManager)
+MAKE_CTOR(CreateGlobalMessageManager,     nsISupports,                 NS_NewGlobalMessageManager)
+MAKE_CTOR(CreateParentMessageManager,     nsISupports,                 NS_NewParentProcessMessageManager)
+MAKE_CTOR(CreateChildMessageManager,      nsISupports,                 NS_NewChildProcessMessageManager)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDataDocumentContentPolicy)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsNoDataProtocolContentPolicy)
 MAKE_CTOR(CreatePluginDocument,           nsIDocument,                 NS_NewPluginDocument)
@@ -522,9 +513,6 @@ NS_DEFINE_NAMED_CID(NS_POPUPBOXOBJECT_CID);
 NS_DEFINE_NAMED_CID(NS_SCROLLBOXOBJECT_CID);
 NS_DEFINE_NAMED_CID(NS_TREEBOXOBJECT_CID);
 #endif // MOZ_XUL
-#ifdef MOZ_XUL
-NS_DEFINE_NAMED_CID(IN_DOMVIEW_CID);
-#endif
 NS_DEFINE_NAMED_CID(IN_DEEPTREEWALKER_CID);
 NS_DEFINE_NAMED_CID(NS_CONTENT_VIEWER_CID);
 NS_DEFINE_NAMED_CID(NS_HTMLDOCUMENT_CID);
@@ -560,7 +548,6 @@ NS_DEFINE_NAMED_CID(NS_PLUGINDOCLOADERFACTORY_CID);
 NS_DEFINE_NAMED_CID(NS_PLUGINDOCUMENT_CID);
 NS_DEFINE_NAMED_CID(NS_VIDEODOCUMENT_CID);
 NS_DEFINE_NAMED_CID(NS_STYLESHEETSERVICE_CID);
-NS_DEFINE_NAMED_CID(NS_XMLSERIALIZER_CID);
 NS_DEFINE_NAMED_CID(NS_HOSTOBJECTURI_CID);
 NS_DEFINE_NAMED_CID(NS_HOSTOBJECTURIMUTATOR_CID);
 NS_DEFINE_NAMED_CID(NS_DOMPARSER_CID);
@@ -768,9 +755,6 @@ static const mozilla::Module::CIDEntry kLayoutCIDs[] = {
   { &kNS_SCROLLBOXOBJECT_CID, false, nullptr, CreateNewScrollBoxObject },
   { &kNS_TREEBOXOBJECT_CID, false, nullptr, CreateNewTreeBoxObject },
 #endif // MOZ_XUL
-#ifdef MOZ_XUL
-  { &kIN_DOMVIEW_CID, false, nullptr, inDOMViewConstructor },
-#endif
   { &kIN_DEEPTREEWALKER_CID, false, nullptr, inDeepTreeWalkerConstructor },
   { &kNS_CONTENT_VIEWER_CID, false, nullptr, CreateContentViewer },
   { &kNS_HTMLDOCUMENT_CID, false, nullptr, CreateHTMLDocument },
@@ -806,7 +790,6 @@ static const mozilla::Module::CIDEntry kLayoutCIDs[] = {
   { &kNS_PLUGINDOCUMENT_CID, false, nullptr, CreatePluginDocument },
   { &kNS_VIDEODOCUMENT_CID, false, nullptr, CreateVideoDocument },
   { &kNS_STYLESHEETSERVICE_CID, false, nullptr, nsStyleSheetServiceConstructor },
-  { &kNS_XMLSERIALIZER_CID, false, nullptr, nsDOMSerializerConstructor },
   { &kNS_HOSTOBJECTURI_CID, false, nullptr, nsHostObjectURIMutatorConstructor }, // do_CreateInstance returns mutator
   { &kNS_HOSTOBJECTURIMUTATOR_CID, false, nullptr, nsHostObjectURIMutatorConstructor },
   { &kNS_DOMPARSER_CID, false, nullptr, DOMParserConstructor },
@@ -880,9 +863,6 @@ static const mozilla::Module::ContractIDEntry kLayoutContracts[] = {
   { "@mozilla.org/layout/xul-boxobject-scrollbox;1", &kNS_SCROLLBOXOBJECT_CID },
   { "@mozilla.org/layout/xul-boxobject-tree;1", &kNS_TREEBOXOBJECT_CID },
 #endif // MOZ_XUL
-#ifdef MOZ_XUL
-  { "@mozilla.org/inspector/dom-view;1", &kIN_DOMVIEW_CID },
-#endif
   { "@mozilla.org/inspector/deep-tree-walker;1", &kIN_DEEPTREEWALKER_CID },
   { "@mozilla.org/xml/xml-document;1", &kNS_XMLDOCUMENT_CID },
   { "@mozilla.org/svg/svg-document;1", &kNS_SVGDOCUMENT_CID },
@@ -917,7 +897,6 @@ static const mozilla::Module::ContractIDEntry kLayoutContracts[] = {
   { NS_WINDOWCONTROLLER_CONTRACTID, &kNS_WINDOWCONTROLLER_CID },
   { PLUGIN_DLF_CONTRACTID, &kNS_PLUGINDOCLOADERFACTORY_CID },
   { NS_STYLESHEETSERVICE_CONTRACTID, &kNS_STYLESHEETSERVICE_CID },
-  { NS_XMLSERIALIZER_CONTRACTID, &kNS_XMLSERIALIZER_CID },
   { NS_DOMPARSER_CONTRACTID, &kNS_DOMPARSER_CID },
   { "@mozilla.org/dom/localStorage-manager;1", &kNS_DOMLOCALSTORAGEMANAGER_CID },
   // Keeping the old ContractID for backward compatibility

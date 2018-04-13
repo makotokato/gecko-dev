@@ -7,11 +7,6 @@
 
 #include "ShimInterfaceInfo.h"
 
-#ifdef MOZ_WEBRTC
-#include "nsIDOMDataChannel.h"
-#endif
-#include "nsIDOMDOMCursor.h"
-#include "nsIDOMDOMException.h"
 #include "nsIDOMDOMRequest.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMDocumentFragment.h"
@@ -25,23 +20,16 @@
 #include "nsIDOMOfflineResourceList.h"
 #include "nsIDOMParser.h"
 #include "nsIDOMRange.h"
-#include "nsIDOMScreen.h"
-#include "nsIDOMSerializer.h"
-#include "nsIDOMXMLDocument.h"
-#include "nsIDOMXULElement.h"
 #include "nsIListBoxObject.h"
 #include "nsIMessageManager.h"
 #include "nsISelection.h"
 #include "nsITreeBoxObject.h"
-#include "nsIWebBrowserPersistable.h"
 
 #include "mozilla/dom/CSSPrimitiveValueBinding.h"
 #include "mozilla/dom/CSSStyleDeclarationBinding.h"
 #include "mozilla/dom/CSSStyleSheetBinding.h"
 #include "mozilla/dom/CSSValueBinding.h"
 #include "mozilla/dom/CSSValueListBinding.h"
-#include "mozilla/dom/DOMCursorBinding.h"
-#include "mozilla/dom/DOMExceptionBinding.h"
 #include "mozilla/dom/DOMParserBinding.h"
 #include "mozilla/dom/DOMRequestBinding.h"
 #include "mozilla/dom/DocumentBinding.h"
@@ -49,7 +37,6 @@
 #include "mozilla/dom/ElementBinding.h"
 #include "mozilla/dom/EventBinding.h"
 #include "mozilla/dom/EventTargetBinding.h"
-#include "mozilla/dom/FrameLoaderBinding.h"
 #include "mozilla/dom/HTMLAnchorElementBinding.h"
 #include "mozilla/dom/HTMLAreaElementBinding.h"
 #include "mozilla/dom/HTMLButtonElementBinding.h"
@@ -66,10 +53,6 @@
 #include "mozilla/dom/OfflineResourceListBinding.h"
 #include "mozilla/dom/PositionErrorBinding.h"
 #include "mozilla/dom/RangeBinding.h"
-#ifdef MOZ_WEBRTC
-#include "mozilla/dom/RTCDataChannelBinding.h"
-#endif
-#include "mozilla/dom/ScreenBinding.h"
 #include "mozilla/dom/SelectionBinding.h"
 #include "mozilla/dom/StorageEventBinding.h"
 #include "mozilla/dom/StyleSheetBinding.h"
@@ -77,10 +60,7 @@
 #include "mozilla/dom/SVGElementBinding.h"
 #include "mozilla/dom/TimeEventBinding.h"
 #include "mozilla/dom/TreeBoxObjectBinding.h"
-#include "mozilla/dom/XMLDocumentBinding.h"
-#include "mozilla/dom/XMLSerializerBinding.h"
 #include "mozilla/dom/XULDocumentBinding.h"
-#include "mozilla/dom/XULElementBinding.h"
 
 using namespace mozilla;
 
@@ -138,8 +118,6 @@ struct ComponentsInterfaceShimEntry {
 const ComponentsInterfaceShimEntry kComponentsInterfaceShimMap[] =
 {
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIContentFrameMessageManager, ContentFrameMessageManager),
-  DEFINE_SHIM(DOMCursor),
-  DEFINE_SHIM(DOMException),
   DEFINE_SHIM(DOMRequest),
   DEFINE_SHIM(Document),
   DEFINE_SHIM(DocumentFragment),
@@ -155,15 +133,7 @@ const ComponentsInterfaceShimEntry kComponentsInterfaceShimMap[] =
   DEFINE_SHIM(OfflineResourceList),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMParser, DOMParser),
   DEFINE_SHIM(Range),
-#ifdef MOZ_WEBRTC
-  DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMDataChannel, RTCDataChannel),
-#endif
-  DEFINE_SHIM(Screen),
-  DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMSerializer, XMLSerializer),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsITreeBoxObject, TreeBoxObject),
-  DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIWebBrowserPersistable, FrameLoader),
-  DEFINE_SHIM(XMLDocument),
-  DEFINE_SHIM(XULElement),
   DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsISelection, Selection),
 };
 
@@ -202,13 +172,6 @@ NS_IMETHODIMP
 ShimInterfaceInfo::GetName(char** aName)
 {
     *aName = ToNewCString(mName);
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-ShimInterfaceInfo::GetInterfaceIID(nsIID** aIID)
-{
-    *aIID = mIID.Clone();
     return NS_OK;
 }
 
@@ -331,20 +294,6 @@ ShimInterfaceInfo::GetConstant(uint16_t aIndex, JS::MutableHandleValue aConstant
 
     // aIndex was bigger than the number of constants we have.
     return NS_ERROR_INVALID_ARG;
-}
-
-NS_IMETHODIMP
-ShimInterfaceInfo::GetInfoForParam(uint16_t aIndex, const nsXPTParamInfo* aParam, nsIInterfaceInfo** aRetVal)
-{
-    MOZ_ASSERT(false, "This should never be called");
-    return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-ShimInterfaceInfo::GetIIDForParam(uint16_t aIndex, const nsXPTParamInfo* aParam, nsIID** aRetVal)
-{
-    MOZ_ASSERT(false, "This should never be called");
-    return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP

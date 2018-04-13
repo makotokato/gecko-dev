@@ -329,12 +329,7 @@ var gPrivacyPane = {
         document.getElementById("notificationsDoNotDisturbBox");
       notificationsDoNotDisturbBox.removeAttribute("hidden");
       let checkbox = document.getElementById("notificationsDoNotDisturb");
-      let brandName = document.getElementById("bundleBrand")
-        .getString("brandShortName");
-      checkbox.setAttribute("label",
-        bundlePrefs.getFormattedString("pauseNotifications.label",
-          [brandName]));
-      checkbox.setAttribute("accesskey", bundlePrefs.getString("pauseNotifications.accesskey"));
+      document.l10n.setAttributes(checkbox, "permissions-notification-pause");
       if (AlertsServiceDND.manualDoNotDisturb) {
         let notificationsDoNotDisturb =
           document.getElementById("notificationsDoNotDisturb");
@@ -409,10 +404,6 @@ var gPrivacyPane = {
       bundlePrefs.getString("trackingprotectionpermissionstitle"),
       bundlePrefs.getString("trackingprotectionpermissionstext2"),
     ]);
-    appendSearchKeywords("changeBlockList", [
-      bundlePrefs.getString("blockliststitle"),
-      bundlePrefs.getString("blockliststext"),
-    ]);
     appendSearchKeywords("popupPolicyButton", [
       bundlePrefs.getString("popuppermissionstitle2"),
       bundlePrefs.getString("popuppermissionstext"),
@@ -450,8 +441,7 @@ var gPrivacyPane = {
     ]);
     appendSearchKeywords("siteDataSettings", [
       bundlePrefs.getString("siteDataSettings3.description"),
-      bundlePrefs.getString("removeAllCookies.label"),
-      bundlePrefs.getString("removeSelectedCookies.label"),
+      bundlePrefs.getString("removeAllSiteData.label"),
     ]);
 
     if (!PrivateBrowsingUtils.enabled) {
@@ -797,16 +787,7 @@ var gPrivacyPane = {
    * Displays the available block lists for tracking protection.
    */
   showBlockLists() {
-    var bundlePreferences = document.getElementById("bundlePreferences");
-    let brandName = document.getElementById("bundleBrand")
-      .getString("brandShortName");
-    var params = {
-      brandShortName: brandName,
-      windowTitle: bundlePreferences.getString("blockliststitle"),
-      introText: bundlePreferences.getString("blockliststext")
-    };
-    gSubDialog.open("chrome://browser/content/preferences/blocklists.xul",
-      null, params);
+    gSubDialog.open("chrome://browser/content/preferences/blocklists.xul", null);
   },
 
   // COOKIES AND SITE DATA

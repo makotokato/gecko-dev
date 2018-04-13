@@ -30,7 +30,9 @@ class PaymentDialog extends PaymentStateSubscriberMixin(HTMLElement) {
     this._viewAllButton = contents.querySelector("#view-all");
     this._viewAllButton.addEventListener("click", this);
 
+    this._mainContainer = contents.getElementById("main-container");
     this._orderDetailsOverlay = contents.querySelector("#order-details-overlay");
+
     this._shippingTypeLabel = contents.querySelector("#shipping-type-label");
     this._shippingRelatedEls = contents.querySelectorAll(".shipping-related");
     this._payerRelatedEls = contents.querySelectorAll(".payer-related");
@@ -104,6 +106,7 @@ class PaymentDialog extends PaymentStateSubscriberMixin(HTMLElement) {
    * @param {object} state - See `PaymentsStore.setState`
    */
   setStateFromParent(state) {
+    let oldSavedAddresses = this.requestStore.getState().savedAddresses;
     this.requestStore.setState(state);
 
     // Check if any foreign-key constraints were invalidated.
@@ -117,10 +120,23 @@ class PaymentDialog extends PaymentStateSubscriberMixin(HTMLElement) {
       selectedShippingOption,
     } = state;
     let shippingOptions = state.request.paymentDetails.shippingOptions;
+    let shippingAddress = selectedShippingAddress && savedAddresses[selectedShippingAddress];
+    let oldShippingAddress = selectedShippingAddress &&
+                             oldSavedAddresses[selectedShippingAddress];
 
     // Ensure `selectedShippingAddress` never refers to a deleted address and refers
-    // to an address if one exists.
-    if (!savedAddresses[selectedShippingAddress]) {
+    // to an address if one exists. We also compare address timestamps to handle changes
+    // made outside the payments UI.
+    if (shippingAddress) {
+      // invalidate the cached value if the address was modified
+      if (oldShippingAddress &&
+          shippingAddress.guid == oldShippingAddress.guid &&
+          shippingAddress.timeLastModified != oldShippingAddress.timeLastModified) {
+        delete this._cachedState.selectedShippingAddress;
+      }
+    } else {
+      // assign selectedShippingAddress as value if it is undefined,
+      // or if the address it pointed to was removed from storage
       this.requestStore.setState({
         selectedShippingAddress: Object.keys(savedAddresses)[0] || null,
       });
@@ -154,7 +170,6 @@ class PaymentDialog extends PaymentStateSubscriberMixin(HTMLElement) {
         selectedShippingOption,
       });
     }
-
 
     // Ensure `selectedPayerAddress` never refers to a deleted address and refers
     // to an address if one exists.
@@ -245,6 +260,10 @@ class PaymentDialog extends PaymentStateSubscriberMixin(HTMLElement) {
       this._shippingTypeLabel.dataset[shippingType + "AddressLabel"];
 
     this._renderPayButton(state);
+
+    for (let page of this._mainContainer.querySelectorAll(":scope > .page")) {
+      page.hidden = state.page.id != page.id;
+    }
 
     let {
       changesPrevented,

@@ -57,6 +57,7 @@ pub struct HitTestingItem {
     rect: LayerRect,
     clip_rect: LayerRect,
     tag: ItemTag,
+    is_backface_visible: bool,
 }
 
 impl HitTestingItem {
@@ -65,6 +66,7 @@ impl HitTestingItem {
             rect: info.rect,
             clip_rect: info.clip_rect,
             tag: tag,
+            is_backface_visible: info.is_backface_visible,
         }
     }
 }
@@ -73,17 +75,20 @@ impl HitTestingItem {
 pub struct HitTestingRun(pub Vec<HitTestingItem>, pub ScrollNodeAndClipChain);
 
 enum HitTestRegion {
-    Rectangle(LayerRect),
+    Rectangle(LayerRect, ClipMode),
     RoundedRectangle(LayerRect, BorderRadius, ClipMode),
 }
 
 impl HitTestRegion {
     pub fn contains(&self, point: &LayerPoint) -> bool {
-        match self {
-            &HitTestRegion::Rectangle(ref rectangle) => rectangle.contains(point),
-            &HitTestRegion::RoundedRectangle(rect, radii, ClipMode::Clip) =>
+        match *self {
+            HitTestRegion::Rectangle(ref rectangle, ClipMode::Clip) =>
+                rectangle.contains(point),
+            HitTestRegion::Rectangle(ref rectangle, ClipMode::ClipOut) =>
+                !rectangle.contains(point),
+            HitTestRegion::RoundedRectangle(rect, radii, ClipMode::Clip) =>
                 rounded_rectangle_contains_point(point, &rect, &radii),
-            &HitTestRegion::RoundedRectangle(rect, radii, ClipMode::ClipOut) =>
+            HitTestRegion::RoundedRectangle(rect, radii, ClipMode::ClipOut) =>
                 !rounded_rectangle_contains_point(point, &rect, &radii),
         }
     }
@@ -232,6 +237,7 @@ impl HitTester {
             }
 
             let transform = scroll_node.world_content_transform;
+            let mut facing_backwards: Option<bool> = None;  // will be computed on first use
             let point_in_layer = match transform.inverse() {
                 Some(inverted) => inverted.transform_point2d(&point),
                 None => continue,
@@ -265,6 +271,13 @@ impl HitTester {
                     None => continue,
                 };
 
+                // Don't hit items with backface-visibility:hidden if they are facing the back.
+                if !item.is_backface_visible {
+                    if *facing_backwards.get_or_insert_with(|| transform.is_backface_visible()) {
+                        continue;
+                    }
+                }
+
                 result.items.push(HitTestItem {
                     pipeline: pipeline_id,
                     tag: item.tag,
@@ -295,12 +308,12 @@ fn get_regions_for_clip_scroll_node(
         _ => return Vec::new(),
     };
 
-    clips.iter().map(|ref source| {
+    clips.iter().map(|source| {
         match source.0 {
-            ClipSource::Rectangle(ref rect) => HitTestRegion::Rectangle(*rect),
+            ClipSource::Rectangle(ref rect, mode) => HitTestRegion::Rectangle(*rect, mode),
             ClipSource::RoundedRectangle(ref rect, ref radii, ref mode) =>
                 HitTestRegion::RoundedRectangle(*rect, *radii, *mode),
-            ClipSource::Image(ref mask) => HitTestRegion::Rectangle(mask.rect),
+            ClipSource::Image(ref mask) => HitTestRegion::Rectangle(mask.rect, ClipMode::Clip),
             ClipSource::BorderCorner(_) |
             ClipSource::LineDecoration(_) |
             ClipSource::BoxShadow(_) => {
@@ -355,7 +368,7 @@ impl HitTest {
 
         let point =  &LayerPoint::new(self.point.x, self.point.y);
         self.pipeline_id.map(|id|
-            hit_tester.get_pipeline_root(id).world_viewport_transform.transform_point2d(&point)
+            hit_tester.get_pipeline_root(id).world_viewport_transform.transform_point2d(point)
         ).unwrap_or_else(|| WorldPoint::new(self.point.x, self.point.y))
     }
 }

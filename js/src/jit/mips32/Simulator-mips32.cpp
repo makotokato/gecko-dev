@@ -516,8 +516,6 @@ class AutoLockSimulatorCache : public LockGuard<Mutex>
 
 mozilla::Atomic<size_t, mozilla::ReleaseAcquire>
     SimulatorProcess::ICacheCheckingDisableCount(1); // Checking is disabled by default.
-mozilla::Atomic<bool, mozilla::ReleaseAcquire>
-    SimulatorProcess::cacheInvalidatedBySignalHandler_(false);
 SimulatorProcess* SimulatorProcess::singleton_ = nullptr;
 
 int Simulator::StopSimAt = -1;
@@ -1206,25 +1204,11 @@ SimulatorProcess::checkICacheLocked(SimInstruction* instr)
     bool cache_hit = (*cache_valid_byte == CachePage::LINE_VALID);
     char* cached_line = cache_page->cachedData(offset & ~CachePage::kLineMask);
 
-    // Read all state before considering signal handler effects.
-    int cmpret = 0;
     if (cache_hit) {
         // Check that the data in memory matches the contents of the I-cache.
-        cmpret = memcmp(reinterpret_cast<void*>(instr),
-                        cache_page->cachedData(offset),
-                        SimInstruction::kInstrSize);
-    }
-
-    // Check for signal handler interruption between reading state and asserting.
-    // It is safe for the signal to arrive during the !cache_hit path, since it
-    // will be cleared the next time this function is called.
-    if (cacheInvalidatedBySignalHandler_) {
-        icache().clear();
-        cacheInvalidatedBySignalHandler_ = false;
-        return;
-    }
-
-    if (cache_hit) {
+        int cmpret = memcmp(reinterpret_cast<void*>(instr),
+                            cache_page->cachedData(offset),
+                            SimInstruction::kInstrSize);
         MOZ_ASSERT(cmpret == 0);
     } else {
         // Cache miss.  Load memory into the cache.
@@ -1271,6 +1255,9 @@ Simulator::Simulator()
     break_count_ = 0;
     break_pc_ = nullptr;
     break_instr_ = 0;
+    single_stepping_ = false;
+    single_step_callback_ = nullptr;
+    single_step_callback_arg_ = nullptr;
 
     // Set up architecture state.
     // All registers are initialized to zero to start with.
@@ -2084,6 +2071,9 @@ Simulator::softwareInterrupt(SimInstruction* instr)
             MOZ_CRASH();
         }
 
+        if (single_stepping_)
+            single_step_callback_(single_step_callback_arg_, this, nullptr);
+
         switch (redirection->type()) {
           case Args_General0: {
             Prototype_General0 target = reinterpret_cast<Prototype_General0>(external);
@@ -2300,6 +2290,9 @@ Simulator::softwareInterrupt(SimInstruction* instr)
           default:
             MOZ_CRASH("call");
         }
+
+        if (single_stepping_)
+            single_step_callback_(single_step_callback_arg_, this, nullptr);
 
         setRegister(ra, saved_ra);
         set_pc(getRegister(ra));
@@ -3645,10 +3638,33 @@ Simulator::branchDelayInstructionDecode(SimInstruction* instr)
     instructionDecode(instr);
 }
 
+void
+Simulator::enable_single_stepping(SingleStepCallback cb, void* arg)
+{
+    single_stepping_ = true;
+    single_step_callback_ = cb;
+    single_step_callback_arg_ = arg;
+    single_step_callback_(single_step_callback_arg_, this, (void*)get_pc());
+}
+
+void
+Simulator::disable_single_stepping()
+{
+    if (!single_stepping_)
+        return;
+    single_step_callback_(single_step_callback_arg_, this, (void*)get_pc());
+    single_stepping_ = false;
+    single_step_callback_ = nullptr;
+    single_step_callback_arg_ = nullptr;
+}
+
 template<bool enableStopSimAt>
 void
 Simulator::execute()
 {
+    if (single_stepping_)
+        single_step_callback_(single_step_callback_arg_, this, nullptr);
+
     // Get the PC to simulate. Cannot use the accessor here as we need the
     // raw PC value and not the one used as input to arithmetic instructions.
     int program_counter = get_pc();
@@ -3658,12 +3674,17 @@ Simulator::execute()
             MipsDebugger dbg(this);
             dbg.debug();
         } else {
+            if (single_stepping_)
+                single_step_callback_(single_step_callback_arg_, this, (void*)program_counter);
             SimInstruction* instr = reinterpret_cast<SimInstruction*>(program_counter);
             instructionDecode(instr);
             icount_++;
         }
         program_counter = get_pc();
     }
+
+    if (single_stepping_)
+        single_step_callback_(single_step_callback_arg_, this, nullptr);
 }
 
 void

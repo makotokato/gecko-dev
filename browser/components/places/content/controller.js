@@ -175,7 +175,8 @@ PlacesController.prototype = {
                  Ci.nsINavHistoryQueryOptions.SORT_BY_NONE;
     case "placesCmd_show:info": {
       let selectedNode = this._view.selectedNode;
-      return selectedNode && PlacesUtils.getConcreteItemId(selectedNode) != -1;
+      return selectedNode && (PlacesUtils.nodeIsTagQuery(selectedNode) ||
+                              PlacesUtils.nodeIsBookmark(selectedNode));
     }
     case "placesCmd_reload": {
       // Livemark containers
@@ -399,7 +400,6 @@ PlacesController.prototype = {
       var nodeData = {};
       var node = nodes[i];
       var nodeType = node.type;
-      var uri = null;
 
       // We don't use the nodeIs* methods here to avoid going through the type
       // property way too often
@@ -421,13 +421,15 @@ PlacesController.prototype = {
         case Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER:
         case Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER_SHORTCUT:
           nodeData.folder = true;
+          if (this.hasCachedLivemarkInfo(node)) {
+            nodeData.livemark = true;
+          }
           break;
         case Ci.nsINavHistoryResultNode.RESULT_TYPE_SEPARATOR:
           nodeData.separator = true;
           break;
         case Ci.nsINavHistoryResultNode.RESULT_TYPE_URI:
           nodeData.link = true;
-          uri = Services.io.newURI(node.uri);
           if (PlacesUtils.nodeIsBookmark(node)) {
             nodeData.bookmark = true;
             var parentNode = node.parent;
@@ -441,20 +443,6 @@ PlacesController.prototype = {
           break;
       }
 
-      // annotations
-      if (uri) {
-        let names = PlacesUtils.annotations.getPageAnnotationNames(uri);
-        for (let j = 0; j < names.length; ++j)
-          nodeData[names[j]] = true;
-      }
-
-      // For items also include the item-specific annotations
-      if (node.itemId != -1) {
-        let names = PlacesUtils.annotations
-                               .getItemAnnotationNames(node.itemId);
-        for (let j = 0; j < names.length; ++j)
-          nodeData[names[j]] = true;
-      }
       metadata.push(nodeData);
     }
 
@@ -807,18 +795,17 @@ PlacesController.prototype = {
       if (PlacesUtils.nodeIsTagQuery(node.parent)) {
         // This is a uri node inside a tag container.  It needs a special
         // untag transaction.
-        let tag = node.parent.title;
+        let tag = node.parent.title || "";
         if (!tag) {
-          // TODO: Bug 1432405 Try using getConcreteItemGuid.
-          let tagItemId = PlacesUtils.getConcreteItemId(node.parent);
-          let tagGuid = await PlacesUtils.promiseItemGuid(tagItemId);
-          tag = (await PlacesUtils.bookmarks.fetch(tagGuid)).title;
+          // The parent may be the root node, that doesn't have a title.
+          tag = node.parent.query.tags[0];
         }
         transactions.push(PlacesTransactions.Untag({ urls: [node.uri], tag }));
-      } else if (PlacesUtils.nodeIsTagQuery(node) && node.parent &&
-               PlacesUtils.nodeIsQuery(node.parent) &&
-               PlacesUtils.asQuery(node.parent).queryOptions.resultType ==
-                 Ci.nsINavHistoryQueryOptions.RESULTS_AS_TAG_QUERY) {
+      } else if (PlacesUtils.nodeIsTagQuery(node) &&
+                 node.parent &&
+                 PlacesUtils.nodeIsQuery(node.parent) &&
+                 PlacesUtils.asQuery(node.parent).queryOptions.resultType ==
+                   Ci.nsINavHistoryQueryOptions.RESULTS_AS_TAGS_ROOT) {
         // This is a tag container.
         // Untag all URIs tagged with this tag only if the tag container is
         // child of the "Tags" query in the library, in all other places we
@@ -827,16 +814,16 @@ PlacesController.prototype = {
         let URIs = PlacesUtils.tagging.getURIsForTag(tag);
         transactions.push(PlacesTransactions.Untag({ tag, urls: URIs }));
       } else if (PlacesUtils.nodeIsURI(node) &&
-               PlacesUtils.nodeIsQuery(node.parent) &&
-               PlacesUtils.asQuery(node.parent).queryOptions.queryType ==
-                 Ci.nsINavHistoryQueryOptions.QUERY_TYPE_HISTORY) {
+                 PlacesUtils.nodeIsQuery(node.parent) &&
+                 PlacesUtils.asQuery(node.parent).queryOptions.queryType ==
+                   Ci.nsINavHistoryQueryOptions.QUERY_TYPE_HISTORY) {
         // This is a uri node inside an history query.
         PlacesUtils.history.remove(node.uri).catch(Cu.reportError);
         // History deletes are not undoable, so we don't have a transaction.
       } else if (node.itemId == -1 &&
-               PlacesUtils.nodeIsQuery(node) &&
-               PlacesUtils.asQuery(node).queryOptions.queryType ==
-                 Ci.nsINavHistoryQueryOptions.QUERY_TYPE_HISTORY) {
+                 PlacesUtils.nodeIsQuery(node) &&
+                 PlacesUtils.asQuery(node).queryOptions.queryType ==
+                   Ci.nsINavHistoryQueryOptions.QUERY_TYPE_HISTORY) {
         // This is a dynamically generated history query, like queries
         // grouped by site, time or both.  Dynamically generated queries don't
         // have an itemId even if they are descendants of a bookmark.

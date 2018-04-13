@@ -78,7 +78,6 @@
 #include "nsURLHelper.h"
 #include "nsNetUtil.h"
 #include "nsIURLParser.h"
-#include "nsIDOMDataChannel.h"
 #include "NullPrincipal.h"
 #include "mozilla/PeerIdentity.h"
 #include "mozilla/dom/RTCCertificate.h"
@@ -224,8 +223,6 @@ namespace mozilla {
   class DataChannel;
 }
 
-class nsIDOMDataChannel;
-
 // XXX Workaround for bug 998092 to maintain the existing broken semantics
 template<>
 struct nsISupportsWeakReference::COMTypeInfo<nsSupportsWeakReference, void> {
@@ -235,10 +232,12 @@ const nsIID nsISupportsWeakReference::COMTypeInfo<nsSupportsWeakReference, void>
 
 namespace mozilla {
 
-RTCStatsQuery::RTCStatsQuery(bool internal) :
-  failed(false),
-  internalStats(internal),
-  grabAllLevels(false) {
+RTCStatsQuery::RTCStatsQuery(bool internal)
+  : failed(false)
+  , internalStats(internal)
+  , grabAllLevels(false)
+  , now{ 0.0 }
+{
 }
 
 RTCStatsQuery::~RTCStatsQuery() {
@@ -316,8 +315,8 @@ bool IsPrivateBrowsing(nsPIDOMWindowInner* aWindow)
 }
 
 PeerConnectionImpl::PeerConnectionImpl(const GlobalObject* aGlobal)
-: mTimeCard(MOZ_LOG_TEST(logModuleInfo,LogLevel::Error) ?
-            create_timecard() : nullptr)
+  : mTimeCard(MOZ_LOG_TEST(logModuleInfo, LogLevel::Error) ? create_timecard()
+                                                           : nullptr)
   , mSignalingState(PCImplSignalingState::SignalingStable)
   , mIceConnectionState(PCImplIceConnectionState::New)
   , mIceGatheringState(PCImplIceGatheringState::New)
@@ -341,6 +340,9 @@ PeerConnectionImpl::PeerConnectionImpl(const GlobalObject* aGlobal)
   , mActiveOnWindow(false)
   , mPacketDumpEnabled(false)
   , mPacketDumpFlagsMutex("Packet dump flags mutex")
+  , listenPort{}
+  , connectPort{}
+  , connectStr{ nullptr }
 {
   MOZ_ASSERT(NS_IsMainThread());
   auto log = RLogConnector::CreateInstance();
@@ -1365,12 +1367,13 @@ PeerConnectionImpl::CreateDataChannel(const nsAString& aLabel,
         new JsepTransceiver(SdpMediaSection::MediaType::kApplication));
     mHaveDataStream = true;
   }
-  nsIDOMDataChannel *retval;
-  rv = NS_NewDOMDataChannel(dataChannel.forget(), mWindow, &retval);
+  RefPtr<nsDOMDataChannel> retval;
+  rv = NS_NewDOMDataChannel(dataChannel.forget(), mWindow,
+			    getter_AddRefs(retval));
   if (NS_FAILED(rv)) {
     return rv;
   }
-  *aRetval = static_cast<nsDOMDataChannel*>(retval);
+  retval.forget(aRetval);
   return NS_OK;
 }
 
@@ -1401,14 +1404,13 @@ do_QueryObjectReferent(nsIWeakReference* aRawPtr) {
 
 
 // Not a member function so that we don't need to keep the PC live.
-static void NotifyDataChannel_m(RefPtr<nsIDOMDataChannel> aChannel,
+static void NotifyDataChannel_m(RefPtr<nsDOMDataChannel> aChannel,
                                 RefPtr<PeerConnectionObserver> aObserver)
 {
   MOZ_ASSERT(NS_IsMainThread());
   JSErrorResult rv;
-  RefPtr<nsDOMDataChannel> channel = static_cast<nsDOMDataChannel*>(&*aChannel);
-  aObserver->NotifyDataChannel(*channel, rv);
-  NS_DataChannelAppReady(aChannel);
+  aObserver->NotifyDataChannel(*aChannel, rv);
+  aChannel->AppReady();
 }
 
 void
@@ -1420,7 +1422,7 @@ PeerConnectionImpl::NotifyDataChannel(already_AddRefed<DataChannel> aChannel)
   MOZ_ASSERT(channel);
   CSFLogDebug(LOGTAG, "%s: channel: %p", __FUNCTION__, channel.get());
 
-  nsCOMPtr<nsIDOMDataChannel> domchannel;
+  RefPtr<nsDOMDataChannel> domchannel;
   nsresult rv = NS_NewDOMDataChannel(channel.forget(),
                                      mWindow, getter_AddRefs(domchannel));
   NS_ENSURE_SUCCESS_VOID(rv);
@@ -2343,7 +2345,8 @@ PeerConnectionImpl::CreateReceiveTrack(SdpMediaSection::MediaType type)
       audio ?
         MediaStreamGraph::AUDIO_THREAD_DRIVER :
         MediaStreamGraph::SYSTEM_THREAD_DRIVER,
-      GetWindow());
+      GetWindow(),
+      MediaStreamGraph::REQUEST_DEFAULT_SAMPLE_RATE);
 
   RefPtr<DOMMediaStream> stream =
     DOMMediaStream::CreateSourceStreamAsInput(GetWindow(), graph);

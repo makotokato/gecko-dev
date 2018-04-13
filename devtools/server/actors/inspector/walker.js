@@ -4,7 +4,7 @@
 
 "use strict";
 
-const {Ci, Cu} = require("chrome");
+const {Cc, Ci, Cu} = require("chrome");
 
 const Services = require("Services");
 const protocol = require("devtools/shared/protocol");
@@ -706,33 +706,28 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     }
 
     if (isShadowHost) {
-      let {before, after} = this._getBeforeAfterElements(node.rawNode);
+      // Use anonymous walkers to fetch ::before / ::after pseudo elements
+      let firstChildWalker = this.getDocumentWalker(node.rawNode);
+      let first = firstChildWalker.firstChild();
+      let hasBefore = first && this._ref(first).isBeforePseudoElement;
+
+      let lastChildWalker = this.getDocumentWalker(node.rawNode);
+      let last = lastChildWalker.lastChild();
+      let hasAfter = last && this._ref(last).isAfterPseudoElement;
+
       nodes = [
         // #shadow-root
         this._ref(node.rawNode.shadowRoot),
         // ::before
-        ...(before ? [before] : []),
+        ...(hasBefore ? [this._ref(first)] : []),
         // shadow host direct children
         ...nodes,
         // ::after
-        ...(after ? [after] : []),
+        ...(hasAfter ? [this._ref(last)] : []),
       ];
     }
 
     return { hasFirst, hasLast, nodes };
-  },
-
-  _getBeforeAfterElements: function(node) {
-    let firstChildWalker = this.getDocumentWalker(node);
-    let before = this._ref(firstChildWalker.firstChild());
-
-    let lastChildWalker = this.getDocumentWalker(node);
-    let after = this._ref(lastChildWalker.lastChild());
-
-    return {
-      before: before.isBeforePseudoElement ? before : undefined,
-      after: after.isAfterPseudoElement ? after : undefined,
-    };
   },
 
   /**
@@ -2018,6 +2013,21 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     }
 
     return this._ref(offsetParent);
+  },
+
+  /**
+   * Returns true if accessibility service is running and the node has a
+   * corresponding valid accessible object.
+   */
+  hasAccessibilityProperties: async function(node) {
+    if (isNodeDead(node) || !Services.appinfo.accessibilityEnabled) {
+      return false;
+    }
+
+    const accService = Cc["@mozilla.org/accessibilityService;1"].getService(
+      Ci.nsIAccessibilityService);
+    const acc = accService.getAccessibleFor(node.rawNode);
+    return acc && acc.indexInParent > -1;
   },
 });
 

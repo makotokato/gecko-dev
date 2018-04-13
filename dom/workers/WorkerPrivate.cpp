@@ -393,8 +393,7 @@ private:
                          EventInit());
     event->SetTrusted(true);
 
-    bool dummy;
-    parentEventTarget->DispatchEvent(event, &dummy);
+    parentEventTarget->DispatchEvent(*event);
     return true;
   }
 };
@@ -424,10 +423,14 @@ private:
       return false;
     }
 
-    // PerformanceStorage needs to be initialized on the worker thread before
-    // being used on main-thread. Let's be sure that it is created before any
+    // PerformanceStorage & PerformanceCounter both need to be initialized
+    // on the worker thread before being used on main-thread.
+    // Let's be sure that it is created before any
     // content loading.
     aWorkerPrivate->EnsurePerformanceStorage();
+#ifndef RELEASE_OR_BETA
+    aWorkerPrivate->EnsurePerformanceCounter();
+#endif
 
     ErrorResult rv;
     workerinternals::LoadMainScript(aWorkerPrivate, mScriptURL, WorkerScript, rv);
@@ -472,6 +475,15 @@ private:
 
     aWorkerPrivate->SetWorkerScriptExecutedSuccessfully();
     return true;
+  }
+
+  void
+  PostRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate, bool aRunResult) override
+  {
+    if (!aRunResult) {
+      aWorkerPrivate->CloseInternal();
+    }
+    WorkerRunnable::PostRun(aCx, aWorkerPrivate, aRunResult);
   }
 };
 
@@ -2095,8 +2107,7 @@ WorkerPrivate::OfflineStatusChangeEventInternal(bool aIsOffline)
   event->InitEvent(eventType, false, false);
   event->SetTrusted(true);
 
-  bool dummy;
-  globalScope->DispatchEvent(event, &dummy);
+  globalScope->DispatchEvent(*event);
 }
 
 void
@@ -2195,10 +2206,11 @@ WorkerPrivate::BroadcastErrorToSharedWorkers(
 
     event->SetTrusted(true);
 
-    bool defaultActionEnabled;
-    nsresult rv = sharedWorker->DispatchEvent(event, &defaultActionEnabled);
-    if (NS_FAILED(rv)) {
-      ThrowAndReport(window, rv);
+    ErrorResult res;
+    bool defaultActionEnabled =
+      sharedWorker->DispatchEvent(*event, CallerType::System, res);
+    if (res.Failed()) {
+      ThrowAndReport(window, res.StealNSResult());
       continue;
     }
 
@@ -3153,6 +3165,12 @@ WorkerPrivate::DoRunLoop(JSContext* aCx)
       currentStatus = mStatus;
     }
 
+    if (currentStatus >= Terminating && previousStatus < Terminating) {
+      if (mScope) {
+        mScope->NoteTerminating();
+      }
+    }
+
     // if all holders are done then we can kill this thread.
     if (currentStatus != Running && !HasActiveHolders()) {
 
@@ -3295,19 +3313,6 @@ WorkerPrivate::AfterProcessNextEvent()
 {
   AssertIsOnWorkerThread();
   MOZ_ASSERT(CycleCollectedJSContext::Get()->RecursionDepth());
-}
-
-void
-WorkerPrivate::MaybeDispatchLoadFailedRunnable()
-{
-  AssertIsOnWorkerThread();
-
-  nsCOMPtr<nsIRunnable> runnable = StealLoadFailedAsyncRunnable();
-  if (!runnable) {
-    return;
-  }
-
-  MOZ_ALWAYS_SUCCEEDS(DispatchToMainThread(runnable.forget()));
 }
 
 nsIEventTarget*
@@ -3587,7 +3592,7 @@ WorkerPrivate::InterruptCallback(JSContext* aCx)
         break;
       }
 
-      WaitForWorkerEvents(PR_MillisecondsToInterval(UINT32_MAX));
+      WaitForWorkerEvents();
     }
   }
 
@@ -3708,13 +3713,13 @@ WorkerPrivate::DisableMemoryReporter()
 }
 
 void
-WorkerPrivate::WaitForWorkerEvents(PRIntervalTime aInterval)
+WorkerPrivate::WaitForWorkerEvents()
 {
   AssertIsOnWorkerThread();
   mMutex.AssertCurrentThreadOwns();
 
   // Wait for a worker event.
-  mCondVar.Wait(aInterval);
+  mCondVar.Wait();
 }
 
 WorkerPrivate::ProcessAllControlRunnablesResult
@@ -4578,8 +4583,7 @@ WorkerPrivate::SetTimeout(JSContext* aCx,
   // If the worker is trying to call setTimeout/setInterval and the parent
   // thread has initiated the close process then just silently fail.
   if (currentStatus >= Closing) {
-    aRv.Throw(NS_ERROR_FAILURE);
-    return 0;
+    return timerId;
   }
 
   nsAutoPtr<TimeoutInfo> newInfo(new TimeoutInfo());
@@ -5097,10 +5101,7 @@ WorkerPrivate::ConnectMessagePort(JSContext* aCx,
 
   event->SetTrusted(true);
 
-  nsCOMPtr<nsIDOMEvent> domEvent = do_QueryObject(event);
-
-  bool dummy;
-  globalScope->DispatchEvent(domEvent, &dummy);
+  globalScope->DispatchEvent(*event);
 
   return true;
 }
@@ -5215,15 +5216,19 @@ WorkerPrivate::DumpCrashInformation(nsACString& aString)
 }
 
 #ifndef RELEASE_OR_BETA
-PerformanceCounter*
-WorkerPrivate::GetPerformanceCounter()
+void
+WorkerPrivate::EnsurePerformanceCounter()
 {
   AssertIsOnWorkerThread();
-
   if (!mPerformanceCounter) {
     mPerformanceCounter = new PerformanceCounter(NS_ConvertUTF16toUTF8(mWorkerName));
   }
+}
 
+PerformanceCounter*
+WorkerPrivate::GetPerformanceCounter()
+{
+  MOZ_ASSERT(mPerformanceCounter);
   return mPerformanceCounter;
 }
 #endif

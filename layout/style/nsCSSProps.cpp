@@ -27,7 +27,7 @@
 #include "nsStaticNameTable.h"
 
 #include "mozilla/Preferences.h"
-#include "mozilla/StylePrefs.h"
+#include "mozilla/StaticPrefs.h"
 
 using namespace mozilla;
 
@@ -367,7 +367,8 @@ nsCSSProps::LookupFontDesc(const nsAString& aFontDesc)
   MOZ_ASSERT(gFontDescTable, "no lookup table, needs addref");
   nsCSSFontDesc which = nsCSSFontDesc(gFontDescTable->Lookup(aFontDesc));
 
-  if (which == eCSSFontDesc_Display && !StylePrefs::sFontDisplayEnabled) {
+  if (which == eCSSFontDesc_Display &&
+      !StaticPrefs::layout_css_font_display_enabled()) {
     which = eCSSFontDesc_UNKNOWN;
   }
   return which;
@@ -1374,8 +1375,8 @@ const KTableEntry nsCSSProps::kFontVariantPositionKTable[] = {
 };
 
 const KTableEntry nsCSSProps::kFontWeightKTable[] = {
-  { eCSSKeyword_normal, NS_STYLE_FONT_WEIGHT_NORMAL },
-  { eCSSKeyword_bold, NS_STYLE_FONT_WEIGHT_BOLD },
+  { eCSSKeyword_normal, NS_FONT_WEIGHT_NORMAL },
+  { eCSSKeyword_bold, NS_FONT_WEIGHT_BOLD },
   { eCSSKeyword_bolder, NS_STYLE_FONT_WEIGHT_BOLDER },
   { eCSSKeyword_lighter, NS_STYLE_FONT_WEIGHT_LIGHTER },
   { eCSSKeyword_UNKNOWN, -1 }
@@ -1914,6 +1915,20 @@ const KTableEntry nsCSSProps::kWidthKTable[] = {
   { eCSSKeyword_UNKNOWN, -1 }
 };
 
+// This must be the same as kWidthKTable, but just with 'content' added:
+const KTableEntry nsCSSProps::kFlexBasisKTable[] = {
+  { eCSSKeyword__moz_max_content, NS_STYLE_WIDTH_MAX_CONTENT },
+  { eCSSKeyword__moz_min_content, NS_STYLE_WIDTH_MIN_CONTENT },
+  { eCSSKeyword__moz_fit_content, NS_STYLE_WIDTH_FIT_CONTENT },
+  { eCSSKeyword__moz_available,   NS_STYLE_WIDTH_AVAILABLE },
+  { eCSSKeyword_content,          NS_STYLE_FLEX_BASIS_CONTENT },
+  { eCSSKeyword_UNKNOWN, -1 }
+};
+static_assert(ArrayLength(nsCSSProps::kFlexBasisKTable) ==
+              ArrayLength(nsCSSProps::kWidthKTable) + 1,
+              "kFlexBasisKTable should have the same entries as "
+              "kWidthKTable, plus one more for 'content'");
+
 const KTableEntry nsCSSProps::kWindowDraggingKTable[] = {
   { eCSSKeyword_default, StyleWindowDragging::Default },
   { eCSSKeyword_drag, StyleWindowDragging::Drag },
@@ -2257,22 +2272,10 @@ bool nsCSSProps::GetColorName(int32_t aPropValue, nsCString &aStr)
   return rv;
 }
 
-const nsStyleStructID nsCSSProps::kSIDTable[eCSSProperty_COUNT_no_shorthands] = {
-    #define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_, \
-                     kwtable_, stylestruct_, ...) \
-        eStyleStruct_##stylestruct_,
-    #define CSS_PROP_LIST_INCLUDE_LOGICAL
-
-    #include "nsCSSPropList.h"
-
-    #undef CSS_PROP_LIST_INCLUDE_LOGICAL
-    #undef CSS_PROP
-};
-
 const nsStyleAnimType
 nsCSSProps::kAnimTypeTable[eCSSProperty_COUNT_no_shorthands] = {
-#define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_, \
-                 kwtable_, stylestruct_, animtype_)                 \
+#define CSS_PROP(name_, id_, method_, flags_, pref_, \
+                 parsevariant_, kwtable_, animtype_) \
   animtype_,
 #define CSS_PROP_LIST_INCLUDE_LOGICAL
 #include "nsCSSPropList.h"
@@ -2488,7 +2491,6 @@ static const nsCSSPropertyID gFontSubpropTable[] = {
   eCSSProperty_line_height,
   eCSSProperty_font_size_adjust,
   eCSSProperty_font_stretch,
-  eCSSProperty__x_system_font,
   eCSSProperty_font_feature_settings,
   eCSSProperty_font_language_override,
   eCSSProperty_font_kerning,

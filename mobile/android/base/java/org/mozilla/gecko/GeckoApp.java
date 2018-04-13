@@ -40,6 +40,7 @@ import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.util.ViewUtil;
 import org.mozilla.gecko.widget.ActionModePresenter;
 import org.mozilla.gecko.widget.AnchoredPopup;
+import org.mozilla.geckoview.GeckoRuntime;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoSessionSettings;
 import org.mozilla.geckoview.GeckoView;
@@ -634,6 +635,8 @@ public abstract class GeckoApp extends GeckoActivity
         outState.putBoolean(SAVED_STATE_IN_BACKGROUND, isApplicationInBackground());
     }
 
+    public void addTab(int flags) { }
+
     public void addTab() { }
 
     public void addPrivateTab() { }
@@ -902,6 +905,10 @@ public abstract class GeckoApp extends GeckoActivity
                               int elementType, final String elementSrc) {
     }
 
+    @Override
+    public void onExternalResponse(final GeckoSession session, final GeckoSession.WebResponseInfo request) {
+    }
+
     protected void setFullScreen(final boolean fullscreen) {
         ThreadUtils.postToUiThread(new Runnable() {
             @Override
@@ -1073,16 +1080,16 @@ public abstract class GeckoApp extends GeckoActivity
         mLayerView = (GeckoView) findViewById(R.id.layer_view);
 
         final GeckoSession session = new GeckoSession();
+        session.getSettings().setString(GeckoSessionSettings.CHROME_URI,
+                                        "chrome://browser/content/browser.xul");
+        session.setContentDelegate(this);
+
         // If the view already has a session, we need to ensure it is closed.
         if (mLayerView.getSession() != null) {
             mLayerView.getSession().close();
         }
-        mLayerView.setSession(session);
+        mLayerView.setSession(session, GeckoRuntime.getDefault(this));
         mLayerView.setOverScrollMode(View.OVER_SCROLL_NEVER);
-
-        session.getSettings().setString(GeckoSessionSettings.CHROME_URI,
-                                        "chrome://browser/content/browser.xul");
-        session.setContentDelegate(this);
 
         GeckoAccessibility.setDelegate(mLayerView);
 
@@ -1459,7 +1466,7 @@ public abstract class GeckoApp extends GeckoActivity
         final String passedUri = getIntentURI(intent);
 
         final boolean intentHasURL = passedUri != null;
-        final boolean isAboutHomeURL = intentHasURL && AboutPages.isAboutHome(passedUri);
+        final boolean isAboutHomeURL = intentHasURL && AboutPages.isDefaultHomePage(passedUri);
         final boolean isAssistIntent = Intent.ACTION_ASSIST.equals(action);
         final boolean needsNewForegroundTab = intentHasURL || isAssistIntent;
 

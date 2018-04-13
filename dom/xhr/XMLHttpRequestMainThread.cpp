@@ -55,7 +55,6 @@
 #include "nsThreadUtils.h"
 #include "nsIUploadChannel.h"
 #include "nsIUploadChannel2.h"
-#include "nsIDOMSerializer.h"
 #include "nsXPCOM.h"
 #include "nsIDOMEventListener.h"
 #include "nsIScriptSecurityManager.h"
@@ -195,33 +194,44 @@ bool
 XMLHttpRequestMainThread::sDontWarnAboutSyncXHR = false;
 
 XMLHttpRequestMainThread::XMLHttpRequestMainThread()
-  : mResponseBodyDecodedPos(0),
-    mResponseCharset(nullptr),
-    mResponseType(XMLHttpRequestResponseType::_empty),
-    mRequestObserver(nullptr),
-    mState(XMLHttpRequestBinding::UNSENT),
-    mFlagSynchronous(false), mFlagAborted(false), mFlagParseBody(false),
-    mFlagSyncLooping(false), mFlagBackgroundRequest(false),
-    mFlagHadUploadListenersOnSend(false), mFlagACwithCredentials(false),
-    mFlagTimedOut(false), mFlagDeleted(false), mFlagSend(false),
-    mUploadTransferred(0), mUploadTotal(0), mUploadComplete(true),
-    mProgressSinceLastProgressEvent(false),
-    mRequestSentTime(0), mTimeoutMilliseconds(0),
-    mErrorLoad(ErrorType::eOK), mErrorParsingXML(false),
-    mWaitingForOnStopRequest(false),
-    mProgressTimerIsActive(false),
-    mIsHtml(false),
-    mWarnAboutSyncHtml(false),
-    mLoadTotal(-1),
-    mIsSystem(false),
-    mIsAnon(false),
-    mFirstStartRequestSeen(false),
-    mInLoadProgressEvent(false),
-    mResultJSON(JS::UndefinedValue()),
-    mResultArrayBuffer(nullptr),
-    mIsMappedArrayBuffer(false),
-    mXPCOMifier(nullptr),
-    mEventDispatchingSuspended(false)
+  : mResponseBodyDecodedPos(0)
+  , mResponseCharset(nullptr)
+  , mResponseType(XMLHttpRequestResponseType::_empty)
+  , mRequestObserver(nullptr)
+  , mState(XMLHttpRequestBinding::UNSENT)
+  , mFlagSynchronous(false)
+  , mFlagAborted(false)
+  , mFlagParseBody(false)
+  , mFlagSyncLooping(false)
+  , mFlagBackgroundRequest(false)
+  , mFlagHadUploadListenersOnSend(false)
+  , mFlagACwithCredentials(false)
+  , mFlagTimedOut(false)
+  , mFlagDeleted(false)
+  , mFlagSend(false)
+  , mUploadTransferred(0)
+  , mUploadTotal(0)
+  , mUploadComplete(true)
+  , mProgressSinceLastProgressEvent(false)
+  , mRequestSentTime(0)
+  , mTimeoutMilliseconds(0)
+  , mErrorLoad(ErrorType::eOK)
+  , mErrorParsingXML(false)
+  , mWaitingForOnStopRequest(false)
+  , mProgressTimerIsActive(false)
+  , mIsHtml(false)
+  , mWarnAboutSyncHtml(false)
+  , mLoadTotal(-1)
+  , mLoadTransferred{}
+  , mIsSystem(false)
+  , mIsAnon(false)
+  , mFirstStartRequestSeen(false)
+  , mInLoadProgressEvent(false)
+  , mResultJSON(JS::UndefinedValue())
+  , mResultArrayBuffer(nullptr)
+  , mIsMappedArrayBuffer(false)
+  , mXPCOMifier(nullptr)
+  , mEventDispatchingSuspended(false)
 {
   mozilla::HoldJSObjects(this);
 }
@@ -1325,6 +1335,10 @@ XMLHttpRequestMainThread::DispatchOrStoreEvent(DOMEventTargetHelper* aTarget,
   MOZ_ASSERT(aTarget);
   MOZ_ASSERT(aEvent);
 
+  if (NS_FAILED(CheckInnerWindowCorrectness())) {
+    return;
+  }
+
   if (mEventDispatchingSuspended) {
     PendingEvent* event = mPendingEvents.AppendElement();
     event->mTarget = aTarget;
@@ -1332,8 +1346,7 @@ XMLHttpRequestMainThread::DispatchOrStoreEvent(DOMEventTargetHelper* aTarget,
     return;
   }
 
-  bool dummy;
-  aTarget->DispatchEvent(aEvent, &dummy);
+  aTarget->DispatchEvent(*aEvent);
 }
 
 void
@@ -1352,9 +1365,12 @@ XMLHttpRequestMainThread::ResumeEventDispatching()
   nsTArray<PendingEvent> pendingEvents;
   pendingEvents.SwapElements(mPendingEvents);
 
+  if (NS_FAILED(CheckInnerWindowCorrectness())) {
+    return;
+  }
+
   for (uint32_t i = 0; i < pendingEvents.Length(); ++i) {
-    bool dummy;
-    pendingEvents[i].mTarget->DispatchEvent(pendingEvents[i].mEvent, &dummy);
+    pendingEvents[i].mTarget->DispatchEvent(*pendingEvents[i].mEvent);
   }
 }
 

@@ -53,8 +53,7 @@
 #include "nsISelection.h"
 #include "mozilla/dom/HTMLDetailsElement.h"
 #include "mozilla/dom/HTMLSummaryElement.h"
-#include "mozilla/RestyleManagerInlines.h"
-#include "mozilla/ServoRestyleManager.h"
+#include "mozilla/RestyleManager.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/Telemetry.h"
 
@@ -450,7 +449,7 @@ nsBlockFrame::GetFrameName(nsAString& aResult) const
 #endif
 
 void
-nsBlockFrame::InvalidateFrame(uint32_t aDisplayItemKey)
+nsBlockFrame::InvalidateFrame(uint32_t aDisplayItemKey, bool aRebuildDisplayItems)
 {
   if (nsSVGUtils::IsInSVGTextSubtree(this)) {
     NS_ASSERTION(GetParent()->IsSVGTextFrame(),
@@ -458,11 +457,11 @@ nsBlockFrame::InvalidateFrame(uint32_t aDisplayItemKey)
     GetParent()->InvalidateFrame();
     return;
   }
-  nsContainerFrame::InvalidateFrame(aDisplayItemKey);
+  nsContainerFrame::InvalidateFrame(aDisplayItemKey, aRebuildDisplayItems);
 }
 
 void
-nsBlockFrame::InvalidateFrameWithRect(const nsRect& aRect, uint32_t aDisplayItemKey)
+nsBlockFrame::InvalidateFrameWithRect(const nsRect& aRect, uint32_t aDisplayItemKey, bool aRebuildDisplayItems)
 {
   if (nsSVGUtils::IsInSVGTextSubtree(this)) {
     NS_ASSERTION(GetParent()->IsSVGTextFrame(),
@@ -470,7 +469,7 @@ nsBlockFrame::InvalidateFrameWithRect(const nsRect& aRect, uint32_t aDisplayItem
     GetParent()->InvalidateFrame();
     return;
   }
-  nsContainerFrame::InvalidateFrameWithRect(aRect, aDisplayItemKey);
+  nsContainerFrame::InvalidateFrameWithRect(aRect, aDisplayItemKey, aRebuildDisplayItems);
 }
 
 nscoord
@@ -531,8 +530,11 @@ nsBlockFrame::GetCaretBaseline() const
   RefPtr<nsFontMetrics> fm =
     nsLayoutUtils::GetFontMetricsForFrame(this, inflation);
   nscoord lineHeight =
-    ReflowInput::CalcLineHeight(GetContent(), Style(),
-                                      contentRect.height, inflation);
+    ReflowInput::CalcLineHeight(GetContent(),
+                                Style(),
+                                PresContext(),
+                                contentRect.height,
+                                inflation);
   const WritingMode wm = GetWritingMode();
   return nsLayoutUtils::GetCenteredFontBaseline(fm, lineHeight,
                                                 wm.IsLineInverted()) + bp.top;
@@ -7542,9 +7544,9 @@ nsBlockFrame::UpdatePseudoElementStyles(ServoRestyleState& aRestyleState)
     // We also want to update the styles of the first-line's descendants.  We
     // don't need to compute a changehint for this, though, since any changes to
     // them are handled by the first-line anyway.
-    ServoRestyleManager* manager = PresContext()->RestyleManager()->AsServo();
+    RestyleManager* manager = PresContext()->RestyleManager();
     for (nsIFrame* kid : firstLineFrame->PrincipalChildList()) {
-      manager->ReparentComputedStyle(kid);
+      manager->ReparentComputedStyleForFirstLine(kid);
     }
   }
 }

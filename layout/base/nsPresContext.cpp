@@ -38,7 +38,6 @@
 #include "nsLayoutUtils.h"
 #include "nsViewManager.h"
 #include "mozilla/RestyleManager.h"
-#include "mozilla/RestyleManagerInlines.h"
 #include "SurfaceCacheUtils.h"
 #include "nsMediaFeatures.h"
 #include "gfxPlatform.h"
@@ -266,9 +265,6 @@ nsPresContext::nsPresContext(nsIDocument* aDocument, nsPresContextType aType)
     mQuirkSheetAdded(false),
     mNeedsPrefUpdate(false),
     mHadNonBlankPaint(false)
-#ifdef RESTYLE_LOGGING
-    , mRestyleLoggingEnabled(false)
-#endif
 #ifdef DEBUG
     , mInitialized(false)
 #endif
@@ -836,7 +832,7 @@ nsPresContext::Init(nsDeviceContext* aDeviceContext)
   // FIXME(emilio): I'm pretty sure this doesn't happen after bug 1414999.
   Element* root = mDocument->GetRootElement();
   if (root && root->HasServoData()) {
-    ServoRestyleManager::ClearServoDataFromSubtree(root);
+    RestyleManager::ClearServoDataFromSubtree(root);
   }
 
   if (mDeviceContext->SetFullZoom(mFullZoom))
@@ -945,10 +941,6 @@ nsPresContext::Init(nsDeviceContext* aDeviceContext)
 
   mEventManager->SetPresContext(this);
 
-#ifdef RESTYLE_LOGGING
-  mRestyleLoggingEnabled = GeckoRestyleManager::RestyleLoggingInitiallyEnabled();
-#endif
-
 #ifdef DEBUG
   mInitialized = true;
 #endif
@@ -964,7 +956,7 @@ nsPresContext::AttachShell(nsIPresShell* aShell)
   MOZ_ASSERT(!mShell);
   mShell = aShell;
 
-  mRestyleManager = new ServoRestyleManager(this);
+  mRestyleManager = new mozilla::RestyleManager(this);
 
   // Since CounterStyleManager is also the name of a method of
   // nsPresContext, it is necessary to prefix the class with the mozilla
@@ -1787,8 +1779,10 @@ nsPresContext::ThemeChangedInternal()
 
   // Recursively notify all remote leaf descendants that the
   // system theme has changed.
-  nsContentUtils::CallOnAllRemoteChildren(mDocument->GetWindow(),
-                                          NotifyThemeChanged, nullptr);
+  if (nsPIDOMWindowOuter* window = mDocument->GetWindow()) {
+    nsContentUtils::CallOnAllRemoteChildren(window,
+                                            NotifyThemeChanged, nullptr);
+  }
 }
 
 void
@@ -1999,7 +1993,7 @@ nsPresContext::RebuildAllStyleData(nsChangeHint aExtraHint,
   // TODO(emilio): It's unclear to me why would these three calls below be
   // needed. In particular, RebuildAllStyleData doesn't rebuild rules or
   // specified style information and such (note the comment in
-  // ServoRestyleManager::RebuildAllStyleData re. the funny semantics), so I
+  // RestyleManager::RebuildAllStyleData re. the funny semantics), so I
   // don't know why should we rebuild the user font set / counter styles /
   // etc...
   mDocument->MarkUserFontSetDirty();
@@ -2118,9 +2112,11 @@ NotifyTabSizeModeChanged(TabParent* aTab, void* aArg)
 void
 nsPresContext::SizeModeChanged(nsSizeMode aSizeMode)
 {
-  nsContentUtils::CallOnAllRemoteChildren(mDocument->GetWindow(),
-                                          NotifyTabSizeModeChanged,
-                                          &aSizeMode);
+  if (nsPIDOMWindowOuter* window = mDocument->GetWindow()) {
+    nsContentUtils::CallOnAllRemoteChildren(window,
+                                            NotifyTabSizeModeChanged,
+                                            &aSizeMode);
+  }
   MediaFeatureValuesChangedAllDocuments({ MediaFeatureChangeReason::SizeModeChange });
 }
 

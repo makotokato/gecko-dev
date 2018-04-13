@@ -914,7 +914,7 @@ function gKeywordURIFixup({ target: browser, data: fixupInfo }) {
             let pref = "browser.fixup.domainwhitelist." + asciiHost;
             Services.prefs.setBoolPref(pref, true);
           }
-          openUILinkIn(alternativeURI.spec, "current");
+          openTrustedLinkIn(alternativeURI.spec, "current");
         }
       },
       {
@@ -2221,7 +2221,7 @@ function BrowserGoHome(aEvent) {
       gBrowser.selectedTab.pinned)
     where = "tab";
 
-  // openUILinkIn in utilityOverlay.js doesn't handle loading multiple pages
+  // openTrustedLinkIn in utilityOverlay.js doesn't handle loading multiple pages
   switch (where) {
   case "current":
     loadOneOrMoreURIs(homePage, Services.scriptSecurityManager.getSystemPrincipal());
@@ -2344,7 +2344,9 @@ function BrowserOpenTab(event) {
     }
   }
 
-  openUILinkIn(BROWSER_NEW_TAB_URL, where, { relatedToCurrent });
+  openTrustedLinkIn(BROWSER_NEW_TAB_URL, where, {
+    relatedToCurrent,
+  });
 }
 
 var gLastOpenDirectory = {
@@ -2393,7 +2395,7 @@ function BrowserOpenFileWindow() {
           }
         } catch (ex) {
         }
-        openUILinkIn(fp.fileURL.spec, "current");
+        openTrustedLinkIn(fp.fileURL.spec, "current");
       }
     };
 
@@ -3188,7 +3190,7 @@ var BrowserOnClick = {
           label: gNavigatorBundle.getString("safebrowsing.notAnAttackButton.label"),
           accessKey: gNavigatorBundle.getString("safebrowsing.notAnAttackButton.accessKey"),
           callback() {
-            openUILinkIn(reportUrl, "tab");
+            openTrustedLinkIn(reportUrl, "tab");
           }
         };
       }
@@ -3202,7 +3204,7 @@ var BrowserOnClick = {
           label: gNavigatorBundle.getString("safebrowsing.notADeceptiveSiteButton.label"),
           accessKey: gNavigatorBundle.getString("safebrowsing.notADeceptiveSiteButton.accessKey"),
           callback() {
-            openUILinkIn(reportUrl, "tab");
+            openTrustedLinkIn(reportUrl, "tab");
           }
         };
       }
@@ -3240,9 +3242,7 @@ function getMeOutOfHere() {
  * that has certificate errors, we can get them somewhere safe.
  */
 function goBackFromErrorPage() {
-  const ss = Cc["@mozilla.org/browser/sessionstore;1"].
-             getService(Ci.nsISessionStore);
-  let state = JSON.parse(ss.getTabState(gBrowser.selectedTab));
+  let state = JSON.parse(SessionStore.getTabState(gBrowser.selectedTab));
   if (state.index == 1) {
     // If the unsafe page is the first or the only one in history, go to the
     // start page.
@@ -4028,7 +4028,7 @@ const BrowserSearch = {
   loadAddEngines: function BrowserSearch_loadAddEngines() {
     var newWindowPref = Services.prefs.getIntPref("browser.link.open_newwindow");
     var where = newWindowPref == 3 ? "tab" : "window";
-    openUILinkIn(this.searchEnginesURL, where);
+    openTrustedLinkIn(this.searchEnginesURL, where);
   },
 
   _getSearchEngineId(engine) {
@@ -4226,7 +4226,7 @@ function addToUrlbarHistory(aUrlToAdd) {
 
 function BrowserDownloadsUI() {
   if (PrivateBrowsingUtils.isWindowPrivate(window)) {
-    openUILinkIn("about:downloads", "tab");
+    openTrustedLinkIn("about:downloads", "tab");
   } else {
     PlacesCommandHook.showPlacesOrganizer("Downloads");
   }
@@ -4396,7 +4396,7 @@ function updateEditUIVisibility() {
  *        A click event on a userContext File Menu option
  */
 function openNewUserContextTab(event) {
-  openUILinkIn(BROWSER_NEW_TAB_URL, "tab", {
+  openTrustedLinkIn(BROWSER_NEW_TAB_URL, "tab", {
     userContextId: parseInt(event.target.getAttribute("data-usercontextid")),
   });
 }
@@ -4470,8 +4470,6 @@ var XULBrowserWindow = {
   startTime: 0,
   isBusy: false,
   busyUI: false,
-  // Left here for add-on compatibility, see bug 752434
-  inContentWhitelist: [],
 
   QueryInterface(aIID) {
     if (aIID.equals(Ci.nsIWebProgressListener) ||
@@ -4832,9 +4830,6 @@ var XULBrowserWindow = {
     FeedHandler.updateFeeds();
     BrowserSearch.updateOpenSearchBadge();
   },
-
-  // Left here for add-on compatibility, see bug 752434
-  hideChromeForLocation() {},
 
   onStatusChange(aWebProgress, aRequest, aStatus, aMessage) {
     this.status = aMessage;
@@ -5610,8 +5605,6 @@ function setToolbarVisibility(toolbar, isVisible, persist = true) {
   let event = new CustomEvent("toolbarvisibilitychange", eventParams);
   toolbar.dispatchEvent(event);
 
-  BookmarkingUI.onToolbarVisibilityChange();
-
   if (toolbar.getAttribute("type") == "menubar" && CustomizationHandler.isCustomizing()) {
     gCustomizeMode._updateDragSpaceCheckbox();
   }
@@ -5729,10 +5722,6 @@ var gUIDensity = {
       return { mode: this.MODE_TOUCH, overridden: true };
     }
     return { mode: Services.prefs.getIntPref(this.uiDensityPref), overridden: false };
-  },
-
-  setCurrentMode(mode) {
-    Services.prefs.setIntPref(this.uiDensityPref, mode);
   },
 
   update(mode) {
@@ -6127,6 +6116,11 @@ function handleLinkClick(event, href, linkNode) {
   return true;
 }
 
+/**
+ * Handles paste on middle mouse clicks.
+ *
+ * @param event {Event | Object} Event or JSON object.
+ */
 function middleMousePaste(event) {
   let clipboard = readFromClipboard();
   if (!clipboard)
@@ -6166,11 +6160,15 @@ function middleMousePaste(event) {
         lastLocationChange == gBrowser.selectedBrowser.lastLocationChange) {
       openUILink(data.url, event,
                  { ignoreButton: true,
-                   disallowInheritPrincipal: !data.mayInheritPrincipal });
+                   disallowInheritPrincipal: !data.mayInheritPrincipal,
+                   triggeringPrincipal: gBrowser.selectedBrowser.contentPrincipal,
+                 });
     }
   });
 
-  event.stopPropagation();
+  if (event instanceof Event) {
+    event.stopPropagation();
+  }
 }
 
 function stripUnsafeProtocolOnPaste(pasteData) {
@@ -7100,7 +7098,7 @@ function BrowserOpenAddonsMgr(aView) {
     let whereToOpen = (window.gBrowser && isTabEmpty(gBrowser.selectedTab)) ?
                       "current" :
                       "tab";
-    openUILinkIn("about:addons", whereToOpen);
+    openTrustedLinkIn("about:addons", whereToOpen);
 
     Services.obs.addObserver(function observer(aSubject, aTopic, aData) {
       Services.obs.removeObserver(observer, aTopic);
@@ -7276,7 +7274,7 @@ function ReportFalseDeceptiveSite() {
       mm.removeMessageListener("DeceptiveBlockedDetails:Result", onMessage);
       let reportUrl = gSafeBrowsing.getReportURL("PhishMistake", message.data.blockedInfo);
       if (reportUrl) {
-        openUILinkIn(reportUrl, "tab");
+        openTrustedLinkIn(reportUrl, "tab");
       } else {
         let bundle =
           Services.strings.createBundle("chrome://browser/locale/safebrowsing/safebrowsing.properties");
@@ -8575,8 +8573,8 @@ var gPrivateBrowsingUI = {
  *        If no suitable window is found, a new one will be opened.
  * @param aOpenParams
  *        If switching to this URI results in us opening a tab, aOpenParams
- *        will be the parameter object that gets passed to openUILinkIn. Please
- *        see the documentation for openUILinkIn to see what parameters can be
+ *        will be the parameter object that gets passed to openTrustedLinkIn. Please
+ *        see the documentation for openTrustedLinkIn to see what parameters can be
  *        passed via this object.
  *        This object also allows:
  *        - 'ignoreFragment' property to be set to true to exclude fragment-portion
@@ -8702,9 +8700,9 @@ function switchToTabHavingURI(aURI, aOpenNew, aOpenParams = {}) {
   // No opened tab has that url.
   if (aOpenNew) {
     if (isBrowserWindow && isTabEmpty(gBrowser.selectedTab))
-      openUILinkIn(aURI.spec, "current", aOpenParams);
+      openTrustedLinkIn(aURI.spec, "current", aOpenParams);
     else
-      openUILinkIn(aURI.spec, "tab", aOpenParams);
+      openTrustedLinkIn(aURI.spec, "tab", aOpenParams);
   }
 
   return false;
@@ -8712,23 +8710,8 @@ function switchToTabHavingURI(aURI, aOpenNew, aOpenParams = {}) {
 
 var RestoreLastSessionObserver = {
   init() {
-    let browser_tabs_restorebutton_pref = Services.prefs.getIntPref("browser.tabs.restorebutton");
-    Services.telemetry.scalarSet("browser.session.restore.browser_tabs_restorebutton", browser_tabs_restorebutton_pref);
-    Services.telemetry.scalarSet("browser.session.restore.browser_startup_page", Services.prefs.getIntPref("browser.startup.page"));
     if (SessionStore.canRestoreLastSession &&
         !PrivateBrowsingUtils.isWindowPrivate(window)) {
-      if (browser_tabs_restorebutton_pref == 1) {
-        let {restoreTabsButton, restoreTabsButtonWrapperWidth} = gBrowser.tabContainer;
-        let restoreTabsButtonWrapper = restoreTabsButton.parentNode;
-        restoreTabsButtonWrapper.setAttribute("session-exists", "true");
-        gBrowser.tabContainer.updateSessionRestoreVisibility();
-        restoreTabsButton.style.maxWidth = `${restoreTabsButtonWrapperWidth}px`;
-        gBrowser.tabContainer.addEventListener("TabOpen", this);
-        Services.telemetry.scalarSet("browser.session.restore.tabbar_restore_available", true);
-        restoreTabsButton.addEventListener("click", () => {
-          Services.telemetry.scalarSet("browser.session.restore.tabbar_restore_clicked", true);
-        });
-      }
       Services.obs.addObserver(this, "sessionstore-last-session-cleared", true);
       goSetCommandEnabled("Browser:RestoreLastSession", true);
     } else if (SessionStartup.isAutomaticRestoreEnabled()) {
@@ -8736,34 +8719,11 @@ var RestoreLastSessionObserver = {
     }
   },
 
-  handleEvent(event) {
-    switch (event.type) {
-     case "TabOpen":
-        this.removeRestoreButton();
-        break;
-    }
-  },
-
-  removeRestoreButton() {
-    let {restoreTabsButton} = gBrowser.tabContainer;
-    let restoreTabsButtonWrapper = restoreTabsButton.parentNode;
-    gBrowser.tabContainer.addEventListener("transitionend", function maxWidthTransitionHandler(e) {
-      if (e.target == gBrowser.tabContainer && e.propertyName == "max-width") {
-        gBrowser.tabContainer.updateSessionRestoreVisibility();
-        gBrowser.tabContainer.removeEventListener("transitionend", maxWidthTransitionHandler);
-      }
-    });
-    restoreTabsButtonWrapper.removeAttribute("session-exists");
-    restoreTabsButton.style.maxWidth = 0;
-    gBrowser.tabContainer.removeEventListener("TabOpen", this);
-  },
-
   observe() {
     // The last session can only be restored once so there's
     // no way we need to re-enable our menu item.
     Services.obs.removeObserver(this, "sessionstore-last-session-cleared");
     goSetCommandEnabled("Browser:RestoreLastSession", false);
-    this.removeRestoreButton();
   },
 
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,

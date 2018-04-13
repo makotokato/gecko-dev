@@ -32,7 +32,6 @@
 #include "imgIContainer.h"
 #include "CounterStyleManager.h"
 
-#include "mozilla/dom/AnimationEffectReadOnlyBinding.h" // for PlaybackDirection
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/ImageTracker.h"
 #include "mozilla/CORSMode.h"
@@ -321,6 +320,10 @@ nsStyleBorder::nsStyleBorder(const nsPresContext* aContext)
   , mBorderImageRepeatV(StyleBorderImageRepeat::Stretch)
   , mFloatEdge(StyleFloatEdge::ContentBox)
   , mBoxDecorationBreak(StyleBoxDecorationBreak::Slice)
+  , mBorderTopColor{}
+  , mBorderRightColor{}
+  , mBorderBottomColor{}
+  , mBorderLeftColor{}
   , mComputedBorder(0, 0, 0, 0)
 {
   MOZ_COUNT_CTOR(nsStyleBorder);
@@ -1067,6 +1070,18 @@ StyleShapeSource::SetShapeImage(UniquePtr<nsStyleImage> aShapeImage)
   MOZ_ASSERT(aShapeImage);
   mShapeImage = Move(aShapeImage);
   mType = StyleShapeSourceType::Image;
+}
+
+imgIRequest*
+StyleShapeSource::GetShapeImageData() const
+{
+  if (mType != StyleShapeSourceType::Image) {
+    return nullptr;
+  }
+  if (mShapeImage->GetType() != eStyleImageType_Image) {
+    return nullptr;
+  }
+  return mShapeImage->GetImageData();
 }
 
 void
@@ -2302,6 +2317,7 @@ CachedBorderImageData::GetSubImage(uint8_t aIndex)
 
 nsStyleImage::nsStyleImage()
   : mType(eStyleImageType_Null)
+  , mImage{ nullptr }
   , mCropRect(nullptr)
 {
   MOZ_COUNT_CTOR(nsStyleImage);
@@ -3109,7 +3125,8 @@ nsStyleImageLayers::Size::operator==(const Size& aOther) const
 
 nsStyleImageLayers::Layer::Layer()
   : mClip(StyleGeometryBox::BorderBox)
-  , mAttachment(NS_STYLE_IMAGELAYER_ATTACHMENT_SCROLL)
+  , /* FIXME: initialize mOrigin */ mAttachment(
+    NS_STYLE_IMAGELAYER_ATTACHMENT_SCROLL)
   , mBlendMode(NS_STYLE_BLEND_NORMAL)
   , mComposite(NS_STYLE_MASK_COMPOSITE_ADD)
   , mMaskMode(NS_STYLE_MASK_MODE_MATCH_SOURCE)
@@ -4131,8 +4148,12 @@ nsStyleContentData::~nsStyleContentData()
   } else if (mType == eStyleContentType_Counter ||
              mType == eStyleContentType_Counters) {
     mContent.mCounters->Release();
-  } else if (mContent.mString) {
+  } else if (mType == eStyleContentType_String) {
     free(mContent.mString);
+  } else if (mType == eStyleContentType_Attr) {
+    delete mContent.mAttr;
+  } else {
+    MOZ_ASSERT(mContent.mString == nullptr, "Leaking due to missing case");
   }
 }
 
@@ -4764,36 +4785,6 @@ nsStyleUIReset::CalcDifference(const nsStyleUIReset& aNewData) const
   }
 
   return hint;
-}
-
-//-----------------------
-// nsStyleVariables
-//
-
-nsStyleVariables::nsStyleVariables()
-{
-  MOZ_COUNT_CTOR(nsStyleVariables);
-}
-
-nsStyleVariables::nsStyleVariables(const nsPresContext* aContext)
-{
-  MOZ_COUNT_CTOR(nsStyleVariables);
-}
-
-nsStyleVariables::nsStyleVariables(const nsStyleVariables& aSource)
-{
-  MOZ_COUNT_CTOR(nsStyleVariables);
-}
-
-nsStyleVariables::~nsStyleVariables()
-{
-  MOZ_COUNT_DTOR(nsStyleVariables);
-}
-
-nsChangeHint
-nsStyleVariables::CalcDifference(const nsStyleVariables& aNewData) const
-{
-  return nsChangeHint(0);
 }
 
 //-----------------------

@@ -451,6 +451,7 @@ pub struct StackingContext {
     pub perspective: Option<LayoutTransform>,
     pub mix_blend_mode: MixBlendMode,
     pub reference_frame_id: Option<ClipId>,
+    pub clip_node_id: Option<ClipId>,
 } // IMPLICIT: filters: Vec<FilterOp>
 
 #[repr(u32)]
@@ -627,7 +628,7 @@ impl LocalClip {
     pub fn clip_rect(&self) -> &LayoutRect {
         match *self {
             LocalClip::Rect(ref rect) => rect,
-            LocalClip::RoundedRect(ref rect, _) => &rect,
+            LocalClip::RoundedRect(ref rect, _) => rect,
         }
     }
 

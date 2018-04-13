@@ -1110,60 +1110,12 @@ public:
   }
 
   /**
-   * After calling this function, any CSP violation reports will be buffered up
-   * by the document (by calling BufferCSPViolation) instead of being sent
-   * immediately.
-   *
-   * This facility is used by the user font cache, which wants to pre-emptively
-   * check whether a given font load would violate CSP directives, and so
-   * shouldn't immediately send the report.
-   */
-  void StartBufferingCSPViolations()
-  {
-    MOZ_ASSERT(!mBufferingCSPViolations);
-    mBufferingCSPViolations = true;
-  }
-
-  /**
-   * Stops buffering CSP violation reports, and stores any buffered reports in
-   * aResult.
-   */
-  void StopBufferingCSPViolations(nsTArray<nsCOMPtr<nsIRunnable>>& aResult)
-  {
-    MOZ_ASSERT(mBufferingCSPViolations);
-    mBufferingCSPViolations = false;
-
-    aResult.SwapElements(mBufferedCSPViolations);
-    mBufferedCSPViolations.Clear();
-  }
-
-  /**
-   * Returns whether we are currently buffering CSP violation reports.
-   */
-  bool ShouldBufferCSPViolations() const
-  {
-    return mBufferingCSPViolations;
-  }
-
-  /**
-   * Called when a CSP violation is encountered that would generate a report
-   * while buffering is enabled.
-   */
-  void BufferCSPViolation(nsIRunnable* aReportingRunnable)
-  {
-    MOZ_ASSERT(mBufferingCSPViolations);
-
-    // Dropping the CSP violation report seems preferable to OOMing.
-    mBufferedCSPViolations.AppendElement(aReportingRunnable, mozilla::fallible);
-  }
-
-  /**
    * Called when the document was decoded as UTF-8 and decoder encountered no
    * errors.
    */
-  void DisableEncodingMenu()
+  void EnableEncodingMenu()
   {
-    mEncodingMenuDisabled = true;
+    mEncodingMenuDisabled = false;
   }
 
   /**
@@ -3015,6 +2967,33 @@ public:
     mResponsiveContent.RemoveEntry(aContent);
   }
 
+  void AddComposedDocShadowRoot(mozilla::dom::ShadowRoot& aShadowRoot)
+  {
+    MOZ_ASSERT(IsShadowDOMEnabled());
+    mComposedShadowRoots.PutEntry(&aShadowRoot);
+  }
+
+  using ShadowRootSet = nsTHashtable<nsPtrHashKey<mozilla::dom::ShadowRoot>>;
+
+  void RemoveComposedDocShadowRoot(mozilla::dom::ShadowRoot& aShadowRoot)
+  {
+    MOZ_ASSERT(IsShadowDOMEnabled());
+    mComposedShadowRoots.RemoveEntry(&aShadowRoot);
+  }
+
+  // If you're considering using this, you probably want to use
+  // ShadowRoot::IsComposedDocParticipant instead. This is just for
+  // sanity-checking.
+  bool IsComposedDocShadowRoot(mozilla::dom::ShadowRoot& aShadowRoot)
+  {
+    return mComposedShadowRoots.Contains(&aShadowRoot);
+  }
+
+  const ShadowRootSet& ComposedShadowRoots() const
+  {
+    return mComposedShadowRoots;
+  }
+
   // Notifies any responsive content added by AddResponsiveContent upon media
   // features values changing.
   void NotifyMediaFeatureValuesChanged();
@@ -3211,8 +3190,6 @@ public:
     CreateAttributeNS(const nsAString& aNamespaceURI,
                       const nsAString& aQualifiedName,
                       mozilla::ErrorResult& rv);
-  void SetAllowUnsafeHTML(bool aAllow) { mAllowUnsafeHTML = aAllow; }
-  bool AllowUnsafeHTML() const;
   void GetInputEncoding(nsAString& aInputEncoding) const;
   already_AddRefed<mozilla::dom::Location> GetLocation() const;
   void GetReferrer(nsAString& aReferrer) const;
@@ -3808,6 +3785,11 @@ protected:
   // Tracking for images in the document.
   RefPtr<mozilla::dom::ImageTracker> mImageTracker;
 
+  // A hashtable of ShadowRoots belonging to the composed doc.
+  //
+  // See ShadowRoot::SetIsComposedDocParticipant.
+  ShadowRootSet mComposedShadowRoots;
+
   // The set of all object, embed, video/audio elements or
   // nsIObjectLoadingContent or nsIDocumentActivity for which this is the owner
   // document. (They might not be in the document.)
@@ -4027,10 +4009,6 @@ protected:
   // True if we have called BeginLoad and are expecting a paired EndLoad call.
   bool mDidCallBeginLoad : 1;
 
-  // True if any CSP violation reports for this doucment will be buffered in
-  // mBufferedCSPViolations instead of being sent immediately.
-  bool mBufferingCSPViolations : 1;
-
   // True if the document is allowed to use PaymentRequest.
   bool mAllowPaymentRequest : 1;
 
@@ -4043,10 +4021,6 @@ protected:
 
   // True if this document is for an SVG-in-OpenType font.
   bool mIsSVGGlyphsDocument : 1;
-
-  // True if unsafe HTML fragments should be allowed in chrome-privileged
-  // documents.
-  bool mAllowUnsafeHTML : 1;
 
   // True if the document is being destroyed.
   bool mInDestructor: 1;
@@ -4316,10 +4290,6 @@ protected:
   // calling NoteScriptTrackingStatus().  Currently we assume that a URL not
   // existing in the set means the corresponding script isn't a tracking script.
   nsTHashtable<nsCStringHashKey> mTrackingScripts;
-
-  // CSP violation reports that have been buffered up due to a call to
-  // StartBufferingCSPViolations.
-  nsTArray<nsCOMPtr<nsIRunnable>> mBufferedCSPViolations;
 
   // List of ancestor principals.  This is set at the point a document
   // is connected to a docshell and not mutated thereafter.

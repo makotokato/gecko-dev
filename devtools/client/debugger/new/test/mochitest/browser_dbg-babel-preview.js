@@ -1,6 +1,9 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
+// Tests for preview through Babel's compile output.
+requestLongerTimeout(3);
+
 function getCoordsFromPosition(cm, { line, ch }) {
   return cm.charCoords({ line: ~~line, ch: ~~ch });
 }
@@ -85,19 +88,19 @@ add_task(async function() {
     {
       line: 5,
       column: 7,
-      expression: "doThing;",
+      expression: "doThing",
       result: "doThing(arg)",
     },
     {
       line: 5,
       column: 12,
-      expression: "x;",
+      expression: "x",
       result: "1",
     },
     {
       line: 8,
       column: 16,
-      expression: "doThing;",
+      expression: "doThing",
       result: "doThing(arg)",
     },
   ]);
@@ -110,7 +113,7 @@ add_task(async function() {
     {
       line: 2,
       column: 9,
-      expression: "aVar;",
+      expression: "aVar",
       result: '"var3"',
     },
     {
@@ -128,7 +131,7 @@ add_task(async function() {
     {
       line: 10,
       column: 11,
-      expression: "aVar;",
+      expression: "aVar",
       result: '"var3"',
     },
     {
@@ -148,7 +151,7 @@ add_task(async function() {
     {
       line: 14,
       column: 13,
-      expression: "aVar;",
+      expression: "aVar",
       result: '"var3"',
     },
     {
@@ -193,7 +196,7 @@ add_task(async function() {
     {
       line: 26,
       column: 16,
-      expression: "aNamespace;",
+      expression: "aNamespace",
       fields: [
         ['aNamed', 'a-named'],
         ['default', 'a-default'],
@@ -226,7 +229,7 @@ add_task(async function() {
     {
       line: 35,
       column: 20,
-      expression: "aNamespace2;",
+      expression: "aNamespace2",
       fields: [
         ['aNamed', 'a-named2'],
         ['default', 'a-default2'],

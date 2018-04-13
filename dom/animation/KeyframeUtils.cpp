@@ -19,6 +19,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/KeyframeEffectBinding.h"
 #include "mozilla/dom/KeyframeEffectReadOnly.h" // For PropertyValuesPair etc.
+#include "mozilla/dom/Nullable.h"
 #include "jsapi.h" // For ForOfIterator etc.
 #include "nsClassHashtable.h"
 #include "nsContentUtils.h" // For GetContextForContent, and
@@ -31,6 +32,8 @@
 #include "nsIScriptError.h"
 #include "nsTArray.h"
 #include <algorithm> // For std::stable_sort, std::min
+
+using mozilla::dom::Nullable;
 
 namespace mozilla {
 
@@ -478,12 +481,11 @@ KeyframeUtils::DistributeKeyframes(nsTArray<Keyframe>& aKeyframes)
   }
 }
 
-template<typename StyleType>
 /* static */ nsTArray<AnimationProperty>
 KeyframeUtils::GetAnimationPropertiesFromKeyframes(
   const nsTArray<Keyframe>& aKeyframes,
   dom::Element* aElement,
-  StyleType* aStyle,
+  const ComputedStyle* aStyle,
   dom::CompositeOperation aEffectComposite)
 {
   nsTArray<AnimationProperty> result;
@@ -1488,13 +1490,5 @@ DistributeRange(const Range<Keyframe>& aRange)
   }
 }
 
-
-template
-nsTArray<AnimationProperty>
-KeyframeUtils::GetAnimationPropertiesFromKeyframes(
-  const nsTArray<Keyframe>& aKeyframes,
-  dom::Element* aElement,
-  const ComputedStyle* aStyle,
-  dom::CompositeOperation aEffectComposite);
 
 } // namespace mozilla

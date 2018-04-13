@@ -80,6 +80,11 @@ private:
 
 nsHtml5TreeOperation::nsHtml5TreeOperation()
   : mOpCode(eTreeOpUninitialized)
+  , mOne{}
+  , mTwo{}
+  , mThree{}
+  , mFour{}
+  , mFive{}
 {
   MOZ_COUNT_CTOR(nsHtml5TreeOperation);
 }
@@ -1057,9 +1062,9 @@ nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
       aBuilder->MaybeComplainAboutCharset(msgId, error, (uint32_t)lineNumber);
       return NS_OK;
     }
-    case eTreeOpDisableEncodingMenu: {
+    case eTreeOpEnableEncodingMenu: {
       nsIDocument* doc = aBuilder->GetDocument();
-      doc->DisableEncodingMenu();
+      doc->EnableEncodingMenu();
       return NS_OK;
     }
     case eTreeOpAddClass: {

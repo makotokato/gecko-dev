@@ -490,13 +490,6 @@ pref("browser.tabs.drawInTitlebar", true);
 // will only be shown if browser.tabs.drawInTitlebar is true.
 pref("browser.tabs.extraDragSpace", false);
 
-// 0 - Disable the tabbar session restore button.
-// 1 - Enable the tabbar session restore button.
-// 2 - Control group. The tabbar session restore button is disabled,
-// but we will record data on other session restore usage.
-// To be enabled with shield.
-pref("browser.tabs.restorebutton", 0);
-
 // When tabs opened by links in other tabs via a combination of
 // browser.link.open_newwindow being set to 3 and target="_blank" etc are
 // closed:
@@ -1075,7 +1068,9 @@ pref("security.sandbox.gpu.level", 0);
 
 // Controls whether we disable win32k for the GMP processes.
 // true means that win32k system calls are not permitted.
-pref("security.sandbox.gmp.win32k-disable", true);
+// Note: win32k is currently _not_ disabled due to intermittent test failures,
+// where the GMP process fails very early. See bug 1449348.
+pref("security.sandbox.gmp.win32k-disable", false);
 #endif
 
 #if defined(XP_MACOSX) && defined(MOZ_SANDBOX) && defined(MOZ_CONTENT_SANDBOX)
@@ -1104,11 +1099,11 @@ pref("security.sandbox.content.level", 3);
 //      read access triggered by file dialog activity"
 // 2 - "no global read access, read and write access to some
 //      Flash-specific directories"
-pref("dom.ipc.plugins.sandbox-level.flash", 0);
+pref("dom.ipc.plugins.sandbox-level.flash", 1);
 // Controls the sandbox level used by plugins other than Flash. On Mac,
 // no other plugins are supported and this pref is only used for test
 // plugins used in automated tests.
-pref("dom.ipc.plugins.sandbox-level.default", 0);
+pref("dom.ipc.plugins.sandbox-level.default", 1);
 #endif
 
 #if defined(XP_LINUX) && defined(MOZ_SANDBOX) && defined(MOZ_CONTENT_SANDBOX)
@@ -1747,6 +1742,7 @@ pref("browser.chrome.errorReporter.infoURL",
 pref("app.normandy.api_url", "https://normandy.cdn.mozilla.net/api/v1");
 pref("app.normandy.dev_mode", false);
 pref("app.normandy.enabled", true);
+pref("app.normandy.first_run", true);
 pref("app.normandy.logging.level", 50); // Warn
 pref("app.normandy.run_interval_seconds", 86400); // 24 hours
 pref("app.normandy.shieldLearnMoreUrl", "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/shield");

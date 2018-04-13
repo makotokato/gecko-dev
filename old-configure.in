@@ -66,7 +66,7 @@ W32API_VERSION=3.14
 GCONF_VERSION=1.2.1
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.22.0
+SQLITE_VERSION=3.23.1
 
 dnl Set various checks
 dnl ========================================================
@@ -1771,9 +1771,7 @@ if test -n "$_USE_SYSTEM_NSS"; then
     AM_PATH_NSS(3.36, [MOZ_SYSTEM_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
 fi
 
-if test -n "$MOZ_SYSTEM_NSS"; then
-   NSS_LIBS="$NSS_LIBS -lcrmf"
-else
+if test -z "$MOZ_SYSTEM_NSS"; then
    NSS_CFLAGS="-I${DIST}/include/nss"
    case "${OS_ARCH}" in
         # Only few platforms have been tested with GYP

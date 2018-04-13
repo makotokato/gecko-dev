@@ -54,9 +54,8 @@ window._gBrowser = {
 
     // To correctly handle keypresses for potential FindAsYouType, while
     // the tab's find bar is not yet initialized.
-    this._findAsYouType = Services.prefs.getBoolPref("accessibility.typeaheadfind");
-    Services.prefs.addObserver("accessibility.typeaheadfind", this);
     messageManager.addMessageListener("Findbar:Keypress", this);
+    this._setFindbarData();
 
     XPCOMUtils.defineLazyPreferenceGetter(this, "animationsEnabled",
       "toolkit.cosmeticAnimations.enabled");
@@ -84,7 +83,7 @@ window._gBrowser = {
 
   _tabFilters: new Map(),
 
-  mIsBusy: false,
+  _isBusy: false,
 
   _outerWindowIDBrowserMap: new Map(),
 
@@ -438,6 +437,27 @@ window._gBrowser = {
     return this.selectedBrowser.userTypedValue;
   },
 
+  _setFindbarData() {
+    // Ensure we know what the find bar key is in the content process:
+    let initialProcessData = Services.ppmm.initialProcessData;
+    if (!initialProcessData.findBarShortcutData) {
+      let keyEl = document.getElementById("key_find");
+      let mods = keyEl.getAttribute("modifiers")
+        .replace(/accel/i, AppConstants.platform == "macosx" ? "meta" : "control");
+      initialProcessData.findBarShortcutData = {
+        key: keyEl.getAttribute("key"),
+        modifiers: {
+          shiftKey: mods.includes("shift"),
+          ctrlKey: mods.includes("control"),
+          altKey: mods.includes("alt"),
+          metaKey: mods.includes("meta"),
+        },
+      };
+      Services.ppmm.broadcastAsyncMessage("Findbar:ShortcutData",
+        initialProcessData.findBarShortcutData);
+    }
+  },
+
   isFindBarInitialized(aTab) {
     return (aTab || this.selectedTab)._findBar != undefined;
   },
@@ -469,27 +489,19 @@ window._gBrowser = {
   /**
    * Create a findbar instance.
    * @param aTab the tab to create the find bar for.
-   * @param aForce Whether to force a sync flush to trigger XBL construction immediately.
    * @return the created findbar, or null if the window or tab is closed/closing.
    */
-  async _createFindBar(aTab, aForce = false) {
+  async _createFindBar(aTab) {
     let findBar = document.createElementNS(this._XUL_NS, "findbar");
     let browser = this.getBrowserForTab(aTab);
     let browserContainer = this.getBrowserContainer(browser);
     browserContainer.appendChild(findBar);
 
-    if (aForce) {
-      // Force a style flush to ensure that our binding is attached.
-      // Remove after bug 1371523 makes more of this async.
-      findBar.clientTop;
-    } else {
-      await new Promise(r => requestAnimationFrame(r));
-      if (window.closed || aTab.closing) {
-        delete aTab._pendingFindBar;
-        return null;
-      }
-    }
+    await new Promise(r => requestAnimationFrame(r));
     delete aTab._pendingFindBar;
+    if (window.closed || aTab.closing) {
+      return null;
+    }
 
     findBar.browser = browser;
     findBar._findField.value = this._lastFindValue;
@@ -990,8 +1002,8 @@ window._gBrowser = {
 
     // If the new tab is busy, and our current state is not busy, then
     // we need to fire a start to all progress listeners.
-    if (newTab.hasAttribute("busy") && !this.mIsBusy) {
-      this.mIsBusy = true;
+    if (newTab.hasAttribute("busy") && !this._isBusy) {
+      this._isBusy = true;
       this._callProgressListeners(null, "onStateChange",
                                   [webProgress, null,
                                    Ci.nsIWebProgressListener.STATE_START |
@@ -1001,8 +1013,8 @@ window._gBrowser = {
 
     // If the new tab is not busy, and our current state is busy, then
     // we need to fire a stop to all progress listeners.
-    if (!newTab.hasAttribute("busy") && this.mIsBusy) {
-      this.mIsBusy = false;
+    if (!newTab.hasAttribute("busy") && this._isBusy) {
+      this._isBusy = false;
       this._callProgressListeners(null, "onStateChange",
                                   [webProgress, null,
                                    Ci.nsIWebProgressListener.STATE_STOP |
@@ -1467,6 +1479,13 @@ window._gBrowser = {
     var firstTabAdded = null;
     var targetTabIndex = -1;
 
+    // When bulk opening tabs, such as from a bookmark folder, we want to insertAfterCurrent
+    // if necessary, but we also will set the bulkOrderedOpen flag so that the bookmarks
+    // open in the same order they are in the folder.
+    if (multiple && aNewIndex < 0 && Services.prefs.getBoolPref("browser.tabs.insertAfterCurrent")) {
+      aNewIndex = this.selectedTab._tPos + 1;
+    }
+
     if (aReplace) {
       let browser;
       if (aTargetTab) {
@@ -1499,6 +1518,7 @@ window._gBrowser = {
         postData: aPostDatas[0],
         userContextId: aUserContextId,
         triggeringPrincipal: aTriggeringPrincipal,
+        bulkOrderedOpen: multiple,
       });
       if (aNewIndex !== -1) {
         this.moveTabTo(firstTabAdded, aNewIndex);
@@ -1514,6 +1534,7 @@ window._gBrowser = {
         postData: aPostDatas[i],
         userContextId: aUserContextId,
         triggeringPrincipal: aTriggeringPrincipal,
+        bulkOrderedOpen: true,
       });
       if (targetTabIndex !== -1)
         this.moveTabTo(tab, ++tabNum);
@@ -1868,13 +1889,13 @@ window._gBrowser = {
     let browserContainer = document.createElementNS(this._XUL_NS, "vbox");
     browserContainer.className = "browserContainer";
     browserContainer.appendChild(stack);
-    browserContainer.setAttribute("flex", "1");
+    browserContainer.setAttribute("flex", "10000");
 
     // Create the sidebar container
     let browserSidebarContainer = document.createElementNS(this._XUL_NS, "hbox");
     browserSidebarContainer.className = "browserSidebarContainer";
     browserSidebarContainer.appendChild(browserContainer);
-    browserSidebarContainer.setAttribute("flex", "1");
+    browserSidebarContainer.setAttribute("flex", "10000");
 
     // Add the Message and the Browser to the box
     let notificationbox = document.createElementNS(this._XUL_NS, "notificationbox");
@@ -3066,7 +3087,7 @@ window._gBrowser = {
         aOurTab.setAttribute("busy", "true");
         modifiedAttrs.push("busy");
         if (aOurTab.selected)
-          this.mIsBusy = true;
+          this._isBusy = true;
       }
 
       this._swapBrowserDocShells(aOurTab, otherBrowser, Ci.nsIBrowser.SWAP_DEFAULT, stateFlags);
@@ -3273,6 +3294,7 @@ window._gBrowser = {
         this.showTab(tab);
     }
 
+    this.tabContainer._updateHiddenTabsStatus();
     this.tabContainer._handleTabSelect(true);
   },
 
@@ -3282,13 +3304,14 @@ window._gBrowser = {
       this._visibleTabs = null; // invalidate cache
 
       this.tabContainer._updateCloseButtons();
+      this.tabContainer._updateHiddenTabsStatus();
 
       this.tabContainer._setPositionalAttributes();
 
       let event = document.createEvent("Events");
       event.initEvent("TabShow", true, false);
       aTab.dispatchEvent(event);
-      SessionStore.deleteTabValue(aTab, "hiddenBy");
+      SessionStore.deleteCustomTabValue(aTab, "hiddenBy");
     }
   },
 
@@ -3299,6 +3322,7 @@ window._gBrowser = {
       this._visibleTabs = null; // invalidate cache
 
       this.tabContainer._updateCloseButtons();
+      this.tabContainer._updateHiddenTabsStatus();
 
       this.tabContainer._setPositionalAttributes();
 
@@ -3306,7 +3330,7 @@ window._gBrowser = {
       event.initEvent("TabHide", true, false);
       aTab.dispatchEvent(event);
       if (aSource) {
-        SessionStore.setTabValue(aTab, "hiddenBy", aSource);
+        SessionStore.setCustomTabValue(aTab, "hiddenBy", aSource);
       }
     }
   },
@@ -3784,30 +3808,11 @@ window._gBrowser = {
       case "Findbar:Keypress":
       {
         let tab = this.getTabForBrowser(browser);
-        // If the find bar for this tab is not yet alive, only initialize
-        // it if there's a possibility FindAsYouType will be used.
-        // There's no point in doing it for most random keypresses.
-        if (!this.isFindBarInitialized(tab) &&
-            data.shouldFastFind) {
-          let shouldFastFind = this._findAsYouType;
-          if (!shouldFastFind) {
-            // Please keep in sync with toolkit/content/widgets/findbar.xml
-            const FAYT_LINKS_KEY = "'";
-            const FAYT_TEXT_KEY = "/";
-            let charCode = data.fakeEvent.charCode;
-            let key = charCode ? String.fromCharCode(charCode) : null;
-            shouldFastFind = key == FAYT_LINKS_KEY || key == FAYT_TEXT_KEY;
-          }
-          if (shouldFastFind) {
-            // Make sure we return the result.
-            // This needs sync initialization of the find bar, unfortunately.
-            // bug 1371523 tracks removing all of this.
-
-            // This returns a promise, so don't use the result...
-            this._createFindBar(tab, true);
-            // ... just grab the 'cached' version now we know it exists.
-            this.getCachedFindBar().receiveMessage(aMessage);
-          }
+        if (!this.isFindBarInitialized(tab)) {
+          let fakeEvent = data;
+          this.getFindBar(tab).then(findbar => {
+            findbar._onBrowserKeypress(fakeEvent);
+          });
         }
         break;
       }
@@ -3876,12 +3881,6 @@ window._gBrowser = {
         }
         break;
       }
-      case "nsPref:changed":
-      {
-        // This is the only pref observed.
-        this._findAsYouType = Services.prefs.getBoolPref("accessibility.typeaheadfind");
-        break;
-      }
     }
   },
 
@@ -3942,8 +3941,6 @@ window._gBrowser = {
         this._switcher.destroy();
       }
     }
-
-    Services.prefs.removeObserver("accessibility.typeaheadfind", this);
   },
 
   _setupEventListeners() {
@@ -4352,7 +4349,7 @@ class TabProgressListener {
         }
 
         if (this.mTab.selected) {
-          gBrowser.mIsBusy = true;
+          gBrowser._isBusy = true;
         }
       }
     } else if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP &&
@@ -4423,7 +4420,7 @@ class TabProgressListener {
         this.mBrowser.userTypedValue = null;
 
       if (this.mTab.selected)
-        gBrowser.mIsBusy = false;
+        gBrowser._isBusy = false;
     }
 
     if (ignoreBlank) {

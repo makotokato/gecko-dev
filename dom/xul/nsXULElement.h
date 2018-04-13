@@ -20,7 +20,6 @@
 #include "mozilla/dom/NodeInfo.h"
 #include "nsIControllers.h"
 #include "nsIDOMElement.h"
-#include "nsIDOMXULElement.h"
 #include "nsIDOMXULMultSelectCntrlEl.h"
 #include "nsIURI.h"
 #include "nsLayoutCID.h"
@@ -335,7 +334,7 @@ ASSERT_NODE_FLAGS_SPACE(ELEMENT_TYPE_SPECIFIC_BITS_OFFSET + 2);
 #undef XUL_ELEMENT_FLAG_BIT
 
 class nsXULElement final : public nsStyledElement,
-                           public nsIDOMXULElement
+                           public nsIDOMElement
 {
 public:
     using Element::Blur;
@@ -353,8 +352,7 @@ public:
     NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsXULElement, nsStyledElement)
 
     // nsINode
-    virtual nsresult GetEventTargetParent(
-                       mozilla::EventChainPreVisitor& aVisitor) override;
+    void GetEventTargetParent(mozilla::EventChainPreVisitor& aVisitor) override;
     virtual nsresult PreHandleEvent(
                        mozilla::EventChainVisitor& aVisitor) override;
     // nsIContent
@@ -388,9 +386,6 @@ public:
     virtual nsChangeHint GetAttributeChangeHint(const nsAtom* aAttribute,
                                                 int32_t aModType) const override;
     NS_IMETHOD_(bool) IsAttributeMapped(const nsAtom* aAttribute) const override;
-
-    // nsIDOMXULElement
-    NS_DECL_NSIDOMXULELEMENT
 
     virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
                            bool aPreallocateChildren) const override;
@@ -455,14 +450,6 @@ public:
     void SetFlex(const nsAString& aValue, mozilla::ErrorResult& rv)
     {
         SetXULAttr(nsGkAtoms::flex, aValue, rv);
-    }
-    void GetFlexGroup(DOMString& aValue) const
-    {
-        GetXULAttr(nsGkAtoms::flexgroup, aValue);
-    }
-    void SetFlexGroup(const nsAString& aValue, mozilla::ErrorResult& rv)
-    {
-        SetXULAttr(nsGkAtoms::flexgroup, aValue, rv);
     }
     void GetOrdinal(DOMString& aValue) const
     {
@@ -584,14 +571,6 @@ public:
     {
         SetXULAttr(nsGkAtoms::maxheight, aValue, rv);
     }
-    void GetPersist(DOMString& aValue) const
-    {
-        GetXULAttr(nsGkAtoms::persist, aValue);
-    }
-    void SetPersist(const nsAString& aValue, mozilla::ErrorResult& rv)
-    {
-        SetXULAttr(nsGkAtoms::persist, aValue, rv);
-    }
     void GetLeft(DOMString& aValue) const
     {
         GetXULAttr(nsGkAtoms::left, aValue);
@@ -615,14 +594,6 @@ public:
     void SetTooltipText(const nsAString& aValue, mozilla::ErrorResult& rv)
     {
         SetXULAttr(nsGkAtoms::tooltiptext, aValue, rv);
-    }
-    void GetStatusText(DOMString& aValue) const
-    {
-        GetXULAttr(nsGkAtoms::statustext, aValue);
-    }
-    void SetStatusText(const nsAString& aValue, mozilla::ErrorResult& rv)
-    {
-        SetXULAttr(nsGkAtoms::statustext, aValue, rv);
     }
     void GetSrc(DOMString& aValue) const
     {

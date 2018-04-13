@@ -310,6 +310,13 @@ public:
                            nsHostResolver **resolver);
 
     /**
+     * Set (new) cache limits.
+     */
+    void SetCacheLimits(uint32_t maxCacheEntries, // zero disables cache
+                        uint32_t defaultCacheEntryLifetime, // seconds
+                        uint32_t defaultGracePeriod); // seconds
+
+    /**
      * puts the resolver in the shutdown state, which will cause any pending
      * callbacks to be detached.  any future calls to ResolveHost will fail.
      */
@@ -448,8 +455,8 @@ private:
     mozilla::LinkedList<RefPtr<nsHostRecord>> mEvictionQ;
     uint32_t      mEvictionQSize;
     PRTime        mCreationTime;
-    PRIntervalTime mLongIdleTimeout;
-    PRIntervalTime mShortIdleTimeout;
+    mozilla::TimeDuration mLongIdleTimeout;
+    mozilla::TimeDuration mShortIdleTimeout;
 
     mozilla::Atomic<bool>     mShutdown;
     mozilla::Atomic<uint32_t> mNumIdleThreads;

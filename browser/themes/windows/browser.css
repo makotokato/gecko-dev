@@ -374,7 +374,6 @@ menuitem.bookmark-item {
 }
 
 
-%include ../shared/bookmarked-notification.inc.css
 %include ../shared/toolbarbuttons.inc.css
 %include ../shared/toolbarbutton-icons.inc.css
 %include ../shared/menupanel.inc.css
@@ -1116,7 +1115,3 @@ panel[touchmode] .PanelUI-subView #appMenu-zoom-controls > .subviewbutton-iconic
   padding-bottom: .9167em;
 }
 
-/* Prevent movement in the restore-tabs-button when it's clicked. */
-.restore-tabs-button:hover:active:not([disabled="true"]) {
-  padding: 3px;
-}

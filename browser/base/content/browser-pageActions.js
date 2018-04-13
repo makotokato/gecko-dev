@@ -1175,11 +1175,7 @@ BrowserPageActions.addSearchEngine = {
     if (!this.engines.length) {
       return;
     }
-    let title =
-      this.engines.length == 1 ?
-      this.strings.formatStringFromName("searchAddFoundEngine",
-                                        [this.engines[0].title], 1) :
-      this.strings.GetStringFromName("searchAddFoundEngineMenu");
+    let title = this.strings.GetStringFromName("searchAddFoundEngine2");
     this.action.setTitle(title, window);
     this.action.setIconURL(this.engines[0].icon, window);
   },
@@ -1206,8 +1202,10 @@ BrowserPageActions.addSearchEngine = {
       button.setAttribute("image", engine.icon);
       button.setAttribute("uri", engine.uri);
       button.addEventListener("command", event => {
-        PanelMultiView.hidePopup(BrowserPageActions.panelNode);
-        this._handleClickOnEngineButton(button);
+        let panelNode = panelViewNode.closest("panel");
+        PanelMultiView.hidePopup(panelNode);
+        this._installEngine(button.getAttribute("uri"),
+                            button.getAttribute("image"));
       });
       body.appendChild(button);
     }
@@ -1223,19 +1221,20 @@ BrowserPageActions.addSearchEngine = {
         return;
       }
     }
-    this._handleClickOnEngineButton(buttonNode);
-  },
-
-  _handleClickOnEngineButton(button) {
-    this._installEngine(button.getAttribute("uri"),
-                        button.getAttribute("image"));
+    // Either the panel button or urlbar button was clicked -- not a button in
+    // the subview -- but in either case, there's only one search engine.
+    // (Because this method isn't called when the panel button is clicked and it
+    // shows a subview, and the many-engines case for the urlbar returned early
+    // above.)
+    let engine = this.engines[0];
+    this._installEngine(engine.uri, engine.icon);
   },
 
   _installEngine(uri, image) {
     Services.search.addEngine(uri, null, image, false, {
       onSuccess: engine => {
         BrowserPageActionFeedback.show(this.action, {
-          text: this.strings.GetStringFromName("searchAddedFoundEngine"),
+          text: this.strings.GetStringFromName("searchAddedFoundEngine2"),
         });
       },
       onError(errorCode) {

@@ -84,7 +84,6 @@ class ParentDevToolsPanel {
       icon: icon,
       label: title,
       tooltip: `DevTools Panel added by "${extensionName}" add-on.`,
-      visibilityswitch:  `devtools.webext-${this.id}.enabled`,
       isTargetSupported: target => target.isLocalTab,
       build: (window, toolbox) => {
         if (toolbox !== this.toolbox) {
@@ -505,7 +504,7 @@ this.devtools_panels = class extends ExtensionAPI {
     // (used by Sidebar.setExpression).
     let waitForInspectedWindowFront;
 
-    // TODO - Bug 1448878: retrive a more detailed callerInfo object,
+    // TODO - Bug 1448878: retrieve a more detailed callerInfo object,
     // like the filename and lineNumber of the actual extension called
     // in the child process.
     const callerInfo = {
@@ -526,8 +525,10 @@ this.devtools_panels = class extends ExtensionAPI {
       devtools: {
         panels: {
           elements: {
-            onSelectionChanged: new EventManager(
-              context, "devtools.panels.elements.onSelectionChanged", fire => {
+            onSelectionChanged: new EventManager({
+              context,
+              name: "devtools.panels.elements.onSelectionChanged",
+              register: fire => {
                 const listener = (eventName) => {
                   fire.async();
                 };
@@ -535,7 +536,8 @@ this.devtools_panels = class extends ExtensionAPI {
                 return () => {
                   toolboxSelectionObserver.off("selectionChanged", listener);
                 };
-              }).api(),
+              },
+            }).api(),
             createSidebarPane(title) {
               const id = `devtools-inspector-sidebar-${makeWidgetId(newBasePanelId())}`;
 
@@ -597,7 +599,7 @@ this.devtools_panels = class extends ExtensionAPI {
             icon = context.extension.baseURI.resolve(icon);
             url = context.extension.baseURI.resolve(url);
 
-            const id = `${makeWidgetId(newBasePanelId())}-devtools-panel`;
+            const id = `webext-devtools-panel-${makeWidgetId(newBasePanelId())}`;
 
             new ParentDevToolsPanel(context, {title, icon, url, id});
 

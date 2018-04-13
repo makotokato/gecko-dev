@@ -38,8 +38,7 @@
 #include "mozilla/EffectSet.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/ServoStyleSet.h"
-#include "mozilla/ServoRestyleManager.h"
-#include "mozilla/RestyleManagerInlines.h"
+#include "mozilla/RestyleManager.h"
 #include "imgIRequest.h"
 #include "nsLayoutUtils.h"
 #include "nsCSSKeywords.h"
@@ -151,8 +150,7 @@ DocumentNeedsRestyle(
   // For Servo, we need to process the restyle-hint-invalidations first, to
   // expand LaterSiblings hint, so that we can look whether ancestors need
   // restyling.
-  ServoRestyleManager* restyleManager =
-    presContext->RestyleManager()->AsServo();
+  RestyleManager* restyleManager = presContext->RestyleManager();
   restyleManager->ProcessAllPendingAttributeAndStateInvalidations();
 
   if (!presContext->EffectCompositor()->HasPendingStyleUpdates() &&
@@ -323,6 +321,12 @@ nsComputedDOMStyle::nsComputedDOMStyle(dom::Element* aElement,
   , mComputedStyleGeneration(0)
   , mExposeVisitedStyle(false)
   , mResolvedComputedStyle(false)
+#ifdef DEBUG
+  , mFlushedPendingReflows
+{
+  false
+}
+#endif
 {
   MOZ_ASSERT(aElement && aPresShell);
   MOZ_ASSERT(aPresShell->GetPresContext());
@@ -858,6 +862,9 @@ nsComputedDOMStyle::UpdateCurrentStyleSources(bool aNeedsLayoutFlush)
     nsContentUtils::GetPresShellForContent(mContent);
   if (presShellForContent && presShellForContent->GetDocument() != document) {
     presShellForContent->GetDocument()->FlushPendingNotifications(FlushType::Style);
+    if (presShellForContent->IsDestroying()) {
+      presShellForContent = nullptr;
+    }
   }
 
   mPresShell = document->GetShell();
@@ -1381,9 +1388,13 @@ nsComputedDOMStyle::DoGetContent()
         break;
       }
       case eStyleContentType_Attr: {
+        // XXXbholley: We don't correctly serialize namespaces here. Doing so
+        // would require either storing the prefix on the nsStyleContentAttr,
+        // or poking at the namespaces in the stylesheet to map from the
+        // namespace URL.
         nsAutoString str;
         nsStyleUtil::AppendEscapedCSSIdent(
-          nsDependentString(data.GetString()), str);
+          nsDependentString(data.GetAttr()->mName->GetUTF16String()), str);
         val->SetString(str, CSSPrimitiveValueBinding::CSS_ATTR);
         break;
       }
@@ -4777,7 +4788,7 @@ nsComputedDOMStyle::DoGetFlexBasis()
   //   }
 
   SetValueToCoord(val, StylePosition()->mFlexBasis, true,
-                  nullptr, nsCSSProps::kWidthKTable);
+                  nullptr, nsCSSProps::kFlexBasisKTable);
   return val.forget();
 }
 
@@ -5108,16 +5119,22 @@ nsComputedDOMStyle::DoGetOverflow()
 {
   const nsStyleDisplay* display = StyleDisplay();
 
-  if (display->mOverflowX != display->mOverflowY) {
-    // No value to return.  We can't express this combination of
-    // values as a shorthand.
-    return nullptr;
+  RefPtr<nsROCSSPrimitiveValue> overflowX = new nsROCSSPrimitiveValue;
+  overflowX->SetIdent(
+    nsCSSProps::ValueToKeywordEnum(display->mOverflowX,
+                                   nsCSSProps::kOverflowKTable));
+  if (display->mOverflowX == display->mOverflowY) {
+    return overflowX.forget();
   }
+  RefPtr<nsDOMCSSValueList> valueList = GetROCSSValueList(false);
+  valueList->AppendCSSValue(overflowX.forget());
 
-  RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-  val->SetIdent(nsCSSProps::ValueToKeywordEnum(display->mOverflowX,
-                                               nsCSSProps::kOverflowKTable));
-  return val.forget();
+  RefPtr<nsROCSSPrimitiveValue> overflowY= new nsROCSSPrimitiveValue;
+  overflowY->SetIdent(
+    nsCSSProps::ValueToKeywordEnum(display->mOverflowY,
+                                   nsCSSProps::kOverflowKTable));
+  valueList->AppendCSSValue(overflowY.forget());
+  return valueList.forget();
 }
 
 already_AddRefed<CSSValue>
@@ -5631,9 +5648,13 @@ nsComputedDOMStyle::GetLineHeightCoord(nscoord& aCoord)
     }
   }
 
+  nsPresContext* presContext = mPresShell->GetPresContext();
+
   // lie about font size inflation since we lie about font size (since
   // the inflation only applies to text)
-  aCoord = ReflowInput::CalcLineHeight(mContent, mComputedStyle,
+  aCoord = ReflowInput::CalcLineHeight(mContent,
+                                       mComputedStyle,
+                                       presContext,
                                        blockHeight, 1.0f);
 
   // CalcLineHeight uses font->mFont.size, but we want to use
@@ -5642,7 +5663,7 @@ nsComputedDOMStyle::GetLineHeightCoord(nscoord& aCoord)
   const nsStyleFont* font = StyleFont();
   float fCoord = float(aCoord);
   if (font->mAllowZoom) {
-    fCoord /= mPresShell->GetPresContext()->EffectiveTextZoom();
+    fCoord /= presContext->EffectiveTextZoom();
   }
   if (font->mFont.size != font->mSize) {
     fCoord = fCoord * (float(font->mSize) / float(font->mFont.size));

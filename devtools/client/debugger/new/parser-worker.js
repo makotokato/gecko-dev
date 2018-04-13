@@ -784,6 +784,7 @@ const dispatcher = new WorkerDispatcher();
 
 const getOriginalURLs = dispatcher.task("getOriginalURLs");
 const getGeneratedLocation = dispatcher.task("getGeneratedLocation");
+const getAllGeneratedLocations = dispatcher.task("getAllGeneratedLocations");
 const getOriginalLocation = dispatcher.task("getOriginalLocation");
 const getLocationScopes = dispatcher.task("getLocationScopes");
 const getOriginalSourceText = dispatcher.task("getOriginalSourceText");
@@ -799,6 +800,7 @@ module.exports = {
   hasMappedSource,
   getOriginalURLs,
   getGeneratedLocation,
+  getAllGeneratedLocations,
   getOriginalLocation,
   getLocationScopes,
   getOriginalSourceText,
@@ -1160,6 +1162,7 @@ function trimUrlQuery(url) {
 const contentMap = {
   "js": "text/javascript",
   "jsm": "text/javascript",
+  "mjs": "text/javascript",
   "ts": "text/typescript",
   "tsx": "text/typescript-jsx",
   "jsx": "text/jsx",
@@ -1246,6 +1249,11 @@ Object.defineProperty(exports, "__esModule", {
 exports.isFunction = isFunction;
 exports.isAwaitExpression = isAwaitExpression;
 exports.isYieldExpression = isYieldExpression;
+exports.isObjectShorthand = isObjectShorthand;
+exports.getObjectExpressionValue = getObjectExpressionValue;
+exports.getVariableNames = getVariableNames;
+exports.getComments = getComments;
+exports.getSpecifiers = getSpecifiers;
 exports.isVariable = isVariable;
 exports.isComputedExpression = isComputedExpression;
 exports.getMemberExpression = getMemberExpression;
@@ -1254,6 +1262,16 @@ exports.getVariables = getVariables;
 var _types = __webpack_require__(2268);
 
 var t = _interopRequireWildcard(_types);
+
+var _generator = __webpack_require__(2365);
+
+var _generator2 = _interopRequireDefault(_generator);
+
+var _flatten = __webpack_require__(706);
+
+var _flatten2 = _interopRequireDefault(_flatten);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
 
@@ -1271,6 +1289,75 @@ function isAwaitExpression(path) {
 function isYieldExpression(path) {
   const { node, parent } = path;
   return t.isYieldExpression(node) || t.isYieldExpression(parent.init) || t.isYieldExpression(parent);
+}
+
+function isObjectShorthand(parent) {
+  return t.isProperty(parent) && parent.key.start == parent.value.start && parent.key.loc.identifierName === parent.value.loc.identifierName;
+}
+
+function getObjectExpressionValue(node) {
+  const { value } = node;
+
+  if (t.isIdentifier(value)) {
+    return value.name;
+  }
+
+  if (t.isCallExpression(value)) {
+    return "";
+  }
+  const code = (0, _generator2.default)(value).code;
+
+  const shouldWrap = t.isObjectExpression(value);
+  return shouldWrap ? `(${code})` : code;
+}
+
+function getVariableNames(path) {
+  if (t.isObjectProperty(path.node) && !isFunction(path.node.value)) {
+    if (path.node.key.type === "StringLiteral") {
+      return [{
+        name: path.node.key.value,
+        location: path.node.loc
+      }];
+    } else if (path.node.value.type === "Identifier") {
+      return [{ name: path.node.value.name, location: path.node.loc }];
+    } else if (path.node.value.type === "AssignmentPattern") {
+      return [{ name: path.node.value.left.name, location: path.node.loc }];
+    }
+
+    return [{
+      name: path.node.key.name,
+      location: path.node.loc
+    }];
+  }
+
+  if (!path.node.declarations) {
+    return path.node.params.map(dec => ({
+      name: dec.name,
+      location: dec.loc
+    }));
+  }
+
+  const declarations = path.node.declarations.filter(dec => dec.id.type !== "ObjectPattern").map(getVariables);
+
+  return (0, _flatten2.default)(declarations);
+}
+
+function getComments(ast) {
+  if (!ast || !ast.comments) {
+    return [];
+  }
+  return ast.comments.map(comment => ({
+    name: comment.location,
+    location: comment.loc
+  }));
+}
+
+function getSpecifiers(specifiers) {
+  if (!specifiers) {
+    return [];
+  }
+
+  return specifiers.map(specifier => specifier.local && specifier.local.name);
 }
 
 function isVariable(path) {
@@ -1443,10 +1530,6 @@ var _extends = Object.assign || function (target) { for (var i = 1; i < argument
 exports.clearSymbols = clearSymbols;
 exports.getSymbols = getSymbols;
 
-var _flatten = __webpack_require__(706);
-
-var _flatten2 = _interopRequireDefault(_flatten);
-
 var _types = __webpack_require__(2268);
 
 var t = _interopRequireWildcard(_types);
@@ -1465,9 +1548,9 @@ var _getFunctionName = __webpack_require__(1621);
 
 var _getFunctionName2 = _interopRequireDefault(_getFunctionName);
 
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
-
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
 
 let symbolDeclarations = new Map();
 
@@ -1495,58 +1578,10 @@ function getFunctionParameterNames(path) {
   return [];
 }
 
-function getVariableNames(path) {
-  if (t.isObjectProperty(path.node) && !(0, _helpers.isFunction)(path.node.value)) {
-    if (path.node.key.type === "StringLiteral") {
-      return [{
-        name: path.node.key.value,
-        location: path.node.loc
-      }];
-    } else if (path.node.value.type === "Identifier") {
-      return [{ name: path.node.value.name, location: path.node.loc }];
-    } else if (path.node.value.type === "AssignmentPattern") {
-      return [{ name: path.node.value.left.name, location: path.node.loc }];
-    }
-
-    return [{
-      name: path.node.key.name,
-      location: path.node.loc
-    }];
-  }
-
-  if (!path.node.declarations) {
-    return path.node.params.map(dec => ({
-      name: dec.name,
-      location: dec.loc
-    }));
-  }
-
-  const declarations = path.node.declarations.filter(dec => dec.id.type !== "ObjectPattern").map(_helpers.getVariables);
-
-  return (0, _flatten2.default)(declarations);
-}
-
-function getComments(ast) {
-  if (!ast || !ast.comments) {
-    return [];
-  }
-  return ast.comments.map(comment => ({
-    name: comment.location,
-    location: comment.loc
-  }));
-}
-
-function getSpecifiers(specifiers) {
-  if (!specifiers) {
-    return null;
-  }
-
-  return specifiers.map(specifier => specifier.local && specifier.local.name);
-}
-
+/* eslint-disable complexity */
 function extractSymbol(path, symbols) {
   if ((0, _helpers.isVariable)(path)) {
-    symbols.variables.push(...getVariableNames(path));
+    symbols.variables.push(...(0, _helpers.getVariableNames)(path));
   }
 
   if ((0, _helpers.isFunction)(path)) {
@@ -1579,7 +1614,7 @@ function extractSymbol(path, symbols) {
     symbols.imports.push({
       source: path.node.source.value,
       location: path.node.loc,
-      specifiers: getSpecifiers(path.node.specifiers)
+      specifiers: (0, _helpers.getSpecifiers)(path.node.specifiers)
     });
   }
 
@@ -1597,9 +1632,18 @@ function extractSymbol(path, symbols) {
     symbols.memberExpressions.push({
       name: path.node.property.name,
       location: { start, end },
-      expressionLocation: path.node.loc,
       expression: getSnippet(path),
       computed: path.node.computed
+    });
+  }
+
+  if ((t.isStringLiteral(path) || t.isNumericLiteral(path)) && t.isMemberExpression(path.parentPath)) {
+    // We only need literals that are part of computed memeber expressions
+    const { start, end } = path.node.loc;
+    symbols.literals.push({
+      name: path.node.value,
+      location: { start, end },
+      expression: getSnippet(path.parentPath)
     });
   }
 
@@ -1616,6 +1660,15 @@ function extractSymbol(path, symbols) {
     }
   }
 
+  if (t.isStringLiteral(path) && t.isProperty(path.parentPath)) {
+    const { start, end } = path.node.loc;
+    return symbols.identifiers.push({
+      name: path.node.value,
+      expression: (0, _helpers.getObjectExpressionValue)(path.parent),
+      location: { start, end }
+    });
+  }
+
   if (t.isIdentifier(path) && !t.isGenericTypeAnnotation(path.parent)) {
     let { start, end } = path.node.loc;
 
@@ -1624,8 +1677,12 @@ function extractSymbol(path, symbols) {
       return;
     }
 
-    if (t.isProperty(path.parent)) {
-      return;
+    if (t.isProperty(path.parentPath) && !(0, _helpers.isObjectShorthand)(path.parent)) {
+      return symbols.identifiers.push({
+        name: path.node.name,
+        expression: (0, _helpers.getObjectExpressionValue)(path.parent),
+        location: { start, end }
+      });
     }
 
     if (path.node.typeAnnotation) {
@@ -1645,24 +1702,33 @@ function extractSymbol(path, symbols) {
     symbols.identifiers.push({
       name: "this",
       location: { start, end },
-      expressionLocation: path.node.loc,
       expression: "this"
     });
   }
 
   if (t.isVariableDeclarator(path)) {
-    const node = path.node.id;
-    const { start, end } = path.node.loc;
-    if (t.isArrayPattern(node)) {
+    const nodeId = path.node.id;
+
+    if (t.isArrayPattern(nodeId)) {
       return;
     }
-    symbols.identifiers.push({
-      name: node.name,
-      expression: node.name,
-      location: { start, end }
+
+    const properties = nodeId.properties && t.objectPattern(nodeId.properties) ? nodeId.properties : [{
+      value: { name: nodeId.name },
+      loc: path.node.loc
+    }];
+
+    properties.forEach(function (property) {
+      const { start, end } = property.loc;
+      symbols.identifiers.push({
+        name: property.value.name,
+        expression: property.value.name,
+        location: { start, end }
+      });
     });
   }
 }
+/* eslint-enable complexity */
 
 function extractSymbols(sourceId) {
   const symbols = {
@@ -1675,6 +1741,7 @@ function extractSymbols(sourceId) {
     identifiers: [],
     classes: [],
     imports: [],
+    literals: [],
     hasJsx: false,
     hasTypes: false
   };
@@ -1693,12 +1760,12 @@ function extractSymbols(sourceId) {
   });
 
   // comments are extracted separately from the AST
-  symbols.comments = getComments(ast);
+  symbols.comments = (0, _helpers.getComments)(ast);
 
   return symbols;
 }
 
-function extendSnippet(name, expression, path = null, prevPath = null) {
+function extendSnippet(name, expression, path, prevPath) {
   const computed = path && path.node.computed;
   const prevComputed = prevPath && prevPath.node.computed;
   const prevArray = t.isArrayExpression(prevPath);
@@ -1784,7 +1851,7 @@ function getArraySnippet(path, prevPath, expression) {
   return getSnippet(nextPath, nextPrevPath, extendedExpression);
 }
 
-function getSnippet(path, prevPath = null, expression = "") {
+function getSnippet(path, prevPath, expression = "") {
   if (!path) {
     return expression;
   }
@@ -1843,6 +1910,8 @@ function getSnippet(path, prevPath = null, expression = "") {
 
     return getArraySnippet(path, prevPath, expression);
   }
+
+  return "";
 }
 
 function clearSymbols() {
@@ -20960,6 +21029,10 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.default = createSimplePath;
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
 function createSimplePath(ancestors) {
   if (ancestors.length === 0) {
     return null;
@@ -20968,9 +21041,7 @@ function createSimplePath(ancestors) {
   // Slice the array because babel-types traverse may continue mutating
   // the ancestors array in later traversal logic.
   return new SimplePath(ancestors.slice());
-} /* This Source Code Form is subject to the terms of the Mozilla Public
-   * License, v. 2.0. If a copy of the MPL was not distributed with this
-   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+}
 
 /**
  * Mimics @babel/traverse's NodePath API in a simpler fashion that isn't as
@@ -21218,7 +21289,9 @@ function onEnter(node, ancestors, state) {
 
   if (t.isProgram(node)) {
     const lastStatement = node.body[node.body.length - 1];
-    addPoint(state, lastStatement.loc.end);
+    if (lastStatement) {
+      addPoint(state, lastStatement.loc.end);
+    }
   }
 }
 
@@ -21274,7 +21347,9 @@ function replaceNode(ancestors, node) {
   } else {
     ancestor.node[ancestor.key] = node;
   }
-}
+} /* This Source Code Form is subject to the terms of the Mozilla Public
+   * License, v. 2.0. If a copy of the MPL was not distributed with this
+   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 function getFirstExpression(ast) {
   const statements = ast.program.body;
@@ -21286,6 +21361,8 @@ function getFirstExpression(ast) {
 }
 
 function mapOriginalExpression(expression, mappings) {
+  let didReplace = false;
+
   const ast = (0, _ast.parseScript)(expression);
   t.traverse(ast, (node, ancestors) => {
     const parent = ancestors[ancestors.length - 1];
@@ -21297,16 +21374,23 @@ function mapOriginalExpression(expression, mappings) {
     if (t.isIdentifier(node) && t.isReferenced(node, parentNode)) {
       if (mappings.hasOwnProperty(node.name)) {
         const mapping = mappings[node.name];
-        if (mapping) {
+        if (mapping && mapping !== node.name) {
           const mappingNode = getFirstExpression((0, _ast.parseScript)(mapping));
-
           replaceNode(ancestors, mappingNode);
+
+          didReplace = true;
         }
       }
     }
   });
 
-  return (0, _generator2.default)(ast, { concise: true }).code;
+  if (!didReplace) {
+    // Avoid the extra code generation work and also avoid potentially
+    // reformatting the user's code unnecessarily.
+    return expression;
+  }
+
+  return (0, _generator2.default)(ast).code;
 }
 
 /***/ }),

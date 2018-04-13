@@ -34,6 +34,7 @@ public:
 
   StreamFilterChild()
     : mState(State::Uninitialized)
+    , mNextState{ State::Uninitialized }
     , mReceivedOnStop(false)
   {}
 
@@ -66,7 +67,7 @@ public:
     Closed,
     // The channel is being disconnected from the parent, and all further events
     // and data will pass unfiltered. Data received by the child in this state
-    // will be automatically written ot the output stream listener. No data may
+    // will be automatically written to the output stream listener. No data may
     // be explicitly written.
     Disconnecting,
     // The channel has been disconnected from the parent, and all further data

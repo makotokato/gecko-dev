@@ -5,6 +5,7 @@
 from __future__ import absolute_import, unicode_literals
 
 import os
+import json
 import sys
 
 import mozpack.path as mozpath
@@ -204,6 +205,9 @@ class TupOnly(CommonBackend, PartialBackend):
         # in Tup. Express these as a group dependency.
         self._early_generated_files = '$(MOZ_OBJ_ROOT)/<early-generated-files>'
 
+        self._built_in_addons = set()
+        self._built_in_addons_file = 'dist/bin/browser/chrome/browser/content/browser/built_in_addons.json'
+
         # application.ini.h is a special case since we need to process
         # the FINAL_TARGET_PP_FILES for application.ini before running
         # the GENERATED_FILES script, and tup doesn't handle the rules
@@ -240,11 +244,12 @@ class TupOnly(CommonBackend, PartialBackend):
                 for l in libs]
 
     def _gen_shared_library(self, backend_file):
-        if backend_file.shared_lib.name == 'libxul.so':
+        shlib = backend_file.shared_lib
+        if shlib.name == 'libxul.so':
             # This will fail to link currently due to missing rust symbols.
             return
 
-        if backend_file.shared_lib.cxx_link:
+        if shlib.cxx_link:
             mkshlib = (
                 [backend_file.environment.substs['CXX']] +
                 backend_file.local_flags['CXX_LDFLAGS']
@@ -258,15 +263,15 @@ class TupOnly(CommonBackend, PartialBackend):
         mkshlib += (
             backend_file.environment.substs['DSO_PIC_CFLAGS'] +
             [backend_file.environment.substs['DSO_LDOPTS']] +
-            ['-Wl,-h,%s' % backend_file.shared_lib.soname] +
-            ['-o', backend_file.shared_lib.lib_name]
+            ['-Wl,-h,%s' % shlib.soname] +
+            ['-o', shlib.lib_name]
         )
 
-        objs, _, shared_libs, os_libs, static_libs = self._expand_libs(backend_file.shared_lib)
+        objs, _, shared_libs, os_libs, static_libs = self._expand_libs(shlib)
         static_libs = self._lib_paths(backend_file.objdir, static_libs)
         shared_libs = self._lib_paths(backend_file.objdir, shared_libs)
 
-        list_file_name = '%s.list' % backend_file.shared_lib.name.replace('.', '_')
+        list_file_name = '%s.list' % shlib.name.replace('.', '_')
         list_file = self._make_list_file(backend_file.objdir, objs, list_file_name)
 
         inputs = objs + static_libs + shared_libs
@@ -275,10 +280,10 @@ class TupOnly(CommonBackend, PartialBackend):
             return
 
         symbols_file = []
-        if backend_file.shared_lib.symbols_file:
-            inputs.append(backend_file.shared_lib.symbols_file)
+        if shlib.symbols_file:
+            inputs.append(shlib.symbols_file)
             # TODO: Assumes GNU LD
-            symbols_file = ['-Wl,--version-script,%s' % backend_file.shared_lib.symbols_file]
+            symbols_file = ['-Wl,--version-script,%s' % shlib.symbols_file]
 
         cmd = (
             mkshlib +
@@ -293,9 +298,14 @@ class TupOnly(CommonBackend, PartialBackend):
         backend_file.rule(
             cmd=cmd,
             inputs=inputs,
-            outputs=[backend_file.shared_lib.lib_name],
+            outputs=[shlib.lib_name],
             display='LINK %o'
         )
+        backend_file.symlink_rule(mozpath.join(backend_file.objdir,
+                                               shlib.lib_name),
+                                  output=mozpath.join(self.environment.topobjdir,
+                                                      shlib.install_target,
+                                                      shlib.lib_name))
 
 
     def _gen_program(self, backend_file):
@@ -439,6 +449,11 @@ class TupOnly(CommonBackend, PartialBackend):
                                                target)) as fh:
                 fh.write(''.join('%s\n' % e for e in sorted(entries)))
 
+        if self._built_in_addons:
+            with self._write_file(mozpath.join(self.environment.topobjdir,
+                                               self._built_in_addons_file)) as fh:
+                json.dump({'system': sorted(list(self._built_in_addons))}, fh)
+
         for objdir, backend_file in sorted(self._backend_files.items()):
             backend_file.gen_sources_rules([self._installed_files])
             for condition, gen_method in ((backend_file.shared_lib, self._gen_shared_library),
@@ -542,6 +557,12 @@ class TupOnly(CommonBackend, PartialBackend):
             else:
                 backend_file.defines = defines
 
+    def _add_features(self, target, path):
+        path_parts = mozpath.split(path)
+        if all([target == 'dist/bin/browser', path_parts[0] == 'features',
+                len(path_parts) > 1]):
+            self._built_in_addons.add(path_parts[1])
+
     def _process_final_target_files(self, obj):
         target = obj.install_target
         if not isinstance(obj, ObjdirFiles):
@@ -561,6 +582,7 @@ class TupOnly(CommonBackend, PartialBackend):
             return
 
         for path, files in obj.files.walk():
+            self._add_features(target, path)
             for f in files:
                 if not isinstance(f, ObjDirPath):
                     backend_file = self._get_backend_file(mozpath.join(target, path))
@@ -612,6 +634,7 @@ class TupOnly(CommonBackend, PartialBackend):
 
     def _process_final_target_pp_files(self, obj, backend_file):
         for i, (path, files) in enumerate(obj.files.walk()):
+            self._add_features(obj.install_target, path)
             for f in files:
                 self._preprocess(backend_file, f.full_path,
                                  destdir=mozpath.join(self.environment.topobjdir, obj.install_target, path),
@@ -637,8 +660,9 @@ class TupOnly(CommonBackend, PartialBackend):
         backend_file = self._get_backend_file('xpcom/xpidl')
         backend_file.export_shell()
 
+        all_xpts = []
         for module, data in sorted(manager.modules.iteritems()):
-            dest, idls = data
+            _, idls = data
             cmd = [
                 '$(PYTHON_PATH)',
                 '$(PLY_INCLUDE)',
@@ -649,12 +673,13 @@ class TupOnly(CommonBackend, PartialBackend):
                 '$(DIST)/idl',
                 '$(DIST)/include',
                 '$(DIST)/xpcrs',
-                '$(MOZ_OBJ_ROOT)/%s/components' % dest,
+                '.',
                 module,
             ]
             cmd.extend(sorted(idls))
 
-            outputs = ['$(MOZ_OBJ_ROOT)/%s/components/%s.xpt' % (dest, module)]
+            all_xpts.append('$(MOZ_OBJ_ROOT)/%s/%s.xpt' % (backend_file.relobjdir, module))
+            outputs = ['%s.xpt' % module]
             outputs.extend(['$(MOZ_OBJ_ROOT)/dist/include/%s.h' % f for f in sorted(idls)])
             outputs.extend(['$(MOZ_OBJ_ROOT)/dist/xpcrs/rt/%s.rs' % f for f in sorted(idls)])
             outputs.extend(['$(MOZ_OBJ_ROOT)/dist/xpcrs/bt/%s.rs' % f for f in sorted(idls)])
@@ -670,12 +695,21 @@ class TupOnly(CommonBackend, PartialBackend):
                 extra_outputs=[self._installed_files],
             )
 
-        for manifest, entries in manager.interface_manifests.items():
-            for xpt in entries:
-                self._manifest_entries[manifest].add('interfaces %s' % xpt)
-
-        for m in manager.chrome_manifests:
-            self._manifest_entries[m].add('manifest components/interfaces.manifest')
+        cpp_backend_file = self._get_backend_file('xpcom/typelib/xpt')
+        cpp_backend_file.export_shell()
+        cpp_backend_file.rule(
+            inputs=all_xpts,
+            display='XPIDL linkgen %o',
+            cmd=[
+                '$(PYTHON_PATH)',
+                '$(PLY_INCLUDE)',
+                '$(topsrcdir)/xpcom/typelib/xpt/tools/xpt.py',
+                'linkgen',
+                'XPTInfo.cpp',
+                '%f',
+            ],
+            outputs=['XPTInfo.cpp'],
+        )
 
     def _preprocess(self, backend_file, input_file, destdir=None, target=None):
         if target is None:

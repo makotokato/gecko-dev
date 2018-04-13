@@ -455,6 +455,7 @@ public:
                                NS_LITERAL_CSTRING("EventSource :: Init"))
     , mImpl(aEventSourceImpl)
     , mURL(aURL)
+    , mRv{ NS_ERROR_NOT_INITIALIZED }
   {
     MOZ_ASSERT(aWorkerPrivate);
     aWorkerPrivate->AssertIsOnWorkerThread();
@@ -1524,9 +1525,9 @@ EventSourceImpl::DispatchAllMessageEvents()
                             Sequence<OwningNonNull<MessagePort>>());
     event->SetTrusted(true);
 
-    bool dummy;
-    rv = mEventSource->DispatchEvent(static_cast<Event*>(event), &dummy);
-    if (NS_FAILED(rv)) {
+    IgnoredErrorResult err;
+    mEventSource->DispatchEvent(*event, err);
+    if (err.Failed()) {
       NS_WARNING("Failed to dispatch the message event!!!");
       return;
     }
@@ -1928,6 +1929,7 @@ EventSourceImpl::CheckListenerChain()
 EventSource::EventSource(nsPIDOMWindowInner* aOwnerWindow,
                          bool aWithCredentials)
   : DOMEventTargetHelper(aOwnerWindow)
+  , mReadyState{}
   , mWithCredentials(aWithCredentials)
   , mIsMainThread(true)
   , mKeepingAlive(false)
@@ -1946,8 +1948,9 @@ EventSource::CreateAndDispatchSimpleEvent(const nsAString& aName)
   // it doesn't bubble, and it isn't cancelable
   event->InitEvent(aName, false, false);
   event->SetTrusted(true);
-  bool dummy;
-  return DispatchEvent(event, &dummy);
+  ErrorResult rv;
+  DispatchEvent(*event, rv);
+  return rv.StealNSResult();
 }
 
 /* static */ already_AddRefed<EventSource>

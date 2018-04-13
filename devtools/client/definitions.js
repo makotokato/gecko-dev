@@ -24,6 +24,7 @@ loader.lazyGetter(this, "NetMonitorPanel", () => require("devtools/client/netmon
 loader.lazyGetter(this, "StoragePanel", () => require("devtools/client/storage/panel").StoragePanel);
 loader.lazyGetter(this, "ScratchpadPanel", () => require("devtools/client/scratchpad/scratchpad-panel").ScratchpadPanel);
 loader.lazyGetter(this, "DomPanel", () => require("devtools/client/dom/dom-panel").DomPanel);
+loader.lazyGetter(this, "AccessibilityPanel", () => require("devtools/client/accessibility/accessibility-panel").AccessibilityPanel);
 
 // Other dependencies
 loader.lazyRequireGetter(this, "CommandUtils", "devtools/client/shared/developer-toolbar", true);
@@ -98,7 +99,7 @@ Tools.webConsole = {
   id: "webconsole",
   accesskey: l10n("webConsoleCmd.accesskey"),
   ordinal: 2,
-  oldWebConsoleURL: "chrome://devtools/content/webconsole/webconsole.xul",
+  oldWebConsoleURL: "chrome://devtools/content/webconsole/old/webconsole.xul",
   newWebConsoleURL: "chrome://devtools/content/webconsole/webconsole.html",
   get browserConsoleURL() {
     if (Services.prefs.getBoolPref("devtools.browserconsole.new-frontend-enabled")) {
@@ -438,6 +439,30 @@ Tools.dom = {
   }
 };
 
+Tools.accessibility = {
+  id: "accessibility",
+  accesskey: l10n("accessibility.accesskey"),
+  ordinal: 14,
+  modifiers: osString == "Darwin" ? "accel,alt" : "accel,shift",
+  visibilityswitch: "devtools.accessibility.enabled",
+  icon: "chrome://devtools/skin/images/tool-accessibility.svg",
+  url: "chrome://devtools/content/accessibility/accessibility.html",
+  label: l10n("accessibility.label"),
+  panelLabel: l10n("accessibility.panelLabel"),
+  get tooltip() {
+    return l10n("accessibility.tooltip2");
+  },
+  inMenu: true,
+
+  isTargetSupported(target) {
+    return target.hasActor("accessibility");
+  },
+
+  build(iframeWindow, toolbox) {
+    return new AccessibilityPanel(iframeWindow, toolbox);
+  }
+};
+
 var defaultTools = [
   Tools.options,
   Tools.webConsole,
@@ -453,6 +478,7 @@ var defaultTools = [
   Tools.scratchpad,
   Tools.memory,
   Tools.dom,
+  Tools.accessibility,
 ];
 
 exports.defaultTools = defaultTools;
@@ -473,40 +499,15 @@ Tools.lightTheme = {
   classList: ["theme-light"],
 };
 
-Tools.firebugTheme = {
-  id: "firebug",
-  label: l10n("options.firebugTheme.label2"),
-  ordinal: 3,
-  stylesheets: ["chrome://devtools/skin/firebug-theme.css"],
-  classList: ["theme-light", "theme-firebug"],
-};
-
 exports.defaultThemes = [
   Tools.darkTheme,
   Tools.lightTheme,
-  Tools.firebugTheme,
 ];
 
 // White-list buttons that can be toggled to prevent adding prefs for
 // addons that have manually inserted toolbarbuttons into DOM.
 // (By default, supported target is only local tab)
 exports.ToolboxButtons = [
-  { id: "command-button-splitconsole",
-    description: l10n("toolbox.buttons.splitconsole", "Esc"),
-    isTargetSupported: target => !target.isAddon,
-    onClick(event, toolbox) {
-      toolbox.toggleSplitConsole();
-    },
-    isChecked(toolbox) {
-      return toolbox.splitConsole;
-    },
-    setup(toolbox, onChange) {
-      toolbox.on("split-console", onChange);
-    },
-    teardown(toolbox, onChange) {
-      toolbox.off("split-console", onChange);
-    }
-  },
   { id: "command-button-paintflashing",
     description: l10n("toolbox.buttons.paintflashing"),
     isTargetSupported: target => target.isLocalTab,

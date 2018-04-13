@@ -242,7 +242,8 @@ TabChildBase::DispatchMessageManagerMessage(const nsAString& aMessageName,
     // content manipulate the frame state.
     RefPtr<nsFrameMessageManager> mm = mTabChildGlobal->GetMessageManager();
     mm->ReceiveMessage(static_cast<EventTarget*>(mTabChildGlobal), nullptr,
-                       aMessageName, false, &data, nullptr, nullptr, nullptr);
+                       aMessageName, false, &data, nullptr, nullptr, nullptr,
+                       IgnoreErrors());
 }
 
 bool
@@ -404,8 +405,9 @@ TabChild::TabChild(nsIContentChild* aManager,
   , mChromeFlags(aChromeFlags)
   , mMaxTouchPoints(0)
   , mActiveSuppressDisplayport(0)
-  , mLayersId{0}
+  , mLayersId{ 0 }
   , mBeforeUnloadListeners(0)
+  , mLastBackgroundColor{}
   , mDidFakeShow(false)
   , mNotified(false)
   , mTriedBrowserInit(false)
@@ -1485,6 +1487,12 @@ TabChild::ZoomToRect(const uint32_t& aPresShellId,
 mozilla::ipc::IPCResult
 TabChild::RecvActivate()
 {
+  // Ensure that the PresShell exists, otherwise focusing
+  // is definitely not going to work. GetPresShell should
+  // create a PresShell if one doesn't exist yet.
+  nsCOMPtr<nsIPresShell> presShell = GetPresShell();
+  MOZ_ASSERT(presShell);
+
   nsCOMPtr<nsIWebBrowserFocus> browser = do_QueryInterface(WebNavigation());
   browser->Activate();
   return IPC_OK();
@@ -2320,7 +2328,8 @@ TabChild::RecvAsyncMessage(const nsString& aMessage,
   StructuredCloneData data;
   UnpackClonedMessageDataForChild(aData, data);
   mm->ReceiveMessage(static_cast<EventTarget*>(mTabChildGlobal), nullptr,
-                     aMessage, false, &data, &cpows, aPrincipal, nullptr);
+                     aMessage, false, &data, &cpows, aPrincipal, nullptr,
+                     IgnoreErrors());
   return IPC_OK();
 }
 
@@ -3515,9 +3524,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(TabChildGlobal,
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(TabChildGlobal)
-  NS_INTERFACE_MAP_ENTRY(nsIMessageListenerManager)
   NS_INTERFACE_MAP_ENTRY(nsIMessageSender)
-  NS_INTERFACE_MAP_ENTRY(nsISyncMessageSender)
   NS_INTERFACE_MAP_ENTRY(nsIContentFrameMessageManager)
   NS_INTERFACE_MAP_ENTRY(nsIScriptObjectPrincipal)
   NS_INTERFACE_MAP_ENTRY(nsIGlobalObject)
@@ -3542,9 +3549,7 @@ TabChildGlobal::WrapGlobalObject(JSContext* aCx,
   return ok;
 }
 
-// This method isn't automatically forwarded safely because it's notxpcom, so
-// the IDL binding doesn't know what value to return.
-NS_IMETHODIMP_(bool)
+void
 TabChildGlobal::MarkForCC()
 {
   if (mTabChild) {
@@ -3554,7 +3559,7 @@ TabChildGlobal::MarkForCC()
   if (elm) {
     elm->MarkForCC();
   }
-  return MessageManagerGlobal::MarkForCC();
+  MessageManagerGlobal::MarkForCC();
 }
 
 already_AddRefed<nsPIDOMWindowOuter>
@@ -3569,14 +3574,6 @@ TabChildGlobal::GetContent(ErrorResult& aError)
   return window.forget();
 }
 
-NS_IMETHODIMP
-TabChildGlobal::GetContent(mozIDOMWindowProxy** aContent)
-{
-  ErrorResult rv;
-  *aContent = GetContent(rv).take();
-  return rv.StealNSResult();
-}
-
 already_AddRefed<nsIDocShell>
 TabChildGlobal::GetDocShell(ErrorResult& aError)
 {
@@ -3588,26 +3585,11 @@ TabChildGlobal::GetDocShell(ErrorResult& aError)
   return window.forget();
 }
 
-NS_IMETHODIMP
-TabChildGlobal::GetDocShell(nsIDocShell** aDocShell)
-{
-  ErrorResult rv;
-  *aDocShell = GetDocShell(rv).take();
-  return rv.StealNSResult();
-}
-
 already_AddRefed<nsIEventTarget>
 TabChildGlobal::GetTabEventTarget()
 {
   nsCOMPtr<nsIEventTarget> target = EventTargetFor(TaskCategory::Other);
   return target.forget();
-}
-
-NS_IMETHODIMP
-TabChildGlobal::GetTabEventTarget(nsIEventTarget** aTarget)
-{
-  *aTarget = GetTabEventTarget().take();
-  return NS_OK;
 }
 
 nsIPrincipal*

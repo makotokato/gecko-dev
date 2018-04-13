@@ -183,29 +183,29 @@ nsHostKey::SizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const
 }
 
 nsHostRecord::nsHostRecord(const nsHostKey& key)
-    : nsHostKey(key)
-    , addr_info_lock("nsHostRecord.addr_info_lock")
-    , addr_info_gencnt(0)
-    , addr_info(nullptr)
-    , addr(nullptr)
-    , negative(false)
-    , mResolving(0)
-    , mNative(false)
-    , mTRRSuccess(0)
-    , mTRRUsed(false)
-    , mNativeUsed(false)
-    , mNativeSuccess(false)
-    , mFirstTRR(nullptr)
-    , onQueue(false)
-    , usingAnyThread(false)
-    , mDoomed(false)
-    , mDidCallbacks(false)
-    , mGetTtl(false)
-    , mTrrAUsed(INIT)
-    , mTrrAAAAUsed(INIT)
-    , mTrrLock("nsHostRecord.mTrrLock")
-    , mBlacklistedCount(0)
-    , mResolveAgain(false)
+  : nsHostKey(key)
+  , addr_info_lock("nsHostRecord.addr_info_lock")
+  , addr_info_gencnt(0)
+  , addr_info(nullptr)
+  , addr(nullptr)
+  , negative(false)
+  , /* FIXME: initialize mResolverMode */ mResolving(0)
+  , mNative(false)
+  , mTRRSuccess(0)
+  , mTRRUsed(false)
+  , mNativeUsed(false)
+  , mNativeSuccess(false)
+  , mFirstTRR(nullptr)
+  , onQueue(false)
+  , usingAnyThread(false)
+  , mDoomed(false)
+  , mDidCallbacks(false)
+  , mGetTtl(false)
+  , mTrrAUsed(INIT)
+  , mTrrAAAAUsed(INIT)
+  , mTrrLock("nsHostRecord.mTrrLock")
+  , mBlacklistedCount(0)
+  , mResolveAgain(false)
 {
 }
 
@@ -530,8 +530,8 @@ nsHostResolver::nsHostResolver(uint32_t maxCacheEntries,
 {
     mCreationTime = PR_Now();
 
-    mLongIdleTimeout  = PR_SecondsToInterval(LongIdleTimeoutSeconds);
-    mShortIdleTimeout = PR_SecondsToInterval(ShortIdleTimeoutSeconds);
+    mLongIdleTimeout  = TimeDuration::FromSeconds(LongIdleTimeoutSeconds);
+    mShortIdleTimeout = TimeDuration::FromSeconds(ShortIdleTimeoutSeconds);
 }
 
 nsHostResolver::~nsHostResolver() = default;
@@ -1313,12 +1313,13 @@ bool
 nsHostResolver::GetHostToLookup(nsHostRecord **result)
 {
     bool timedOut = false;
-    PRIntervalTime epoch, now, timeout;
+    TimeDuration timeout;
+    TimeStamp epoch, now;
 
     MutexAutoLock lock(mLock);
 
     timeout = (mNumIdleThreads >= HighThreadThreshold) ? mShortIdleTimeout : mLongIdleTimeout;
-    epoch = PR_IntervalNow();
+    epoch = TimeStamp::Now();
 
     while (!mShutdown) {
         // remove next record from Q; hand over owning reference. Check high, then med, then low
@@ -1363,15 +1364,16 @@ nsHostResolver::GetHostToLookup(nsHostRecord **result)
         mIdleThreadCV.Wait(timeout);
         mNumIdleThreads--;
 
-        now = PR_IntervalNow();
+        now = TimeStamp::Now();
 
-        if ((PRIntervalTime)(now - epoch) >= timeout)
+        if (now - epoch >= timeout) {
             timedOut = true;
-        else {
-            // It is possible that PR_WaitCondVar() was interrupted and returned early,
-            // in which case we will loop back and re-enter it. In that case we want to
-            // do so with the new timeout reduced to reflect time already spent waiting.
-            timeout -= (PRIntervalTime)(now - epoch);
+        } else {
+            // It is possible that CondVar::Wait() was interrupted and returned
+            // early, in which case we will loop back and re-enter it. In that
+            // case we want to do so with the new timeout reduced to reflect
+            // time already spent waiting.
+            timeout -= now - epoch;
             epoch = now;
         }
     }
@@ -1436,6 +1438,10 @@ different_rrset(AddrInfo *rrset1, AddrInfo *rrset2)
     LOG(("different_rrset %s\n", rrset1->mHostName));
     nsTArray<NetAddr> orderedSet1;
     nsTArray<NetAddr> orderedSet2;
+
+    if (rrset1->IsTRR() != rrset2->IsTRR()) {
+        return true;
+    }
 
     for (NetAddrElement *element = rrset1->mAddresses.getFirst();
          element; element = element->getNext()) {
@@ -1863,6 +1869,17 @@ nsHostResolver::ThreadFunc(void *arg)
     resolver->mThreadCount--;
     resolver = nullptr;
     LOG(("DNS lookup thread - queue empty, thread finished.\n"));
+}
+
+void
+nsHostResolver::SetCacheLimits(uint32_t aMaxCacheEntries,
+                               uint32_t aDefaultCacheEntryLifetime,
+                               uint32_t aDefaultGracePeriod)
+{
+    MutexAutoLock lock(mLock);
+    mMaxCacheEntries = aMaxCacheEntries;
+    mDefaultCacheLifetime = aDefaultCacheEntryLifetime;
+    mDefaultGracePeriod = aDefaultGracePeriod;
 }
 
 nsresult

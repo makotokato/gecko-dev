@@ -62,8 +62,6 @@ using mozilla::FontFamilyName;
 using mozilla::FontFamilyType;
 using mozilla::ServoElementSnapshot;
 using mozilla::SharedFontList;
-class nsCSSCounterStyleRule;
-class nsCSSFontFaceRule;
 struct nsMediaFeature;
 class nsSimpleContentList;
 struct nsStyleList;
@@ -88,10 +86,8 @@ namespace mozilla {
 
 #define STYLE_STRUCT(name_) \
   const nsStyle##name_* ServoComputedData::GetStyle##name_() const { return &name_.mPtr->gecko; }
-#define STYLE_STRUCT_LIST_IGNORE_VARIABLES
 #include "nsStyleStructList.h"
 #undef STYLE_STRUCT
-#undef STYLE_STRUCT_LIST_IGNORE_VARIABLES
 
 #define NS_DECL_THREADSAFE_FFI_REFCOUNTING(class_, name_)                     \
   void Gecko_AddRef##name_##ArbitraryThread(class_* aPtr);                    \
@@ -406,7 +402,7 @@ mozilla::CSSPseudoElementType Gecko_GetImplementedPseudo(RawGeckoElementBorrowed
 // they wrap the value in a struct.
 uint32_t Gecko_CalcStyleDifference(ComputedStyleBorrowed old_style,
                                    ComputedStyleBorrowed new_style,
-                                   bool* any_style_changed,
+                                   bool* any_style_struct_changed,
                                    bool* reset_only_changed);
 
 // Get an element snapshot for a given element from the table.
@@ -629,20 +625,6 @@ void Gecko_StyleSheet_Release(const mozilla::ServoStyleSheet* aSheet);
 nsCSSKeyword Gecko_LookupCSSKeyword(const uint8_t* string, uint32_t len);
 const char* Gecko_CSSKeywordString(nsCSSKeyword keyword, uint32_t* len);
 
-// Font face rule
-// Creates and returns a new (already-addrefed) nsCSSFontFaceRule object.
-nsCSSFontFaceRule* Gecko_CSSFontFaceRule_Create(uint32_t line, uint32_t column);
-nsCSSFontFaceRule* Gecko_CSSFontFaceRule_Clone(const nsCSSFontFaceRule* rule);
-void Gecko_CSSFontFaceRule_GetCssText(const nsCSSFontFaceRule* rule, nsAString* result);
-NS_DECL_FFI_REFCOUNTING(nsCSSFontFaceRule, CSSFontFaceRule);
-
-// Counter style rule
-// Creates and returns a new (already-addrefed) nsCSSCounterStyleRule object.
-nsCSSCounterStyleRule* Gecko_CSSCounterStyle_Create(nsAtom* name);
-nsCSSCounterStyleRule* Gecko_CSSCounterStyle_Clone(const nsCSSCounterStyleRule* rule);
-void Gecko_CSSCounterStyle_GetCssText(const nsCSSCounterStyleRule* rule, nsAString* result);
-NS_DECL_FFI_REFCOUNTING(nsCSSCounterStyleRule, CSSCounterStyleRule);
-
 bool Gecko_IsDocumentBody(RawGeckoElementBorrowed element);
 
 // We use an int32_t here instead of a LookAndFeel::ColorID
@@ -651,10 +633,6 @@ nscolor Gecko_GetLookAndFeelSystemColor(int32_t color_id,
                                         RawGeckoPresContextBorrowed pres_context);
 
 void Gecko_AddPropertyToSet(nsCSSPropertyIDSetBorrowedMut, nsCSSPropertyID);
-
-// Register a namespace and get a namespace id.
-// Returns -1 on error (OOM)
-int32_t Gecko_RegisterNamespace(nsAtom* ns);
 
 // Style-struct management.
 #define STYLE_STRUCT(name)                                            \

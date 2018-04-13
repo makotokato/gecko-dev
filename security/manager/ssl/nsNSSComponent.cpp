@@ -208,6 +208,7 @@ nsNSSComponent::nsNSSComponent()
   , mLoadableRootsLoadedResult(NS_ERROR_FAILURE)
   , mMutex("nsNSSComponent.mMutex")
   , mNSSInitialized(false)
+  , mMitmDetecionEnabled{ false }
 {
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("nsNSSComponent::ctor\n"));
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
@@ -1016,23 +1017,6 @@ LoadLoadableRootsTask::Dispatch()
 NS_IMETHODIMP
 LoadLoadableRootsTask::Run()
 {
-  // First we Run() on the "LoadRoots" thread, do our work, and then we Run()
-  // again on the main thread so we can shut down the thread (since we don't
-  // need it any more). We can't shut down the thread while we're *on* the
-  // thread, which is why we do the dispatch to the main thread. CryptoTask.cpp
-  // (which informs this code) says that we can't null out mThread. This appears
-  // to be because its refcount could be decreased while this dispatch is being
-  // processed, so it might get prematurely destroyed. I'm not sure this makes
-  // sense but it'll get cleaned up in our destructor anyway, so it's fine to
-  // not null it out here (as long as we don't run twice on the main thread,
-  // which shouldn't be possible).
-  if (NS_IsMainThread()) {
-    if (mThread) {
-      mThread->Shutdown();
-    }
-    return NS_OK;
-  }
-
   nsresult rv = LoadLoadableRoots();
   if (NS_FAILED(rv)) {
     MOZ_LOG(gPIPNSSLog, LogLevel::Error, ("LoadLoadableRoots failed"));
@@ -1060,9 +1044,7 @@ LoadLoadableRootsTask::Run()
       return rv;
     }
   }
-
-  // Go back to the main thread to clean up this worker thread.
-  return NS_DispatchToMainThread(this);
+  return NS_OK;
 }
 
 nsresult
@@ -1127,10 +1109,7 @@ nsNSSComponent::BlockUntilLoadableRootsLoaded()
 {
   MonitorAutoLock rootsLoadedLock(mLoadableRootsLoadedMonitor);
   while (!mLoadableRootsLoaded) {
-    nsresult rv = rootsLoadedLock.Wait();
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+    rootsLoadedLock.Wait();
   }
   MOZ_ASSERT(mLoadableRootsLoaded);
 
@@ -2220,6 +2199,12 @@ nsNSSComponent::InitializeNSS()
     Preferences::GetString("security.content.signature.root_hash",
                            mContentSigningRootHash);
 
+    mMitmCanaryIssuer.Truncate();
+    Preferences::GetString("security.pki.mitm_canary_issuer",
+                           mMitmCanaryIssuer);
+    mMitmDetecionEnabled =
+      Preferences::GetBool("security.pki.mitm_canary_issuer.enabled", true);
+
     mNSSInitialized = true;
   }
 
@@ -2386,6 +2371,16 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
                              mContentSigningRootHash);
     } else if (prefName.Equals(kEnterpriseRootModePref)) {
       MaybeImportEnterpriseRoots();
+    } else if (prefName.EqualsLiteral("security.pki.mitm_canary_issuer")) {
+      MutexAutoLock lock(mMutex);
+      mMitmCanaryIssuer.Truncate();
+      Preferences::GetString("security.pki.mitm_canary_issuer",
+                             mMitmCanaryIssuer);
+    } else if (prefName.EqualsLiteral(
+                 "security.pki.mitm_canary_issuer.enabled")) {
+      MutexAutoLock lock(mMutex);
+      mMitmDetecionEnabled =
+        Preferences::GetBool("security.pki.mitm_canary_issuer.enabled", true);
     } else {
       clearSessionCache = false;
     }
@@ -2512,6 +2507,20 @@ nsNSSComponent::IsCertContentSigningRoot(CERTCertificate* cert, bool& result)
 
   result = mContentSigningRootHash.Equals(certHash);
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNSSComponent::IssuerMatchesMitmCanary(const char* aCertIssuer)
+{
+  MutexAutoLock lock(mMutex);
+  if (mMitmDetecionEnabled && !mMitmCanaryIssuer.IsEmpty()) {
+    nsString certIssuer = NS_ConvertUTF8toUTF16(aCertIssuer);
+    if (mMitmCanaryIssuer.Equals(certIssuer)) {
+      return NS_OK;
+    }
+  }
+
+  return NS_ERROR_FAILURE;
 }
 
 SharedCertVerifier::~SharedCertVerifier() { }

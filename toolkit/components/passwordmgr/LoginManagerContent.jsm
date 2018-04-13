@@ -48,7 +48,6 @@ var observer = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
                                           Ci.nsIFormSubmitObserver,
                                           Ci.nsIWebProgressListener,
-                                          Ci.nsIDOMEventListener,
                                           Ci.nsISupportsWeakReference]),
 
   // nsIFormSubmitObserver
@@ -384,7 +383,7 @@ var LoginManagerContent = {
       return;
     }
 
-    let pwField = event.target;
+    let pwField = event.originalTarget;
     if (pwField.form) {
       // Fill is handled by onDOMFormHasPassword which is already throttled.
       return;

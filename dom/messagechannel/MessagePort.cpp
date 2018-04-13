@@ -156,8 +156,7 @@ private:
                             EmptyString(), nullptr, ports);
     event->SetTrusted(true);
 
-    bool dummy;
-    mPort->DispatchEvent(static_cast<dom::Event*>(event.get()), &dummy);
+    mPort->DispatchEvent(*event);
 
     return NS_OK;
   }
@@ -202,6 +201,7 @@ NS_IMPL_RELEASE_INHERITED(MessagePort, DOMEventTargetHelper)
 MessagePort::MessagePort(nsIGlobalObject* aGlobal)
   : DOMEventTargetHelper(aGlobal)
   , mInnerID(0)
+  , mState{ static_cast<State>(0) }
   , mMessageQueueEnabled(false)
   , mIsKeptAlive(false)
   , mHasBeenTransferredOrClosed(false)
@@ -954,8 +954,7 @@ MessagePort::DispatchError()
     MessageEvent::Constructor(this, NS_LITERAL_STRING("messageerror"), init);
   event->SetTrusted(true);
 
-  bool dummy;
-  DispatchEvent(event, &dummy);
+  DispatchEvent(*event);
 }
 
 } // namespace dom

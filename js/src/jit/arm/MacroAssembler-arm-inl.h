@@ -1513,27 +1513,6 @@ MacroAssembler::branchPtr(Condition cond, const BaseIndex& lhs, ImmWord rhs, Lab
     branch32(cond, lhs, Imm32(rhs.value), label);
 }
 
-template <typename T>
-inline CodeOffsetJump
-MacroAssembler::branchPtrWithPatch(Condition cond, Register lhs, T rhs, RepatchLabel* label)
-{
-    cmpPtr(lhs, rhs);
-    return jumpWithPatch(label, cond);
-}
-
-template <typename T>
-inline CodeOffsetJump
-MacroAssembler::branchPtrWithPatch(Condition cond, Address lhs, T rhs, RepatchLabel* label)
-{
-    SecondScratchRegisterScope scratch2(*this);
-    {
-        ScratchRegisterScope scratch(*this);
-        ma_ldr(lhs, scratch2, scratch);
-    }
-    cmpPtr(scratch2, rhs);
-    return jumpWithPatch(label, cond);
-}
-
 void
 MacroAssembler::branchPrivatePtr(Condition cond, const Address& lhs, Register rhs, Label* label)
 {
@@ -2197,7 +2176,6 @@ void
 MacroAssembler::spectreBoundsCheck32(Register index, Register length, Register maybeScratch,
                                      Label* failure)
 {
-    MOZ_ASSERT(index != length);
     MOZ_ASSERT(length != maybeScratch);
     MOZ_ASSERT(index != maybeScratch);
 

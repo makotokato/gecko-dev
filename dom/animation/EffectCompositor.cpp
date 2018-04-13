@@ -21,7 +21,6 @@
 #include "mozilla/EffectSet.h"
 #include "mozilla/LayerAnimationInfo.h"
 #include "mozilla/RestyleManager.h"
-#include "mozilla/RestyleManagerInlines.h"
 #include "mozilla/ServoBindings.h" // Servo_GetProperties_Overriding_Animation
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/StyleAnimationValue.h"
@@ -380,9 +379,8 @@ EffectCompositor::ClearRestyleRequestsFor(Element* aElement)
   }
 }
 
-template<typename StyleType>
 void
-EffectCompositor::UpdateEffectProperties(StyleType* aStyleType,
+EffectCompositor::UpdateEffectProperties(const ComputedStyle* aStyle,
                                          Element* aElement,
                                          CSSPseudoElementType aPseudoType)
 {
@@ -397,7 +395,7 @@ EffectCompositor::UpdateEffectProperties(StyleType* aStyleType,
   effectSet->MarkCascadeNeedsUpdate();
 
   for (KeyframeEffectReadOnly* effect : *effectSet) {
-    effect->UpdateProperties(aStyleType);
+    effect->UpdateProperties(aStyle);
   }
 }
 
@@ -885,7 +883,7 @@ EffectCompositor::PreTraverseInSubtree(ServoTraversalFlags aFlags,
       // ensure the final restyling for removed animations.
       // We can't call PostRestyleEvent directly here since we are still in the
       // middle of the servo traversal.
-      mPresContext->RestyleManager()->AsServo()->
+      mPresContext->RestyleManager()->
         PostRestyleEventForAnimations(target.mElement,
                                       target.mPseudoType,
                                       cascadeLevel == CascadeLevel::Transitions
@@ -967,7 +965,7 @@ EffectCompositor::PreTraverse(dom::Element* aElement,
       continue;
     }
 
-    mPresContext->RestyleManager()->AsServo()->
+    mPresContext->RestyleManager()->
       PostRestyleEventForAnimations(aElement,
                                     aPseudoType,
                                     cascadeLevel == CascadeLevel::Transitions
@@ -989,12 +987,5 @@ EffectCompositor::PreTraverse(dom::Element* aElement,
   return found;
 }
 
-
-template
-void
-EffectCompositor::UpdateEffectProperties(
-  const ComputedStyle* aComputedStyle,
-  Element* aElement,
-  CSSPseudoElementType aPseudoType);
 
 } // namespace mozilla

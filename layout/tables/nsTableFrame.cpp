@@ -39,7 +39,7 @@
 #include "nsError.h"
 #include "nsCSSFrameConstructor.h"
 #include "mozilla/Range.h"
-#include "mozilla/ServoRestyleManager.h"
+#include "mozilla/RestyleManager.h"
 #include "mozilla/ServoStyleSet.h"
 #include "nsDisplayList.h"
 #include "nsIScrollableFrame.h"
@@ -1771,16 +1771,15 @@ nsTableFrame::GetPrefISize(gfxContext *aRenderingContext)
 }
 
 /* virtual */ nsIFrame::IntrinsicISizeOffsetData
-nsTableFrame::IntrinsicISizeOffsets()
+nsTableFrame::IntrinsicISizeOffsets(nscoord aPercentageBasis)
 {
-  IntrinsicISizeOffsetData result = nsContainerFrame::IntrinsicISizeOffsets();
+  IntrinsicISizeOffsetData result =
+    nsContainerFrame::IntrinsicISizeOffsets(aPercentageBasis);
 
   result.hMargin = 0;
-  result.hPctMargin = 0;
 
   if (IsBorderCollapse()) {
     result.hPadding = 0;
-    result.hPctPadding = 0;
 
     WritingMode wm = GetWritingMode();
     LogicalMargin outerBC = GetIncludedOuterBCBorder(wm);
@@ -2217,11 +2216,6 @@ nsTableFrame::Reflow(nsPresContext*           aPresContext,
     tableRect.Inflate(bcMargin.GetPhysicalMargin(wm));
   }
   aDesiredSize.mOverflowAreas.UnionAllWith(tableRect);
-
-  if (HasAnyStateBits(NS_FRAME_FIRST_REFLOW) ||
-      nsSize(aDesiredSize.Width(), aDesiredSize.Height()) != mRect.Size()) {
-      nsIFrame::InvalidateFrame();
-  }
 
   FinishAndStoreOverflow(&aDesiredSize);
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aDesiredSize);
@@ -4568,13 +4562,15 @@ struct BCMapCellInfo
 
 };
 
-
 BCMapCellInfo::BCMapCellInfo(nsTableFrame* aTableFrame)
   : mTableFrame(aTableFrame)
   , mNumTableRows(aTableFrame->GetRowCount())
   , mNumTableCols(aTableFrame->GetColCount())
   , mTableBCData(mTableFrame->GetProperty(TableBCProperty()))
   , mTableWM(aTableFrame->Style())
+  , mCurrentRowFrame{ nullptr }
+  , mCurrentColGroupFrame{ nullptr }
+  , mCurrentColFrame{ nullptr }
 {
   ResetCellInfo();
 }
@@ -4659,7 +4655,13 @@ private:
 
 BCMapCellIterator::BCMapCellIterator(nsTableFrame* aTableFrame,
                                      const TableArea& aDamageArea)
-  : mTableFrame(aTableFrame)
+  : mRowGroupStart{}
+  , mRowGroupEnd{}
+  , mCellMap{ nullptr }
+  , mTableFrame(aTableFrame)
+  , mRowGroup{ nullptr }
+  , mPrevRow{ nullptr }
+  , mIsNewRow{ false }
 {
   mTableCellMap  = aTableFrame->GetCellMap();
 
@@ -5281,9 +5283,16 @@ Perpendicular(mozilla::LogicalSide aSide1,
 // XXX allocate this as number-of-cols+1 instead of number-of-cols+1 * number-of-rows+1
 struct BCCornerInfo
 {
-  BCCornerInfo() { ownerColor = 0; ownerWidth = subWidth = ownerElem = subSide =
-                   subElem = hasDashDot = numSegs = bevel = 0; ownerSide = eLogicalSideBStart;
-                   ownerStyle = 0xFF; subStyle = NS_STYLE_BORDER_STYLE_SOLID;  }
+  BCCornerInfo()
+    : unused{}
+  {
+    ownerColor = 0;
+    ownerWidth = subWidth = ownerElem = subSide = subElem = hasDashDot =
+      numSegs = bevel = 0;
+    ownerSide = eLogicalSideBStart;
+    ownerStyle = 0xFF;
+    subStyle = NS_STYLE_BORDER_STYLE_SOLID;
+  }
   void Set(mozilla::LogicalSide aSide,
            BCCellBorder  border);
 
@@ -6796,13 +6805,36 @@ private:
 
 };
 
-
-
 BCPaintBorderIterator::BCPaintBorderIterator(nsTableFrame* aTable)
   : mTable(aTable)
   , mTableFirstInFlow(static_cast<nsTableFrame*>(aTable->FirstInFlow()))
   , mTableCellMap(aTable->GetCellMap())
+  , mCellMap{ nullptr }
   , mTableWM(aTable->Style())
+  , mPrevRg{ nullptr }
+  , mRg{ nullptr }
+  , mIsRepeatedHeader{ false }
+  , mIsRepeatedFooter{ false }
+  , mStartRg{ nullptr }
+  , mRgIndex{}
+  , mFifRgFirstRowIndex{}
+  , mRgFirstRowIndex{}
+  , mRgLastRowIndex{}
+  , mColIndex{}
+  , mRowIndex{}
+  , mIsNewRow{ false }
+  , mAtEnd{ false }
+  , mPrevRow{ nullptr }
+  , mRow{ nullptr }
+  , mStartRow{ nullptr }
+  , mPrevCell{ nullptr }
+  , mCell{ nullptr }
+  , mPrevCellData{ nullptr }
+  , mCellData{ nullptr }
+  , mBCData{ nullptr }
+  , mInitialOffsetI{}
+  , mNextOffsetB{}
+  , mPrevInlineSegBSize{}
 {
   mBlockDirInfo    = nullptr;
   LogicalMargin childAreaOffset = mTable->GetChildAreaOffset(mTableWM, nullptr);
@@ -7222,6 +7254,11 @@ CalcHorCornerOffset(nsPresContext* aPresContext,
 }
 
 BCBlockDirSeg::BCBlockDirSeg()
+  : mFirstRowGroup{ nullptr }
+  , mFirstRow{ nullptr }
+  , mBEndInlineSegBSize{}
+  , mBEndOffset{}
+  , mIsBEndBevel{ false }
 {
   mCol = nullptr;
   mFirstCell = mLastCell = mAjaCell = nullptr;
@@ -7507,7 +7544,7 @@ BCBlockDirSeg::CreateWebRenderCommands(BCPaintBorderIterator& aIter,
   LayoutDeviceRect borderRect = LayoutDeviceRect::FromUnknownRect(NSRectToRect(param->mBorderRect + aOffset,
                                                                                param->mAppUnitsPerDevPixel));
 
-  wr::LayoutRect transformedRect = aSc.ToRelativeLayoutRect(borderRect);
+  wr::LayoutRect roundedRect = wr::ToRoundedLayoutRect(borderRect);
   wr::BorderSide wrSide[4];
   NS_FOR_CSS_SIDES(i) {
     wrSide[i] = wr::ToBorderSide(ToDeviceColor(param->mBorderColor), NS_STYLE_BORDER_STYLE_NONE);
@@ -7518,13 +7555,13 @@ BCBlockDirSeg::CreateWebRenderCommands(BCPaintBorderIterator& aIter,
 
   // All border style is set to none except left side. So setting the widths of
   // each side to width of rect is fine.
-  wr::BorderWidths borderWidths = wr::ToBorderWidths(transformedRect.size.width,
-                                                     transformedRect.size.width,
-                                                     transformedRect.size.width,
-                                                     transformedRect.size.width);
+  wr::BorderWidths borderWidths = wr::ToBorderWidths(roundedRect.size.width,
+                                                     roundedRect.size.width,
+                                                     roundedRect.size.width,
+                                                     roundedRect.size.width);
   Range<const wr::BorderSide> wrsides(wrSide, 4);
-  aBuilder.PushBorder(transformedRect,
-                      transformedRect,
+  aBuilder.PushBorder(roundedRect,
+                      roundedRect,
                       param->mBackfaceIsVisible,
                       borderWidths,
                       wrsides,
@@ -7551,6 +7588,11 @@ BCBlockDirSeg::IncludeCurrentBorder(BCPaintBorderIterator& aIter)
 }
 
 BCInlineDirSeg::BCInlineDirSeg()
+  : mIsIEndBevel{ false }
+  , mIEndBevelOffset{}
+  , mIEndBevelSide{ static_cast<LogicalSide>(0) }
+  , mEndOffset{}
+  , mOwner{ '\0' }
 {
   mOffsetI = mOffsetB = mLength = mWidth =  mIStartBevelOffset = 0;
   mIStartBevelSide = eLogicalSideBStart;
@@ -7789,7 +7831,7 @@ BCInlineDirSeg::CreateWebRenderCommands(BCPaintBorderIterator& aIter,
 
   LayoutDeviceRect borderRect = LayoutDeviceRect::FromUnknownRect(NSRectToRect(param->mBorderRect + aPt,
                                                                                param->mAppUnitsPerDevPixel));
-  wr::LayoutRect transformedRect = aSc.ToRelativeLayoutRect(borderRect);
+  wr::LayoutRect roundedRect = wr::ToRoundedLayoutRect(borderRect);
   wr::BorderSide wrSide[4];
   NS_FOR_CSS_SIDES(i) {
     wrSide[i] = wr::ToBorderSide(ToDeviceColor(param->mBorderColor), NS_STYLE_BORDER_STYLE_NONE);
@@ -7800,13 +7842,13 @@ BCInlineDirSeg::CreateWebRenderCommands(BCPaintBorderIterator& aIter,
 
   // All border style is set to none except top side. So setting the widths of
   // each side to height of rect is fine.
-  wr::BorderWidths borderWidths = wr::ToBorderWidths(transformedRect.size.height,
-                                                     transformedRect.size.height,
-                                                     transformedRect.size.height,
-                                                     transformedRect.size.height);
+  wr::BorderWidths borderWidths = wr::ToBorderWidths(roundedRect.size.height,
+                                                     roundedRect.size.height,
+                                                     roundedRect.size.height,
+                                                     roundedRect.size.height);
   Range<const wr::BorderSide> wrsides(wrSide, 4);
-  aBuilder.PushBorder(transformedRect,
-                      transformedRect,
+  aBuilder.PushBorder(roundedRect,
+                      roundedRect,
                       param->mBackfaceIsVisible,
                       borderWidths,
                       wrsides,
@@ -8060,30 +8102,30 @@ nsTableFrame::CreateWebRenderCommandsForBCBorders(wr::DisplayListBuilder& aBuild
       backfaceIsVisible |= param->mBackfaceIsVisible;
     }
 
-    wr::LayoutRect transformedRect = aSc.ToRelativeLayoutRect(borderRect);
+    wr::LayoutRect roundedRect = wr::ToRoundedLayoutRect(borderRect);
     allBorderRect = allBorderRect.Union(borderRect);
     wrSide[side] = wr::ToBorderSide(ToDeviceColor(borderColor), borderStyle);
     switch (side) {
       case eSideTop:
-        wrWidths.top = transformedRect.size.height;
+        wrWidths.top = roundedRect.size.height;
         break;
       case eSideBottom:
-        wrWidths.bottom = transformedRect.size.height;
+        wrWidths.bottom = roundedRect.size.height;
         break;
       case eSideLeft:
-        wrWidths.left = transformedRect.size.width;
+        wrWidths.left = roundedRect.size.width;
         break;
       case eSideRight:
-        wrWidths.right = transformedRect.size.width;
+        wrWidths.right = roundedRect.size.width;
         break;
     }
   }
 
   if (!allBorderRect.IsEmpty()) {
     Range<const wr::BorderSide> wrsides(wrSide, 4);
-    wr::LayoutRect allTransformedRect = aSc.ToRelativeLayoutRect(allBorderRect);
-    aBuilder.PushBorder(allTransformedRect,
-                        allTransformedRect,
+    wr::LayoutRect allRoundedRect = wr::ToRoundedLayoutRect(allBorderRect);
+    aBuilder.PushBorder(allRoundedRect,
+                        allRoundedRect,
                         backfaceIsVisible,
                         wrWidths,
                         wrsides,
@@ -8153,8 +8195,6 @@ nsTableFrame::InvalidateTableFrame(nsIFrame* aFrame,
              aOrigVisualOverflow.Size() != visualOverflow.Size()){
     aFrame->InvalidateFrameWithRect(aOrigVisualOverflow);
     aFrame->InvalidateFrame();
-    parent->InvalidateFrameWithRect(aOrigRect);
-    parent->InvalidateFrame();
   }
 }
 

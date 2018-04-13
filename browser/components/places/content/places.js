@@ -189,12 +189,15 @@ var PlacesOrganizer = {
     document.getElementById("placesContext")
             .removeChild(document.getElementById("placesContext_show:info"));
 
+    if (!Services.policies.isAllowed("profileImport")) {
+      document.getElementById("OrganizerCommand_browserImport").setAttribute("disabled", true);
+    }
+
     ContentArea.focus();
   },
 
   QueryInterface: function PO_QueryInterface(aIID) {
-    if (aIID.equals(Ci.nsIDOMEventListener) ||
-        aIID.equals(Ci.nsISupports))
+    if (aIID.equals(Ci.nsISupports))
       return this;
 
     throw Cr.NS_NOINTERFACE;

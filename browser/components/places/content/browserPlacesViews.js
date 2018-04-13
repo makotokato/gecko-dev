@@ -205,10 +205,7 @@ PlacesViewBase.prototype = {
         container = selectedNode.parent;
         index = container.getChildIndex(selectedNode);
         if (PlacesUtils.nodeIsTagQuery(container)) {
-          tagName = container.title;
-          // TODO (Bug 1160193): properly support dropping on a tag root.
-          if (!tagName)
-            return null;
+          tagName = PlacesUtils.asQuery(container).query.tags[0];
         }
       }
     }
@@ -439,7 +436,8 @@ PlacesViewBase.prototype = {
       }
       aPopup._siteURIMenuitem.setAttribute("targetURI", siteUrl);
       aPopup._siteURIMenuitem.setAttribute("oncommand",
-        "openUILink(this.getAttribute('targetURI'), event);");
+        "openUILink(this.getAttribute('targetURI'), event, {" +
+        " triggeringPrincipal: Services.scriptSecurityManager.createNullPrincipal({})});");
 
       // If a user middle-clicks this item we serve the oncommand event.
       // We are using checkForMiddleClick because of Bug 246720.
@@ -1011,8 +1009,7 @@ PlacesToolbar.prototype = {
               "mousemove", "mouseover", "mouseout"],
 
   QueryInterface: function PT_QueryInterface(aIID) {
-    if (aIID.equals(Ci.nsIDOMEventListener) ||
-        aIID.equals(Ci.nsITimerCallback))
+    if (aIID.equals(Ci.nsITimerCallback))
       return this;
 
     return PlacesViewBase.prototype.QueryInterface.apply(this, arguments);
@@ -1912,13 +1909,6 @@ function PlacesMenu(aPopupShowingEvent, aPlace, aOptions) {
 
 PlacesMenu.prototype = {
   __proto__: PlacesViewBase.prototype,
-
-  QueryInterface: function PM_QueryInterface(aIID) {
-    if (aIID.equals(Ci.nsIDOMEventListener))
-      return this;
-
-    return PlacesViewBase.prototype.QueryInterface.apply(this, arguments);
-  },
 
   _removeChild: function PM_removeChild(aChild) {
     PlacesViewBase.prototype._removeChild.apply(this, arguments);

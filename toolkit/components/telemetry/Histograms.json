@@ -239,7 +239,7 @@
     "record_in_processes": ["main", "content", "gpu"],
     "alert_emails": ["kgupta@mozilla.com"],
     "bug_numbers": [1238040],
-    "expires_in_version": "62",
+    "expires_in_version": "70",
     "kind": "exponential",
     "high": 100000,
     "n_buckets": 50,
@@ -249,7 +249,7 @@
     "record_in_processes": ["main", "content", "gpu"],
     "alert_emails": ["kgupta@mozilla.com"],
     "bug_numbers": [1238040],
-    "expires_in_version": "62",
+    "expires_in_version": "70",
     "kind": "exponential",
     "high": 66355200,
     "n_buckets": 50,
@@ -259,7 +259,7 @@
     "record_in_processes": ["main", "content", "gpu"],
     "alert_emails": ["kgupta@mozilla.com"],
     "bug_numbers": [1238040],
-    "expires_in_version": "62",
+    "expires_in_version": "70",
     "kind": "exponential",
     "high": 1000000,
     "n_buckets": 50,
@@ -269,7 +269,7 @@
     "record_in_processes": ["main", "content", "gpu"],
     "alert_emails": ["kgupta@mozilla.com"],
     "bug_numbers": [1238040],
-    "expires_in_version": "62",
+    "expires_in_version": "70",
     "kind": "exponential",
     "high": 1073741824,
     "n_buckets": 50,
@@ -291,141 +291,9 @@
     "high": 1000,
     "n_buckets": 50
   },
-  "CONTENT_JS_FOREGROUND_TICK_DELAY_TOTAL_MS": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["farre@mozilla.com"],
-    "expires_in_version": "61",
-    "kind": "exponential",
-    "high": 100,
-    "n_buckets": 10,
-    "bug_numbers": [1305153, 1296486],
-    "description": "Time (in ms) that a pending vsync gets delayed by a runnable associated with a TabGroup that is (partially) in the foreground. The time is measured from the vsync event's time stamp to when the runnable finishes execution."
-  },
-  "CONTENT_JS_FOREGROUND_TICK_DELAY_EVENTS_MS": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["farre@mozilla.com"],
-    "expires_in_version": "61",
-    "keyed": true,
-    "kind": "exponential",
-    "high": 100,
-    "n_buckets": 10,
-    "bug_numbers": [1305153, 1296486],
-    "description": "Time (in ms) that a pending vsync gets delayed by a runnable associated with a TabGroup that is (partially) in the foreground. The time is measured from the vsync event's time stamp to when the runnable finishes execution. The histogram is keyed by the label of the runnable, indicating which type of task the runnable is performing."
-  },
-  "CONTENT_JS_BACKGROUND_TICK_DELAY_TOTAL_MS": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["farre@mozilla.com"],
-    "expires_in_version": "61",
-    "kind": "exponential",
-    "high": 100,
-    "n_buckets": 10,
-    "bug_numbers": [1305153, 1296486],
-    "description": "Time (in ms) that a pending vsync gets delayed by a runnable associated with a TabGroup that is completely in the background. The time is measured from the vsync event's time stamp to when the runnable finishes execution."
-  },
-  "CONTENT_JS_BACKGROUND_TICK_DELAY_EVENTS_MS": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["farre@mozilla.com"],
-    "expires_in_version": "61",
-    "keyed": true,
-    "kind": "exponential",
-    "high": 100,
-    "n_buckets": 10,
-    "bug_numbers": [1305153, 1296486],
-    "description" : "Time (in ms) that a pending vsync gets delayed by a runnable associated with a TabGroup that is completely in the background. The time is measured from the vsync event's time stamp to when the runnable finishes execution. The histogram is keyed by the label of the runnable, indicating which type of task the runnable is performing."
-  },
-  "CONTENT_JS_KNOWN_TICK_DELAY_MS": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["farre@mozilla.com"],
-    "expires_in_version": "65",
-    "kind": "exponential",
-    "high": 100,
-    "n_buckets": 10,
-    "bug_numbers": [1305153, 1296486],
-    "description": "Time (in ms) that a pending vsync gets delayed by a runnable associated with a TabGroup when the vsync event's timestamp is before the starting time of the runnable. The time is measured from the vsync event's time stamp to when the runnable finishes execution."
-  },
-  "COMPOSITOR_ANIMATION_DURATION" : {
-    "record_in_processes": ["main", "content", "gpu"],
-    "expires_in_version": "62",
-    "description": "Duration of animations running on the compositor in milliseconds",
-    "kind": "exponential",
-    "high": 20000,
-    "n_buckets": 50,
-    "alert_emails": ["kgupta@mozilla.com"],
-    "bug_numbers": [1339220]
-  },
-  "COMPOSITOR_ANIMATION_MAX_CONTIGUOUS_DROPS_APZ" : {
-    "record_in_processes": ["main", "content", "gpu"],
-    "expires_in_version": "62",
-    "description": "For APZ/scrolling compositor animations, the maximum number of contiguous frame drops encountered",
-    "kind": "exponential",
-    "high": 7200,
-    "n_buckets": 50,
-    "alert_emails": ["kgupta@mozilla.com"],
-    "bug_numbers": [1338347]
-  },
-  "COMPOSITOR_ANIMATION_MAX_CONTIGUOUS_DROPS_CHROME" : {
-    "record_in_processes": ["main", "content", "gpu"],
-    "expires_in_version": "62",
-    "description": "For compositor animations of chrome-process layers, the maximum number of contiguous frame drops encountered",
-    "kind": "exponential",
-    "high": 7200,
-    "n_buckets": 50,
-    "alert_emails": ["kgupta@mozilla.com"],
-    "bug_numbers": [1338347]
-  },
-  "COMPOSITOR_ANIMATION_MAX_CONTIGUOUS_DROPS_CONTENT" : {
-    "record_in_processes": ["main", "content", "gpu"],
-    "expires_in_version": "62",
-    "description": "For compositor animations of content-process layers, the maximum number of contiguous frame drops encountered",
-    "kind": "exponential",
-    "high": 7200,
-    "n_buckets": 50,
-    "alert_emails": ["kgupta@mozilla.com"],
-    "bug_numbers": [1338347]
-  },
-  "COMPOSITOR_ANIMATION_MAX_LAYER_AREA" : {
-    "record_in_processes": ["main", "content", "gpu"],
-    "expires_in_version": "62",
-    "description": "High-watermark of layer area affected during a compositor animation. Units are layer pixels squared.",
-    "kind": "exponential",
-    "high": 8294400,
-    "n_buckets": 50,
-    "alert_emails": ["kgupta@mozilla.com"],
-    "bug_numbers": [1339220]
-  },
-  "COMPOSITOR_ANIMATION_THROUGHPUT_APZ" : {
-    "record_in_processes": ["main", "content", "gpu"],
-    "expires_in_version": "62",
-    "description": "Frame throughput ratio (scaled up to 1000) for APZ/scrolling animations in the compositor.",
-    "kind": "linear",
-    "high": 1500,
-    "n_buckets": 50,
-    "alert_emails": ["kgupta@mozilla.com"],
-    "bug_numbers": [1338347]
-  },
-  "COMPOSITOR_ANIMATION_THROUGHPUT_CHROME" : {
-    "record_in_processes": ["main", "content", "gpu"],
-    "expires_in_version": "62",
-    "description": "Frame throughput ratio (scaled up to 1000) for compositor animations of chrome-process layers.",
-    "kind": "linear",
-    "high": 1500,
-    "n_buckets": 50,
-    "alert_emails": ["kgupta@mozilla.com"],
-    "bug_numbers": [1338347]
-  },
-  "COMPOSITOR_ANIMATION_THROUGHPUT_CONTENT" : {
-    "record_in_processes": ["main", "content", "gpu"],
-    "expires_in_version": "62",
-    "description": "Frame throughput ratio (scaled up to 1000) for compositor animations of content-process layers.",
-    "kind": "linear",
-    "high": 1500,
-    "n_buckets": 50,
-    "alert_emails": ["kgupta@mozilla.com"],
-    "bug_numbers": [1338347]
-  },
   "CONTENT_PROCESS_LAUNCH_TIME_MS" : {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["bsmedberg@mozilla.com", "mconley@mozilla.com"],
+    "alert_emails": ["fgomes@mozilla.com", "mconley@mozilla.com"],
     "expires_in_version": "57",
     "bug_numbers": [1304790],
     "kind": "exponential",
@@ -438,7 +306,7 @@
     "record_in_processes": ["main", "content", "gpu"],
     "alert_emails": ["kgupta@mozilla.com"],
     "bug_numbers": [1261373],
-    "expires_in_version": "62",
+    "expires_in_version": "70",
     "description": "Main thread response times for APZ notifications about input events (ms)",
     "kind" : "exponential",
     "high": 60000,
@@ -1037,14 +905,6 @@
     "releaseChannelCollection": "opt-out",
     "n_values":  10,
     "description": "Count how often we use different fallbacks when the GPU process crashes: None=0, GPUProcessDecodingDisabled=1, GPUProcessDisabled=2"
-  },
-  "JS_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["jdemooij@mozilla.com"],
-    "expires_in_version": "never",
-    "kind": "enumerated",
-    "n_values": 10,
-    "description": "Use of SpiderMonkey's deprecated language extensions in web content: ForEach=0 (obsolete), DestructuringForIn=1 (obsolete), LegacyGenerator=2 (obsolete), ExpressionClosure=3, LetBlock=4 (obsolete), LetExpression=5 (obsolete), NoSuchMethod=6 (obsolete), FlagsArgument=7 (obsolete), RegExpSourceProp=8 (obsolete), RestoredRegExpStatics=9 (obsolete), BlockScopeFunRedecl=10 (obsolete)"
   },
   "JS_PRIVILEGED_PARSER_COMPILE_LAZY_AFTER_MS": {
     "record_in_processes": ["main", "content"],
@@ -2067,7 +1927,7 @@
   "NETWORK_RACE_CACHE_WITH_NETWORK_SAVED_TIME": {
     "record_in_processes": ["main", "content"],
     "expires_in_version": "62",
-    "alert_emails": ["necko@mozilla.com", "bsmedberg@mozilla.com"],
+    "alert_emails": ["necko@mozilla.com"],
     "bug_numbers": [1354407],
     "kind": "exponential",
     "high": 60000,
@@ -2077,7 +1937,7 @@
   "NETWORK_RACE_CACHE_WITH_NETWORK_OCEC_ON_START_DIFF": {
     "record_in_processes": ["main", "content"],
     "expires_in_version": "62",
-    "alert_emails": ["necko@mozilla.com", "bsmedberg@mozilla.com"],
+    "alert_emails": ["necko@mozilla.com"],
     "bug_numbers": [1354407],
     "kind": "linear",
     "high": 1000,
@@ -2092,7 +1952,7 @@
     "high": 16777216,
     "n_buckets": 100,
     "description": "Amount of bytes received when we decide to race cache with network and network wins.",
-    "alert_emails": ["necko@mozilla.com", "bsmedberg@mozilla.com"],
+    "alert_emails": ["necko@mozilla.com"],
     "bug_numbers": [1354405]
   },
   "NETWORK_RACE_CACHE_BANDWIDTH_RACE_CACHE_WIN": {
@@ -2103,7 +1963,7 @@
     "high": 16777216,
     "n_buckets": 100,
     "description": "Amount of bytes received when we decide to race cache with network and cache wins.",
-    "alert_emails": ["necko@mozilla.com", "bsmedberg@mozilla.com"],
+    "alert_emails": ["necko@mozilla.com"],
     "bug_numbers": [1354405]
   },
   "NETWORK_RACE_CACHE_BANDWIDTH_NOT_RACE": {
@@ -2114,7 +1974,7 @@
     "high": 16777216,
     "n_buckets": 100,
     "description": "Amount of bytes received when we decide not to race cache with network.",
-    "alert_emails": ["necko@mozilla.com", "bsmedberg@mozilla.com"],
+    "alert_emails": ["necko@mozilla.com"],
     "bug_numbers": [1354405]
   },
   "NETWORK_RACE_CACHE_VALIDATION": {
@@ -6404,11 +6264,11 @@
   },
   "FX_PREFERENCES_CATEGORY_OPENED_V2": {
     "record_in_processes": ["main", "content"],
-    "bug_numbers": [1335907, 1425173],
+    "bug_numbers": [1335907, 1425173, 1451006],
     "alert_emails": ["jaws@mozilla.com"],
     "expires_in_version": "66",
     "kind": "categorical",
-    "labels": ["unknown", "searchresults", "general", "applications", "privacy", "sync", "advanced", "search"],
+    "labels": ["unknown", "searchresults", "general", "applications", "privacy", "sync", "advanced", "search", "home"],
     "releaseChannelCollection": "opt-out",
     "description": "Count how often each preference category is opened."
   },
@@ -7205,13 +7065,6 @@
     "n_buckets": 29,
     "description": "The size (MB) of the ping data submitted to Telemetry exceeding the maximum size"
   },
-  "TELEMETRY_DISCARDED_CONTENT_PINGS_COUNT": {
-    "record_in_processes": ["main"],
-    "alert_emails": ["telemetry-client-dev@mozilla.com"],
-    "expires_in_version": "never",
-    "kind": "count",
-    "description": "Count of discarded content payloads."
-  },
   "TELEMETRY_COMPRESS": {
     "record_in_processes": ["main"],
     "alert_emails": ["telemetry-client-dev@mozilla.com"],
@@ -7255,7 +7108,8 @@
       "eRedirect",
       "abort",
       "timeout",
-      "eTooLate"
+      "eTooLate",
+      "eTerminated"
     ],
     "description": "Counts of the different ways sending a Telemetry ping can fail."
   },
@@ -8128,67 +7982,67 @@
   "PLUGINS_NOTIFICATION_SHOWN": {
     "record_in_processes": ["main", "content"],
     "releaseChannelCollection": "opt-out",
-    "expires_in_version": "60",
+    "expires_in_version": "never",
     "kind": "boolean",
     "description": "The number of times the click-to-activate notification was shown: false: shown by in-content activation true: shown by location bar activation",
     "bug_numbers": [902075, 1345894],
-    "alert_emails": ["bsmedberg@mozilla.com"]
+    "alert_emails": ["flashvideo-2015@mozilla.com"]
   },
   "PLUGINS_NOTIFICATION_PLUGIN_COUNT": {
     "record_in_processes": ["main", "content"],
     "releaseChannelCollection": "opt-out",
-    "expires_in_version": "60",
+    "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 5,
     "description": "The number of plugins present in the click-to-activate notification, minus one (1, 2, 3, 4, more than 4)",
     "bug_numbers": [902075, 1345894],
-    "alert_emails": ["bsmedberg@mozilla.com"]
+    "alert_emails": ["flashvideo-2015@mozilla.com"]
   },
   "PLUGINS_NOTIFICATION_USER_ACTION_2": {
     "record_in_processes": ["main", "content"],
     "releaseChannelCollection": "opt-out",
-    "expires_in_version": "60",
+    "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 8,
     "description": "User actions taken in the plugin notification: 0: allownow 1: allowalways 2: block 3: blockalways",
     "bug_numbers": [902075, 1345894, 1398972],
-    "alert_emails": ["bsmedberg@mozilla.com"]
+    "alert_emails": ["flashvideo-2015@mozilla.com"]
   },
   "PLUGINS_INFOBAR_SHOWN": {
     "record_in_processes": ["main"],
     "releaseChannelCollection": "opt-out",
-    "expires_in_version": "60",
+    "expires_in_version": "never",
     "kind": "boolean",
     "description": "Count of when the hidden-plugin infobar was displayed.",
     "bug_numbers": [902075, 1345894],
-    "alert_emails": ["bsmedberg@mozilla.com"]
+    "alert_emails": ["flashvideo-2015@mozilla.com"]
   },
   "PLUGINS_INFOBAR_BLOCK": {
     "record_in_processes": ["main"],
     "releaseChannelCollection": "opt-out",
-    "expires_in_version": "60",
+    "expires_in_version": "never",
     "kind": "boolean",
     "description": "Count the number of times the user clicked 'block' on the hidden-plugin infobar.",
     "bug_numbers": [902075, 1345894],
-    "alert_emails": ["bsmedberg@mozilla.com"]
+    "alert_emails": ["flashvideo-2015@mozilla.com"]
   },
   "PLUGINS_INFOBAR_ALLOW": {
     "record_in_processes": ["main"],
     "releaseChannelCollection": "opt-out",
-    "expires_in_version": "60",
+    "expires_in_version": "never",
     "kind": "boolean",
     "description": "Count the number of times the user clicked 'allow' on the hidden-plugin infobar.",
     "bug_numbers": [902075, 1345894],
-    "alert_emails": ["bsmedberg@mozilla.com"]
+    "alert_emails": ["flashvideo-2015@mozilla.com"]
   },
   "PLUGINS_INFOBAR_DISMISSED": {
     "record_in_processes": ["main"],
     "releaseChannelCollection": "opt-out",
-    "expires_in_version": "60",
+    "expires_in_version": "never",
     "kind": "boolean",
     "description": "Count the number of times the user explicitly dismisses the hidden-plugin infobar without choosing allow or continue-blocking.",
     "bug_numbers": [1368060],
-    "alert_emails": ["bsmedberg@mozilla.com"]
+    "alert_emails": ["flashvideo-2015@mozilla.com"]
   },
   "POPUP_NOTIFICATION_STATS": {
     "record_in_processes": ["main", "content"],
