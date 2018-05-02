@@ -37,7 +37,6 @@ import org.mozilla.gecko.Clipboard;
 import org.mozilla.gecko.DoorHangerPopup;
 import org.mozilla.gecko.EventDispatcher;
 import org.mozilla.gecko.FormAssistPopup;
-import org.mozilla.gecko.GeckoAccessibility;
 import org.mozilla.gecko.GeckoSharedPrefs;
 import org.mozilla.gecko.preferences.GeckoPreferences;
 import org.mozilla.gecko.R;
@@ -58,6 +57,7 @@ import org.mozilla.gecko.util.PackageUtil;
 import org.mozilla.gecko.webapps.WebApps;
 import org.mozilla.gecko.widget.ActionModePresenter;
 import org.mozilla.gecko.widget.GeckoPopupMenu;
+import org.mozilla.geckoview.GeckoResponse;
 import org.mozilla.geckoview.GeckoRuntime;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoSessionSettings;
@@ -124,14 +124,8 @@ public class CustomTabsActivity extends AppCompatActivity
 
         mGeckoView = (GeckoView) findViewById(R.id.gecko_view);
 
-        GeckoAccessibility.setDelegate(mGeckoView);
-
         final GeckoSessionSettings settings = new GeckoSessionSettings();
         settings.setBoolean(GeckoSessionSettings.USE_MULTIPROCESS, false);
-        settings.setBoolean(
-            GeckoSessionSettings.USE_REMOTE_DEBUGGER,
-            GeckoSharedPrefs.forApp(this).getBoolean(
-                GeckoPreferences.PREFS_DEVTOOLS_REMOTE_USB_ENABLED, false));
         mGeckoSession = new GeckoSession(settings);
         mGeckoSession.setNavigationDelegate(this);
         mGeckoSession.setProgressDelegate(this);
@@ -606,8 +600,9 @@ public class CustomTabsActivity extends AppCompatActivity
 
     @Override
     public void onLoadRequest(final GeckoSession session, final String urlStr,
-                                 final int target,
-                                 final GeckoSession.Response<Boolean> response) {
+                              final int target,
+                              final int flags,
+                              final GeckoResponse<Boolean> response) {
         if (target != GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW) {
             response.respond(false);
             return;
@@ -648,7 +643,7 @@ public class CustomTabsActivity extends AppCompatActivity
 
     @Override
     public void onNewSession(final GeckoSession session, final String uri,
-                             final GeckoSession.Response<GeckoSession> response) {
+                             final GeckoResponse<GeckoSession> response) {
         // We should never get here because we abort loads that need a new session in onLoadRequest()
         throw new IllegalStateException("Unexpected new session");
     }

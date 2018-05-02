@@ -471,7 +471,7 @@ TextServicesDocument::LastSelectedBlock(BlockSelectionStatus* aSelStatus,
     }
 
     nsresult rv;
-    if (parent->IsNodeOfType(nsINode::eTEXT)) {
+    if (parent->IsText()) {
       // The caret is in a text node. Find the beginning
       // of the text block containing this text node and
       // return.
@@ -544,7 +544,7 @@ TextServicesDocument::LastSelectedBlock(BlockSelectionStatus* aSelStatus,
       nsIContent* content = nullptr;
       while (!iter->IsDone()) {
         nsINode* currentNode = iter->GetCurrentNode();
-        if (currentNode->IsNodeOfType(nsINode::eTEXT)) {
+        if (currentNode->IsText()) {
           content = currentNode->AsContent();
           break;
         }
@@ -1099,7 +1099,8 @@ TextServicesDocument::DeleteSelection()
   // Now delete the actual content!
   RefPtr<TextEditor> textEditor = mTextEditor;
   nsresult rv =
-    textEditor->DeleteSelection(nsIEditor::ePrevious, nsIEditor::eStrip);
+    textEditor->DeleteSelectionAsAction(nsIEditor::ePrevious,
+                                        nsIEditor::eStrip);
   if (NS_FAILED(rv)) {
     UNLOCK_DOC(this);
     return rv;
@@ -1258,7 +1259,7 @@ TextServicesDocument::InsertText(const nsString* aText)
     return rv;
   }
 
-  rv = textEditor->InsertText(*aText);
+  rv = textEditor->InsertTextAsAction(*aText);
   if (NS_FAILED(rv)) {
     textEditor->EndTransaction();
     UNLOCK_DOC(this);
@@ -1516,8 +1517,7 @@ TextServicesDocument::DidJoinNodes(nsINode& aLeftNode,
                                    nsINode& aRightNode)
 {
   // Make sure that both nodes are text nodes -- otherwise we don't care.
-  if (!aLeftNode.IsNodeOfType(nsINode::eTEXT) ||
-      !aRightNode.IsNodeOfType(nsINode::eTEXT)) {
+  if (!aLeftNode.IsText() || !aRightNode.IsText()) {
     return;
   }
 
@@ -2455,13 +2455,13 @@ TextServicesDocument::GetUncollapsedSelection(
 
   iter->First();
 
-  if (!p1->IsNodeOfType(nsINode::eTEXT)) {
+  if (!p1->IsText()) {
     found = false;
 
     while (!iter->IsDone()) {
       nsINode* node = iter->GetCurrentNode();
 
-      if (node->IsNodeOfType(nsINode::eTEXT)) {
+      if (node->IsText()) {
         p1 = node;
         o1 = 0;
         found = true;
@@ -2479,11 +2479,11 @@ TextServicesDocument::GetUncollapsedSelection(
 
   iter->Last();
 
-  if (!p2->IsNodeOfType(nsINode::eTEXT)) {
+  if (!p2->IsText()) {
     found = false;
     while (!iter->IsDone()) {
       nsINode* node = iter->GetCurrentNode();
-      if (node->IsNodeOfType(nsINode::eTEXT)) {
+      if (node->IsText()) {
         p2 = node;
         o2 = p2->Length();
         found = true;
@@ -3221,7 +3221,7 @@ TextServicesDocument::DidCreateNode(const nsAString& aTag,
 }
 
 NS_IMETHODIMP
-TextServicesDocument::DidInsertText(nsISupports* aTextNode,
+TextServicesDocument::DidInsertText(CharacterData* aTextNode,
                                     int32_t aOffset,
                                     const nsAString& aString,
                                     nsresult aResult)
@@ -3230,7 +3230,7 @@ TextServicesDocument::DidInsertText(nsISupports* aTextNode,
 }
 
 NS_IMETHODIMP
-TextServicesDocument::WillDeleteText(nsISupports* aTextNode,
+TextServicesDocument::WillDeleteText(CharacterData* aTextNode,
                                      int32_t aOffset,
                                      int32_t aLength)
 {
@@ -3238,7 +3238,7 @@ TextServicesDocument::WillDeleteText(nsISupports* aTextNode,
 }
 
 NS_IMETHODIMP
-TextServicesDocument::DidDeleteText(nsISupports* aTextNode,
+TextServicesDocument::DidDeleteText(CharacterData* aTextNode,
                                     int32_t aOffset,
                                     int32_t aLength,
                                     nsresult aResult)

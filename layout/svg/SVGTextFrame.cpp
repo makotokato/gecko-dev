@@ -276,7 +276,7 @@ GetNonEmptyTextFrameAndNode(nsIFrame* aFrame,
 
   if (isNonEmptyTextFrame) {
     nsIContent* content = text->GetContent();
-    NS_ASSERTION(content && content->IsNodeOfType(nsINode::eTEXT),
+    NS_ASSERTION(content && content->IsText(),
                  "unexpected content type for nsTextFrame");
 
     nsTextNode* node = static_cast<nsTextNode*>(content);
@@ -471,13 +471,6 @@ struct TextRenderedRun
    */
   TextRenderedRun()
     : mFrame(nullptr)
-    , mLengthAdjustScaleFactor{ 0.0 }
-    , mRotate{ 0.0 }
-    , mFontSizeScaleFactor{ 0.0 }
-    , mBaseline{}
-    , mTextFrameContentOffset{}
-    , mTextFrameContentLength{}
-    , mTextElementCharIndex{}
   {
   }
 
@@ -1197,7 +1190,7 @@ public:
       mSubtreePosition(mSubtree ? eBeforeSubtree : eWithinSubtree)
   {
     NS_ASSERTION(aRoot, "expected non-null root");
-    if (!aRoot->IsNodeOfType(nsINode::eTEXT)) {
+    if (!aRoot->IsText()) {
       Next();
     }
   }
@@ -1296,7 +1289,7 @@ TextNodeIterator::Next()
           mCurrent = mCurrent->GetParent();
         }
       }
-    } while (mCurrent && !mCurrent->IsNodeOfType(nsINode::eTEXT));
+    } while (mCurrent && !mCurrent->IsText());
   }
 
   return static_cast<nsTextNode*>(mCurrent);
@@ -2441,16 +2434,14 @@ CharIterator::CharIterator(SVGTextFrame* aSVGTextFrame,
                            CharIterator::CharacterFilter aFilter,
                            nsIContent* aSubtree,
                            bool aPostReflow)
-  : mFilter(aFilter)
-  , mFrameIterator(aSVGTextFrame, aSubtree)
-  , mFrameForTrimCheck(nullptr)
-  , mTrimmedOffset(0)
-  , mTrimmedLength(0)
-  , mTextRun{ nullptr }
-  , mTextElementCharIndex(0)
-  , mGlyphStartTextElementCharIndex(0)
-  , mGlyphUndisplayedCharacters{}
-  , mLengthAdjustScaleFactor(aSVGTextFrame->mLengthAdjustScaleFactor)
+  : mFilter(aFilter),
+    mFrameIterator(aSVGTextFrame, aSubtree),
+    mFrameForTrimCheck(nullptr),
+    mTrimmedOffset(0),
+    mTrimmedLength(0),
+    mTextElementCharIndex(0),
+    mGlyphStartTextElementCharIndex(0),
+    mLengthAdjustScaleFactor(aSVGTextFrame->mLengthAdjustScaleFactor)
   , mPostReflow(aPostReflow)
 {
   if (!AtEnd()) {
@@ -2776,13 +2767,12 @@ public:
                            const gfxMatrix& aCanvasTM,
                            imgDrawingParams& aImgParams,
                            bool aShouldPaintSVGGlyphs)
-    : DrawPathCallbacks(aShouldPaintSVGGlyphs)
-    , mSVGTextFrame(aSVGTextFrame)
-    , mContext(aContext)
-    , mFrame(aFrame)
-    , mCanvasTM(aCanvasTM)
-    , mImgParams(aImgParams)
-    , mColor{}
+    : DrawPathCallbacks(aShouldPaintSVGGlyphs),
+      mSVGTextFrame(aSVGTextFrame),
+      mContext(aContext),
+      mFrame(aFrame),
+      mCanvasTM(aCanvasTM),
+      mImgParams(aImgParams)
   {
   }
 
@@ -4537,7 +4527,7 @@ SVGTextFrame::ResolvePositionsForNode(nsIContent* aContent,
                                       bool& aForceStartOfChunk,
                                       nsTArray<gfxPoint>& aDeltas)
 {
-  if (aContent->IsNodeOfType(nsINode::eTEXT)) {
+  if (aContent->IsText()) {
     // We found a text node.
     uint32_t length = static_cast<nsTextNode*>(aContent)->TextLength();
     if (length) {
@@ -4592,6 +4582,8 @@ SVGTextFrame::ResolvePositionsForNode(nsIContent* aContent,
       mPositions[aIndex].mStartOfChunk = true;
     }
   } else if (!aContent->IsSVGElement(nsGkAtoms::a)) {
+    MOZ_ASSERT(aContent->IsSVGElement());
+
     // We have a text content element that can have x/y/dx/dy/rotate attributes.
     nsSVGElement* element = static_cast<nsSVGElement*>(aContent);
 

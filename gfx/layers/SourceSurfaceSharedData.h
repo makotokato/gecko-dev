@@ -40,9 +40,9 @@ public:
 
   SourceSurfaceSharedDataWrapper()
     : mStride(0)
+    , mConsumers(0)
     , mFormat(SurfaceFormat::UNKNOWN)
-  {
-  }
+  { }
 
   bool Init(const IntSize& aSize,
             int32_t aStride,
@@ -72,16 +72,6 @@ public:
   {
     return false;
   }
-
-  bool Map(MapType, MappedSurface *aMappedSurface) override
-  {
-    aMappedSurface->mData = GetData();
-    aMappedSurface->mStride = mStride;
-    return true;
-  }
-
-  void Unmap() override
-  { }
 
   bool AddConsumer()
   {

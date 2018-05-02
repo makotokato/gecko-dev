@@ -25,7 +25,6 @@
 #include "nsIFrame.h"
 #include "nsError.h"
 
-#include "nsCSSParser.h"
 #include "nsCSSPseudoElements.h"
 #include "nsComputedDOMStyle.h"
 
@@ -3380,12 +3379,10 @@ bool CanvasRenderingContext2D::DrawCustomFocusRing(mozilla::dom::Element& aEleme
     return false;
   }
 
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
-    // check that the element i focused
-    nsCOMPtr<nsIDOMElement> focusedElement;
-    fm->GetFocusedElement(getter_AddRefs(focusedElement));
-    if (SameCOMIdentity(aElement.AsDOMNode(), focusedElement)) {
+    // check that the element is focused
+    if (&aElement == fm->GetFocusedElement()) {
       if (nsPIDOMWindowOuter* window = aElement.OwnerDoc()->GetWindow()) {
         return window->ShouldShowFocusRing();
       }
@@ -3986,12 +3983,6 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
 
   CanvasBidiProcessor()
     : nsBidiPresUtils::BidiProcessor()
-    , mCtx{ nullptr }
-    , mFontgrp{ nullptr }
-    , mAppUnitsPerDevPixel{}
-    , mOp{ static_cast<CanvasRenderingContext2D::TextDrawOperation>(0) }
-    , mTextRunFlags{ static_cast<gfx::ShapedTextFlags>(0) }
-    , mDoMeasureBoundingBox{ false }
   {
     if (Preferences::GetBool(GFX_MISSING_FONTS_NOTIFY_PREF)) {
       mMissingFonts = new gfxMissingFontRecorder();

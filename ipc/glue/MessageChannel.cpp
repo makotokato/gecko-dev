@@ -533,7 +533,8 @@ MessageChannel::MessageChannel(const char* aName,
     mFlags(REQUIRE_DEFAULT),
     mPeerPidSet(false),
     mPeerPid(-1),
-    mIsPostponingSends(false)
+    mIsPostponingSends(false),
+    mInKillHardShutdown(false)
 {
     MOZ_COUNT_CTOR(ipc::MessageChannel);
 
@@ -699,7 +700,10 @@ MessageChannel::Clear()
     // before mListener.  But just to be safe, mListener is a weak pointer.
 
 #if !defined(ANDROID)
-    if (!Unsound_IsClosed()) {
+    // KillHard shutdowns can occur with the channel in connected state. We are
+    // already collecting crash dump data about KillHard shutdowns and we
+    // shouldn't intentionally crash here.
+    if (!Unsound_IsClosed() && !mInKillHardShutdown) {
         CrashReporter::AnnotateCrashReport(
             NS_LITERAL_CSTRING("IPCFatalErrorProtocol"),
             nsDependentCString(mName));
@@ -1164,7 +1168,9 @@ MessageChannel::OnMessageReceivedFromLink(Message&& aMsg)
     if (MaybeInterceptSpecialIOMessage(aMsg))
         return;
 
+#ifdef EARLY_BETA_OR_EARLIER
     mListener->OnChannelReceivedMessage(aMsg);
+#endif
 
     // Regardless of the Interrupt stack, if we're awaiting a sync reply,
     // we know that it needs to be immediately handled to unblock us.

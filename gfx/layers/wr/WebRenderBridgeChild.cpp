@@ -127,7 +127,7 @@ WebRenderBridgeChild::EndTransaction(const wr::LayoutSize& aContentSize,
                                      wr::BuiltDisplayList& aDL,
                                      wr::IpcResourceUpdateQueue& aResources,
                                      const gfx::IntSize& aSize,
-                                     uint64_t aTransactionId,
+                                     TransactionId aTransactionId,
                                      const WebRenderScrollData& aScrollData,
                                      const mozilla::TimeStamp& aTxnStartTime)
 {
@@ -161,7 +161,7 @@ WebRenderBridgeChild::EndTransaction(const wr::LayoutSize& aContentSize,
 
 void
 WebRenderBridgeChild::EndEmptyTransaction(const FocusTarget& aFocusTarget,
-                                          uint64_t aTransactionId,
+                                          TransactionId aTransactionId,
                                           const mozilla::TimeStamp& aTxnStartTime)
 {
   MOZ_ASSERT(!mDestroyed);
@@ -272,7 +272,7 @@ WriteFontDescriptor(const uint8_t* aData, uint32_t aLength, uint32_t aIndex,
 void
 WebRenderBridgeChild::PushGlyphs(wr::DisplayListBuilder& aBuilder, Range<const wr::GlyphInstance> aGlyphs,
                                  gfx::ScaledFont* aFont, const wr::ColorF& aColor, const StackingContextHelper& aSc,
-                                 const wr::LayerRect& aBounds, const wr::LayerRect& aClip, bool aBackfaceVisible,
+                                 const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip, bool aBackfaceVisible,
                                  const wr::GlyphOptions* aGlyphOptions)
 {
   MOZ_ASSERT(aFont);

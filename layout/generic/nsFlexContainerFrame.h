@@ -12,6 +12,8 @@
 #include "nsContainerFrame.h"
 #include "mozilla/UniquePtr.h"
 
+class nsStyleCoord;
+
 namespace mozilla {
 template <class T> class LinkedList;
 class LogicalPoint;
@@ -212,10 +214,23 @@ public:
    */
   static bool IsItemInlineAxisMainAxis(nsIFrame* aFrame);
 
+  /**
+   * Returns true iff the given computed 'flex-basis' & main-size property
+   * values collectively represent a used flex-basis of 'content'.
+   * See https://drafts.csswg.org/css-flexbox-1/#valdef-flex-basis-auto
+   *
+   * @param aFlexBasis the computed 'flex-basis' for a flex item.
+   * @param aMainSize the computed main-size property for a flex item.
+   */
+  static bool IsUsedFlexBasisContent(const nsStyleCoord* aFlexBasis,
+                                     const nsStyleCoord* aMainSize);
+
 protected:
   // Protected constructor & destructor
   explicit nsFlexContainerFrame(ComputedStyle* aStyle)
     : nsContainerFrame(aStyle, kClassID)
+    , mCachedMinISize(NS_INTRINSIC_WIDTH_UNKNOWN)
+    , mCachedPrefISize(NS_INTRINSIC_WIDTH_UNKNOWN)
     , mBaselineFromLastReflow(NS_INTRINSIC_WIDTH_UNKNOWN)
     , mLastBaselineFromLastReflow(NS_INTRINSIC_WIDTH_UNKNOWN)
   {}
@@ -422,6 +437,18 @@ protected:
                           nsTArray<nsIFrame*>& aPlaceholders,
                           const mozilla::LogicalPoint& aContentBoxOrigin,
                           const nsSize& aContainerSize);
+
+  /**
+   * Helper for GetMinISize / GetPrefISize.
+   */
+  nscoord IntrinsicISize(gfxContext* aRenderingContext,
+                         nsLayoutUtils::IntrinsicISizeType aType);
+
+  /**
+   * Cached values to optimize GetMinISize/GetPrefISize.
+   */
+  nscoord mCachedMinISize;
+  nscoord mCachedPrefISize;
 
   nscoord mBaselineFromLastReflow;
   // Note: the last baseline is a distance from our border-box end edge.

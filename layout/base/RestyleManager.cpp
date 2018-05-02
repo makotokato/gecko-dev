@@ -273,7 +273,7 @@ RestyleManager::CharacterDataChanged(nsIContent* aContent,
     return;
   }
 
-  if (!aContent->IsNodeOfType(nsINode::eTEXT)) {
+  if (!aContent->IsText()) {
     // Doesn't matter to styling (could be a processing instruction or a
     // comment), it can't change whether any selectors match or don't.
     return;
@@ -1253,7 +1253,7 @@ NextSiblingWhichMayHaveFrame(nsIContent* aContent)
   for (nsIContent* next = aContent->GetNextSibling();
        next;
        next = next->GetNextSibling()) {
-    if (next->IsElement() || next->IsNodeOfType(nsINode::eTEXT)) {
+    if (next->IsElement() || next->IsText()) {
       return next;
     }
   }
@@ -2592,6 +2592,8 @@ RestyleManager::ProcessPostTraversal(
   nsIFrame* styleFrame = nsLayoutUtils::GetStyleFrame(aElement);
   nsIFrame* primaryFrame = aElement->GetPrimaryFrame();
 
+  MOZ_ASSERT(aElement->HasServoData(), "How in the world?");
+
   // NOTE(emilio): This is needed because for table frames the bit is set on the
   // table wrapper (which is the primary frame), not on the table itself.
   const bool isOutOfFlow =
@@ -2774,7 +2776,7 @@ RestyleManager::ProcessPostTraversal(
                                                     upToDateContext,
                                                     childrenRestyleState,
                                                     childrenFlags);
-      } else if (traverseTextChildren && n->IsNodeOfType(nsINode::eTEXT)) {
+      } else if (traverseTextChildren && n->IsText()) {
         recreatedAnyContext |= ProcessPostTraversalForText(n, textState,
                                                            childrenRestyleState,
                                                            childrenFlags);
@@ -3056,6 +3058,7 @@ VerifyFlatTree(const nsIContent& aContent)
        content;
        content = iter.GetNextChild()) {
     MOZ_ASSERT(content->GetFlattenedTreeParentNodeForStyle() == &aContent);
+    MOZ_ASSERT(!content->IsActiveChildrenElement());
     VerifyFlatTree(*content);
   }
 }
@@ -3521,7 +3524,7 @@ RestyleManager::DoReparentComputedStyleForFirstLine(nsIFrame* aFrame,
   ReparentFrameDescendants(aFrame, providerChild, aStyleSet);
 
   // We do not need to do the equivalent of UpdateFramePseudoElementStyles,
-  // because those are hadled by our descendant walk.
+  // because those are handled by our descendant walk.
 }
 
 void
@@ -3529,6 +3532,12 @@ RestyleManager::ReparentFrameDescendants(nsIFrame* aFrame,
                                          nsIFrame* aProviderChild,
                                          ServoStyleSet& aStyleSet)
 {
+  if (aFrame->GetContent()->IsElement() &&
+      !aFrame->GetContent()->AsElement()->HasServoData()) {
+    // We're getting into a display: none subtree, avoid reparenting into stuff
+    // that is going to go away anyway in seconds.
+    return;
+  }
   nsIFrame::ChildListIterator lists(aFrame);
   for (; !lists.IsDone(); lists.Next()) {
     for (nsIFrame* child : lists.CurrentList()) {

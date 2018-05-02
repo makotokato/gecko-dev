@@ -166,7 +166,6 @@ linux64-devedition-nightly/opt:
         config:
             - builds/releng_base_firefox.py
             - builds/releng_base_linux_64_builds.py
-            - disable_signing.py
             - taskcluster_nightly.py
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
@@ -418,7 +417,6 @@ linux-devedition-nightly/opt:
         config:
             - builds/releng_base_firefox.py
             - builds/releng_base_linux_32_builds.py
-            - disable_signing.py
             - taskcluster_nightly.py
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
@@ -455,7 +453,6 @@ linux-nightly/opt:
         config:
             - builds/releng_base_firefox.py
             - builds/releng_base_linux_32_builds.py
-            - disable_signing.py
             - taskcluster_nightly.py
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
@@ -529,13 +526,16 @@ linux64-asan-fuzzing/opt:
         - linux64-rust
         - linux64-sccache
 
-linux64-asan-reporter/opt:
+linux64-asan-reporter-nightly/opt:
     description: "Linux64 Opt ASAN Reporter Nightly"
+    attributes:
+        nightly: true
     index:
         product: firefox
         job-name: linux64-asan-reporter-opt
+        type: nightly
     treeherder:
-        platform: linux64/asan
+        platform: linux64-asan-reporter/opt
         symbol: BoR
     worker-type: aws-provisioner-v1/gecko-{level}-b-linux
     worker:
@@ -548,6 +548,7 @@ linux64-asan-reporter/opt:
         config:
             - builds/releng_base_firefox.py
             - builds/releng_base_linux_64_builds.py
+            - taskcluster_nightly.py
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
         custom-build-variant-cfg: asan-reporter-tc
@@ -611,7 +612,6 @@ linux64-nightly/opt:
         config:
             - builds/releng_base_firefox.py
             - builds/releng_base_linux_64_builds.py
-            - disable_signing.py
             - taskcluster_nightly.py
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true

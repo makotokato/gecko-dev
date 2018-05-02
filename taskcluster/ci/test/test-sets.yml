@@ -37,7 +37,10 @@ common-tests:
     - reftest
     - reftest-no-accel
     - telemetry-tests-client
+    - test-coverage
+    - test-coverage-wpt
     - test-verify
+    - test-verify-gpu
     - test-verify-wpt
     - xpcshell
 
@@ -114,8 +117,6 @@ linux-qr-tests:
     - mochitest-media
     - mochitest-webgl
     - reftest
-    - test-verify
-    - test-verify-wpt
     - xpcshell
 
 linux-talos-profiling:
@@ -145,7 +146,6 @@ windows-qr-tests:
     - mochitest-media
     - mochitest-webgl
     - reftest
-    - test-verify
 
 windows-qr-talos:
     - talos-chrome
@@ -188,7 +188,10 @@ windows-tests:
     - mochitest-webgl
     - reftest
     - reftest-no-accel
+    - test-coverage
+    - test-coverage-wpt
     - test-verify
+    - test-verify-gpu
     - test-verify-wpt
     - web-platform-tests
     - web-platform-tests-reftests
@@ -252,6 +255,7 @@ macosx64-tests:
     - mochitest-webgl
     - reftest
     - test-verify
+    - test-verify-gpu
     - test-verify-wpt
     - web-platform-tests
     - web-platform-tests-reftests
@@ -331,6 +335,7 @@ desktop-instrumentation:
 android-common-tests:
     - cppunit
     - crashtest
+    # - geckoview-junit
     # - jittest # not ready yet: bug 1098508
     - jsreftest
     - mochitest

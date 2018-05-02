@@ -35,7 +35,6 @@
 #include "nsIScriptSecurityManager.h"
 #include "nsIScrollable.h"
 #include "nsFrameLoader.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIFrame.h"
 #include "nsIScrollableFrame.h"
 #include "nsSubDocumentFrame.h"
@@ -164,10 +163,8 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsFrameLoader)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
 
-nsFrameLoader::nsFrameLoader(Element* aOwner,
-                             nsPIDOMWindowOuter* aOpener,
-                             bool aNetworkCreated,
-                             int32_t aJSPluginID)
+nsFrameLoader::nsFrameLoader(Element* aOwner, nsPIDOMWindowOuter* aOpener,
+                             bool aNetworkCreated, int32_t aJSPluginID)
   : mOwnerContent(aOwner)
   , mDetachedSubdocFrame(nullptr)
   , mOpener(aOpener)
@@ -189,7 +186,6 @@ nsFrameLoader::nsFrameLoader(Element* aOwner,
   , mClipSubdocument(true)
   , mClampScrollPosition(true)
   , mObservingOwnerContent(false)
-  , mFreshProcess{ false }
 {
   mRemoteFrame = ShouldUseRemoteProcess();
   MOZ_ASSERT(!mRemoteFrame || !aOpener,
@@ -398,8 +394,6 @@ nsFrameLoader::FireWillChangeProcessEvent()
     return nullptr;
   }
   JSContext* cx = jsapi.cx();
-  GlobalObject global(cx, mOwnerContent->GetOwnerGlobal()->GetGlobalJSObject());
-  MOZ_ASSERT(!global.Failed());
 
   // Set our mBrowserChangingProcessBlockers property to refer to the blockers
   // list. We will synchronously dispatch a DOM event to collect this list of
@@ -421,7 +415,7 @@ nsFrameLoader::FireWillChangeProcessEvent()
   mBrowserChangingProcessBlockers = nullptr;
 
   ErrorResult rv;
-  RefPtr<Promise> allPromise = Promise::All(global, blockers, rv);
+  RefPtr<Promise> allPromise = Promise::All(cx, blockers, rv);
   return allPromise.forget();
 }
 
@@ -849,7 +843,8 @@ nsFrameLoader::Show(int32_t marginWidth, int32_t marginHeight,
   presShell = mDocShell->GetPresShell();
   if (presShell) {
     nsIDocument* doc = presShell->GetDocument();
-    nsHTMLDocument* htmlDoc = doc ? doc->AsHTMLDocument() : nullptr;
+    nsHTMLDocument* htmlDoc =
+      doc && doc->IsHTMLOrXHTML() ? doc->AsHTMLDocument() : nullptr;
 
     if (htmlDoc) {
       nsAutoString designMode;
@@ -1008,6 +1003,28 @@ nsFrameLoader::Hide()
                "Found an nsIDocShell which doesn't implement nsIBaseWindow.");
   baseWin->SetVisibility(false);
   baseWin->SetParentWidget(nullptr);
+}
+
+void
+nsFrameLoader::ForceLayoutIfNecessary()
+{
+  nsIFrame* frame = GetPrimaryFrameOfOwningContent();
+  if (!frame) {
+    return;
+  }
+
+  nsPresContext* presContext = frame->PresContext();
+  if (!presContext) {
+    return;
+  }
+
+  // Only force the layout flush if the frameloader hasn't ever been
+  // run through layout.
+  if (frame->GetStateBits() & NS_FRAME_FIRST_REFLOW) {
+    if (nsCOMPtr<nsIPresShell> shell = presContext->GetPresShell()) {
+      shell->FlushPendingNotifications(FlushType::Layout);
+    }
+  }
 }
 
 nsresult
@@ -2059,13 +2076,13 @@ nsFrameLoader::MaybeCreateDocShell()
 
   // Make sure all shells have links back to the content element
   // in the nearest enclosing chrome shell.
-  nsCOMPtr<nsIDOMEventTarget> chromeEventHandler;
+  RefPtr<EventTarget> chromeEventHandler;
 
   if (parentType == nsIDocShellTreeItem::typeChrome) {
     // Our parent shell is a chrome shell. It is therefore our nearest
     // enclosing chrome shell.
 
-    chromeEventHandler = do_QueryInterface(mOwnerContent);
+    chromeEventHandler = mOwnerContent;
     NS_ASSERTION(chromeEventHandler,
                  "This mContent should implement this.");
   } else {
@@ -2527,9 +2544,8 @@ GetContentParent(Element* aBrowser)
     return ReturnTuple(nullptr, nullptr);
   }
 
-  nsCOMPtr<nsISupports> otherLoaderAsSupports;
-  browser->GetSameProcessAsFrameLoader(getter_AddRefs(otherLoaderAsSupports));
-  RefPtr<nsFrameLoader> otherLoader = do_QueryObject(otherLoaderAsSupports);
+  RefPtr<nsFrameLoader> otherLoader;
+  browser->GetSameProcessAsFrameLoader(getter_AddRefs(otherLoader));
   if (!otherLoader) {
     return ReturnTuple(nullptr, nullptr);
   }

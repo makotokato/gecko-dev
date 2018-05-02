@@ -19,7 +19,6 @@
 #include "nsCSSAnonBoxes.h"
 #include "mozilla/css/ErrorReporter.h"
 #include "nsCSSKeywords.h"
-#include "nsCSSParser.h"
 #include "nsCSSProps.h"
 #include "nsCSSPseudoElements.h"
 #include "nsCSSRendering.h"
@@ -105,7 +104,6 @@
 #include "TouchManager.h"
 #include "DecoderDoctorLogger.h"
 #include "MediaDecoder.h"
-#include "MediaPrefs.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/StaticPresData.h"
 #include "mozilla/dom/WebIDLGlobalNameHash.h"
@@ -282,11 +280,6 @@ nsLayoutStatics::Initialize()
   if (XRE_IsParentProcess() || XRE_IsContentProcess()) {
     InitializeServo();
   }
-
-#ifndef MOZ_WIDGET_ANDROID
-  // On Android, we instantiate it when constructing AndroidBridge.
-  MediaPrefs::GetSingleton();
-#endif
 
   // This must be initialized on the main-thread.
   mozilla::dom::IPCBlobInputStreamStorage::Initialize();

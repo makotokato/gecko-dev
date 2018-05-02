@@ -16,10 +16,7 @@ module.exports = {
     // XXX Bug 1230193. We're still working on enabling no-undef for these test
     // directories.
     "files": [
-      "client/framework/test/**",
-      "client/scratchpad/**",
       "server/tests/mochitest/**",
-      "shared/tests/unit/**",
     ],
     "rules": {
       "no-undef": "off",
@@ -30,7 +27,6 @@ module.exports = {
     ],
     "rules": {
       "no-return-assign": "off",
-      "no-unused-vars": "off",
     }
   }, {
     "files": [
@@ -47,6 +43,7 @@ module.exports = {
       "client/scratchpad/**",
       "client/shared/*.jsm",
       "client/shared/widgets/*.jsm",
+      "client/webide/**",
     ],
     "rules": {
       "consistent-return": "off",
@@ -56,6 +53,7 @@ module.exports = {
       "client/framework/**",
       "client/scratchpad/**",
       "client/shared/AppCacheUtils.jsm",
+      "client/webide/**",
     ],
     "rules": {
       "max-nested-callbacks": "off",
@@ -66,6 +64,7 @@ module.exports = {
       "client/scratchpad/**",
       "client/shared/*.jsm",
       "client/shared/widgets/*.jsm",
+      "client/webide/**",
     ],
     "rules": {
       "max-len": "off",
@@ -84,6 +83,7 @@ module.exports = {
       "client/scratchpad/**",
       "client/shared/*.jsm",
       "client/shared/widgets/*.jsm",
+      "client/webide/**",
     ],
     "rules": {
       "mozilla/no-aArgs": "off",
@@ -102,6 +102,7 @@ module.exports = {
       "client/scratchpad/**",
       "client/shared/AppCacheUtils.jsm",
       "client/shared/widgets/*.jsm",
+      "client/webide/**",
     ],
     "rules": {
       "no-shadow": "off",
@@ -110,6 +111,7 @@ module.exports = {
     "files": [
       "client/framework/**",
       "client/scratchpad/**",
+      "client/webide/**",
     ],
     "rules": {
       "strict": "off",
@@ -122,16 +124,21 @@ module.exports = {
       // Note: Bug 1342237 may be removing shadereditor, check before
       // doing more work on enabling these rules.
       "client/shadereditor/**",
+      // Note: Bug 1403944 may be removing webaudioeditor, check before
+      // doing more work on enabling these rules.
+      "client/webaudioeditor/**",
     ],
     "rules": {
       "consistent-return": "off",
       "max-len": "off",
       "mozilla/no-aArgs": "off",
       "mozilla/var-only-at-top-level": "off",
+      "no-redeclare": "off",
       "no-return-assign": "off",
       "no-shadow": "off",
       "no-undef": "off",
       "no-unused-vars": "off",
+      "no-useless-call": "off",
       "strict": "off",
     }
   }, {

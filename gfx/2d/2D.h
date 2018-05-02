@@ -920,12 +920,7 @@ class DrawTarget : public external::AtomicRefCounted<DrawTarget>
 {
 public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(DrawTarget)
-  DrawTarget()
-    : mTransformDirty(false)
-    , mPermitSubpixelAA(false)
-    , mFormat{ SurfaceFormat::UNKNOWN }
-  {
-  }
+  DrawTarget() : mTransformDirty(false), mPermitSubpixelAA(false) {}
   virtual ~DrawTarget() {}
 
   virtual bool IsValid() const { return true; };
@@ -1558,6 +1553,7 @@ public:
   static void ShutDown();
 
   static bool HasSSE2();
+  static bool HasSSE4();
 
   /**
    * Returns false if any of the following are true:

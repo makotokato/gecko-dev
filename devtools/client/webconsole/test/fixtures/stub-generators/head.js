@@ -14,10 +14,6 @@ Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/shared/test/shared-head.js",
   this);
 
-Services.prefs.setBoolPref("devtools.webconsole.new-frontend-enabled", true);
-registerCleanupFunction(() => {
-  Services.prefs.clearUserPref("devtools.webconsole.new-frontend-enabled");
-});
 const { PREFS } = require("devtools/client/webconsole/constants");
 
 const { prepareMessage } = require("devtools/client/webconsole/utils/messages");
@@ -374,6 +370,7 @@ async function generateCssMessageStubs() {
       gBrowser.selectedBrowser,
       [key, code],
       function([subKey, subCode]) {
+        content.document.docShell.cssErrorReportingEnabled = true;
         let style = content.document.createElement("style");
         // eslint-disable-next-line no-unsanitized/property
         style.innerHTML = subCode;

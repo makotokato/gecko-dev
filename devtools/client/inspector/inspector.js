@@ -57,6 +57,7 @@ const SIDE_PORTAIT_MODE_WIDTH_THRESHOLD = 1000;
 
 const SHOW_THREE_PANE_TOGGLE_PREF = "devtools.inspector.three-pane-toggle";
 const THREE_PANE_ENABLED_PREF = "devtools.inspector.three-pane-enabled";
+const THREE_PANE_ENABLED_SCALAR = "devtools.inspector.three_pane_enabled";
 
 /**
  * Represents an open instance of the Inspector for a tab.
@@ -291,8 +292,14 @@ Inspector.prototype = {
       await this.markup.expandNode(this.selection.nodeFront);
     }
 
-    // And setup the toolbar only now because it may depend on the document.
+    // Setup the toolbar only now because it may depend on the document.
     await this.setupToolbar();
+
+    // Log the 3 pane inspector setting on inspector open. The question we want to answer
+    // is:
+    // "What proportion of users use the 3 pane vs 2 pane inspector on inspector open?"
+    this.telemetry.logKeyedScalar(THREE_PANE_ENABLED_SCALAR, this.is3PaneModeEnabled, 1);
+
     this.emit("ready");
     return this;
   },
@@ -892,7 +899,7 @@ Inspector.prototype = {
         this.sidebar.addFrameTab(
           "animationinspector",
           animationTitle,
-          "chrome://devtools/content/animationinspector/animation-inspector.xhtml",
+          "chrome://devtools/content/inspector/animation-old/animation-inspector.xhtml",
           defaultTab == "animationinspector");
       }
     }
@@ -1406,7 +1413,8 @@ Inspector.prototype = {
   },
 
   _onContextMenu: function(e) {
-    if (e.originalTarget.closest("input[type=text]") ||
+    if (!(e.originalTarget instanceof Element) ||
+        e.originalTarget.closest("input[type=text]") ||
         e.originalTarget.closest("input:not([type])") ||
         e.originalTarget.closest("textarea")) {
       return;
@@ -1585,7 +1593,7 @@ Inspector.prototype = {
   },
 
   buildA11YMenuItem: function(menu) {
-    if (!this.selection.isElementNode() ||
+    if (!(this.selection.isElementNode() || this.selection.isTextNode()) ||
         !Services.prefs.getBoolPref("devtools.accessibility.enabled")) {
       return;
     }
@@ -1995,7 +2003,8 @@ Inspector.prototype = {
     // Select the accessible object in the panel and wait for the event that
     // tells us it has been done.
     let onSelected = a11yPanel.once("new-accessible-front-selected");
-    a11yPanel.selectAccessibleForNode(this.selection.nodeFront);
+    a11yPanel.selectAccessibleForNode(this.selection.nodeFront,
+                                      "inspector-context-menu");
     await onSelected;
   },
 
@@ -2434,115 +2443,4 @@ Inspector.prototype = {
   },
 };
 
-/**
- * Create a fake toolbox when running the inspector standalone, either in a chrome tab or
- * in a content tab.
- *
- * @param {Target} target to debug
- * @param {Function} createThreadClient
- *        When supported the thread client needs a reference to the toolbox.
- *        This callback will be called right after the toolbox object is created.
- * @param {Object} dependencies
- *        - react
- *        - reactDOM
- *        - browserRequire
- */
-const buildFakeToolbox = async function(
-  target, createThreadClient, {
-    React,
-    ReactDOM,
-    browserRequire
-  }) {
-  const { InspectorFront } = require("devtools/shared/fronts/inspector");
-  const { Selection } = require("devtools/client/framework/selection");
-  const { getHighlighterUtils } = require("devtools/client/framework/toolbox-highlighter-utils");
-
-  let notImplemented = function() {
-    throw new Error("Not implemented in a tab");
-  };
-  let fakeToolbox = {
-    target,
-    hostType: "bottom",
-    doc: window.document,
-    win: window,
-    on() {}, emit() {}, off() {},
-    initInspector() {},
-    browserRequire,
-    React,
-    ReactDOM,
-    isToolRegistered() {
-      return false;
-    },
-    currentToolId: "inspector",
-    getCurrentPanel() {
-      return "inspector";
-    },
-    get textboxContextMenuPopup() {
-      notImplemented();
-    },
-    getPanel: notImplemented,
-    openSplitConsole: notImplemented,
-    viewCssSourceInStyleEditor: notImplemented,
-    viewJsSourceInDebugger: notImplemented,
-    viewSource: notImplemented,
-    viewSourceInDebugger: notImplemented,
-    viewSourceInStyleEditor: notImplemented,
-
-    get inspectorExtensionSidebars() {
-      notImplemented();
-    },
-
-    // For attachThread:
-    highlightTool() {},
-    unhighlightTool() {},
-    selectTool() {},
-    raise() {},
-    getNotificationBox() {}
-  };
-
-  fakeToolbox.threadClient = await createThreadClient(fakeToolbox);
-
-  let inspector = InspectorFront(target.client, target.form);
-  let showAllAnonymousContent =
-    Services.prefs.getBoolPref("devtools.inspector.showAllAnonymousContent");
-  let walker = await inspector.getWalker({ showAllAnonymousContent });
-  let selection = new Selection(walker);
-  let highlighter = await inspector.getHighlighter(false);
-  fakeToolbox.highlighterUtils = getHighlighterUtils(fakeToolbox);
-
-  fakeToolbox.inspector = inspector;
-  fakeToolbox.walker = walker;
-  fakeToolbox.selection = selection;
-  fakeToolbox.highlighter = highlighter;
-  return fakeToolbox;
-};
-
-// URL constructor doesn't support chrome: scheme
-let href = window.location.href.replace(/chrome:/, "http://");
-let url = new window.URL(href);
-
-// If query parameters are given in a chrome tab, the inspector is running in standalone.
-if (window.location.protocol === "chrome:" && url.search.length > 1) {
-  const { targetFromURL } = require("devtools/client/framework/target-from-url");
-  const { attachThread } = require("devtools/client/framework/attach-thread");
-
-  const browserRequire = BrowserLoader({ window, useOnlyShared: true }).require;
-  const React = browserRequire("devtools/client/shared/vendor/react");
-  const ReactDOM = browserRequire("devtools/client/shared/vendor/react-dom");
-
-  (async function() {
-    let target = await targetFromURL(url);
-    let fakeToolbox = await buildFakeToolbox(
-      target,
-      (toolbox) => attachThread(toolbox),
-      { React, ReactDOM, browserRequire }
-    );
-    let inspectorUI = new Inspector(fakeToolbox);
-    inspectorUI.init();
-  })().catch(e => {
-    window.alert("Unable to start the inspector:" + e.message + "\n" + e.stack);
-  });
-}
-
 exports.Inspector = Inspector;
-exports.buildFakeToolbox = buildFakeToolbox;

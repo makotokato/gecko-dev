@@ -39,7 +39,7 @@ class GeckoviewOptions(OptionParser):
                         help="serial ID of remote device to test")
         self.add_option("--adbpath",
                         action="store", type="string", dest="adbPath",
-                        default="adb",
+                        default=None,
                         help="Path to adb binary.")
         self.add_option("--remoteTestRoot",
                         action="store", type="string", dest="remoteTestRoot",
@@ -56,7 +56,7 @@ class GeckoviewTestRunner:
 
     def __init__(self, log, options):
         self.log = log
-        self.device = ADBAndroid(adb=options.adbPath,
+        self.device = ADBAndroid(adb=options.adbPath or 'adb',
                                  device=options.deviceSerial,
                                  test_root=options.remoteTestRoot)
         self.options = options
@@ -147,9 +147,9 @@ class GeckoviewTestRunner:
             expected = 'PASS'
             (passed, message) = test()
             if passed:
-                pass_count = pass_count + 1
+                pass_count += 1
             else:
-                fail_count = fail_count + 1
+                fail_count += 1
             status = 'PASS' if passed else 'FAIL'
 
             self.log.test_end(self.test_name, status, expected, message)
@@ -195,7 +195,7 @@ class GeckoviewTestRunner:
             try:
                 shutil.rmtree(dump_dir)
             except Exception:
-                self.log.warn("unable to remove directory: %s" % dump_dir)
+                self.log.warning("unable to remove directory: %s" % dump_dir)
         return crashed
 
     def cleanup(self):

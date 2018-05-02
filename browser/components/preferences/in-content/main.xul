@@ -43,6 +43,11 @@
   </vbox>
 #endif
 
+  <vbox id="startupPageBox">
+    <checkbox id="browserRestoreSession"
+              data-l10n-id="startup-restore-previous-session"/>
+  </vbox>
+
 #ifdef HAVE_SHELL_SERVICE
   <vbox id="defaultBrowserBox">
     <checkbox id="alwaysCheckDefault" preference="browser.shell.checkDefaultBrowser"
@@ -64,23 +69,6 @@
   </vbox>
 #endif
 
-  <vbox id="startupPageBox">
-    <label data-l10n-id="startup-page"
-           control="browserStartupPage"/>
-    <radiogroup id="browserStartupPage"
-                preference="browser.startup.page">
-      <radio data-l10n-id="startup-user-homepage"
-             value="1"
-             id="browserStartupHomePage"/>
-      <radio data-l10n-id="startup-blank-page"
-             value="0"
-             id="browserStartupBlank"/>
-      <radio data-l10n-id="startup-prev-session"
-             value="3"
-             id="browserStartupLastSession"/>
-    </radiogroup>
-
-  </vbox>
 </groupbox>
 
 <!-- Tab preferences -->
@@ -201,7 +189,7 @@
                 data-l10n-id="advanced-fonts"
                 search-l10n-ids="
                   fonts-window.title,
-                  fonts-header,
+                  fonts-langgroup-header,
                   fonts-proportional-size,
                   fonts-proportional-header,
                   fonts-serif,
@@ -307,7 +295,7 @@
                 languages-customize-moveup.label,
                 languages-customize-movedown.label,
                 languages-customize-remove.label,
-                languages-customize-select-language.label,
+                languages-customize-select-language.placeholder,
                 languages-customize-add.label,
               " />
     </hbox>
@@ -320,12 +308,11 @@
                 onsyncfrompreference="return gMainPane.updateButtons('translateButton',
                                               'browser.translation.detectLanguage');"/>
       <hbox id="bingAttribution" hidden="true" align="center">
-        <label>&translation.options.attribution.beforeLogo;</label>
-        <separator orient="vertical" class="thin"/>
-        <image id="translationAttributionImage" aria-label="Microsoft Translator"
-               src="chrome://browser/content/microsoft-translator-attribution.png"/>
-        <separator orient="vertical" class="thin"/>
-        <label>&translation.options.attribution.afterLogo;</label>
+        <label data-l10n-id="translate-attribution">
+          <html:img id="translationAttributionImage" aria-label="Microsoft Translator"
+            src="chrome://browser/content/microsoft-translator-attribution.png"
+            data-l10n-name="logo"/>
+        </label>
       </hbox>
     </hbox>
     <button id="translateButton"
@@ -354,28 +341,24 @@
   <radiogroup id="saveWhere"
               preference="browser.download.useDownloadDir"
               onsyncfrompreference="return gMainPane.readUseDownloadDir();">
-    <hbox id="saveToRow">
+    <hbox>
       <radio id="saveTo"
-            value="true"
-            data-l10n-id="download-save-to"
-            aria-labelledby="saveTo downloadFolder"/>
-      <filefield id="downloadFolder"
-                flex="1"
-                preference="browser.download.folderList"
-                preference-editable="true"
-                aria-labelledby="saveTo"
-                onsyncfrompreference="return gMainPane.displayDownloadDirPref();"/>
+             value="true"
+             data-l10n-id="download-save-to"/>
+      <textbox id="downloadFolder" flex="1"
+               readonly="true"
+               aria-labelledby="saveTo"/>
       <button id="chooseFolder"
-              data-l10n-id="download-choose-folder"
-      />
+              class="accessory-button"
+              data-l10n-id="download-choose-folder"/>
     </hbox>
     <!-- Additional radio button added to support CloudStorage - Bug 1357171 -->
     <radio id="saveToCloud"
-          value="true"
-          hidden="true"/>
+           value="true"
+           hidden="true"/>
     <radio id="alwaysAsk"
-          value="false"
-          data-l10n-id="download-always-ask-where"/>
+           value="false"
+           data-l10n-id="download-always-ask-where"/>
   </radiogroup>
 </groupbox>
 
@@ -442,7 +425,7 @@
   <hbox align="center">
     <vbox flex="1">
       <description id="updateAppInfo">
-        <html:a id="releasenotes" class="learnMore text-link" hidden="true"/>
+        <html:a id="releasenotes" target="_blank" data-l10n-name="learn-more" class="learnMore text-link" hidden="true"/>
       </description>
       <description id="distribution" class="text-blurb" hidden="true"/>
       <description id="distributionId" class="text-blurb" hidden="true"/>
@@ -615,8 +598,8 @@
       </menulist>
     </hbox>
     <description id="contentProcessCountEnabledDescription" class="tip-caption" data-l10n-id="performance-limit-content-process-enabled-desc"/>
-    <description id="contentProcessCountDisabledDescription" class="tip-caption" data-l10n-id="performance-limit-content-process-disabled-desc">
-      <html:a class="text-link" href="https://wiki.mozilla.org/Electrolysis"/>
+    <description id="contentProcessCountDisabledDescription" class="tip-caption" data-l10n-id="performance-limit-content-process-blocked-desc">
+      <html:a class="text-link" data-l10n-name="learn-more" href="https://wiki.mozilla.org/Electrolysis"/>
     </description>
   </vbox>
 </groupbox>

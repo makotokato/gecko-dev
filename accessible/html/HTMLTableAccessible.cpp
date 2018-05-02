@@ -18,10 +18,8 @@
 #include "TreeWalker.h"
 
 #include "mozilla/dom/HTMLTableElement.h"
-#include "nsIDOMElement.h"
 #include "nsIDOMRange.h"
 #include "nsISelectionPrivate.h"
-#include "nsIDOMNodeList.h"
 #include "nsIHTMLCollection.h"
 #include "nsIDocument.h"
 #include "nsIMutableArray.h"

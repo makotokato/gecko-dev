@@ -201,13 +201,21 @@
   opacity: 0.7;
 }
 
-%ifdef NIGHTLY_BUILD
 @supports -moz-bool-pref("browser.tabs.30FpsThrobber") {
   :root[sessionrestored] .tab-throbber[busy]::before {
+    background-image: url("chrome://browser/skin/tabbrowser/loading-30fps.svg");
     animation: tab-throbber-animation 1.05s steps(30) infinite;
+    width: 480px;
   }
 }
-%endif
+
+@supports -moz-bool-pref("browser.tabs.20FpsThrobber") {
+  :root[sessionrestored] .tab-throbber[busy]::before {
+    background-image: url("chrome://browser/skin/tabbrowser/loading-20fps.svg");
+    animation: tab-throbber-animation 1.05s steps(20) infinite;
+    width: 320px;
+  }
+}
 
 :root[sessionrestored] .tab-throbber[busy]:-moz-locale-dir(rtl)::before {
   animation-name: tab-throbber-animation-rtl;
@@ -709,6 +717,22 @@
 
 #alltabs-button {
   list-style-image: url(chrome://global/skin/icons/arrow-dropdown-16.svg);
+}
+
+#tabbrowser-tabs[hiddensoundplaying] ~ #alltabs-button > .toolbarbutton-badge-stack > .toolbarbutton-badge {
+  background: transparent url(chrome://browser/skin/tabbrowser/badge-audio-playing.svg);
+  box-shadow: none;
+  /* Match the color of the button, rather than label default. */
+  color: inherit;
+  display: block;
+  -moz-context-properties: fill, fill-opacity;
+  fill: currentColor;
+  fill-opacity: var(--toolbarbutton-icon-fill-opacity);
+  /* "!important" is necessary to override the rule in toolbarbutton.css */
+  margin: -7px 0 0 !important;
+  margin-inline-end: -4px !important;
+  min-width: 12px;
+  min-height: 12px;
 }
 
 .alltabs-item > .menu-iconic-left > .menu-iconic-icon {

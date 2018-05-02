@@ -261,10 +261,6 @@ nsSocketInputStream::nsSocketInputStream(nsSocketTransport *trans)
 {
 }
 
-nsSocketInputStream::~nsSocketInputStream()
-{
-}
-
 // called on the socket transport thread...
 //
 //   condition : failure code if socket has been closed
@@ -523,10 +519,6 @@ nsSocketOutputStream::nsSocketOutputStream(nsSocketTransport *trans)
     , mCondition(NS_OK)
     , mCallbackFlags(0)
     , mByteCount(0)
-{
-}
-
-nsSocketOutputStream::~nsSocketOutputStream()
 {
 }
 
@@ -804,14 +796,10 @@ nsSocketTransport::nsSocketTransport()
     , mFirstRetryError(NS_OK)
     , mDoNotRetryToConnect(false)
 {
-  this->mNetAddr.raw.family = {};
-  this->mNetAddr.inet = {};
-  this->mSelfAddr.raw.family = {};
-  this->mSelfAddr.inet = {};
-  SOCKET_LOG(("creating nsSocketTransport @%p\n", this));
+    SOCKET_LOG(("creating nsSocketTransport @%p\n", this));
 
-  mTimeouts[TIMEOUT_CONNECT] = UINT16_MAX;    // no timeout
-  mTimeouts[TIMEOUT_READ_WRITE] = UINT16_MAX; // no timeout
+    mTimeouts[TIMEOUT_CONNECT]    = UINT16_MAX; // no timeout
+    mTimeouts[TIMEOUT_READ_WRITE] = UINT16_MAX; // no timeout
 }
 
 nsSocketTransport::~nsSocketTransport()
@@ -988,7 +976,7 @@ nsSocketTransport::InitWithConnectedSocket(PRFileDesc *fd, const NetAddr *addr)
 
         mFD = fd;
         mFDref = 1;
-        mFDconnected = 1;
+        mFDconnected = true;
     }
 
     // make sure new socket is non-blocking
@@ -1265,7 +1253,7 @@ nsSocketTransport::BuildSocket(PRFileDesc *&fd, bool &proxyTransparent, bool &us
                         static_cast<uint32_t>(rv)));
             if (fd) {
                 CloseSocket(fd,
-                    mSocketTransportService->IsTelemetryEnabledAndNotSleepPhase()); 
+                    mSocketTransportService->IsTelemetryEnabledAndNotSleepPhase());
             }
         }
     }
@@ -1538,6 +1526,9 @@ nsSocketTransport::InitiateSocket()
     bool connectCalled = true; // This is only needed for telemetry.
     status = PR_Connect(fd, &prAddr, NS_SOCKET_CONNECT_TIMEOUT);
     PRErrorCode code = PR_GetError();
+    if (status == PR_SUCCESS) {
+        PR_SetFDInheritable(fd, false);
+    }
     if ((status == PR_SUCCESS) && tfo) {
         {
             MutexAutoLock lock(mLock);
@@ -2191,9 +2182,9 @@ nsSocketTransport::OnSocketReady(PRFileDesc *fd, int16_t outFlags)
         mFastOpenLayerHasBufferedData = TCPFastOpenFlushBuffer(fd);
         if (mFastOpenLayerHasBufferedData) {
             return;
-        } else {
-            SendStatus(NS_NET_STATUS_SENDING_TO);
         }
+        SendStatus(NS_NET_STATUS_SENDING_TO);
+
         // If we are done sending the buffered data continue with the normal
         // path.
         // In case of an error, TCPFastOpenFlushBuffer will return false and

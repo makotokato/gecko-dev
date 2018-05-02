@@ -70,8 +70,6 @@ class nsIContentSecurityPolicy;
 class nsIDocShellTreeItem;
 class nsIDocumentLoaderFactory;
 class nsIDOMDocument;
-class nsIDOMDocumentFragment;
-class nsIDOMEvent;
 class nsIDOMNode;
 class nsIDragSession;
 class nsIEventTarget;
@@ -132,6 +130,7 @@ class ChromeMessageBroadcaster;
 struct CustomElementDefinition;
 class DocumentFragment;
 class Element;
+class Event;
 class EventTarget;
 class HTMLInputElement;
 class IPCDataTransfer;
@@ -591,8 +590,6 @@ public:
   /**
    * Checks whether two nodes come from the same origin.
    */
-  static nsresult CheckSameOrigin(const nsINode* aTrustedNode,
-                                  nsIDOMNode* aUnTrustedNode);
   static nsresult CheckSameOrigin(const nsINode* aTrustedNode,
                                   const nsINode* unTrustedNode);
 
@@ -1357,12 +1354,12 @@ public:
    * nsIDOMDocument::CreateEvent() with parameter "Events".
    * @param aDoc           The document which will be used to create the event.
    * @param aTarget        The target of the event, should be QIable to
-   *                       nsIDOMEventTarget.
+   *                       EventTarget.
    * @param aEventName     The name of the event.
    * @param aCanBubble     Whether the event can bubble.
    * @param aCancelable    Is the event cancelable.
    * @param aDefaultAction Set to true if default action should be taken,
-   *                       see nsIDOMEventTarget::DispatchEvent.
+   *                       see EventTarget::DispatchEvent.
    */
   static nsresult DispatchTrustedEvent(nsIDocument* aDoc,
                                        nsISupports* aTarget,
@@ -1380,7 +1377,7 @@ public:
    * @param aCanBubble     Whether the event can bubble.
    * @param aCancelable    Is the event cancelable.
    * @param aDefaultAction Set to true if default action should be taken,
-   *                       see nsIDOMEventTarget::DispatchEvent.
+   *                       see EventTarget::DispatchEvent.
    */
   template <class WidgetEventType>
   static nsresult DispatchTrustedEvent(nsIDocument* aDoc,
@@ -1404,12 +1401,12 @@ public:
    * nsIDOMDocument::CreateEvent() with parameter "Events".
    * @param aDoc           The document which will be used to create the event.
    * @param aTarget        The target of the event, should be QIable to
-   *                       nsIDOMEventTarget.
+   *                       EventTarget.
    * @param aEventName     The name of the event.
    * @param aCanBubble     Whether the event can bubble.
    * @param aCancelable    Is the event cancelable.
    * @param aDefaultAction Set to true if default action should be taken,
-   *                       see nsIDOMEventTarget::DispatchEvent.
+   *                       see EventTarget::DispatchEvent.
    */
   static nsresult DispatchUntrustedEvent(nsIDocument* aDoc,
                                          nsISupports* aTarget,
@@ -1428,7 +1425,7 @@ public:
    * @param aCanBubble     Whether the event can bubble.
    * @param aCancelable    Is the event cancelable.
    * @param aDefaultAction Set to true if default action should be taken,
-   *                       see nsIDOMEventTarget::DispatchEvent.
+   *                       see EventTarget::DispatchEvent.
    */
   template <class WidgetEventType>
   static nsresult DispatchUntrustedEvent(nsIDocument* aDoc,
@@ -1462,7 +1459,7 @@ public:
    * @param aCanBubble     Whether the event can bubble.
    * @param aCancelable    Is the event cancelable.
    * @param aDefaultAction Set to true if default action should be taken,
-   *                       see nsIDOMEventTarget::DispatchEvent.
+   *                       see EventTarget::DispatchEvent.
    */
   static nsresult DispatchChromeEvent(nsIDocument* aDoc,
                                       nsISupports* aTarget,
@@ -1490,12 +1487,12 @@ public:
    * nsIDOMDocument::CreateEvent() with parameter "Events".
    * @param aDoc           The document which will be used to create the event.
    * @param aTarget        The target of the event, should be QIable to
-   *                       nsIDOMEventTarget.
+   *                       EventTarget.
    * @param aEventName     The name of the event.
    * @param aCanBubble     Whether the event can bubble.
    * @param aCancelable    Is the event cancelable.
    * @param aDefaultAction Set to true if default action should be taken,
-   *                       see nsIDOMEventTarget::DispatchEvent.
+   *                       see EventTarget::DispatchEvent.
    */
   static nsresult DispatchEventOnlyToChrome(nsIDocument* aDoc,
                                             nsISupports* aTarget,
@@ -1630,10 +1627,6 @@ public:
    * @param aSanitize whether the fragment should be sanitized prior to
    *        injection
    */
-  static nsresult CreateContextualFragment(nsINode* aContextNode,
-                                           const nsAString& aFragment,
-                                           bool aPreventScriptExecution,
-                                           nsIDOMDocumentFragment** aReturn);
   static already_AddRefed<mozilla::dom::DocumentFragment>
   CreateContextualFragment(nsINode* aContextNode, const nsAString& aFragment,
                            bool aPreventScriptExecution,
@@ -1690,7 +1683,7 @@ public:
                                    nsIDocument* aDocument,
                                    nsTArray<nsString>& aTagStack,
                                    bool aPreventScriptExecution,
-                                   nsIDOMDocumentFragment** aReturn,
+                                   mozilla::dom::DocumentFragment** aReturn,
                                    SanitizeFragments aSanitize = SanitizeSystemPrivileged);
 
   /**
@@ -2109,7 +2102,7 @@ public:
    */
   static nsresult DispatchXULCommand(nsIContent* aTarget,
                                      bool aTrusted,
-                                     nsIDOMEvent* aSourceEvent = nullptr,
+                                     mozilla::dom::Event* aSourceEvent = nullptr,
                                      nsIPresShell* aShell = nullptr,
                                      bool aCtrl = false,
                                      bool aAlt = false,
@@ -3291,6 +3284,8 @@ public:
   // Get the current number of inner or outer windows.
   static int32_t GetCurrentInnerOrOuterWindowCount() { return sInnerOrOuterWindowCount; }
 
+  static bool CanShowPopup(nsIPrincipal* aPrincipal);
+
 private:
   static bool InitializeEventTable();
 
@@ -3418,6 +3413,7 @@ private:
 
   static bool sIsHandlingKeyBoardEvent;
   static bool sAllowXULXBL_for_file;
+  static bool sDisablePopups;
   static bool sIsFullScreenApiEnabled;
   static bool sIsUnprefixedFullscreenApiEnabled;
   static bool sTrustedFullScreenOnly;

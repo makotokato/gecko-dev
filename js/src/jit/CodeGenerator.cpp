@@ -6087,7 +6087,7 @@ CodeGenerator::visitNewTypedArray(LNewTypedArray* lir)
                         ool->entry(), /*initContents*/true, /*convertDoubleElements*/false);
 
     masm.initTypedArraySlots(objReg, tempReg, lengthReg, liveRegs, ool->entry(),
-                             ttemplate, TypedArrayLength::Fixed);
+                             ttemplate, MacroAssembler::TypedArrayLength::Fixed);
 
     masm.bind(ool->rejoin());
 }
@@ -6113,7 +6113,7 @@ CodeGenerator::visitNewTypedArrayDynamicLength(LNewTypedArrayDynamicLength* lir)
                         ool->entry(), /*initContents*/true, /*convertDoubleElements*/false);
 
     masm.initTypedArraySlots(objReg, tempReg, lengthReg, liveRegs, ool->entry(),
-                             ttemplate, TypedArrayLength::Dynamic);
+                             ttemplate, MacroAssembler::TypedArrayLength::Dynamic);
 
     masm.bind(ool->rejoin());
 }
@@ -12069,9 +12069,6 @@ CodeGenerator::emitInstanceOf(LInstruction* ins, JSObject* prototypeObject)
     masm.bind(ool->rejoin());
 }
 
-typedef bool (*HasInstanceFn)(JSContext*, HandleObject, HandleValue, bool*);
-static const VMFunction HasInstanceInfo = FunctionInfo<HasInstanceFn>(js::HasInstance, "HasInstance");
-
 void
 CodeGenerator::visitInstanceOfCache(LInstanceOfCache* ins)
 {
@@ -12587,6 +12584,33 @@ CodeGenerator::visitHasClass(LHasClass* ins)
 
     masm.loadObjClassUnsafe(lhs, output);
     masm.cmpPtrSet(Assembler::Equal, output, ImmPtr(ins->mir()->getClass()), output);
+}
+
+void
+CodeGenerator::visitGuardToClass(LGuardToClass* ins)
+{
+    Register lhs = ToRegister(ins->lhs());
+    Register output = ToRegister(ins->output());
+    Register temp = ToRegister(ins->temp());
+
+    Label notEqual;
+
+    masm.branchTestObjClass(Assembler::NotEqual, lhs, ins->mir()->getClass(), temp,
+                            output, &notEqual);
+    masm.mov(lhs, output);
+
+    if (ins->mir()->type() == MIRType::Object) {
+        // Can't return null-return here, so bail
+        bailoutFrom(&notEqual, ins->snapshot());
+    } else {
+        Label done;
+        masm.jump(&done);
+
+        masm.bind(&notEqual);
+        masm.mov(ImmPtr(0), output);
+
+        masm.bind(&done);
+    }
 }
 
 typedef JSString* (*ObjectClassToStringFn)(JSContext*, HandleObject);

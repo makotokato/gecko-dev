@@ -39,6 +39,11 @@ struct ParamTraits<mozilla::layers::LayersId>
 {};
 
 template <>
+struct ParamTraits<mozilla::layers::TransactionId>
+  : public PlainOldDataSerializer<mozilla::layers::TransactionId>
+{};
+
+template <>
 struct ParamTraits<mozilla::layers::LayersBackend>
   : public ContiguousEnumSerializer<
              mozilla::layers::LayersBackend,
@@ -282,6 +287,7 @@ struct ParamTraits<mozilla::layers::ScrollMetadata>
     WriteParam(aMsg, aParam.mScrollClip);
     WriteParam(aMsg, aParam.mHasScrollgrab);
     WriteParam(aMsg, aParam.mIsLayersIdRoot);
+    WriteParam(aMsg, aParam.mIsAutoDirRootContentRTL);
     WriteParam(aMsg, aParam.mUsesContainerScrolling);
     WriteParam(aMsg, aParam.mForceDisableApz);
     WriteParam(aMsg, aParam.mDisregardedDirection);
@@ -310,6 +316,8 @@ struct ParamTraits<mozilla::layers::ScrollMetadata>
             ReadParam(aMsg, aIter, &aResult->mScrollClip) &&
             ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetHasScrollgrab) &&
             ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetIsLayersIdRoot) &&
+            ReadBoolForBitfield(aMsg, aIter, aResult,
+              &paramType::SetIsAutoDirRootContentRTL) &&
             ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetUsesContainerScrolling) &&
             ReadBoolForBitfield(aMsg, aIter, aResult, &paramType::SetForceDisableApz) &&
             ReadParam(aMsg, aIter, &aResult->mDisregardedDirection) &&

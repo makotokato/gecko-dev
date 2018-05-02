@@ -1806,7 +1806,7 @@ Selection::SelectFrames(nsPresContext* aPresContext, nsRange* aRange,
   }
 
   // We must call first one explicitly
-  bool isFirstContentTextNode = startContent->IsNodeOfType(nsINode::eTEXT);
+  bool isFirstContentTextNode = startContent->IsText();
   nsINode* endNode = aRange->GetEndContainer();
   if (isFirstContentTextNode) {
     nsIFrame* frame = startContent->GetPrimaryFrame();
@@ -1864,7 +1864,7 @@ Selection::SelectFrames(nsPresContext* aPresContext, nsRange* aRange,
     if (NS_WARN_IF(!endContent)) {
       return NS_ERROR_UNEXPECTED;
     }
-    if (endContent->IsNodeOfType(nsINode::eTEXT)) {
+    if (endContent->IsText()) {
       nsIFrame* frame = endContent->GetPrimaryFrame();
       // The frame could be an SVG text frame, in which case we'll ignore it.
       if (frame && frame->IsTextFrame()) {
@@ -2387,12 +2387,12 @@ Selection::RemoveRange(nsRange& aRange, ErrorResult& aRv)
 
   // find out the length of the end node, so we can select all of it
   int32_t beginOffset, endOffset;
-  if (endNode->IsNodeOfType(nsINode::eTEXT)) {
+  if (endNode->IsText()) {
     // Get the length of the text. We can't just use the offset because
     // another range could be touching this text node but not intersect our
     // range.
     beginOffset = 0;
-    endOffset = static_cast<nsIContent*>(endNode)->TextLength();
+    endOffset = endNode->AsText()->TextLength();
   } else {
     // For non-text nodes, the given offsets should be sufficient.
     beginOffset = aRange.StartOffset();
@@ -3215,9 +3215,9 @@ Selection::ContainsNode(nsINode& aNode, bool aAllowPartial, ErrorResult& aRv)
 
   // XXXbz this duplicates the GetNodeLength code in nsRange.cpp
   uint32_t nodeLength;
-  bool isData = aNode.IsNodeOfType(nsINode::eDATA_NODE);
-  if (isData) {
-    nodeLength = static_cast<nsIContent&>(aNode).TextLength();
+  auto* nodeAsCharData = CharacterData::FromNode(aNode);
+  if (nodeAsCharData) {
+    nodeLength = nodeAsCharData->TextLength();
   } else {
     nodeLength = aNode.GetChildCount();
   }
@@ -3238,7 +3238,7 @@ Selection::ContainsNode(nsINode& aNode, bool aAllowPartial, ErrorResult& aRv)
   }
 
   // text nodes always count as inside
-  if (isData) {
+  if (nodeAsCharData) {
     return true;
   }
 
@@ -3431,7 +3431,7 @@ Selection::GetSelectionEndPointGeometry(SelectionRegion aRegion, nsRect* aRect)
 
   // Figure out what node type we have, then get the
   // appropriate rect for it's nodeOffset.
-  bool isText = node->IsNodeOfType(nsINode::eTEXT);
+  bool isText = node->IsText();
 
   nsPoint pt(0, 0);
   if (isText) {
@@ -3737,8 +3737,6 @@ Selection::NotifySelectionListeners()
       // focus but only selection range is updated.
       if (newEditingHost && newEditingHost != focusedElement) {
         MOZ_ASSERT(!newEditingHost->IsInNativeAnonymousSubtree());
-        nsCOMPtr<nsIDOMElement> domElementToFocus =
-          do_QueryInterface(newEditingHost->AsDOMNode());
         // Note that don't steal focus from focused window if the window doesn't
         // have focus and if the window isn't focused window, shouldn't be
         // scrolled to the new focused element.
@@ -3746,7 +3744,7 @@ Selection::NotifySelectionListeners()
         if (focusedWindow != fm->GetFocusedWindow()) {
           flags |= nsIFocusManager::FLAG_NOSCROLL;
         }
-        fm->SetFocus(domElementToFocus, flags);
+        fm->SetFocus(newEditingHost, flags);
       }
     }
   }

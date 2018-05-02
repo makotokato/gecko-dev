@@ -82,7 +82,6 @@
 #include "nsIDocument.h"
 #include "nsIDocumentLoaderFactory.h"
 #include "nsIDOMDocument.h"
-#include "nsIDOMElement.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMStorage.h"
 #include "nsIDOMWindow.h"
@@ -362,6 +361,7 @@ nsDocShell::nsDocShell()
   , mAllowContentRetargetingOnChildren(true)
   , mUseErrorPages(false)
   , mObserveErrorPages(true)
+  , mCSSErrorReportingEnabled(false)
   , mAllowAuth(true)
   , mAllowKeywordFixup(false)
   , mIsOffScreenBrowser(false)
@@ -389,9 +389,6 @@ nsDocShell::nsDocShell()
   , mHasLoadedNonBlankURI(false)
   , mBlankTiming(false)
 {
-  this->mHistoryID.m0 = {};
-  this->mHistoryID.m1 = {};
-  this->mHistoryID.m2 = {};
   AssertOriginAttributesMatchPrivateBrowsing();
 
   nsContentUtils::GenerateUUIDInPlace(mHistoryID);
@@ -1387,11 +1384,10 @@ nsDocShell::GetContentViewer(nsIContentViewer** aContentViewer)
 }
 
 NS_IMETHODIMP
-nsDocShell::SetChromeEventHandler(nsIDOMEventTarget* aChromeEventHandler)
+nsDocShell::SetChromeEventHandler(EventTarget* aChromeEventHandler)
 {
   // Weak reference. Don't addref.
-  nsCOMPtr<EventTarget> handler = do_QueryInterface(aChromeEventHandler);
-  mChromeEventHandler = handler.get();
+  mChromeEventHandler = aChromeEventHandler;
 
   if (mScriptGlobal) {
     mScriptGlobal->SetChromeEventHandler(mChromeEventHandler);
@@ -1401,7 +1397,7 @@ nsDocShell::SetChromeEventHandler(nsIDOMEventTarget* aChromeEventHandler)
 }
 
 NS_IMETHODIMP
-nsDocShell::GetChromeEventHandler(nsIDOMEventTarget** aChromeEventHandler)
+nsDocShell::GetChromeEventHandler(EventTarget** aChromeEventHandler)
 {
   NS_ENSURE_ARG_POINTER(aChromeEventHandler);
   nsCOMPtr<EventTarget> handler = mChromeEventHandler;
@@ -1686,6 +1682,21 @@ nsDocShell::GetAllowJavascript(bool* aAllowJavascript)
   NS_ENSURE_ARG_POINTER(aAllowJavascript);
 
   *aAllowJavascript = mAllowJavascript;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::GetCssErrorReportingEnabled(bool* aEnabled)
+{
+  MOZ_ASSERT(aEnabled);
+  *aEnabled = mCSSErrorReportingEnabled;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::SetCssErrorReportingEnabled(bool aEnabled)
+{
+  mCSSErrorReportingEnabled = aEnabled;
   return NS_OK;
 }
 
@@ -6162,8 +6173,13 @@ nsDocShell::SetCurScrollPosEx(int32_t aCurHorizontalPos,
   nsIScrollableFrame* sf = GetRootScrollFrame();
   NS_ENSURE_TRUE(sf, NS_ERROR_FAILURE);
 
-  sf->ScrollTo(nsPoint(aCurHorizontalPos, aCurVerticalPos),
-               nsIScrollableFrame::INSTANT);
+  nsIScrollableFrame::ScrollMode scrollMode = nsIScrollableFrame::INSTANT;
+  if (sf->GetScrollbarStyles().mScrollBehavior ==
+        NS_STYLE_SCROLL_BEHAVIOR_SMOOTH) {
+    scrollMode = nsIScrollableFrame::SMOOTH_MSD;
+  }
+
+  sf->ScrollTo(nsPoint(aCurHorizontalPos, aCurVerticalPos), scrollMode);
   return NS_OK;
 }
 
@@ -7298,7 +7314,7 @@ nsDocShell::EndPageLoad(nsIWebProgress* aProgress,
     // document. (document of parent window of blocked document)
     if (isTopFrame == false && aStatus == NS_ERROR_TRACKING_URI) {
       // frameElement is our nsIContent to be annotated
-      nsCOMPtr<nsIDOMElement> frameElement;
+      RefPtr<Element> frameElement;
       nsPIDOMWindowOuter* thisWindow = GetWindow();
       if (!thisWindow) {
         return NS_OK;
@@ -7322,8 +7338,7 @@ nsDocShell::EndPageLoad(nsIWebProgress* aProgress,
         return NS_OK;
       }
 
-      nsCOMPtr<nsIContent> cont = do_QueryInterface(frameElement);
-      parentDoc->AddBlockedTrackingNode(cont);
+      parentDoc->AddBlockedTrackingNode(frameElement);
 
       return NS_OK;
     }
@@ -9579,9 +9594,11 @@ nsDocShell::InternalLoad(nsIURI* aURI,
         // happen for links.
         MOZ_ASSERT(!aLoadReplace);
         MOZ_ASSERT(aPrincipalToInherit == aTriggeringPrincipal);
-        MOZ_ASSERT(aFlags == INTERNAL_LOAD_FLAGS_NO_OPENER ||
-                   aFlags == (INTERNAL_LOAD_FLAGS_NO_OPENER |
-                              INTERNAL_LOAD_FLAGS_DONT_SEND_REFERRER));
+        MOZ_ASSERT((aFlags & ~INTERNAL_LOAD_FLAGS_IS_USER_TRIGGERED) ==
+                   INTERNAL_LOAD_FLAGS_NO_OPENER ||
+                   (aFlags & ~INTERNAL_LOAD_FLAGS_IS_USER_TRIGGERED) ==
+                   (INTERNAL_LOAD_FLAGS_NO_OPENER |
+                    INTERNAL_LOAD_FLAGS_DONT_SEND_REFERRER));
         MOZ_ASSERT(!aPostData);
         MOZ_ASSERT(!aHeadersData);
         // If OnLinkClickSync was invoked inside the onload handler, the load
@@ -11852,6 +11869,8 @@ nsDocShell::AddState(JS::Handle<JS::Value> aData, const nsAString& aTitle,
   // call ReplaceEntry so that we notify nsIHistoryListeners that an entry
   // was replaced.
   RefPtr<ChildSHistory> rootSH = GetRootSessionHistory();
+  NS_ENSURE_TRUE(rootSH, NS_ERROR_UNEXPECTED);
+
   if (!aReplace) {
     int32_t curIndex = rootSH->Index();
     if (curIndex > -1) {
@@ -13060,7 +13079,7 @@ nsDocShell::GetTopWindow(mozIDOMWindowProxy** aWindow)
 }
 
 NS_IMETHODIMP
-nsDocShell::GetTopFrameElement(nsIDOMElement** aElement)
+nsDocShell::GetTopFrameElement(Element** aElement)
 {
   *aElement = nullptr;
   nsCOMPtr<nsPIDOMWindowOuter> win = GetWindow();
@@ -13074,8 +13093,7 @@ nsDocShell::GetTopFrameElement(nsIDOMElement** aElement)
   // GetFrameElementInternal, /not/ GetScriptableFrameElement -- if |top| is
   // inside <iframe mozbrowser>, we want to return the iframe, not null.
   // And we want to cross the content/chrome boundary.
-  nsCOMPtr<nsIDOMElement> elt =
-    do_QueryInterface(top->GetFrameElementInternal());
+  RefPtr<Element> elt = top->GetFrameElementInternal();
   elt.forget(aElement);
   return NS_OK;
 }
@@ -13342,6 +13360,7 @@ public:
                    int64_t aPostDataStreamLength,
                    nsIInputStream* aHeadersDataStream,
                    bool aNoOpenerImplied,
+                   bool aIsUserTriggered,
                    bool aIsTrusted,
                    nsIPrincipal* aTriggeringPrincipal);
 
@@ -13360,7 +13379,8 @@ public:
                                 mTargetSpec.get(), mFileName,
                                 mPostDataStream, mPostDataStreamLength,
                                 mHeadersDataStream, mNoOpenerImplied,
-                                nullptr, nullptr, mTriggeringPrincipal);
+                                nullptr, nullptr, mIsUserTriggered,
+                                mTriggeringPrincipal);
     }
     return NS_OK;
   }
@@ -13376,6 +13396,7 @@ private:
   nsCOMPtr<nsIContent> mContent;
   PopupControlState mPopupState;
   bool mNoOpenerImplied;
+  bool mIsUserTriggered;
   bool mIsTrusted;
   nsCOMPtr<nsIPrincipal> mTriggeringPrincipal;
 };
@@ -13389,6 +13410,7 @@ OnLinkClickEvent::OnLinkClickEvent(nsDocShell* aHandler,
                                    int64_t aPostDataStreamLength,
                                    nsIInputStream* aHeadersDataStream,
                                    bool aNoOpenerImplied,
+                                   bool aIsUserTriggered,
                                    bool aIsTrusted,
                                    nsIPrincipal* aTriggeringPrincipal)
   : mozilla::Runnable("OnLinkClickEvent")
@@ -13402,6 +13424,7 @@ OnLinkClickEvent::OnLinkClickEvent(nsDocShell* aHandler,
   , mContent(aContent)
   , mPopupState(mHandler->mScriptGlobal->GetPopupControlState())
   , mNoOpenerImplied(aNoOpenerImplied)
+  , mIsUserTriggered(aIsUserTriggered)
   , mIsTrusted(aIsTrusted)
   , mTriggeringPrincipal(aTriggeringPrincipal)
 {
@@ -13415,6 +13438,7 @@ nsDocShell::OnLinkClick(nsIContent* aContent,
                         nsIInputStream* aPostDataStream,
                         int64_t aPostDataStreamLength,
                         nsIInputStream* aHeadersDataStream,
+                        bool aIsUserTriggered,
                         bool aIsTrusted,
                         nsIPrincipal* aTriggeringPrincipal)
 {
@@ -13461,7 +13485,7 @@ nsDocShell::OnLinkClick(nsIContent* aContent,
     new OnLinkClickEvent(this, aContent, aURI, target.get(), aFileName,
                          aPostDataStream, aPostDataStreamLength,
                          aHeadersDataStream, noOpenerImplied,
-                         aIsTrusted, aTriggeringPrincipal);
+                         aIsUserTriggered, aIsTrusted, aTriggeringPrincipal);
   return DispatchToTabGroup(TaskCategory::UI, ev.forget());
 }
 
@@ -13484,6 +13508,7 @@ nsDocShell::OnLinkClickSync(nsIContent* aContent,
                             bool aNoOpenerImplied,
                             nsIDocShell** aDocShell,
                             nsIRequest** aRequest,
+                            bool aIsUserTriggered,
                             nsIPrincipal* aTriggeringPrincipal)
 {
   // Initialize the DocShell / Request
@@ -13622,6 +13647,10 @@ nsDocShell::OnLinkClickSync(nsIContent* aContent,
   GetIsExecutingOnLoadHandler(&inOnLoadHandler);
   uint32_t loadType = inOnLoadHandler ? LOAD_NORMAL_REPLACE : LOAD_LINK;
 
+  if (aIsUserTriggered) {
+    flags |= INTERNAL_LOAD_FLAGS_IS_USER_TRIGGERED;
+  }
+
   nsresult rv = InternalLoad(clonedURI,                 // New URI
                              nullptr,                   // Original URI
                              Nothing(),                 // Let the protocol handler assign it
@@ -13672,7 +13701,7 @@ nsDocShell::OnOverLink(nsIContent* aContent,
   }
 
   nsAutoCString spec;
-  rv = aURI->GetSpec(spec);
+  rv = aURI->GetDisplaySpec(spec);
   NS_ENSURE_SUCCESS(rv, rv);
 
   NS_ConvertUTF8toUTF16 uStr(spec);
@@ -13683,9 +13712,8 @@ nsDocShell::OnOverLink(nsIContent* aContent,
                                  nullptr);
 
   if (browserChrome2) {
-    nsCOMPtr<nsIDOMElement> element = do_QueryInterface(aContent);
     rv = browserChrome2->SetStatusWithContext(nsIWebBrowserChrome::STATUS_LINK,
-                                              uStr, element);
+                                              uStr, aContent);
   } else {
     rv = browserChrome->SetStatus(nsIWebBrowserChrome::STATUS_LINK, uStr.get());
   }

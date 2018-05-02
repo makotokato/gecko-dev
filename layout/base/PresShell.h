@@ -237,7 +237,7 @@ public:
                                     WidgetEvent* aEvent,
                                     nsEventStatus* aStatus) override;
   nsresult HandleDOMEventWithTarget(nsIContent* aTargetContent,
-                                    nsIDOMEvent* aEvent,
+                                    dom::Event* aEvent,
                                     nsEventStatus* aStatus) override;
   bool ShouldIgnoreInvalidation() override;
   void WillPaint() override;
@@ -695,7 +695,7 @@ private:
 
   // Get the selected item and coordinates in device pixels relative to root
   // document's root view for element, first ensuring the element is onscreen
-  void GetCurrentItemAndPositionForElement(nsIDOMElement *aCurrentEl,
+  void GetCurrentItemAndPositionForElement(dom::Element* aFocusedElement,
                                            nsIContent **aTargetToUse,
                                            LayoutDeviceIntPoint& aTargetPt,
                                            nsIWidget *aRootWidget);
@@ -871,6 +871,14 @@ private:
 
   // Whether we have ever handled a user input event
   bool mHasHandledUserInput : 1;
+
+#ifdef NIGHTLY_BUILD
+  // Whether we should dispatch keypress events even for non-printable keys
+  // for keeping backward compatibility.
+  bool mForceDispatchKeyPressEventsForNonPrintableKeys : 1;
+  // Whether mForceDispatchKeyPressEventsForNonPrintableKeys is initialized.
+  bool mInitializedForceDispatchKeyPressEventsForNonPrintableKeys : 1;
+#endif // #ifdef NIGHTLY_BUILD
 
   static bool sDisableNonTestMouseEvents;
 

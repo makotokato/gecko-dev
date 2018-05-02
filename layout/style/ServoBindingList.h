@@ -56,13 +56,20 @@ SERVO_BINDING_FUNC(Servo_StyleSheet_FromUTF8Bytes,
                    mozilla::css::Loader* loader,
                    mozilla::ServoStyleSheet* gecko_stylesheet,
                    mozilla::css::SheetLoadData* load_data,
-                   const uint8_t* data,
-                   size_t data_len,
+                   const nsACString* bytes,
                    mozilla::css::SheetParsingMode parsing_mode,
                    RawGeckoURLExtraData* extra_data,
                    uint32_t line_number_offset,
                    nsCompatibility quirks_mode,
                    mozilla::css::LoaderReusableStyleSheets* reusable_sheets)
+SERVO_BINDING_FUNC(Servo_StyleSheet_FromUTF8BytesAsync,
+                   void,
+                   mozilla::css::SheetLoadDataHolder* load_data,
+                   RawGeckoURLExtraData* extra_data,
+                   const nsACString* bytes,
+                   mozilla::css::SheetParsingMode parsing_mode,
+                   uint32_t line_number_offset,
+                   nsCompatibility quirks_mode)
 SERVO_BINDING_FUNC(Servo_StyleSheet_Empty, RawServoStyleSheetContentsStrong,
                    mozilla::css::SheetParsingMode parsing_mode)
 SERVO_BINDING_FUNC(Servo_StyleSheet_HasRules, bool,
@@ -289,11 +296,18 @@ SERVO_BINDING_FUNC(Servo_StyleRule_GetSelectorCount, void,
 SERVO_BINDING_FUNC(Servo_StyleRule_SelectorMatchesElement, bool,
                    RawServoStyleRuleBorrowed, RawGeckoElementBorrowed,
                    uint32_t index, mozilla::CSSPseudoElementType pseudo_type)
+SERVO_BINDING_FUNC(Servo_StyleRule_SetSelectorText, bool,
+                   RawServoStyleSheetContentsBorrowed sheet,
+                   RawServoStyleRuleBorrowed rule, const nsAString* text)
 SERVO_BINDING_FUNC(Servo_ImportRule_GetHref, void,
                    RawServoImportRuleBorrowed rule, nsAString* result)
 SERVO_BINDING_FUNC(Servo_ImportRule_GetSheet,
                    const mozilla::ServoStyleSheet*,
                    RawServoImportRuleBorrowed rule)
+SERVO_BINDING_FUNC(Servo_ImportRule_SetSheet,
+                   void,
+                   RawServoImportRuleBorrowed rule,
+                   mozilla::ServoStyleSheet* sheet);
 SERVO_BINDING_FUNC(Servo_Keyframe_GetKeyText, void,
                    RawServoKeyframeBorrowed keyframe, nsAString* result)
 // Returns whether it successfully changes the key text.
@@ -862,6 +876,10 @@ SERVO_BINDING_FUNC(Servo_Property_IsShorthand, bool,
                    const nsACString* name, bool* found);
 SERVO_BINDING_FUNC(Servo_Property_IsInherited, bool,
                    const nsACString* name);
+SERVO_BINDING_FUNC(Servo_Property_SupportsType, bool,
+                   const nsACString* name, uint32_t ty, bool* found);
+SERVO_BINDING_FUNC(Servo_Property_GetCSSValuesForProperty, void,
+                   const nsACString* name, bool* found, nsTArray<nsString>* result)
 SERVO_BINDING_FUNC(Servo_PseudoClass_GetStates, uint64_t,
                    const nsACString* name)
 

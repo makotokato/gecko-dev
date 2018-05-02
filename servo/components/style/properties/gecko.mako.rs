@@ -1804,7 +1804,7 @@ fn static_assert() {
     }
 
     pub fn set_computed_justify_items(&mut self, v: values::specified::JustifyItems) {
-        debug_assert_ne!(v.0, ::values::specified::align::AlignFlags::AUTO);
+        debug_assert_ne!(v.0, ::values::specified::align::AlignFlags::LEGACY);
         self.gecko.mJustifyItems = v.into();
     }
 
@@ -2599,13 +2599,49 @@ fn static_assert() {
     }
 
     pub fn set_font_weight(&mut self, v: longhands::font_weight::computed_value::T) {
-        self.gecko.mFont.weight = v.0;
+        unsafe { bindings::Gecko_FontWeight_SetFloat(&mut self.gecko.mFont.weight, v.0) };
     }
     ${impl_simple_copy('font_weight', 'mFont.weight')}
 
     pub fn clone_font_weight(&self) -> longhands::font_weight::computed_value::T {
-        debug_assert!(self.gecko.mFont.weight <= ::std::u16::MAX);
-        longhands::font_weight::computed_value::T(self.gecko.mFont.weight)
+        let weight: f32 = unsafe {
+            bindings::Gecko_FontWeight_ToFloat(self.gecko.mFont.weight)
+        };
+        longhands::font_weight::computed_value::T(weight)
+    }
+
+    pub fn set_font_stretch(&mut self, v: longhands::font_stretch::computed_value::T) {
+        unsafe { bindings::Gecko_FontStretch_SetFloat(&mut self.gecko.mFont.stretch, (v.0).0) };
+    }
+    ${impl_simple_copy('font_stretch', 'mFont.stretch')}
+    pub fn clone_font_stretch(&self) -> longhands::font_stretch::computed_value::T {
+        use values::computed::Percentage;
+        use values::generics::NonNegative;
+
+        let stretch =
+            unsafe { bindings::Gecko_FontStretch_ToFloat(self.gecko.mFont.stretch) };
+        debug_assert!(stretch >= 0.);
+
+        NonNegative(Percentage(stretch))
+    }
+
+    pub fn set_font_style(&mut self, v: longhands::font_style::computed_value::T) {
+        use values::generics::font::FontStyle;
+        let s = &mut self.gecko.mFont.style;
+        unsafe {
+            match v {
+                FontStyle::Normal => bindings::Gecko_FontSlantStyle_SetNormal(s),
+                FontStyle::Italic => bindings::Gecko_FontSlantStyle_SetItalic(s),
+                FontStyle::Oblique(ref angle) => {
+                    bindings::Gecko_FontSlantStyle_SetOblique(s, angle.0.degrees())
+                }
+            }
+        }
+    }
+    ${impl_simple_copy('font_style', 'mFont.style')}
+    pub fn clone_font_style(&self) -> longhands::font_style::computed_value::T {
+        use values::computed::font::FontStyle;
+        FontStyle::from_gecko(self.gecko.mFont.style)
     }
 
     ${impl_simple_type_with_conversion("font_synthesis", "mFont.synthesis")}
@@ -5661,9 +5697,9 @@ clip-path
         ) {
             unsafe {
                 bindings::Gecko_ClearAndResizeCounter${counter_property}s(&mut self.gecko, v.len() as u32);
-                for (i, &(ref name, value)) in v.iter().enumerate() {
-                    self.gecko.m${counter_property}s[i].mCounter.assign(name.0.as_slice());
-                    self.gecko.m${counter_property}s[i].mValue = value;
+                for (i, ref pair) in v.iter().enumerate() {
+                    self.gecko.m${counter_property}s[i].mCounter.assign(pair.name.0.as_slice());
+                    self.gecko.m${counter_property}s[i].mValue = pair.value;
                 }
             }
         }
@@ -5681,12 +5717,16 @@ clip-path
         pub fn clone_counter_${counter_property.lower()}(
             &self
         ) -> longhands::counter_${counter_property.lower()}::computed_value::T {
+            use values::generics::counters::CounterPair;
             use values::CustomIdent;
             use gecko_string_cache::Atom;
 
             longhands::counter_${counter_property.lower()}::computed_value::T::new(
                 self.gecko.m${counter_property}s.iter().map(|ref gecko_counter| {
-                    (CustomIdent(Atom::from(gecko_counter.mCounter.to_string())), gecko_counter.mValue)
+                    CounterPair {
+                        name: CustomIdent(Atom::from(gecko_counter.mCounter.to_string())),
+                        value: gecko_counter.mValue,
+                    }
                 }).collect()
             )
         }

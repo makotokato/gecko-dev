@@ -23,7 +23,6 @@
 #include "jit/EagerSimdUnbox.h"
 #include "jit/EdgeCaseAnalysis.h"
 #include "jit/EffectiveAddressAnalysis.h"
-#include "jit/FlowAliasAnalysis.h"
 #include "jit/FoldLinearArithConstants.h"
 #include "jit/InstructionReordering.h"
 #include "jit/IonAnalysis.h"
@@ -104,17 +103,6 @@ jit::MaybeGetJitContext()
     return CurrentJitContext();
 }
 
-JitContext::JitContext(JSContext* cx, TempAllocator* temp)
-  : cx(cx),
-    temp(temp),
-    runtime(CompileRuntime::get(cx->runtime())),
-    compartment(CompileCompartment::get(cx->compartment())),
-    prev_(CurrentJitContext()),
-    assemblerCount_(0)
-{
-    SetJitContext(this);
-}
-
 JitContext::JitContext(CompileRuntime* rt, CompileCompartment* comp, TempAllocator* temp)
   : cx(nullptr),
     temp(temp),
@@ -126,11 +114,11 @@ JitContext::JitContext(CompileRuntime* rt, CompileCompartment* comp, TempAllocat
     SetJitContext(this);
 }
 
-JitContext::JitContext(CompileRuntime* rt)
-  : cx(nullptr),
-    temp(nullptr),
-    runtime(rt),
-    compartment(nullptr),
+JitContext::JitContext(JSContext* cx, TempAllocator* temp)
+  : cx(cx),
+    temp(temp),
+    runtime(CompileRuntime::get(cx->runtime())),
+    compartment(CompileCompartment::get(cx->compartment())),
     prev_(CurrentJitContext()),
     assemblerCount_(0)
 {
@@ -138,37 +126,12 @@ JitContext::JitContext(CompileRuntime* rt)
 }
 
 JitContext::JitContext(TempAllocator* temp)
-  : cx(nullptr),
-    temp(temp),
-    runtime(nullptr),
-    compartment(nullptr),
-    prev_(CurrentJitContext()),
-    assemblerCount_(0)
-{
-    SetJitContext(this);
-}
-
-JitContext::JitContext(CompileRuntime* rt, TempAllocator* temp)
-  : cx(nullptr),
-    temp(temp),
-    runtime(rt),
-    compartment(nullptr),
-    prev_(CurrentJitContext()),
-    assemblerCount_(0)
-{
-    SetJitContext(this);
-}
+  : JitContext(nullptr, nullptr, temp)
+{}
 
 JitContext::JitContext()
-  : cx(nullptr),
-    temp(nullptr),
-    runtime(nullptr),
-    compartment(nullptr),
-    prev_(CurrentJitContext()),
-    assemblerCount_(0)
-{
-    SetJitContext(this);
-}
+  : JitContext(nullptr, nullptr, nullptr)
+{}
 
 JitContext::~JitContext()
 {
@@ -386,7 +349,7 @@ JitRuntime::IonBuilderList&
 JitRuntime::ionLazyLinkList(JSRuntime* rt)
 {
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt),
-               "Should only be mutated by the active thread.");
+               "Should only be mutated by the main thread.");
     return ionLazyLinkList_.ref();
 }
 
@@ -394,8 +357,8 @@ void
 JitRuntime::ionLazyLinkListRemove(JSRuntime* rt, jit::IonBuilder* builder)
 {
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt),
-               "Should only be mutated by the active thread.");
-    MOZ_ASSERT(rt == builder->script()->runtimeFromActiveCooperatingThread());
+               "Should only be mutated by the main thread.");
+    MOZ_ASSERT(rt == builder->script()->runtimeFromMainThread());
     MOZ_ASSERT(ionLazyLinkListSize_ > 0);
 
     builder->removeFrom(ionLazyLinkList(rt));
@@ -408,8 +371,8 @@ void
 JitRuntime::ionLazyLinkListAdd(JSRuntime* rt, jit::IonBuilder* builder)
 {
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt),
-               "Should only be mutated by the active thread.");
-    MOZ_ASSERT(rt == builder->script()->runtimeFromActiveCooperatingThread());
+               "Should only be mutated by the main thread.");
+    MOZ_ASSERT(rt == builder->script()->runtimeFromMainThread());
     ionLazyLinkList(rt).insertFront(builder);
     ionLazyLinkListSize_++;
 }
@@ -1547,15 +1510,10 @@ OptimizeMIR(MIRGenerator* mir)
     {
         {
             AutoTraceLog log(logger, TraceLogger_AliasAnalysis);
-            if (JitOptions.disableFlowAA) {
-                AliasAnalysis analysis(mir, graph);
-                if (!analysis.analyze())
-                    return false;
-            } else {
-                FlowAliasAnalysis analysis(mir, graph);
-                if (!analysis.analyze())
-                    return false;
-            }
+
+            AliasAnalysis analysis(mir, graph);
+            if (!analysis.analyze())
+                return false;
 
             gs.spewPass("Alias analysis");
             AssertExtendedGraphCoherency(graph);
@@ -1967,7 +1925,7 @@ AttachFinishedCompilations(JSContext* cx)
     // Incorporate any off thread compilations for the runtime which have
     // finished, failed or have been cancelled.
     while (true) {
-        // Find a finished builder for the zone group.
+        // Find a finished builder for the runtime.
         IonBuilder* builder = GetFinishedBuilder(rt, finished, lock);
         if (!builder)
             break;
@@ -1977,7 +1935,7 @@ AttachFinishedCompilations(JSContext* cx)
         script->baselineScript()->setPendingIonBuilder(rt, script, builder);
         rt->jitRuntime()->ionLazyLinkListAdd(rt, builder);
 
-        // Don't keep more than 100 lazy link builders in a zone group.
+        // Don't keep more than 100 lazy link builders in a runtime.
         // Link the oldest ones immediately.
         while (rt->jitRuntime()->ionLazyLinkListSize() > 100) {
             jit::IonBuilder* builder = rt->jitRuntime()->ionLazyLinkList(rt).getLast();
@@ -2310,8 +2268,8 @@ ScriptIsTooLarge(JSContext* cx, JSScript* script)
 
     uint32_t numLocalsAndArgs = NumLocalsAndArgs(script);
 
-    if (script->length() > MAX_ACTIVE_THREAD_SCRIPT_SIZE ||
-        numLocalsAndArgs > MAX_ACTIVE_THREAD_LOCALS_AND_ARGS)
+    if (script->length() > MAX_MAIN_THREAD_SCRIPT_SIZE ||
+        numLocalsAndArgs > MAX_MAIN_THREAD_LOCALS_AND_ARGS)
     {
         if (!OffThreadCompilationAvailable(cx)) {
             JitSpew(JitSpew_IonAbort, "Script too large (%zu bytes) (%u locals/args)",
@@ -2447,7 +2405,7 @@ bool
 jit::OffThreadCompilationAvailable(JSContext* cx)
 {
     // Even if off thread compilation is enabled, compilation must still occur
-    // on the active thread in some cases.
+    // on the main thread in some cases.
     //
     // Require cpuCount > 1 so that Ion compilation jobs and active-thread
     // execution are not competing for the same resources.

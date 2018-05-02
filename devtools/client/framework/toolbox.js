@@ -14,6 +14,7 @@ const HOST_HISTOGRAM = "DEVTOOLS_TOOLBOX_HOST";
 const SCREENSIZE_HISTOGRAM = "DEVTOOLS_SCREEN_RESOLUTION_ENUMERATED_PER_USER";
 const CURRENT_THEME_SCALAR = "devtools.current_theme";
 const HTML_NS = "http://www.w3.org/1999/xhtml";
+const REGEX_PANEL = /webconsole|inspector|jsdebugger|styleeditor|netmonitor|storage/;
 
 var {Ci, Cc} = require("chrome");
 var promise = require("promise");
@@ -23,6 +24,7 @@ var ChromeUtils = require("ChromeUtils");
 var {gDevTools} = require("devtools/client/framework/devtools");
 var EventEmitter = require("devtools/shared/event-emitter");
 var Telemetry = require("devtools/client/shared/telemetry");
+const { getUnicodeUrl } = require("devtools/client/shared/unicode-url");
 var { attachThread, detachThread } = require("./attach-thread");
 var Menu = require("devtools/client/framework/menu");
 var MenuItem = require("devtools/client/framework/menu-item");
@@ -73,6 +75,10 @@ loader.lazyRequireGetter(this, "buildHarLog",
   "devtools/client/netmonitor/src/har/har-builder-utils", true);
 loader.lazyRequireGetter(this, "getKnownDeviceFront",
   "devtools/shared/fronts/device", true);
+loader.lazyRequireGetter(this, "NetMonitorAPI",
+  "devtools/client/netmonitor/src/api", true);
+loader.lazyRequireGetter(this, "sortPanelDefinitions",
+  "devtools/client/framework/toolbox-tabs-order-manager", true);
 
 loader.lazyGetter(this, "domNodeConstants", () => {
   return require("devtools/shared/dom-node-constants");
@@ -115,13 +121,11 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
   this._initInspector = null;
   this._inspector = null;
   this._styleSheets = null;
+  this._netMonitorAPI = null;
 
   // Map of frames (id => frame-info) and currently selected frame id.
   this.frameMap = new Map();
   this.selectedFrameId = null;
-
-  // List of listeners for `devtools.network.onRequestFinished` WebExt API
-  this._requestFinishedListeners = new Set();
 
   this._toolRegistered = this._toolRegistered.bind(this);
   this._toolUnregistered = this._toolUnregistered.bind(this);
@@ -146,6 +150,7 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
   this._showDevEditionPromo = this._showDevEditionPromo.bind(this);
   this._updateTextBoxMenuItems = this._updateTextBoxMenuItems.bind(this);
   this._onPerformanceFrontEvent = this._onPerformanceFrontEvent.bind(this);
+  this._onTabsOrderUpdated = this._onTabsOrderUpdated.bind(this);
   this._onToolbarFocus = this._onToolbarFocus.bind(this);
   this._onToolbarArrowKeypress = this._onToolbarArrowKeypress.bind(this);
   this._onPickerClick = this._onPickerClick.bind(this);
@@ -154,8 +159,9 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
   this._onPickerStopped = this._onPickerStopped.bind(this);
   this._onInspectObject = this._onInspectObject.bind(this);
   this._onNewSelectedNodeFront = this._onNewSelectedNodeFront.bind(this);
-  this._updatePickerButton = this._updatePickerButton.bind(this);
+  this.updatePickerButton = this.updatePickerButton.bind(this);
   this.selectTool = this.selectTool.bind(this);
+  this._pingTelemetrySelectTool = this._pingTelemetrySelectTool.bind(this);
   this.toggleSplitConsole = this.toggleSplitConsole.bind(this);
 
   this._target.on("close", this.destroy);
@@ -179,7 +185,7 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
 
   this.on("host-changed", this._refreshHostTitle);
   this.on("select", this._refreshHostTitle);
-  this.on("select", this._updatePickerButton);
+  this.on("select", this.updatePickerButton);
 
   this.on("ready", this._showDevEditionPromo);
 
@@ -262,13 +268,8 @@ Toolbox.prototype = {
    * can be set by add-ons.
    */
   _combineAndSortPanelDefinitions() {
-    const definitions = [...this._panelDefinitions, ...this.getVisibleAdditionalTools()];
-    definitions.sort(definition => {
-      return -1 * (definition.ordinal == undefined || definition.ordinal < 0
-        ? MAX_ORDINAL
-        : definition.ordinal
-      );
-    });
+    let definitions = [...this._panelDefinitions, ...this.getVisibleAdditionalTools()];
+    definitions = sortPanelDefinitions(definitions);
     this.component.setPanelDefinitions(definitions);
   },
 
@@ -537,7 +538,7 @@ Toolbox.prototype = {
         this.component.setCanRender();
       }, {timeout: 16});
 
-      await this.selectTool(this._defaultToolId);
+      await this.selectTool(this._defaultToolId, "initial_panel");
 
       // Wait until the original tool is selected so that the split
       // console input will receive focus.
@@ -765,6 +766,8 @@ Toolbox.prototype = {
    * @property {Function} isTargetSupported - Function to automatically enable/disable
    *                      the button based on the target. If the target don't support
    *                      the button feature, this method should return false.
+   * @property {Function} isCurrentlyVisible - Function to automatically
+   *                      hide/show the button based on current state.
    * @property {Function} isChecked - Optional function called to known if the button
    *                      is toggled or not. The function should return true when
    *                      the button should be displayed as toggled on.
@@ -781,6 +784,7 @@ Toolbox.prototype = {
       setup,
       teardown,
       isTargetSupported,
+      isCurrentlyVisible,
       isChecked,
       onKeyDown
     } = options;
@@ -801,6 +805,7 @@ Toolbox.prototype = {
         }
       },
       isTargetSupported,
+      isCurrentlyVisible,
       get isChecked() {
         if (typeof isChecked == "function") {
           return isChecked(toolbox);
@@ -841,9 +846,9 @@ Toolbox.prototype = {
       // on the options panel.
       if (this.currentToolId === "options" &&
           gDevTools.getToolDefinition(this.lastUsedToolId)) {
-        this.selectTool(this.lastUsedToolId);
+        this.selectTool(this.lastUsedToolId, "toggle_settings_off");
       } else {
-        this.selectTool("options");
+        this.selectTool("options", "toggle_settings_on");
       }
     };
     this.shortcuts.on(L10N.getStr("toolbox.help.key"), selectOptions);
@@ -1013,7 +1018,7 @@ Toolbox.prototype = {
       // needed. See bug 371900
       key.setAttribute("oncommand", "void(0);");
       key.addEventListener("command", () => {
-        this.selectTool(toolId).then(() => this.fireCustomKey(toolId));
+        this.selectTool(toolId, "key_shortcut").then(() => this.fireCustomKey(toolId));
       }, true);
       doc.getElementById("toolbox-keyset").appendChild(key);
     }
@@ -1077,6 +1082,7 @@ Toolbox.prototype = {
   _buildDockOptions: function() {
     if (!this._target.isLocalTab) {
       this.component.setDockOptionsEnabled(false);
+      this.component.setCanCloseToolbox(false);
       return;
     }
 
@@ -1088,8 +1094,7 @@ Toolbox.prototype = {
     let hostTypes = [];
     for (let type in Toolbox.HostType) {
       let position = Toolbox.HostType[type];
-      if (position == this.hostType ||
-          position == Toolbox.HostType.CUSTOM ||
+      if (position == Toolbox.HostType.CUSTOM ||
           (!sideEnabled && position == Toolbox.HostType.SIDE)) {
         continue;
       }
@@ -1100,6 +1105,7 @@ Toolbox.prototype = {
       });
     }
 
+    this.component.setCurrentHostType(this.hostType);
     this.component.setHostTypes(hostTypes);
   },
 
@@ -1144,7 +1150,8 @@ Toolbox.prototype = {
       toggleNoAutohide: this.toggleNoAutohide,
       closeToolbox: this.destroy,
       focusButton: this._onToolbarFocus,
-      toolbox: this
+      toolbox: this,
+      onTabsOrderUpdated: this._onTabsOrderUpdated,
     });
 
     this.component = this.ReactDOM.render(element, this._componentMount);
@@ -1238,6 +1245,9 @@ Toolbox.prototype = {
       onClick: this.showFramesMenu,
       isTargetSupported: target => {
         return target.activeTab && target.activeTab.traits.frames;
+      },
+      isCurrentlyVisible: () => {
+        return this.frameMap.size > 1;
       },
       onKeyDown: this.handleKeyDownOnFramesButton
     });
@@ -1357,7 +1367,7 @@ Toolbox.prototype = {
    * update the visual state of the picker button such as disabled state,
    * additional CSS classes (className), and tooltip (description).
    */
-  _updatePickerButton() {
+  updatePickerButton() {
     const button = this.pickerButton;
     let currentPanel = this.getCurrentPanel();
 
@@ -1380,16 +1390,23 @@ Toolbox.prototype = {
   _commandIsVisible: function(button) {
     const {
       isTargetSupported,
+      isCurrentlyVisible,
       visibilityswitch
     } = button;
 
-    let visible = Services.prefs.getBoolPref(visibilityswitch, true);
-
-    if (isTargetSupported) {
-      return visible && isTargetSupported(this.target);
+    if (!Services.prefs.getBoolPref(visibilityswitch, true)) {
+      return false;
     }
 
-    return visible;
+    if (isTargetSupported && !isTargetSupported(this.target)) {
+      return false;
+    }
+
+    if (isCurrentlyVisible && !isCurrentlyVisible()) {
+      return false;
+    }
+
+    return true;
   },
 
   /**
@@ -1803,8 +1820,10 @@ Toolbox.prototype = {
    *
    * @param {string} id
    *        The id of the tool to switch to
+   * @param {string} reason
+   *        Reason the tool was opened
    */
-  selectTool: function(id) {
+  selectTool: function(id, reason = "unknown") {
     if (this.currentToolId == id) {
       let panel = this._toolPanels.get(id);
       if (panel) {
@@ -1832,7 +1851,8 @@ Toolbox.prototype = {
       if (this.currentToolId) {
         this._telemetry.toolClosed(this.currentToolId);
       }
-      this._telemetry.toolOpened(id);
+
+      this._pingTelemetrySelectTool(id, reason);
     } else {
       throw new Error("No tool found");
     }
@@ -1856,6 +1876,48 @@ Toolbox.prototype = {
       this.emit(id + "-selected", panel);
       return panel;
     });
+  },
+
+  _pingTelemetrySelectTool(id, reason) {
+    const width = Math.ceil(this.win.outerWidth / 50) * 50;
+    const panelName = this.getTelemetryPanelName(id);
+    const prevPanelName = this.getTelemetryPanelName(this.currentToolId);
+    const cold = !this.getPanel(id);
+
+    this._telemetry.addEventProperties("devtools.main", "enter", panelName, null, {
+      "host": this._hostType,
+      "width": width,
+      "start_state": reason,
+      "panel_name": id,
+      "cold": cold
+    });
+
+    // On first load this.currentToolId === undefined so we need to skip sending
+    // a devtools.main.exit telemetry event.
+    if (this.currentToolId) {
+      this._telemetry.recordEvent("devtools.main", "exit", prevPanelName, null, {
+        "host": this._hostType,
+        "width": width,
+        "panel_name": prevPanelName,
+        "next_panel": id,
+        "reason": reason
+      });
+    }
+
+    const pending = ["host", "width", "start_state", "panel_name", "cold"];
+    if (id === "webconsole") {
+      pending.push("message_count");
+
+      // Cold webconsole event message_count is handled in
+      // devtools/client/webconsole/new-console-output-wrapper.js
+      if (!cold) {
+        this._telemetry.addEventProperty(
+          "devtools.main", "enter", "webconsole", null, "message_count", 0);
+      }
+    }
+    this._telemetry.preparePendingEvent(
+      "devtools.main", "enter", panelName, null, pending);
+    this._telemetry.toolOpened(id);
   },
 
   /**
@@ -1900,6 +1962,10 @@ Toolbox.prototype = {
     this._lastFocusedElement = originalTarget;
   },
 
+  _onTabsOrderUpdated: function() {
+    this._combineAndSortPanelDefinitions();
+  },
+
   /**
    * Opens the split console.
    *
@@ -1919,6 +1985,10 @@ Toolbox.prototype = {
 
     return this.loadTool("webconsole").then(() => {
       this.component.setIsSplitConsoleActive(true);
+      this._telemetry.recordEvent("devtools.main", "activate", "split_console", null, {
+        "host": this._getTelemetryHostString(),
+        "width": Math.ceil(this.win.outerWidth / 50) * 50
+      });
       this.emit("split-console");
       this.focusConsoleInput();
     });
@@ -1935,6 +2005,12 @@ Toolbox.prototype = {
     Services.prefs.setBoolPref(SPLITCONSOLE_ENABLED_PREF, false);
     this._refreshConsoleDisplay();
     this.component.setIsSplitConsoleActive(false);
+
+    this._telemetry.recordEvent("devtools.main", "deactivate", "split_console", null, {
+      "host": this._getTelemetryHostString(),
+      "width": Math.ceil(this.win.outerWidth / 50) * 50
+    });
+
     this.emit("split-console");
 
     if (this._lastFocusedElement) {
@@ -1976,7 +2052,7 @@ Toolbox.prototype = {
     let definition = index === -1 || index >= definitions.length - 1
                      ? definitions[0]
                      : definitions[index + 1];
-    return this.selectTool(definition.id);
+    return this.selectTool(definition.id, "select_next_key");
   },
 
   /**
@@ -1988,7 +2064,7 @@ Toolbox.prototype = {
     let definition = index === -1 || index < 1
                      ? definitions[definitions.length - 1]
                      : definitions[index - 1];
-    return this.selectTool(definition.id);
+    return this.selectTool(definition.id, "select_prev_key");
   },
 
   /**
@@ -2057,11 +2133,13 @@ Toolbox.prototype = {
     let title;
     if (this.target.name && this.target.name != this.target.url) {
       const url = this.target.isWebExtension ?
-                  this.target.getExtensionPathName(this.target.url) : this.target.url;
+                    this.target.getExtensionPathName(this.target.url) :
+                    getUnicodeUrl(this.target.url);
       title = L10N.getFormatStr("toolbox.titleTemplate2", this.target.name,
                                                           url);
     } else {
-      title = L10N.getFormatStr("toolbox.titleTemplate1", this.target.url);
+      title = L10N.getFormatStr("toolbox.titleTemplate1",
+                                getUnicodeUrl(this.target.url));
     }
     this.postMessage({
       name: "set-host-title",
@@ -2069,7 +2147,11 @@ Toolbox.prototype = {
     });
   },
 
-  // Returns an instance of the preference actor
+  /**
+   * Returns an instance of the preference actor. This is a lazily initialized root
+   * actor that persists preferences to the debuggee, instead of just to the DevTools
+   * client. See the definition of the preference actor for more information.
+   */
   get preferenceFront() {
     if (this._preferenceFront) {
       return Promise.resolve(this._preferenceFront);
@@ -2148,11 +2230,12 @@ Toolbox.prototype = {
       // A frame is checked if it's the selected one.
       let checked = frame.id == this.selectedFrameId;
 
-      let label = frame.url;
-
+      let label;
       if (this.target.isWebExtension) {
         // Show a shorter url for extensions page.
         label = this.target.getExtensionPathName(frame.url);
+      } else {
+        label = getUnicodeUrl(frame.url);
       }
 
       // Create menu item.
@@ -2248,10 +2331,6 @@ Toolbox.prototype = {
    *                                    for top level window)
    */
   _updateFrames: function(data) {
-    if (!Services.prefs.getBoolPref("devtools.command-button-frames.enabled")) {
-      return;
-    }
-
     // We may receive this event before the toolbox is ready.
     if (!this.isReady) {
       return;
@@ -2298,6 +2377,10 @@ Toolbox.prototype = {
     if (!topFrameSelected && this.selectedFrameId) {
       this._framesButtonChecked = false;
     }
+
+    // We may need to hide/show the frames button now.
+    this.frameButton.isVisible = this._commandIsVisible(this.frameButton);
+    this.component.setToolboxButtons(this.toolbarButtons);
   },
 
   /**
@@ -2376,6 +2459,8 @@ Toolbox.prototype = {
 
     this.emit("host-changed");
     this._telemetry.log(HOST_HISTOGRAM, this._getTelemetryHostId());
+
+    this.component.setCurrentHostType(hostType);
   },
 
   /**
@@ -2444,7 +2529,7 @@ Toolbox.prototype = {
         toolNameToSelect = previousTool.id;
       }
       if (toolNameToSelect) {
-        this.selectTool(toolNameToSelect);
+        this.selectTool(toolNameToSelect, "tool_unloaded");
       }
     }
 
@@ -2555,7 +2640,7 @@ Toolbox.prototype = {
       const nodeFound = await inspector.inspectNodeActor(objectActor.actor,
                                                          inspectFromAnnotation);
       if (nodeFound) {
-        await this.selectTool("inspector");
+        await this.selectTool("inspector", "inspect_dom");
       }
     } else if (objectActor.type !== "null" &&
                objectActor.type !== "undefined") {
@@ -2652,7 +2737,7 @@ Toolbox.prototype = {
     this._target.off("navigate", this._refreshHostTitle);
     this._target.off("frame-update", this._updateFrames);
     this.off("select", this._refreshHostTitle);
-    this.off("select", this._updatePickerButton);
+    this.off("select", this.updatePickerButton);
     this.off("host-changed", this._refreshHostTitle);
     this.off("ready", this._showDevEditionPromo);
 
@@ -2669,7 +2754,6 @@ Toolbox.prototype = {
       this._sourceMapURLService.destroy();
       this._sourceMapURLService = null;
     }
-
     if (this._sourceMapService) {
       this._sourceMapService.stopSourceMapWorker();
       this._sourceMapService = null;
@@ -2753,9 +2837,23 @@ Toolbox.prototype = {
     });
 
     // We need to grab a reference to win before this._host is destroyed.
-    let win = this.win;
+    const win = this.win;
+    const host = this._getTelemetryHostString();
+    const width = Math.ceil(win.outerWidth / 50) * 50;
+    const prevPanelName = this.getTelemetryPanelName(this.currentToolId);
 
     this._telemetry.toolClosed("toolbox");
+    this._telemetry.recordEvent("devtools.main", "close", "tools", null, {
+      host: host,
+      width: width
+    });
+    this._telemetry.recordEvent("devtools.main", "exit", prevPanelName, null, {
+      "host": host,
+      "width": width,
+      "panel_name": this.currentToolId,
+      "next_panel": "none",
+      "reason": "toolbox_close"
+    });
     this._telemetry.destroy();
 
     // Finish all outstanding tasks (which means finish destroying panels and
@@ -2763,6 +2861,11 @@ Toolbox.prototype = {
     // target.
     deferred.resolve(settleAll(outstanding)
         .catch(console.error)
+        .then(() => {
+          let api = this._netMonitorAPI;
+          this._netMonitorAPI = null;
+          return api ? api.destroy() : null;
+        }, console.error)
         .then(() => {
           this._removeHostListeners();
 
@@ -3023,21 +3126,38 @@ Toolbox.prototype = {
   // Support for WebExtensions API (`devtools.network.*`)
 
   /**
+   * Return Netmonitor API object. This object offers Network monitor
+   * public API that can be consumed by other panels or WE API.
+   */
+  getNetMonitorAPI: async function() {
+    let netPanel = this.getPanel("netmonitor");
+
+    // Return Net panel if it exists.
+    if (netPanel) {
+      return netPanel.panelWin.Netmonitor.api;
+    }
+
+    if (this._netMonitorAPI) {
+      return this._netMonitorAPI;
+    }
+
+    // Create and initialize Network monitor API object.
+    // This object is only connected to the backend - not to the UI.
+    this._netMonitorAPI = new NetMonitorAPI();
+    await this._netMonitorAPI.connect(this);
+
+    return this._netMonitorAPI;
+  },
+
+  /**
    * Returns data (HAR) collected by the Network panel.
    */
   getHARFromNetMonitor: async function() {
-    let netPanel = this.getPanel("netmonitor");
+    let netMonitor = await this.getNetMonitorAPI();
+    let har = await netMonitor.getHar();
 
-    // The panel doesn't have to exist (it must be selected
-    // by the user at least once to be created).
-    // Return default empty HAR log in such case.
-    if (!netPanel) {
-      let har = await buildHarLog(Services.appinfo);
-      return har.log;
-    }
-
-    // Use Netmonitor object to get the current HAR log.
-    let har = await netPanel.panelWin.Netmonitor.getHar();
+    // Return default empty HAR file if needed.
+    har = har || buildHarLog(Services.appinfo);
 
     // Return the log directly to be compatible with
     // Chrome WebExtension API.
@@ -3052,24 +3172,26 @@ Toolbox.prototype = {
    *        a function that takes ({harEntry, requestId})
    *        as first argument.
    */
-  addRequestFinishedListener: function(listener) {
-    // Log console message informing the extension developer
-    // that the Network panel needs to be selected at least
-    // once in order to receive `onRequestFinished` events.
-    let message = "The Network panel needs to be selected at least" +
-      " once in order to receive 'onRequestFinished' events.";
-    this.target.logWarningInPage(message, "har");
-
-    // Add the listener into internal list.
-    this._requestFinishedListeners.add(listener);
+  addRequestFinishedListener: async function(listener) {
+    let netMonitor = await this.getNetMonitorAPI();
+    netMonitor.addRequestFinishedListener(listener);
   },
 
-  removeRequestFinishedListener: function(listener) {
-    this._requestFinishedListeners.delete(listener);
-  },
+  removeRequestFinishedListener: async function(listener) {
+    let netMonitor = await this.getNetMonitorAPI();
+    netMonitor.removeRequestFinishedListener(listener);
 
-  getRequestFinishedListeners: function() {
-    return this._requestFinishedListeners;
+    // Destroy Network monitor API object if the following is true:
+    // 1) there is no listener
+    // 2) the Net panel doesn't exist/use the API object (if the panel
+    //    exists it's also responsible for destroying it,
+    //    see `NetMonitorPanel.open` for more details)
+    let netPanel = this.getPanel("netmonitor");
+    let hasListeners = netMonitor.hasRequestFinishedListeners();
+    if (this._netMonitorAPI && !hasListeners && !netPanel) {
+      this._netMonitorAPI.destroy();
+      this._netMonitorAPI = null;
+    }
   },
 
   /**
@@ -3080,17 +3202,9 @@ Toolbox.prototype = {
    *        Id of the request for which the response content
    *        should be fetched.
    */
-  fetchResponseContent: function(requestId) {
-    let netPanel = this.getPanel("netmonitor");
-
-    // The panel doesn't have to exist (it must be selected
-    // by the user at least once to be created).
-    // Return undefined content in such case.
-    if (!netPanel) {
-      return Promise.resolve({content: {}});
-    }
-
-    return netPanel.panelWin.Netmonitor.fetchResponseContent(requestId);
+  fetchResponseContent: async function(requestId) {
+    let netMonitor = await this.getNetMonitorAPI();
+    return netMonitor.fetchResponseContent(requestId);
   },
 
   // Support management of installed WebExtensions that provide a devtools_page.
@@ -3149,4 +3263,11 @@ Toolbox.prototype = {
     let extInfo = this._webExtensions.get(extensionUUID);
     return extInfo && Services.prefs.getBoolPref(extInfo.pref, false);
   },
+
+  getTelemetryPanelName: function(id) {
+    if (!REGEX_PANEL.test(id)) {
+      return "other";
+    }
+    return id;
+  }
 };

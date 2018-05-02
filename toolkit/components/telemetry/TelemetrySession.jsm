@@ -16,10 +16,8 @@ ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 XPCOMUtils.defineLazyModuleGetters(this, {
   TelemetrySend: "resource://gre/modules/TelemetrySend.jsm",
   AddonManagerPrivate: "resource://gre/modules/AddonManager.jsm",
-  AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
   TelemetryController: "resource://gre/modules/TelemetryController.jsm",
   TelemetryStorage: "resource://gre/modules/TelemetryStorage.jsm",
-  TelemetryLog: "resource://gre/modules/TelemetryLog.jsm",
   UITelemetry: "resource://gre/modules/UITelemetry.jsm",
   GCTelemetry: "resource://gre/modules/GCTelemetry.jsm",
   TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.jsm",
@@ -766,8 +764,6 @@ var Impl = {
     }
 
     ret.startupInterrupted = Number(Services.startup.interrupted);
-
-    ret.js = Cu.getJSEngineTelemetryValue();
 
     let maximalNumberOfConcurrentThreads = Telemetry.maximalNumberOfConcurrentThreads;
     if (maximalNumberOfConcurrentThreads) {

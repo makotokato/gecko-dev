@@ -69,9 +69,7 @@
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/CookieServiceChild.h"
 #include "mozilla/net/CaptivePortalService.h"
-#ifndef RELEASE_OR_BETA
 #include "mozilla/PerformanceUtils.h"
-#endif
 #include "mozilla/plugins/PluginInstanceParent.h"
 #include "mozilla/plugins/PluginModuleParent.h"
 #include "mozilla/widget/ScreenManager.h"
@@ -1382,15 +1380,11 @@ ContentChild::GetResultForRenderingInitFailure(base::ProcessId aOtherPid)
 mozilla::ipc::IPCResult
 ContentChild::RecvRequestPerformanceMetrics()
 {
-#ifndef RELEASE_OR_BETA
+  MOZ_ASSERT(mozilla::dom::DOMPrefs::SchedulerLoggingEnabled());
   nsTArray<PerformanceInfo> info;
   CollectPerformanceInfo(info);
   SendAddPerformanceMetrics(info);
   return IPC_OK();
-#endif
-#ifdef RELEASE_OR_BETA
-  return IPC_OK();
-#endif
 }
 
 mozilla::ipc::IPCResult
@@ -3439,8 +3433,7 @@ ContentChild::RecvGetFilesResponse(const nsID& aUUID,
 }
 
 /* static */ void
-ContentChild::FatalErrorIfNotUsingGPUProcess(const char* const aProtocolName,
-                                             const char* const aErrorMsg,
+ContentChild::FatalErrorIfNotUsingGPUProcess(const char* const aErrorMsg,
                                              base::ProcessId aOtherPid)
 {
   // If we're communicating with the same process or the UI process then we
@@ -3448,11 +3441,9 @@ ContentChild::FatalErrorIfNotUsingGPUProcess(const char* const aProtocolName,
   // must be the GPU process and it crashing shouldn't be fatal for us.
   if (aOtherPid == base::GetCurrentProcId() ||
       (GetSingleton() && GetSingleton()->OtherPid() == aOtherPid)) {
-    mozilla::ipc::FatalError(aProtocolName, aErrorMsg, false);
+    mozilla::ipc::FatalError(aErrorMsg, false);
   } else {
-    nsAutoCString formattedMessage("IPDL error [");
-    formattedMessage.AppendASCII(aProtocolName);
-    formattedMessage.AppendLiteral(R"(]: ")");
+    nsAutoCString formattedMessage("IPDL error: \"");
     formattedMessage.AppendASCII(aErrorMsg);
     formattedMessage.AppendLiteral(R"(".)");
     NS_WARNING(formattedMessage.get());

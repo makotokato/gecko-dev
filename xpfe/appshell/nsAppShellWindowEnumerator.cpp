@@ -8,7 +8,6 @@
 #include "nsIContentViewer.h"
 #include "nsIDocShell.h"
 #include "nsIDocument.h"
-#include "nsIDOMElement.h"
 #include "nsIDOMWindow.h"
 #include "nsIFactory.h"
 #include "nsIInterfaceRequestor.h"
@@ -74,14 +73,8 @@ void GetWindowType(nsIXULWindow* aWindow, nsString &outType)
 // nsWindowInfo
 //
 
-nsWindowInfo::nsWindowInfo(nsIXULWindow* inWindow, int32_t inTimeStamp)
-  : mWindow(inWindow)
-  , mTimeStamp(inTimeStamp)
-  , mZLevel(nsIXULWindow::normalZ)
-  , mYounger{ nullptr }
-  , mOlder{ nullptr }
-  , mLower{ nullptr }
-  , mHigher{ nullptr }
+nsWindowInfo::nsWindowInfo(nsIXULWindow* inWindow, int32_t inTimeStamp) :
+  mWindow(inWindow),mTimeStamp(inTimeStamp),mZLevel(nsIXULWindow::normalZ)
 {
   ReferenceSelf(true, true);
 }

@@ -23,7 +23,7 @@
   <vbox id="passwordSettings">
     <hbox id="savePasswordsBox">
       <checkbox id="savePasswords"
-                data-l10n-id="forms-remember-logins"
+                data-l10n-id="forms-ask-to-save-logins"
                 preference="signon.rememberSignons"
                 onsyncfrompreference="return gPrivacyPane.readSavePasswords();"
                 flex="1" />
@@ -66,19 +66,18 @@
   <hbox align="center">
     <label id="historyModeLabel"
            control="historyMode"
-           accesskey="&historyHeader2.pre.accesskey;">&historyHeader2.pre.label;
-    </label>
+           data-l10n-id="history-remember-label"/>
     <!-- Please don't remove the wrapping hbox/vbox/box for these elements. It's used to properly compute the search tooltip position. -->
     <hbox>
       <menulist id="historyMode">
         <menupopup>
-          <menuitem label="&historyHeader.remember.label;"
+          <menuitem data-l10n-id="history-remember-option-all"
                     value="remember"
                     search-l10n-ids="history-remember-description"/>
-          <menuitem label="&historyHeader.dontremember.label;"
+          <menuitem data-l10n-id="history-remember-option-never"
                     value="dontremember"
                     search-l10n-ids="history-dontremember-description"/>
-          <menuitem label="&historyHeader.custom.label;"
+          <menuitem data-l10n-id="history-remember-option-custom"
                     value="custom"
                     search-l10n-ids="
                       history-private-browsing-permanent.label,
@@ -89,7 +88,6 @@
         </menupopup>
       </menulist>
     </hbox>
-    <label>&historyHeader.post.label;</label>
   </hbox>
   <hbox>
     <deck id="historyPane" flex="1">
@@ -129,38 +127,38 @@
                         preference="privacy.sanitize.sanitizeOnShutdown"
                         data-l10n-id="history-clear-on-close-option"
                         flex="1" />
-              <!-- Please don't remove the wrapping hbox/vbox/box for these elements. It's used to properly compute the search tooltip position. -->
-              <hbox>
-                <button id="clearDataSettings"
-                        class="accessory-button"
-                        data-l10n-id="history-clear-on-close-settings"
-                        searchkeywords="&clearDataSettings3.label;
-                                        &historySection.label;
-                                        &itemHistoryAndDownloads.label;
-                                        &itemCookies.label;
-                                        &itemActiveLogins.label;
-                                        &itemCache.label;
-                                        &itemFormSearchHistory.label;
-                                        &dataSection.label;
-                                        &itemSitePreferences.label;
-                                        &itemOfflineApps.label;"/>
-              </hbox>
             </hbox>
           </vbox>
         </vbox>
       </vbox>
     </deck>
-    <vbox align="end">
+    <vbox id="historyButtons" align="end">
       <button id="clearHistoryButton"
               class="accessory-button"
               icon="clear"
               data-l10n-id="history-clear-button"/>
+      <!-- Please don't remove the wrapping hbox/vbox/box for these elements. It's used to properly compute the search tooltip position. -->
+      <hbox>
+        <button id="clearDataSettings"
+                class="accessory-button"
+                data-l10n-id="history-clear-on-close-settings"
+                searchkeywords="&clearDataSettings3.label;
+                                &historySection.label;
+                                &itemHistoryAndDownloads.label;
+                                &itemCookies.label;
+                                &itemActiveLogins.label;
+                                &itemCache.label;
+                                &itemFormSearchHistory.label;
+                                &dataSection.label;
+                                &itemSitePreferences.label;
+                                &itemOfflineApps.label;"/>
+      </hbox>
     </vbox>
   </hbox>
 </groupbox>
 
 <!-- Site Data -->
-<groupbox id="siteDataGroup" hidden="true" data-category="panePrivacy" data-hidden-from-search="true">
+<groupbox id="siteDataGroup" data-category="panePrivacy">
   <caption><label data-l10n-id="sitedata-header"/></caption>
 
   <hbox data-subcategory="sitedata" align="baseline">
@@ -281,8 +279,8 @@
   <vbox>
     <hbox align="start">
       <vbox flex="1">
-        <description data-l10n-id="tracking-description">
-          <a id="trackingProtectionLearnMore" target="_blank" class="learnMore text-link"/>
+        <description data-l10n-id="tracking-desc">
+          <html:a id="trackingProtectionLearnMore" data-l10n-name="learn-more" target="_blank" class="learnMore text-link"/>
         </description>
       </vbox>
       <spacer flex="1"/>

@@ -76,11 +76,7 @@ private:
 class nsAutoPushCurrentTableItem
 {
 public:
-  nsAutoPushCurrentTableItem()
-    : mBuilder(nullptr)
-    , mOldCurrentItem{ nullptr }
-  {
-  }
+  nsAutoPushCurrentTableItem() : mBuilder(nullptr) {}
 
   void Push(nsDisplayListBuilder* aBuilder, nsDisplayTableItem* aPushItem)
   {
@@ -305,7 +301,8 @@ public:
   void PaintBCBorders(DrawTarget& aDrawTarget, const nsRect& aDirtyRect);
   void CreateWebRenderCommandsForBCBorders(mozilla::wr::DisplayListBuilder& aBuilder,
                                            const mozilla::layers::StackingContextHelper& aSc,
-                                           const nsPoint& aPt);
+                                           const nsRect& aVisibleRect,
+                                           const nsPoint& aOffsetToReferenceFrame);
 
   virtual void MarkIntrinsicISizesDirty() override;
   // For border-collapse tables, the caller must not add padding and

@@ -140,6 +140,7 @@ pub fn parse_border<'i, 't>(
         for prop in ['color', 'style', 'width'])}
         ${' '.join('border-image-%s' % name
         for name in ['outset', 'repeat', 'slice', 'source', 'width'])}"
+    derive_value_info="False"
     spec="https://drafts.csswg.org/css-backgrounds/#border">
 
     pub fn parse_value<'i, 't>(
@@ -202,6 +203,17 @@ pub fn parse_border<'i, 't>(
         }
     }
 
+    // Just use the same as border-left. The border shorthand can't accept
+    // any value that the sub-shorthand couldn't.
+    <%
+        border_left = "<::properties::shorthands::border_left::Longhands as SpecifiedValueInfo>"
+    %>
+    impl SpecifiedValueInfo for Longhands {
+        const SUPPORTED_TYPES: u8 = ${border_left}::SUPPORTED_TYPES;
+        fn collect_completion_keywords(f: KeywordsCollectFn) {
+            ${border_left}::collect_completion_keywords(f);
+        }
+    }
 </%helpers:shorthand>
 
 <%helpers:shorthand name="border-radius" sub_properties="${' '.join(
@@ -246,7 +258,8 @@ pub fn parse_border<'i, 't>(
 
 <%helpers:shorthand name="border-image" sub_properties="border-image-outset
     border-image-repeat border-image-slice border-image-source border-image-width"
-    extra_prefixes="moz webkit" spec="https://drafts.csswg.org/css-backgrounds-3/#border-image">
+    extra_prefixes="moz:layout.css.prefixes.border-image webkit"
+    spec="https://drafts.csswg.org/css-backgrounds-3/#border-image">
     use properties::longhands::{border_image_outset, border_image_repeat, border_image_slice};
     use properties::longhands::{border_image_source, border_image_width};
 

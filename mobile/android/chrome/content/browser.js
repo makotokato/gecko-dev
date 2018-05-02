@@ -428,7 +428,7 @@ var BrowserApp = {
     XPInstallObserver.init();
     CharacterEncoding.init();
     ActivityObserver.init();
-    RemoteDebugger.init();
+    RemoteDebugger.init(window);
     DesktopUserAgent.init();
     Distribution.init();
     Tabs.init();
@@ -483,7 +483,14 @@ var BrowserApp = {
     }, NativeWindow, "contextmenus");
 
     if (AppConstants.ACCESSIBILITY) {
-      InitLater(() => AccessFu.attach(window), window, "AccessFu");
+      InitLater(() => GlobalEventDispatcher.dispatch("GeckoView:AccessibilityReady"));
+      GlobalEventDispatcher.registerListener((aEvent, aData, aCallback) => {
+        if (aData.enabled) {
+          AccessFu.attach(window);
+        } else {
+          AccessFu.detach();
+        }
+      }, "GeckoView:AccessibilitySettings");
     }
 
     InitLater(() => {
@@ -3434,7 +3441,7 @@ function nsBrowserAccess() {
 }
 
 nsBrowserAccess.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIBrowserDOMWindow]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIBrowserDOMWindow]),
 
   _getBrowser: function _getBrowser(aURI, aOpener, aWhere, aFlags, aTriggeringPrincipal) {
     let isExternal = !!(aFlags & Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL);
@@ -4796,7 +4803,7 @@ Tab.prototype = {
     return this.browser.contentWindow;
   },
 
-  QueryInterface: XPCOMUtils.generateQI([
+  QueryInterface: ChromeUtils.generateQI([
     Ci.nsIWebProgressListener,
     Ci.nsISHistoryListener,
     Ci.nsIObserver,
@@ -6246,6 +6253,10 @@ var ExternalApps = {
 
   filter: {
     matches: function(aElement) {
+      if (!Services.prefs.getBoolPref("network.protocol-handler.external-default")) {
+        return false;
+      }
+
       let uri = ExternalApps._getMediaLink(aElement);
       let apps = [];
       if (uri) {

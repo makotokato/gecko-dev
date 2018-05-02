@@ -13,7 +13,7 @@ use num_traits::One;
 use parser::{Parse, ParserContext};
 use std::f32;
 use std::fmt::{self, Write};
-use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
+use style_traits::{CssWriter, ParseError, SpecifiedValueInfo, StyleParseErrorKind, ToCss};
 use style_traits::values::specified::AllowedNumericType;
 use super::{Auto, CSSFloat, CSSInteger, Either};
 use super::computed::{Context, ToComputedValue};
@@ -34,8 +34,8 @@ pub use self::border::{BorderCornerRadius, BorderImageSlice, BorderImageWidth};
 pub use self::border::{BorderImageRepeat, BorderImageSideWidth};
 pub use self::border::{BorderRadius, BorderSideWidth, BorderSpacing};
 pub use self::column::ColumnCount;
-pub use self::font::{FontSize, FontSizeAdjust, FontSynthesis, FontVariantAlternates, FontWeight};
-pub use self::font::{FontFamily, FontLanguageOverride, FontVariantEastAsian, FontVariationSettings};
+pub use self::font::{FontSize, FontSizeAdjust, FontStretch, FontSynthesis, FontVariantAlternates, FontWeight};
+pub use self::font::{FontFamily, FontLanguageOverride, FontStyle, FontVariantEastAsian, FontVariationSettings};
 pub use self::font::{FontFeatureSettings, FontVariantLigatures, FontVariantNumeric};
 pub use self::font::{MozScriptLevel, MozScriptMinSize, MozScriptSizeMultiplier, XLang, XTextZoom};
 pub use self::box_::{AnimationIterationCount, AnimationName, Contain, Display};
@@ -149,8 +149,8 @@ fn parse_number_with_clamping_mode<'i, 't>(
 // FIXME(emilio): Should move to border.rs
 #[allow(missing_docs)]
 #[cfg_attr(feature = "servo", derive(Deserialize, Serialize))]
-#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, Ord, Parse, PartialEq, PartialOrd,
-         ToComputedValue, ToCss)]
+#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, Ord, Parse, PartialEq,
+         PartialOrd, SpecifiedValueInfo, ToComputedValue, ToCss)]
 pub enum BorderStyle {
     None = -1,
     Solid = 6,
@@ -201,7 +201,14 @@ impl Number {
         }
     }
 
+    /// Returns whether this number came from a `calc()` expression.
+    #[inline]
+    pub fn was_calc(&self) -> bool {
+        self.calc_clamping_mode.is_some()
+    }
+
     /// Returns the numeric value, clamped if needed.
+    #[inline]
     pub fn get(&self) -> f32 {
         self.calc_clamping_mode
             .map_or(self.value, |mode| mode.clamp(self.value))
@@ -266,6 +273,8 @@ impl ToCss for Number {
     }
 }
 
+impl SpecifiedValueInfo for Number {}
+
 impl From<Number> for f32 {
     #[inline]
     fn from(n: Number) -> Self {
@@ -319,7 +328,8 @@ impl Parse for GreaterThanOrEqualToOneNumber {
 ///
 /// FIXME(emilio): Should probably use Either.
 #[allow(missing_docs)]
-#[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, ToCss)]
+#[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo,
+         ToCss)]
 pub enum NumberOrPercentage {
     Percentage(Percentage),
     Number(Number),
@@ -357,7 +367,8 @@ impl Parse for NumberOrPercentage {
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, PartialOrd, ToCss)]
+#[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, PartialOrd,
+         SpecifiedValueInfo, ToCss)]
 pub struct Opacity(Number);
 
 impl Parse for Opacity {
@@ -526,6 +537,8 @@ impl ToCss for Integer {
     }
 }
 
+impl SpecifiedValueInfo for Integer {}
+
 /// A wrapper of Integer, with value >= 1.
 pub type PositiveInteger = GreaterThanOrEqualToOne<Integer>;
 
@@ -555,8 +568,9 @@ pub type GridLine = GenericGridLine<Integer>;
 /// `<grid-template-rows> | <grid-template-columns>`
 pub type GridTemplateComponent = GenericGridTemplateComponent<LengthOrPercentage, Integer>;
 
-#[derive(Clone, Debug, MallocSizeOf, PartialEq)]
+#[derive(Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo)]
 /// rect(<top>, <left>, <bottom>, <right>) used by clip and image-region
+#[css(function = "rect")]
 pub struct ClipRect {
     /// <top> (<length> | <auto>)
     pub top: Option<Length>,
@@ -744,7 +758,9 @@ impl AllowQuirks {
 /// An attr(...) rule
 ///
 /// `[namespace? `|`]? ident`
-#[derive(Clone, Debug, Eq, MallocSizeOf, PartialEq, ToComputedValue)]
+#[derive(Clone, Debug, Eq, MallocSizeOf, PartialEq, SpecifiedValueInfo,
+         ToComputedValue)]
+#[css(function)]
 pub struct Attr {
     /// Optional namespace prefix and URL.
     pub namespace: Option<(Prefix, Namespace)>,

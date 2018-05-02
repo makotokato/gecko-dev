@@ -15,8 +15,6 @@
 
 // Interfaces needed to be included
 #include "nsIDOMNode.h"
-#include "nsIDOMElement.h"
-#include "nsIDOMNodeList.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMChromeWindow.h"
 #include "nsIBrowserDOMWindow.h"
@@ -450,12 +448,9 @@ NS_IMETHODIMP nsContentTreeOwner::SetStatusWithContext(uint32_t aStatusType,
   {
     switch(aStatusType)
     {
-    case STATUS_SCRIPT:
-      xulBrowserWindow->SetJSStatus(aStatusText);
-      break;
     case STATUS_LINK:
       {
-        nsCOMPtr<nsIDOMElement> element = do_QueryInterface(aStatusContext);
+        nsCOMPtr<dom::Element> element = do_QueryInterface(aStatusContext);
         xulBrowserWindow->SetOverLink(aStatusText, element);
         break;
       }

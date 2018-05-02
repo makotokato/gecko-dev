@@ -629,8 +629,7 @@ function Pmanual_update(aVersion) {
   for (let name of ["soft1", "soft2", "soft3", "soft4", "hard1", "regexp1"]) {
     Pinstalls.push(
       AddonManager.getInstallForURL(
-        `http://example.com/addons/blocklist_${name}_${aVersion}.xpi`,
-        null, "application/x-xpinstall"));
+        `http://example.com/addons/blocklist_${name}_${aVersion}.xpi`, "application/x-xpinstall"));
   }
 
   return Promise.all(Pinstalls).then(installs => {
@@ -804,7 +803,7 @@ add_task(async function update_schema_2() {
 
   await changeXPIDBVersion(100);
   gAppInfo.version = "2";
-  startupManager(true);
+  await promiseStartupManager(true);
 
   let [s1, s2, s3, s4, h, r] = await promiseAddonsByIDs(ADDON_IDS);
 
@@ -828,7 +827,7 @@ add_task(async function update_schema_3() {
   await promiseShutdownManager();
   await changeXPIDBVersion(100);
   gAppInfo.version = "2.5";
-  startupManager(true);
+  await promiseStartupManager(true);
 
   let [s1, s2, s3, s4, h, r] = await promiseAddonsByIDs(ADDON_IDS);
 
@@ -861,7 +860,7 @@ add_task(async function update_schema_5() {
 
   await changeXPIDBVersion(100);
   gAppInfo.version = "1";
-  startupManager(true);
+  await promiseStartupManager(true);
 
   let [s1, s2, s3, s4, h, r] = await promiseAddonsByIDs(ADDON_IDS);
 
@@ -1062,7 +1061,7 @@ add_task(async function run_addon_change_2_test() {
   getFileForAddon(profileDir, hardblock_1.id).remove(true);
   getFileForAddon(profileDir, regexpblock_1.id).remove(true);
 
-  startupManager(false);
+  await promiseStartupManager(false);
   await promiseShutdownManager();
 
   writeInstallRDFForExtension(softblock1_2, profileDir);
@@ -1188,7 +1187,7 @@ add_task(async function run_background_update_2_test() {
   getFileForAddon(profileDir, hardblock_1.id).remove(true);
   getFileForAddon(profileDir, regexpblock_1.id).remove(true);
 
-  startupManager(false);
+  await promiseStartupManager(false);
   await promiseShutdownManager();
 
   writeInstallRDFForExtension(softblock1_3, profileDir);
@@ -1294,7 +1293,7 @@ add_task(async function run_manual_update_2_test() {
   getFileForAddon(profileDir, hardblock_1.id).remove(true);
   getFileForAddon(profileDir, regexpblock_1.id).remove(true);
 
-  startupManager(false);
+  await promiseStartupManager(false);
   await promiseShutdownManager();
 
   writeInstallRDFForExtension(softblock1_1, profileDir);

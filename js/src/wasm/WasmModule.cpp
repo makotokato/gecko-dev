@@ -271,8 +271,10 @@ Module::finishTier2(UniqueLinkDataTier linkData2, UniqueCodeTier tier2, ModuleEn
                 return false;
         }
 
+        HasGcTypes gcTypesEnabled = code().metadata().temporaryHasGcTypes;
+
         Maybe<size_t> stub2Index;
-        if (!stubs2->createTier2(funcExportIndices, *tier2, &stub2Index))
+        if (!stubs2->createTier2(gcTypesEnabled, funcExportIndices, *tier2, &stub2Index))
             return false;
 
         // Install the data in the data structures. They will not be visible
@@ -601,7 +603,8 @@ wasm::DeserializeModule(PRFileDesc* bytecodeFile, PRFileDesc* maybeCompiledFile,
     args->sharedMemoryEnabled = true;
 
     UniqueChars error;
-    return CompileBuffer(*args, *bytecode, &error);
+    UniqueCharsVector warnings;
+    return CompileBuffer(*args, *bytecode, &error, &warnings);
 }
 
 /* virtual */ void

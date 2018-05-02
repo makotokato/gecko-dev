@@ -33,19 +33,17 @@ static PRDescIdentity sLayerIdentity;
 static PRIOMethods sLayerMethods;
 static PRIOMethods *sLayerMethodsPtr = nullptr;
 
-TLSFilterTransaction::TLSFilterTransaction(nsAHttpTransaction* aWrapped,
-                                           const char* aTLSHost,
+TLSFilterTransaction::TLSFilterTransaction(nsAHttpTransaction *aWrapped,
+                                           const char *aTLSHost,
                                            int32_t aTLSPort,
-                                           nsAHttpSegmentReader* aReader,
-                                           nsAHttpSegmentWriter* aWriter)
+                                           nsAHttpSegmentReader *aReader,
+                                           nsAHttpSegmentWriter *aWriter)
   : mTransaction(aWrapped)
   , mEncryptedTextUsed(0)
   , mEncryptedTextSize(0)
   , mSegmentReader(aReader)
   , mSegmentWriter(aWriter)
-  , mFilterReadCode{ NS_ERROR_NOT_INITIALIZED }
   , mForce(false)
-  , mReadSegmentBlocked{ false }
   , mNudgeCounter(0)
 {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
@@ -761,7 +759,7 @@ class SocketInWrapper : public nsIAsyncInputStream
   virtual nsresult OnWriteSegment(char *segment, uint32_t count, uint32_t *countWritten) override;
 
 private:
-  virtual ~SocketInWrapper() {};
+  virtual ~SocketInWrapper() = default;;
 
   nsCOMPtr<nsIAsyncInputStream> mStream;
   RefPtr<TLSFilterTransaction> mTLSFilter;
@@ -833,7 +831,7 @@ class SocketOutWrapper : public nsIAsyncOutputStream
   virtual nsresult OnReadSegment(const char *segment, uint32_t count, uint32_t *countRead) override;
 
 private:
-  virtual ~SocketOutWrapper() {};
+  virtual ~SocketOutWrapper() = default;;
 
   nsCOMPtr<nsIAsyncOutputStream> mStream;
   RefPtr<TLSFilterTransaction> mTLSFilter;
@@ -896,7 +894,7 @@ public:
   {};
 
 private:
-  virtual ~SocketTransportShim() {};
+  virtual ~SocketTransportShim() = default;;
 
   nsCOMPtr<nsISocketTransport> mWrapped;
 };
@@ -918,7 +916,7 @@ public:
   }
 
 private:
-  virtual ~OutputStreamShim() {};
+  virtual ~OutputStreamShim() = default;;
 
   nsWeakPtr mWeakTrans; // SpdyConnectTransaction *
   nsIOutputStreamCallback *mCallback;
@@ -942,7 +940,7 @@ public:
   }
 
 private:
-  virtual ~InputStreamShim() {};
+  virtual ~InputStreamShim() = default;;
 
   nsWeakPtr mWeakTrans; // SpdyConnectTransaction *
   nsIInputStreamCallback *mCallback;

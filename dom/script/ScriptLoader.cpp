@@ -2489,6 +2489,7 @@ ScriptLoader::EncodeRequestBytecode(JSContext* aCx, ScriptLoadRequest* aRequest)
   // case, we just ignore the current one.
   nsCOMPtr<nsIOutputStream> output;
   rv = aRequest->mCacheInfo->OpenAlternativeOutputStream(nsContentUtils::JSBytecodeMimeType(),
+                                                         aRequest->mScriptBytecode.length(),
                                                          getter_AddRefs(output));
   if (NS_FAILED(rv)) {
     LOG(("ScriptLoadRequest (%p): Cannot open bytecode cache (rv = %X, output = %p)",
@@ -3054,6 +3055,22 @@ ScriptLoader::NumberOfProcessors()
   return mNumberOfProcessors;
 }
 
+static bool
+IsInternalURIScheme(nsIURI* uri)
+{
+  bool isWebExt;
+  if (NS_SUCCEEDED(uri->SchemeIs("moz-extension", &isWebExt)) && isWebExt) {
+    return true;
+  }
+
+  bool isResource;
+  if (NS_SUCCEEDED(uri->SchemeIs("resource", &isResource)) && isResource) {
+    return true;
+  }
+
+  return false;
+}
+
 nsresult
 ScriptLoader::PrepareLoadedRequest(ScriptLoadRequest* aRequest,
                                    nsIIncrementalStreamLoader* aLoader,
@@ -3142,10 +3159,9 @@ ScriptLoader::PrepareLoadedRequest(ScriptLoadRequest* aRequest,
     rv = channel->GetOriginalURI(getter_AddRefs(uri));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    // Fixup moz-extension URIs, because the channel URI points to file:,
-    // which won't be allowed to load.
-    bool isWebExt = false;
-    if (uri && NS_SUCCEEDED(uri->SchemeIs("moz-extension", &isWebExt)) && isWebExt) {
+    // Fixup moz-extension: and resource: URIs, because the channel URI will
+    // point to file:, which won't be allowed to load.
+    if (uri && IsInternalURIScheme(uri)) {
       request->mBaseURL = uri;
     } else {
       channel->GetURI(getter_AddRefs(request->mBaseURL));

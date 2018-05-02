@@ -64,11 +64,16 @@ ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
     win.resizeTo(width, height);
   }
 
+  // Set this before showing the window so that graphics code can use it to
+  // decide to skip some expensive code paths (eg. starting the GPU process).
+  docElt.setAttribute("windowtype", "navigator:blank");
+
   // The window becomes visible after OnStopRequest, so make this happen now.
   win.stop();
 
-  // Used in nsBrowserContentHandler.js to close unwanted blank windows.
-  docElt.setAttribute("windowtype", "navigator:blank");
+  let { TelemetryTimestamps } =
+    ChromeUtils.import("resource://gre/modules/TelemetryTimestamps.jsm", {});
+  TelemetryTimestamps.add("blankWindowShown");
 })();
 
 Cu.importGlobalProperties(["fetch"]);
@@ -86,11 +91,13 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   AsyncPrefs: "resource://gre/modules/AsyncPrefs.jsm",
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
   AutoCompletePopup: "resource://gre/modules/AutoCompletePopup.jsm",
+  Blocklist: "resource://gre/modules/Blocklist.jsm",
   BookmarkHTMLUtils: "resource://gre/modules/BookmarkHTMLUtils.jsm",
   BookmarkJSONUtils: "resource://gre/modules/BookmarkJSONUtils.jsm",
   BrowserErrorReporter: "resource:///modules/BrowserErrorReporter.jsm",
   BrowserUITelemetry: "resource:///modules/BrowserUITelemetry.jsm",
   BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   ContentClick: "resource:///modules/ContentClick.jsm",
   ContextualIdentityService: "resource://gre/modules/ContextualIdentityService.jsm",
   CustomizableUI: "resource:///modules/CustomizableUI.jsm",
@@ -122,7 +129,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   ProcessHangMonitor: "resource:///modules/ProcessHangMonitor.jsm",
   ReaderParent: "resource:///modules/ReaderParent.jsm",
-  RecentWindow: "resource:///modules/RecentWindow.jsm",
   RemotePrompt: "resource:///modules/RemotePrompt.jsm",
   SafeBrowsing: "resource://gre/modules/SafeBrowsing.jsm",
   Sanitizer: "resource:///modules/Sanitizer.jsm",
@@ -377,7 +383,7 @@ BrowserGlue.prototype = {
   },
 
   // nsIObserver implementation
-  observe: function BG_observe(subject, topic, data) {
+  observe: async function BG_observe(subject, topic, data) {
     switch (topic) {
       case "notifications-open-settings":
         this._openPreferences("privacy", { origin: "notifOpenSettings" });
@@ -439,6 +445,7 @@ BrowserGlue.prototype = {
           this._onDeviceDisconnected();
         }
         break;
+      case "fxaccounts:messages:display-tabs":
       case "weave:engine:clients:display-uris":
         this._onDisplaySyncURIs(subject);
         break;
@@ -500,7 +507,7 @@ BrowserGlue.prototype = {
       case "handle-xul-text-link":
         let linkHandled = subject.QueryInterface(Ci.nsISupportsPRBool);
         if (!linkHandled.data) {
-          let win = RecentWindow.getMostRecentBrowserWindow();
+          let win = BrowserWindowTracker.getTopWindow();
           if (win) {
             data = JSON.parse(data);
             let where = win.whereToOpenLink(data);
@@ -529,7 +536,7 @@ BrowserGlue.prototype = {
         } catch (ex) {
           Cu.reportError(ex);
         }
-        let win = RecentWindow.getMostRecentBrowserWindow();
+        let win = BrowserWindowTracker.getTopWindow();
         win.BrowserSearch.recordSearchInTelemetry(engine, "urlbar");
         break;
       case "browser-search-engine-modified":
@@ -548,14 +555,10 @@ BrowserGlue.prototype = {
         break;
       case "xpi-signature-changed":
         let disabledAddons = JSON.parse(data).disabled;
-        AddonManager.getAddonsByIDs(disabledAddons, (addons) => {
-          for (let addon of addons) {
-            if (addon.type != "experiment") {
-              this._notifyUnsignedAddonsDisabled();
-              break;
-            }
-          }
-        });
+        let addons = await AddonManager.getAddonsByIDs(disabledAddons);
+        if (addons.some(addon => addon)) {
+          this._notifyUnsignedAddonsDisabled();
+        }
         break;
       case "sync-ui-state:update":
         this._updateFxaBadges();
@@ -597,6 +600,7 @@ BrowserGlue.prototype = {
     os.addObserver(this, "fxaccounts:device_connected");
     os.addObserver(this, "fxaccounts:verify_login");
     os.addObserver(this, "fxaccounts:device_disconnected");
+    os.addObserver(this, "fxaccounts:messages:display-tabs");
     os.addObserver(this, "weave:engine:clients:display-uris");
     os.addObserver(this, "session-save");
     os.addObserver(this, "places-init-complete");
@@ -639,6 +643,7 @@ BrowserGlue.prototype = {
     os.removeObserver(this, "fxaccounts:device_connected");
     os.removeObserver(this, "fxaccounts:verify_login");
     os.removeObserver(this, "fxaccounts:device_disconnected");
+    os.removeObserver(this, "fxaccounts:messages:display-tabs");
     os.removeObserver(this, "weave:engine:clients:display-uris");
     os.removeObserver(this, "session-save");
     if (this._bookmarksBackupIdleTime) {
@@ -711,8 +716,9 @@ BrowserGlue.prototype = {
       textcolor: "white",
       accentcolor: "black",
       popup: "#4a4a4f",
-      popup_text: "rgba(249, 249, 250, 0.8)",
+      popup_text: "rgb(249, 249, 250)",
       popup_border: "#27272b",
+      toolbar_field_text: "rgb(249, 249, 250)",
       author: vendorShortName,
     });
 
@@ -827,7 +833,7 @@ BrowserGlue.prototype = {
     if (profileAge < 90) // 3 months
       return;
 
-    let win = RecentWindow.getMostRecentBrowserWindow();
+    let win = BrowserWindowTracker.getTopWindow();
     if (!win)
       return;
 
@@ -865,7 +871,7 @@ BrowserGlue.prototype = {
    *        why a profile reset is offered.
    */
   _resetProfileNotification(reason) {
-    let win = RecentWindow.getMostRecentBrowserWindow();
+    let win = BrowserWindowTracker.getTopWindow();
     if (!win)
       return;
 
@@ -902,7 +908,7 @@ BrowserGlue.prototype = {
   },
 
   _notifyUnsignedAddonsDisabled() {
-    let win = RecentWindow.getMostRecentBrowserWindow();
+    let win = BrowserWindowTracker.getTopWindow();
     if (!win)
       return;
 
@@ -1097,11 +1103,8 @@ BrowserGlue.prototype = {
 
     if (signingRequired) {
       let disabledAddons = AddonManager.getStartupChanges(AddonManager.STARTUP_CHANGE_DISABLED);
-      AddonManager.getAddonsByIDs(disabledAddons, (addons) => {
+      AddonManager.getAddonsByIDs(disabledAddons).then(addons => {
         for (let addon of addons) {
-          if (addon.type == "experiment")
-            continue;
-
           if (addon.signedState <= AddonManager.SIGNEDSTATE_MISSING) {
             this._notifyUnsignedAddonsDisabled();
             break;
@@ -1222,7 +1225,7 @@ BrowserGlue.prototype = {
     });
 
     Services.tm.idleDispatchToMainThread(() => {
-      Services.blocklist.loadBlocklistAsync();
+      Blocklist.loadBlocklistAsync();
     });
   },
 
@@ -1476,7 +1479,7 @@ BrowserGlue.prototype = {
       let key = getNotifyString({propName: "notificationButtonAccessKey",
                                  stringName: "pu.notifyButton.accesskey"});
 
-      let win = RecentWindow.getMostRecentBrowserWindow();
+      let win = BrowserWindowTracker.getTopWindow();
       let notifyBox = win.document.getElementById("high-priority-global-notificationbox");
 
       let buttons = [
@@ -1511,7 +1514,7 @@ BrowserGlue.prototype = {
       // This callback will be called twice but only once with this topic
       if (topic != "alertclickcallback")
         return;
-      let win = RecentWindow.getMostRecentBrowserWindow();
+      let win = BrowserWindowTracker.getTopWindow();
       win.openTrustedLinkIn(data, "tab");
     }
 
@@ -1772,7 +1775,7 @@ BrowserGlue.prototype = {
     var url = Services.urlFormatter.formatURLPref("app.support.baseURL");
     url += helpTopic;
 
-    var win = RecentWindow.getMostRecentBrowserWindow();
+    var win = BrowserWindowTracker.getTopWindow();
 
     var buttons = [
                     {
@@ -1838,7 +1841,9 @@ BrowserGlue.prototype = {
 
   // eslint-disable-next-line complexity
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 67;
+    // Use an increasing number to keep track of the current migration state.
+    // Completely unrelated to the current Firefox release number.
+    const UI_VERSION = 68;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul";
 
     let currentUIVersion;
@@ -2194,6 +2199,12 @@ BrowserGlue.prototype = {
       }
     }
 
+    if (currentUIVersion < 68) {
+      // Remove blocklists legacy storage, now relying on IndexedDB.
+      OS.File.remove(OS.Path.join(OS.Constants.Path.profileDir,
+                                  "kinto.sqlite"), {ignoreAbsent: true});
+    }
+
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
   },
@@ -2271,7 +2282,7 @@ BrowserGlue.prototype = {
     } catch (ex) { /* Don't break the default prompt if telemetry is broken. */ }
 
     if (willPrompt) {
-      DefaultBrowserCheck.prompt(RecentWindow.getMostRecentBrowserWindow());
+      DefaultBrowserCheck.prompt(BrowserWindowTracker.getTopWindow());
     }
   },
 
@@ -2493,7 +2504,7 @@ BrowserGlue.prototype = {
       return;
     }
 
-    let chromeWindow = RecentWindow.getMostRecentBrowserWindow();
+    let chromeWindow = BrowserWindowTracker.getTopWindow();
     chromeWindow.openPreferences(...args);
   },
 
@@ -2518,7 +2529,7 @@ BrowserGlue.prototype = {
       const URIs = data.wrappedJSObject.object;
 
       // win can be null, but it's ok, we'll assign it later in openTab()
-      let win = RecentWindow.getMostRecentBrowserWindow({private: false});
+      let win = BrowserWindowTracker.getTopWindow({private: false});
 
       const openTab = async (URI) => {
         let tab;
@@ -2537,7 +2548,7 @@ BrowserGlue.prototype = {
       await Promise.all(URIs.slice(1).map(URI => openTab(URI)));
 
       let title, body;
-      const deviceName = Weave.Service.clientsEngine.getClientName(URIs[0].clientId);
+      const deviceName = URIs[0].sender.name;
       const bundle = Services.strings.createBundle("chrome://browser/locale/accounts.properties");
       if (URIs.length == 1) {
         // Due to bug 1305895, tabs from iOS may not have device information, so
@@ -2561,7 +2572,7 @@ BrowserGlue.prototype = {
         }
       } else {
         title = bundle.GetStringFromName("multipleTabsArrivingNotification.title");
-        const allSameDevice = URIs.every(URI => URI.clientId == URIs[0].clientId);
+        const allSameDevice = URIs.every(URI => URI.sender.id == URIs[0].sender.id);
         const unknownDevice = allSameDevice && !deviceName;
         let tabArrivingBody;
         if (unknownDevice) {
@@ -2601,7 +2612,7 @@ BrowserGlue.prototype = {
     if (AppConstants.platform == "win") {
       imageURL = "chrome://branding/content/icon64.png";
     }
-    let win = RecentWindow.getMostRecentBrowserWindow({private: false});
+    let win = BrowserWindowTracker.getTopWindow({private: false});
     if (!win) {
       win = await this._openURLInNewWindow(url);
       let tabs = win.gBrowser.tabs;
@@ -2636,7 +2647,7 @@ BrowserGlue.prototype = {
       if (topic != "alertclickcallback")
         return;
       let url = await FxAccounts.config.promiseManageDevicesURI("device-connected-notification");
-      let win = RecentWindow.getMostRecentBrowserWindow({private: false});
+      let win = BrowserWindowTracker.getTopWindow({private: false});
       if (!win) {
         this._openURLInNewWindow(url);
       } else {
@@ -2686,7 +2697,7 @@ BrowserGlue.prototype = {
     Services.prefs.setBoolPref("dom.ipc.plugins.flash.disable-protected-mode", true);
     Services.prefs.setBoolPref("browser.flash-protected-mode-flip.done", true);
 
-    let win = RecentWindow.getMostRecentBrowserWindow();
+    let win = BrowserWindowTracker.getTopWindow();
     if (!win) {
       return;
     }
@@ -2718,8 +2729,8 @@ BrowserGlue.prototype = {
   // for XPCOM
   classID:          Components.ID("{eab9012e-5f74-4cbc-b2b5-a590235513cc}"),
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
-                                         Ci.nsISupportsWeakReference]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver,
+                                          Ci.nsISupportsWeakReference]),
 
   _xpcom_factory: XPCOMUtils.generateSingletonFactory(BrowserGlue),
 };
@@ -2763,9 +2774,7 @@ const ContentPermissionIntegration = {
         return new PermissionUI.DesktopNotificationPermissionPrompt(request);
       }
       case "persistent-storage": {
-        if (Services.prefs.getBoolPref("browser.storageManager.enabled")) {
-          return new PermissionUI.PersistentStoragePermissionPrompt(request);
-        }
+        return new PermissionUI.PersistentStoragePermissionPrompt(request);
       }
       case "midi": {
         return new PermissionUI.MIDIPermissionPrompt(request);
@@ -2780,7 +2789,7 @@ function ContentPermissionPrompt() {}
 ContentPermissionPrompt.prototype = {
   classID:          Components.ID("{d8903bf6-68d5-4e97-bcd1-e4d3012f721a}"),
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIContentPermissionPrompt]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIContentPermissionPrompt]),
 
   /**
    * This implementation of nsIContentPermissionPrompt.prompt ensures
@@ -3033,7 +3042,7 @@ var JawsScreenReaderVersionCheck = {
     Services.obs.addObserver(this, "a11y-init-or-shutdown", true);
   },
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver, Ci.nsISupportsWeakReference]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver, Ci.nsISupportsWeakReference]),
 
   observe(subject, topic, data) {
     if (topic == "a11y-init-or-shutdown" && data == "1") {
@@ -3055,7 +3064,7 @@ var JawsScreenReaderVersionCheck = {
       return;
     }
 
-    let win = RecentWindow.getMostRecentBrowserWindow();
+    let win = BrowserWindowTracker.getTopWindow();
     if (!win || !win.gBrowser || !win.gBrowser.selectedBrowser) {
       Services.console.logStringMessage(
           "Content access support for older versions of JAWS is disabled " +

@@ -4185,7 +4185,7 @@ class MInitElemGetterSetter
 };
 
 // WrappedFunction wraps a JSFunction so it can safely be used off-thread.
-// In particular, a function's flags can be modified on the active thread as
+// In particular, a function's flags can be modified on the main thread as
 // functions are relazified and delazified, so we must be careful not to access
 // these flags off-thread.
 class WrappedFunction : public TempObject
@@ -8872,7 +8872,7 @@ struct LambdaFunctionInfo
 {
     // The functions used in lambdas are the canonical original function in
     // the script, and are immutable except for delazification. Record this
-    // information while still on the active thread to avoid races.
+    // information while still on the main thread to avoid races.
   private:
     CompilerFunction fun_;
 
@@ -13656,6 +13656,48 @@ class MHasClass
         if (!ins->isHasClass())
             return false;
         if (getClass() != ins->toHasClass()->getClass())
+            return false;
+        return congruentIfOperandsEqual(ins);
+    }
+};
+
+class MGuardToClass
+    : public MUnaryInstruction,
+      public SingleObjectPolicy::Data
+{
+    const Class* class_;
+
+    MGuardToClass(MDefinition* object, const Class* clasp, MIRType resultType)
+      : MUnaryInstruction(classOpcode, object)
+      , class_(clasp)
+    {
+        MOZ_ASSERT(object->type() == MIRType::Object ||
+                   (object->type() == MIRType::Value && object->mightBeType(MIRType::Object)));
+        MOZ_ASSERT(resultType == MIRType::Object || resultType == MIRType::ObjectOrNull);
+        setResultType(resultType);
+        setMovable();
+        if (resultType == MIRType::Object) {
+            // We will bail out if the class type is incorrect,
+            // so we need to ensure we don't eliminate this instruction
+            setGuard();
+        }
+    }
+
+  public:
+    INSTRUCTION_HEADER(GuardToClass)
+    TRIVIAL_NEW_WRAPPERS
+    NAMED_OPERANDS((0, object))
+
+    const Class* getClass() const {
+        return class_;
+    }
+    AliasSet getAliasSet() const override {
+        return AliasSet::None();
+    }
+    bool congruentTo(const MDefinition* ins) const override {
+        if (!ins->isGuardToClass())
+            return false;
+        if (getClass() != ins->toGuardToClass()->getClass())
             return false;
         return congruentIfOperandsEqual(ins);
     }

@@ -9,7 +9,6 @@
 
 #include "nsString.h"
 #include "nsIDOMDocument.h"
-#include "nsIDOMNodeList.h"
 #include "nsServiceManagerUtils.h"
 #include "nsIContent.h"
 #include "ChildIterator.h"
@@ -26,11 +25,10 @@
 ////////////////////////////////////////////////////
 
 inDeepTreeWalker::inDeepTreeWalker()
-  : mShowAnonymousContent(false)
-  , mShowSubDocuments(false)
-  , mShowDocumentsAsNodes(false)
-  , mCurrentIndex{}
-  , mWhatToShow(mozilla::dom::NodeFilterBinding::SHOW_ALL)
+  : mShowAnonymousContent(false),
+    mShowSubDocuments(false),
+    mShowDocumentsAsNodes(false),
+    mWhatToShow(mozilla::dom::NodeFilterBinding::SHOW_ALL)
 {
 }
 

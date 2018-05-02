@@ -17,6 +17,7 @@ ChromeUtils.import("resource://gre/modules/AsyncShutdown.jsm");
 ChromeUtils.import("resource://gre/modules/FileUtils.jsm");
 ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 ChromeUtils.import("resource://gre/modules/Services.jsm");
+ChromeUtils.import("resource://gre/modules/Timer.jsm");
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const {EventEmitter} = ChromeUtils.import("resource://gre/modules/EventEmitter.jsm", {});
@@ -108,26 +109,45 @@ class MockBlocklist {
       addons = new Map(Object.entries(addons));
     }
     this.addons = addons;
+    this.wrappedJSObject = this;
+
+    // Copy blocklist constants.
+    for (let [k, v] of Object.entries(Ci.nsIBlocklistService)) {
+      if (typeof v === "number") {
+        this[k] = v;
+      }
+    }
+
+    this._xpidb = ChromeUtils.import("resource://gre/modules/addons/XPIDatabase.jsm", null);
   }
 
   get contractID() {
     return "@mozilla.org/extensions/blocklist;1";
   }
 
+  _reLazifyService() {
+    XPCOMUtils.defineLazyServiceGetter(Services, "blocklist", this.contractID);
+    ChromeUtils.defineModuleGetter(this._xpidb, "Blocklist", "resource://gre/modules/Blocklist.jsm");
+  }
+
   register() {
     this.originalCID = MockRegistrar.register(this.contractID, this);
+    this._reLazifyService();
+    this._xpidb.Blocklist = this;
   }
 
   unregister() {
     MockRegistrar.unregister(this.originalCID);
+    this._reLazifyService();
   }
 
-  getAddonBlocklistState(addon, appVersion, toolkitVersion) {
-    return this.addons.get(addon.id, Ci.nsIBlocklistService.STATE_NOT_BLOCKED);
+  async getAddonBlocklistState(addon, appVersion, toolkitVersion) {
+    await new Promise(r => setTimeout(r, 150));
+    return this.addons.get(addon.id) || Ci.nsIBlocklistService.STATE_NOT_BLOCKED;
   }
 
-  getAddonBlocklistEntry(addon, appVersion, toolkitVersion) {
-    let state = this.getAddonBlocklistState(addon, appVersion, toolkitVersion);
+  async getAddonBlocklistEntry(addon, appVersion, toolkitVersion) {
+    let state = await this.getAddonBlocklistState(addon, appVersion, toolkitVersion);
     if (state != Ci.nsIBlocklistService.STATE_NOT_BLOCKED) {
       return {
         state,
@@ -137,12 +157,13 @@ class MockBlocklist {
     return null;
   }
 
-  getPluginBlocklistState(plugin, version, appVersion, toolkitVersion) {
+  async getPluginBlocklistState(plugin, version, appVersion, toolkitVersion) {
+    await new Promise(r => setTimeout(r, 150));
     return Ci.nsIBlocklistService.STATE_NOT_BLOCKED;
   }
 }
 
-MockBlocklist.prototype.QueryInterface = XPCOMUtils.generateQI(["nsIBlocklistService"]);
+MockBlocklist.prototype.QueryInterface = ChromeUtils.generateQI(["nsIBlocklistService"]);
 
 
 /**
@@ -318,9 +339,6 @@ var AddonTestUtils = {
 
     // By default, don't cache add-ons in AddonRepository.jsm
     Services.prefs.setBoolPref("extensions.getAddons.cache.enabled", false);
-
-    // Disable the compatibility updates window by default
-    Services.prefs.setBoolPref("extensions.showMismatchUI", false);
 
     // Point update checks to the local machine for fast failures
     Services.prefs.setCharPref("extensions.update.url", "http://127.0.0.1/updateURL");
@@ -681,7 +699,7 @@ var AddonTestUtils = {
         });
       },
 
-      QueryInterface: XPCOMUtils.generateQI([Ci.nsIX509CertDB]),
+      QueryInterface: ChromeUtils.generateQI([Ci.nsIX509CertDB]),
     };
 
     // Unregister the real database. This only works because the add-ons manager
@@ -771,13 +789,8 @@ var AddonTestUtils = {
 
         AddonManagerPrivate.unregisterProvider(XPIscope.XPIProvider);
         Cu.unload("resource://gre/modules/addons/XPIProvider.jsm");
+        Cu.unload("resource://gre/modules/addons/XPIDatabase.jsm");
         Cu.unload("resource://gre/modules/addons/XPIInstall.jsm");
-
-        // We need to set this in order reset the startup service, which
-        // is only possible when running in automation.
-        Services.prefs.setBoolPref(PREF_DISABLE_SECURITY, true);
-
-        aomStartup.reset();
 
         if (shutdownError)
           throw shutdownError;
@@ -943,6 +956,8 @@ var AddonTestUtils = {
     var zipW = ZipWriter(zipFile, FileUtils.MODE_WRONLY | FileUtils.MODE_CREATE | flags);
 
     for (let [path, data] of Object.entries(files)) {
+      if (typeof data === "object" && ChromeUtils.getClassName(data) === "Object")
+        data = JSON.stringify(data);
       if (!(data instanceof ArrayBuffer))
         data = new TextEncoder("utf-8").encode(data).buffer;
 
@@ -1224,7 +1239,7 @@ var AddonTestUtils = {
         return null;
       },
 
-      QueryInterface: XPCOMUtils.generateQI([Ci.nsIDirectoryServiceProvider]),
+      QueryInterface: ChromeUtils.generateQI([Ci.nsIDirectoryServiceProvider]),
     };
     Services.dirsvc.registerProvider(dirProvider);
 

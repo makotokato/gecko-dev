@@ -191,8 +191,6 @@
 @RESPATH@/browser/components/aboutdevtoolstoolbox.manifest
 @RESPATH@/browser/components/nsAboutCapabilities.js
 @RESPATH@/browser/components/aboutcapabilities.manifest
-@RESPATH@/browser/components/Experiments.manifest
-@RESPATH@/browser/components/ExperimentsService.js
 @RESPATH@/browser/components/aboutNewTabService.js
 @RESPATH@/browser/components/NewTabComponents.manifest
 @RESPATH@/browser/components/EnterprisePolicies.js
@@ -208,8 +206,8 @@
 @RESPATH@/components/nsSearchSuggestions.js
 @RESPATH@/components/nsSidebar.js
 #ifdef NIGHTLY_BUILD
-@RESPATH@/components/payments.manifest
-@RESPATH@/components/paymentUIService.js
+@RESPATH@/browser/components/payments.manifest
+@RESPATH@/browser/components/paymentUIService.js
 #endif
 @RESPATH@/components/passwordmgr.manifest
 @RESPATH@/components/nsLoginInfo.js
@@ -232,7 +230,6 @@
 @RESPATH@/components/amContentHandler.js
 @RESPATH@/components/amInstallTrigger.js
 @RESPATH@/components/amWebAPI.js
-@RESPATH@/components/nsBlocklistService.js
 #ifdef MOZ_UPDATER
 @RESPATH@/components/nsUpdateService.manifest
 @RESPATH@/components/nsUpdateService.js
@@ -332,10 +329,14 @@
 @RESPATH@/components/PeerConnection.manifest
 #endif
 
+; Remote control protocol
+#ifdef ENABLE_MARIONETTE
 @RESPATH@/chrome/marionette@JAREXT@
 @RESPATH@/chrome/marionette.manifest
 @RESPATH@/components/marionette.manifest
 @RESPATH@/components/marionette.js
+@RESPATH@/defaults/pref/marionette.js
+#endif
 
 @RESPATH@/components/nsAsyncShutdown.manifest
 @RESPATH@/components/nsAsyncShutdown.js
@@ -402,8 +403,6 @@
 @RESPATH@/browser/chrome/browser.manifest
 @RESPATH@/browser/chrome/pdfjs.manifest
 @RESPATH@/browser/chrome/pdfjs/*
-@RESPATH@/browser/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/chrome.manifest
-@RESPATH@/browser/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/install.rdf
 @RESPATH@/chrome/toolkit@JAREXT@
 @RESPATH@/chrome/toolkit.manifest
 @RESPATH@/chrome/recording.manifest
@@ -457,10 +456,6 @@
 ; Technically this is an app pref file, but we are keeping it in the original
 ; gre location for now.
 @RESPATH@/defaults/pref/channel-prefs.js
-
-; Remote control protocol prefs
-; defined in ../../testing/marionette/prefs/marionette.js
-@RESPATH@/defaults/pref/marionette.js
 
 ; Services (gre) prefs
 @RESPATH@/defaults/pref/services-sync.js

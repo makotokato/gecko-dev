@@ -16,9 +16,9 @@ var { LocalDebuggerTransport, ChildDebuggerTransport, WorkerDebuggerTransport } 
   require("devtools/shared/transport/transport");
 var DevToolsUtils = require("devtools/shared/DevToolsUtils");
 var { dumpn } = DevToolsUtils;
-var flags = require("devtools/shared/flags");
 
 DevToolsUtils.defineLazyGetter(this, "DebuggerSocket", () => {
+  // eslint-disable-next-line no-shadow
   let { DebuggerSocket } = require("devtools/shared/security/socket");
   return DebuggerSocket;
 });
@@ -26,6 +26,7 @@ DevToolsUtils.defineLazyGetter(this, "Authentication", () => {
   return require("devtools/shared/security/auth");
 });
 DevToolsUtils.defineLazyGetter(this, "generateUUID", () => {
+  // eslint-disable-next-line no-shadow
   let { generateUUID } = Cc["@mozilla.org/uuid-generator;1"]
                            .getService(Ci.nsIUUIDGenerator);
   return generateUUID;
@@ -33,24 +34,12 @@ DevToolsUtils.defineLazyGetter(this, "generateUUID", () => {
 
 // Overload `Components` to prevent DevTools loader exception on Components
 // object usage
+// eslint-disable-next-line no-unused-vars
 Object.defineProperty(this, "Components", {
   get() {
     return require("chrome").components;
   }
 });
-
-if (isWorker) {
-  flags.wantLogging = true;
-  flags.wantVerbose = true;
-} else {
-  const LOG_PREF = "devtools.debugger.log";
-  const VERBOSE_PREF = "devtools.debugger.log.verbose";
-
-  flags.wantLogging = Services.prefs.getBoolPref(LOG_PREF);
-  flags.wantVerbose =
-    Services.prefs.getPrefType(VERBOSE_PREF) !== Services.prefs.PREF_INVALID &&
-    Services.prefs.getBoolPref(VERBOSE_PREF);
-}
 
 const CONTENT_PROCESS_SERVER_STARTUP_SCRIPT =
   "resource://devtools/server/startup/content-process.js";
@@ -981,7 +970,7 @@ var DebuggerServer = {
    *
    * @param object connection
    *        The debugger server connection to use.
-   * @param nsIDOMElement frame
+   * @param Element frame
    *        The frame element with remote content to connect to.
    * @param function [onDestroy]
    *        Optional function to invoke when the child process closes

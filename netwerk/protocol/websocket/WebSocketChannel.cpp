@@ -135,7 +135,7 @@ class FailDelay
 {
 public:
   FailDelay(nsCString address, int32_t port)
-    : mAddress(address), mPort(port)
+    : mAddress(std::move(address)), mPort(port)
   {
     mLastFailure = TimeStamp::Now();
     mNextDelay = kWSReconnectInitialBaseDelay +
@@ -607,7 +607,7 @@ public:
   }
 
 private:
-  ~CallOnMessageAvailable() {}
+  ~CallOnMessageAvailable() = default;
 
   RefPtr<WebSocketChannel> mChannel;
   RefPtr<BaseWebSocketChannel::ListenerAndContextContainer> mListenerMT;
@@ -649,7 +649,7 @@ public:
   }
 
 private:
-  ~CallOnStop() {}
+  ~CallOnStop() = default;
 
   RefPtr<WebSocketChannel> mChannel;
   RefPtr<BaseWebSocketChannel::ListenerAndContextContainer> mListenerMT;
@@ -691,7 +691,7 @@ public:
   }
 
 private:
-  ~CallOnServerClose() {}
+  ~CallOnServerClose() = default;
 
   RefPtr<WebSocketChannel> mChannel;
   RefPtr<BaseWebSocketChannel::ListenerAndContextContainer> mListenerMT;
@@ -731,7 +731,7 @@ public:
   }
 
 private:
-  ~CallAcknowledge() {}
+  ~CallAcknowledge() = default;
 
   RefPtr<WebSocketChannel> mChannel;
   RefPtr<BaseWebSocketChannel::ListenerAndContextContainer> mListenerMT;
@@ -763,7 +763,7 @@ public:
   }
 
 private:
-  ~CallOnTransportAvailable() {}
+  ~CallOnTransportAvailable() = default;
 
   RefPtr<WebSocketChannel>     mChannel;
   nsCOMPtr<nsISocketTransport>   mTransport;
@@ -787,28 +787,6 @@ public:
     , mResetDeflater(false)
     , mMessageDeflated(false)
   {
-    this->mDeflater.next_in = { nullptr };
-    this->mDeflater.avail_in = {};
-    this->mDeflater.total_in = {};
-    this->mDeflater.next_out = { nullptr };
-    this->mDeflater.avail_out = {};
-    this->mDeflater.total_out = {};
-    this->mDeflater.msg = { nullptr };
-    this->mDeflater.state = { nullptr };
-    this->mDeflater.data_type = {};
-    this->mDeflater.adler = {};
-    this->mDeflater.reserved = {};
-    this->mInflater.next_in = { nullptr };
-    this->mInflater.avail_in = {};
-    this->mInflater.total_in = {};
-    this->mInflater.next_out = { nullptr };
-    this->mInflater.avail_out = {};
-    this->mInflater.total_out = {};
-    this->mInflater.msg = { nullptr };
-    this->mInflater.state = { nullptr };
-    this->mInflater.data_type = {};
-    this->mInflater.adler = {};
-    this->mInflater.reserved = {};
     MOZ_COUNT_CTOR(PMCECompression);
 
     mDeflater.zalloc = mInflater.zalloc = Z_NULL;
@@ -1162,7 +1140,7 @@ public:
   }
 
 private:
-  ~OutboundEnqueuer() {}
+  ~OutboundEnqueuer() = default;
 
   RefPtr<WebSocketChannel>  mChannel;
   OutboundMessage            *mMessage;
@@ -1174,45 +1152,42 @@ NS_IMPL_ISUPPORTS(OutboundEnqueuer, nsIRunnable)
 // WebSocketChannel
 //-----------------------------------------------------------------------------
 
-WebSocketChannel::WebSocketChannel()
-  : mPort(0)
-  , mCloseTimeout(20000)
-  , mOpenTimeout(20000)
-  , mConnecting(NOT_CONNECTING)
-  , mMaxConcurrentConnections(200)
-  , mInnerWindowID{}
-  , mGotUpgradeOK(0)
-  , mRecvdHttpUpgradeTransport(0)
-  , mAutoFollowRedirects(0)
-  , mAllowPMCE(1)
-  , mPingOutstanding(0)
-  , mReleaseOnTransmit(0)
-  , mDataStarted(0)
-  , mRequestedClose(0)
-  , mClientClosed(0)
-  , mServerClosed(0)
-  , mStopped(0)
-  , mCalledOnStop(0)
-  , mTCPClosed(0)
-  , mOpenedHttpChannel(0)
-  , mIncrementedSessionCount(0)
-  , mDecrementedSessionCount(0)
-  , mMaxMessageSize(INT32_MAX)
-  , mStopOnClose(NS_OK)
-  , mServerCloseCode(CLOSE_ABNORMAL)
-  , mScriptCloseCode(0)
-  , mFragmentOpcode(nsIWebSocketFrame::OPCODE_CONTINUATION)
-  , mFragmentAccumulator(0)
-  , mBuffered(0)
-  , mBufferSize(kIncomingBufferInitialSize)
-  , mCurrentOut(nullptr)
-  , mCurrentOutSent(0)
-  , mHdrOutToSend{}
-  , mHdrOut{ nullptr }
-  , mDynamicOutputSize(0)
-  , mDynamicOutput(nullptr)
-  , mPrivateBrowsing(false)
-  , mConnectionLogService(nullptr)
+WebSocketChannel::WebSocketChannel() :
+  mPort(0),
+  mCloseTimeout(20000),
+  mOpenTimeout(20000),
+  mConnecting(NOT_CONNECTING),
+  mMaxConcurrentConnections(200),
+  mGotUpgradeOK(0),
+  mRecvdHttpUpgradeTransport(0),
+  mAutoFollowRedirects(0),
+  mAllowPMCE(1),
+  mPingOutstanding(0),
+  mReleaseOnTransmit(0),
+  mDataStarted(false),
+  mRequestedClose(false),
+  mClientClosed(false),
+  mServerClosed(false),
+  mStopped(false),
+  mCalledOnStop(false),
+  mTCPClosed(false),
+  mOpenedHttpChannel(false),
+  mIncrementedSessionCount(false),
+  mDecrementedSessionCount(false),
+  mMaxMessageSize(INT32_MAX),
+  mStopOnClose(NS_OK),
+  mServerCloseCode(CLOSE_ABNORMAL),
+  mScriptCloseCode(0),
+  mFragmentOpcode(nsIWebSocketFrame::OPCODE_CONTINUATION),
+  mFragmentAccumulator(0),
+  mBuffered(0),
+  mBufferSize(kIncomingBufferInitialSize),
+  mCurrentOut(nullptr),
+  mCurrentOutSent(0),
+  mDynamicOutputSize(0),
+  mDynamicOutput(nullptr),
+  mPrivateBrowsing(false),
+  mConnectionLogService(nullptr)
 {
   MOZ_ASSERT(NS_IsMainThread(), "not main thread");
 
@@ -1355,7 +1330,7 @@ WebSocketChannel::OnNetworkChanged()
   }
   // Trigger the ping timeout asap to fire off a new ping. Wait just
   // a little bit to better avoid multi-triggers.
-  mPingForced = 1;
+  mPingForced = true;
   mPingTimer->InitWithCallback(this, 200, nsITimer::TYPE_ONE_SHOT);
 
   return NS_OK;
@@ -1443,7 +1418,7 @@ WebSocketChannel::BeginOpenInternal()
     AbortSession(NS_ERROR_CONNECTION_REFUSED);
     return;
   }
-  mOpenedHttpChannel = 1;
+  mOpenedHttpChannel = true;
 
   rv = NS_NewTimerWithCallback(getter_AddRefs(mOpenTimer),
                                this, mOpenTimeout,
@@ -1791,7 +1766,7 @@ WebSocketChannel::ProcessInput(uint8_t *buffer, uint32_t count)
 
       if (opcode == nsIWebSocketFrame::OPCODE_CLOSE) {
         LOG(("WebSocketChannel:: close received\n"));
-        mServerClosed = 1;
+        mServerClosed = true;
 
         mServerCloseCode = CLOSE_NO_STATUS;
         if (payloadLength >= 2) {
@@ -2107,7 +2082,7 @@ WebSocketChannel::PrimeNewOutgoingMessage()
       return;
     }
 
-    mClientClosed = 1;
+    mClientClosed = true;
     mOutHeader[0] = kFinalFragBit | nsIWebSocketFrame::OPCODE_CLOSE;
     mOutHeader[1] = maskBit;
 
@@ -2393,7 +2368,7 @@ WebSocketChannel::StopSession(nsresult reason)
   // normally this should be called on socket thread, but it is ok to call it
   // from OnStartRequest before the socket thread machine has gotten underway
 
-  mStopped = 1;
+  mStopped = true;
 
   if (!mOpenedHttpChannel) {
     // The HTTP channel information will never be used in this case
@@ -2484,7 +2459,7 @@ WebSocketChannel::StopSession(nsresult reason)
   mPMCECompressor = nullptr;
 
   if (!mCalledOnStop) {
-    mCalledOnStop = 1;
+    mCalledOnStop = true;
 
     nsWSAdmissionManager::OnStopSession(this, reason);
 
@@ -2515,11 +2490,11 @@ WebSocketChannel::AbortSession(nsresult reason)
 
   if (mStopped)
     return;
-  mStopped = 1;
+  mStopped = true;
 
   if (mTransport && reason != NS_BASE_STREAM_CLOSED && !mRequestedClose &&
       !mClientClosed && !mServerClosed && mConnecting == NOT_CONNECTING) {
-    mRequestedClose = 1;
+    mRequestedClose = true;
     mStopOnClose = reason;
     mSocketThread->Dispatch(
       new OutboundEnqueuer(this, new OutboundMessage(kMsgTypeFin, nullptr)),
@@ -2547,7 +2522,7 @@ WebSocketChannel::IncrementSessionCount()
 {
   if (!mIncrementedSessionCount) {
     nsWSAdmissionManager::IncrementSessionCount();
-    mIncrementedSessionCount = 1;
+    mIncrementedSessionCount = true;
   }
 }
 
@@ -2560,7 +2535,7 @@ WebSocketChannel::DecrementSessionCount()
   // times when they'll never be a race condition for checking/setting them.
   if (mIncrementedSessionCount && !mDecrementedSessionCount) {
     nsWSAdmissionManager::DecrementSessionCount();
-    mDecrementedSessionCount = 1;
+    mDecrementedSessionCount = true;
   }
 }
 
@@ -2982,7 +2957,7 @@ WebSocketChannel::StartWebsocketData()
 
   LOG(("WebSocketChannel::StartWebsocketData() %p", this));
   MOZ_ASSERT(!mDataStarted, "StartWebsocketData twice");
-  mDataStarted = 1;
+  mDataStarted = true;
 
   rv = mSocketIn->AsyncWait(this, 0, 0, mSocketThread);
   if (NS_FAILED(rv)) {
@@ -3262,7 +3237,7 @@ WebSocketChannel::AsyncOnChannelRedirect(
 
   // ApplyForAdmission as if we were starting from fresh...
   mAddress.Truncate();
-  mOpenedHttpChannel = 0;
+  mOpenedHttpChannel = false;
   rv = ApplyForAdmission();
   if (NS_FAILED(rv)) {
     LOG(("WebSocketChannel: Redirect failed due to DNS failure\n"));
@@ -3323,7 +3298,7 @@ WebSocketChannel::Notify(nsITimer *timer)
       MOZ_ASSERT(mPingInterval || mPingForced);
       LOG(("nsWebSocketChannel:: Generating Ping\n"));
       mPingOutstanding = 1;
-      mPingForced = 0;
+      mPingForced = false;
       mPingTimer->InitWithCallback(this, mPingResponseTimeout,
                                    nsITimer::TYPE_ONE_SHOT);
       GeneratePing();
@@ -3609,7 +3584,7 @@ WebSocketChannel::Close(uint16_t code, const nsACString & reason)
   if (reason.Length() > 123)
     return NS_ERROR_ILLEGAL_VALUE;
 
-  mRequestedClose = 1;
+  mRequestedClose = true;
   mScriptCloseReason = reason;
   mScriptCloseCode = code;
 

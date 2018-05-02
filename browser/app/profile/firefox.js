@@ -76,16 +76,15 @@ pref("extensions.geckoProfiler.getSymbolRules", "localBreakpad,remoteBreakpad,du
 pref("extensions.webextensions.base-content-security-policy", "script-src 'self' https://* moz-extension: blob: filesystem: 'unsafe-eval' 'unsafe-inline'; object-src 'self' https://* moz-extension: blob: filesystem:;");
 pref("extensions.webextensions.default-content-security-policy", "script-src 'self'; object-src 'self';");
 
-#if defined(XP_WIN)
-pref("extensions.webextensions.remote", true);
-#elif defined(XP_MACOSX) && !defined(RELEASE_OR_BETA)
+#if defined(XP_WIN) || defined(XP_MACOSX)
 pref("extensions.webextensions.remote", true);
 #endif
 
 // Extensions that should not be flagged as legacy in about:addons
-pref("extensions.legacy.exceptions", "{972ce4c6-7e08-4474-a285-3208198ce6fd},testpilot@cliqz.com,@testpilot-containers,jid1-NeEaf3sAHdKHPA@jetpack,@activity-streams,pulse@mozilla.com,@testpilot-addon,@min-vid,tabcentertest1@mozilla.com,snoozetabs@mozilla.com,speaktome@mozilla.com,hoverpad@mozilla.com");
+pref("extensions.legacy.exceptions", "testpilot@cliqz.com,@testpilot-containers,jid1-NeEaf3sAHdKHPA@jetpack,@activity-streams,pulse@mozilla.com,@testpilot-addon,@min-vid,tabcentertest1@mozilla.com,snoozetabs@mozilla.com,speaktome@mozilla.com,hoverpad@mozilla.com");
 
 // Require signed add-ons by default
+pref("extensions.langpacks.signatures.required", true);
 pref("xpinstall.signatures.required", true);
 pref("xpinstall.signatures.devInfoURL", "https://wiki.mozilla.org/Addons/Extension_Signing");
 
@@ -190,9 +189,6 @@ pref("extensions.update.url", "https://versioncheck.addons.mozilla.org/update/Ve
 pref("extensions.update.background.url", "https://versioncheck-bg.addons.mozilla.org/update/VersionCheck.php?reqVersion=%REQ_VERSION%&id=%ITEM_ID%&version=%ITEM_VERSION%&maxAppVersion=%ITEM_MAXAPPVERSION%&status=%ITEM_STATUS%&appID=%APP_ID%&appVersion=%APP_VERSION%&appOS=%APP_OS%&appABI=%APP_ABI%&locale=%APP_LOCALE%&currentAppVersion=%CURRENT_APP_VERSION%&updateType=%UPDATE_TYPE%&compatMode=%COMPATIBILITY_MODE%");
 pref("extensions.update.interval", 86400);  // Check for updates to Extensions and
                                             // Themes every day
-
-pref("extensions.{972ce4c6-7e08-4474-a285-3208198ce6fd}.name", "chrome://browser/locale/browser.properties");
-pref("extensions.{972ce4c6-7e08-4474-a285-3208198ce6fd}.description", "chrome://browser/locale/browser.properties");
 
 pref("extensions.webextensions.themes.enabled", true);
 pref("extensions.webextensions.themes.icons.buttons", "back,forward,reload,stop,bookmark_star,bookmark_menu,downloads,home,app_menu,cut,copy,paste,new_window,new_private_window,save_page,print,history,full_screen,find,options,addons,developer,synced_tabs,open_file,sidebars,share_page,subscribe,text_encoding,email_link,forget,pocket");
@@ -458,6 +454,8 @@ pref("browser.link.open_newwindow.disabled_in_fullscreen", false);
 #endif
 
 // Tabbed browser
+pref("browser.tabs.20FpsThrobber", false);
+pref("browser.tabs.30FpsThrobber", false);
 pref("browser.tabs.closeTabByDblclick", false);
 pref("browser.tabs.closeWindowWithLastTab", true);
 // Open related links to a tab, e.g., link in current tab, at next to the
@@ -1091,7 +1089,8 @@ pref("security.sandbox.gmp.win32k-disable", false);
 pref("security.sandbox.content.level", 3);
 #endif
 
-#if defined(NIGHTLY_BUILD) && defined(XP_MACOSX) && defined(MOZ_SANDBOX)
+// Enable the Mac Flash sandbox on Nightly and Beta, not Release
+#if defined(EARLY_BETA_OR_EARLIER) && defined(XP_MACOSX) && defined(MOZ_SANDBOX)
 // Controls whether and how the Mac NPAPI Flash plugin process is sandboxed.
 // On Mac these levels are:
 // 0 - "no sandbox"
@@ -1256,7 +1255,7 @@ pref("services.sync.syncedTabs.showRemoteIcons", true);
 pref("lightweightThemes.selectedThemeID", "firefox-compact-dark@mozilla.org",
      sticky);
 #else
-pref("lightweightThemes.selectedThemeID", "", sticky);
+pref("lightweightThemes.selectedThemeID", "default-theme@mozilla.org", sticky);
 #endif
 
 // Whether the character encoding menu is under the main Firefox button. This
@@ -1275,11 +1274,7 @@ pref("browser.newtabpage.enabled", true);
 // Activity Stream prefs that control to which page to redirect
 pref("browser.newtabpage.activity-stream.prerender", true);
 #ifndef RELEASE_OR_BETA
-#ifdef MOZILLA_OFFICIAL
 pref("browser.newtabpage.activity-stream.debug", false);
-#else
-pref("browser.newtabpage.activity-stream.debug", true);
-#endif
 #endif
 
 pref("browser.library.activity-stream.enabled", true);
@@ -1434,23 +1429,12 @@ pref("identity.fxaccounts.migrateToDevEdition", true);
 pref("identity.fxaccounts.migrateToDevEdition", false);
 #endif
 
+// If activated, send tab will use the new FxA messages backend.
+pref("identity.fxaccounts.messages.enabled", false);
+
 // On GTK, we now default to showing the menubar only when alt is pressed:
 #ifdef MOZ_WIDGET_GTK
 pref("ui.key.menuAccessKeyFocuses", true);
-#endif
-
-// Encrypted media extensions.
-#ifdef XP_LINUX
-// On Linux EME is visible but disabled by default. This is so that the
-// "Play DRM content" checkbox in the Firefox UI is unchecked by default.
-// DRM requires downloading and installing proprietary binaries, which
-// users on an open source operating systems didn't opt into. The first
-// time a site using EME is encountered, the user will be prompted to
-// enable DRM, whereupon the EME plugin binaries will be downloaded if
-// permission is granted.
-pref("media.eme.enabled", false);
-#else
-pref("media.eme.enabled", true);
 #endif
 
 #ifdef NIGHTLY_BUILD
@@ -1508,13 +1492,6 @@ pref("toolkit.telemetry.bhrPing.enabled", true);
 // Enables using Hybrid Content Telemetry from Mozilla privileged pages.
 pref("toolkit.telemetry.hybridContent.enabled", true);
 
-// Telemetry experiments settings.
-pref("experiments.enabled", true);
-pref("experiments.manifest.fetchIntervalSeconds", 86400);
-pref("experiments.manifest.uri", "https://telemetry-experiment.cdn.mozilla.net/manifest/v1/firefox/%VERSION%/%CHANNEL%");
-// Whether experiments are supported by the current application profile.
-pref("experiments.supported", true);
-
 // Ping Centre Telemetry settings.
 pref("browser.ping-centre.telemetry", true);
 pref("browser.ping-centre.log", false);
@@ -1552,7 +1529,14 @@ pref("browser.tabs.remote.desktopbehavior", true);
 
 // For speculatively warming up tabs to improve perceived
 // performance while using the async tab switcher.
-#if defined(NIGHTLY_BUILD)
+//
+// This feature is enabled by default on Windows and Linux
+// on all channels.
+//
+// This feature is enabled on macOS only on the Nightly channel
+// until bug 1453080 is fixed.
+//
+#if !defined(XP_MACOSX) || defined(NIGHTLY_BUILD)
 pref("browser.tabs.remote.warmup.enabled", true);
 #else
 pref("browser.tabs.remote.warmup.enabled", false);
@@ -1744,7 +1728,7 @@ pref("app.normandy.dev_mode", false);
 pref("app.normandy.enabled", true);
 pref("app.normandy.first_run", true);
 pref("app.normandy.logging.level", 50); // Warn
-pref("app.normandy.run_interval_seconds", 86400); // 24 hours
+pref("app.normandy.run_interval_seconds", 21600); // 6 hours
 pref("app.normandy.shieldLearnMoreUrl", "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/shield");
 #ifdef MOZ_DATA_REPORTING
 pref("app.shield.optoutstudies.enabled", true);

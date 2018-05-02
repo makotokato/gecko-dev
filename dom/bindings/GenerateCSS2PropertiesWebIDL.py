@@ -5,9 +5,6 @@
 import sys
 import string
 import argparse
-import subprocess
-import buildconfig
-from mozbuild import shellutil
 
 # Generates a line of WebIDL with the given spelling of the property name
 # (whether camelCase, _underscorePrefixed, etc.) and the given array of
@@ -15,16 +12,12 @@ from mozbuild import shellutil
 def generateLine(propName, extendedAttrs):
     return "  [%s] attribute DOMString %s;\n" % (", ".join(extendedAttrs),
                                                  propName)
-def generate(output, idlFilename, preprocessorHeader):
-    cpp = list(buildconfig.substs['CPP'])
-    cpp += shellutil.split(buildconfig.substs['ACDEFINES'])
-    cpp.append(preprocessorHeader)
-    preprocessed = subprocess.check_output(cpp)
-
-    propList = eval(preprocessed)
+def generate(output, idlFilename, dataFile):
+    with open(dataFile, "r") as f:
+        propList = eval(f.read())
     props = ""
-    for [name, prop, id, flags, pref, proptype] in propList:
-        if "CSS_PROPERTY_INTERNAL" in flags:
+    for name, prop, id, flags, pref, proptype in propList:
+        if "CSSPropFlags::Internal" in flags:
             continue
         # Unfortunately, even some of the getters here are fallible
         # (e.g. on nsComputedDOMStyle).

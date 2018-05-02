@@ -206,13 +206,21 @@ void
 TransactionBuilder::UpdateDynamicProperties(const nsTArray<wr::WrOpacityProperty>& aOpacityArray,
                                      const nsTArray<wr::WrTransformProperty>& aTransformArray)
 {
-  wr_transaction_update_dynamic_properties(mTxn,
-                                           aOpacityArray.IsEmpty() ?
-                                             nullptr : aOpacityArray.Elements(),
-                                           aOpacityArray.Length(),
-                                           aTransformArray.IsEmpty() ?
-                                             nullptr : aTransformArray.Elements(),
-                                           aTransformArray.Length());
+  wr_transaction_update_dynamic_properties(
+      mTxn,
+      aOpacityArray.IsEmpty() ?  nullptr : aOpacityArray.Elements(),
+      aOpacityArray.Length(),
+      aTransformArray.IsEmpty() ?  nullptr : aTransformArray.Elements(),
+      aTransformArray.Length());
+}
+
+void
+TransactionBuilder::AppendTransformProperties(const nsTArray<wr::WrTransformProperty>& aTransformArray)
+{
+  wr_transaction_append_transform_properties(
+      mTxn,
+      aTransformArray.IsEmpty() ? nullptr : aTransformArray.Elements(),
+      aTransformArray.Length());
 }
 
 bool
@@ -244,19 +252,42 @@ TransactionBuilder::UpdateScrollPosition(const wr::WrPipelineId& aPipelineId,
   wr_transaction_scroll_layer(mTxn, aPipelineId, aScrollId, aScrollPosition);
 }
 
-
-/*static*/ void
-WebRenderAPI::InitExternalLogHandler()
+TransactionWrapper::TransactionWrapper(Transaction* aTxn)
+  : mTxn(aTxn)
 {
-  // Redirect the webrender's log to gecko's log system.
-  // The current log level is "error".
-  mozilla::wr::wr_init_external_log_handler(wr::WrLogLevelFilter::Error);
+}
+
+void
+TransactionWrapper::AppendTransformProperties(const nsTArray<wr::WrTransformProperty>& aTransformArray)
+{
+  wr_transaction_append_transform_properties(
+      mTxn,
+      aTransformArray.IsEmpty() ? nullptr : aTransformArray.Elements(),
+      aTransformArray.Length());
+}
+
+void
+TransactionWrapper::UpdateScrollPosition(const wr::WrPipelineId& aPipelineId,
+                                         const layers::FrameMetrics::ViewID& aScrollId,
+                                         const wr::LayoutPoint& aScrollPosition)
+{
+  wr_transaction_scroll_layer(mTxn, aPipelineId, aScrollId, aScrollPosition);
 }
 
 /*static*/ void
-WebRenderAPI::ShutdownExternalLogHandler()
+WebRenderAPI::InitRustLogForGpuProcess()
 {
-  mozilla::wr::wr_shutdown_external_log_handler();
+  MOZ_ASSERT(XRE_IsGPUProcess());
+  // Initialize rust log for gpu process.
+  // Rust log of non-gpu process is initialized by Servo_Initialize()
+  mozilla::wr::wr_init_log_for_gpu_process();
+}
+
+/*static*/ void
+WebRenderAPI::ShutdownRustLogForGpuProcess()
+{
+  MOZ_ASSERT(XRE_IsGPUProcess());
+  mozilla::wr::wr_shutdown_log_for_gpu_process();
 }
 
 /*static*/ already_AddRefed<WebRenderAPI>
@@ -328,8 +359,6 @@ WebRenderAPI::GetNamespace() {
   return wr_api_get_namespace(mDocHandle);
 }
 
-extern void ClearBlobImageResources(WrIdNamespace aNamespace);
-
 WebRenderAPI::~WebRenderAPI()
 {
   if (!mRootDocumentApi) {
@@ -346,21 +375,6 @@ WebRenderAPI::~WebRenderAPI()
 
     wr_api_shut_down(mDocHandle);
   }
-
-  // wr_api_get_namespace cannot be marked destructor-safe because it has a
-  // return value, and we can't call it if MOZ_BUILD_WEBRENDER is not defined
-  // because it's not destructor-safe. So let's just ifdef around it. This is
-  // basically a hack to get around compile-time warnings, this code never runs
-  // unless MOZ_BUILD_WEBRENDER is defined anyway.
-#ifdef MOZ_BUILD_WEBRENDER
-  wr::WrIdNamespace ns = GetNamespace();
-#else
-  wr::WrIdNamespace ns{0};
-#endif
-
-  // Clean up any resources the blob image renderer is holding onto that
-  // can no longer be used once this WR API instance goes away.
-  ClearBlobImageResources(ns);
 
   wr_api_delete(mDocHandle);
 }
@@ -510,6 +524,12 @@ void
 WebRenderAPI::WakeSceneBuilder()
 {
     wr_api_wake_scene_builder(mDocHandle);
+}
+
+void
+WebRenderAPI::FlushSceneBuilder()
+{
+    wr_api_flush_scene_builder(mDocHandle);
 }
 
 void

@@ -15,17 +15,13 @@ NS_IMPL_ISUPPORTS(NullHttpChannel, nsINullChannel,
                   nsIHttpChannel, nsITimedChannel)
 
 NullHttpChannel::NullHttpChannel()
-  : mAllRedirectsSameOrigin{ false }
-  , mAllRedirectsPassTimingAllowCheck{ false }
 {
   mChannelCreationTime = PR_Now();
   mChannelCreationTimestamp = TimeStamp::Now();
   mAsyncOpenTime = TimeStamp::Now();
 }
 
-NullHttpChannel::NullHttpChannel(nsIHttpChannel* chan)
-  : mAllRedirectsSameOrigin{ false }
-  , mAllRedirectsPassTimingAllowCheck{ false }
+NullHttpChannel::NullHttpChannel(nsIHttpChannel * chan)
 {
   nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
   ssm->GetChannelURIPrincipal(chan, getter_AddRefs(mResourcePrincipal));
@@ -901,6 +897,12 @@ NullHttpChannel::GetReportResourceTiming(bool* _retval) {
 
 NS_IMETHODIMP
 NullHttpChannel::GetServerTiming(nsIArray **aServerTiming)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::GetNativeServerTiming(nsTArray<nsCOMPtr<nsIServerTiming>>& aServerTiming)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }

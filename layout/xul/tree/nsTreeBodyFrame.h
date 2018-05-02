@@ -82,7 +82,7 @@ public:
   nsresult SetView(nsITreeView *aView);
   bool GetFocused() const { return mFocused; }
   nsresult SetFocused(bool aFocused);
-  nsresult GetTreeBody(nsIDOMElement **aElement);
+  nsresult GetTreeBody(mozilla::dom::Element **aElement);
   int32_t RowHeight() const;
   int32_t RowWidth();
   int32_t GetHorizontalPosition() const;
@@ -522,14 +522,7 @@ protected: // Data Members
 
   class Slots {
     public:
-      Slots()
-        : mDropAllowed{ false }
-        , mIsDragging{ false }
-        , mDropRow{}
-        , mDropOrient{}
-        , mScrollLines{}
-        , mDragAction{}
-      {
+      Slots() {
       }
 
       ~Slots() {

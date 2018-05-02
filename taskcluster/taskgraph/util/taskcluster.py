@@ -14,9 +14,13 @@ import logging
 from mozbuild.util import memoize
 from requests.packages.urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
+from taskgraph.task import Task
 
-_TC_ARTIFACT_LOCATION = \
-        'https://queue.taskcluster.net/v1/task/{task_id}/artifacts/public/build/{postfix}'
+_PUBLIC_TC_ARTIFACT_LOCATION = \
+        'https://queue.taskcluster.net/v1/task/{task_id}/artifacts/{artifact_prefix}/{postfix}'
+
+_PRIVATE_TC_ARTIFACT_LOCATION = \
+        'http://taskcluster/queue/v1/task/{task_id}/artifacts/{artifact_prefix}/{postfix}'
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +92,19 @@ def get_artifact(task_id, path, use_proxy=False):
 def list_artifacts(task_id, use_proxy=False):
     response = _do_request(get_artifact_url(task_id, '', use_proxy).rstrip('/'))
     return response.json()['artifacts']
+
+
+def get_artifact_prefix(task):
+    prefix = None
+    if isinstance(task, dict):
+        prefix = task.get('attributes', {}).get("artifact_prefix")
+    elif isinstance(task, Task):
+        prefix = task.attributes.get("artifact_prefix")
+    return prefix or "public/build"
+
+
+def get_artifact_path(task, path):
+    return "{}/{}".format(get_artifact_prefix(task), path)
 
 
 def get_index_url(index_path, use_proxy=False, multiple=False):
@@ -163,9 +180,12 @@ def cancel_task(task_id, use_proxy=False):
 def status_task(task_id, use_proxy=False):
     """Gets the status of a task given a task_id. In testing mode, just logs that it would
     have retrieved status."""
-    resp = _do_request(get_task_url(task_id, use_proxy) + '/status')
-    status = resp.json().get("status", {}).get('state') or 'unknown'
-    return status
+    if testing:
+        logger.info('Would have gotten status for {}.'.format(task_id))
+    else:
+        resp = _do_request(get_task_url(task_id, use_proxy) + '/status')
+        status = resp.json().get("status", {}).get('state') or 'unknown'
+        return status
 
 
 def rerun_task(task_id):
@@ -195,8 +215,16 @@ def purge_cache(provisioner_id, worker_type, cache_name, use_proxy=False):
         _do_request(purge_cache_url, json={'cacheName': cache_name})
 
 
-def get_taskcluster_artifact_prefix(task_id, postfix='', locale=None):
+def get_taskcluster_artifact_prefix(task, task_id, postfix='', locale=None, force_private=False):
     if locale:
         postfix = '{}/{}'.format(locale, postfix)
 
-    return _TC_ARTIFACT_LOCATION.format(task_id=task_id, postfix=postfix)
+    artifact_prefix = get_artifact_prefix(task)
+    if artifact_prefix == 'public/build' and not force_private:
+        tmpl = _PUBLIC_TC_ARTIFACT_LOCATION
+    else:
+        tmpl = _PRIVATE_TC_ARTIFACT_LOCATION
+
+    return tmpl.format(
+        task_id=task_id, postfix=postfix, artifact_prefix=artifact_prefix
+    )

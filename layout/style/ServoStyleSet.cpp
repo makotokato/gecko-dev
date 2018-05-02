@@ -515,7 +515,7 @@ already_AddRefed<ComputedStyle>
 ServoStyleSet::ResolveStyleForText(nsIContent* aTextNode,
                                    ComputedStyle* aParentContext)
 {
-  MOZ_ASSERT(aTextNode && aTextNode->IsNodeOfType(nsINode::eTEXT));
+  MOZ_ASSERT(aTextNode && aTextNode->IsText());
   MOZ_ASSERT(aTextNode->GetParent());
   MOZ_ASSERT(aParentContext);
 
@@ -869,10 +869,15 @@ ServoStyleSet::StyleSheetAt(SheetType aType, int32_t aIndex) const
 }
 
 void
-ServoStyleSet::AppendAllXBLStyleSheets(nsTArray<StyleSheet*>& aArray) const
+ServoStyleSet::AppendAllNonDocumentAuthorSheets(nsTArray<StyleSheet*>& aArray) const
 {
   if (mDocument) {
     mDocument->BindingManager()->AppendAllSheets(aArray);
+    EnumerateShadowRoots(*mDocument, [&](ShadowRoot& aShadowRoot) {
+      for (auto index : IntegerRange(aShadowRoot.SheetCount())) {
+        aArray.AppendElement(aShadowRoot.SheetAt(index));
+      }
+    });
   }
 }
 
@@ -1062,6 +1067,8 @@ ServoStyleSet::StyleNewSubtree(Element* aRoot)
 {
   MOZ_ASSERT(GetPresContext());
   MOZ_ASSERT(!aRoot->HasServoData());
+  MOZ_ASSERT(aRoot->GetFlattenedTreeParentNodeForStyle(),
+             "Not in the flat tree? Fishy!");
   PreTraverseSync();
   AutoPrepareTraversal guard(this);
 
@@ -1515,7 +1522,7 @@ ServoStyleSet::MayTraverseFrom(const Element* aElement)
   }
 
   if (!parent->IsElement()) {
-    MOZ_ASSERT(parent->IsNodeOfType(nsINode::eDOCUMENT));
+    MOZ_ASSERT(parent->IsDocument());
     return true;
   }
 

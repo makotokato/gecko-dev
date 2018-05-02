@@ -8,12 +8,12 @@
 #include "nsMathMLElement.h"
 #include "base/compiler_specific.h"
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/FontPropertyTypes.h"
+#include "mozilla/TextUtils.h"
 #include "nsGkAtoms.h"
 #include "nsITableCellLayout.h" // for MAX_COLSPAN / MAX_ROWSPAN
-#include "nsCRT.h"
 #include "nsLayoutStylesheetCache.h"
 #include "nsCSSValue.h"
-#include "nsCSSParser.h"
 #include "nsMappedAttributes.h"
 #include "nsStyleConsts.h"
 #include "nsIDocument.h"
@@ -36,7 +36,7 @@ using namespace mozilla::dom;
 // nsISupports methods:
 
 NS_IMPL_ISUPPORTS_INHERITED(nsMathMLElement, nsMathMLElementBase,
-                            nsIDOMElement, nsIDOMNode, Link)
+                            nsIDOMNode, Link)
 
 static nsresult
 WarnDeprecated(const char16_t* aDeprecatedAttribute,
@@ -420,7 +420,7 @@ nsMathMLElement::ParseNumericValue(const nsString& aString,
     }
     else if (c == '.')
       gotDot = true;
-    else if (!nsCRT::IsAsciiDigit(c)) {
+    else if (!IsAsciiDigit(c)) {
       str.Right(unit, stringLength - i);
       // some authors leave blanks before the unit, but that shouldn't
       // be allowed, so don't CompressWhitespace on 'unit'.
@@ -695,12 +695,12 @@ nsMathMLElement::MapMathMLAttributesInto(const nsMappedAttributes* aAttributes,
         !aData->PropertyIsSet(eCSSProperty_font_style)) {
       nsAutoString str(value->GetStringValue());
       str.CompressWhitespace();
+      // FIXME(emilio): This should use FontSlantStyle or what not. Or even
+      // better, it looks deprecated since forever, we should just kill it.
       if (str.EqualsASCII("normal")) {
-        aData->SetKeywordValue(eCSSProperty_font_style,
-                               NS_STYLE_FONT_STYLE_NORMAL);
+        aData->SetKeywordValue(eCSSProperty_font_style, NS_FONT_STYLE_NORMAL);
       } else if (str.EqualsASCII("italic")) {
-        aData->SetKeywordValue(eCSSProperty_font_style,
-                               NS_STYLE_FONT_STYLE_ITALIC);
+        aData->SetKeywordValue(eCSSProperty_font_style, NS_FONT_STYLE_ITALIC);
       }
     }
   }
@@ -726,10 +726,10 @@ nsMathMLElement::MapMathMLAttributesInto(const nsMappedAttributes* aAttributes,
       str.CompressWhitespace();
       if (str.EqualsASCII("normal")) {
         aData->SetKeywordValue(eCSSProperty_font_weight,
-                               NS_FONT_WEIGHT_NORMAL);
+                               FontWeight::Normal().ToFloat());
       } else if (str.EqualsASCII("bold")) {
         aData->SetKeywordValue(eCSSProperty_font_weight,
-                               NS_FONT_WEIGHT_BOLD);
+                               FontWeight::Bold().ToFloat());
       }
     }
   }

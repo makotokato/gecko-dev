@@ -1,3 +1,4 @@
+use std::env;
 use std::ffi::{CStr, CString};
 use std::{mem, slice};
 use std::path::PathBuf;
@@ -12,7 +13,7 @@ use webrender::{ReadPixelsFormat, Renderer, RendererOptions, ThreadListener};
 use webrender::{ExternalImage, ExternalImageHandler, ExternalImageSource};
 use webrender::DebugFlags;
 use webrender::{ApiRecordingReceiver, BinaryRecorder};
-use webrender::{PipelineInfo, SceneBuilderHooks};
+use webrender::{AsyncPropertySampler, PipelineInfo, SceneBuilderHooks};
 use webrender::{ProgramCache, UploadMethod, VertexUsageHint};
 use thread_profiler::register_thread_with_profiler;
 use moz2d_renderer::Moz2dImageRenderer;
@@ -20,6 +21,7 @@ use app_units::Au;
 use rayon;
 use euclid::SideOffsets2D;
 use log;
+use env_logger::filter::Filter;
 
 #[cfg(target_os = "windows")]
 use dwrote::{FontDescriptor, FontWeight, FontStretch, FontStyle};
@@ -63,7 +65,7 @@ type WrEpoch = Epoch;
 /// cbindgen:derive-lt=true
 /// cbindgen:derive-lte=true
 /// cbindgen:derive-neq=true
-type WrIdNamespace = IdNamespace;
+pub type WrIdNamespace = IdNamespace;
 
 /// cbindgen:field-names=[mNamespace, mHandle]
 type WrPipelineId = PipelineId;
@@ -76,8 +78,6 @@ pub type WrFontKey = FontKey;
 type WrFontInstanceKey = FontInstanceKey;
 /// cbindgen:field-names=[mNamespace, mHandle]
 type WrYuvColorSpace = YuvColorSpace;
-/// cbindgen:field-names=[mNamespace, mHandle]
-type WrLogLevelFilter = log::LevelFilter;
 
 fn make_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
     if ptr.is_null() {
@@ -456,10 +456,9 @@ fn get_proc_address(glcontext_ptr: *mut c_void,
     let symbol_name = CString::new(name).unwrap();
     let symbol = unsafe { get_proc_address_from_glcontext(glcontext_ptr, symbol_name.as_ptr()) };
 
-    // For now panic, not sure we should be though or if we can recover
     if symbol.is_null() {
         // XXX Bug 1322949 Make whitelist for extensions
-        println!("Could not find symbol {:?} by glcontext", symbol_name);
+        warn!("Could not find symbol {:?} by glcontext", symbol_name);
     }
 
     symbol as *const _
@@ -496,8 +495,7 @@ unsafe impl Send for CppNotifier {}
 extern "C" {
     fn wr_notifier_wake_up(window_id: WrWindowId);
     fn wr_notifier_new_frame_ready(window_id: WrWindowId);
-    fn wr_notifier_new_scroll_frame_ready(window_id: WrWindowId,
-                                          composite_needed: bool);
+    fn wr_notifier_nop_frame_done(window_id: WrWindowId);
     fn wr_notifier_external_event(window_id: WrWindowId,
                                   raw_event: usize);
 }
@@ -515,15 +513,15 @@ impl RenderNotifier for CppNotifier {
         }
     }
 
-    fn new_document_ready(&self,
-                          _: DocumentId,
-                          scrolled: bool,
-                          composite_needed: bool) {
+    fn new_frame_ready(&self,
+                       _: DocumentId,
+                       _scrolled: bool,
+                       composite_needed: bool) {
         unsafe {
-            if scrolled {
-                wr_notifier_new_scroll_frame_ready(self.window_id, composite_needed);
-            } else if composite_needed {
+            if composite_needed {
                 wr_notifier_new_frame_ready(self.window_id);
+            } else {
+                wr_notifier_nop_frame_done(self.window_id);
             }
         }
     }
@@ -564,7 +562,7 @@ pub extern "C" fn wr_renderer_render(renderer: &mut Renderer,
         Ok(_) => true,
         Err(errors) => {
             for e in errors {
-                println!(" Failed to render: {:?}", e);
+                warn!(" Failed to render: {:?}", e);
                 let msg = CString::new(format!("wr_renderer_render: {:?}", e)).unwrap();
                 unsafe {
                     gfx_critical_note(msg.as_ptr());
@@ -685,7 +683,10 @@ pub unsafe extern "C" fn wr_pipeline_info_delete(_info: WrPipelineInfo) {
     // the underlying vec memory
 }
 
+#[allow(improper_ctypes)] // this is needed so that rustc doesn't complain about passing the &mut Transaction to an extern function
 extern "C" {
+    // These callbacks are invoked from the scene builder thread (aka the APZ
+    // updater thread)
     fn apz_register_updater(window_id: WrWindowId);
     fn apz_pre_scene_swap(window_id: WrWindowId);
     // This function takes ownership of the pipeline_info and is responsible for
@@ -693,6 +694,12 @@ extern "C" {
     fn apz_post_scene_swap(window_id: WrWindowId, pipeline_info: WrPipelineInfo);
     fn apz_run_updater(window_id: WrWindowId);
     fn apz_deregister_updater(window_id: WrWindowId);
+
+    // These callbacks are invoked from the render backend thread (aka the APZ
+    // sampler thread)
+    fn apz_register_sampler(window_id: WrWindowId);
+    fn apz_sample_transforms(window_id: WrWindowId, transaction: &mut Transaction);
+    fn apz_deregister_sampler(window_id: WrWindowId);
 }
 
 struct APZCallbacks {
@@ -727,6 +734,35 @@ impl SceneBuilderHooks for APZCallbacks {
 
     fn deregister(&self) {
         unsafe { apz_deregister_updater(self.window_id) }
+    }
+}
+
+struct SamplerCallback {
+    window_id: WrWindowId,
+}
+
+impl SamplerCallback {
+    pub fn new(window_id: WrWindowId) -> Self {
+        SamplerCallback {
+            window_id,
+        }
+    }
+}
+
+impl AsyncPropertySampler for SamplerCallback {
+    fn register(&self) {
+        unsafe { apz_register_sampler(self.window_id) }
+    }
+
+    fn sample(&self) -> Vec<FrameMsg> {
+        let mut transaction = Transaction::new();
+        unsafe { apz_sample_transforms(self.window_id, &mut transaction) };
+        // TODO: also omta_sample_transforms(...)
+        transaction.get_frame_ops()
+    }
+
+    fn deregister(&self) {
+        unsafe { apz_deregister_sampler(self.window_id) }
     }
 }
 
@@ -836,7 +872,7 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
 
     let version = gl.get_string(gl::VERSION);
 
-    println!("WebRender - OpenGL version new {}", version);
+    info!("WebRender - OpenGL version new {}", version);
 
     let workers = unsafe {
         Arc::clone(&(*thread_pool).0)
@@ -870,6 +906,7 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
         renderer_id: Some(window_id.0),
         upload_method,
         scene_builder_hooks: Some(Box::new(APZCallbacks::new(window_id))),
+        sampler: Some(Box::new(SamplerCallback::new(window_id))),
         ..Default::default()
     };
 
@@ -879,7 +916,7 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
     let (renderer, sender) = match Renderer::new(gl, notifier, opts) {
         Ok((renderer, sender)) => (renderer, sender),
         Err(e) => {
-            println!(" Failed to create a Renderer: {:?}", e);
+            warn!(" Failed to create a Renderer: {:?}", e);
             let msg = CString::new(format!("wr_window_new: {:?}", e)).unwrap();
             unsafe {
                 gfx_critical_note(msg.as_ptr());
@@ -1066,8 +1103,6 @@ pub extern "C" fn wr_transaction_update_dynamic_properties(
     transform_array: *const WrTransformProperty,
     transform_count: usize,
 ) {
-    debug_assert!(transform_count > 0 || opacity_count > 0);
-
     let mut properties = DynamicProperties {
         transforms: Vec::new(),
         floats: Vec::new(),
@@ -1102,13 +1137,41 @@ pub extern "C" fn wr_transaction_update_dynamic_properties(
 }
 
 #[no_mangle]
+pub extern "C" fn wr_transaction_append_transform_properties(
+    txn: &mut Transaction,
+    transform_array: *const WrTransformProperty,
+    transform_count: usize,
+) {
+    if transform_count == 0 {
+        return;
+    }
+
+    let mut properties = DynamicProperties {
+        transforms: Vec::new(),
+        floats: Vec::new(),
+    };
+
+    let transform_slice = make_slice(transform_array, transform_count);
+
+    for element in transform_slice.iter() {
+        let prop = PropertyValue {
+            key: PropertyBindingKey::new(element.id),
+            value: element.transform.into(),
+        };
+
+        properties.transforms.push(prop);
+    }
+
+    txn.append_dynamic_properties(properties);
+}
+
+#[no_mangle]
 pub extern "C" fn wr_transaction_scroll_layer(
     txn: &mut Transaction,
     pipeline_id: WrPipelineId,
     scroll_id: u64,
     new_scroll_origin: LayoutPoint
 ) {
-    assert!(unsafe { is_in_compositor_thread() });
     let scroll_id = ExternalScrollId(scroll_id, pipeline_id);
     txn.scroll_node_with_id(new_scroll_origin, scroll_id, ScrollClamping::NoClamping);
 }
@@ -1296,7 +1359,7 @@ pub extern "C" fn wr_api_capture(
             file.write(revision).unwrap();
         }
         Err(e) => {
-            println!("Unable to create path '{:?}' for capture: {:?}", path, e);
+            warn!("Unable to create path '{:?}' for capture: {:?}", path, e);
             return
         }
     }
@@ -1416,6 +1479,11 @@ pub unsafe extern "C" fn wr_api_get_namespace(dh: &mut DocumentHandle) -> WrIdNa
 #[no_mangle]
 pub unsafe extern "C" fn wr_api_wake_scene_builder(dh: &mut DocumentHandle) {
     dh.api.wake_scene_builder();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn wr_api_flush_scene_builder(dh: &mut DocumentHandle) {
+    dh.api.flush_scene_builder();
 }
 
 // RenderThread WIP notes:
@@ -1582,7 +1650,8 @@ pub extern "C" fn wr_dp_push_stacking_context(state: &mut WrState,
                                 transform_style,
                                 perspective,
                                 mix_blend_mode,
-                                filters);
+                                filters,
+                                GlyphRasterSpace::Screen);
 }
 
 #[no_mangle]
@@ -2295,25 +2364,42 @@ struct WrExternalLogHandler {
     info_msg: ExternalMessageHandler,
     debug_msg: ExternalMessageHandler,
     trace_msg: ExternalMessageHandler,
-    log_level: log::Level,
+    inner: Filter
 }
 
 impl WrExternalLogHandler {
-    fn new(log_level: log::Level) -> WrExternalLogHandler {
+    fn new() -> Self {
+        use env_logger::filter::Builder;
+
+        // Filter cration code is borrowed from Servo_Initialize()
+        let mut builder = Builder::new();
+        let default_level = if cfg!(debug_assertions) { "warn" } else { "error" };
+        let builder = match env::var("RUST_LOG") {
+            Ok(v) => builder.parse(&v),
+            _ => builder.parse(default_level),
+        };
+
         WrExternalLogHandler {
             error_msg: gfx_critical_note,
-            warn_msg: gfx_critical_note,
+            warn_msg: gecko_printf_stderr_output,
             info_msg: gecko_printf_stderr_output,
             debug_msg: gecko_printf_stderr_output,
             trace_msg: gecko_printf_stderr_output,
-            log_level: log_level,
+            inner: builder.build(),
         }
+    }
+
+    fn init() -> Result<(), log::SetLoggerError> {
+        let logger = Self::new();
+
+        log::set_max_level(logger.inner.filter());
+        log::set_boxed_logger(Box::new(logger))
     }
 }
 
 impl log::Log for WrExternalLogHandler {
     fn enabled(&self, metadata : &log::Metadata) -> bool {
-        metadata.level() <= self.log_level
+        self.inner.enabled(metadata)
     }
 
     fn log(&self, record: &log::Record) {
@@ -2338,16 +2424,13 @@ impl log::Log for WrExternalLogHandler {
 }
 
 #[no_mangle]
-pub extern "C" fn wr_init_external_log_handler(log_filter: WrLogLevelFilter) {
-    log::set_max_level(log_filter);
-    let logger = Box::new(WrExternalLogHandler::new(log_filter
-                                                    .to_level()
-                                                    .unwrap_or(log::Level::Error)));
-    let _ = log::set_logger(unsafe { &*Box::into_raw(logger) });
+pub extern "C" fn wr_init_log_for_gpu_process() {
+    WrExternalLogHandler::init().unwrap();
 }
 
 #[no_mangle]
-pub extern "C" fn wr_shutdown_external_log_handler() {
+pub extern "C" fn wr_shutdown_log_for_gpu_process() {
+    // log does not support shutdown
 }
 
 #[no_mangle]

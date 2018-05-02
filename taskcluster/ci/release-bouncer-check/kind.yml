@@ -22,7 +22,7 @@ job-defaults:
     worker-type: aws-provisioner-v1/gecko-{level}-b-linux
     worker:
         max-run-time: 1200
-        docker-image: {in-tree: "lint"}
+        docker-image: {in-tree: "update-verify"}
     run:
         using: run-task
         sparse-profile: mozharness
@@ -43,10 +43,14 @@ jobs:
         run:
             config:
                 by-project:
-                    mozilla-release:
-                        - releases/bouncer_firefox_release.py
                     mozilla-beta:
                         - releases/bouncer_firefox_beta.py
+                    mozilla-release:
+                        - releases/bouncer_firefox_release.py
+                    mozilla-esr60:
+                        - releases/bouncer_firefox_esr.py
+                    jamun:
+                        - releases/dev_bouncer_firefox_esr.py
                     default:
                         - releases/dev_bouncer_firefox_beta.py
         treeherder:

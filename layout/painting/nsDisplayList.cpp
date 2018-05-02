@@ -681,7 +681,7 @@ AddAnimationsForProperty(nsIFrame* aFrame, nsDisplayListBuilder* aBuilder,
   }
 
   MOZ_ASSERT(nsCSSProps::PropHasFlags(aProperty,
-                                      CSS_PROPERTY_CAN_ANIMATE_ON_COMPOSITOR),
+                                      CSSPropFlags::CanAnimateOnCompositor),
              "inconsistent property flags");
 
   // Add from first to last (since last overrides)
@@ -814,7 +814,7 @@ nsDisplayListBuilder::AddAnimationsAndTransitionsToLayer(Layer* aLayer,
                                                          nsCSSPropertyID aProperty)
 {
   MOZ_ASSERT(nsCSSProps::PropHasFlags(aProperty,
-                                      CSS_PROPERTY_CAN_ANIMATE_ON_COMPOSITOR),
+                                      CSSPropFlags::CanAnimateOnCompositor),
              "inconsistent property flags");
 
   // This function can be called in two ways:  from
@@ -2401,8 +2401,9 @@ nsDisplayList::ComputeVisibilityForSublist(nsDisplayListBuilder* aBuilder,
 #ifdef DEBUG
   nsRegion r;
   r.And(*aVisibleRegion, GetBounds(aBuilder));
-  NS_ASSERTION(r.GetBounds().IsEqualInterior(aListVisibleBounds),
-               "bad aListVisibleBounds");
+  // XXX this fails sometimes:
+  NS_WARNING_ASSERTION(r.GetBounds().IsEqualInterior(aListVisibleBounds),
+                       "bad aListVisibleBounds");
 #endif
 
   bool anyVisible = false;
@@ -6081,10 +6082,12 @@ nsDisplayWrapList::nsDisplayWrapList(nsDisplayListBuilder* aBuilder,
 nsDisplayWrapList::nsDisplayWrapList(nsDisplayListBuilder* aBuilder,
                                      nsIFrame* aFrame, nsDisplayList* aList,
                                      const ActiveScrolledRoot* aActiveScrolledRoot,
-                                     bool aClearClipChain)
+                                     bool aClearClipChain,
+                                     uint32_t aIndex)
   : nsDisplayItem(aBuilder, aFrame, aActiveScrolledRoot)
   , mFrameActiveScrolledRoot(aBuilder->CurrentActiveScrolledRoot())
   , mOverrideZIndex(0)
+  , mIndex(aIndex)
   , mHasZIndexOverride(false)
   , mClearingClipChain(aClearClipChain)
 {
@@ -6127,6 +6130,7 @@ nsDisplayWrapList::nsDisplayWrapList(nsDisplayListBuilder* aBuilder,
                                      nsIFrame* aFrame, nsDisplayItem* aItem)
   : nsDisplayItem(aBuilder, aFrame)
   , mOverrideZIndex(0)
+  , mIndex(0)
   , mHasZIndexOverride(false)
 {
   MOZ_COUNT_CTOR(nsDisplayWrapList);
@@ -6593,8 +6597,8 @@ nsDisplayOpacity::ShouldFlattenAway(nsDisplayListBuilder* aBuilder)
   // ShouldFlattenAway() should be called only once during painting.
   MOZ_ASSERT(!mOpacityAppliedToChildren);
 
-  if (mFrame->GetPrevContinuation() ||
-      mFrame->GetNextContinuation()) {
+  if (mFrame->GetPrevContinuation() || mFrame->GetNextContinuation() ||
+      mFrame->HasAnyStateBits(NS_FRAME_PART_OF_IBSPLIT)) {
     // If we've been split, then we might need to merge, so
     // don't flatten us away.
     return false;
@@ -6922,14 +6926,13 @@ nsDisplayTableBlendContainer::CreateForBackgroundBlendMode(nsDisplayListBuilder*
 nsDisplayOwnLayer::nsDisplayOwnLayer(nsDisplayListBuilder* aBuilder,
                                      nsIFrame* aFrame, nsDisplayList* aList,
                                      const ActiveScrolledRoot* aActiveScrolledRoot,
-                                     nsDisplayOwnLayerFlags aFlags, ViewID aScrollTarget,
-                                     const ScrollbarData& aThumbData,
+                                     nsDisplayOwnLayerFlags aFlags,
+                                     const ScrollbarData& aScrollbarData,
                                      bool aForceActive,
                                      bool aClearClipChain)
     : nsDisplayWrapList(aBuilder, aFrame, aList, aActiveScrolledRoot, aClearClipChain)
     , mFlags(aFlags)
-    , mScrollTarget(aScrollTarget)
-    , mThumbData(aThumbData)
+    , mScrollbarData(aScrollbarData)
     , mForceActive(aForceActive)
     , mWrAnimationId(0)
 {
@@ -6965,7 +6968,7 @@ nsDisplayOwnLayer::GetLayerState(nsDisplayListBuilder* aBuilder,
 bool
 nsDisplayOwnLayer::IsScrollThumbLayer() const
 {
-  return mThumbData.mScrollbarLayerType == layers::ScrollbarLayerType::Thumb;
+  return mScrollbarData.mScrollbarLayerType == layers::ScrollbarLayerType::Thumb;
 }
 
 bool
@@ -6986,15 +6989,16 @@ nsDisplayOwnLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
     BuildContainerLayerFor(aBuilder, aManager, mFrame, this, &mList,
                            aContainerParameters, nullptr,
                            FrameLayerBuilder::CONTAINER_ALLOW_PULL_BACKGROUND_COLOR);
+
   if (IsScrollThumbLayer()) {
-    mThumbData.mTargetViewId = mScrollTarget;
-    layer->SetScrollbarData(mThumbData);
-  }
-  if (mFlags & nsDisplayOwnLayerFlags::eScrollbarContainer) {
-    ScrollDirection dir = (mFlags & nsDisplayOwnLayerFlags::eVerticalScrollbar)
-                        ? ScrollDirection::eVertical
-                        : ScrollDirection::eHorizontal;
-    layer->SetScrollbarContainer(mScrollTarget, dir);
+    layer->SetScrollbarData(mScrollbarData);
+  } else if (mFlags & nsDisplayOwnLayerFlags::eScrollbarContainer) {
+    mScrollbarData.mScrollbarLayerType = ScrollbarLayerType::Container;
+    mScrollbarData.mDirection = (mFlags & nsDisplayOwnLayerFlags::eVerticalScrollbar)
+                                ? Some(ScrollDirection::eVertical)
+                                : Some(ScrollDirection::eHorizontal);
+
+    layer->SetScrollbarData(mScrollbarData);
   }
 
   if (mFlags & nsDisplayOwnLayerFlags::eGenerateSubdocInvalidations) {
@@ -7044,19 +7048,17 @@ nsDisplayOwnLayer::UpdateScrollData(mozilla::layers::WebRenderScrollData* aData,
   if (IsScrollThumbLayer()) {
     ret = true;
     if (aLayerData) {
-      aLayerData->SetScrollbarData(mThumbData);
+      aLayerData->SetScrollbarData(mScrollbarData);
       aLayerData->SetScrollbarAnimationId(mWrAnimationId);
-      aLayerData->SetScrollbarTargetContainerId(mScrollTarget);
     }
-  }
-  if (mFlags & nsDisplayOwnLayerFlags::eScrollbarContainer) {
+  } else if (mFlags & nsDisplayOwnLayerFlags::eScrollbarContainer) {
     ret = true;
     if (aLayerData) {
-      ScrollDirection dir = (mFlags & nsDisplayOwnLayerFlags::eVerticalScrollbar)
-                          ? ScrollDirection::eVertical
-                          : ScrollDirection::eHorizontal;
-      aLayerData->SetScrollbarContainerDirection(dir);
-      aLayerData->SetScrollbarTargetContainerId(mScrollTarget);
+      mScrollbarData.mScrollbarLayerType = ScrollbarLayerType::Container;
+      mScrollbarData.mDirection = (mFlags & nsDisplayOwnLayerFlags::eVerticalScrollbar)
+                                  ? Some(ScrollDirection::eVertical)
+                                  : Some(ScrollDirection::eHorizontal);
+      aLayerData->SetScrollbarData(mScrollbarData);
     }
   }
   return ret;
@@ -7065,7 +7067,7 @@ nsDisplayOwnLayer::UpdateScrollData(mozilla::layers::WebRenderScrollData* aData,
 void
 nsDisplayOwnLayer::WriteDebugInfo(std::stringstream& aStream)
 {
-  aStream << nsPrintfCString(" (flags 0x%x) (scrolltarget %" PRIu64 ")", (int)mFlags, mScrollTarget).get();
+  aStream << nsPrintfCString(" (flags 0x%x) (scrolltarget %" PRIu64 ")", (int)mFlags, mScrollbarData.mTargetViewId).get();
 }
 
 nsDisplaySubDocument::nsDisplaySubDocument(nsDisplayListBuilder* aBuilder,
@@ -8364,9 +8366,14 @@ nsDisplayTransform::ShouldPrerenderTransformedContent(nsDisplayListBuilder* aBui
   nsSize absoluteLimit(aFrame->PresContext()->DevPixelsToAppUnits(absoluteLimitX),
                        aFrame->PresContext()->DevPixelsToAppUnits(absoluteLimitY));
   nsSize maxSize = Min(relativeLimit, absoluteLimit);
-  gfxSize scale = nsLayoutUtils::GetTransformToAncestorScale(aFrame);
-  nsSize frameSize(overflow.Size().width * scale.width,
-                   overflow.Size().height * scale.height);
+
+  const auto transform = nsLayoutUtils::GetTransformToAncestor(aFrame,
+    nsLayoutUtils::GetDisplayRootFrame(aFrame));
+  const gfxRect transformedBounds = transform.TransformAndClipBounds(
+    gfxRect(overflow.x, overflow.y, overflow.width, overflow.height),
+    gfxRect::MaxIntRect());
+  const nsSize frameSize = nsSize(transformedBounds.width, transformedBounds.height);
+
   uint64_t maxLimitArea = uint64_t(maxSize.width) * maxSize.height;
   uint64_t frameArea = uint64_t(frameSize.width) * frameSize.height;
   if (frameArea <= maxLimitArea && frameSize <= absoluteLimit) {

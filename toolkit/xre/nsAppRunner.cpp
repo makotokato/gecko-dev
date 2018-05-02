@@ -1716,8 +1716,8 @@ DumpHelp()
          "  --new-instance     Open new instance, not a new window in running instance.\n"
          "  --UILocale <locale> Start with <locale> resources as UI Locale.\n"
          "  --safe-mode        Disables extensions and themes for this session.\n"
-         "  -MOZ_LOG <modules> Treated as MOZ_LOG=<modules> environment variable, overrides it.\n"
-         "  -MOZ_LOG_FILE <file> Treated as MOZ_LOG_FILE=<file> environment variable, overrides it.\n"
+         "  -MOZ_LOG=<modules> Treated as MOZ_LOG=<modules> environment variable, overrides it.\n"
+         "  -MOZ_LOG_FILE=<file> Treated as MOZ_LOG_FILE=<file> environment variable, overrides it.\n"
          "                     If MOZ_LOG_FILE is not specified as an argument or as an environment variable,\n"
          "                     logging will be written to stdout.\n"
          , (const char*)gAppData->name);
@@ -3162,18 +3162,11 @@ public:
 #ifdef XP_WIN
 namespace {
 
-bool PolicyHasRegValue(HKEY aKey, LPCTSTR aName, DWORD* aValue)
+bool PolicyHasRegValue(HKEY aKey, LPCWSTR aName, DWORD* aValue)
 {
-  HKEY hkey = NULL;
-  LONG ret = RegOpenKeyExW(aKey,
-    L"SOFTWARE\\Policies\\Mozilla\\Firefox", 0, KEY_READ, &hkey);
-  if (ret != ERROR_SUCCESS) {
-     return false;
-  }
-  nsAutoRegKey key(hkey);
-  DWORD len = sizeof(aValue);
-  ret = RegQueryValueExW(hkey, aName, 0, NULL, (LPBYTE)aValue, &len);
-  RegCloseKey(key);
+  DWORD len = sizeof(DWORD);
+  LONG ret = ::RegGetValueW(aKey, L"SOFTWARE\\Policies\\Mozilla\\Firefox", aName,
+                            RRF_RT_DWORD, nullptr, aValue, &len);
   return ret == ERROR_SUCCESS;
 }
 

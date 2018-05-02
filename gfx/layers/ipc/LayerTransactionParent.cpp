@@ -45,21 +45,19 @@ namespace layers {
 
 //--------------------------------------------------
 // LayerTransactionParent
-LayerTransactionParent::LayerTransactionParent(
-  HostLayerManager* aManager,
-  CompositorBridgeParentBase* aBridge,
-  CompositorAnimationStorage* aAnimStorage,
-  LayersId aId)
+LayerTransactionParent::LayerTransactionParent(HostLayerManager* aManager,
+                                               CompositorBridgeParentBase* aBridge,
+                                               CompositorAnimationStorage* aAnimStorage,
+                                               LayersId aId)
   : mLayerManager(aManager)
   , mCompositorBridge(aBridge)
   , mAnimStorage(aAnimStorage)
   , mId(aId)
   , mChildEpoch(0)
   , mParentEpoch(0)
-  , mPendingTransaction(0)
+  , mPendingTransaction{0}
   , mDestroyed(false)
   , mIPCOpen(false)
-  , mUpdateHitTestingTree{ false }
 {
   MOZ_ASSERT(mId.IsValid());
 }
@@ -151,7 +149,7 @@ private:
 };
 
 mozilla::ipc::IPCResult
-LayerTransactionParent::RecvPaintTime(const uint64_t& aTransactionId,
+LayerTransactionParent::RecvPaintTime(const TransactionId& aTransactionId,
                                       const TimeDuration& aPaintTime)
 {
   mCompositorBridge->UpdatePaintTime(this, aPaintTime);
@@ -893,11 +891,11 @@ bool LayerTransactionParent::IsSameProcess() const
   return OtherPid() == base::GetCurrentProcId();
 }
 
-uint64_t
+TransactionId
 LayerTransactionParent::FlushTransactionId(TimeStamp& aCompositeEnd)
 {
 #if defined(ENABLE_FRAME_LATENCY_LOG)
-  if (mPendingTransaction) {
+  if (mPendingTransaction.IsValid()) {
     if (mTxnStartTime) {
       uint32_t latencyMs = round((aCompositeEnd - mTxnStartTime).ToMilliseconds());
       printf_stderr("From transaction start to end of generate frame latencyMs %d this %p\n", latencyMs, this);
@@ -910,8 +908,8 @@ LayerTransactionParent::FlushTransactionId(TimeStamp& aCompositeEnd)
   mTxnStartTime = TimeStamp();
   mFwdTime = TimeStamp();
 #endif
-  uint64_t id = mPendingTransaction;
-  mPendingTransaction = 0;
+  TransactionId id = mPendingTransaction;
+  mPendingTransaction = TransactionId{0};
   return id;
 }
 
@@ -981,6 +979,7 @@ LayerTransactionParent::RecvReleaseLayer(const LayerHandle& aHandle)
   if (mAnimStorage &&
       layer->GetCompositorAnimationsId()) {
     mAnimStorage->ClearById(layer->GetCompositorAnimationsId());
+    layer->ClearCompositorAnimations();
   }
   layer->Disconnect();
   return IPC_OK();

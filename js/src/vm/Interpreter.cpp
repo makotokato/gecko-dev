@@ -3068,8 +3068,10 @@ CASE(JSOP_FUNCALL)
     JSFunction* maybeFun;
     bool isFunction = IsFunctionObject(args.calleev(), &maybeFun);
 
-    /* Don't bother trying to fast-path calls to scripted non-constructors. */
-    if (!isFunction || !maybeFun->isInterpreted() || !maybeFun->isConstructor() ||
+    // Use the slow path if the callee is not an interpreted function or if we
+    // have to throw an exception.
+    if (!isFunction || !maybeFun->isInterpreted() ||
+        (construct && !maybeFun->isConstructor()) ||
         (!construct && maybeFun->isClassConstructor()))
     {
         if (construct) {
@@ -5066,7 +5068,7 @@ js::ReportRuntimeLexicalError(JSContext* cx, unsigned errorNumber, HandleId id)
     MOZ_ASSERT(errorNumber == JSMSG_UNINITIALIZED_LEXICAL ||
                errorNumber == JSMSG_BAD_CONST_ASSIGN);
     JSAutoByteString printable;
-    if (ValueToPrintable(cx, IdToValue(id), &printable))
+    if (ValueToPrintableLatin1(cx, IdToValue(id), &printable))
         JS_ReportErrorNumberLatin1(cx, GetErrorMessage, nullptr, errorNumber, printable.ptr());
 }
 

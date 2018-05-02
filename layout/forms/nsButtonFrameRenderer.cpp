@@ -30,7 +30,6 @@ using namespace mozilla::image;
 using namespace mozilla::layers;
 
 nsButtonFrameRenderer::nsButtonFrameRenderer()
-  : mFrame{ nullptr }
 {
   MOZ_COUNT_CTOR(nsButtonFrameRenderer);
 }
@@ -462,11 +461,23 @@ nsButtonFrameRenderer::GetButtonInnerFocusRect(const nsRect& aRect, nsRect& aRes
   aResult = aRect;
   aResult.Deflate(mFrame->GetUsedBorderAndPadding());
 
-  nsMargin innerFocusPadding(0,0,0,0);
   if (mInnerFocusStyle) {
+    nsMargin innerFocusPadding(0,0,0,0);
     mInnerFocusStyle->StylePadding()->GetPadding(innerFocusPadding);
+
+    nsMargin framePadding = mFrame->GetUsedPadding();
+
+    innerFocusPadding.top = std::min(innerFocusPadding.top,
+                                     framePadding.top);
+    innerFocusPadding.right = std::min(innerFocusPadding.right,
+                                       framePadding.right);
+    innerFocusPadding.bottom = std::min(innerFocusPadding.bottom,
+                                        framePadding.bottom);
+    innerFocusPadding.left = std::min(innerFocusPadding.left,
+                                      framePadding.left);
+
+    aResult.Inflate(innerFocusPadding);
   }
-  aResult.Inflate(innerFocusPadding);
 }
 
 ImgDrawResult
@@ -561,7 +572,7 @@ nsButtonFrameRenderer::ReResolveStyles(nsPresContext* aPresContext)
   ComputedStyle* context = mFrame->Style();
   ServoStyleSet* styleSet = aPresContext->StyleSet();
 
-  // get styles assigned to -moz-inner-focus (ie dotted border on Windows)
+  // get styles assigned to -moz-focus-inner (ie dotted border on Windows)
   mInnerFocusStyle =
     styleSet->ProbePseudoElementStyle(mFrame->GetContent()->AsElement(),
                                       CSSPseudoElementType::mozFocusInner,

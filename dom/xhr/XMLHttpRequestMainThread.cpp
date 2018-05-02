@@ -194,44 +194,33 @@ bool
 XMLHttpRequestMainThread::sDontWarnAboutSyncXHR = false;
 
 XMLHttpRequestMainThread::XMLHttpRequestMainThread()
-  : mResponseBodyDecodedPos(0)
-  , mResponseCharset(nullptr)
-  , mResponseType(XMLHttpRequestResponseType::_empty)
-  , mRequestObserver(nullptr)
-  , mState(XMLHttpRequestBinding::UNSENT)
-  , mFlagSynchronous(false)
-  , mFlagAborted(false)
-  , mFlagParseBody(false)
-  , mFlagSyncLooping(false)
-  , mFlagBackgroundRequest(false)
-  , mFlagHadUploadListenersOnSend(false)
-  , mFlagACwithCredentials(false)
-  , mFlagTimedOut(false)
-  , mFlagDeleted(false)
-  , mFlagSend(false)
-  , mUploadTransferred(0)
-  , mUploadTotal(0)
-  , mUploadComplete(true)
-  , mProgressSinceLastProgressEvent(false)
-  , mRequestSentTime(0)
-  , mTimeoutMilliseconds(0)
-  , mErrorLoad(ErrorType::eOK)
-  , mErrorParsingXML(false)
-  , mWaitingForOnStopRequest(false)
-  , mProgressTimerIsActive(false)
-  , mIsHtml(false)
-  , mWarnAboutSyncHtml(false)
-  , mLoadTotal(-1)
-  , mLoadTransferred{}
-  , mIsSystem(false)
-  , mIsAnon(false)
-  , mFirstStartRequestSeen(false)
-  , mInLoadProgressEvent(false)
-  , mResultJSON(JS::UndefinedValue())
-  , mResultArrayBuffer(nullptr)
-  , mIsMappedArrayBuffer(false)
-  , mXPCOMifier(nullptr)
-  , mEventDispatchingSuspended(false)
+  : mResponseBodyDecodedPos(0),
+    mResponseCharset(nullptr),
+    mResponseType(XMLHttpRequestResponseType::_empty),
+    mRequestObserver(nullptr),
+    mState(XMLHttpRequestBinding::UNSENT),
+    mFlagSynchronous(false), mFlagAborted(false), mFlagParseBody(false),
+    mFlagSyncLooping(false), mFlagBackgroundRequest(false),
+    mFlagHadUploadListenersOnSend(false), mFlagACwithCredentials(false),
+    mFlagTimedOut(false), mFlagDeleted(false), mFlagSend(false),
+    mUploadTransferred(0), mUploadTotal(0), mUploadComplete(true),
+    mProgressSinceLastProgressEvent(false),
+    mRequestSentTime(0), mTimeoutMilliseconds(0),
+    mErrorLoad(ErrorType::eOK), mErrorParsingXML(false),
+    mWaitingForOnStopRequest(false),
+    mProgressTimerIsActive(false),
+    mIsHtml(false),
+    mWarnAboutSyncHtml(false),
+    mLoadTotal(-1),
+    mIsSystem(false),
+    mIsAnon(false),
+    mFirstStartRequestSeen(false),
+    mInLoadProgressEvent(false),
+    mResultJSON(JS::UndefinedValue()),
+    mResultArrayBuffer(nullptr),
+    mIsMappedArrayBuffer(false),
+    mXPCOMifier(nullptr),
+    mEventDispatchingSuspended(false)
 {
   mozilla::HoldJSObjects(this);
 }
@@ -256,20 +245,6 @@ XMLHttpRequestMainThread::~XMLHttpRequestMainThread()
   mResultJSON.setUndefined();
   mResultArrayBuffer = nullptr;
   mozilla::DropJSObjects(this);
-}
-
-/**
- * This Init method should only be called by C++ consumers.
- */
-nsresult
-XMLHttpRequestMainThread::Init(nsIPrincipal* aPrincipal,
-                               nsIGlobalObject* aGlobalObject,
-                               nsIURI* aBaseURI,
-                               nsILoadGroup* aLoadGroup)
-{
-  NS_ENSURE_ARG_POINTER(aPrincipal);
-  Construct(aPrincipal, aGlobalObject, aBaseURI, aLoadGroup);
-  return NS_OK;
 }
 
 void

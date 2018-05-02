@@ -44,13 +44,6 @@ AutoDetectInvalidation::AutoDetectInvalidation(JSContext* cx, MutableHandleValue
     disabled_(false)
 { }
 
-void
-VMFunction::addToFunctions()
-{
-    this->next = functions;
-    functions = this;
-}
-
 bool
 InvokeFunction(JSContext* cx, HandleObject obj, bool constructing, bool ignoresReturnValue,
                uint32_t argc, Value* argv, MutableHandleValue rval)
@@ -1331,7 +1324,7 @@ AssertValidObjectPtr(JSContext* cx, JSObject* obj)
     // bogus object (pointer).
     MOZ_ASSERT(obj->compartment() == cx->compartment());
     MOZ_ASSERT(obj->zoneFromAnyThread() == cx->zone());
-    MOZ_ASSERT(obj->runtimeFromActiveCooperatingThread() == cx->runtime());
+    MOZ_ASSERT(obj->runtimeFromMainThread() == cx->runtime());
 
     MOZ_ASSERT_IF(!obj->hasLazyGroup() && obj->maybeShape(),
                   obj->group()->clasp() == obj->maybeShape()->getObjectClass());
@@ -1577,6 +1570,8 @@ EqualStringsHelper(JSString* str1, JSString* str2)
     MOZ_ASSERT(!str2->isAtom());
     MOZ_ASSERT(str1->length() == str2->length());
 
+    // ensureLinear is intentionally called with a nullptr to avoid OOM
+    // reporting; if it fails, we will continue to the next stub.
     JSLinearString* str2Linear = str2->ensureLinear(nullptr);
     if (!str2Linear)
         return false;

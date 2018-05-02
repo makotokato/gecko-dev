@@ -55,8 +55,6 @@
 #include "nsDateTimeControlFrame.h"
 
 #include "mozilla/PresState.h"
-#include "nsIDOMEvent.h"
-#include "nsIDOMNodeList.h"
 #include "nsLinebreakConverter.h" //to strip out carriage returns
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
@@ -87,7 +85,6 @@
 #include "nsIContentPrefService2.h"
 #include "nsIMIMEService.h"
 #include "nsIObserverService.h"
-#include "nsIPopupWindowManager.h"
 #include "nsGlobalWindow.h"
 
 // input type=image
@@ -104,6 +101,7 @@
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/MathAlgorithms.h"
+#include "mozilla/TextUtils.h"
 
 #include "nsIIDNService.h"
 
@@ -694,14 +692,7 @@ HTMLInputElement::IsPopupBlocked() const
     return false;
   }
 
-  nsCOMPtr<nsIPopupWindowManager> pm = do_GetService(NS_POPUPWINDOWMANAGER_CONTRACTID);
-  if (!pm) {
-    return true;
-  }
-
-  uint32_t permission;
-  pm->TestPermission(OwnerDoc()->NodePrincipal(), &permission);
-  return permission == nsIPopupWindowManager::DENY_POPUP;
+  return !nsContentUtils::CanShowPopup(OwnerDoc()->NodePrincipal());
 }
 
 nsresult
@@ -2468,26 +2459,6 @@ HTMLInputElement::CreateEditor()
   return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP_(Element*)
-HTMLInputElement::GetRootEditorNode()
-{
-  nsTextEditorState* state = GetEditorState();
-  if (state) {
-    return state->GetRootNode();
-  }
-  return nullptr;
-}
-
-NS_IMETHODIMP_(Element*)
-HTMLInputElement::GetPlaceholderNode()
-{
-  nsTextEditorState* state = GetEditorState();
-  if (state) {
-    return state->GetPlaceholderNode();
-  }
-  return nullptr;
-}
-
 NS_IMETHODIMP_(void)
 HTMLInputElement::UpdateOverlayTextVisibility(bool aNotify)
 {
@@ -2506,16 +2477,6 @@ HTMLInputElement::GetPlaceholderVisibility()
   }
 
   return state->GetPlaceholderVisibility();
-}
-
-NS_IMETHODIMP_(Element*)
-HTMLInputElement::GetPreviewNode()
-{
-  nsTextEditorState* state = GetEditorState();
-  if (state) {
-    return state->GetPreviewNode();
-  }
-  return nullptr;
 }
 
 NS_IMETHODIMP_(void)
@@ -3249,7 +3210,7 @@ HTMLInputElement::Focus(ErrorResult& aError)
       nsCOMPtr<nsIFormControl> formCtrl =
         do_QueryInterface(childFrame->GetContent());
       if (formCtrl && formCtrl->ControlType() == NS_FORM_BUTTON_BUTTON) {
-        nsCOMPtr<nsIDOMElement> element = do_QueryInterface(formCtrl);
+        nsCOMPtr<Element> element = do_QueryInterface(formCtrl);
         nsIFocusManager* fm = nsFocusManager::GetFocusManager();
         if (fm && element) {
           fm->SetFocus(element, 0);
@@ -3322,7 +3283,7 @@ HTMLInputElement::Select()
     }
   }
 
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
 
   RefPtr<nsPresContext> presContext = GetPresContext(eForComposedDoc);
   if (state == eInactiveWindow) {
@@ -3336,9 +3297,7 @@ HTMLInputElement::Select()
     fm->SetFocus(this, nsIFocusManager::FLAG_NOSCROLL);
 
     // ensure that the element is actually focused
-    nsCOMPtr<nsIDOMElement> focusedElement;
-    fm->GetFocusedElement(getter_AddRefs(focusedElement));
-    if (SameCOMIdentity(static_cast<nsIDOMNode*>(this), focusedElement)) {
+    if (this == fm->GetFocusedElement()) {
       // Now Select all the text!
       SelectAll(presContext);
     }
@@ -5048,7 +5007,7 @@ bool HTMLInputElement::IsValidSimpleColor(const nsAString& aValue) const
   }
 
   for (int i = 1; i < 7; ++i) {
-    if (!nsCRT::IsAsciiDigit(aValue[i]) &&
+    if (!IsAsciiDigit(aValue[i]) &&
         !(aValue[i] >= 'a' && aValue[i] <= 'f') &&
         !(aValue[i] >= 'A' && aValue[i] <= 'F')) {
       return false;
@@ -5356,7 +5315,7 @@ HTMLInputElement::DigitSubStringToNumber(const nsAString& aStr,
   MOZ_ASSERT(aStr.Length() > (aStart + aLen - 1));
 
   for (uint32_t offset = 0; offset < aLen; ++offset) {
-    if (!NS_IsAsciiDigit(aStr[aStart + offset])) {
+    if (!IsAsciiDigit(aStr[aStart + offset])) {
       return false;
     }
   }

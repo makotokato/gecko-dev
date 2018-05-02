@@ -4,6 +4,15 @@ import {chaiAssertions} from "test/schemas/pings";
 import enzyme from "enzyme";
 enzyme.configure({adapter: new Adapter()});
 
+class DownloadElementShell {
+  downloadsCmd_open() {}
+  downloadsCmd_show() {}
+  downloadsCmd_openReferrer() {}
+  downloadsCmd_delete() {}
+  get sizeStrings() { return {stateLabel: "1.5 MB"}; }
+  displayName() {}
+}
+
 // Cause React warnings to make tests that trigger them fail
 const origConsoleError = console.error; // eslint-disable-line no-console
 console.error = function(msg, ...args) { // eslint-disable-line no-console
@@ -57,6 +66,7 @@ const TEST_GLOBAL = {
         return this;
       },
       insert() {},
+      markPageAsTyped() {},
       removeObserver() {}
     }
   },
@@ -84,6 +94,7 @@ const TEST_GLOBAL = {
   },
   PluralForm: {get() {}},
   Preferences: FakePrefs,
+  DownloadsViewUI: {DownloadElementShell},
   Services: {
     locale: {
       getAppLocaleAsLangTag() { return "en-US"; },

@@ -76,18 +76,59 @@ should-restart-ok = Restart { -brand-short-name } now
 cancel-no-restart-button = Cancel
 restart-later = Restart Later
 
+## Extension Control Notifications
+##
+## These strings are used to inform the user
+## about changes made by extensions to browser settings.
+##
+## <img data-l10n-name="icon"/> is going to be replaced by the extension icon.
+##
+## Variables:
+##   $name (String): name of the extension
+
+# This string is shown to notify the user that their home page
+# is being controlled by an extension.
+extension-controlled-homepage-override = An extension, <img data-l10n-name="icon"/> { $name }, is controlling your home page.
+
+# This string is shown to notify the user that their new tab page
+# is being controlled by an extension.
+extension-controlled-new-tab-url = An extension, <img data-l10n-name="icon"/> { $name }, is controlling your New Tab page.
+
+# This string is shown to notify the user that the default search engine
+# is being controlled by an extension.
+extension-controlled-default-search = An extension, <img data-l10n-name="icon"/> { $name }, has set your default search engine.
+
+# This string is shown to notify the user that Container Tabs
+# are being enabled by an extension.
+extension-controlled-privacy-containers = An extension, <img data-l10n-name="icon"/> { $name }, requires Container Tabs.
+
+# This string is shown to notify the user that their tracking protection preferences
+# are being controlled by an extension.
+extension-controlled-websites-tracking-protection-mode = An extension, <img data-l10n-name="icon"/> { $name }, is controlling tracking protection.
+
+# This string is shown to notify the user that their proxy configuration preferences
+# are being controlled by an extension.
+extension-controlled-proxy-config = An extension, <img data-l10n-name="icon"/> { $name }, is controlling how { -brand-short-name } connects to the internet.
+
+# This string is shown after the user disables an extension to notify the user
+# how to enable an extension that they disabled.
+#
+# <img data-l10n-name="addons-icon"/> will be replaced with Add-ons icon
+# <img data-l10n-name="menu-icon"/> will be replaced with Menu icon
+extension-controlled-enable = To enable the extension go to <img data-l10n-name="addons-icon"/> Add-ons in the <img data-l10n-name="menu-icon"/> menu.
+
 ## Preferences UI Search Results
 
 search-results-header = Search Results
 
-# `<span></span>` will be replaced by the search term.
-search-results-sorry-message =
+# `<span data-l10n-name="query"></span>` will be replaced by the search term.
+search-results-empty-message =
     { PLATFORM() ->
-        [windows] Sorry! There are no results in Options for “<span></span>”.
-       *[other] Sorry! There are no results in Preferences for “<span></span>”.
+        [windows] Sorry! There are no results in Options for “<span data-l10n-name="query"></span>”.
+       *[other] Sorry! There are no results in Preferences for “<span data-l10n-name="query"></span>”.
     }
 
-search-results-need-help = Need help? Visit <a>{ -brand-short-name } Support</a>
+search-results-help-link = Need help? Visit <a data-l10n-name="url">{ -brand-short-name } Support</a>
 
 ## General Section
 
@@ -112,15 +153,9 @@ set-as-my-default-browser =
     .label = Make Default…
     .accesskey = D
 
-startup-page = When { -brand-short-name } starts
+startup-restore-previous-session =
+    .label = Restore previous session
     .accesskey = s
-
-startup-user-homepage =
-    .label = Show your home page
-startup-blank-page =
-    .label = Show a blank page
-startup-prev-session =
-    .label = Show your windows and tabs from last time
 
 disable-extension =
     .label = Disable Extension
@@ -175,6 +210,20 @@ containers-disable-alert-ok-button =
     }
 containers-disable-alert-cancel-button = Keep enabled
 
+containers-remove-alert-title = Remove This Container?
+
+# Variables:
+#   $count (Number) - Number of tabs that will be closed.
+containers-remove-alert-msg =
+    { $count ->
+        [one] If you remove this Container now, { $count } container tab will be closed. Are you sure you want to remove this Container?
+       *[other] If you remove this Container now, { $count } container tabs will be closed. Are you sure you want to remove this Container?
+    }
+
+containers-remove-ok-button = Remove this Container
+containers-remove-cancel-button = Don’t remove this Container
+
+
 ## General Section - Language & Appearance
 
 language-and-appearance-header = Language and Appearance
@@ -205,6 +254,10 @@ choose-button =
 translate-web-pages =
     .label = Translate web content
     .accesskey = T
+
+# The <img> element is replaced by the logo of the provider
+# used to provide machine translations for web pages.
+translate-attribution = Translations by <img data-l10n-name="logo"/>
 
 translate-exceptions =
     .label = Exceptions…
@@ -267,7 +320,7 @@ update-application-title = { -brand-short-name } Updates
 
 update-application-description = Keep { -brand-short-name } up to date for the best performance, stability, and security.
 
-update-application-info = Version { $version } <a>What's new</a>
+update-application-version = Version { $version } <a data-l10n-name="learn-more">What’s new</a>
 
 update-history =
     .label = Show Update History…
@@ -315,7 +368,7 @@ performance-limit-content-process-option = Content process limit
     .accesskey = l
 
 performance-limit-content-process-enabled-desc = Additional content processes can improve performance when using multiple tabs, but will also use more memory.
-performance-limit-content-process-disabled-desc = Modifying the number of content processes is only possible with multiprocess { -brand-short-name }. <a>Learn how to check if multiprocess is enabled</a>
+performance-limit-content-process-blocked-desc = Modifying the number of content processes is only possible with multiprocess { -brand-short-name }. <a data-l10n-name="learn-more">Learn how to check if multiprocess is enabled</a>
 
 # Variables:
 #   $num - default value of the `dom.ipc.processCount` pref.
@@ -349,6 +402,8 @@ browsing-search-on-start-typing =
 ## General Section - Proxy
 
 network-proxy-title = Network Proxy
+
+network-proxy-connection-description = Configure how { -brand-short-name } connects to the internet.
 
 network-proxy-connection-learn-more = Learn More
 
@@ -484,6 +539,16 @@ sync-signedout-account-signin =
     .label = Sign In…
     .accesskey = I
 
+# This message contains two links and two icon images.
+#   `<img data-l10n-name="android-icon"/>` - Android logo icon
+#   `<a data-l10n-name="android-link">` - Link to Android Download
+#   `<img data-l10n-name="ios-icon">` - iOS logo icon
+#   `<a data-l10n-name="ios-link">` - Link to iOS Download
+#
+# They can be moved within the sentence as needed to adapt
+# to your language, but should not be changed or translated.
+sync-mobile-promo = Download Firefox for <img data-l10n-name="android-icon"/> <a data-l10n-name="android-link">Android</a> or <img data-l10n-name="ios-icon"/> <a data-l10n-name="ios-link">iOS</a> to sync with your mobile device.
+
 ## Sync Section - Signed in
 
 sync-profile-picture =
@@ -585,9 +650,9 @@ privacy-header = Browser Privacy
 ## Privacy Section - Forms
 
 forms-header = Forms & Passwords
-forms-remember-logins =
-    .label = Remember logins and passwords for websites
-    .accesskey = R
+forms-ask-to-save-logins =
+    .label = Ask to save logins and passwords for websites
+    .accesskey = r
 forms-exceptions =
     .label = Exceptions…
     .accesskey = x
@@ -604,6 +669,25 @@ forms-master-pw-change =
 ## Privacy Section - History
 
 history-header = History
+
+# This label is followed, on the same line, by a dropdown list of options
+# (Remember history, etc.).
+# In English it visually creates a full sentence, e.g.
+# "Firefox will" + "Remember history".
+#
+# If this doesn't work for your language, you can translate this message:
+#   - Simply as "Firefox", moving the verb into each option.
+#     This will result in "Firefox" + "Will remember history", etc.
+#   - As a stand-alone message, for example "Firefox history settings:".
+history-remember-label = { -brand-short-name } will
+    .accesskey = w
+
+history-remember-option-all =
+    .label = Remember history
+history-remember-option-never =
+    .label = Never remember history
+history-remember-option-custom =
+    .label = Use custom settings for history
 
 history-remember-description = { -brand-short-name } will remember your browsing, download, form and search history.
 history-dontremember-description = { -brand-short-name } will use the same settings as private browsing, and will not remember any history as you browse the Web.
@@ -698,7 +782,7 @@ addressbar-suggestions-settings = Change preferences for search engine suggestio
 
 tracking-header = Tracking Protection
 
-tracking-description = Tracking Protection blocks online trackers that collect your browsing data across multiple websites. <a>Learn more about Tracking Protection and your privacy</a>
+tracking-desc = Tracking Protection blocks online trackers that collect your browsing data across multiple websites. <a data-l10n-name="learn-more">Learn more about Tracking Protection and your privacy</a>
 
 tracking-mode-label = Use Tracking Protection to block known trackers
 

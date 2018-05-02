@@ -13,11 +13,9 @@ ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 XPCOMUtils.defineLazyModuleGetters(this, {
   Services: "resource://gre/modules/Services.jsm",
   NetUtil: "resource://gre/modules/NetUtil.jsm",
-  OS: "resource://gre/modules/osfile.jsm",
   Sqlite: "resource://gre/modules/Sqlite.jsm",
   Bookmarks: "resource://gre/modules/Bookmarks.jsm",
   History: "resource://gre/modules/History.jsm",
-  AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
   PlacesSyncUtils: "resource://gre/modules/PlacesSyncUtils.jsm",
 });
 
@@ -695,7 +693,7 @@ var PlacesUtils = {
   SYNC_BOOKMARK_VALIDATORS,
   SYNC_CHANGE_RECORD_VALIDATORS,
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver]),
 
   _shutdownFunctions: [],
   registerShutdownFunction: function PU_registerShutdownFunction(aFunc) {
@@ -1525,29 +1523,6 @@ var PlacesUtils = {
             reject();
           }
         });
-    });
-  },
-
-  /**
-   * Gets the favicon link url (moz-anno:) for a given page url.
-   *
-   * @param aPageURL url of the page to lookup the favicon for.
-   * @resolves to the nsIURL of the favicon link
-   * @rejects if the given url has no associated favicon.
-   */
-  promiseFaviconLinkUrl(aPageUrl) {
-    return new Promise((resolve, reject) => {
-      if (!(aPageUrl instanceof Ci.nsIURI))
-        aPageUrl = NetUtil.newURI(aPageUrl);
-
-      PlacesUtils.favicons.getFaviconURLForPage(aPageUrl, uri => {
-        if (uri) {
-          uri = PlacesUtils.favicons.getFaviconLinkForIcon(uri);
-          resolve(uri);
-        } else {
-          reject("favicon not found for uri");
-        }
-      });
     });
   },
 
@@ -2709,7 +2684,7 @@ var GuidHelper = {
           this.updateCache(aParentId, aParentGuid);
         },
 
-        QueryInterface: XPCOMUtils.generateQI(Ci.nsINavBookmarkObserver),
+        QueryInterface: ChromeUtils.generateQI([Ci.nsINavBookmarkObserver]),
 
         onBeginUpdateBatch() {},
         onEndUpdateBatch() {},

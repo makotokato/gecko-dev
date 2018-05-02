@@ -44,7 +44,7 @@ function NewProcessSelector() {
 
 NewProcessSelector.prototype = {
   classID: OUR_PROCESSSELECTOR_CID,
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIContentProcessProvider]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIContentProcessProvider]),
 
   provideProcess() {
     return Ci.nsIContentProcessProvider.NEW_PROCESS;
@@ -382,7 +382,7 @@ var BrowserTestUtils = {
         onSecurityChange() {},
         onStatusChange() {},
         onLocationChange() {},
-        QueryInterface: XPCOMUtils.generateQI([
+        QueryInterface: ChromeUtils.generateQI([
           Ci.nsIWebProgressListener,
           Ci.nsIWebProgressListener2,
           Ci.nsISupportsWeakReference,
@@ -698,6 +698,10 @@ var BrowserTestUtils = {
     if (options.hasOwnProperty("remote")) {
       let remoteState = options.remote ? "remote" : "non-remote";
       features += `,${remoteState}`;
+    }
+
+    if (options.url) {
+      argString.data = options.url;
     }
 
     let win = Services.ww.openWindow(

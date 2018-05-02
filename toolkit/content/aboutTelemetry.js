@@ -4,12 +4,12 @@
 
 "use strict";
 
+ChromeUtils.import("resource://gre/modules/BrowserUtils.jsm");
 ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.import("resource://gre/modules/TelemetryTimestamps.jsm");
 ChromeUtils.import("resource://gre/modules/TelemetryController.jsm");
 ChromeUtils.import("resource://gre/modules/TelemetryArchive.jsm");
 ChromeUtils.import("resource://gre/modules/TelemetryUtils.jsm");
-ChromeUtils.import("resource://gre/modules/TelemetryLog.jsm");
 ChromeUtils.import("resource://gre/modules/Preferences.jsm");
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
@@ -220,20 +220,20 @@ var Settings = {
     let uploadEnabled = this.getStatusStringForSetting(this.SETTINGS[0]);
     let extendedEnabled = Services.telemetry.canRecordExtended;
     let collectedData = bundle.GetStringFromName(extendedEnabled ? "prereleaseData" : "releaseData");
+    let explanation = bundle.GetStringFromName("settingsExplanation");
 
-    let parameters = [
-      collectedData,
-      this.convertStringToLink(uploadEnabled),
-    ];
-    let explanation = bundle.formatStringFromName("settingsExplanation", parameters, 2);
+    let fragment = BrowserUtils.getLocalizedFragment(document, explanation, collectedData, this.convertStringToLink(uploadEnabled));
+    settingsExplanation.appendChild(fragment);
 
-    // eslint-disable-next-line no-unsanitized/property
-    settingsExplanation.innerHTML = explanation;
     this.attachObservers();
   },
 
   convertStringToLink(string) {
-    return "<a href=\"#\" class=\"change-data-choices-link\">" + string + "</a>";
+    let link = document.createElement("a");
+    link.setAttribute("href", "#");
+    link.setAttribute("class", "change-data-choices-link");
+    link.textContent = string;
+    return link;
   },
 };
 
@@ -303,14 +303,18 @@ var PingPicker = {
 
   render() {
     let pings = bundle.GetStringFromName("pingExplanationLink");
-    let pingLink = "<a href=\"https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/telemetry/concepts/pings.html\">" + pings + "</a>";
+    let pingLink = document.createElement("a");
+    pingLink.setAttribute("href", "https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/telemetry/concepts/pings.html");
+    pingLink.textContent = pings;
     let pingName = this._getSelectedPingName();
+    let pingNameSpan = document.createElement("span");
+    pingNameSpan.setAttribute("class", "change-ping");
 
     // Display the type and controls if the ping is not current
     let pingDate = document.getElementById("ping-date");
     let pingType = document.getElementById("ping-type");
     let controls = document.getElementById("controls");
-    let explanation;
+    let fragment;
     if (!this.viewCurrentPingData) {
       // Change sidebar heading text.
       pingDate.textContent = pingName;
@@ -321,23 +325,22 @@ var PingPicker = {
 
       // Change home page text.
       pingName = bundle.formatStringFromName("namedPing", [pingName, pingTypeText], 2);
-      let pingNameHtml = "<span class=\"change-ping\">" + pingName + "</span>";
-      let parameters = [pingLink, pingNameHtml, pingTypeText];
-      explanation = bundle.formatStringFromName("pingDetails", parameters, 3);
+      pingNameSpan.textContent = pingName;
+      let explanation = bundle.GetStringFromName("pingDetails");
+      fragment = BrowserUtils.getLocalizedFragment(document, explanation, pingLink, pingNameSpan, pingTypeText);
     } else {
       // Change sidebar heading text.
       controls.classList.add("hidden");
       pingType.textContent = bundle.GetStringFromName("currentPingSidebar");
 
       // Change home page text.
-      let pingNameHtml = "<span class=\"change-ping\">" + pingName + "</span>";
-      explanation = bundle.formatStringFromName("pingDetailsCurrent", [pingLink, pingNameHtml], 2);
+      pingNameSpan.textContent = pingName;
+      let explanation = bundle.GetStringFromName("pingDetailsCurrent");
+      fragment = BrowserUtils.getLocalizedFragment(document, explanation, pingLink, pingNameSpan);
     }
 
     let pingExplanation = document.getElementById("ping-explanation");
-
-    // eslint-disable-next-line no-unsanitized/property
-    pingExplanation.innerHTML = explanation;
+    pingExplanation.appendChild(fragment);
     pingExplanation.querySelector(".change-ping").addEventListener("click", (ev) => {
       document.getElementById("ping-picker").classList.remove("hidden");
       ev.stopPropagation();
@@ -670,7 +673,6 @@ var EnvironmentData = {
     this.renderAddonsObject(addons.activeAddons, addonSection, "activeAddons");
     this.renderActivePlugins(addons.activePlugins, addonSection, "activePlugins");
     this.renderKeyValueObject(addons.theme, addonSection, "theme");
-    this.renderKeyValueObject(addons.activeExperiment, addonSection, "activeExperiment");
     this.renderAddonsObject(addons.activeGMPlugins, addonSection, "activeGMPlugins");
     this.renderPersona(addons, addonSection, "persona");
 
@@ -687,59 +689,6 @@ var EnvironmentData = {
     this.appendColumn(row, "td", value);
     table.appendChild(row);
   },
-  /**
-   * Helper function for appending a column to the data table.
-   *
-   * @param aRowElement Parent row element
-   * @param aColType Column's tag name
-   * @param aColText Column contents
-   */
-  appendColumn(aRowElement, aColType, aColText) {
-    let colElement = document.createElement(aColType);
-    let colTextElement = document.createTextNode(aColText);
-    colElement.appendChild(colTextElement);
-    aRowElement.appendChild(colElement);
-  },
-};
-
-var TelLog = {
-  /**
-   * Renders the telemetry log
-   */
-  render(payload) {
-    let entries = payload.log;
-    const hasData = entries && entries.length > 0;
-    setHasData("telemetry-log-section", hasData);
-    if (!hasData) {
-      return;
-    }
-
-    let table = document.createElement("table");
-
-    let caption = document.createElement("caption");
-    let captionString = bundle.GetStringFromName("telemetryLogTitle");
-    caption.appendChild(document.createTextNode(captionString + "\n"));
-    table.appendChild(caption);
-
-    let headings = document.createElement("tr");
-    this.appendColumn(headings, "th", bundle.GetStringFromName("telemetryLogHeadingId") + "\t");
-    this.appendColumn(headings, "th", bundle.GetStringFromName("telemetryLogHeadingTimestamp") + "\t");
-    this.appendColumn(headings, "th", bundle.GetStringFromName("telemetryLogHeadingData") + "\t");
-    table.appendChild(headings);
-
-    for (let entry of entries) {
-        let row = document.createElement("tr");
-        for (let elem of entry) {
-            this.appendColumn(row, "td", elem + "\t");
-        }
-        table.appendChild(row);
-    }
-
-    let dataDiv = document.getElementById("telemetry-log");
-    removeAllChildNodes(dataDiv);
-    dataDiv.appendChild(table);
-  },
-
   /**
    * Helper function for appending a column to the data table.
    *
@@ -2458,9 +2407,6 @@ function displayRichPingData(ping, updatePayloadList) {
 
   // Show chrome hang stacks
   ChromeHangs.render(payload.chromeHangs);
-
-  // Show telemetry log.
-  TelLog.render(payload);
 
   // Show simple measurements
   SimpleMeasurements.render(payload);

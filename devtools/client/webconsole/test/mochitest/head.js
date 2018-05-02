@@ -34,9 +34,7 @@ const STATUS_CODES_GA_PARAMS = `?${new URLSearchParams({
 
 const wcActions = require("devtools/client/webconsole/actions/index");
 
-Services.prefs.setBoolPref("devtools.browserconsole.new-frontend-enabled", true);
 registerCleanupFunction(async function() {
-  Services.prefs.clearUserPref("devtools.browserconsole.new-frontend-enabled");
   Services.prefs.clearUserPref("devtools.webconsole.ui.filterbar");
 
   // Reset all filter prefs between tests. First flushPrefEnv in case one of the
@@ -449,7 +447,7 @@ async function openInspector(options = {}) {
 /**
  * Open the Web Console for the given tab, or the current one if none given.
  *
- * @param nsIDOMElement tab
+ * @param Element tab
  *        Optional tab element for which you want open the Web Console.
  *        Defaults to current selected tab.
  * @return Promise
@@ -464,7 +462,7 @@ async function openConsole(tab) {
 /**
  * Close the Web Console for the given tab.
  *
- * @param nsIDOMElement [tab]
+ * @param Element [tab]
  *        Optional tab element for which you want close the Web Console.
  *        Defaults to current selected tab.
  * @return object

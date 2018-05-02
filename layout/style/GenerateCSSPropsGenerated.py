@@ -5,25 +5,20 @@
 import sys
 import string
 import argparse
-import subprocess
-import buildconfig
-from mozbuild import shellutil
 
-def get_properties(preprocessorHeader):
-    cpp = list(buildconfig.substs['CPP'])
-    cpp += shellutil.split(buildconfig.substs['ACDEFINES'])
-    cpp.append(preprocessorHeader)
-    preprocessed = subprocess.check_output(cpp)
+def get_properties(dataFile):
+    with open(dataFile, "r") as f:
+        properties = eval(f.read())
     properties = [{"name":p[0], "prop":p[1], "id":p[2],
                    "flags":p[3], "pref":p[4], "proptype":p[5]}
-                  for (i, p) in enumerate(eval(preprocessed))]
+                  for (i, p) in enumerate(properties)]
 
-    # Sort the list so that longhand and logical properties are intermingled
-    # first, shorthand properties follow, then aliases appear last.  This matches
-    # the order of the nsCSSPropertyID enum.
+    # Sort the list so that longhand properties are intermingled first,
+    # shorthand properties follow, then aliases appear last.
+    # This matches the order of the nsCSSPropertyID enum.
 
     def property_compare(x, y):
-        property_order = {"longhand": 0, "logical": 0, "shorthand": 1, "alias": 2}
+        property_order = {"longhand": 0, "shorthand": 1, "alias": 2}
         return property_order[x["proptype"]] - property_order[y["proptype"]]
 
     properties = sorted(properties, cmp=property_compare)
@@ -33,7 +28,7 @@ def get_properties(preprocessorHeader):
 
     # Record each property's IDL name.
     for p in properties:
-        if "CSS_PROPERTY_INTERNAL" in p["flags"]:
+        if "CSSPropFlags::Internal" in p["flags"]:
             p["idlname"] = None
         else:
             idl_name = p["prop"]
@@ -57,7 +52,7 @@ def generate_idl_names(properties):
 def generate_assertions(properties):
     def enum(p):
         if p["proptype"] is "alias":
-            return "eCSSPropertyAlias_%s" % p["prop"]
+            return "eCSSPropertyAlias_%s" % p["id"][0]
         else:
             return "eCSSProperty_%s" % p["id"]
     msg = ('static_assert(%s == %d, "GenerateCSSPropsGenerated.py did not list '
@@ -79,12 +74,12 @@ def generate_idl_name_positions(properties):
 
     return ",\n".join(map(lambda (p, position): "  %d" % position, ps))
 
-def generate(output, cppTemplate, preprocessorHeader):
+def generate(output, cppTemplate, dataFile):
     cppFile = open(cppTemplate, "r")
     cppTemplate = cppFile.read()
     cppFile.close()
 
-    properties = get_properties(preprocessorHeader)
+    properties = get_properties(dataFile)
     substitutions = {
         "idl_names": generate_idl_names(properties),
         "assertions": generate_assertions(properties),

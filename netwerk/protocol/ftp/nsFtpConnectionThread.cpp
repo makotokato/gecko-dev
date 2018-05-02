@@ -71,36 +71,33 @@ NS_IMPL_ISUPPORTS_INHERITED(nsFtpState,
                             nsIProtocolProxyCallback)
 
 nsFtpState::nsFtpState()
-  : nsBaseContentStream(true)
-  , mState(FTP_INIT)
-  , mNextState(FTP_S_USER)
-  , mKeepRunning(true)
-  , mResponseCode{}
-  , mReceivedControlData(false)
-  , mTryingCachedControl(false)
-  , mRETRFailed(false)
-  , mFileSize(kJS_MAX_SAFE_UINTEGER)
-  , mServerType(FTP_GENERIC_TYPE)
-  , mAction(GET)
-  , mAnonymous(true)
-  , mRetryPass(false)
-  , mStorReplyReceived(false)
-  , mInternalError(NS_OK)
-  , mReconnectAndLoginAgain(false)
-  , mCacheConnection(true)
-  , mPort(21)
-  , mAddressChecked(false)
-  , mServerIsIPv6(false)
-  , mUseUTF8(false)
-  , mControlStatus(NS_OK)
-  , mDeferredCallbackPending(false)
+    : nsBaseContentStream(true)
+    , mState(FTP_INIT)
+    , mNextState(FTP_S_USER)
+    , mKeepRunning(true)
+    , mReceivedControlData(false)
+    , mTryingCachedControl(false)
+    , mRETRFailed(false)
+    , mFileSize(kJS_MAX_SAFE_UINTEGER)
+    , mServerType(FTP_GENERIC_TYPE)
+    , mAction(GET)
+    , mAnonymous(true)
+    , mRetryPass(false)
+    , mStorReplyReceived(false)
+    , mInternalError(NS_OK)
+    , mReconnectAndLoginAgain(false)
+    , mCacheConnection(true)
+    , mPort(21)
+    , mAddressChecked(false)
+    , mServerIsIPv6(false)
+    , mUseUTF8(false)
+    , mControlStatus(NS_OK)
+    , mDeferredCallbackPending(false)
 {
-  this->mServerAddress.raw.family = {};
-  this->mServerAddress.inet = {};
-  LOG_INFO(("FTP:(%p) nsFtpState created", this));
+    LOG_INFO(("FTP:(%p) nsFtpState created", this));
 
-  // make sure handler stays around
-  NS_ADDREF(gFtpHandler);
+    // make sure handler stays around
+    NS_ADDREF(gFtpHandler);
 }
 
 nsFtpState::~nsFtpState()
@@ -1802,13 +1799,11 @@ public:
   nsFtpAsyncAlert(nsIPrompt* aPrompter, nsString aResponseMsg)
     : mozilla::Runnable("nsFtpAsyncAlert")
     , mPrompter(aPrompter)
-    , mResponseMsg(aResponseMsg)
+    , mResponseMsg(std::move(aResponseMsg))
   {
     }
 protected:
-    virtual ~nsFtpAsyncAlert()
-    {
-    }
+    virtual ~nsFtpAsyncAlert() = default;
 public:
     NS_IMETHOD Run() override
     {

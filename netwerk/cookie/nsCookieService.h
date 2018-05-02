@@ -81,8 +81,7 @@ class nsCookieEntry : public nsCookieKey
       NS_NOTREACHED("nsCookieEntry copy constructor is forbidden!");
     }
 
-    ~nsCookieEntry()
-    {}
+    ~nsCookieEntry() = default;
 
     inline ArrayType& GetCookies() { return mCookies; }
 
@@ -144,19 +143,13 @@ struct CookieDomainTuple
 // conveniently switch state when entering or exiting private browsing.
 struct DBState final
 {
-  DBState()
-    : cookieCount(0)
-    , cookieOldestTime(INT64_MAX)
-    , corruptFlag(OK)
-    , readListener{ nullptr }
+  DBState() : cookieCount(0), cookieOldestTime(INT64_MAX), corruptFlag(OK)
   {
   }
 
 private:
   // Private destructor, to discourage deletion outside of Release():
-  ~DBState()
-  {
-  }
+  ~DBState() = default;
 
 public:
   NS_INLINE_DECL_REFCOUNTING(DBState)
@@ -246,6 +239,8 @@ class nsCookieService final : public nsICookieService
   private:
     size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
+    static bool sSameSiteEnabled; // cached pref
+
   public:
     NS_DECL_ISUPPORTS
     NS_DECL_NSIOBSERVER
@@ -268,6 +263,7 @@ class nsCookieService final : public nsICookieService
   static nsresult GetBaseDomain(nsIEffectiveTLDService *aTLDService, nsIURI *aHostURI, nsCString &aBaseDomain, bool &aRequireHostMatch);
   static nsresult GetBaseDomainFromHost(nsIEffectiveTLDService *aTLDService, const nsACString &aHost, nsCString &aBaseDomain);
   static bool DomainMatches(nsCookie* aCookie, const nsACString& aHost);
+  static bool IsSameSiteEnabled();
   static bool PathMatches(nsCookie* aCookie, const nsACString& aPath);
   static bool CanSetCookie(nsIURI *aHostURI, const nsCookieKey& aKey, nsCookieAttributes &aCookieAttributes, bool aRequireHostMatch, CookieStatus aStatus, nsDependentCString &aCookieHeader, int64_t aServerTime, bool aFromHttp, nsIChannel* aChannel, bool aLeaveSercureAlone, bool &aSetCookie, mozIThirdPartyUtil* aThirdPartyUtil);
   static CookieStatus CheckPrefs(nsICookiePermission *aPermissionServices, uint8_t aCookieBehavior, bool aThirdPartySession, bool aThirdPartyNonsecureSession, nsIURI *aHostURI, bool aIsForeign, const char *aCookieHeader, const int aNumOfCookies, const OriginAttributes& aOriginAttrs);
@@ -300,9 +296,9 @@ class nsCookieService final : public nsICookieService
     nsresult                      GetCookieStringCommon(nsIURI *aHostURI, nsIChannel *aChannel, bool aHttpBound, char** aCookie);
     void                          GetCookieStringInternal(nsIURI *aHostURI, bool aIsForeign, bool aIsSafeTopLevelNav, bool aIsTopLevelForeign, bool aHttpBound, const OriginAttributes& aOriginAttrs, nsCString &aCookie);
     nsresult                      SetCookieStringCommon(nsIURI *aHostURI, const char *aCookieHeader, const char *aServerTime, nsIChannel *aChannel, bool aFromHttp);
-    void                          SetCookieStringInternal(nsIURI *aHostURI, bool aIsForeign, nsDependentCString &aCookieHeader, const nsCString &aServerTime, bool aFromHttp, bool aFromChild, const OriginAttributes &aOriginAttrs, nsIChannel* aChannel);
-    bool                          SetCookieInternal(nsIURI *aHostURI, const nsCookieKey& aKey, bool aRequireHostMatch, CookieStatus aStatus, nsDependentCString &aCookieHeader, int64_t aServerTime, bool aFromHttp, bool aFromChild, nsIChannel* aChannel);
-    void                          AddInternal(const nsCookieKey& aKey, nsCookie *aCookie, int64_t aCurrentTimeInUsec, nsIURI *aHostURI, const char *aCookieHeader, bool aFromHttp, bool aFromChild = false);
+    void                          SetCookieStringInternal(nsIURI *aHostURI, bool aIsForeign, nsDependentCString &aCookieHeader, const nsCString &aServerTime, bool aFromHttp, const OriginAttributes &aOriginAttrs, nsIChannel* aChannel);
+    bool                          SetCookieInternal(nsIURI *aHostURI, const nsCookieKey& aKey, bool aRequireHostMatch, CookieStatus aStatus, nsDependentCString &aCookieHeader, int64_t aServerTime, bool aFromHttp, nsIChannel* aChannel);
+    void                          AddInternal(const nsCookieKey& aKey, nsCookie *aCookie, int64_t aCurrentTimeInUsec, nsIURI *aHostURI, const char *aCookieHeader, bool aFromHttp);
     void                          RemoveCookieFromList(const nsListIter &aIter, mozIStorageBindingParamsArray *aParamsArray = nullptr);
     void                          AddCookieToList(const nsCookieKey& aKey, nsCookie *aCookie, DBState *aDBState, mozIStorageBindingParamsArray *aParamsArray, bool aWriteToDB = true);
     void                          UpdateCookieInList(nsCookie *aCookie, int64_t aLastAccessed, mozIStorageBindingParamsArray *aParamsArray);
@@ -321,7 +317,7 @@ class nsCookieService final : public nsICookieService
     void                          TelemetryForEvictingStaleCookie(nsCookie* aEvicted, int64_t oldestCookieTime);
     void                          NotifyRejected(nsIURI *aHostURI);
     void                          NotifyThirdParty(nsIURI *aHostURI, bool aAccepted, nsIChannel *aChannel);
-    void                          NotifyChanged(nsISupports *aSubject, const char16_t *aData, bool aOldCookieIsSession = false, bool aFromHttp = false, bool aFromChild=false);
+    void                          NotifyChanged(nsISupports *aSubject, const char16_t *aData, bool aOldCookieIsSession = false, bool aFromHttp = false);
     void                          NotifyPurged(nsICookie2* aCookie);
     already_AddRefed<nsIArray>    CreatePurgeList(nsICookie2* aCookie);
     void                          UpdateCookieOldestTime(DBState* aDBState, nsCookie* aCookie);

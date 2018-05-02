@@ -73,11 +73,11 @@ public:
                       wr::BuiltDisplayList& dl,
                       wr::IpcResourceUpdateQueue& aResources,
                       const gfx::IntSize& aSize,
-                      uint64_t aTransactionId,
+                      TransactionId aTransactionId,
                       const WebRenderScrollData& aScrollData,
                       const mozilla::TimeStamp& aTxnStartTime);
   void EndEmptyTransaction(const FocusTarget& aFocusTarget,
-                           uint64_t aTransactionId,
+                           TransactionId aTransactionId,
                            const mozilla::TimeStamp& aTxnStartTime);
   void ProcessWebRenderParentCommands();
 
@@ -133,7 +133,7 @@ public:
   void PushGlyphs(wr::DisplayListBuilder& aBuilder, Range<const wr::GlyphInstance> aGlyphs,
                   gfx::ScaledFont* aFont, const wr::ColorF& aColor,
                   const StackingContextHelper& aSc,
-                  const wr::LayerRect& aBounds, const wr::LayerRect& aClip,
+                  const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
                   bool aBackfaceVisible,
                   const wr::GlyphOptions* aGlyphOptions = nullptr);
 

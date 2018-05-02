@@ -522,6 +522,12 @@ UsesExternalProtocolHandler(const char* aScheme)
         return false;
     }
 
+    for (const auto & forcedExternalScheme : gForcedExternalSchemes) {
+      if (!nsCRT::strcasecmp(forcedExternalScheme, aScheme)) {
+        return true;
+      }
+    }
+
     nsAutoCString pref("network.protocol-handler.external.");
     pref += aScheme;
 
@@ -542,7 +548,7 @@ nsIOService::GetProtocolHandler(const char* scheme, nsIProtocolHandler* *result)
     if (NS_SUCCEEDED(rv))
         return rv;
 
-    if (!UsesExternalProtocolHandler(scheme)) {
+    if (scheme[0] != '\0' && !UsesExternalProtocolHandler(scheme)) {
         nsAutoCString contractID(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX);
         contractID += scheme;
         ToLowerCase(contractID);
@@ -1411,7 +1417,7 @@ public:
   NS_IMETHOD Run() override { return mIOService->NotifyWakeup(); }
 
 private:
-    virtual ~nsWakeupNotifier() { }
+    virtual ~nsWakeupNotifier() = default;
     nsCOMPtr<nsIIOServiceInternal> mIOService;
 };
 
@@ -1741,7 +1747,7 @@ nsIOService::ParseAttributePolicyString(const nsAString& policyString,
 // nsISpeculativeConnect
 class IOServiceProxyCallback final : public nsIProtocolProxyCallback
 {
-    ~IOServiceProxyCallback() {}
+    ~IOServiceProxyCallback() = default;
 
 public:
     NS_DECL_ISUPPORTS

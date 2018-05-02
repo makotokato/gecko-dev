@@ -7,6 +7,7 @@
 #ifndef GFX_WEBRENDERUSERDATA_H
 #define GFX_WEBRENDERUSERDATA_H
 
+#include <vector>
 #include "BasicLayers.h"                // for BasicLayerManager
 #include "mozilla/layers/StackingContextHelper.h"
 #include "mozilla/webrender/WebRenderAPI.h"
@@ -18,6 +19,10 @@ class nsDisplayItemGeometry;
 namespace mozilla {
 namespace wr {
 class IpcResourceUpdateQueue;
+}
+
+namespace gfx {
+class SourceSurface;
 }
 
 namespace layers {
@@ -62,7 +67,6 @@ public:
   nsIFrame* GetFrame() { return mFrame; }
   uint32_t GetDisplayItemKey() { return mDisplayItemKey; }
   void RemoveFromTable();
-  virtual void ClearCachedResources() {};
   virtual nsDisplayItemGeometry* GetGeometry() { return nullptr; }
 protected:
   virtual ~WebRenderUserData();
@@ -126,7 +130,6 @@ public:
                                          bool aIsBackfaceVisible);
 
   void CreateImageClientIfNeeded();
-  void ClearCachedResources() override;
 
   bool IsAsync()
   {
@@ -136,7 +139,6 @@ public:
 protected:
   void ClearImageKey();
   void CreateExternalImageIfNeeded();
-  void DoClearCachedResources();
 
   wr::MaybeExternalImageId mExternalImageId;
   Maybe<wr::ImageKey> mKey;
@@ -155,7 +157,6 @@ public:
   virtual WebRenderFallbackData* AsFallbackData() override { return this; }
   virtual UserDataType GetType() override { return UserDataType::eFallback; }
   static UserDataType Type() { return UserDataType::eFallback; }
-  void ClearCachedResources() override;
   nsDisplayItemGeometry* GetGeometry() override;
   void SetGeometry(nsAutoPtr<nsDisplayItemGeometry> aGeometry);
   nsRect GetBounds() { return mBounds; }
@@ -166,6 +167,7 @@ public:
   bool IsInvalid() { return mInvalid; }
 
   RefPtr<BasicLayerManager> mBasicLayerManager;
+  std::vector<RefPtr<gfx::SourceSurface>> mExternalSurfaces;
 protected:
   nsAutoPtr<nsDisplayItemGeometry> mGeometry;
   nsRect mBounds;
@@ -200,9 +202,7 @@ public:
   void ClearCanvasRenderer();
   WebRenderCanvasRendererAsync* GetCanvasRenderer();
   WebRenderCanvasRendererAsync* CreateCanvasRenderer();
-  void ClearCachedResources() override;
 protected:
-  void DoClearCachedResources();
 
   UniquePtr<WebRenderCanvasRendererAsync> mCanvasRenderer;
 };
@@ -224,7 +224,7 @@ GetWebRenderUserData(nsIFrame* aFrame, uint32_t aPerFrameKey)
   }
 
   WebRenderUserData* data = userDataTable->GetWeak(WebRenderUserDataKey(aPerFrameKey, T::Type()));
-  if (data && (data->GetType() == T::Type())) {
+  if (data) {
     RefPtr<T> result = static_cast<T*>(data);
     return result.forget();
   }

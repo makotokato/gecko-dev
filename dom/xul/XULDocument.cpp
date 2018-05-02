@@ -40,6 +40,7 @@
 #include "nsXULContentUtils.h"
 #include "nsIXULOverlayProvider.h"
 #include "nsIStringEnumerator.h"
+#include "nsDocElementCreatedNotificationRunner.h"
 #include "nsNetUtil.h"
 #include "nsParserCIID.h"
 #include "nsPIBoxObject.h"
@@ -94,6 +95,7 @@
 #include "xpcpublic.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
+#include "nsIConsoleService.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -1525,12 +1527,7 @@ XULDocument::RemoveSubtreeFromDocument(nsIContent* aContent)
     // element from the document's command dispatcher.
     if (aElement->AttrValueIs(kNameSpaceID_None, nsGkAtoms::commandupdater,
                               nsGkAtoms::_true, eCaseMatters)) {
-        nsCOMPtr<nsIDOMElement> domelement = do_QueryInterface(aElement);
-        NS_ASSERTION(domelement != nullptr, "not a DOM element");
-        if (! domelement)
-            return NS_ERROR_UNEXPECTED;
-
-        rv = mCommandDispatcher->RemoveCommandUpdater(domelement);
+        rv = mCommandDispatcher->RemoveCommandUpdater(aElement);
         if (NS_FAILED(rv)) return rv;
     }
 
@@ -2025,6 +2022,9 @@ XULDocument::PrepareToWalk()
         // Block onload until we've finished building the complete
         // document content model.
         BlockOnload();
+
+        nsContentUtils::AddScriptRunner(
+            new nsDocElementCreatedNotificationRunner(this));
     }
 
     // There'd better not be anything on the context stack at this
@@ -2099,18 +2099,20 @@ XULDocument::InsertXMLStylesheetPI(const nsXULPrototypePI* aProtoPI,
 
     // load the stylesheet if necessary, passing ourselves as
     // nsICSSObserver
-    bool willNotify;
-    bool isAlternate;
-    rv = ssle->UpdateStyleSheet(this, &willNotify, &isAlternate);
-    if (NS_SUCCEEDED(rv) && willNotify && !isAlternate) {
-        ++mPendingSheets;
+    auto result = ssle->UpdateStyleSheet(this);
+    if (result.isErr()) {
+        // Ignore errors from UpdateStyleSheet; we don't want failure to
+        // do that to break the XUL document load.  But do propagate out
+        // NS_ERROR_OUT_OF_MEMORY.
+        if (result.unwrapErr() == NS_ERROR_OUT_OF_MEMORY) {
+            return result.unwrapErr();
+        }
+        return NS_OK;
     }
 
-    // Ignore errors from UpdateStyleSheet; we don't want failure to
-    // do that to break the XUL document load.  But do propagate out
-    // NS_ERROR_OUT_OF_MEMORY.
-    if (rv == NS_ERROR_OUT_OF_MEMORY) {
-        return rv;
+    auto update = result.unwrap();
+    if (update.ShouldBlock()) {
+        ++mPendingSheets;
     }
 
     return NS_OK;
@@ -2259,18 +2261,28 @@ XULDocument::LoadOverlayInternal(nsIURI* aURI, bool aIsDynamic,
     nsresult rv;
 
     // XUL overlays are in the process of being removed. In a Firefox build,
-    // loading an overlay will cause a crash as they are no longer allowed.
+    // loading an overlay will no longer work and display an error in the
+    // console. In automation, doing so will cause a crash.
     // However, overlays are allowed in other applications (e.g. Thunderbird)
     // while they work on removing them. See bug 1448162.
-#ifdef MOZ_CRASH_XUL_OVERLAYS
+#ifdef MOZ_BREAK_XUL_OVERLAYS
     nsCString docSpec;
     mCurrentPrototype->GetURI()->GetSpec(docSpec);
     nsCString overlaySpec;
     aURI->GetSpec(overlaySpec);
-    printf("Attempt to load overlay %s into %s\n",
-           overlaySpec.get(),
-           docSpec.get());
-    MOZ_CRASH("Attempt to load overlay");
+    nsPrintfCString msg("Attempt to load overlay %s into %s\n",
+                        overlaySpec.get(),
+                        docSpec.get());
+    nsCOMPtr<nsIConsoleService> consoleSvc =
+        do_GetService("@mozilla.org/consoleservice;1");
+    if (consoleSvc) {
+        consoleSvc->LogStringMessage(NS_ConvertASCIItoUTF16(msg).get());
+    }
+    printf("%s", msg.get());
+    if (xpc::IsInAutomation()) {
+        MOZ_CRASH("Attempt to load overlay.");
+    }
+    return NS_ERROR_NOT_AVAILABLE;
 #endif
 
     *aShouldReturn = false;
@@ -2477,10 +2489,7 @@ XULDocument::ResumeWalk()
                                 do_QueryInterface(element);
                             NS_ASSERTION(ssle, "<html:style> doesn't implement "
                                                "nsIStyleSheetLinkingElement?");
-                            bool willNotify;
-                            bool isAlternate;
-                            ssle->UpdateStyleSheet(nullptr, &willNotify,
-                                                   &isAlternate);
+                            Unused << ssle->UpdateStyleSheet(nullptr);
                         }
                     }
                 }
@@ -2865,14 +2874,13 @@ XULDocument::DoneWalking()
 
 NS_IMETHODIMP
 XULDocument::StyleSheetLoaded(StyleSheet* aSheet,
-                              bool aWasAlternate,
+                              bool aWasDeferred,
                               nsresult aStatus)
 {
-    if (!aWasAlternate) {
+    if (!aWasDeferred) {
         // Don't care about when alternate sheets finish loading
-
-        NS_ASSERTION(mPendingSheets > 0,
-            "Unexpected StyleSheetLoaded notification");
+        MOZ_ASSERT(mPendingSheets > 0,
+                   "Unexpected StyleSheetLoaded notification");
 
         --mPendingSheets;
 
@@ -3316,7 +3324,7 @@ XULDocument::CreateElementFromPrototype(nsXULPrototypeElement* aPrototype,
     if (aPrototype->mNodeInfo->NamespaceEquals(kNameSpaceID_XUL)) {
         // If it's a XUL element, it'll be lightweight until somebody
         // monkeys with it.
-        rv = nsXULElement::Create(aPrototype, this, true, aIsRoot, getter_AddRefs(result));
+        rv = nsXULElement::CreateFromPrototype(aPrototype, this, true, aIsRoot, getter_AddRefs(result));
         if (NS_FAILED(rv)) return rv;
     }
     else {

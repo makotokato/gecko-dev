@@ -16,12 +16,6 @@ namespace net {
 
 NS_IMPL_ISUPPORTS(nsHttpAuthManager, nsIHttpAuthManager)
 
-nsHttpAuthManager::nsHttpAuthManager()
-  : mAuthCache{ nullptr }
-  , mPrivateAuthCache{ nullptr }
-{
-}
-
 nsresult nsHttpAuthManager::Init()
 {
   // get reference to the auth cache.  we assume that we will live
@@ -47,10 +41,6 @@ nsresult nsHttpAuthManager::Init()
   NS_ENSURE_TRUE(mAuthCache, NS_ERROR_FAILURE);
   NS_ENSURE_TRUE(mPrivateAuthCache, NS_ERROR_FAILURE);
   return NS_OK;
-}
-
-nsHttpAuthManager::~nsHttpAuthManager()
-{
 }
 
 NS_IMETHODIMP

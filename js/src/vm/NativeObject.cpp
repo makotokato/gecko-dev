@@ -2251,8 +2251,9 @@ Detecting(JSContext* cx, JSScript* script, jsbytecode* pc)
 {
     MOZ_ASSERT(script->containsPC(pc));
 
-    // Skip jump target opcodes.
-    while (pc < script->codeEnd() && BytecodeIsJumpTarget(JSOp(*pc)))
+    // Skip jump target and dup opcodes.
+    while (pc < script->codeEnd() && (BytecodeIsJumpTarget(JSOp(*pc)) ||
+                                      JSOp(*pc) == JSOP_DUP))
         pc = GetNextPc(pc);
 
     MOZ_ASSERT(script->containsPC(pc));
@@ -2275,11 +2276,17 @@ Detecting(JSContext* cx, JSScript* script, jsbytecode* pc)
         return false;
     }
 
+    // Special case #2: don't warn about (obj.prop == undefined).
     if (op == JSOP_GETGNAME || op == JSOP_GETNAME) {
-        // Special case #2: don't warn about (obj.prop == undefined).
         JSAtom* atom = script->getAtom(GET_UINT32_INDEX(pc));
         if (atom == cx->names().undefined &&
             (pc += CodeSpec[op].length) < endpc) {
+            op = JSOp(*pc);
+            return op == JSOP_EQ || op == JSOP_NE || op == JSOP_STRICTEQ || op == JSOP_STRICTNE;
+        }
+    }
+    if (op == JSOP_UNDEFINED) {
+        if ((pc += CodeSpec[op].length) < endpc) {
             op = JSOp(*pc);
             return op == JSOP_EQ || op == JSOP_NE || op == JSOP_STRICTEQ || op == JSOP_STRICTNE;
         }
@@ -2311,8 +2318,10 @@ GetNonexistentProperty(JSContext* cx, HandleId id, IsNameLookup nameLookup, Muta
     vp.setUndefined();
 
     // If we are doing a name lookup, this is a ReferenceError.
-    if (nameLookup)
-        return ReportIsNotDefined(cx, id);
+    if (nameLookup) {
+        ReportIsNotDefined(cx, id);
+        return false;
+    }
 
     // Give a strict warning if foo.bar is evaluated by a script for an object
     // foo with no property named 'bar'.
@@ -2381,8 +2390,10 @@ GeneralizedGetProperty(JSContext* cx, HandleObject obj, HandleId id, HandleValue
         bool found;
         if (!HasProperty(cx, obj, id, &found))
             return false;
-        if (!found)
-            return ReportIsNotDefined(cx, id);
+        if (!found) {
+            ReportIsNotDefined(cx, id);
+            return false;
+        }
     }
 
     return GetProperty(cx, obj, receiver, id, vp);

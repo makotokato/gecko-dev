@@ -10,7 +10,7 @@
 
 #include "MP4Demuxer.h"
 
-#include "MediaPrefs.h"
+#include "mozilla/StaticPrefs.h"
 // Used for telemetry
 #include "mozilla/Telemetry.h"
 #include "AnnexB.h"
@@ -128,7 +128,6 @@ AccumulateSPSTelemetry(const MediaByteBuffer* aExtradata)
 MP4Demuxer::MP4Demuxer(MediaResource* aResource)
   : mResource(aResource)
   , mStream(new ResourceStream(aResource))
-  , mIsSeekable{ false }
 {
   DDLINKCHILD("resource", aResource);
   DDLINKCHILD("stream", mStream.get());
@@ -168,7 +167,7 @@ MP4Demuxer::Init()
 
   auto audioTrackCount = metadata.GetNumberTracks(TrackInfo::kAudioTrack);
   if (audioTrackCount.Ref() == MP4Metadata::NumberTracksError()) {
-    if (MediaPrefs::MediaWarningsAsErrors()) {
+    if (StaticPrefs::MediaPlaybackWarningsAsErrors()) {
       return InitPromise::CreateAndReject(
         MediaResult(NS_ERROR_DOM_MEDIA_DEMUXER_ERR,
                     RESULT_DETAIL("Invalid audio track (%s)",
@@ -180,7 +179,7 @@ MP4Demuxer::Init()
 
   auto videoTrackCount = metadata.GetNumberTracks(TrackInfo::kVideoTrack);
   if (videoTrackCount.Ref() == MP4Metadata::NumberTracksError()) {
-    if (MediaPrefs::MediaWarningsAsErrors()) {
+    if (StaticPrefs::MediaPlaybackWarningsAsErrors()) {
       return InitPromise::CreateAndReject(
         MediaResult(NS_ERROR_DOM_MEDIA_DEMUXER_ERR,
                     RESULT_DETAIL("Invalid video track (%s)",
@@ -211,7 +210,7 @@ MP4Demuxer::Init()
       MP4Metadata::ResultAndTrackInfo info =
         metadata.GetTrackInfo(TrackInfo::kAudioTrack, i);
       if (!info.Ref()) {
-        if (MediaPrefs::MediaWarningsAsErrors()) {
+        if (StaticPrefs::MediaPlaybackWarningsAsErrors()) {
           return InitPromise::CreateAndReject(
             MediaResult(NS_ERROR_DOM_MEDIA_DEMUXER_ERR,
                         RESULT_DETAIL("Invalid MP4 audio track (%s)",
@@ -247,7 +246,7 @@ MP4Demuxer::Init()
       MP4Metadata::ResultAndTrackInfo info =
         metadata.GetTrackInfo(TrackInfo::kVideoTrack, i);
       if (!info.Ref()) {
-        if (MediaPrefs::MediaWarningsAsErrors()) {
+        if (StaticPrefs::MediaPlaybackWarningsAsErrors()) {
           return InitPromise::CreateAndReject(
             MediaResult(NS_ERROR_DOM_MEDIA_DEMUXER_ERR,
                         RESULT_DETAIL("Invalid MP4 video track (%s)",

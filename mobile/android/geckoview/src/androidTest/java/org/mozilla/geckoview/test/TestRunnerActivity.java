@@ -5,6 +5,7 @@
 
 package org.mozilla.geckoview.test;
 
+import org.mozilla.geckoview.GeckoResponse;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoSessionSettings;
 import org.mozilla.geckoview.GeckoView;
@@ -21,8 +22,9 @@ public class TestRunnerActivity extends Activity {
 
     static GeckoRuntime sRuntime;
 
-    GeckoSession mSession;
-    GeckoView mView;
+    private GeckoSession mSession;
+    private GeckoView mView;
+    private boolean mKillProcessOnDestroy;
 
     private GeckoSession.NavigationDelegate mNavigationDelegate = new GeckoSession.NavigationDelegate() {
         @Override
@@ -42,13 +44,14 @@ public class TestRunnerActivity extends Activity {
 
         @Override
         public void onLoadRequest(GeckoSession session, String uri, int target,
-                                  GeckoSession.Response<Boolean> response) {
+                                  int flags,
+                                  GeckoResponse<Boolean> response) {
             // Allow Gecko to load all URIs
             response.respond(false);
         }
 
         @Override
-        public void onNewSession(GeckoSession session, String uri, GeckoSession.Response<GeckoSession> response) {
+        public void onNewSession(GeckoSession session, String uri, GeckoResponse<GeckoSession> response) {
             response.respond(createSession(session.getSettings()));
         }
     };
@@ -109,10 +112,22 @@ public class TestRunnerActivity extends Activity {
         final Intent intent = getIntent();
 
         if (sRuntime == null) {
-            final GeckoRuntimeSettings geckoSettings = new GeckoRuntimeSettings();
-            geckoSettings.setArguments(new String[] { "-purgecaches" });
-            geckoSettings.setExtras(intent.getExtras());
-            sRuntime = GeckoRuntime.create(this, geckoSettings);
+            final GeckoRuntimeSettings.Builder runtimeSettingsBuilder =
+                new GeckoRuntimeSettings.Builder();
+            runtimeSettingsBuilder.arguments(new String[] { "-purgecaches" });
+            final Bundle extras = intent.getExtras();
+            if (extras != null) {
+                runtimeSettingsBuilder.extras(extras);
+            }
+
+            sRuntime = GeckoRuntime.create(this, runtimeSettingsBuilder.build());
+            sRuntime.setDelegate(new GeckoRuntime.Delegate() {
+                @Override
+                public void onShutdown() {
+                    mKillProcessOnDestroy = true;
+                    finish();
+                }
+            });
         }
 
         mSession = createSession();
@@ -133,6 +148,10 @@ public class TestRunnerActivity extends Activity {
     protected void onDestroy() {
         mSession.close();
         super.onDestroy();
+
+        if (mKillProcessOnDestroy) {
+            android.os.Process.killProcess(android.os.Process.myPid());
+        }
     }
 
     public GeckoView getGeckoView() {

@@ -15,13 +15,10 @@ public:
     NS_DECL_ISUPPORTS
     NS_DECL_NSIHTTPAUTHENTICATOR
 
-    nsHttpNTLMAuth()
-      : mUseNative{ false }
-    {
-    }
+    nsHttpNTLMAuth() = default;
 
-  private:
-    virtual ~nsHttpNTLMAuth() {}
+private:
+    virtual ~nsHttpNTLMAuth() = default;
 
     // This flag indicates whether we are using the native NTLM implementation
     // or the internal one.

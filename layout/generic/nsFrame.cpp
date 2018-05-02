@@ -2781,10 +2781,26 @@ ComputeClipForMaskItem(nsDisplayListBuilder* aBuilder, nsIFrame* aMaskedFrame,
   return Nothing();
 }
 
+struct AutoCheckBuilder {
+  explicit AutoCheckBuilder(nsDisplayListBuilder* aBuilder)
+    : mBuilder(aBuilder)
+  {
+    aBuilder->Check();
+  }
+
+  ~AutoCheckBuilder()
+  {
+    mBuilder->Check();
+  }
+
+  nsDisplayListBuilder* mBuilder;
+};
+
 void
 nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
                                              nsDisplayList*        aList,
                                              bool*                 aCreatedContainerItem) {
+  AutoCheckBuilder check(aBuilder);
   if (GetStateBits() & NS_FRAME_TOO_DEEP_IN_FRAME_TREE)
     return;
 
@@ -2905,6 +2921,12 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
       }
     }
     inTransform = true;
+  } else if (IsFixedPosContainingBlock()) {
+    // Restict the building area to the overflow rect for these frames, since
+    // RetainedDisplayListBuilder uses it to know if the size of the stacking
+    // context changed.
+    visibleRect.IntersectRect(visibleRect, GetVisualOverflowRect());
+    dirtyRect.IntersectRect(dirtyRect, GetVisualOverflowRect());
   }
 
   bool hasOverrideDirtyRect = false;
@@ -3069,7 +3091,9 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
                                                  true);
 
     MarkAbsoluteFramesForDisplayList(aBuilder);
+    aBuilder->Check();
     BuildDisplayList(aBuilder, set);
+    aBuilder->Check();
 
     // Blend modes are a real pain for retained display lists. We build a blend
     // container item if the built list contains any blend mode items within
@@ -3117,7 +3141,9 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
         }
 
         MarkAbsoluteFramesForDisplayList(aBuilder);
+        aBuilder->Check();
         BuildDisplayList(aBuilder, set);
+        aBuilder->Check();
       }
     }
 
@@ -3382,7 +3408,6 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
       MakeDisplayItem<nsDisplayOwnLayer>(aBuilder, this, &resultList,
                                        aBuilder->CurrentActiveScrolledRoot(),
                                        nsDisplayOwnLayerFlags::eNone,
-                                       mozilla::layers::FrameMetrics::NULL_SCROLL_ID,
                                        ScrollbarData{}, /* aForceActive = */ false));
     if (aCreatedContainerItem) {
       *aCreatedContainerItem = true;
@@ -3516,6 +3541,7 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
                                    nsIFrame*               aChild,
                                    const nsDisplayListSet& aLists,
                                    uint32_t                aFlags) {
+  AutoCheckBuilder check(aBuilder);
   // If painting is restricted to just the background of the top level frame,
   // then we have nothing to do here.
   if (aBuilder->IsBackgroundOnly())
@@ -3578,7 +3604,9 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
 
     child->MarkAbsoluteFramesForDisplayList(aBuilder);
     aBuilder->AdjustWindowDraggingRegion(child);
+    aBuilder->Check();
     child->BuildDisplayList(aBuilder, aLists);
+    aBuilder->Check();
     aBuilder->DisplayCaret(child, aLists.Content());
 #ifdef DEBUG
     DisplayDebugBorders(aBuilder, child, aLists);
@@ -3826,7 +3854,9 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
                                                    differentAGR);
 
       aBuilder->AdjustWindowDraggingRegion(child);
+      aBuilder->Check();
       child->BuildDisplayList(aBuilder, aLists);
+      aBuilder->Check();
       aBuilder->DisplayCaret(child, aLists.Content());
 #ifdef DEBUG
       DisplayDebugBorders(aBuilder, child, aLists);
@@ -3846,7 +3876,9 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
 
     aBuilder->AdjustWindowDraggingRegion(child);
     nsDisplayListBuilder::AutoContainerASRTracker contASRTracker(aBuilder);
+    aBuilder->Check();
     child->BuildDisplayList(aBuilder, pseudoStack);
+    aBuilder->Check();
     if (aBuilder->DisplayCaret(child, pseudoStack.Content())) {
       canSkipWrapList = false;
     }
@@ -5643,28 +5675,33 @@ nsFrame::ComputeSize(gfxContext*         aRenderingContext,
     flexMainAxis = nsFlexContainerFrame::IsItemInlineAxisMainAxis(this) ?
       eLogicalAxisInline : eLogicalAxisBlock;
 
-    // NOTE: The logic here should match the similar chunk for determining
-    // inlineStyleCoord and blockStyleCoord in
-    // nsFrame::ComputeSizeWithIntrinsicDimensions().
+    // NOTE: The logic here should match the similar chunk for updating
+    // mainAxisCoord in nsFrame::ComputeSizeWithIntrinsicDimensions() (aside
+    // from using a different dummy value in the IsUsedFlexBasisContent() case).
     const nsStyleCoord* flexBasis = &(stylePos->mFlexBasis);
-    if (flexBasis->GetUnit() != eStyleUnit_Auto) {
-      // Replace our main-axis styleCoord pointer with a different one,
-      // depending on our flex-basis value.
-      auto& mainAxisCoord = (flexMainAxis == eLogicalAxisInline
-                             ? inlineStyleCoord : blockStyleCoord);
-      if (flexBasis->GetUnit() == eStyleUnit_Enumerated &&
-          flexBasis->GetIntValue() == NS_STYLE_FLEX_BASIS_CONTENT) {
-        // We have 'flex-basis: content', which is equivalent to
-        // 'flex-basis:auto; {main-size}: auto'. So, just swap in a dummy
-        // 'auto' value to use for the main size property:
-        static const nsStyleCoord autoStyleCoord(eStyleUnit_Auto);
-        mainAxisCoord = &autoStyleCoord;
-      } else {
-        // For all other flex-basis values, we just swap in the flex-basis
-        // itself for the main-size property here:
-        mainAxisCoord = flexBasis;
-      }
-    }
+    auto& mainAxisCoord = (flexMainAxis == eLogicalAxisInline
+                           ? inlineStyleCoord : blockStyleCoord);
+
+    // NOTE: If we're a table-wrapper frame, we skip this clause and just stick
+    // with 'main-size:auto' behavior (which -- unlike 'content'
+    // i.e. 'max-content' -- will give us the ability to honor percent sizes on
+    // our table-box child when resolving the flex base size). The flexbox spec
+    // doesn't call for this special case, but webcompat & regression-avoidance
+    // seems to require it, for the time being... Tables sure are special.
+    if (nsFlexContainerFrame::IsUsedFlexBasisContent(flexBasis,
+                                                     mainAxisCoord) &&
+        MOZ_LIKELY(!IsTableWrapperFrame())) {
+      static const nsStyleCoord maxContStyleCoord(NS_STYLE_WIDTH_MAX_CONTENT,
+                                                  eStyleUnit_Enumerated);
+      mainAxisCoord = &maxContStyleCoord;
+      // (Note: if our main axis is the block axis, then this 'max-content'
+      // value will be treated like 'auto', via the IsAutoBSize() call below.)
+    } else if (flexBasis->GetUnit() != eStyleUnit_Auto) {
+      // For all other non-'auto' flex-basis values, we just swap in the
+      // flex-basis itself for the main-size property.
+      mainAxisCoord = flexBasis;
+    } // else: flex-basis is 'auto', which is deferring to some explicit value
+      // in mainAxisCoord. So we proceed w/o touching mainAxisCoord.
   }
 
   // Compute inline-axis size
@@ -5899,28 +5936,35 @@ nsFrame::ComputeSizeWithIntrinsicDimensions(gfxContext*          aRenderingConte
       // property (e.g. "width") for sizing purposes, *unless* they have
       // "flex-basis:auto", in which case they use their main-size property
       // after all.
-      // NOTE: The logic here should match the similar chunk for determining
-      // inlineStyleCoord and blockStyleCoord in nsFrame::ComputeSize().
+      // NOTE: The logic here should match the similar chunk for updating
+      // mainAxisCoord in nsFrame::ComputeSize() (aside from using a different
+      // dummy value in the IsUsedFlexBasisContent() case).
       const nsStyleCoord* flexBasis = &(stylePos->mFlexBasis);
-      if (flexBasis->GetUnit() != eStyleUnit_Auto) {
-        // Replace our main-axis styleCoord pointer with a different one,
-        // depending on our flex-basis value.
-        auto& mainAxisCoord = (flexMainAxis == eLogicalAxisInline
-                               ? inlineStyleCoord : blockStyleCoord);
+      auto& mainAxisCoord = (flexMainAxis == eLogicalAxisInline
+                             ? inlineStyleCoord : blockStyleCoord);
 
-        if (flexBasis->GetUnit() == eStyleUnit_Enumerated &&
-            flexBasis->GetIntValue() == NS_STYLE_FLEX_BASIS_CONTENT) {
-          // We have 'flex-basis: content', which is equivalent to
-          // 'flex-basis:auto; {main-size}: auto'. So, just swap in a dummy
-          // 'auto' value to use for the main size property:
-          static const nsStyleCoord autoStyleCoord(eStyleUnit_Auto);
-          mainAxisCoord = &autoStyleCoord;
-        } else {
-          // For all other flex-basis values, we just swap in the flex-basis
-          // itself for the main-size property here:
-          mainAxisCoord = flexBasis;
-        }
-      }
+      if (nsFlexContainerFrame::IsUsedFlexBasisContent(flexBasis,
+                                                       mainAxisCoord)) {
+        // If we get here, we're resolving the flex base size for a flex item,
+        // and we fall into the flexbox spec section 9.2 step 3, substep C (if
+        // we have a definite cross size) or E (if not). And specifically:
+        //
+        // * If we have a definite cross size, we're supposed to resolve our
+        //   main-size based on that and our intrinsic ratio.
+        // * Otherwise, we're supposed to produce our max-content size.
+        //
+        // Conveniently, we can handle both of those scenarios (regardless of
+        // which substep we fall into) by using the 'auto' keyword for our
+        // main-axis coordinate here. (This makes sense, because the spec is
+        // effectively trying to produce the 'auto' sizing behavior).
+        static const nsStyleCoord autoStyleCoord(eStyleUnit_Auto);
+        mainAxisCoord = &autoStyleCoord;
+      } else if (flexBasis->GetUnit() != eStyleUnit_Auto) {
+        // For all other non-'auto' flex-basis values, we just swap in the
+        // flex-basis itself for the main-size property.
+        mainAxisCoord = flexBasis;
+      } // else: flex-basis is 'auto', which is deferring to some explicit
+        // value in mainAxisCoord. So we proceed w/o touching mainAxisCoord.
     }
   }
 
@@ -6670,18 +6714,19 @@ nsIFrame* nsIFrame::GetAncestorWithView() const
   return nullptr;
 }
 
-nsPoint nsIFrame::GetOffsetTo(const nsIFrame* aOther) const
+template<nsPoint (nsIFrame::* PositionGetter)() const>
+static nsPoint OffsetCalculator(const nsIFrame* aThis, const nsIFrame* aOther)
 {
   NS_PRECONDITION(aOther,
                   "Must have frame for destination coordinate system!");
 
-  NS_ASSERTION(PresContext() == aOther->PresContext(),
+  NS_ASSERTION(aThis->PresContext() == aOther->PresContext(),
                "GetOffsetTo called on frames in different documents");
 
   nsPoint offset(0, 0);
   const nsIFrame* f;
-  for (f = this; f != aOther && f; f = f->GetParent()) {
-    offset += f->GetPosition();
+  for (f = aThis; f != aOther && f; f = f->GetParent()) {
+    offset += (f->*PositionGetter)();
   }
 
   if (f != aOther) {
@@ -6689,12 +6734,24 @@ nsPoint nsIFrame::GetOffsetTo(const nsIFrame* aOther) const
     // the root-frame-relative position of |this| in |offset|.  Convert back
     // to the coordinates of aOther
     while (aOther) {
-      offset -= aOther->GetPosition();
+      offset -= (aOther->*PositionGetter)();
       aOther = aOther->GetParent();
     }
   }
 
   return offset;
+}
+
+nsPoint
+nsIFrame::GetOffsetTo(const nsIFrame* aOther) const
+{
+  return OffsetCalculator<&nsIFrame::GetPosition>(this, aOther);
+}
+
+nsPoint
+nsIFrame::GetOffsetToIgnoringScrolling(const nsIFrame* aOther) const
+{
+  return OffsetCalculator<&nsIFrame::GetPositionIgnoringScrolling>(this, aOther);
 }
 
 nsPoint nsIFrame::GetOffsetToCrossDoc(const nsIFrame* aOther) const
@@ -7402,7 +7459,7 @@ nsIFrame::GetNormalRect() const
 }
 
 nsPoint
-nsIFrame::GetPositionIgnoringScrolling()
+nsIFrame::GetPositionIgnoringScrolling() const
 {
   return GetParent() ? GetParent()->GetPositionOfChildIgnoringScrolling(this)
     : GetPosition();
@@ -7804,7 +7861,7 @@ nsresult
 nsFrame::MakeFrameName(const nsAString& aType, nsAString& aResult) const
 {
   aResult = aType;
-  if (mContent && !mContent->IsNodeOfType(nsINode::eTEXT)) {
+  if (mContent && !mContent->IsText()) {
     nsAutoString buf;
     mContent->NodeInfo()->NameAtom()->ToString(buf);
     if (IsSubDocumentFrame()) {
@@ -11337,7 +11394,13 @@ nsIFrame::GetCompositorHitTestInfo(nsDisplayListBuilder* aBuilder)
   nsDisplayOwnLayerFlags flags = aBuilder->GetCurrentScrollbarFlags();
   if (flags != nsDisplayOwnLayerFlags::eNone) {
     if (GetContent()->IsXULElement(nsGkAtoms::thumb)) {
-      result |= CompositorHitTestInfo::eScrollbarThumb;
+      bool thumbGetsLayer = aBuilder->GetCurrentScrollbarTarget() !=
+          layers::FrameMetrics::NULL_SCROLL_ID;
+      if (thumbGetsLayer) {
+        result |= CompositorHitTestInfo::eScrollbarThumb;
+      } else {
+        result |= CompositorHitTestInfo::eDispatchToContent;
+      }
     }
     // The only flags that get set in nsDisplayListBuilder::mCurrentScrollbarFlags
     // are the scrollbar direction flags

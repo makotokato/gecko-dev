@@ -7,11 +7,10 @@ const { Component, createFactory } = require("devtools/client/shared/vendor/reac
 const dom = require("devtools/client/shared/vendor/react-dom-factories");
 const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
 const {div, button} = dom;
-const {openTrustedLink} = require("devtools/client/shared/link");
+const {openWebLink} = require("devtools/client/shared/link");
 
 const Menu = require("devtools/client/framework/menu");
 const MenuItem = require("devtools/client/framework/menu-item");
-const ToolboxTab = createFactory(require("devtools/client/framework/components/toolbox-tab"));
 const ToolboxTabs = createFactory(require("devtools/client/framework/components/toolbox-tabs"));
 
 /**
@@ -40,6 +39,9 @@ class ToolboxToolbar extends Component {
         position: PropTypes.string.isRequired,
         switchHost: PropTypes.func.isRequired,
       })),
+      // Current docking type. Typically one of the position values in
+      // |hostTypes| but this is not always the case (e.g. when it is "custom").
+      currentHostType: PropTypes.string,
       // Should the docking options be enabled? They are disabled in some
       // contexts such as WebIDE.
       areDockButtonsEnabled: PropTypes.bool,
@@ -72,6 +74,13 @@ class ToolboxToolbar extends Component {
       L10N: PropTypes.object,
       // The devtools toolbox
       toolbox: PropTypes.object,
+      // Call back function to detect tabs order updated.
+      onTabsOrderUpdated: PropTypes.func.isRequired,
+      // Count of visible toolbox buttons which is used by ToolboxTabs component to
+      // recognize that the visibility of toolbox buttons were changed. Because in the
+      // component we cannot compare the visibility since the button definition instance
+      // in toolboxButtons will be unchanged.
+      visibleToolboxButtonCount: PropTypes.number,
     };
   }
 
@@ -177,16 +186,16 @@ function renderToolboxButtons({focusedButton, toolboxButtons, focusButton}, isSt
   // Add the appropriate separator, if needed.
   let children = renderedButtons;
   if (renderedButtons.length) {
+    if (isStart) {
+      children.push(renderSeparator());
     // For the end group we add a separator *before* the RDM button if it
-    // exists.
-    if (rdmIndex !== -1) {
+    // exists, but only if it is not the only button.
+    } else if (rdmIndex !== -1 && visibleButtons.length > 1) {
       children.splice(
         children.length - 1,
         0,
         renderSeparator()
       );
-    } else {
-      children.push(renderSeparator());
     }
   }
 
@@ -211,6 +220,8 @@ function renderSeparator() {
  *        Position name.
  * @param {Function} hostTypes[].switchHost
  *        Function to switch the host.
+ * @param {string} currentHostType
+ *        The current docking configuration.
  * @param {boolean} areDockOptionsEnabled
  *        They are not enabled in certain situations like when they are in the
  *        WebIDE.
@@ -297,12 +308,14 @@ function renderToolboxControls(props) {
  *        The id of the currently selected tool.
  * @param {Object[]} props.hostTypes
  *        Array of host type objects.
+ *        This array will be empty if we shouldn't shouldn't show any dock
+ *        options.
  * @param {string} props.hostTypes[].position
  *        Position name.
  * @param {Function} props.hostTypes[].switchHost
  *        Function to switch the host.
- *        This array will be empty if we shouldn't shouldn't show any dock
- *        options.
+ * @param {string} props.currentHostType
+ *        The current docking configuration.
  * @param {boolean} isSplitConsoleActive
  *        Is the split console currently visible?
  * @param {boolean|undefined} disableAutohide
@@ -326,6 +339,7 @@ function showMeatballMenu(
   {
     currentToolId,
     hostTypes,
+    currentHostType,
     isSplitConsoleActive,
     disableAutohide,
     selectTool,
@@ -339,13 +353,23 @@ function showMeatballMenu(
 
   // Dock options
   for (const hostType of hostTypes) {
-    menu.append(new MenuItem({
-      id: `toolbox-meatball-menu-dock-${hostType.position}`,
-      label: L10N.getStr(
-        `toolbox.meatballMenu.dock.${hostType.position}.label`
-      ),
-      click: () => hostType.switchHost(),
-    }));
+    const l10nkey =
+      hostType.position === "window"
+        ? "separateWindow"
+        : hostType.position;
+    menu.append(
+      new MenuItem({
+        id: `toolbox-meatball-menu-dock-${hostType.position}`,
+        label: L10N.getStr(`toolbox.meatballMenu.dock.${l10nkey}.label`),
+        click: () => hostType.switchHost(),
+        type: "checkbox",
+        checked: hostType.position === currentHostType,
+      })
+    );
+  }
+
+  if (menu.items.length) {
+    menu.append(new MenuItem({ type: "separator" }));
   }
 
   // Split console
@@ -376,10 +400,6 @@ function showMeatballMenu(
     }));
   }
 
-  if (menu.items.length) {
-    menu.append(new MenuItem({ type: "separator" }));
-  }
-
   // Settings
   menu.append(new MenuItem({
     id: "toolbox-meatball-menu-settings",
@@ -394,19 +414,25 @@ function showMeatballMenu(
 
   // Getting started
   menu.append(new MenuItem({
-    id: "toolbox-meatball-menu-gettingstarted",
-    label: L10N.getStr("toolbox.meatballMenu.gettingStarted.label"),
+    id: "toolbox-meatball-menu-documentation",
+    label: L10N.getStr("toolbox.meatballMenu.documentation.label"),
     click: () => {
-      openTrustedLink("https://developer.mozilla.org/docs/Tools", toolbox);
+      openWebLink(
+        "https://developer.mozilla.org/docs/Tools?utm_source=devtools&utm_medium=tabbar-menu",
+        toolbox
+      );
     },
   }));
 
   // Give feedback
   menu.append(new MenuItem({
-    id: "toolbox-meatball-menu-feedback",
-    label: L10N.getStr("toolbox.meatballMenu.giveFeedback.label"),
+    id: "toolbox-meatball-menu-community",
+    label: L10N.getStr("toolbox.meatballMenu.community.label"),
     click: () => {
-      openTrustedLink("https://discourse.mozilla.org/c/devtools", toolbox);
+      openWebLink(
+        "https://discourse.mozilla.org/c/devtools?utm_source=devtools&utm_medium=tabbar-menu",
+        toolbox
+      );
     },
   }));
 

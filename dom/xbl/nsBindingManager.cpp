@@ -16,7 +16,7 @@
 #include "nsString.h"
 #include "plstr.h"
 #include "nsIContent.h"
-#include "nsIDOMElement.h"
+#include "nsIContentInlines.h"
 #include "nsIDocument.h"
 #include "nsContentUtils.h"
 #include "nsIPresShell.h"
@@ -786,7 +786,7 @@ nsBindingManager::ContentAppended(nsIContent* aFirstNewContent)
       first = false;
       for (nsIContent* child = aFirstNewContent; child;
            child = child->GetNextSibling()) {
-        point->AppendInsertedChild(child);
+        point->AppendInsertedChild(child, true);
       }
     } else {
       InsertAppendedContent(point, aFirstNewContent);

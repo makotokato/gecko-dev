@@ -17,9 +17,9 @@ import android.view.WindowManager;
 
 import java.util.Locale;
 
+import org.mozilla.geckoview.GeckoResponse;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoSessionSettings;
-import org.mozilla.geckoview.GeckoSession.Response;
 import org.mozilla.geckoview.GeckoSession.TrackingProtectionDelegate;
 import org.mozilla.geckoview.GeckoView;
 import org.mozilla.geckoview.GeckoRuntime;
@@ -54,17 +54,21 @@ public class GeckoViewActivity extends Activity {
             getIntent().getBooleanExtra(USE_MULTIPROCESS_EXTRA, true);
 
         if (sGeckoRuntime == null) {
-            final GeckoRuntimeSettings geckoSettings = new GeckoRuntimeSettings();
+            final GeckoRuntimeSettings.Builder runtimeSettingsBuilder =
+                new GeckoRuntimeSettings.Builder();
 
             if (BuildConfig.DEBUG) {
                 // In debug builds, we want to load JavaScript resources fresh with
                 // each build.
-                geckoSettings.setArguments(new String[] { "-purgecaches" });
+                runtimeSettingsBuilder.arguments(new String[] { "-purgecaches" });
             }
 
-            geckoSettings.setUseContentProcessHint(useMultiprocess);
-            geckoSettings.setExtras(getIntent().getExtras());
-            sGeckoRuntime = GeckoRuntime.create(this, geckoSettings);
+            final Bundle extras = getIntent().getExtras();
+            if (extras != null) {
+                runtimeSettingsBuilder.extras(extras);
+            }
+            runtimeSettingsBuilder.useContentProcessHint(useMultiprocess);
+            sGeckoRuntime = GeckoRuntime.create(this, runtimeSettingsBuilder.build());
         }
 
         final GeckoSessionSettings sessionSettings = new GeckoSessionSettings();
@@ -134,12 +138,8 @@ public class GeckoViewActivity extends Activity {
     }
 
     private void loadSettings(final Intent intent) {
-        final GeckoSessionSettings settings = mGeckoSession.getSettings();
-        settings.setBoolean(
-            GeckoSessionSettings.USE_REMOTE_DEBUGGER,
+        sGeckoRuntime.getSettings().setRemoteDebuggingEnabled(
             intent.getBooleanExtra(USE_REMOTE_DEBUGGER_EXTRA, false));
-
-        Log.i(LOGTAG, "Load with settings " + settings);
     }
 
     @Override
@@ -360,13 +360,15 @@ public class GeckoViewActivity extends Activity {
 
         @Override
         public void onLoadRequest(final GeckoSession session, final String uri,
-                                  final int target, Response<Boolean> response) {
-            Log.d(LOGTAG, "onLoadRequest=" + uri + " where=" + target);
+                                  final int target, final int flags,
+                                  GeckoResponse<Boolean> response) {
+            Log.d(LOGTAG, "onLoadRequest=" + uri + " where=" + target +
+                  " flags=" + flags);
             response.respond(false);
         }
 
         @Override
-        public void onNewSession(final GeckoSession session, final String uri, Response<GeckoSession> response) {
+        public void onNewSession(final GeckoSession session, final String uri, GeckoResponse<GeckoSession> response) {
             response.respond(null);
         }
     }

@@ -90,22 +90,21 @@ public:
   NS_DECL_NSIEVENTTARGET_FULL
 
   explicit WebSocketImpl(WebSocket* aWebSocket)
-    : mWebSocket(aWebSocket)
-    , mIsServerSide(false)
-    , mSecure(false)
-    , mOnCloseScheduled(false)
-    , mFailed(false)
-    , mDisconnectingOrDisconnected(false)
-    , mCloseEventWasClean(false)
-    , mCloseEventCode(nsIWebSocketChannel::CLOSE_ABNORMAL)
-    , mPort{}
-    , mScriptLine(0)
-    , mScriptColumn(0)
-    , mInnerWindowID(0)
-    , mPrivateBrowsing(false)
-    , mIsMainThread(true)
-    , mMutex("WebSocketImpl::mMutex")
-    , mWorkerShuttingDown(false)
+  : mWebSocket(aWebSocket)
+  , mIsServerSide(false)
+  , mSecure(false)
+  , mOnCloseScheduled(false)
+  , mFailed(false)
+  , mDisconnectingOrDisconnected(false)
+  , mCloseEventWasClean(false)
+  , mCloseEventCode(nsIWebSocketChannel::CLOSE_ABNORMAL)
+  , mScriptLine(0)
+  , mScriptColumn(0)
+  , mInnerWindowID(0)
+  , mPrivateBrowsing(false)
+  , mIsMainThread(true)
+  , mMutex("WebSocketImpl::mMutex")
+  , mWorkerShuttingDown(false)
   {
     if (!NS_IsMainThread()) {
       mIsMainThread = false;
@@ -573,7 +572,7 @@ class DisconnectInternalRunnable final : public WorkerMainThreadRunnable
 {
 public:
   explicit DisconnectInternalRunnable(WebSocketImpl* aImpl)
-    : WorkerMainThreadRunnable(aImpl->mWorkerRef->Private(),
+    : WorkerMainThreadRunnable(GetCurrentThreadWorkerPrivate(),
                                NS_LITERAL_CSTRING("WebSocket :: disconnect"))
     , mImpl(aImpl)
   { }
@@ -621,7 +620,7 @@ WebSocketImpl::Disconnect()
     if (mWebSocket->GetOwner()) {
       mWebSocket->GetOwner()->UpdateWebSocketCount(-1);
     }
-  } else if (mWorkerRef) {
+  } else {
     RefPtr<DisconnectInternalRunnable> runnable =
       new DisconnectInternalRunnable(this);
     ErrorResult rv;
@@ -953,6 +952,30 @@ JSObject*
 WebSocket::WrapObject(JSContext* cx, JS::Handle<JSObject*> aGivenProto)
 {
   return WebSocketBinding::Wrap(cx, this, aGivenProto);
+}
+
+void
+WebSocket::BindToOwner(nsIGlobalObject* aNew)
+{
+  auto scopeExit = MakeScopeExit([&] {
+    DOMEventTargetHelper::BindToOwner(aNew);
+  });
+
+  // If we're disconnected, then there is no state to update.
+  if (!mImpl || mImpl->mDisconnectingOrDisconnected) {
+    return;
+  }
+
+  // Update state on the old window.
+  if (GetOwner()) {
+    GetOwner()->UpdateWebSocketCount(-1);
+  }
+
+  // Update state on the new window
+  nsCOMPtr<nsPIDOMWindowInner> newWindow = do_QueryInterface(aNew);
+  if (newWindow) {
+    newWindow->UpdateWebSocketCount(1);
+  }
 }
 
 //---------------------------------------------------------------------------
@@ -1380,18 +1403,14 @@ WebSocket::ConstructorCommon(const GlobalObject& aGlobal,
     }
 
     if (NS_WARN_IF(!webSocketImpl->RegisterWorkerRef(workerPrivate))) {
-      // The worker is shutting down. We cannot proceed but we return a
-      // 'connecting' object.
-      webSocketImpl->mWorkerShuttingDown = true;
-      webSocketImpl->Disconnect();
-      return webSocket.forget();
+      // The worker is shutting down.
+      aRv.Throw(NS_ERROR_FAILURE);
+      return nullptr;
     }
 
     RefPtr<ConnectRunnable> connectRunnable =
       new ConnectRunnable(workerPrivate, webSocketImpl);
-    // We can use Closing because we have a WorkerRef and that is enough to be
-    // sure that the worker is up and running.
-    connectRunnable->Dispatch(Closing, aRv);
+    connectRunnable->Dispatch(Canceling, aRv);
     if (NS_WARN_IF(aRv.Failed())) {
       return nullptr;
     }

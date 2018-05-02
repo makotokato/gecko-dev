@@ -459,7 +459,7 @@ DevTools.prototype = {
       }
 
       if (toolId != null && toolbox.currentToolId != toolId) {
-        await toolbox.selectTool(toolId);
+        await toolbox.selectTool(toolId, "toolbox_show");
       }
 
       toolbox.raise();
@@ -725,7 +725,7 @@ DevTools.prototype = {
     // tells us it has been done.
     let a11yPanel = toolbox.getCurrentPanel();
     let onSelected = a11yPanel.once("new-accessible-front-selected");
-    a11yPanel.selectAccessibleForNode(nodeFront);
+    a11yPanel.selectAccessibleForNode(nodeFront, "browser-context-menu");
     await onSelected;
   },
 

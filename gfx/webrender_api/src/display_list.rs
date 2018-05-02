@@ -16,8 +16,8 @@ use time::precise_time_ns;
 use {AlphaType, BorderDetails, BorderDisplayItem, BorderRadius, BorderWidths, BoxShadowClipMode};
 use {BoxShadowDisplayItem, ClipAndScrollInfo, ClipChainId, ClipChainItem, ClipDisplayItem, ClipId};
 use {ColorF, ComplexClipRegion, DisplayItem, ExtendMode, ExternalScrollId, FilterOp};
-use {FontInstanceKey, GlyphInstance, GlyphOptions, Gradient, GradientDisplayItem, GradientStop};
-use {IframeDisplayItem, ImageDisplayItem, ImageKey, ImageMask, ImageRendering, LayerPrimitiveInfo};
+use {FontInstanceKey, GlyphInstance, GlyphOptions, GlyphRasterSpace, Gradient, GradientDisplayItem, GradientStop};
+use {IframeDisplayItem, ImageDisplayItem, ImageKey, ImageMask, ImageRendering};
 use {LayoutPoint, LayoutPrimitiveInfo, LayoutRect, LayoutSize, LayoutTransform, LayoutVector2D};
 use {LineDisplayItem, LineOrientation, LineStyle, MixBlendMode, PipelineId, PropertyBinding};
 use {PushStackingContextDisplayItem, RadialGradient, RadialGradientDisplayItem};
@@ -331,9 +331,9 @@ impl<'a, 'b> DisplayItemRef<'a, 'b> {
         self.iter.cur_item.info.rect
     }
 
-    pub fn get_layer_primitive_info(&self, offset: &LayoutVector2D) -> LayerPrimitiveInfo {
+    pub fn get_layout_primitive_info(&self, offset: &LayoutVector2D) -> LayoutPrimitiveInfo {
         let info = self.iter.cur_item.info;
-        LayerPrimitiveInfo {
+        LayoutPrimitiveInfo {
             rect: info.rect.translate(offset),
             clip_rect: info.clip_rect.translate(offset),
             is_backface_visible: info.is_backface_visible,
@@ -1276,6 +1276,7 @@ impl DisplayListBuilder {
         perspective: Option<LayoutTransform>,
         mix_blend_mode: MixBlendMode,
         filters: Vec<FilterOp>,
+        glyph_raster_space: GlyphRasterSpace,
     ) {
         let reference_frame_id = if transform.is_some() || perspective.is_some() {
             Some(self.generate_clip_id())
@@ -1292,6 +1293,7 @@ impl DisplayListBuilder {
                 mix_blend_mode,
                 reference_frame_id,
                 clip_node_id,
+                glyph_raster_space,
             },
         });
 

@@ -14,8 +14,8 @@
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/css/Rule.h"
 #include "mozilla/dom/CSSRuleList.h"
+#include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/dom/SRIMetadata.h"
-#include "nsCSSParser.h"
 #include "nsCSSPropertyID.h"
 #include "nsUnicharInputStream.h"
 #include "nsAttrName.h"
@@ -1097,9 +1097,10 @@ nsTreeSanitizer::SanitizeStyleSheet(const nsAString& aOriginal,
   sheet->SetURIs(aDocument->GetDocumentURI(), nullptr, aBaseURI);
   sheet->SetPrincipal(aDocument->NodePrincipal());
   sheet->AsServo()->ParseSheetSync(
-    aDocument->CSSLoader(), NS_ConvertUTF16toUTF8(aOriginal),
-    aDocument->GetDocumentURI(), aBaseURI, aDocument->NodePrincipal(),
-    /* aLoadData = */ nullptr, 0, aDocument->GetCompatibilityMode());
+    aDocument->CSSLoader(),
+    NS_ConvertUTF16toUTF8(aOriginal),
+    /* aLoadData = */ nullptr,
+    /* aLineNumber = */ 0);
   NS_ENSURE_SUCCESS(rv, true);
   // Mark the sheet as complete.
   MOZ_ASSERT(!sheet->HasForcedUniqueInner(),
@@ -1350,13 +1351,11 @@ nsTreeSanitizer::SanitizeURL(mozilla::dom::Element* aElement,
 }
 
 void
-nsTreeSanitizer::Sanitize(nsIContent* aFragment)
+nsTreeSanitizer::Sanitize(DocumentFragment* aFragment)
 {
   // If you want to relax these preconditions, be sure to check the code in
   // here that notifies / does not notify or that fires mutation events if
   // in tree.
-  NS_PRECONDITION(aFragment->IsNodeOfType(nsINode::eDOCUMENT_FRAGMENT),
-      "Argument was not DOM fragment.");
   NS_PRECONDITION(!aFragment->IsInUncomposedDoc(), "The fragment is in doc?");
 
   mFullDocument = false;
@@ -1500,7 +1499,7 @@ nsTreeSanitizer::SanitizeChildren(nsINode* aRoot)
     }
     NS_ASSERTION(!node->GetFirstChild(), "How come non-element node had kids?");
     nsIContent* next = node->GetNextNonChildNode(aRoot);
-    if (!mAllowComments && node->IsNodeOfType(nsINode::eCOMMENT)) {
+    if (!mAllowComments && node->IsComment()) {
       node->RemoveFromParent();
     }
     node = next;

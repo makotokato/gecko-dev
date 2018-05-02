@@ -26,7 +26,6 @@ import org.mozilla.gecko.AppConstants;
 import org.mozilla.gecko.BrowserApp;
 import org.mozilla.gecko.DoorHangerPopup;
 import org.mozilla.gecko.FormAssistPopup;
-import org.mozilla.gecko.GeckoAccessibility;
 import org.mozilla.gecko.GeckoScreenOrientation;
 import org.mozilla.gecko.GeckoSharedPrefs;
 import org.mozilla.gecko.preferences.GeckoPreferences;
@@ -38,6 +37,7 @@ import org.mozilla.gecko.text.TextSelection;
 import org.mozilla.gecko.util.ActivityUtils;
 import org.mozilla.gecko.util.ColorUtil;
 import org.mozilla.gecko.widget.ActionModePresenter;
+import org.mozilla.geckoview.GeckoResponse;
 import org.mozilla.geckoview.GeckoRuntime;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoSessionSettings;
@@ -73,6 +73,8 @@ public class WebAppActivity extends AppCompatActivity
 
     private WebAppManifest mManifest;
 
+    private boolean mIsFirstLoad = true;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         if ((getIntent().getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0 &&
@@ -94,10 +96,6 @@ public class WebAppActivity extends AppCompatActivity
 
         final GeckoSessionSettings settings = new GeckoSessionSettings();
         settings.setBoolean(GeckoSessionSettings.USE_MULTIPROCESS, false);
-        settings.setBoolean(
-            GeckoSessionSettings.USE_REMOTE_DEBUGGER,
-            GeckoSharedPrefs.forApp(this).getBoolean(
-                GeckoPreferences.PREFS_DEVTOOLS_REMOTE_USB_ENABLED, false));
         mGeckoSession = new GeckoSession(settings);
         mGeckoView.setSession(mGeckoSession, GeckoRuntime.getDefault(this));
 
@@ -116,6 +114,13 @@ public class WebAppActivity extends AppCompatActivity
 
             @Override
             public void onSecurityChange(GeckoSession session, SecurityInformation security) {
+                // We want to ignore the extraneous first about:blank load
+                if (mIsFirstLoad && security.origin.startsWith("moz-nullprincipal:")) {
+                    mIsFirstLoad = false;
+                    return;
+                }
+                mIsFirstLoad = false;
+
                 int message;
                 if (!security.isSecure) {
                     if (SecurityInformation.CONTENT_LOADED == security.mixedModeActive) {
@@ -139,11 +144,8 @@ public class WebAppActivity extends AppCompatActivity
                         fallbackToFennec(getString(message));
                     }
                 }
-
             }
         });
-
-        GeckoAccessibility.setDelegate(mGeckoView);
 
         mPromptService = new PromptService(this, mGeckoView.getEventDispatcher());
         mDoorHangerPopup = new DoorHangerPopup(this, mGeckoView.getEventDispatcher());
@@ -376,7 +378,8 @@ public class WebAppActivity extends AppCompatActivity
     @Override
     public void onLoadRequest(final GeckoSession session, final String urlStr,
                               final int target,
-                              final GeckoSession.Response<Boolean> response) {
+                              final int flags,
+                              final GeckoResponse<Boolean> response) {
         final Uri uri = Uri.parse(urlStr);
         if (uri == null) {
             // We can't really handle this, so deny it?
@@ -428,7 +431,7 @@ public class WebAppActivity extends AppCompatActivity
 
     @Override
     public void onNewSession(final GeckoSession session, final String uri,
-                             final GeckoSession.Response<GeckoSession> response) {
+                             final GeckoResponse<GeckoSession> response) {
         // We should never get here because we abort loads that need a new session in onLoadRequest()
         throw new IllegalStateException("Unexpected new session");
     }

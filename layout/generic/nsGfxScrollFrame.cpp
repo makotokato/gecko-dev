@@ -236,20 +236,13 @@ struct MOZ_STACK_CLASS ScrollReflowInput {
   MOZ_INIT_OUTSIDE_CTOR
   bool mShowVScrollbar;
 
-  ScrollReflowInput(nsIScrollableFrame* aFrame, const ReflowInput& aReflowInput)
-    : mReflowInput(aReflowInput)
-    ,
+  ScrollReflowInput(nsIScrollableFrame* aFrame,
+                    const ReflowInput& aReflowInput) :
+    mReflowInput(aReflowInput),
     // mBoxState is just used for scrollbars so we don't need to
     // worry about the reflow depth here
-    mBoxState(aReflowInput.mFrame->PresContext(),
-              aReflowInput.mRenderingContext,
-              0)
-    , mStyles(aFrame->GetScrollbarStyles())
-    , mReflowedContentsWithHScrollbar{ false }
-    , mReflowedContentsWithVScrollbar{ false }
-    , mShowHScrollbar{ false }
-    , mShowVScrollbar{ false }
-  {
+    mBoxState(aReflowInput.mFrame->PresContext(), aReflowInput.mRenderingContext, 0),
+    mStyles(aFrame->GetScrollbarStyles()) {
   }
 };
 
@@ -2053,7 +2046,8 @@ static ScrollFrameActivityTracker *gScrollFrameActivityTracker = nullptr;
 // ensure the new one gets a fresh value.
 static uint32_t sScrollGenerationCounter = 0;
 
-ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter, bool aIsRoot)
+ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter,
+                                             bool aIsRoot)
   : mHScrollbarBox(nullptr)
   , mVScrollbarBox(nullptr)
   , mScrolledFrame(nullptr)
@@ -2075,7 +2069,6 @@ ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter, bool aIsRoot)
   , mLastUpdateFramesPos(-1, -1)
   , mHadDisplayPortAtLastFrameUpdate(false)
   , mDisplayPortAtLastFrameUpdate()
-  , mScrollParentID{}
   , mNeverHasVerticalScrollbar(false)
   , mNeverHasHorizontalScrollbar(false)
   , mHasVerticalScrollbar(false)
@@ -2097,7 +2090,6 @@ ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter, bool aIsRoot)
   , mWillBuildScrollableLayer(false)
   , mIsScrollParent(false)
   , mIsScrollableLayerInRootContainer(false)
-  , mAddClipRectToLayer{ false }
   , mHasBeenScrolled(false)
   , mIgnoreMomentumScroll(false)
   , mTransformingByAPZ(false)
@@ -3050,23 +3042,25 @@ AppendToTop(nsDisplayListBuilder* aBuilder, const nsDisplayListSet& aLists,
   nsDisplayWrapList* newItem;
   const ActiveScrolledRoot* asr = aBuilder->CurrentActiveScrolledRoot();
   if (aFlags & APPEND_OWN_LAYER) {
-    FrameMetrics::ViewID scrollTarget = FrameMetrics::NULL_SCROLL_ID;
     nsDisplayOwnLayerFlags flags = aBuilder->GetCurrentScrollbarFlags();
     // The flags here should be at most one scrollbar direction and nothing else
     MOZ_ASSERT(flags == nsDisplayOwnLayerFlags::eNone ||
                flags == nsDisplayOwnLayerFlags::eVerticalScrollbar ||
                flags == nsDisplayOwnLayerFlags::eHorizontalScrollbar);
 
+    ScrollbarData scrollbarData;
     if (aFlags & APPEND_SCROLLBAR_CONTAINER) {
-      scrollTarget = aBuilder->GetCurrentScrollbarTarget();
+      scrollbarData.mTargetViewId = aBuilder->GetCurrentScrollbarTarget();
       // The flags here should be exactly one scrollbar direction
       MOZ_ASSERT(flags != nsDisplayOwnLayerFlags::eNone);
       flags |= nsDisplayOwnLayerFlags::eScrollbarContainer;
     }
 
-    newItem = MakeDisplayItem<nsDisplayOwnLayer>(aBuilder, aSourceFrame, aSource, asr, flags, scrollTarget);
+    newItem = MakeDisplayItem<nsDisplayOwnLayer>(aBuilder, aSourceFrame, aSource, asr, flags, scrollbarData);
   } else {
-    newItem = MakeDisplayItem<nsDisplayWrapList>(aBuilder, aSourceFrame, aSource, asr);
+    // Build the wrap list with an index of 1, since the scrollbar frame itself might have already
+    // built an nsDisplayWrapList.
+    newItem = MakeDisplayItem<nsDisplayWrapList>(aBuilder, aSourceFrame, aSource, asr, false, 1);
   }
 
   if (aFlags & APPEND_POSITIONED) {
@@ -3904,13 +3898,17 @@ ScrollFrameHelper::DecideScrollableLayer(nsDisplayListBuilder* aBuilder,
 
 
 Maybe<ScrollMetadata>
-ScrollFrameHelper::ComputeScrollMetadata(Layer* aLayer,
-                                         LayerManager* aLayerManager,
+ScrollFrameHelper::ComputeScrollMetadata(LayerManager* aLayerManager,
                                          const nsIFrame* aContainerReferenceFrame,
                                          const ContainerLayerParameters& aParameters,
                                          const DisplayItemClip* aClip) const
 {
   if (!mWillBuildScrollableLayer || mIsScrollableLayerInRootContainer) {
+    return Nothing();
+  }
+
+  if (!nsLayoutUtils::UsesAsyncScrolling(mOuter)) {
+    // Return early, since if we don't use APZ we don't need FrameMetrics.
     return Nothing();
   }
 
@@ -3924,11 +3922,33 @@ ScrollFrameHelper::ComputeScrollMetadata(Layer* aLayer,
   }
 
   bool isRootContent = mIsRoot && mOuter->PresContext()->IsRootContentDocument();
-  bool thisScrollFrameUsesAsyncScrolling = nsLayoutUtils::UsesAsyncScrolling(mOuter);
-  if (!thisScrollFrameUsesAsyncScrolling) {
+
+  MOZ_ASSERT(mScrolledFrame->GetContent());
+
+  nsRect scrollport = mScrollPort + toReferenceFrame;
+
+  return Some(nsLayoutUtils::ComputeScrollMetadata(
+    mScrolledFrame, mOuter, mOuter->GetContent(),
+    aContainerReferenceFrame, aLayerManager, mScrollParentID,
+    scrollport, parentLayerClip, isRootContent, aParameters));
+}
+
+void
+ScrollFrameHelper::ClipLayerToDisplayPort(Layer* aLayer,
+                                          const DisplayItemClip* aClip,
+                                          const ContainerLayerParameters& aParameters) const
+{
+  // If APZ is not enabled, we still need the displayport to be clipped
+  // in the compositor.
+  if (!nsLayoutUtils::UsesAsyncScrolling(mOuter)) {
+    Maybe<nsRect> parentLayerClip;
+    // For containerful frames, the clip is on the container layer.
+    if (aClip &&
+        (!gfxPrefs::LayoutUseContainersForRootFrames() || mAddClipRectToLayer)) {
+      parentLayerClip = Some(aClip->GetClipRect());
+    }
+
     if (parentLayerClip) {
-      // If APZ is not enabled, we still need the displayport to be clipped
-      // in the compositor.
       ParentLayerIntRect displayportClip =
         ViewAs<ParentLayerPixel>(
           parentLayerClip->ScaleToNearestPixels(
@@ -3944,19 +3964,7 @@ ScrollFrameHelper::ComputeScrollMetadata(Layer* aLayer,
       }
       aLayer->SetClipRect(Some(layerClip));
     }
-
-    // Return early, since if we don't use APZ we don't need FrameMetrics.
-    return Nothing();
   }
-
-  MOZ_ASSERT(mScrolledFrame->GetContent());
-
-  nsRect scrollport = mScrollPort + toReferenceFrame;
-
-  return Some(nsLayoutUtils::ComputeScrollMetadata(
-    mScrolledFrame, mOuter, mOuter->GetContent(),
-    aContainerReferenceFrame, aLayerManager, mScrollParentID,
-    scrollport, parentLayerClip, isRootContent, aParameters));
 }
 
 bool
@@ -4717,7 +4725,12 @@ ScrollFrameHelper::CreateAnonymousContent(
         dir.AssignLiteral("bottom");
         break;
       case NS_STYLE_RESIZE_BOTH:
-        dir.AssignLiteral("bottomend");
+        if (IsScrollbarOnRight()) {
+          dir.AssignLiteral("bottomright");
+        }
+        else {
+          dir.AssignLiteral("bottomleft");
+        }
         break;
       default:
         NS_WARNING("only resizable types should have resizers");

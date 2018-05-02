@@ -15,6 +15,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/BinarySearch.h"
+#include "mozilla/CSSEnabledState.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/EffectSet.h"
 #include "mozilla/EnumSet.h"
@@ -60,6 +61,7 @@
 #include "mozilla/dom/Attr.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/Event.h"
 #include "mozilla/dom/FramingChecker.h"
 #include "mozilla/dom/HTMLSharedElement.h"
 #include "nsGenericHTMLElement.h"
@@ -111,7 +113,6 @@
 
 #include "nsIDOMWindow.h"
 #include "nsPIDOMWindow.h"
-#include "nsIDOMElement.h"
 #include "nsFocusManager.h"
 
 // for radio group stuff
@@ -255,7 +256,6 @@
 #ifdef MOZ_XUL
 #include "mozilla/dom/ListBoxObject.h"
 #include "mozilla/dom/MenuBoxObject.h"
-#include "mozilla/dom/PopupBoxObject.h"
 #include "mozilla/dom/ScrollBoxObject.h"
 #include "mozilla/dom/TreeBoxObject.h"
 #endif
@@ -399,7 +399,7 @@ nsIdentifierMapEntry::Traverse(nsCycleCollectionTraversalCallback* aCallback)
 {
   NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*aCallback,
                                      "mIdentifierMap mNameContentList");
-  aCallback->NoteXPCOMChild(static_cast<nsIDOMNodeList*>(mNameContentList));
+  aCallback->NoteXPCOMChild(static_cast<nsINodeList*>(mNameContentList));
 
   if (mImageElement) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*aCallback,
@@ -1317,9 +1317,9 @@ void nsIDocument::SelectorCache::NotifyExpired(SelectorCacheKey* aSelector)
   // There is no guarantee that this method won't be re-entered when selector
   // matching is ongoing because "memory-pressure" could be notified immediately
   // when OOM happens according to the design of nsExpirationTracker.
-  // The perfect solution is to delete the |aSelector| and its nsCSSSelectorList
-  // in mTable asynchronously.
-  // We remove these objects synchronously for now because NotifiyExpired() will
+  // The perfect solution is to delete the |aSelector| and its
+  // RawServoSelectorList in mTable asynchronously.
+  // We remove these objects synchronously for now because NotifyExpired() will
   // never be triggered by "memory-pressure" which is not implemented yet in
   // the stage 2 of mozalloc_handle_oom().
   // Once these objects are removed asynchronously, we should update the warning
@@ -1740,7 +1740,6 @@ NS_INTERFACE_TABLE_HEAD(nsDocument)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, nsIDOMDocument)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, nsIDOMNode)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, nsIScriptObjectPrincipal)
-    NS_INTERFACE_TABLE_ENTRY(nsDocument, nsIDOMEventTarget)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, mozilla::dom::EventTarget)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, nsISupportsWeakReference)
     NS_INTERFACE_TABLE_ENTRY(nsDocument, nsIRadioGroupContainer)
@@ -3524,11 +3523,10 @@ nsIDocument::GetActiveElement()
   }
 
   // No focused element anywhere in this document.  Try to get the BODY.
-  RefPtr<nsHTMLDocument> htmlDoc = AsHTMLDocument();
-  if (htmlDoc) {
+  if (IsHTMLOrXHTML()) {
     // Because of IE compatibility, return null when html document doesn't have
     // a body.
-    return htmlDoc->GetBody();
+    return AsHTMLDocument()->GetBody();
   }
 
   // If we couldn't get a BODY, return the root element.
@@ -3548,7 +3546,7 @@ nsIDocument::NodesFromRectHelper(float aX, float aY,
                                  float aBottomSize, float aLeftSize,
                                  bool aIgnoreRootScrollFrame,
                                  bool aFlushLayout,
-                                 nsIDOMNodeList** aReturn)
+                                 nsINodeList** aReturn)
 {
   NS_ENSURE_ARG_POINTER(aReturn);
 
@@ -3593,7 +3591,7 @@ nsIDocument::NodesFromRectHelper(float aX, float aY,
   for (uint32_t i = 0; i < outFrames.Length(); i++) {
     nsIContent* node = GetContentInThisDocument(outFrames[i]);
 
-    if (node && !node->IsElement() && !node->IsNodeOfType(nsINode::eTEXT)) {
+    if (node && !node->IsElement() && !node->IsText()) {
       // We have a node that isn't an element or a text node,
       // use its parent content instead.
       node = node->GetParent();
@@ -3843,13 +3841,25 @@ static inline void
 AssertNoStaleServoDataIn(const nsINode& aSubtreeRoot)
 {
 #ifdef DEBUG
-  for (const nsINode* node = aSubtreeRoot.GetFirstChild();
+  for (const nsINode* node = &aSubtreeRoot;
        node;
-       node = node->GetNextNode()) {
-    if (node->IsElement()) {
-      MOZ_ASSERT(!node->AsElement()->HasServoData());
-      if (auto* shadow = node->AsElement()->GetShadowRoot()) {
-        AssertNoStaleServoDataIn(*shadow);
+       node = node->GetNextNode(&aSubtreeRoot)) {
+    if (!node->IsElement()) {
+      continue;
+    }
+    MOZ_ASSERT(!node->AsElement()->HasServoData());
+    if (auto* shadow = node->AsElement()->GetShadowRoot()) {
+      AssertNoStaleServoDataIn(*shadow);
+    }
+    if (nsXBLBinding* binding = node->AsElement()->GetXBLBinding()) {
+      if (nsXBLBinding* bindingWithContent = binding->GetBindingWithContent()) {
+        nsIContent* content = bindingWithContent->GetAnonymousContent();
+        MOZ_ASSERT(!content->AsElement()->HasServoData());
+        for (nsINode* child = content->GetFirstChild();
+             child;
+             child = child->GetNextSibling()) {
+          AssertNoStaleServoDataIn(*child);
+        }
       }
     }
   }
@@ -4148,7 +4158,7 @@ nsIDocument::FindContentForSubDocument(nsIDocument *aDocument) const
 bool
 nsIDocument::IsNodeOfType(uint32_t aFlags) const
 {
-  return !(aFlags & ~eDOCUMENT);
+  return false;
 }
 
 Element*
@@ -4759,6 +4769,10 @@ nsIDocument::SetContainer(nsDocShell* aContainer)
   }
 
   EnumerateActivityObservers(NotifyActivityChanged, nullptr);
+
+  // IsTopLevelWindowInactive depends on the docshell, so
+  // update the cached value now that it's available.
+  UpdateDocumentStates(NS_DOCUMENT_STATE_WINDOW_INACTIVE);
   if (!aContainer) {
     return;
   }
@@ -5450,6 +5464,10 @@ nsIDocument::UnblockDOMContentLoaded()
   MOZ_LOG(gDocumentLeakPRLog, LogLevel::Debug, ("DOCUMENT %p UnblockDOMContentLoaded", this));
 
   mDidFireDOMContentLoaded = true;
+  if (nsIPresShell* shell = GetShell()) {
+    shell->GetRefreshDriver()->NotifyDOMContentLoaded();
+  }
+
 
   MOZ_ASSERT(mReadyState == READYSTATE_INTERACTIVE);
   if (!mSynchronousDOMContentLoaded) {
@@ -5728,7 +5746,7 @@ GetPseudoElementType(const nsString& aString, ErrorResult& aRv)
   }
   RefPtr<nsAtom> pseudo = NS_Atomize(Substring(aString, 1));
   return nsCSSPseudoElements::GetPseudoType(pseudo,
-      nsCSSProps::EnabledState::eInUASheets);
+      CSSEnabledState::eInUASheets);
 }
 
 already_AddRefed<Element>
@@ -6561,11 +6579,6 @@ nsIDocument::GetBoxObjectFor(Element* aElement, ErrorResult& aRv)
   if (namespaceID == kNameSpaceID_XUL) {
     if (tag == nsGkAtoms::menu) {
       boxObject = new MenuBoxObject();
-    } else if (tag == nsGkAtoms::popup ||
-               tag == nsGkAtoms::menupopup ||
-               tag == nsGkAtoms::panel ||
-               tag == nsGkAtoms::tooltip) {
-      boxObject = new PopupBoxObject();
     } else if (tag == nsGkAtoms::tree) {
       boxObject = new TreeBoxObject();
     } else if (tag == nsGkAtoms::listbox) {
@@ -9340,7 +9353,7 @@ public:
     }
 
     // Don't steal focus from the user.
-    if (mTopWindow->GetFocusedNode()) {
+    if (mTopWindow->GetFocusedElement()) {
       return NS_OK;
     }
 
@@ -10930,13 +10943,12 @@ IsInActiveTab(nsIDocument* aDoc)
   return activeWindow == rootWin;
 }
 
-nsresult nsIDocument::RemoteFrameFullscreenChanged(nsIDOMElement* aFrameElement)
+nsresult nsIDocument::RemoteFrameFullscreenChanged(Element* aFrameElement)
 {
   // Ensure the frame element is the fullscreen element in this document.
   // If the frame element is already the fullscreen element in this document,
   // this has no effect.
-  nsCOMPtr<nsIContent> content(do_QueryInterface(aFrameElement));
-  auto request = MakeUnique<FullscreenRequest>(content->AsElement());
+  auto request = MakeUnique<FullscreenRequest>(aFrameElement);
   request->mIsCallerChrome = false;
   request->mShouldNotifyNewOrigin = false;
   RequestFullScreen(Move(request));
@@ -11040,19 +11052,14 @@ nsIDocument::FullscreenElementReadyCheck(Element* aElement,
     return false;
   }
   // Deny requests when a windowed plugin is focused.
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
   if (!fm) {
     NS_WARNING("Failed to retrieve focus manager in full-screen request.");
     return false;
   }
-  nsCOMPtr<nsIDOMElement> focusedElement;
-  fm->GetFocusedElement(getter_AddRefs(focusedElement));
-  if (focusedElement) {
-    nsCOMPtr<nsIContent> content = do_QueryInterface(focusedElement);
-    if (nsContentUtils::HasPluginWithUncontrolledEventDispatch(content)) {
-      DispatchFullscreenError("FullscreenDeniedFocusedPlugin");
-      return false;
-    }
+  if (nsContentUtils::HasPluginWithUncontrolledEventDispatch(fm->GetFocusedElement())) {
+    DispatchFullscreenError("FullscreenDeniedFocusedPlugin");
+    return false;
   }
   return true;
 }
@@ -12002,10 +12009,35 @@ nsIDocument::GetTopLevelContentDocument()
   return parent;
 }
 
+static bool
+MightBeChromeScheme(nsIURI* aURI)
+{
+  MOZ_ASSERT(aURI);
+  bool isChrome = true;
+  aURI->SchemeIs("chrome", &isChrome);
+  return isChrome;
+}
+
+static bool
+MightBeAboutOrChromeScheme(nsIURI* aURI)
+{
+  MOZ_ASSERT(aURI);
+  bool isAbout = true;
+  aURI->SchemeIs("about", &isAbout);
+  return isAbout || MightBeChromeScheme(aURI);
+}
+
 void
 nsIDocument::PropagateUseCounters(nsIDocument* aParentDocument)
 {
   MOZ_ASSERT(this != aParentDocument);
+
+  // Don't count chrome resources, even in the web content.
+  nsCOMPtr<nsIURI> uri;
+  NodePrincipal()->GetURI(getter_AddRefs(uri));
+  if (!uri || MightBeChromeScheme(uri)) {
+    return;
+  }
 
   // What really matters here is that our use counters get propagated as
   // high up in the content document hierarchy as possible.  So,
@@ -12090,17 +12122,6 @@ nsIDocument::InlineScriptAllowedByCSP()
     NS_ENSURE_SUCCESS(rv, true);
   }
   return allowsInlineScript;
-}
-
-static bool
-MightBeAboutOrChromeScheme(nsIURI* aURI)
-{
-  MOZ_ASSERT(aURI);
-  bool isAbout = true;
-  bool isChrome = true;
-  aURI->SchemeIs("about", &isAbout);
-  aURI->SchemeIs("chrome", &isChrome);
-  return isAbout || isChrome;
 }
 
 static bool
@@ -12694,8 +12715,6 @@ namespace {
 struct PrefStore
 {
   PrefStore()
-    : mFlashBlockEnabled{ false }
-    , mPluginsHttpOnly{ false }
   {
     Preferences::AddBoolVarCache(&mFlashBlockEnabled,
                                  "plugins.flashBlock.enabled");

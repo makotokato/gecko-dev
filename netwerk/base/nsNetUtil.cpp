@@ -2144,6 +2144,15 @@ bool NS_IsSameSiteForeign(nsIChannel* aChannel, nsIURI* aHostURI)
   if (!loadInfo) {
     return false;
   }
+
+  // Do not treat loads triggered by web extensions as foreign
+  nsCOMPtr<nsIURI> channelURI;
+  NS_GetFinalChannelURI(aChannel, getter_AddRefs(channelURI));
+  if (BasePrincipal::Cast(loadInfo->TriggeringPrincipal())->
+        AddonAllowsLoad(channelURI)) {
+    return false;
+  }
+
   nsCOMPtr<nsIURI> uri;
   if (loadInfo->GetExternalContentPolicyType() == nsIContentPolicy::TYPE_DOCUMENT) {
     // for loads of TYPE_DOCUMENT we query the hostURI from the triggeringPricnipal
@@ -2160,8 +2169,44 @@ bool NS_IsSameSiteForeign(nsIChannel* aChannel, nsIURI* aHostURI)
     return false;
   }
 
-  bool isForeign = false;
-  thirdPartyUtil->IsThirdPartyChannel(aChannel, uri, &isForeign);
+  bool isForeign = true;
+  nsresult rv = thirdPartyUtil->IsThirdPartyChannel(aChannel, uri, &isForeign);
+  // if we are dealing with a cross origin request, we can return here
+  // because we already know the request is 'foreign'.
+  if (NS_FAILED(rv) || isForeign) {
+    return true;
+  }
+
+  // for loads of TYPE_SUBDOCUMENT we have to perform an additional test, because
+  // a cross-origin iframe might perform a navigation to a same-origin iframe which
+  // would send same-site cookies. Hence, if the iframe navigation was triggered
+  // by a cross-origin triggeringPrincipal, we treat the load as foreign.
+  if (loadInfo->GetExternalContentPolicyType() == nsIContentPolicy::TYPE_SUBDOCUMENT) {
+    nsCOMPtr<nsIURI> triggeringPrincipalURI;
+    loadInfo->TriggeringPrincipal()->GetURI(getter_AddRefs(triggeringPrincipalURI));
+    rv = thirdPartyUtil->IsThirdPartyChannel(aChannel, triggeringPrincipalURI, &isForeign);
+    if (NS_FAILED(rv) || isForeign) {
+      return true;
+    }
+  }
+
+  // for the purpose of same-site cookies we have to treat any cross-origin
+  // redirects as foreign. E.g. cross-site to same-site redirect is a problem
+  // with regards to CSRF.
+
+  nsCOMPtr<nsIPrincipal> redirectPrincipal;
+  nsCOMPtr<nsIURI> redirectURI;
+  for (nsIRedirectHistoryEntry* entry : loadInfo->RedirectChain()) {
+    entry->GetPrincipal(getter_AddRefs(redirectPrincipal));
+    if (redirectPrincipal) {
+      redirectPrincipal->GetURI(getter_AddRefs(redirectURI));
+      rv = thirdPartyUtil->IsThirdPartyChannel(aChannel, redirectURI, &isForeign);
+      // if at any point we encounter a cross-origin redirect we can return.
+      if (NS_FAILED(rv) || isForeign) {
+        return true;
+      }
+    }
+  }
   return isForeign;
 }
 
@@ -3111,9 +3156,8 @@ NS_ShouldSecureUpgrade(nsIURI* aURI,
               break;
         }
         return NS_OK;
-      } else {
-        Telemetry::AccumulateCategorical(Telemetry::LABELS_HTTP_SCHEME_UPGRADE_TYPE::PrefBlockedSTS);
       }
+      Telemetry::AccumulateCategorical(Telemetry::LABELS_HTTP_SCHEME_UPGRADE_TYPE::PrefBlockedSTS);
     } else {
       Telemetry::AccumulateCategorical(Telemetry::LABELS_HTTP_SCHEME_UPGRADE_TYPE::NoReasonToUpgrade);
     }

@@ -6,7 +6,7 @@
 
 /*
  * Base class for all element classes; this provides an implementation
- * of DOM Core's nsIDOMElement, implements nsIContent, provides
+ * of DOM Core's Element, implements nsIContent, provides
  * utility methods for subclasses, and so forth.
  */
 
@@ -26,7 +26,6 @@
 #include "mozilla/dom/NodeInfo.h"
 #include "nsIDocumentInlines.h"
 #include "mozilla/dom/DocumentTimeline.h"
-#include "nsIDOMNodeList.h"
 #include "nsIDOMDocument.h"
 #include "nsIContentIterator.h"
 #include "nsFlexContainerFrame.h"
@@ -41,7 +40,6 @@
 #include "nsStyleConsts.h"
 #include "nsString.h"
 #include "nsUnicharUtils.h"
-#include "nsIDOMEvent.h"
 #include "nsDOMCID.h"
 #include "nsIServiceManager.h"
 #include "nsDOMCSSAttrDeclaration.h"
@@ -120,7 +118,6 @@
 
 #include "mozAutoDocUpdate.h"
 
-#include "nsCSSParser.h"
 #include "nsDOMMutationObserver.h"
 #include "nsWrapperCacheInlines.h"
 #include "xpcpublic.h"
@@ -341,15 +338,14 @@ Element::TabIndex()
 void
 Element::Focus(mozilla::ErrorResult& aError)
 {
-  nsCOMPtr<nsIDOMElement> domElement = do_QueryInterface(this);
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
   // Also other browsers seem to have the hack to not re-focus (and flush) when
   // the element is already focused.
-  if (fm && domElement) {
+  if (fm) {
     if (fm->CanSkipFocus(this)) {
       fm->NeedsFlushBeforeEventHandling(this);
     } else {
-      aError = fm->SetFocus(domElement, 0);
+      aError = fm->SetFocus(this, 0);
     }
   }
 }
@@ -1219,18 +1215,6 @@ Element::AttachShadow(const ShadowRootInit& aInit, ErrorResult& aError)
     return nullptr;
   }
 
-  return AttachShadowInternal(aInit.mMode, aError);
-}
-
-already_AddRefed<ShadowRoot>
-Element::CreateShadowRoot(ErrorResult& aError)
-{
-  return AttachShadowInternal(ShadowRootMode::Open, aError);
-}
-
-already_AddRefed<ShadowRoot>
-Element::AttachShadowInternal(ShadowRootMode aMode, ErrorResult& aError)
-{
   /**
    * 3. If context object is a shadow host, then throw
    *    an "InvalidStateError" DOMException.
@@ -1260,7 +1244,7 @@ Element::AttachShadowInternal(ShadowRootMode aMode, ErrorResult& aError)
    *    and mode is init’s mode.
    */
   RefPtr<ShadowRoot> shadowRoot =
-    new ShadowRoot(this, aMode, nodeInfo.forget());
+    new ShadowRoot(this, aInit.mMode, nodeInfo.forget());
 
   shadowRoot->SetIsComposedDocParticipant(IsInComposedDoc());
 
@@ -3321,9 +3305,9 @@ Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor)
           nsIFocusManager* fm = nsFocusManager::GetFocusManager();
           if (fm) {
             aVisitor.mEvent->mFlags.mMultipleActionsPrevented = true;
-            nsCOMPtr<nsIDOMElement> elem = do_QueryInterface(this);
-            fm->SetFocus(elem, nsIFocusManager::FLAG_BYMOUSE |
-                               nsIFocusManager::FLAG_NOSCROLL);
+            RefPtr<Element> kungFuDeathGrip(this);
+            fm->SetFocus(kungFuDeathGrip, nsIFocusManager::FLAG_BYMOUSE |
+                                          nsIFocusManager::FLAG_NOSCROLL);
           }
 
           EventStateManager::SetActiveManager(
@@ -3881,15 +3865,11 @@ Element::SetOuterHTML(const nsAString& aOuterHTML, ErrorResult& aError)
     context = NS_NewHTMLBodyElement(info.forget(), FROM_PARSER_FRAGMENT);
   }
 
-  nsCOMPtr<nsIDOMDocumentFragment> df;
-  aError = nsContentUtils::CreateContextualFragment(context,
-                                                    aOuterHTML,
-                                                    true,
-                                                    getter_AddRefs(df));
+  RefPtr<DocumentFragment> fragment =
+    nsContentUtils::CreateContextualFragment(context, aOuterHTML, true, aError);
   if (aError.Failed()) {
     return;
   }
-  nsCOMPtr<nsINode> fragment = do_QueryInterface(df);
   parent->ReplaceChild(*fragment, *this, aError);
 }
 
@@ -3966,16 +3946,11 @@ Element::InsertAdjacentHTML(const nsAString& aPosition, const nsAString& aText,
   }
 
   // couldn't parse directly
-  nsCOMPtr<nsIDOMDocumentFragment> df;
-  aError = nsContentUtils::CreateContextualFragment(destination,
-                                                    aText,
-                                                    true,
-                                                    getter_AddRefs(df));
+  RefPtr<DocumentFragment> fragment =
+    nsContentUtils::CreateContextualFragment(destination, aText, true, aError);
   if (aError.Failed()) {
     return;
   }
-
-  nsCOMPtr<nsINode> fragment = do_QueryInterface(df);
 
   // Suppress assertion about node removal mutation events that can't have
   // listeners anyway, because no one has had the chance to register mutation

@@ -529,24 +529,23 @@ FrameLayerBuilder::DestroyDisplayItemDataFor(nsIFrame* aFrame)
  */
 class PaintedLayerData {
 public:
-  PaintedLayerData()
-    : mAnimatedGeometryRoot(nullptr)
-    , mASR(nullptr)
-    , mClipChain{ nullptr }
-    , mReferenceFrame(nullptr)
-    , mLayer(nullptr)
-    , mSolidColor(NS_RGBA(0, 0, 0, 0))
-    , mIsSolidColorInVisibleRegion(false)
-    , mNeedComponentAlpha(false)
-    , mForceTransparentSurface(false)
-    , mHideAllLayersBelow(false)
-    , mOpaqueForAnimatedGeometryRootParent(false)
-    , mDisableFlattening(false)
-    , mBackfaceHidden(false)
-    , mShouldPaintOnContentSide(false)
-    , mDTCRequiresTargetConfirmation(false)
-    , mImage(nullptr)
-    , mNewChildLayersIndex(-1)
+  PaintedLayerData() :
+    mAnimatedGeometryRoot(nullptr),
+    mASR(nullptr),
+    mReferenceFrame(nullptr),
+    mLayer(nullptr),
+    mSolidColor(NS_RGBA(0, 0, 0, 0)),
+    mIsSolidColorInVisibleRegion(false),
+    mNeedComponentAlpha(false),
+    mForceTransparentSurface(false),
+    mHideAllLayersBelow(false),
+    mOpaqueForAnimatedGeometryRootParent(false),
+    mDisableFlattening(false),
+    mBackfaceHidden(false),
+    mShouldPaintOnContentSide(false),
+    mDTCRequiresTargetConfirmation(false),
+    mImage(nullptr),
+    mNewChildLayersIndex(-1)
   {}
 
 #ifdef MOZ_DUMP_PAINTING
@@ -1575,6 +1574,19 @@ protected:
   // thing repeatly.
   AnimatedGeometryRoot* mLastDisplayPortAGR;
   nsRect mLastDisplayPortRect;
+
+  // Cache ScrollMetadata so it doesn't need recomputed if the ASR and clip are unchanged.
+  // If mASR == nullptr then mMetadata is not valid.
+  struct CachedScrollMetadata {
+    const ActiveScrolledRoot* mASR;
+    const DisplayItemClip* mClip;
+    Maybe<ScrollMetadata> mMetadata;
+
+    CachedScrollMetadata()
+      : mASR(nullptr), mClip(nullptr)
+    {}
+  };
+  CachedScrollMetadata mCachedScrollMetadata;
 };
 
 bool
@@ -1617,19 +1629,15 @@ FLBDisplayItemIterator::ShouldFlattenNextItem() const
 class PaintedDisplayItemLayerUserData : public LayerUserData
 {
 public:
-  PaintedDisplayItemLayerUserData()
-    : mForcedBackgroundColor(NS_RGBA(0, 0, 0, 0))
-    , mXScale(1.f)
-    , mYScale(1.f)
-    , mAppUnitsPerDevPixel(0)
-    , mTranslation(0, 0)
-    , mAnimatedGeometryRootPosition(0, 0)
-    , mLastItemCount(0)
-    , mContainerLayerFrame(nullptr)
-    , mHasExplicitLastPaintOffset(false)
-    , mDisabledAlpha{ false }
-  {
-  }
+  PaintedDisplayItemLayerUserData() :
+    mForcedBackgroundColor(NS_RGBA(0,0,0,0)),
+    mXScale(1.f), mYScale(1.f),
+    mAppUnitsPerDevPixel(0),
+    mTranslation(0, 0),
+    mAnimatedGeometryRootPosition(0, 0),
+    mLastItemCount(0),
+    mContainerLayerFrame(nullptr),
+    mHasExplicitLastPaintOffset(false) {}
 
   NS_INLINE_DECL_REFCOUNTING(PaintedDisplayItemLayerUserData);
 
@@ -1713,7 +1721,6 @@ protected:
 
 FrameLayerBuilder::FrameLayerBuilder()
   : mRetainingManager(nullptr)
-  , mDisplayListBuilder{ nullptr }
   , mContainingPaintedLayer(nullptr)
   , mInactiveLayerClip(nullptr)
   , mInvalidateAllLayers(false)
@@ -2741,10 +2748,8 @@ ContainerState::FindOpaqueBackgroundColorInLayer(const PaintedLayerData* aData,
   appUnitRect.ScaleInverseRoundOut(mParameters.mXScale, mParameters.mYScale);
 
   for (auto& assignedItem : Reversed(aData->mAssignedDisplayItems)) {
-    if (assignedItem.mType != DisplayItemEntryType::ITEM ||
-        assignedItem.mHasOpacity) {
-      // |assignedItem| is either an effect marker, or within a flatten opacity
-      // group. In both cases, there is no opaque area.
+    if (assignedItem.mType != DisplayItemEntryType::ITEM) {
+      // |assignedItem| is an effect marker.
       continue;
     }
 
@@ -2780,9 +2785,13 @@ ContainerState::FindOpaqueBackgroundColorInLayer(const PaintedLayerData* aData,
       return NS_RGBA(0,0,0,0);
     }
 
-    Maybe<nscolor> color = item->IsUniform(mBuilder);
-    if (color && NS_GET_A(*color) == 255)
-      return *color;
+    if (!assignedItem.mHasOpacity) {
+      Maybe<nscolor> color = item->IsUniform(mBuilder);
+
+      if (color && NS_GET_A(*color) == 255) {
+        return *color;
+      }
+    }
 
     return NS_RGBA(0,0,0,0);
   }
@@ -3496,6 +3505,7 @@ void ContainerState::FinishPaintedLayerData(PaintedLayerData& aData, FindOpaqueB
       }
       containingPaintedLayerData->mDispatchToContentHitRegion.Or(
         containingPaintedLayerData->mDispatchToContentHitRegion, rect);
+      containingPaintedLayerData->mDispatchToContentHitRegion.SimplifyOutward(8);
       if (data->mDTCRequiresTargetConfirmation) {
         containingPaintedLayerData->mDTCRequiresTargetConfirmation = true;
       }
@@ -3823,6 +3833,7 @@ PaintedLayerData::AccumulateEventRegions(ContainerState* aState, nsDisplayLayerE
   // Avoid quadratic performance as a result of the region growing to include
   // and arbitrarily large number of rects, which can happen on some pages.
   mMaybeHitRegion.SimplifyOutward(8);
+  mDispatchToContentHitRegion.SimplifyOutward(8);
 
   // Calculate scaled versions of the bounds of mHitRegion and mMaybeHitRegion
   // for quick access in FindPaintedLayerFor().
@@ -3927,6 +3938,7 @@ PaintedLayerData::AccumulateHitTestInfo(ContainerState* aState,
   // Avoid quadratic performance as a result of the region growing to include
   // and arbitrarily large number of rects, which can happen on some pages.
   mMaybeHitRegion.SimplifyOutward(8);
+  mDispatchToContentHitRegion.SimplifyOutward(8);
 
   // Calculate scaled versions of the bounds of mHitRegion and mMaybeHitRegion
   // for quick access in FindPaintedLayerFor().
@@ -5450,9 +5462,20 @@ ContainerState::SetupScrollingMetadata(NewLayerEntry* aEntry)
     const DisplayItemClip* clip =
       (clipChain && clipChain->mASR == asr->mParent) ? &clipChain->mClip : nullptr;
 
-    Maybe<ScrollMetadata> metadata =
-      scrollFrame->ComputeScrollMetadata(aEntry->mLayer, aEntry->mLayer->Manager(),
+    scrollFrame->ClipLayerToDisplayPort(aEntry->mLayer, clip, mParameters);
+
+    Maybe<ScrollMetadata> metadata;
+    if (mCachedScrollMetadata.mASR == asr &&
+        mCachedScrollMetadata.mClip == clip) {
+      metadata = mCachedScrollMetadata.mMetadata;
+    } else {
+      metadata = scrollFrame->ComputeScrollMetadata(aEntry->mLayer->Manager(),
             mContainerReferenceFrame, mParameters, clip);
+      mCachedScrollMetadata.mASR = asr;
+      mCachedScrollMetadata.mClip = clip;
+      mCachedScrollMetadata.mMetadata = metadata;
+    }
+
     if (!metadata) {
       continue;
     }
@@ -6260,6 +6283,21 @@ struct ClipTracker {
   gfxContext* mContext;
 };
 
+static void
+UpdateOpacityNesting(int& aOpacityNesting, DisplayItemEntryType aType)
+{
+  if (aType == DisplayItemEntryType::PUSH_OPACITY ||
+      aType == DisplayItemEntryType::PUSH_OPACITY_WITH_BG) {
+    aOpacityNesting++;
+  }
+
+  if (aType == DisplayItemEntryType::POP_OPACITY) {
+    aOpacityNesting--;
+  }
+
+  MOZ_ASSERT(aOpacityNesting >= 0);
+}
+
 void
 FrameLayerBuilder::PaintItems(nsTArray<AssignedDisplayItem>& aItems,
                               const nsIntRect& aRect,
@@ -6279,7 +6317,13 @@ FrameLayerBuilder::PaintItems(nsTArray<AssignedDisplayItem>& aItems,
 
   DisplayItemClip currentClip, tmpClip;
 
+  // Tracks opacity nesting level for item level clipping.
   int opacityNesting = 0;
+
+  // Tracks opacity nesting level for skipping items between opacity markers,
+  // when opacity has empty visible rect set.
+  int emptyOpacityNesting = 0;
+
   ClipTracker clipTracker(aContext);
 
   for (uint32_t i = 0; i < aItems.Length(); ++i) {
@@ -6292,9 +6336,14 @@ FrameLayerBuilder::PaintItems(nsTArray<AssignedDisplayItem>& aItems,
     }
 
     const nsRect& visibleRect = item->GetVisibleRect();
+    const nsRect paintRect = visibleRect.Intersect(boundRect);
 
-    nsRect paintRect = visibleRect.Intersect(boundRect);
-    if (paintRect.IsEmpty()) {
+    if (paintRect.IsEmpty() || emptyOpacityNesting > 0) {
+      // In order for this branch to be hit, either this item has an empty paint
+      // rect and nothing would be drawn, or a PUSH_OPACITY marker before this
+      // item had an empty paint rect. In the latter case, the items are skipped
+      // until POP_OPACITY markers bring |emptyOpacityNesting| back to 0.
+      UpdateOpacityNesting(emptyOpacityNesting, cdi.mType);
       continue;
     }
 
@@ -6312,7 +6361,6 @@ FrameLayerBuilder::PaintItems(nsTArray<AssignedDisplayItem>& aItems,
         cdi.mType == DisplayItemEntryType::PUSH_OPACITY_WITH_BG) {
       clipTracker.PopClipIfNeeded(opacityNesting);
       PushOpacity(aContext, paintRect, cdi, appUnitsPerDevPixel);
-      opacityNesting++;
     }
 
     if (cdi.mType == DisplayItemEntryType::POP_OPACITY) {
@@ -6322,10 +6370,10 @@ FrameLayerBuilder::PaintItems(nsTArray<AssignedDisplayItem>& aItems,
       clipTracker.PopClipIfNeeded(opacityNesting);
       aContext->PopGroupAndBlend();
       aContext->Restore();
-      opacityNesting--;
     }
 
     if (cdi.mType != DisplayItemEntryType::ITEM) {
+      UpdateOpacityNesting(opacityNesting, cdi.mType);
       continue;
     }
 
@@ -6373,6 +6421,7 @@ FrameLayerBuilder::PaintItems(nsTArray<AssignedDisplayItem>& aItems,
 
   clipTracker.PopClipIfNeeded(opacityNesting);
   MOZ_ASSERT(opacityNesting == 0);
+  MOZ_ASSERT(emptyOpacityNesting == 0);
 }
 
 /**

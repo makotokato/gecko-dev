@@ -40,7 +40,6 @@
 #include "nsPlaceholderFrame.h"
 #include "nsIScrollableFrame.h"
 #include "nsSubDocumentFrame.h"
-#include "nsIDOMEvent.h"
 #include "nsDisplayList.h"
 #include "nsRegion.h"
 #include "nsCSSFrameConstructor.h"
@@ -158,9 +157,6 @@ using namespace mozilla::gfx;
 using mozilla::dom::HTMLMediaElementBinding::HAVE_NOTHING;
 using mozilla::dom::HTMLMediaElementBinding::HAVE_METADATA;
 
-#define WEBKIT_PREFIXES_ENABLED_PREF_NAME "layout.css.prefixes.webkit"
-#define TEXT_ALIGN_UNSAFE_ENABLED_PREF_NAME "layout.css.text-align-unsafe-value.enabled"
-#define FLOAT_LOGICAL_VALUES_ENABLED_PREF_NAME "layout.css.float-logical-values.enabled"
 #define INTERCHARACTER_RUBY_ENABLED_PREF_NAME "layout.css.ruby.intercharacter.enabled"
 #define CONTENT_SELECT_ENABLED_PREF_NAME "dom.select_popup_in_content.enabled"
 
@@ -205,169 +201,6 @@ static ContentMap& GetContentMap() {
     sContentMap = new ContentMap();
   }
   return *sContentMap;
-}
-
-// When the pref "layout.css.prefixes.webkit" changes, this function is invoked
-// to let us update kDisplayKTable, to selectively disable or restore the
-// entries for "-webkit-box" and "-webkit-inline-box" in that table.
-static void
-WebkitPrefixEnabledPrefChangeCallback(const char* aPrefName, void* aClosure)
-{
-  MOZ_ASSERT(strncmp(aPrefName, WEBKIT_PREFIXES_ENABLED_PREF_NAME,
-                     ArrayLength(WEBKIT_PREFIXES_ENABLED_PREF_NAME)) == 0,
-             "We only registered this callback for a single pref, so it "
-             "should only be called for that pref");
-
-  static int32_t sIndexOfWebkitBoxInDisplayTable;
-  static int32_t sIndexOfWebkitInlineBoxInDisplayTable;
-  static int32_t sIndexOfWebkitFlexInDisplayTable;
-  static int32_t sIndexOfWebkitInlineFlexInDisplayTable;
-
-  static bool sAreKeywordIndicesInitialized; // initialized to false
-
-  bool isWebkitPrefixSupportEnabled =
-    Preferences::GetBool(WEBKIT_PREFIXES_ENABLED_PREF_NAME, false);
-  if (!sAreKeywordIndicesInitialized) {
-    // First run: find the position of the keywords in kDisplayKTable.
-    sIndexOfWebkitBoxInDisplayTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword__webkit_box,
-                                     nsCSSProps::kDisplayKTable);
-    MOZ_ASSERT(sIndexOfWebkitBoxInDisplayTable >= 0,
-               "Couldn't find -webkit-box in kDisplayKTable");
-    sIndexOfWebkitInlineBoxInDisplayTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword__webkit_inline_box,
-                                     nsCSSProps::kDisplayKTable);
-    MOZ_ASSERT(sIndexOfWebkitInlineBoxInDisplayTable >= 0,
-               "Couldn't find -webkit-inline-box in kDisplayKTable");
-
-    sIndexOfWebkitFlexInDisplayTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword__webkit_flex,
-                                     nsCSSProps::kDisplayKTable);
-    MOZ_ASSERT(sIndexOfWebkitFlexInDisplayTable >= 0,
-               "Couldn't find -webkit-flex in kDisplayKTable");
-    sIndexOfWebkitInlineFlexInDisplayTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword__webkit_inline_flex,
-                                     nsCSSProps::kDisplayKTable);
-    MOZ_ASSERT(sIndexOfWebkitInlineFlexInDisplayTable >= 0,
-               "Couldn't find -webkit-inline-flex in kDisplayKTable");
-    sAreKeywordIndicesInitialized = true;
-  }
-
-  // OK -- now, stomp on or restore the "-webkit-{box|flex}" entries in
-  // kDisplayKTable, depending on whether the webkit prefix pref is enabled
-  // vs. disabled.
-  if (sIndexOfWebkitBoxInDisplayTable >= 0) {
-    nsCSSProps::kDisplayKTable[sIndexOfWebkitBoxInDisplayTable].mKeyword =
-      isWebkitPrefixSupportEnabled ?
-      eCSSKeyword__webkit_box : eCSSKeyword_UNKNOWN;
-  }
-  if (sIndexOfWebkitInlineBoxInDisplayTable >= 0) {
-    nsCSSProps::kDisplayKTable[sIndexOfWebkitInlineBoxInDisplayTable].mKeyword =
-      isWebkitPrefixSupportEnabled ?
-      eCSSKeyword__webkit_inline_box : eCSSKeyword_UNKNOWN;
-  }
-  if (sIndexOfWebkitFlexInDisplayTable >= 0) {
-    nsCSSProps::kDisplayKTable[sIndexOfWebkitFlexInDisplayTable].mKeyword =
-      isWebkitPrefixSupportEnabled ?
-      eCSSKeyword__webkit_flex : eCSSKeyword_UNKNOWN;
-  }
-  if (sIndexOfWebkitInlineFlexInDisplayTable >= 0) {
-    nsCSSProps::kDisplayKTable[sIndexOfWebkitInlineFlexInDisplayTable].mKeyword =
-      isWebkitPrefixSupportEnabled ?
-      eCSSKeyword__webkit_inline_flex : eCSSKeyword_UNKNOWN;
-  }
-}
-
-// When the pref "layout.css.text-align-unsafe-value.enabled" changes, this
-// function is called to let us update kTextAlignKTable & kTextAlignLastKTable,
-// to selectively disable or restore the entries for "unsafe" in those tables.
-static void
-TextAlignUnsafeEnabledPrefChangeCallback(const char* aPrefName, void* aClosure)
-{
-  NS_ASSERTION(strcmp(aPrefName, TEXT_ALIGN_UNSAFE_ENABLED_PREF_NAME) == 0,
-               "Did you misspell " TEXT_ALIGN_UNSAFE_ENABLED_PREF_NAME " ?");
-
-  static bool sIsInitialized;
-  static int32_t sIndexOfUnsafeInTextAlignTable;
-  static int32_t sIndexOfUnsafeInTextAlignLastTable;
-  bool isTextAlignUnsafeEnabled =
-    Preferences::GetBool(TEXT_ALIGN_UNSAFE_ENABLED_PREF_NAME, false);
-
-  if (!sIsInitialized) {
-    // First run: find the position of "unsafe" in kTextAlignKTable.
-    sIndexOfUnsafeInTextAlignTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_unsafe,
-                                     nsCSSProps::kTextAlignKTable);
-    // First run: find the position of "unsafe" in kTextAlignLastKTable.
-    sIndexOfUnsafeInTextAlignLastTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_unsafe,
-                                     nsCSSProps::kTextAlignLastKTable);
-    sIsInitialized = true;
-  }
-
-  // OK -- now, stomp on or restore the "unsafe" entry in the keyword tables,
-  // depending on whether the pref is enabled vs. disabled.
-  MOZ_ASSERT(sIndexOfUnsafeInTextAlignTable >= 0);
-  nsCSSProps::kTextAlignKTable[sIndexOfUnsafeInTextAlignTable].mKeyword =
-    isTextAlignUnsafeEnabled ? eCSSKeyword_unsafe : eCSSKeyword_UNKNOWN;
-  MOZ_ASSERT(sIndexOfUnsafeInTextAlignLastTable >= 0);
-  nsCSSProps::kTextAlignLastKTable[sIndexOfUnsafeInTextAlignLastTable].mKeyword =
-    isTextAlignUnsafeEnabled ? eCSSKeyword_unsafe : eCSSKeyword_UNKNOWN;
-}
-
-// When the pref "layout.css.float-logical-values.enabled" changes, this
-// function is called to let us update kFloatKTable & kClearKTable,
-// to selectively disable or restore the entries for logical values
-// (inline-start and inline-end) in those tables.
-static void
-FloatLogicalValuesEnabledPrefChangeCallback(const char* aPrefName,
-                                            void* aClosure)
-{
-  NS_ASSERTION(strcmp(aPrefName, FLOAT_LOGICAL_VALUES_ENABLED_PREF_NAME) == 0,
-               "Did you misspell " FLOAT_LOGICAL_VALUES_ENABLED_PREF_NAME " ?");
-
-  static bool sIsInitialized;
-  static int32_t sIndexOfInlineStartInFloatTable;
-  static int32_t sIndexOfInlineEndInFloatTable;
-  static int32_t sIndexOfInlineStartInClearTable;
-  static int32_t sIndexOfInlineEndInClearTable;
-  bool isFloatLogicalValuesEnabled =
-    Preferences::GetBool(FLOAT_LOGICAL_VALUES_ENABLED_PREF_NAME, false);
-
-  if (!sIsInitialized) {
-    // First run: find the position of "inline-start" in kFloatKTable.
-    sIndexOfInlineStartInFloatTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_inline_start,
-                                     nsCSSProps::kFloatKTable);
-    // First run: find the position of "inline-end" in kFloatKTable.
-    sIndexOfInlineEndInFloatTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_inline_end,
-                                     nsCSSProps::kFloatKTable);
-    // First run: find the position of "inline-start" in kClearKTable.
-    sIndexOfInlineStartInClearTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_inline_start,
-                                     nsCSSProps::kClearKTable);
-    // First run: find the position of "inline-end" in kClearKTable.
-    sIndexOfInlineEndInClearTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_inline_end,
-                                     nsCSSProps::kClearKTable);
-    sIsInitialized = true;
-  }
-
-  // OK -- now, stomp on or restore the logical entries in the keyword tables,
-  // depending on whether the pref is enabled vs. disabled.
-  MOZ_ASSERT(sIndexOfInlineStartInFloatTable >= 0);
-  nsCSSProps::kFloatKTable[sIndexOfInlineStartInFloatTable].mKeyword =
-    isFloatLogicalValuesEnabled ? eCSSKeyword_inline_start : eCSSKeyword_UNKNOWN;
-  MOZ_ASSERT(sIndexOfInlineEndInFloatTable >= 0);
-  nsCSSProps::kFloatKTable[sIndexOfInlineEndInFloatTable].mKeyword =
-    isFloatLogicalValuesEnabled ? eCSSKeyword_inline_end : eCSSKeyword_UNKNOWN;
-  MOZ_ASSERT(sIndexOfInlineStartInClearTable >= 0);
-  nsCSSProps::kClearKTable[sIndexOfInlineStartInClearTable].mKeyword =
-    isFloatLogicalValuesEnabled ? eCSSKeyword_inline_start : eCSSKeyword_UNKNOWN;
-  MOZ_ASSERT(sIndexOfInlineEndInClearTable >= 0);
-  nsCSSProps::kClearKTable[sIndexOfInlineEndInClearTable].mKeyword =
-    isFloatLogicalValuesEnabled ? eCSSKeyword_inline_end : eCSSKeyword_UNKNOWN;
 }
 
 template<typename TestType>
@@ -700,22 +533,6 @@ nsLayoutUtils::UnsetValueEnabled()
   }
 
   return sUnsetValueEnabled;
-}
-
-bool
-nsLayoutUtils::IsTextAlignUnsafeValueEnabled()
-{
-  static bool sTextAlignUnsafeValueEnabled;
-  static bool sTextAlignUnsafeValueEnabledPrefCached = false;
-
-  if (!sTextAlignUnsafeValueEnabledPrefCached) {
-    sTextAlignUnsafeValueEnabledPrefCached = true;
-    Preferences::AddBoolVarCache(&sTextAlignUnsafeValueEnabled,
-                                 TEXT_ALIGN_UNSAFE_ENABLED_PREF_NAME,
-                                 false);
-  }
-
-  return sTextAlignUnsafeValueEnabled;
 }
 
 bool
@@ -2277,7 +2094,7 @@ nsLayoutUtils::HasPseudoStyle(nsIContent* aContent,
 }
 
 nsPoint
-nsLayoutUtils::GetDOMEventCoordinatesRelativeTo(nsIDOMEvent* aDOMEvent, nsIFrame* aFrame)
+nsLayoutUtils::GetDOMEventCoordinatesRelativeTo(Event* aDOMEvent, nsIFrame* aFrame)
 {
   if (!aDOMEvent)
     return nsPoint(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
@@ -8207,20 +8024,6 @@ nsLayoutUtils::SizeOfTextRunsForFrames(nsIFrame* aFrame,
   return total;
 }
 
-struct PrefCallbacks
-{
-  const char* name;
-  PrefChangedFunc func;
-};
-static const PrefCallbacks kPrefCallbacks[] = {
-  { WEBKIT_PREFIXES_ENABLED_PREF_NAME,
-    WebkitPrefixEnabledPrefChangeCallback },
-  { TEXT_ALIGN_UNSAFE_ENABLED_PREF_NAME,
-    TextAlignUnsafeEnabledPrefChangeCallback },
-  { FLOAT_LOGICAL_VALUES_ENABLED_PREF_NAME,
-    FloatLogicalValuesEnabledPrefChangeCallback },
-};
-
 /* static */
 void
 nsLayoutUtils::Initialize()
@@ -8260,9 +8063,6 @@ nsLayoutUtils::Initialize()
                                "layout.idle_period.required_quiescent_frames",
                                DEFAULT_QUIESCENT_FRAMES);
 
-  for (auto& callback : kPrefCallbacks) {
-    Preferences::RegisterCallbackAndCall(callback.func, callback.name);
-  }
   nsComputedDOMStyle::RegisterPrefChangeCallbacks();
 }
 
@@ -8275,9 +8075,6 @@ nsLayoutUtils::Shutdown()
     sContentMap = nullptr;
   }
 
-  for (auto& callback : kPrefCallbacks) {
-    Preferences::UnregisterCallback(callback.func, callback.name);
-  }
   nsComputedDOMStyle::UnregisterPrefChangeCallbacks();
 
   // so the cached initial quotes array doesn't appear to be a leak
@@ -8998,8 +8795,7 @@ nsLayoutUtils::NeedsPrintPreviewBackground(nsPresContext* aPresContext)
      aPresContext->Type() == nsPresContext::eContext_PageLayout);
 }
 
-AutoMaybeDisableFontInflation::AutoMaybeDisableFontInflation(nsIFrame* aFrame)
-  : mOldValue{ false }
+AutoMaybeDisableFontInflation::AutoMaybeDisableFontInflation(nsIFrame *aFrame)
 {
   // FIXME: Now that inflation calculations are based on the flow
   // root's NCA's (nearest common ancestor of its inflatable
@@ -9341,16 +9137,50 @@ nsLayoutUtils::ComputeScrollMetadata(nsIFrame* aForFrame,
   metrics.SetIsRootContent(aIsRootContent);
   metadata.SetScrollParentId(aScrollParentId);
 
+  nsIFrame* rootScrollFrame = presShell->GetRootScrollFrame();
+  bool isRootScrollFrame = aScrollFrame == rootScrollFrame;
+  nsIDocument* document = presShell->GetDocument();
+
   if (scrollId != FrameMetrics::NULL_SCROLL_ID && !presContext->GetParentPresContext()) {
-    if ((aScrollFrame && (aScrollFrame == presShell->GetRootScrollFrame())) ||
-        aContent == presShell->GetDocument()->GetDocumentElement()) {
+    if ((aScrollFrame && isRootScrollFrame)) {
       metadata.SetIsLayersIdRoot(true);
+    } else {
+      MOZ_ASSERT(document, "A non-root-scroll frame must be in a document");
+      if (aContent == document->GetDocumentElement()) {
+        metadata.SetIsLayersIdRoot(true);
+      }
+    }
+  }
+
+  // Get whether the root content is RTL(E.g. it's true either if
+  // "writing-mode: vertical-rl", or if
+  // "writing-mode: horizontal-tb; direction: rtl;" in CSS).
+  // For the concept of this and the reason why we need to get this kind of
+  // information, see the definition of |mIsAutoDirRootContentRTL| in struct
+  // |ScrollMetadata|.
+  Element* bodyElement = document ? document->GetBodyElement() : nullptr;
+  nsIFrame* primaryFrame = bodyElement ? bodyElement->GetPrimaryFrame() :
+                                           rootScrollFrame;
+  if (!primaryFrame) {
+    primaryFrame = rootScrollFrame;
+  }
+  if (primaryFrame) {
+    WritingMode writingModeOfRootScrollFrame =
+                  primaryFrame->GetWritingMode();
+    WritingMode::BlockDir blockDirOfRootScrollFrame =
+                            writingModeOfRootScrollFrame.GetBlockDir();
+    WritingMode::InlineDir inlineDirOfRootScrollFrame =
+                             writingModeOfRootScrollFrame.GetInlineDir();
+    if (blockDirOfRootScrollFrame == WritingMode::BlockDir::eBlockRL ||
+        (blockDirOfRootScrollFrame == WritingMode::BlockDir::eBlockTB &&
+          inlineDirOfRootScrollFrame == WritingMode::InlineDir::eInlineRTL)) {
+      metadata.SetIsAutoDirRootContentRTL(true);
     }
   }
 
   // Only the root scrollable frame for a given presShell should pick up
   // the presShell's resolution. All the other frames are 1.0.
-  if (aScrollFrame == presShell->GetRootScrollFrame()) {
+  if (isRootScrollFrame) {
     metrics.SetPresShellResolution(presShell->GetResolution());
   } else {
     metrics.SetPresShellResolution(1.0f);
@@ -9409,7 +9239,6 @@ nsLayoutUtils::ComputeScrollMetadata(nsIFrame* aForFrame,
   // document has a widget then the widget's bounds will correspond to what is
   // visible. If we don't have a widget the root view's bounds correspond to what
   // would be visible because they don't get modified by setCSSViewport.
-  bool isRootScrollFrame = aScrollFrame == presShell->GetRootScrollFrame();
   bool isRootContentDocRootScrollFrame = isRootScrollFrame
                                       && presContext->IsRootContentDocument();
   if (isRootContentDocRootScrollFrame) {

@@ -611,6 +611,7 @@ nsWindow::nsWindow(bool aIsChildWindow)
   mFullscreenMode       = false;
   mMousePresent         = false;
   mDestroyCalled        = false;
+  mIsEarlyBlankWindow   = false;
   mHasTaskbarIconBeenCreated = false;
   mMouseTransparent     = false;
   mPickerDisplayCount   = 0;
@@ -4102,6 +4103,12 @@ nsWindow::GetMaxTouchPoints() const
   return WinUtils::GetMaxTouchPoints();
 }
 
+void
+nsWindow::SetWindowClass(const nsAString& xulWinType)
+{
+  mIsEarlyBlankWindow = xulWinType.EqualsLiteral("navigator:blank");
+}
+
 /**************************************************************
  **************************************************************
  **
@@ -7555,18 +7562,20 @@ void nsWindow::SetWindowTranslucencyInner(nsTransparencyMode aMode)
 
   LONG_PTR style = ::GetWindowLongPtrW(hWnd, GWL_STYLE),
     exStyle = ::GetWindowLongPtr(hWnd, GWL_EXSTYLE);
- 
-   if (parent->mIsVisible)
-     style |= WS_VISIBLE;
-   if (parent->mSizeMode == nsSizeMode_Maximized)
-     style |= WS_MAXIMIZE;
-   else if (parent->mSizeMode == nsSizeMode_Minimized)
-     style |= WS_MINIMIZE;
 
-   if (aMode == eTransparencyTransparent)
-     exStyle |= WS_EX_LAYERED;
-   else
-     exStyle &= ~WS_EX_LAYERED;
+  if (parent->mIsVisible) {
+    style |= WS_VISIBLE;
+    if (parent->mSizeMode == nsSizeMode_Maximized) {
+      style |= WS_MAXIMIZE;
+    } else if (parent->mSizeMode == nsSizeMode_Minimized) {
+      style |= WS_MINIMIZE;
+    }
+  }
+
+  if (aMode == eTransparencyTransparent)
+    exStyle |= WS_EX_LAYERED;
+  else
+    exStyle &= ~WS_EX_LAYERED;
 
   VERIFY_WINDOW_STYLE(style);
   ::SetWindowLongPtrW(hWnd, GWL_STYLE, style);

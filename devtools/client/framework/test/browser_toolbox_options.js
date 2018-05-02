@@ -20,6 +20,7 @@ add_task(async function() {
   let tab = await addTab(URL);
   let target = TargetFactory.forTab(tab);
   toolbox = await gDevTools.showToolbox(target);
+
   doc = toolbox.doc;
   await registerNewPerToolboxTool();
   await testSelectTool();
@@ -332,11 +333,16 @@ async function testToggleWebExtensions() {
      "There should not be any checkbox for the unregistered WebExtensions");
 }
 
+function getToolNode(id) {
+  return panelWin.document.getElementById(id);
+}
+
 async function testToggleTools() {
   let toolNodes = panelWin.document.querySelectorAll(
     "#default-tools-box input[type=checkbox]:not([data-unsupported])," +
     "#additional-tools-box input[type=checkbox]:not([data-unsupported])");
-  let enabledTools = [...toolNodes].filter(node => node.checked);
+  let toolNodeIds = [...toolNodes].map(node => node.id);
+  let enabledToolIds = [...toolNodes].filter(node => node.checked).map(node => node.id);
 
   let toggleableTools = gDevTools.getDefaultTools()
                                  .filter(tool => {
@@ -358,39 +364,43 @@ async function testToggleTools() {
   }
 
   // Toggle each tool
-  for (let node of toolNodes) {
-    await toggleTool(node);
+  for (let id of toolNodeIds) {
+    await toggleTool(getToolNode(id));
   }
 
   // Toggle again to reset tool enablement state
-  for (let node of toolNodes) {
-    await toggleTool(node);
+  for (let id of toolNodeIds) {
+    await toggleTool(getToolNode(id));
   }
 
   // Test that a tool can still be added when no tabs are present:
   // Disable all tools
-  for (let node of enabledTools) {
-    await toggleTool(node);
+  for (let id of enabledToolIds) {
+    await toggleTool(getToolNode(id));
   }
   // Re-enable the tools which are enabled by default
-  for (let node of enabledTools) {
-    await toggleTool(node);
+  for (let id of enabledToolIds) {
+    await toggleTool(getToolNode(id));
   }
 
   // Toggle first, middle, and last tools to ensure that toolbox tabs are
   // inserted in order
-  let firstTool = toolNodes[0];
-  let middleTool = toolNodes[(toolNodes.length / 2) | 0];
-  let lastTool = toolNodes[toolNodes.length - 1];
+  let firstToolId = toolNodeIds[0];
+  let middleToolId = toolNodeIds[(toolNodeIds.length / 2) | 0];
+  let lastToolId = toolNodeIds[toolNodeIds.length - 1];
 
-  await toggleTool(firstTool);
-  await toggleTool(firstTool);
-  await toggleTool(middleTool);
-  await toggleTool(middleTool);
-  await toggleTool(lastTool);
-  await toggleTool(lastTool);
+  await toggleTool(getToolNode(firstToolId));
+  await toggleTool(getToolNode(firstToolId));
+  await toggleTool(getToolNode(middleToolId));
+  await toggleTool(getToolNode(middleToolId));
+  await toggleTool(getToolNode(lastToolId));
+  await toggleTool(getToolNode(lastToolId));
 }
 
+/**
+ * Toggle tool node checkbox. Note: because toggling the checkbox will result in
+ * re-rendering of the tool list, we must re-query the checkboxes every time.
+ */
 async function toggleTool(node) {
   let deferred = defer();
 
@@ -420,11 +430,11 @@ function checkUnregistered(toolId, deferred, data) {
   deferred.resolve();
 }
 
-function checkRegistered(toolId, deferred, data) {
+async function checkRegistered(toolId, deferred, data) {
   if (data == toolId) {
     ok(true, "Correct tool added back");
     // checking tab on the toolbox
-    let button = doc.getElementById("toolbox-tab-" + toolId);
+    let button = await lookupButtonForToolId(toolId);
     ok(button, "Tab added back for " + toolId);
   } else {
     ok(false, "Something went wrong, " + toolId + " was not registered");
@@ -444,6 +454,26 @@ function GetPref(name) {
     default:
       throw new Error("Unknown type");
   }
+}
+
+/**
+ * Find the button from specified toolId.
+ * Generally, button which access to the tool panel is in toolbox or
+ * tools menu(in the Chevron menu).
+ */
+async function lookupButtonForToolId(toolId) {
+  let button = doc.getElementById("toolbox-tab-" + toolId);
+  if (!button) {
+    // search from the tools menu.
+    let menuPopup = await openChevronMenu(toolbox);
+    button = doc.querySelector("#tools-chevron-menupopup-" + toolId);
+
+    info("Closing the tools-chevron-menupopup popup");
+    let onPopupHidden = once(menuPopup, "popuphidden");
+    menuPopup.hidePopup();
+    await onPopupHidden;
+  }
+  return button;
 }
 
 async function cleanup() {

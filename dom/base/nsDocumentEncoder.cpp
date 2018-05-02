@@ -20,8 +20,6 @@
 #include "nsIContentSerializer.h"
 #include "mozilla/Encoding.h"
 #include "nsIOutputStream.h"
-#include "nsIDOMElement.h"
-#include "nsIDOMNodeList.h"
 #include "nsRange.h"
 #include "nsIDOMDocument.h"
 #include "nsGkAtoms.h"
@@ -106,16 +104,25 @@ protected:
     if (mFlags & SkipInvisibleContent) {
       // Treat the visibility of the ShadowRoot as if it were
       // the host content.
-      nsCOMPtr<nsIContent> content = do_QueryInterface(aNode);
-      if (ShadowRoot* shadowRoot = ShadowRoot::FromNodeOrNull(content)) {
-        content = shadowRoot->GetHost();
+      //
+      // FIXME(emilio): I suspect instead of this a bunch of the GetParent()
+      // calls here should be doing GetFlattenedTreeParent, then this condition
+      // should be unreachable...
+      if (ShadowRoot* shadowRoot = ShadowRoot::FromNode(aNode)) {
+        aNode = shadowRoot->GetHost();
       }
 
-      if (content) {
-        nsIFrame* frame = content->GetPrimaryFrame();
+      if (aNode->IsContent()) {
+        nsIFrame* frame = aNode->AsContent()->GetPrimaryFrame();
         if (!frame) {
-          if (aNode->IsNodeOfType(nsINode::eTEXT)) {
+          if (aNode->IsElement() && aNode->AsElement()->IsDisplayContents()) {
+            return true;
+          }
+          if (aNode->IsText()) {
             // We have already checked that our parent is visible.
+            //
+            // FIXME(emilio): Text not assigned to a <slot> in Shadow DOM should
+            // probably return false...
             return true;
           }
           if (aNode->IsHTMLElement(nsGkAtoms::rp)) {
@@ -126,7 +133,7 @@ protected:
           return false;
         }
         bool isVisible = frame->StyleVisibility()->IsVisible();
-        if (!isVisible && aNode->IsNodeOfType(nsINode::eTEXT))
+        if (!isVisible && aNode->IsText())
           return false;
       }
     }
@@ -208,7 +215,6 @@ NS_IMPL_CYCLE_COLLECTION(nsDocumentEncoder,
 
 nsDocumentEncoder::nsDocumentEncoder()
   : mEncoding(nullptr)
-  , mIsCopying{ false }
   , mCachedBuffer(nullptr)
 {
   Initialize();
@@ -544,10 +550,8 @@ nsDocumentEncoder::SerializeToStringIterative(nsINode* aNode,
 
         // Handle template element. If the parent is a template's content,
         // then adjust the parent to be the template element.
-        if (current && current != aNode &&
-            current->NodeType() == nsINode::DOCUMENT_FRAGMENT_NODE) {
-          DocumentFragment* frag = static_cast<DocumentFragment*>(current);
-          nsIContent* host = frag->GetHost();
+        if (current && current != aNode && current->IsDocumentFragment()) {
+          nsIContent* host = current->AsDocumentFragment()->GetHost();
           if (host && host->IsHTMLElement(nsGkAtoms::_template)) {
             current = host;
           }
@@ -632,7 +636,7 @@ nsDocumentEncoder::FlushText(nsAString& aString, bool aForce)
 
 static bool IsTextNode(nsINode *aNode)
 {
-  return aNode && aNode->IsNodeOfType(nsINode::eTEXT);
+  return aNode && aNode->IsText();
 }
 
 nsresult
@@ -1252,11 +1256,14 @@ nsHTMLCopyEncoder::SetSelection(nsISelection* aSelection)
   // we'll just use the common parent of the first range.  Implicit assumption
   // here that multi-range selections are table cell selections, in which case
   // the common parent is somewhere in the table and we don't really care where.
+  //
+  // FIXME(emilio, bug 1455894): This assumption is already wrong, and will
+  // probably be more wrong in a Shadow DOM world...
+  //
+  // We should be able to write this as "Find the common ancestor of the
+  // selection, then go through the flattened tree and serialize the selected
+  // nodes", effectively serializing the composed tree.
   RefPtr<nsRange> range = selection->GetRangeAt(0);
-  if (!range) {
-    // XXXbz can this happen given rangeCount > 0?
-    return NS_ERROR_NULL_POINTER;
-  }
   nsINode* commonParent = range->GetCommonAncestor();
 
   for (nsCOMPtr<nsIContent> selContent(do_QueryInterface(commonParent));

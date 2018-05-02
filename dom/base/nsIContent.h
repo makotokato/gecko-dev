@@ -240,15 +240,7 @@ public:
    * from the top of this node's parent chain back to this node or
    * if the node is in native anonymous subtree without a parent.
    */
-  bool IsInAnonymousSubtree() const
-  {
-    NS_ASSERTION(!IsInNativeAnonymousSubtree() || GetBindingParent() ||
-                 (!IsInUncomposedDoc() &&
-                  static_cast<nsIContent*>(SubtreeRoot())->IsInNativeAnonymousSubtree()),
-                 "Must have binding parent when in native anonymous subtree which is in document.\n"
-                 "Native anonymous subtree which is not in document must have native anonymous root.");
-    return IsInNativeAnonymousSubtree() || (!IsInShadowTree() && GetBindingParent() != nullptr);
-  }
+  inline bool IsInAnonymousSubtree() const;
 
   /**
    * Return true iff this node is in an HTML document (in the HTML5 sense of
@@ -334,11 +326,8 @@ public:
   {
     return IsMathMLElement() && IsNodeInternal(aFirst, aArgs...);
   }
-  inline bool IsActiveChildrenElement() const
-  {
-    return mNodeInfo->Equals(nsGkAtoms::children, kNameSpaceID_XBL) &&
-           GetBindingParent();
-  }
+
+  inline bool IsActiveChildrenElement() const;
 
   bool IsGeneratedContentContainerForBefore() const
   {
@@ -813,6 +802,8 @@ protected:
 
     /**
      * The nearest enclosing content node with a binding that created us.
+     * TODO(emilio): This should be an Element*.
+     *
      * @see nsIContent::GetBindingParent
      */
     nsIContent* mBindingParent;  // [Weak]
@@ -949,41 +940,9 @@ inline nsIContent* nsINode::AsContent()
   return static_cast<nsIContent*>(this);
 }
 
-// Some checks are faster to do on nsIContent or Element than on
-// nsINode, so spit out FromNode versions taking those types too.
-#define NS_IMPL_FROMNODE_HELPER(_class, _check)                         \
-  template<typename ArgType>                                            \
-  static _class* FromNode(ArgType&& aNode)                              \
-  {                                                                     \
-    /* We need the double-cast in case aNode is a smartptr.  Those */   \
-    /* can cast to superclasses of the type they're templated on, */    \
-    /* but not directly to subclasses.  */                              \
-    return aNode->_check ?                                              \
-      static_cast<_class*>(static_cast<nsINode*>(aNode)) : nullptr;     \
-  }                                                                     \
-  template<typename ArgType>                                            \
-  static _class* FromNodeOrNull(ArgType&& aNode)                        \
-  {                                                                     \
-    return aNode ? FromNode(aNode) : nullptr;                           \
-  }                                                                     \
-  template<typename ArgType>                                            \
-  static const _class* FromNode(const ArgType* aNode)                   \
-  {                                                                     \
-    return aNode->_check ? static_cast<const _class*>(aNode) : nullptr; \
-  }                                                                     \
-  template<typename ArgType>                                            \
-  static const _class* FromNodeOrNull(const ArgType* aNode)             \
-  {                                                                     \
-    return aNode ? FromNode(aNode) : nullptr;                           \
-  }
-
-#define NS_IMPL_FROMNODE(_class, _nsid)                                     \
-  NS_IMPL_FROMNODE_HELPER(_class, IsInNamespace(_nsid))
-
-#define NS_IMPL_FROMNODE_WITH_TAG(_class, _nsid, _tag)                      \
-  NS_IMPL_FROMNODE_HELPER(_class, NodeInfo()->Equals(nsGkAtoms::_tag, _nsid))
-
-#define NS_IMPL_FROMNODE_HTML_WITH_TAG(_class, _tag)                        \
-  NS_IMPL_FROMNODE_WITH_TAG(_class, kNameSpaceID_XHTML, _tag)
+inline const nsIContent* nsINode::AsContent() const
+{
+  return const_cast<nsINode*>(this)->AsContent();
+}
 
 #endif /* nsIContent_h___ */

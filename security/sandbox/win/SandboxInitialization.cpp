@@ -83,7 +83,7 @@ EnableHandleCloseMonitoring()
 static bool
 ShouldDisableHandleVerifier()
 {
-#if defined(_X86_) && (defined(NIGHTLY_BUILD) || defined(DEBUG))
+#if defined(_X86_) && (defined(EARLY_BETA_OR_EARLIER) || defined(DEBUG))
   // Chromium only has the verifier enabled for 32-bit and our close monitoring
   // hooks cause debug assertions for 64-bit anyway.
   // For x86 keep the verifier enabled by default only for Nightly or debug.
@@ -106,6 +106,9 @@ InitializeHandleVerifier()
 static sandbox::TargetServices*
 InitializeTargetServices()
 {
+  // This might disable the verifier, so we want to do it before it is used.
+  InitializeHandleVerifier();
+
   sandbox::TargetServices* targetServices =
     sandbox::SandboxFactory::GetTargetServices();
   if (!targetServices) {
@@ -115,8 +118,6 @@ InitializeTargetServices()
   if (targetServices->Init() != sandbox::SBOX_ALL_OK) {
     return nullptr;
   }
-
-  InitializeHandleVerifier();
 
   return targetServices;
 }
@@ -139,6 +140,9 @@ LowerSandbox()
 static sandbox::BrokerServices*
 InitializeBrokerServices()
 {
+  // This might disable the verifier, so we want to do it before it is used.
+  InitializeHandleVerifier();
+
   sandbox::BrokerServices* brokerServices =
     sandbox::SandboxFactory::GetBrokerServices();
   if (!brokerServices) {
@@ -157,8 +161,6 @@ InitializeBrokerServices()
   // will be broken. This has to run before threads and windows are created.
   scoped_refptr<sandbox::TargetPolicy> policy = brokerServices->CreatePolicy();
   sandbox::ResultCode result = policy->CreateAlternateDesktop(true);
-
-  InitializeHandleVerifier();
 
   return brokerServices;
 }

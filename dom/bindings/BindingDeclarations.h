@@ -66,6 +66,23 @@ public:
   }
 };
 
+template<typename T>
+inline typename EnableIf<IsBaseOf<DictionaryBase, T>::value, void>::Type
+ImplCycleCollectionUnlink(T& aDictionary)
+{
+  aDictionary.UnlinkForCC();
+}
+
+template<typename T>
+inline typename EnableIf<IsBaseOf<DictionaryBase, T>::value, void>::Type
+ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
+                            T& aDictionary,
+                            const char* aName,
+                            uint32_t aFlags = 0)
+{
+  aDictionary.TraverseForCC(aCallback, aFlags);
+}
+
 // Struct that serves as a base class for all typed arrays and array buffers and
 // array buffer views.  Particularly useful so we can use IsBaseOf to detect
 // typed array/buffer/view template arguments.
@@ -382,20 +399,36 @@ private:
   const nsAString* mStr;
 };
 
+template<typename T>
+inline void
+ImplCycleCollectionUnlink(Optional<T>& aField)
+{
+  if (aField.WasPassed()) {
+    ImplCycleCollectionUnlink(aField.Value());
+  }
+}
+
+template<typename T>
+inline void
+ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
+                            Optional<T>& aField,
+                            const char* aName,
+                            uint32_t aFlags = 0)
+{
+  if (aField.WasPassed()) {
+    ImplCycleCollectionTraverse(aCallback, aField.Value(), aName, aFlags);
+  }
+}
+
 template<class T>
 class NonNull
 {
 public:
   NonNull()
-    : ptr
-  {
-    nullptr
-  }
 #ifdef DEBUG
-  , inited(false)
+    : inited(false)
 #endif
-  {
-  }
+  {}
 
   // This is no worse than get() in terms of const handling.
   operator T&() const {

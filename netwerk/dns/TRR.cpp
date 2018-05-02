@@ -107,7 +107,7 @@ TRR::DohEncode(nsCString &aBody)
       break;
     }
     offset += labelLength + 1; // move over label and dot
-  } while(1);
+  } while(true);
 
   aBody += '\0'; // upper 8 bit TYPE
   aBody += static_cast<uint8_t>(mType);
@@ -819,7 +819,7 @@ TRR::On200Response()
   nsresult rv = DohDecode();
 
   if (NS_SUCCEEDED(rv)) {
-    if (!mCname.IsEmpty()) {
+    if (!mDNS.mAddresses.getFirst() && !mCname.IsEmpty()) {
       if (!--mCnameLoop) {
         LOG(("TRR::On200Response CNAME loop, eject!\n"));
       } else  {

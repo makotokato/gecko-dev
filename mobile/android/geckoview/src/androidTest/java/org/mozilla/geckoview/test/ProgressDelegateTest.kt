@@ -1,10 +1,10 @@
 /* -*- Mode: Java; c-basic-offset: 4; tab-width: 4; indent-tabs-mode: nil; -*-
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * Any copyright is dedicated to the Public Domain.
+   http://creativecommons.org/publicdomain/zero/1.0/ */
 
 package org.mozilla.geckoview.test
 
+import org.mozilla.geckoview.GeckoResponse
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.AssertCalled
 import org.mozilla.geckoview.test.util.Callbacks
@@ -14,6 +14,7 @@ import android.support.test.filters.LargeTest
 import android.support.test.runner.AndroidJUnit4
 
 import org.hamcrest.Matchers.*
+import org.junit.Assume.assumeThat
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -61,7 +62,8 @@ class ProgressDelegateTest : BaseSessionTest() {
             @AssertCalled(count = 2)
             override fun onLoadRequest(session: GeckoSession, uri: String,
                                        where: Int,
-                                       response: GeckoSession.Response<Boolean>) {
+                                       flags: Int,
+                                       response: GeckoResponse<Boolean>) {
                 if (sessionRule.currentCall.counter == 1) {
                     assertThat("URI should be " + testUri, uri, equalTo(testUri));
                 } else {
@@ -78,7 +80,7 @@ class ProgressDelegateTest : BaseSessionTest() {
     }
 
     @Test fun loadUnknownHost() {
-        loadExpectNetError("http://does.not.exist.mozilla.org/")
+        loadExpectNetError(INVALID_URI)
     }
 
     @Test fun loadBadPort() {
@@ -179,8 +181,58 @@ class ProgressDelegateTest : BaseSessionTest() {
         })
     }
 
+    @Test fun correctSecurityInfoForValidTLS_automation() {
+        assumeThat(sessionRule.env.isAutomation, equalTo(true))
+
+        sessionRule.session.loadUri("https://example.com")
+        sessionRule.waitForPageStop()
+
+        sessionRule.forCallbacksDuringWait(object : Callbacks.ProgressDelegate {
+            @AssertCalled(count = 1)
+            override fun onSecurityChange(session: GeckoSession,
+                                          securityInfo: GeckoSession.ProgressDelegate.SecurityInformation) {
+                assertThat("Should be secure",
+                           securityInfo.isSecure, equalTo(true))
+                assertThat("Should not be exception",
+                           securityInfo.isException, equalTo(false))
+                assertThat("Origin should match",
+                           securityInfo.origin,
+                           equalTo("https://example.com"))
+                assertThat("Host should match",
+                           securityInfo.host,
+                           equalTo("example.com"))
+                assertThat("Organization should match",
+                           securityInfo.organization,
+                           equalTo(""))
+                assertThat("Subject name should match",
+                           securityInfo.subjectName,
+                           equalTo("CN=example.com"))
+                assertThat("Issuer common name should match",
+                           securityInfo.issuerCommonName,
+                           equalTo("Temporary Certificate Authority"))
+                assertThat("Issuer organization should match",
+                           securityInfo.issuerOrganization,
+                           equalTo("Mozilla Testing"))
+                assertThat("Security mode should match",
+                           securityInfo.securityMode,
+                           equalTo(GeckoSession.ProgressDelegate.SecurityInformation.SECURITY_MODE_IDENTIFIED))
+                assertThat("Active mixed mode should match",
+                           securityInfo.mixedModeActive,
+                           equalTo(GeckoSession.ProgressDelegate.SecurityInformation.CONTENT_UNKNOWN))
+                assertThat("Passive mixed mode should match",
+                           securityInfo.mixedModePassive,
+                           equalTo(GeckoSession.ProgressDelegate.SecurityInformation.CONTENT_UNKNOWN))
+                assertThat("Tracking mode should match",
+                           securityInfo.trackingMode,
+                           equalTo(GeckoSession.ProgressDelegate.SecurityInformation.CONTENT_UNKNOWN))
+            }
+        })
+    }
+
     @LargeTest
-    @Test fun correctSecurityInfoForValidTLS() {
+    @Test fun correctSecurityInfoForValidTLS_local() {
+        assumeThat(sessionRule.env.isAutomation, equalTo(false))
+
         sessionRule.session.loadUri("https://mozilla-modern.badssl.com")
         sessionRule.waitForPageStop()
 
@@ -228,7 +280,10 @@ class ProgressDelegateTest : BaseSessionTest() {
 
     @LargeTest
     @Test fun noSecurityInfoForExpiredTLS() {
-        sessionRule.session.loadUri("https://expired.badssl.com")
+        sessionRule.session.loadUri(if (sessionRule.env.isAutomation)
+                                        "https://expired.example.com"
+                                    else
+                                        "https://expired.badssl.com")
         sessionRule.waitForPageStop()
 
         sessionRule.forCallbacksDuringWait(object : Callbacks.ProgressDelegate {

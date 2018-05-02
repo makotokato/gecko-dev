@@ -78,7 +78,7 @@ public:
                                              InfallibleTArray<WebRenderParentCommand>&& aCommands,
                                              InfallibleTArray<OpDestroy>&& aToDestroy,
                                              const uint64_t& aFwdTransactionId,
-                                             const uint64_t& aTransactionId,
+                                             const TransactionId& aTransactionId,
                                              const wr::LayoutSize& aContentSize,
                                              ipc::ByteBuf&& dl,
                                              const wr::BuiltDisplayListDescriptor& dlDesc,
@@ -93,7 +93,7 @@ public:
                                                InfallibleTArray<WebRenderParentCommand>&& aCommands,
                                                InfallibleTArray<OpDestroy>&& aToDestroy,
                                                const uint64_t& aFwdTransactionId,
-                                               const uint64_t& aTransactionId,
+                                               const TransactionId& aTransactionId,
                                                const wr::IdNamespace& aIdNamespace,
                                                const TimeStamp& aTxnStartTime,
                                                const TimeStamp& aFwdTime) override;
@@ -146,12 +146,12 @@ public:
   void SetAboutToSendAsyncMessages() override;
 
   void HoldPendingTransactionId(const wr::Epoch& aWrEpoch,
-                                uint64_t aTransactionId,
+                                TransactionId aTransactionId,
                                 const TimeStamp& aTxnStartTime,
                                 const TimeStamp& aFwdTime);
-  uint64_t LastPendingTransactionId();
-  uint64_t FlushPendingTransactionIds();
-  uint64_t FlushTransactionIdsForEpoch(const wr::Epoch& aEpoch, const TimeStamp& aEndTime);
+  TransactionId LastPendingTransactionId();
+  TransactionId FlushPendingTransactionIds();
+  TransactionId FlushTransactionIdsForEpoch(const wr::Epoch& aEpoch, const TimeStamp& aEndTime);
 
   TextureFactoryIdentifier GetTextureFactoryIdentifier();
 
@@ -183,6 +183,8 @@ public:
                        AsyncImagePipelineManager* aImageMgr,
                        CompositorAnimationStorage* aAnimStorage);
 
+  void RemoveEpochDataPriorTo(const wr::Epoch& aRenderedEpoch);
+
 private:
   explicit WebRenderBridgeParent(const wr::PipelineId& aPipelineId);
   virtual ~WebRenderBridgeParent();
@@ -200,7 +202,8 @@ private:
   void AddPipelineIdForCompositable(const wr::PipelineId& aPipelineIds,
                                     const CompositableHandle& aHandle,
                                     const bool& aAsync);
-  void RemovePipelineIdForCompositable(const wr::PipelineId& aPipelineId);
+  void RemovePipelineIdForCompositable(const wr::PipelineId& aPipelineId,
+                                       wr::TransactionBuilder& aTxn);
 
   void AddExternalImageIdForCompositable(const ExternalImageId& aImageId,
                                          const CompositableHandle& aHandle);
@@ -220,27 +223,36 @@ private:
 
   CompositorBridgeParent* GetRootCompositorBridgeParent() const;
 
-  // Have APZ push the async scroll state to WR. Returns true if an APZ
-  // animation is in effect and we need to schedule another composition.
-  // If scrollbars need their transforms updated, the provided aTransformArray
-  // is populated with the property update details.
-  bool PushAPZStateToWR(wr::TransactionBuilder& aTxn,
-                        nsTArray<wr::WrTransformProperty>& aTransformArray);
+  RefPtr<WebRenderBridgeParent> GetRootWebRenderBridgeParent() const;
+
+  // Tell APZ what the subsequent sampling's timestamp should be.
+  void SetAPZSampleTime();
 
   wr::Epoch GetNextWrEpoch();
 
 private:
   struct PendingTransactionId {
-    PendingTransactionId(const wr::Epoch& aEpoch, uint64_t aId, const TimeStamp& aTxnStartTime, const TimeStamp& aFwdTime)
+    PendingTransactionId(const wr::Epoch& aEpoch, TransactionId aId, const TimeStamp& aTxnStartTime, const TimeStamp& aFwdTime)
       : mEpoch(aEpoch)
       , mId(aId)
       , mTxnStartTime(aTxnStartTime)
       , mFwdTime(aFwdTime)
     {}
     wr::Epoch mEpoch;
-    uint64_t mId;
+    TransactionId mId;
     TimeStamp mTxnStartTime;
     TimeStamp mFwdTime;
+  };
+
+  struct CompositorAnimationIdsForEpoch {
+    CompositorAnimationIdsForEpoch(const wr::Epoch& aEpoch, InfallibleTArray<uint64_t>&& aIds)
+      : mEpoch(aEpoch)
+      , mIds(Move(aIds))
+    {
+    }
+
+    wr::Epoch mEpoch;
+    InfallibleTArray<uint64_t> mIds;
   };
 
   CompositorBridgeParentBase* MOZ_NON_OWNING_REF mCompositorBridge;
@@ -255,6 +267,7 @@ private:
   std::unordered_set<uint64_t> mActiveAnimations;
   nsDataHashtable<nsUint64HashKey, RefPtr<WebRenderImageHost>> mAsyncCompositables;
   nsDataHashtable<nsUint64HashKey, RefPtr<WebRenderImageHost>> mExternalImageIds;
+  nsTHashtable<nsUint64HashKey> mSharedSurfaceIds;
 
   TimeStamp mPreviousFrameTimeStamp;
   // These fields keep track of the latest layer observer epoch values in the child and the
@@ -265,6 +278,7 @@ private:
   uint64_t mParentLayerObserverEpoch;
 
   std::queue<PendingTransactionId> mPendingTransactionIds;
+  std::queue<CompositorAnimationIdsForEpoch> mCompositorAnimationsToDelete;
   wr::Epoch mWrEpoch;
   wr::IdNamespace mIdNamespace;
 

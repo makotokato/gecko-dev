@@ -39,6 +39,7 @@
 #include "nsIController.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/TextEvents.h"
+#include "mozilla/dom/Event.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/HTMLInputElement.h"
 #include "mozilla/dom/HTMLTextAreaElement.h"
@@ -65,11 +66,11 @@ public:
   }
   ~ValueSetter()
   {
-    mTextEditor->SetSuppressDispatchingInputEvent(mOuterTransaction);
+    mTextEditor->SuppressDispatchingInputEvent(mOuterTransaction);
   }
   void Init()
   {
-    mTextEditor->SetSuppressDispatchingInputEvent(true);
+    mTextEditor->SuppressDispatchingInputEvent(true);
   }
 
 private:
@@ -924,19 +925,13 @@ DoCommandCallback(Command aCommand, void* aData)
 }
 
 NS_IMETHODIMP
-TextInputListener::HandleEvent(nsIDOMEvent* aEvent)
+TextInputListener::HandleEvent(Event* aEvent)
 {
-  bool defaultPrevented = false;
-  nsresult rv = aEvent->GetDefaultPrevented(&defaultPrevented);
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (defaultPrevented) {
+  if (aEvent->DefaultPrevented()) {
     return NS_OK;
   }
 
-  bool isTrusted = false;
-  rv = aEvent->GetIsTrusted(&isTrusted);
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (!isTrusted) {
+  if (!aEvent->IsTrusted()) {
     return NS_OK;
   }
 
@@ -1110,12 +1105,6 @@ Element*
 nsTextEditorState::GetRootNode()
 {
   return mBoundFrame ? mBoundFrame->GetRootNode() : nullptr;
-}
-
-Element*
-nsTextEditorState::GetPlaceholderNode()
-{
-  return mBoundFrame ? mBoundFrame->GetPlaceholderNode() : nullptr;
 }
 
 Element*
@@ -2427,9 +2416,16 @@ nsTextEditorState::SetValue(const nsAString& aValue, const nsAString* aOldValue,
               StringTail(newValue, newlength - currentLength);
 
             if (insertValue.IsEmpty()) {
-              textEditor->DeleteSelection(nsIEditor::eNone, nsIEditor::eStrip);
+              DebugOnly<nsresult> rv =
+                textEditor->DeleteSelectionAsAction(nsIEditor::eNone,
+                                                    nsIEditor::eStrip);
+              NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                "Failed to remove the text");
             } else {
-              textEditor->InsertText(insertValue);
+              DebugOnly<nsresult> rv =
+                textEditor->InsertTextAsAction(insertValue);
+              NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                "Failed to insert the new value");
             }
           } else {
             AutoDisableUndo disableUndo(textEditor);

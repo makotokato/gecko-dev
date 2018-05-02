@@ -455,7 +455,7 @@
     "lij": {
       "default": {
         "visibleDefaultEngines": [
-          "google", "amazondotcom", "twitter", "wikipedia"
+          "google", "bing", "amazon-it", "wikipedia-lij"
         ]
       }
     },
@@ -495,6 +495,13 @@
       }
     },
     "meh": {
+      "default": {
+        "visibleDefaultEngines": [
+          "google", "bing", "amazondotcom", "twitter", "wikipedia-es"
+        ]
+      }
+    },
+    "mix": {
       "default": {
         "visibleDefaultEngines": [
           "google", "bing", "amazondotcom", "twitter", "wikipedia-es"

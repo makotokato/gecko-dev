@@ -10,6 +10,9 @@
 #include "mozilla/Maybe.h"
 
 #include "builtin/ModuleObject.h"
+#if defined(JS_BUILD_BINAST)
+# include "frontend/BinSource.h"
+#endif // JS_BUILD_BINAST
 #include "frontend/BytecodeEmitter.h"
 #include "frontend/ErrorReporter.h"
 #include "frontend/FoldConstants.h"
@@ -343,7 +346,6 @@ BytecodeCompiler::compileScript(HandleObject environment, SharedContext* sc)
                 return nullptr;
             if (!NameFunctions(cx, pn))
                 return nullptr;
-            parser->handler.freeTree(pn);
 
             break;
         }
@@ -416,8 +418,6 @@ BytecodeCompiler::compileModule()
 
     if (!NameFunctions(cx, pn))
         return nullptr;
-
-    parser->handler.freeTree(pn);
 
     if (!builder.initModule())
         return nullptr;
@@ -576,6 +576,52 @@ frontend::CompileGlobalScript(JSContext* cx, LifoAlloc& alloc, ScopeKind scopeKi
     return compiler.compileGlobalScript(scopeKind);
 }
 
+#if defined(JS_BUILD_BINAST)
+
+JSScript*
+frontend::CompileGlobalBinASTScript(JSContext* cx, LifoAlloc& alloc, const ReadOnlyCompileOptions& options,
+                                    const uint8_t* src, size_t len)
+{
+    frontend::UsedNameTracker usedNames(cx);
+    if (!usedNames.init())
+        return nullptr;
+
+    RootedObject sourceObj(cx, CreateScriptSourceObject(cx, options));
+
+    if (!sourceObj)
+        return nullptr;
+
+    RootedScript script(cx, JSScript::Create(cx, options, sourceObj, 0, len, 0, len));
+
+    if (!script)
+        return nullptr;
+
+    frontend::BinASTParser<BinTokenReaderMultipart> parser(cx, alloc, usedNames, options);
+
+    auto parsed = parser.parse(src, len);
+
+    if (parsed.isErr())
+        return nullptr;
+
+    Directives dir(false);
+    GlobalSharedContext sc(cx, ScopeKind::Global, dir, false);
+    BytecodeEmitter bce(nullptr, &parser, &sc, script, nullptr, 0);
+
+    if (!bce.init())
+        return nullptr;
+
+    ParseNode *pn = parsed.unwrap();
+    if (!bce.emitScript(pn))
+        return nullptr;
+
+    if (!NameFunctions(cx, pn))
+        return nullptr;
+
+    return script;
+}
+
+#endif // JS_BUILD_BINAST
+
 JSScript*
 frontend::CompileEvalScript(JSContext* cx, LifoAlloc& alloc,
                             HandleObject environment, HandleScope enclosingScope,
@@ -636,7 +682,7 @@ frontend::CompileLazyFunction(JSContext* cx, Handle<LazyScript*> lazy, const cha
     options.setMutedErrors(lazy->mutedErrors())
            .setFileAndLine(lazy->filename(), lazy->lineno())
            .setColumn(lazy->column())
-           .setScriptSourceOffset(lazy->begin())
+           .setScriptSourceOffset(lazy->sourceStart())
            .setNoScriptRval(false)
            .setSelfHostingMode(false);
 
@@ -678,7 +724,7 @@ frontend::CompileLazyFunction(JSContext* cx, Handle<LazyScript*> lazy, const cha
     MOZ_ASSERT(sourceObject);
 
     Rooted<JSScript*> script(cx, JSScript::Create(cx, options, sourceObject,
-                                                  lazy->begin(), lazy->end(),
+                                                  lazy->sourceStart(), lazy->sourceEnd(),
                                                   lazy->toStringStart(), lazy->toStringEnd()));
     if (!script)
         return false;

@@ -30,7 +30,6 @@
 
 #include "nsDOMMutationObserver.h"
 #include "nsICycleCollectorListener.h"
-#include "mozilla/XPTInterfaceInfoManager.h"
 #include "nsIObjectInputStream.h"
 #include "nsIObjectOutputStream.h"
 #include "nsScriptSecurityManager.h"
@@ -97,6 +96,7 @@ nsXPConnect::~nsXPConnect()
 
     mShuttingDown = true;
     XPCWrappedNativeScope::SystemIsBeingShutDown();
+    mRuntime->SystemIsBeingShutDown();
 
     // The above causes us to clean up a bunch of XPConnect data structures,
     // after which point we need to GC to clean everything up. We need to do
@@ -177,12 +177,9 @@ nsXPConnect::GetRuntimeInstance()
 
 // static
 bool
-nsXPConnect::IsISupportsDescendant(nsIInterfaceInfo* info)
+nsXPConnect::IsISupportsDescendant(const nsXPTInterfaceInfo* info)
 {
-    bool found = false;
-    if (info)
-        info->HasAncestor(&NS_GET_IID(nsISupports), &found);
-    return found;
+    return info && info->HasAncestor(NS_GET_IID(nsISupports));
 }
 
 void
@@ -394,12 +391,6 @@ xpc::ErrorReport::ErrorReportToMessageString(JSErrorReport* aReport,
 
 /***************************************************************************/
 
-
-nsresult
-nsXPConnect::GetInfoForIID(const nsIID * aIID, nsIInterfaceInfo** info)
-{
-  return XPTInterfaceInfoManager::GetSingleton()->GetInfoForIID(aIID, info);
-}
 
 void
 xpc_TryUnmarkWrappedGrayObject(nsISupports* aWrappedJS)

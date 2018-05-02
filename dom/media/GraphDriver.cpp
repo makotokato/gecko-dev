@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,6 +10,7 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/Unused.h"
 #include "CubebUtils.h"
+#include "Tracing.h"
 
 #ifdef MOZ_WEBRTC
 #include "webrtc/MediaEngineWebRTC.h"
@@ -234,11 +236,6 @@ ThreadedDriver::Revive()
 }
 
 void
-ThreadedDriver::RemoveCallback()
-{
-}
-
-void
 ThreadedDriver::Shutdown()
 {
   NS_ASSERTION(NS_IsMainThread(), "Must be called on main thread");
@@ -327,7 +324,6 @@ ThreadedDriver::RunThread()
     MonitorAutoLock lock(GraphImpl()->GetMonitor());
     if (NextDriver()) {
       LOG(LogLevel::Debug, ("Switching to AudioCallbackDriver"));
-      RemoveCallback();
       NextDriver()->SetGraphTime(this, mIterationStart, mIterationEnd);
       mGraphImpl->SetCurrentDriver(NextDriver());
       NextDriver()->Start();
@@ -631,7 +627,7 @@ AudioCallbackDriver::Init()
 
   output.channels = mOutputChannels;
   output.layout = CUBEB_LAYOUT_UNDEFINED;
-  output.prefs = CUBEB_STREAM_PREF_NONE;
+  output.prefs = CubebUtils::GetDefaultStreamPrefs();
 
   uint32_t latency_frames = CubebUtils::GetCubebMSGLatencyInFrames(&output);
 
@@ -881,6 +877,9 @@ long
 AudioCallbackDriver::DataCallback(const AudioDataValue* aInputBuffer,
                                   AudioDataValue* aOutputBuffer, long aFrames)
 {
+   TRACE_AUDIO_CALLBACK_BUDGET(aFrames, mSampleRate);
+   TRACE_AUDIO_CALLBACK();
+
   // Don't add the callback until we're inited and ready
   if (!mAddedMixer) {
     mGraphImpl->mMixer.AddCallback(this);

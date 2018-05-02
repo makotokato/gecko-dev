@@ -467,12 +467,6 @@ public:
                              const ProgressEventType aType,
                              int64_t aLoaded, int64_t aTotal);
 
-  // This is called by nsXULTemplateQueryProcessorXML.
-  nsresult Init(nsIPrincipal* aPrincipal,
-                nsIGlobalObject* aGlobalObject,
-                nsIURI* aBaseURI,
-                nsILoadGroup* aLoadGroup);
-
   void SetRequestObserver(nsIRequestObserver* aObserver);
 
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(XMLHttpRequestMainThread,
@@ -859,7 +853,7 @@ class nsXHRParseEndListener : public nsIDOMEventListener
 {
 public:
   NS_DECL_ISUPPORTS
-  NS_IMETHOD HandleEvent(nsIDOMEvent *event) override
+  NS_IMETHOD HandleEvent(Event *event) override
   {
     if (mXHR) {
       mXHR->OnBodyParseEnd();

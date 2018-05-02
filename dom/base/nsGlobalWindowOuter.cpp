@@ -17,6 +17,7 @@
 #include "nsHistory.h"
 #include "nsDOMNavigationTiming.h"
 #include "nsIDOMStorageManager.h"
+#include "mozilla/dom/EventTarget.h"
 #include "mozilla/dom/LocalStorage.h"
 #include "mozilla/dom/Storage.h"
 #include "mozilla/dom/IdleRequest.h"
@@ -107,8 +108,6 @@
 #include "nsIDocument.h"
 #include "Crypto.h"
 #include "nsIDOMDocument.h"
-#include "nsIDOMElement.h"
-#include "nsIDOMEvent.h"
 #include "nsIDOMOfflineResourceList.h"
 #include "nsDOMString.h"
 #include "nsIEmbeddingSiteWindow.h"
@@ -182,10 +181,6 @@
 
 #include "nsBindingManager.h"
 #include "nsXBLService.h"
-
-// used for popup blocking, needs to be converted to something
-// belonging to the back-end like nsIContentPolicy
-#include "nsIPopupWindowManager.h"
 
 #include "nsIDragService.h"
 #include "mozilla/dom/Element.h"
@@ -1089,13 +1084,11 @@ nsGlobalWindowOuter::ClearControllers()
 // QueryInterface implementation for nsGlobalWindowOuter
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsGlobalWindowOuter)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  // Make sure this matches the cast in nsGlobalWindowOuter::FromWrapper()
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMEventTarget)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, EventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDOMWindow)
   NS_INTERFACE_MAP_ENTRY(nsIGlobalObject)
   NS_INTERFACE_MAP_ENTRY(nsIScriptGlobalObject)
   NS_INTERFACE_MAP_ENTRY(nsIScriptObjectPrincipal)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMEventTarget)
   NS_INTERFACE_MAP_ENTRY(mozilla::dom::EventTarget)
   if (aIID.Equals(NS_GET_IID(nsPIDOMWindowOuter))) {
     foundInterface = static_cast<nsPIDOMWindowOuter*>(this);
@@ -1223,7 +1216,7 @@ nsGlobalWindowOuter::IsBlackForCC(bool aTracingNeeded)
   return (nsCCUncollectableMarker::InGeneration(GetMarkedCCGeneration()) ||
           HasKnownLiveWrapper()) &&
          (!aTracingNeeded ||
-          HasNothingToTrace(static_cast<nsIDOMEventTarget*>(this)));
+          HasNothingToTrace(ToSupports(this)));
 }
 
 //*****************************************************************************
@@ -1572,36 +1565,19 @@ InitializeLegacyNetscapeObject(JSContext* aCx, JS::Handle<JSObject*> aGlobal)
 }
 
 static JS::CompartmentCreationOptions&
-SelectZoneGroup(nsGlobalWindowInner* aNewInner,
-                JS::CompartmentCreationOptions& aOptions)
+SelectZone(nsGlobalWindowInner* aNewInner,
+           JS::CompartmentCreationOptions& aOptions)
 {
-  JS::CompartmentCreationOptions options;
-
   if (aNewInner->GetOuterWindow()) {
     nsGlobalWindowOuter *top = aNewInner->GetTopInternal();
 
-    // If we have a top-level window, use its zone (and zone group).
+    // If we have a top-level window, use its zone.
     if (top && top->GetGlobalJSObject()) {
       return aOptions.setExistingZone(top->GetGlobalJSObject());
     }
   }
 
-  // If we're in the parent process, don't bother with zone groups.
-  if (XRE_IsParentProcess()) {
-    return aOptions.setNewZoneInSystemZoneGroup();
-  }
-
-  // Otherwise, find a zone group from the TabGroup. Typically we only have to
-  // go through one iteration of this loop.
-  RefPtr<TabGroup> tabGroup = aNewInner->TabGroup();
-  for (nsPIDOMWindowOuter* outer : tabGroup->GetWindows()) {
-    nsGlobalWindowOuter* window = nsGlobalWindowOuter::Cast(outer);
-    if (JSObject* global = window->GetGlobalJSObject()) {
-      return aOptions.setNewZoneInExistingZoneGroup(global);
-    }
-  }
-
-  return aOptions.setNewZoneInNewZoneGroup();
+  return aOptions.setNewZone();
 }
 
 /**
@@ -1628,7 +1604,7 @@ CreateNativeGlobalForInner(JSContext* aCx,
 
   JS::CompartmentOptions options;
 
-  SelectZoneGroup(aNewInner, options.creationOptions());
+  SelectZone(aNewInner, options.creationOptions());
 
   options.creationOptions().setSecureContext(aIsSecureContext);
 
@@ -1742,7 +1718,7 @@ nsGlobalWindowOuter::SetNewDocument(nsIDocument* aDocument,
 
   mContext->WillInitializeContext();
 
-  nsGlobalWindowInner *currentInner = GetCurrentInnerWindowInternal();
+  RefPtr<nsGlobalWindowInner> currentInner = GetCurrentInnerWindowInternal();
 
   if (currentInner && currentInner->mNavigator) {
     currentInner->mNavigator->OnNavigation();
@@ -1755,6 +1731,9 @@ nsGlobalWindowOuter::SetNewDocument(nsIDocument* aDocument,
 
   nsCOMPtr<WindowStateHolder> wsh = do_QueryInterface(aState);
   NS_ASSERTION(!aState || wsh, "What kind of weird state are you giving me here?");
+
+  bool handleDocumentOpen = false;
+  bool doomCurrentInner = false;
 
   JS::Rooted<JSObject*> newInnerGlobal(cx);
   if (reUseInnerWindow) {
@@ -1839,32 +1818,13 @@ nsGlobalWindowOuter::SetNewDocument(nsIDocument* aDocument,
 
     if (currentInner && currentInner->GetWrapperPreserveColor()) {
       if (oldDoc == aDocument) {
-        // Make a copy of the old window's performance object on document.open.
-        // Note that we have to force eager creation of it here, because we need
-        // to grab the current document channel and whatnot before that changes.
-        currentInner->AsInner()->CreatePerformanceObjectIfNeeded();
-        if (currentInner->mPerformance) {
-          newInnerWindow->mPerformance =
-            Performance::CreateForMainThread(newInnerWindow->AsInner(),
-                                             aDocument->NodePrincipal(),
-                                             currentInner->mPerformance->GetDOMTiming(),
-                                             currentInner->mPerformance->GetChannel());
-        }
-
-        // Rebind DETH objects to the new global created by document.open().
-        // XXX: Is this correct?  We should consider if the spec and our
-        //      implementation should change to match other browsers by
-        //      just reusing the current window.  (Bug 1449992)
-        currentInner->ForEachEventTargetObject(
-          [&] (DOMEventTargetHelper* aDETH, bool* aDoneOut) {
-            aDETH->BindToOwner(newInnerWindow->AsGlobal());
-          });
+        handleDocumentOpen = true;
       }
 
       // Don't free objects on our current inner window if it's going to be
       // held in the bfcache.
       if (!currentInner->IsFrozen()) {
-        currentInner->FreeInnerObjects();
+        doomCurrentInner = true;
       }
     }
 
@@ -2015,6 +1975,19 @@ nsGlobalWindowOuter::SetNewDocument(nsIDocument* aDocument,
     newInnerWindow->mChromeEventHandler = mChromeEventHandler;
   }
 
+  // Handle any document.open() logic after we setup the new inner window
+  // so that any bound DETH objects can see the top window, document, etc.
+  if (handleDocumentOpen) {
+    newInnerWindow->MigrateStateForDocumentOpen(currentInner);
+  }
+
+  // We no longer need the old inner window.  Start its destruction if
+  // its not being reused and clear our reference.
+  if (doomCurrentInner) {
+    currentInner->FreeInnerObjects();
+  }
+  currentInner = nullptr;
+
   // Ask the JS engine to assert that it's valid to access our DocGroup whenever
   // it runs JS code for this compartment. We skip the check if this window is
   // for chrome JS or an add-on.
@@ -2158,7 +2131,7 @@ nsGlobalWindowOuter::SetDocShell(nsIDocShell* aDocShell)
 
   // Get our enclosing chrome shell and retrieve its global window impl, so
   // that we can do some forwarding to the chrome document.
-  nsCOMPtr<nsIDOMEventTarget> chromeEventHandler;
+  RefPtr<EventTarget> chromeEventHandler;
   mDocShell->GetChromeEventHandler(getter_AddRefs(chromeEventHandler));
   mChromeEventHandler = do_QueryInterface(chromeEventHandler);
   if (!mChromeEventHandler) {
@@ -3087,19 +3060,8 @@ nsGlobalWindowOuter::SetStatusOuter(const nsAString& aStatus)
 {
   mStatus = aStatus;
 
-  /*
-   * If caller is not chrome, prevent propagating window.status to the UI by
-   * exiting early.
-   */
-  if (!nsContentUtils::LegacyIsCallerChromeOrNativeCode()) {
-    return;
-  }
-
-  nsCOMPtr<nsIWebBrowserChrome> browserChrome = GetWebBrowserChrome();
-  if (browserChrome) {
-    browserChrome->SetStatus(nsIWebBrowserChrome::STATUS_SCRIPT,
-                             PromiseFlatString(aStatus).get());
-  }
+  // We don't support displaying window.status in the UI, so there's nothing
+  // left to do here.
 }
 
 void
@@ -4865,13 +4827,12 @@ nsGlobalWindowOuter::FocusOuter(ErrorResult& aError)
       return;
     }
 
-    nsIContent* frame = parentdoc->FindContentForSubDocument(mDoc);
-    nsCOMPtr<nsIDOMElement> frameElement = do_QueryInterface(frame);
-    if (frameElement) {
+    RefPtr<Element> frame = parentdoc->FindContentForSubDocument(mDoc);
+    if (frame) {
       uint32_t flags = nsIFocusManager::FLAG_NOSCROLL;
       if (canFocus)
         flags |= nsIFocusManager::FLAG_RAISE;
-      aError = fm->SetFocus(frameElement, flags);
+      aError = fm->SetFocus(frame, flags);
     }
     return;
   }
@@ -4911,10 +4872,9 @@ nsGlobalWindowOuter::BlurOuter()
     // if the root is focused, clear the focus
     nsIFocusManager* fm = nsFocusManager::GetFocusManager();
     if (fm && mDoc) {
-      nsCOMPtr<nsIDOMElement> element;
+      RefPtr<Element> element;
       fm->GetFocusedElementForWindow(this, false, nullptr, getter_AddRefs(element));
-      nsCOMPtr<nsIContent> content = do_QueryInterface(element);
-      if (content == mDoc->GetRootElement()) {
+      if (element == mDoc->GetRootElement()) {
         fm->ClearFocus(this);
       }
     }
@@ -5367,25 +5327,6 @@ nsGlobalWindowOuter::GetTopWindowRoot()
   return window.forget();
 }
 
-static
-bool IsPopupBlocked(nsIDocument* aDoc)
-{
-  nsCOMPtr<nsIPopupWindowManager> pm =
-    do_GetService(NS_POPUPWINDOWMANAGER_CONTRACTID);
-
-  if (!pm) {
-    return false;
-  }
-
-  if (!aDoc) {
-    return true;
-  }
-
-  uint32_t permission = nsIPopupWindowManager::ALLOW_POPUP;
-  pm->TestPermission(aDoc->NodePrincipal(), &permission);
-  return permission == nsIPopupWindowManager::DENY_POPUP;
-}
-
 void
 nsGlobalWindowOuter::FirePopupBlockedEvent(nsIDocument* aDoc,
                                            nsIURI* aPopupURI,
@@ -5433,8 +5374,10 @@ nsGlobalWindowOuter::CanSetProperty(const char *aPrefName)
 bool
 nsGlobalWindowOuter::PopupWhitelisted()
 {
-  if (!IsPopupBlocked(mDoc))
+  if (mDoc && nsContentUtils::CanShowPopup(mDoc->NodePrincipal()))
+  {
     return true;
+  }
 
   nsCOMPtr<nsPIDOMWindowOuter> parent = GetParent();
   if (parent == this)
@@ -6272,7 +6215,7 @@ nsGlobalWindowOuter::GetRealFrameElementOuter()
  * nsIGlobalWindow::GetFrameElement (when called from C++) is just a wrapper
  * around GetRealFrameElement.
  */
-already_AddRefed<nsIDOMElement>
+Element*
 nsGlobalWindowOuter::GetFrameElement()
 {
   FORWARD_TO_INNER(GetFrameElement, (), nullptr);
@@ -6353,14 +6296,16 @@ nsGlobalWindowOuter::UpdateCommands(const nsAString& anAction,
   }
 
   nsIDocument* doc = rootWindow->GetExtantDoc();
-  XULDocument* xulDoc = doc ? doc->AsXULDocument() : nullptr;
   // See if we contain a XUL document.
+  if (!doc || !doc->IsXULDocument()) {
+    return;
+  }
   // selectionchange action is only used for mozbrowser, not for XUL. So we bypass
   // XUL command dispatch if anAction is "selectionchange".
-  if (xulDoc && !anAction.EqualsLiteral("selectionchange")) {
+  if (!anAction.EqualsLiteral("selectionchange")) {
     // Retrieve the command dispatcher and call updateCommands on it.
     nsIDOMXULCommandDispatcher* xulCommandDispatcher =
-      xulDoc->GetCommandDispatcher();
+      doc->AsXULDocument()->GetCommandDispatcher();
     if (xulCommandDispatcher) {
       nsContentUtils::AddScriptRunner(new CommandDispatcher(xulCommandDispatcher,
                                                             anAction));
@@ -6442,7 +6387,7 @@ nsGlobalWindowOuter::FindOuter(const nsAString& aString, bool aCaseSensitive,
 }
 
 //*****************************************************************************
-// nsGlobalWindowOuter::nsIDOMEventTarget
+// EventTarget
 //*****************************************************************************
 
 nsPIDOMWindowOuter*
@@ -6679,11 +6624,12 @@ nsGlobalWindowOuter::SetChromeEventHandler(EventTarget* aChromeEventHandler)
 }
 
 void
-nsGlobalWindowOuter::SetFocusedNode(nsIContent* aNode,
-                                    uint32_t aFocusMethod,
-                                    bool aNeedsFocus)
+nsGlobalWindowOuter::SetFocusedElement(Element* aElement,
+                                       uint32_t aFocusMethod,
+                                       bool aNeedsFocus)
 {
-  FORWARD_TO_INNER_VOID(SetFocusedNode, (aNode, aFocusMethod, aNeedsFocus));
+  FORWARD_TO_INNER_VOID(SetFocusedElement,
+                        (aElement, aFocusMethod, aNeedsFocus));
 }
 
 uint32_t
@@ -6730,14 +6676,13 @@ nsGlobalWindowOuter::SetKeyboardIndicators(UIStateChangeType aShowAccelerators,
 
   bool newShouldShowFocusRing = ShouldShowFocusRing();
   if (mInnerWindow && nsGlobalWindowInner::Cast(mInnerWindow)->mHasFocus &&
-      mInnerWindow->mFocusedNode &&
-      oldShouldShowFocusRing != newShouldShowFocusRing &&
-      mInnerWindow->mFocusedNode->IsElement()) {
+      mInnerWindow->mFocusedElement &&
+      oldShouldShowFocusRing != newShouldShowFocusRing) {
     // Update focusedNode's state.
     if (newShouldShowFocusRing) {
-      mInnerWindow->mFocusedNode->AsElement()->AddStates(NS_EVENT_STATE_FOCUSRING);
+      mInnerWindow->mFocusedElement->AddStates(NS_EVENT_STATE_FOCUSRING);
     } else {
-      mInnerWindow->mFocusedNode->AsElement()->RemoveStates(NS_EVENT_STATE_FOCUSRING);
+      mInnerWindow->mFocusedElement->RemoveStates(NS_EVENT_STATE_FOCUSRING);
     }
   }
 }
@@ -7312,13 +7257,14 @@ nsGlobalWindowOuter::RestoreWindowState(nsISupports *aState)
 
   // if a link is focused, refocus with the FLAG_SHOWRING flag set. This makes
   // it easy to tell which link was last clicked when going back a page.
-  nsIContent* focusedNode = inner->GetFocusedNode();
-  if (nsContentUtils::ContentIsLink(focusedNode)) {
+  Element* focusedElement = inner->GetFocusedElement();
+  if (nsContentUtils::ContentIsLink(focusedElement)) {
     nsIFocusManager* fm = nsFocusManager::GetFocusManager();
     if (fm) {
-      nsCOMPtr<nsIDOMElement> focusedElement(do_QueryInterface(focusedNode));
-      fm->SetFocus(focusedElement, nsIFocusManager::FLAG_NOSCROLL |
-                                   nsIFocusManager::FLAG_SHOWRING);
+      // XXXbz Do we need the stack strong ref here?
+      RefPtr<Element> kungFuDeathGrip(focusedElement);
+      fm->SetFocus(kungFuDeathGrip, nsIFocusManager::FLAG_NOSCROLL |
+                                    nsIFocusManager::FLAG_SHOWRING);
     }
   }
 
@@ -7668,7 +7614,6 @@ nsGlobalWindowOuter::AbstractMainThreadFor(TaskCategory aCategory)
 
 nsGlobalWindowOuter::TemporarilyDisableDialogs::TemporarilyDisableDialogs(
   nsGlobalWindowOuter* aWindow MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
-  : mSavedDialogsEnabled{ false }
 {
   MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 

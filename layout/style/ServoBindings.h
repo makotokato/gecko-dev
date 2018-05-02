@@ -172,15 +172,24 @@ void Gecko_ConstructStyleChildrenIterator(RawGeckoElementBorrowed aElement,
 void Gecko_DestroyStyleChildrenIterator(RawGeckoStyleChildrenIteratorBorrowedMut aIterator);
 RawGeckoNodeBorrowedOrNull Gecko_GetNextStyleChild(RawGeckoStyleChildrenIteratorBorrowedMut it);
 
+NS_DECL_THREADSAFE_FFI_REFCOUNTING(mozilla::css::SheetLoadDataHolder, SheetLoadDataHolder);
+
+void Gecko_StyleSheet_FinishAsyncParse(mozilla::css::SheetLoadDataHolder* data,
+                                       RawServoStyleSheetContentsStrong sheet_contents);
+
 mozilla::ServoStyleSheet*
 Gecko_LoadStyleSheet(mozilla::css::Loader* loader,
                      mozilla::ServoStyleSheet* parent,
                      mozilla::css::SheetLoadData* parent_load_data,
                      mozilla::css::LoaderReusableStyleSheets* reusable_sheets,
-                     RawGeckoURLExtraData* base_url_data,
-                     const uint8_t* url_bytes,
-                     uint32_t url_length,
+                     ServoBundledURI url,
                      RawServoMediaListStrong media_list);
+
+void
+Gecko_LoadStyleSheetAsync(mozilla::css::SheetLoadDataHolder* parent_data,
+                          ServoBundledURI url,
+                          RawServoMediaListStrong media_list,
+                          RawServoImportRuleStrong import_rule);
 
 // Selector Matching.
 uint64_t Gecko_ElementState(RawGeckoElementBorrowed element);
@@ -565,6 +574,9 @@ void Gecko_CSSValue_SetKeyword(nsCSSValueBorrowedMut css_value, nsCSSKeyword key
 void Gecko_CSSValue_SetPercentage(nsCSSValueBorrowedMut css_value, float percent);
 void Gecko_CSSValue_SetPixelLength(nsCSSValueBorrowedMut aCSSValue, float aLen);
 void Gecko_CSSValue_SetCalc(nsCSSValueBorrowedMut css_value, nsStyleCoord::CalcValue calc);
+void Gecko_CSSValue_SetFontStretch(nsCSSValueBorrowedMut css_value, float stretch);
+void Gecko_CSSValue_SetFontSlantStyle(nsCSSValueBorrowedMut css_value, float style);
+void Gecko_CSSValue_SetFontWeight(nsCSSValueBorrowedMut css_value, float weight);
 void Gecko_CSSValue_SetFunction(nsCSSValueBorrowedMut css_value, int32_t len);
 void Gecko_CSSValue_SetString(nsCSSValueBorrowedMut css_value,
                               const uint8_t* string, uint32_t len, nsCSSUnit unit);
@@ -583,6 +595,22 @@ void Gecko_CSSValue_SetPairList(nsCSSValueBorrowedMut css_value, uint32_t len);
 void Gecko_CSSValue_InitSharedList(nsCSSValueBorrowedMut css_value, uint32_t len);
 void Gecko_CSSValue_Drop(nsCSSValueBorrowedMut css_value);
 NS_DECL_THREADSAFE_FFI_REFCOUNTING(nsCSSValueSharedList, CSSValueSharedList);
+
+float Gecko_FontStretch_ToFloat(mozilla::FontStretch aStretch);
+void Gecko_FontStretch_SetFloat(mozilla::FontStretch* aStretch,
+                                float aFloatValue);
+float Gecko_FontSlantStyle_ToFloat(mozilla::FontSlantStyle aStyle);
+void Gecko_FontSlantStyle_SetNormal(mozilla::FontSlantStyle*);
+void Gecko_FontSlantStyle_SetItalic(mozilla::FontSlantStyle*);
+void Gecko_FontSlantStyle_SetOblique(mozilla::FontSlantStyle*, float angle_degrees);
+void Gecko_FontSlantStyle_Get(mozilla::FontSlantStyle,
+                              bool* normal,
+                              bool* italic,
+                              float* oblique_angle);
+
+float Gecko_FontWeight_ToFloat(mozilla::FontWeight aWeight);
+void Gecko_FontWeight_SetFloat(mozilla::FontWeight* aWeight,
+                               float aFloatValue);
 
 void Gecko_nsStyleFont_SetLang(nsStyleFont* font, nsAtom* atom);
 void Gecko_nsStyleFont_CopyLangFrom(nsStyleFont* aFont, const nsStyleFont* aSource);

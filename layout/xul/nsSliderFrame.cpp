@@ -23,7 +23,6 @@
 #include "nsHTMLParts.h"
 #include "nsIPresShell.h"
 #include "nsCSSRendering.h"
-#include "nsIDOMEvent.h"
 #include "nsScrollbarButtonFrame.h"
 #include "nsISliderListener.h"
 #include "nsIScrollableFrame.h"
@@ -44,6 +43,7 @@
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/dom/Event.h"
 #include "mozilla/layers/APZCCallbackHelper.h"
 #include "mozilla/layers/AsyncDragMetrics.h"
 #include "mozilla/layers/InputAPZContext.h"
@@ -459,7 +459,7 @@ nsSliderFrame::BuildDisplayListForChildren(nsDisplayListBuilder*   aBuilder,
       const ActiveScrolledRoot* ownLayerASR = contASRTracker.GetContainerASR();
       aLists.Content()->AppendToTop(
         MakeDisplayItem<nsDisplayOwnLayer>(aBuilder, this, &masterList, ownLayerASR,
-                                           flags, scrollTargetId,
+                                           flags,
                                            ScrollbarData{scrollDirection,
                                                          layers::ScrollbarLayerType::Thumb,
                                                          GetThumbRatio(),
@@ -467,7 +467,8 @@ nsSliderFrame::BuildDisplayListForChildren(nsDisplayListBuilder*   aBuilder,
                                                          thumbLength,
                                                          isAsyncDraggable,
                                                          sliderTrackStart,
-                                                         sliderTrackLength}));
+                                                         sliderTrackLength,
+                                                         scrollTargetId}));
 
       return;
     }
@@ -1001,7 +1002,7 @@ nsSliderFrame::SetInitialChildList(ChildListID     aListID,
 }
 
 nsresult
-nsSliderMediator::HandleEvent(nsIDOMEvent* aEvent)
+nsSliderMediator::HandleEvent(dom::Event* aEvent)
 {
   // Only process the event if the thumb is not being dragged.
   if (mSlider && !mSlider->isDraggingThumb())
@@ -1161,7 +1162,7 @@ nsSliderFrame::StartAPZDrag(WidgetGUIEvent* aEvent)
 }
 
 nsresult
-nsSliderFrame::StartDrag(nsIDOMEvent* aEvent)
+nsSliderFrame::StartDrag(Event* aEvent)
 {
 #ifdef DEBUG_SLIDER
   printf("Begin dragging\n");

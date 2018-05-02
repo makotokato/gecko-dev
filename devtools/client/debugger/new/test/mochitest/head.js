@@ -173,6 +173,7 @@ function waitForState(dbg, predicate, msg) {
   return new Promise(resolve => {
     info(`Waiting for state change: ${msg || ""}`);
     if (predicate(dbg.store.getState())) {
+      info(`Finished waiting for state change: ${msg || ""}`);
       return resolve();
     }
 
@@ -746,6 +747,91 @@ function disableBreakpoint(dbg, source, line, column) {
   return waitForDispatch(dbg, "DISABLE_BREAKPOINT");
 }
 
+async function loadAndAddBreakpoint(dbg, filename, line, column) {
+  const { selectors: { getBreakpoint, getBreakpoints }, getState } = dbg;
+
+  await waitForSources(dbg, filename);
+
+  ok(true, "Original sources exist");
+  const source = findSource(dbg, filename);
+
+  await selectSource(dbg, source);
+
+  // Test that breakpoint is not off by a line.
+  await addBreakpoint(dbg, source, line);
+
+  is(getBreakpoints(getState()).size, 1, "One breakpoint exists");
+  ok(
+    getBreakpoint(getState(), { sourceId: source.id, line, column }),
+    "Breakpoint has correct line"
+  );
+
+  return source;
+}
+
+async function invokeWithBreakpoint(dbg, fnName, filename, { line, column }, handler) {
+  const { selectors: { getBreakpoints }, getState } = dbg;
+
+  const source = await loadAndAddBreakpoint(dbg, filename, line, column);
+
+  const invokeResult = invokeInTab(fnName);
+
+  let invokeFailed = await Promise.race([
+    waitForPaused(dbg),
+    invokeResult.then(() => new Promise(() => {}), () => true)
+  ]);
+
+  if (invokeFailed) {
+    return invokeResult;
+  }
+
+  assertPausedLocation(dbg);
+
+  await removeBreakpoint(dbg, source.id, line, column);
+
+  is(getBreakpoints(getState()).size, 0, "Breakpoint reverted");
+
+  await handler(source);
+
+  await resume(dbg);
+
+  // If the invoke errored later somehow, capture here so the error is reported nicely.
+  await invokeResult;
+}
+
+async function expandAllScopes(dbg) {
+  const scopes = await waitForElement(dbg, "scopes");
+  const scopeElements = scopes.querySelectorAll(
+    `.tree-node[aria-level="1"][data-expandable="true"]:not([aria-expanded="true"])`
+  );
+  const indices = Array.from(scopeElements, el => {
+    return Array.prototype.indexOf.call(el.parentNode.childNodes, el);
+  }).reverse();
+
+  for (const index of indices) {
+    await toggleScopeNode(dbg, index + 1);
+  }
+}
+
+async function assertScopes(dbg, items) {
+  await expandAllScopes(dbg);
+
+  for (const [i, val] of items.entries()) {
+    if (Array.isArray(val)) {
+      is(getScopeLabel(dbg, i + 1), val[0]);
+      is(
+        getScopeValue(dbg, i + 1),
+        val[1],
+        `"${val[0]}" has the expected "${val[1]}" value`
+      );
+    } else {
+      is(getScopeLabel(dbg, i + 1), val);
+    }
+  }
+
+  is(getScopeLabel(dbg, items.length + 1), "Window");
+}
+
 /**
  * Removes a breakpoint from a source at line/col.
  *
@@ -1175,8 +1261,9 @@ async function assertPreviewPopup(dbg, { field, value, expression }) {
   const properties =
     preview.result.preview.ownProperties || preview.result.preview.items;
   const property = properties[field];
+  const propertyValue = property.value || property
 
-  is(`${property.value || property}`, value, "Preview.result");
+  is(`${propertyValue}`, value, "Preview.result");
   is(preview.updating, false, "Preview.updating");
   is(preview.expression, expression, "Preview.expression");
 }
@@ -1197,9 +1284,7 @@ async function assertPreviews(dbg, previews) {
       await assertPreviewTextValue(dbg, { expression, text: result });
     }
 
-    // Move to column 0 after to make sure that the preview created by this
-    // test does not affect later attempts to hover and preview.
-    hoverAtPos(dbg, { line: line, ch: 0 });
+    dbg.actions.clearPreview();
   }
 }
 

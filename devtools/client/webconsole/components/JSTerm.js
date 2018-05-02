@@ -250,7 +250,7 @@ class JSTerm extends Component {
 
   /**
    * Getter for the element that holds the messages we display.
-   * @type nsIDOMElement
+   * @type Element
    */
   get outputNode() {
     return this.hud.outputNode;
@@ -619,7 +619,7 @@ class JSTerm extends Component {
    * The inputNode "keypress" event handler.
    *
    * @private
-   * @param nsIDOMEvent event
+   * @param Event event
    */
   _keyPress(event) {
     let inputNode = this.inputNode;
@@ -1345,7 +1345,8 @@ class JSTerm extends Component {
       dom.div({
         className: "jsterm-input-container",
         key: "jsterm-container",
-        style: {direction: "ltr"}
+        style: {direction: "ltr"},
+        "aria-live": "off",
       },
         dom.textarea({
           className: "jsterm-complete-node devtools-monospace",

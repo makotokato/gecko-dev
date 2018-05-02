@@ -112,7 +112,7 @@ public:
 
   NS_DECL_ISUPPORTS
 
-  DataChannelShutdown() {}
+  DataChannelShutdown() = default;
 
   void Init()
     {
@@ -303,15 +303,10 @@ debug_printf(const char *format, ...)
   }
 }
 
-DataChannelConnection::DataChannelConnection(DataConnectionListener* listener,
-                                             nsIEventTarget* aTarget)
+DataChannelConnection::DataChannelConnection(DataConnectionListener *listener,
+                                             nsIEventTarget *aTarget)
   : NeckoTargetHolder(aTarget)
   , mLock("netwerk::sctp::DataChannelConnection")
-  , mSendInterleaved{ false }
-  , mPpidFragmentation{ false }
-  , mMaxMessageSizeSet{ false }
-  , mMaxMessageSize{}
-  , mAllocateEven{ false }
 {
   mCurrentStream = 0;
   mState = CLOSED;
@@ -2982,10 +2977,9 @@ DataChannelConnection::SendDataMsgCommon(uint16_t stream, const nsACString &aMsg
   if (isBinary) {
     return SendDataMsg(channel, data, len,
                        DATA_CHANNEL_PPID_BINARY_PARTIAL, DATA_CHANNEL_PPID_BINARY);
-  } else {
-    return SendDataMsg(channel, data, len,
-                       DATA_CHANNEL_PPID_DOMSTRING_PARTIAL, DATA_CHANNEL_PPID_DOMSTRING);
   }
+  return SendDataMsg(channel, data, len,
+                     DATA_CHANNEL_PPID_DOMSTRING_PARTIAL, DATA_CHANNEL_PPID_DOMSTRING);
 }
 
 void
@@ -3257,10 +3251,9 @@ DataChannel::EnsureValidStream(ErrorResult& aRv)
   MOZ_ASSERT(mConnection);
   if (mConnection && mStream != INVALID_STREAM) {
     return true;
-  } else {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
-    return false;
   }
+  aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+  return false;
 }
 
 } // namespace mozilla

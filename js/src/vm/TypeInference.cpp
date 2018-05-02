@@ -670,13 +670,21 @@ class TypeSetRef : public BufferableRef
 {
     Zone* zone;
     ConstraintTypeSet* types;
+#ifdef DEBUG
+    uint64_t minorGCNumberAtCreation;
+#endif
 
   public:
     TypeSetRef(Zone* zone, ConstraintTypeSet* types)
-      : zone(zone), types(types)
+      : zone(zone)
+      , types(types)
+#ifdef DEBUG
+      , minorGCNumberAtCreation(zone->runtimeFromMainThread()->gc.minorGCCount())
+#endif
     {}
 
     void trace(JSTracer* trc) override {
+        MOZ_ASSERT(trc->runtime()->gc.minorGCCount() == minorGCNumberAtCreation);
         types->trace(zone, trc);
     }
 };
@@ -713,7 +721,8 @@ ConstraintTypeSet::addType(JSContext* cx, Type type)
 
     /* Propagate the type to all constraints. */
     if (!cx->helperThread()) {
-        TypeConstraint* constraint = constraintList();
+        AutoAssertNoTISweeping nosweeping(cx->zone()->types);
+        TypeConstraint* constraint = constraintList(nosweeping);
         while (constraint) {
             constraint->newType(cx, this, type);
             constraint = constraint->next();
@@ -1012,14 +1021,14 @@ TypeSet::intersectSets(TemporaryTypeSet* a, TemporaryTypeSet* b, LifoAlloc* allo
 // Constraints generated during Ion compilation capture assumptions made about
 // heap properties that will trigger invalidation of the resulting Ion code if
 // the constraint is violated. Constraints can only be attached to type sets on
-// the active thread, so to allow compilation to occur almost entirely off thread
+// the main thread, so to allow compilation to occur almost entirely off thread
 // the generation is split into two phases.
 //
 // During compilation, CompilerConstraint values are constructed in a list,
 // recording the heap property type set which was read from and its expected
 // contents, along with the assumption made about those contents.
 //
-// At the end of compilation, when linking the result on the active thread, the
+// At the end of compilation, when linking the result on the main thread, the
 // list of compiler constraints are read and converted to type constraints and
 // attached to the type sets. If the property type sets have changed so that the
 // assumptions no longer hold then the compilation is aborted and its result
@@ -1035,7 +1044,7 @@ class CompilerConstraint
 
     // Contents of the property at the point when the query was performed. This
     // may differ from the actual property types later in compilation as the
-    // active thread performs side effects.
+    // main thread performs side effects.
     TemporaryTypeSet* expected;
 
     CompilerConstraint(LifoAlloc* alloc, const HeapTypeSetKey& property)
@@ -1305,7 +1314,7 @@ TypeSet::ObjectKey::ensureTrackedProperty(JSContext* cx, jsid id)
 {
     // If we are accessing a lazily defined property which actually exists in
     // the VM and has not been instantiated yet, instantiate it now if we are
-    // on the active thread and able to do so.
+    // on the main thread and able to do so.
     if (!JSID_IS_VOID(id) && !JSID_IS_EMPTY(id)) {
         MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
         if (isSingleton()) {
@@ -1503,7 +1512,7 @@ js::FinishCompilation(JSContext* cx, HandleScript script, CompilerConstraintList
 static void
 CheckDefinitePropertiesTypeSet(JSContext* cx, TemporaryTypeSet* frozen, StackTypeSet* actual)
 {
-    // The definite properties analysis happens on the active thread, so no new
+    // The definite properties analysis happens on the main thread, so no new
     // types can have been added to actual. The analysis may have updated the
     // contents of |frozen| though with new speculative types, and these need
     // to be reflected in |actual| for AddClearDefiniteFunctionUsesInScript
@@ -1974,18 +1983,19 @@ ObjectStateChange(JSContext* cx, ObjectGroup* group, bool markingUnknown)
     HeapTypeSet* types = group->maybeGetProperty(JSID_EMPTY);
 
     /* Mark as unknown after getting the types, to avoid assertion. */
+    AutoAssertNoTISweeping nosweeping(cx->zone()->types);
     if (markingUnknown)
         group->addFlags(OBJECT_FLAG_DYNAMIC_MASK | OBJECT_FLAG_UNKNOWN_PROPERTIES);
 
     if (types) {
         if (!cx->helperThread()) {
-            TypeConstraint* constraint = types->constraintList();
+            TypeConstraint* constraint = types->constraintList(nosweeping);
             while (constraint) {
                 constraint->newObjectState(cx, group);
                 constraint = constraint->next();
             }
         } else {
-            MOZ_ASSERT(!types->constraintList());
+            MOZ_ASSERT(!types->constraintList(nosweeping));
         }
     }
 }
@@ -2340,7 +2350,7 @@ TemporaryTypeSet::getTypedArrayType(CompilerConstraintList* constraints,
     if (clasp && IsTypedArrayClass(clasp)) {
         if (sharedness)
             getTypedArraySharedness(constraints, sharedness);
-        return (Scalar::Type) (clasp - &TypedArrayObject::classes[0]);
+        return GetTypedArrayClassType(clasp);
     }
     return Scalar::MaxTypedArrayViewType;
 }
@@ -2834,20 +2844,23 @@ ObjectGroup::markPropertyNonWritable(JSContext* cx, JSObject* obj, jsid id)
 void
 ObjectGroup::markStateChange(JSContext* cx)
 {
+    MOZ_ASSERT(cx->compartment() == compartment());
+
     if (unknownProperties())
         return;
 
     AutoEnterAnalysis enter(cx);
     HeapTypeSet* types = maybeGetProperty(JSID_EMPTY);
     if (types) {
+        AutoAssertNoTISweeping nosweeping(cx->zone()->types);
         if (!cx->helperThread()) {
-            TypeConstraint* constraint = types->constraintList();
+            TypeConstraint* constraint = types->constraintList(nosweeping);
             while (constraint) {
                 constraint->newObjectState(cx, this);
                 constraint = constraint->next();
             }
         } else {
-            MOZ_ASSERT(!types->constraintList());
+            MOZ_ASSERT(!types->constraintList(nosweeping));
         }
     }
 }
@@ -3303,6 +3316,8 @@ js::TypeMonitorResult(JSContext* cx, JSScript* script, jsbytecode* pc, StackType
 
     AutoEnterAnalysis enter(cx);
 
+    script->maybeSweepTypes(nullptr);
+
     MOZ_ASSERT(types == TypeScript::BytecodeTypes(script, pc));
     MOZ_ASSERT(!types->hasType(type));
 
@@ -3332,6 +3347,7 @@ bool
 JSScript::makeTypes(JSContext* cx)
 {
     MOZ_ASSERT(!types_);
+    assertSameCompartment(cx, this);
 
     AutoEnterAnalysis enter(cx);
 
@@ -4136,6 +4152,33 @@ ConstraintTypeSet::trace(Zone* zone, JSTracer* trc)
     } else {
         MOZ_RELEASE_ASSERT(!objectSet);
     }
+
+#ifdef DEBUG
+    MOZ_ASSERT(objectCount == baseObjectCount());
+    if (objectCount >= 2) {
+        unsigned capacity = TypeHashSet::Capacity(objectCount);
+        MOZ_ASSERT(uintptr_t(objectSet[-1]) == capacity);
+        for (unsigned i = 0; i < capacity; i++) {
+            ObjectKey* key = objectSet[i];
+            if (!key)
+                continue;
+            if (key->isGroup())
+                CheckGCThingAfterMovingGC(key->groupNoBarrier());
+            else
+                CheckGCThingAfterMovingGC(key->singletonNoBarrier());
+            JSCompartment* compartment = key->maybeCompartment();
+            MOZ_ASSERT_IF(compartment, compartment->zone() == zone);
+        }
+    } else if (objectCount == 1) {
+        ObjectKey* key = (ObjectKey*) objectSet;
+        if (key->isGroup())
+            CheckGCThingAfterMovingGC(key->groupNoBarrier());
+        else
+            CheckGCThingAfterMovingGC(key->singletonNoBarrier());
+        JSCompartment* compartment = key->maybeCompartment();
+        MOZ_ASSERT_IF(compartment, compartment->zone() == zone);
+    }
+#endif
 }
 
 static inline void
@@ -4226,7 +4269,8 @@ ConstraintTypeSet::sweep(Zone* zone, AutoClearTypeInferenceStateOnOOM& oom)
      * Type constraints only hold weak references. Copy constraints referring
      * to data that is still live into the zone's new arena.
      */
-    TypeConstraint* constraint = constraintList();
+    AutoAssertNoTISweeping nosweeping(zone->types);
+    TypeConstraint* constraint = constraintList(nosweeping);
     constraintList_ = nullptr;
     while (constraint) {
         MOZ_ASSERT(zone->types.sweepTypeLifoAlloc.ref().contains(constraint));
@@ -4281,8 +4325,9 @@ void
 ObjectGroup::sweep(AutoClearTypeInferenceStateOnOOM* oom)
 {
     MOZ_ASSERT(generation() != zoneFromAnyThread()->types.generation);
-
     setGeneration(zone()->types.generation);
+
+    // Bug 1454398, MOZ_RELEASE_ASSERT(!zone()->types.assertNoTISweeping);
 
     AssertGCStateForSweep(zone());
 
@@ -4293,7 +4338,7 @@ ObjectGroup::sweep(AutoClearTypeInferenceStateOnOOM* oom)
 
     if (maybeUnboxedLayout()) {
         // Remove unboxed layouts that are about to be finalized from the
-        // compartment wide list while we are still on the active thread.
+        // compartment wide list while we are still on the main thread.
         ObjectGroup* group = this;
         if (IsAboutToBeFinalizedUnbarriered(&group))
             unboxedLayout().detachFromCompartment();
@@ -4318,6 +4363,7 @@ ObjectGroup::sweep(AutoClearTypeInferenceStateOnOOM* oom)
      * Properties were allocated from the old arena, and need to be copied over
      * to the new one.
      */
+    AutoAssertNoTISweeping nosweeping(zone()->types);
     unsigned propertyCount = basePropertyCount();
     if (propertyCount >= 2) {
         unsigned oldCapacity = TypeHashSet::Capacity(propertyCount);
@@ -4335,7 +4381,10 @@ ObjectGroup::sweep(AutoClearTypeInferenceStateOnOOM* oom)
             if (prop) {
                 oldPropertiesFound++;
                 prop->types.checkMagic();
-                if (singleton() && !prop->types.constraintList() && !zone()->isPreservingCode()) {
+                if (singleton() &&
+                    !prop->types.constraintList(nosweeping) &&
+                    !zone()->isPreservingCode())
+                {
                     /*
                      * Don't copy over properties of singleton objects when their
                      * presence will not be required by jitcode or type constraints
@@ -4371,7 +4420,10 @@ ObjectGroup::sweep(AutoClearTypeInferenceStateOnOOM* oom)
     } else if (propertyCount == 1) {
         Property* prop = (Property*) propertySet;
         prop->types.checkMagic();
-        if (singleton() && !prop->types.constraintList() && !zone()->isPreservingCode()) {
+        if (singleton() &&
+            !prop->types.constraintList(nosweeping) &&
+            !zone()->isPreservingCode())
+        {
             // Skip, as above.
             JS_POISON(prop, JS_SWEPT_TI_PATTERN, sizeof(Property), MemCheckKind::MakeUndefined);
             clearProperties();
@@ -4400,6 +4452,8 @@ JSScript::maybeSweepTypes(AutoClearTypeInferenceStateOnOOM* oom)
 
     if (!types_ || typesGeneration() == zone()->types.generation)
         return;
+
+    // Bug 1454398, MOZ_RELEASE_ASSERT(!zone()->types.assertNoTISweeping);
 
     setTypesGeneration(zone()->types.generation);
 
@@ -4484,14 +4538,15 @@ Zone::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
 
 TypeZone::TypeZone(Zone* zone)
   : zone_(zone),
-    typeLifoAlloc_(zone->group(), (size_t) TYPE_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
-    currentCompilationId_(zone->group()),
-    generation(zone->group(), 0),
-    sweepTypeLifoAlloc(zone->group(), (size_t) TYPE_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
-    sweepReleaseTypes(zone->group(), false),
-    sweepingTypes(zone->group(), false),
-    keepTypeScripts(zone->group(), false),
-    activeAnalysis(zone->group(), nullptr)
+    typeLifoAlloc_(zone, (size_t) TYPE_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
+    currentCompilationId_(zone),
+    generation(zone, 0),
+    sweepTypeLifoAlloc(zone, (size_t) TYPE_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
+    sweepReleaseTypes(zone, false),
+    sweepingTypes(zone, false),
+    keepTypeScripts(zone, false),
+    assertNoTISweeping(zone, false),
+    activeAnalysis(zone, nullptr)
 {
 }
 
@@ -4539,6 +4594,7 @@ AutoClearTypeInferenceStateOnOOM::AutoClearTypeInferenceStateOnOOM(Zone* zone)
 {
     MOZ_RELEASE_ASSERT(CurrentThreadCanAccessZone(zone));
     MOZ_ASSERT(!TlsContext.get()->inUnsafeCallWithABI);
+    // Bug 1454398, MOZ_ASSERT(!zone->types.assertNoTISweeping);
     zone->types.setSweepingTypes(true);
 }
 
@@ -4547,7 +4603,7 @@ AutoClearTypeInferenceStateOnOOM::~AutoClearTypeInferenceStateOnOOM()
     zone->types.setSweepingTypes(false);
 
     if (oom) {
-        JSRuntime* rt = zone->runtimeFromActiveCooperatingThread();
+        JSRuntime* rt = zone->runtimeFromMainThread();
         js::CancelOffThreadIonCompile(rt);
         zone->setPreservingCode(false);
         zone->discardJitCode(rt->defaultFreeOp(), /* discardBaselineCode = */ false);
@@ -4614,6 +4670,19 @@ TypeScript::printTypes(JSContext* cx, HandleScript script) const
     fprintf(stderr, "\n");
 }
 #endif /* DEBUG */
+
+AutoAssertNoTISweeping::AutoAssertNoTISweeping(TypeZone& zone)
+  : zone_(zone),
+    prev_(zone_.assertNoTISweeping)
+{
+    zone_.assertNoTISweeping = true;
+}
+
+AutoAssertNoTISweeping::~AutoAssertNoTISweeping()
+{
+    MOZ_ASSERT(zone_.assertNoTISweeping);
+    zone_.assertNoTISweeping = prev_;
+}
 
 JS::ubi::Node::Size
 JS::ubi::Concrete<js::ObjectGroup>::size(mozilla::MallocSizeOf mallocSizeOf) const

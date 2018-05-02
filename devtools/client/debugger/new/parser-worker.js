@@ -783,8 +783,9 @@ const { workerUtils: { WorkerDispatcher } } = __webpack_require__(1363);
 const dispatcher = new WorkerDispatcher();
 
 const getOriginalURLs = dispatcher.task("getOriginalURLs");
-const getGeneratedLocation = dispatcher.task("getGeneratedLocation");
-const getAllGeneratedLocations = dispatcher.task("getAllGeneratedLocations");
+const getGeneratedRanges = dispatcher.task("getGeneratedRanges", { queue: true });
+const getGeneratedLocation = dispatcher.task("getGeneratedLocation", { queue: true });
+const getAllGeneratedLocations = dispatcher.task("getAllGeneratedLocations", { queue: true });
 const getOriginalLocation = dispatcher.task("getOriginalLocation");
 const getLocationScopes = dispatcher.task("getLocationScopes");
 const getOriginalSourceText = dispatcher.task("getOriginalSourceText");
@@ -799,6 +800,7 @@ module.exports = {
   isOriginalId,
   hasMappedSource,
   getOriginalURLs,
+  getGeneratedRanges,
   getGeneratedLocation,
   getAllGeneratedLocations,
   getOriginalLocation,
@@ -880,53 +882,81 @@ WorkerDispatcher.prototype = {
     this.worker = null;
   },
 
-  task(method) {
-    return (...args) => {
+  task(method, { queue = false } = {}) {
+    const calls = [];
+    const push = args => {
       return new Promise((resolve, reject) => {
-        const id = this.msgId++;
-        this.worker.postMessage({ id, method, args });
+        if (queue && calls.length === 0) {
+          Promise.resolve().then(flush);
+        }
 
-        const listener = ({ data: result }) => {
-          if (result.id !== id) {
-            return;
-          }
+        calls.push([args, resolve, reject]);
 
-          if (!this.worker) {
-            return;
-          }
-
-          this.worker.removeEventListener("message", listener);
-          if (result.error) {
-            reject(result.error);
-          } else {
-            resolve(result.response);
-          }
-        };
-
-        this.worker.addEventListener("message", listener);
+        if (!queue) {
+          flush();
+        }
       });
     };
+
+    const flush = () => {
+      const items = calls.slice();
+      calls.length = 0;
+
+      const id = this.msgId++;
+      this.worker.postMessage({ id, method, calls: items.map(item => item[0]) });
+
+      const listener = ({ data: result }) => {
+        if (result.id !== id) {
+          return;
+        }
+
+        if (!this.worker) {
+          return;
+        }
+
+        this.worker.removeEventListener("message", listener);
+
+        result.results.forEach((resultData, i) => {
+          const [, resolve, reject] = items[i];
+
+          if (resultData.error) {
+            reject(resultData.error);
+          } else {
+            resolve(resultData.response);
+          }
+        });
+      };
+
+      this.worker.addEventListener("message", listener);
+    };
+
+    return (...args) => push(args);
   }
 };
 
 function workerHandler(publicInterface) {
   return function (msg) {
-    const { id, method, args } = msg.data;
-    try {
-      const response = publicInterface[method].apply(undefined, args);
-      if (response instanceof Promise) {
-        response.then(val => self.postMessage({ id, response: val }),
-        // Error can't be sent via postMessage, so be sure to
-        // convert to string.
-        err => self.postMessage({ id, error: err.toString() }));
-      } else {
-        self.postMessage({ id, response });
+    const { id, method, calls } = msg.data;
+
+    Promise.all(calls.map(args => {
+      try {
+        const response = publicInterface[method].apply(undefined, args);
+        if (response instanceof Promise) {
+          return response.then(val => ({ response: val }),
+          // Error can't be sent via postMessage, so be sure to
+          // convert to string.
+          err => ({ error: err.toString() }));
+        } else {
+          return { response };
+        }
+      } catch (error) {
+        // Error can't be sent via postMessage, so be sure to convert to
+        // string.
+        return { error: error.toString() };
       }
-    } catch (error) {
-      // Error can't be sent via postMessage, so be sure to convert to
-      // string.
-      self.postMessage({ id, error: error.toString() });
-    }
+    })).then(results => {
+      self.postMessage({ id, results });
+    });
   };
 }
 
@@ -1073,6 +1103,35 @@ function htmlParser({ source, line }) {
   return parse(source, { startLine: line });
 }
 
+const VUE_COMPONENT_START = /^\s*</;
+function vueParser({ source, line }) {
+  return parse(source, _extends({
+    startLine: line
+  }, sourceOptions.original));
+}
+function parseVueScript(code) {
+  if (typeof code !== "string") {
+    return;
+  }
+
+  let ast;
+
+  // .vue files go through several passes, so while there is a
+  // single-file-component Vue template, there are also generally .vue files
+  // that are still just JS as well.
+  if (code.match(VUE_COMPONENT_START)) {
+    ast = (0, _parseScriptTags2.default)(code, vueParser);
+    if (t.isFile(ast)) {
+      // parseScriptTags is currently hard-coded to return scripts, but Vue
+      // always expects ESM syntax, so we just hard-code it.
+      ast.program.sourceType = "module";
+    }
+  } else {
+    ast = parse(code, sourceOptions.original);
+  }
+  return ast;
+}
+
 function parseScript(text, opts) {
   return _parse(text, opts);
 }
@@ -1088,13 +1147,15 @@ function getAst(sourceId) {
   const { contentType } = source;
   if (contentType == "text/html") {
     ast = (0, _parseScriptTags2.default)(source.text, htmlParser) || {};
-  } else if (contentType && contentType.match(/(javascript|jsx)/)) {
+  } else if (contentType && contentType === "text/vue") {
+    ast = parseVueScript(source.text) || {};
+  } else if (contentType && contentType.match(/(javascript|jsx)/) && !contentType.match(/typescript-jsx/)) {
     const type = source.id.includes("original") ? "original" : "generated";
     const options = sourceOptions[type];
     ast = parse(source.text, options);
   } else if (contentType && contentType.match(/typescript/)) {
     const options = _extends({}, sourceOptions.original, {
-      plugins: [...sourceOptions.original.plugins.filter(p => p !== "flow" && p !== "decorators" && p !== "decorators2"), "decorators", "typescript"]
+      plugins: [...sourceOptions.original.plugins.filter(p => p !== "flow" && p !== "decorators" && p !== "decorators2" && (p !== "jsx" || contentType.match(/typescript-jsx/))), "decorators", "typescript"]
     });
     ast = parse(source.text, options);
   }
@@ -1292,7 +1353,7 @@ function isYieldExpression(path) {
 }
 
 function isObjectShorthand(parent) {
-  return t.isProperty(parent) && parent.key.start == parent.value.start && parent.key.loc.identifierName === parent.value.loc.identifierName;
+  return t.isObjectProperty(parent) && parent.key.start == parent.value.start && parent.key.loc.identifierName === parent.value.loc.identifierName;
 }
 
 function getObjectExpressionValue(node) {
@@ -2001,8 +2062,6 @@ var _validate = __webpack_require__(1629);
 
 var _frameworks = __webpack_require__(1703);
 
-var _pauseLocation = __webpack_require__(2422);
-
 var _pausePoints = __webpack_require__(3612);
 
 var _mapOriginalExpression = __webpack_require__(3613);
@@ -2013,11 +2072,9 @@ var _devtoolsUtils = __webpack_require__(1363);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-const { workerHandler } = _devtoolsUtils.workerUtils;
+const { workerHandler } = _devtoolsUtils.workerUtils; /* This Source Code Form is subject to the terms of the Mozilla Public
+                                                       * License, v. 2.0. If a copy of the MPL was not distributed with this
+                                                       * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 self.onmessage = workerHandler({
   findOutOfScopeLocations: _findOutOfScopeLocations2.default,
@@ -2029,7 +2086,6 @@ self.onmessage = workerHandler({
   hasSource: _sources.hasSource,
   setSource: _sources.setSource,
   clearSources: _sources.clearSources,
-  isInvalidPauseLocation: _pauseLocation.isInvalidPauseLocation,
   getNextStep: _steps.getNextStep,
   hasSyntaxError: _validate.hasSyntaxError,
   getFramework: _frameworks.getFramework,
@@ -19096,6 +19152,7 @@ function tsPrintSignatureDeclarationBase(node) {
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
+exports.buildScopeList = undefined;
 exports.default = getScopes;
 exports.clearScopes = clearScopes;
 
@@ -19119,9 +19176,12 @@ function clearScopes() {
   parsedScopesCache = new Map();
 }
 
+exports.buildScopeList = _visitor.buildScopeList;
+
 /**
  * Searches all scopes and their bindings at the specific location.
  */
+
 function findScopes(scopes, location) {
   // Find inner most in the tree structure.
   let searchInScopes = scopes;
@@ -19170,6 +19230,7 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.parseSourceScopes = parseSourceScopes;
+exports.buildScopeList = buildScopeList;
 
 var _isEmpty = __webpack_require__(963);
 
@@ -19221,6 +19282,12 @@ function parseSourceScopes(sourceId) {
     return null;
   }
 
+  return buildScopeList(ast, sourceId);
+} /* This Source Code Form is subject to the terms of the Mozilla Public
+   * License, v. 2.0. If a copy of the MPL was not distributed with this
+   * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+
+function buildScopeList(ast, sourceId) {
   const { global, lexical } = createGlobalScope(ast, sourceId);
 
   const state = {
@@ -19228,7 +19295,8 @@ function parseSourceScopes(sourceId) {
     freeVariables: new Map(),
     freeVariableStack: [],
     scope: lexical,
-    scopeStack: []
+    scopeStack: [],
+    declarationBindingIds: new Set()
   };
   t.traverse(ast, scopeCollectionVisitor, state);
 
@@ -19253,9 +19321,7 @@ function parseSourceScopes(sourceId) {
   }
 
   return toParsedScopes([global], sourceId) || [];
-} /* This Source Code Form is subject to the terms of the Mozilla Public
-   * License, v. 2.0. If a copy of the MPL was not distributed with this
-   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+}
 
 function toParsedScopes(children, sourceId) {
   if (!children || children.length === 0) {
@@ -19322,7 +19388,7 @@ function fromBabelLocation(location, sourceId) {
   };
 }
 
-function parseDeclarator(declaratorId, targetScope, type, declaration, sourceId) {
+function parseDeclarator(declaratorId, targetScope, type, declaration, state) {
   if (isNode(declaratorId, "Identifier")) {
     let existing = targetScope.bindings[declaratorId.name];
     if (!existing) {
@@ -19332,27 +19398,28 @@ function parseDeclarator(declaratorId, targetScope, type, declaration, sourceId)
       };
       targetScope.bindings[declaratorId.name] = existing;
     }
+    state.declarationBindingIds.add(declaratorId);
     existing.refs.push({
       type: "decl",
-      start: fromBabelLocation(declaratorId.loc.start, sourceId),
-      end: fromBabelLocation(declaratorId.loc.end, sourceId),
+      start: fromBabelLocation(declaratorId.loc.start, state.sourceId),
+      end: fromBabelLocation(declaratorId.loc.end, state.sourceId),
       declaration: {
-        start: fromBabelLocation(declaration.loc.start, sourceId),
-        end: fromBabelLocation(declaration.loc.end, sourceId)
+        start: fromBabelLocation(declaration.loc.start, state.sourceId),
+        end: fromBabelLocation(declaration.loc.end, state.sourceId)
       }
     });
   } else if (isNode(declaratorId, "ObjectPattern")) {
     declaratorId.properties.forEach(prop => {
-      parseDeclarator(prop.value, targetScope, type, declaration, sourceId);
+      parseDeclarator(prop.value, targetScope, type, declaration, state);
     });
   } else if (isNode(declaratorId, "ArrayPattern")) {
     declaratorId.elements.forEach(item => {
-      parseDeclarator(item, targetScope, type, declaration, sourceId);
+      parseDeclarator(item, targetScope, type, declaration, state);
     });
   } else if (isNode(declaratorId, "AssignmentPattern")) {
-    parseDeclarator(declaratorId.left, targetScope, type, declaration, sourceId);
+    parseDeclarator(declaratorId.left, targetScope, type, declaration, state);
   } else if (isNode(declaratorId, "RestElement")) {
-    parseDeclarator(declaratorId.argument, targetScope, type, declaration, sourceId);
+    parseDeclarator(declaratorId.argument, targetScope, type, declaration, state);
   }
 }
 
@@ -19409,6 +19476,7 @@ const scopeCollectionVisitor = {
           start: fromBabelLocation(node.loc.start, state.sourceId),
           end: fromBabelLocation(node.loc.end, state.sourceId)
         });
+        state.declarationBindingIds.add(node.id);
         scope.bindings[node.id.name] = {
           type: "const",
           refs: [{
@@ -19426,6 +19494,7 @@ const scopeCollectionVisitor = {
       if (t.isFunctionDeclaration(node) && isNode(node.id, "Identifier")) {
         // This ignores Annex B function declaration hoisting, which
         // is probably a fine assumption.
+        state.declarationBindingIds.add(node.id);
         const fnScope = getVarScope(scope);
         scope.bindings[node.id.name] = {
           type: fnScope === scope ? "var" : "let",
@@ -19448,7 +19517,7 @@ const scopeCollectionVisitor = {
         end: fromBabelLocation(node.loc.end, state.sourceId)
       });
 
-      node.params.forEach(param => parseDeclarator(param, scope, "var", node, state.sourceId));
+      node.params.forEach(param => parseDeclarator(param, scope, "var", node, state));
 
       if (!t.isArrowFunctionExpression(node)) {
         scope.bindings.this = {
@@ -19461,37 +19530,53 @@ const scopeCollectionVisitor = {
         };
       }
     } else if (t.isClass(node)) {
-      if (t.isClassDeclaration(node) && t.isIdentifier(node.id)) {
-        state.scope.bindings[node.id.name] = {
-          type: "let",
-          refs: [{
-            type: "decl",
-            start: fromBabelLocation(node.id.loc.start, state.sourceId),
-            end: fromBabelLocation(node.id.loc.end, state.sourceId),
-            declaration: {
-              start: fromBabelLocation(node.loc.start, state.sourceId),
-              end: fromBabelLocation(node.loc.end, state.sourceId)
-            }
-          }]
-        };
-      }
-
       if (t.isIdentifier(node.id)) {
+        // For decorated classes, the AST considers the first the decorator
+        // to be the start of the class. For the purposes of mapping class
+        // declarations however, we really want to look for the "class Foo"
+        // piece. To achieve that, we estimate the location of the declaration
+        // instead.
+        let declStart = node.loc.start;
+        if (node.decorators && node.decorators.length > 0) {
+          // Estimate the location of the "class" keyword since it
+          // is unlikely to be a different line than the class name.
+          declStart = {
+            line: node.id.loc.start.line,
+            column: node.id.loc.start.column - "class ".length
+          };
+        }
+
+        const declaration = {
+          start: fromBabelLocation(declStart, state.sourceId),
+          end: fromBabelLocation(node.loc.end, state.sourceId)
+        };
+
+        if (t.isClassDeclaration(node)) {
+          state.declarationBindingIds.add(node.id);
+          state.scope.bindings[node.id.name] = {
+            type: "let",
+            refs: [{
+              type: "decl",
+              start: fromBabelLocation(node.id.loc.start, state.sourceId),
+              end: fromBabelLocation(node.id.loc.end, state.sourceId),
+              declaration
+            }]
+          };
+        }
+
         const scope = pushTempScope(state, "block", "Class", {
           start: fromBabelLocation(node.loc.start, state.sourceId),
           end: fromBabelLocation(node.loc.end, state.sourceId)
         });
 
+        state.declarationBindingIds.add(node.id);
         scope.bindings[node.id.name] = {
           type: "const",
           refs: [{
             type: "decl",
             start: fromBabelLocation(node.id.loc.start, state.sourceId),
             end: fromBabelLocation(node.id.loc.end, state.sourceId),
-            declaration: {
-              start: fromBabelLocation(node.loc.start, state.sourceId),
-              end: fromBabelLocation(node.loc.end, state.sourceId)
-            }
+            declaration
           }]
         };
       }
@@ -19511,7 +19596,7 @@ const scopeCollectionVisitor = {
         start: fromBabelLocation(node.loc.start, state.sourceId),
         end: fromBabelLocation(node.loc.end, state.sourceId)
       });
-      parseDeclarator(node.param, scope, "var", node, state.sourceId);
+      parseDeclarator(node.param, scope, "var", node, state);
     } else if (t.isBlockStatement(node) && hasLexicalDeclaration(node, parentNode)) {
       // Debugger will create new lexical environment for the block.
       pushTempScope(state, "block", "Block", {
@@ -19524,11 +19609,13 @@ const scopeCollectionVisitor = {
       // Finds right lexical environment
       const hoistAt = !isLetOrConst(node) ? getVarScope(state.scope) : state.scope;
       node.declarations.forEach(declarator => {
-        parseDeclarator(declarator.id, hoistAt, node.kind, node, state.sourceId);
+        parseDeclarator(declarator.id, hoistAt, node.kind, node, state);
       });
     } else if (t.isImportDeclaration(node) && (!node.importKind || node.importKind === "value")) {
       node.specifiers.forEach(spec => {
         if (t.isImportNamespaceSpecifier(spec)) {
+          state.declarationBindingIds.add(spec.local);
+
           state.scope.bindings[spec.local.name] = {
             // Imported namespaces aren't live import bindings, they are
             // just normal const bindings.
@@ -19536,10 +19623,16 @@ const scopeCollectionVisitor = {
             refs: [{
               type: "decl",
               start: fromBabelLocation(spec.local.loc.start, state.sourceId),
-              end: fromBabelLocation(spec.local.loc.end, state.sourceId)
+              end: fromBabelLocation(spec.local.loc.end, state.sourceId),
+              declaration: {
+                start: fromBabelLocation(node.loc.start, state.sourceId),
+                end: fromBabelLocation(node.loc.end, state.sourceId)
+              }
             }]
           };
         } else {
+          state.declarationBindingIds.add(spec.local);
+
           state.scope.bindings[spec.local.name] = {
             type: "import",
             refs: [{
@@ -19556,6 +19649,7 @@ const scopeCollectionVisitor = {
         }
       });
     } else if (t.isTSEnumDeclaration(node)) {
+      state.declarationBindingIds.add(node.id);
       state.scope.bindings[node.id.name] = {
         type: "const",
         refs: [{
@@ -19571,7 +19665,24 @@ const scopeCollectionVisitor = {
     } else if (t.isIdentifier(node) && t.isReferenced(node, parentNode) &&
     // Babel doesn't cover this in 'isReferenced' yet, but it should
     // eventually.
-    !t.isTSEnumMember(parentNode, { id: node })) {
+    !t.isTSEnumMember(parentNode, { id: node }) &&
+    // isReferenced above fails to see `var { foo } = ...` as a non-reference
+    // because the direct parent is not enough to know that the pattern is
+    // used within a variable declaration.
+    !state.declarationBindingIds.has(node)) {
+      let freeVariables = state.freeVariables.get(node.name);
+      if (!freeVariables) {
+        freeVariables = [];
+        state.freeVariables.set(node.name, freeVariables);
+      }
+
+      freeVariables.push({
+        type: "ref",
+        start: fromBabelLocation(node.loc.start, state.sourceId),
+        end: fromBabelLocation(node.loc.end, state.sourceId),
+        meta: buildMetaBindings(state.sourceId, node, ancestors)
+      });
+    } else if (isOpeningJSXIdentifier(node, ancestors)) {
       let freeVariables = state.freeVariables.get(node.name);
       if (!freeVariables) {
         freeVariables = [];
@@ -19659,6 +19770,24 @@ const scopeCollectionVisitor = {
     }
   }
 };
+
+function isOpeningJSXIdentifier(node, ancestors) {
+  if (!t.isJSXIdentifier(node)) {
+    return false;
+  }
+
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    const { node: parent, key } = ancestors[i];
+
+    if (t.isJSXOpeningElement(parent) && key === "name") {
+      return true;
+    } else if (!t.isJSXMemberExpression(parent) || key !== "object") {
+      break;
+    }
+  }
+
+  return false;
+}
 
 function buildMetaBindings(sourceId, node, ancestors, parentIndex = ancestors.length - 1) {
   if (parentIndex <= 1) {
@@ -19756,76 +19885,6 @@ function stripModuleScope(rootScope) {
   rootLexicalScope.children.forEach(child => {
     child.parent = rootLexicalScope;
   });
-}
-
-/***/ }),
-
-/***/ 2422:
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.isInvalidPauseLocation = isInvalidPauseLocation;
-
-var _types = __webpack_require__(2268);
-
-var t = _interopRequireWildcard(_types);
-
-var _ast = __webpack_require__(1375);
-
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
-
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
-
-const STOP = {};
-
-function isInvalidPauseLocation(location) {
-  const state = {
-    invalid: false,
-    location
-  };
-
-  try {
-    (0, _ast.traverseAst)(location.sourceId, { enter: invalidLocationVisitor }, state);
-  } catch (e) {
-    if (e !== STOP) {
-      throw e;
-    }
-  }
-
-  return state.invalid;
-}
-
-function invalidLocationVisitor(node, ancestors, state) {
-  const { location } = state;
-
-  if (node.loc.end.line < location.line) {
-    return;
-  }
-  if (node.loc.start.line > location.line) {
-    throw STOP;
-  }
-
-  if (location.line === node.loc.start.line && location.column >= node.loc.start.column && t.isFunction(node) && !t.isArrowFunctionExpression(node) && (location.line < node.body.loc.start.line || location.line === node.body.loc.start.line && location.column <= node.body.loc.start.column)) {
-    // Disallow pausing _inside_ in function arguments to avoid pausing inside
-    // of destructuring and other logic.
-    state.invalid = true;
-    throw STOP;
-  }
-
-  if (location.line === node.loc.start.line && location.column === node.loc.start.column && t.isBlockStatement(node)) {
-    // Disallow pausing directly before the opening curly of a block statement.
-    // Babel occasionally maps statements with unknown original positions to
-    // this location.
-    state.invalid = true;
-    throw STOP;
-  }
 }
 
 /***/ }),
@@ -21186,74 +21245,79 @@ var _isEqual = __webpack_require__(1127);
 
 var _isEqual2 = _interopRequireDefault(_isEqual);
 
-var _uniqBy = __webpack_require__(3624);
-
-var _uniqBy2 = _interopRequireDefault(_uniqBy);
-
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
 
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+const isForStatement = node => t.isForStatement(node) || t.isForOfStatement(node); /* This Source Code Form is subject to the terms of the Mozilla Public
+                                                                                    * License, v. 2.0. If a copy of the MPL was not distributed with this
+                                                                                    * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
-const isControlFlow = node => t.isForStatement(node) || t.isWhileStatement(node) || t.isIfStatement(node) || t.isSwitchCase(node) || t.isSwitchStatement(node);
+const isControlFlow = node => isForStatement(node) || t.isWhileStatement(node) || t.isIfStatement(node) || t.isSwitchCase(node) || t.isSwitchStatement(node);
 
-const isAssignment = node => t.isVariableDeclarator(node) || t.isAssignmentExpression(node);
+const isAssignment = node => t.isVariableDeclarator(node) || t.isAssignmentExpression(node) || t.isAssignmentPattern(node);
 
 const isImport = node => t.isImport(node) || t.isImportDeclaration(node);
 const isReturn = node => t.isReturnStatement(node);
 const isCall = node => t.isCallExpression(node) || t.isJSXElement(node);
 
-const inExpression = (parent, grandParent) => t.isArrayExpression(parent) || t.isObjectProperty(parent) || t.isCallExpression(parent) || t.isJSXElement(parent) || t.isJSXAttribute(grandParent) || t.isTemplateLiteral(parent);
+const inStepExpression = parent => t.isArrayExpression(parent) || t.isObjectProperty(parent) || t.isCallExpression(parent) || t.isJSXElement(parent);
+
+const inExpression = (parent, grandParent) => inStepExpression(parent) || t.isJSXAttribute(grandParent) || t.isTemplateLiteral(parent);
 
 const isExport = node => t.isExportNamedDeclaration(node) || t.isExportDefaultDeclaration(node);
 
-function removeDuplicatePoints(state) {
-  return (0, _uniqBy2.default)(state, ({ location }) => `${location.line}-$${location.column}`);
-}
-
 function getPausePoints(sourceId) {
-  const state = [];
+  const state = {};
   (0, _ast.traverseAst)(sourceId, { enter: onEnter }, state);
-  const uniqPoints = removeDuplicatePoints(state);
-  return uniqPoints;
+  return state;
 }
 
+/* eslint-disable complexity */
 function onEnter(node, ancestors, state) {
   const parent = ancestors[ancestors.length - 1];
+  const parentNode = parent && parent.node;
   const grandParent = ancestors[ancestors.length - 2];
   const startLocation = node.loc.start;
 
   if (isImport(node) || t.isClassDeclaration(node) || isExport(node) || t.isDebuggerStatement(node)) {
-    addPoint(state, startLocation);
+    return addStopPoint(state, startLocation);
   }
 
   if (isControlFlow(node)) {
-    addEmptyPoint(state, startLocation);
+    if (isForStatement(node)) {
+      addStopPoint(state, startLocation);
+    } else {
+      addEmptyPoint(state, startLocation);
+    }
 
     const test = node.test || node.discriminant;
     if (test) {
-      addPoint(state, test.loc.start);
+      addStopPoint(state, test.loc.start);
     }
+    return;
+  }
+
+  if (t.isBlockStatement(node)) {
+    return addEmptyPoint(state, startLocation);
   }
 
   if (isReturn(node)) {
     // We do not want to pause at the return and the call e.g. return foo()
     if (isCall(node.argument)) {
-      addEmptyPoint(state, startLocation);
-    } else {
-      addPoint(state, startLocation);
+      return addEmptyPoint(state, startLocation);
     }
+    return addStopPoint(state, startLocation);
   }
 
   if (isAssignment(node)) {
     // We only want to pause at literal assignments `var a = foo()`
     const value = node.right || node.init;
-    if (!isCall(value)) {
-      addPoint(state, startLocation);
+
+    if (isCall(value) || t.isFunction(parentNode)) {
+      return addEmptyPoint(state, startLocation);
     }
+    return addStopPoint(state, startLocation);
   }
 
   if (isCall(node)) {
@@ -21266,49 +21330,63 @@ function onEnter(node, ancestors, state) {
     }
 
     // NOTE: we do not want to land inside an expression e.g. [], {}, call
-    const stepOver = !inExpression(parent.node, grandParent && grandParent.node);
+    const step = !inExpression(parent.node, grandParent && grandParent.node);
 
     // NOTE: we add a point at the beginning of the expression
     // and each of the calls because the engine does not support
     // column-based member expression calls.
-    addPoint(state, startLocation, { breakpoint: true, stepOver });
+    addPoint(state, startLocation, { break: true, step });
     if (location && !(0, _isEqual2.default)(location, startLocation)) {
-      addPoint(state, location, { breakpoint: true, stepOver });
+      addPoint(state, location, { break: true, step });
     }
+
+    return;
   }
 
   if (t.isClassProperty(node)) {
-    addBreakPoint(state, startLocation);
+    return addBreakPoint(state, startLocation);
   }
 
   if (t.isFunction(node)) {
     const { line, column } = node.loc.end;
     addBreakPoint(state, startLocation);
-    addPoint(state, { line, column: column - 1 });
+    return addStopPoint(state, { line, column: column - 1 });
   }
 
   if (t.isProgram(node)) {
     const lastStatement = node.body[node.body.length - 1];
     if (lastStatement) {
-      addPoint(state, lastStatement.loc.end);
+      return addStopPoint(state, lastStatement.loc.end);
     }
+  }
+
+  if (!hasPoint(state, startLocation) && inStepExpression(parentNode)) {
+    return addEmptyPoint(state, startLocation);
   }
 }
 
-function formatNode(location, types) {
-  return { location, types };
+function hasPoint(state, { line, column }) {
+  return state[line] && state[line][column];
 }
 
-function addPoint(state, location, types = { breakpoint: true, stepOver: true }) {
-  state.push(formatNode(location, types));
+function addPoint(state, { line, column }, types) {
+  if (!state[line]) {
+    state[line] = {};
+  }
+  state[line][column] = types;
+  return state;
+}
+
+function addStopPoint(state, location) {
+  return addPoint(state, location, { break: true, step: true });
 }
 
 function addEmptyPoint(state, location) {
-  addPoint(state, location, { breakpoint: false, stepOver: false });
+  return addPoint(state, location, {});
 }
 
 function addBreakPoint(state, location) {
-  addPoint(state, location, { breakpoint: true, stepOver: false });
+  return addPoint(state, location, { break: true });
 }
 
 /***/ }),
@@ -21325,6 +21403,8 @@ Object.defineProperty(exports, "__esModule", {
 exports.default = mapOriginalExpression;
 
 var _ast = __webpack_require__(1375);
+
+var _getScopes = __webpack_require__(2413);
 
 var _generator = __webpack_require__(2365);
 
@@ -21360,76 +21440,67 @@ function getFirstExpression(ast) {
   return statements[0].expression;
 }
 
+function locationKey(start) {
+  return `${start.line}:${start.column}`;
+}
+
 function mapOriginalExpression(expression, mappings) {
-  let didReplace = false;
-
   const ast = (0, _ast.parseScript)(expression);
-  t.traverse(ast, (node, ancestors) => {
-    const parent = ancestors[ancestors.length - 1];
-    if (!parent) {
-      return;
+  const scopes = (0, _getScopes.buildScopeList)(ast, "");
+
+  const nodes = new Map();
+
+  const replacements = new Map();
+
+  // The ref-only global bindings are the ones that are accessed, but not
+  // declared anywhere in the parsed code, meaning they are either global,
+  // or declared somewhere in a scope outside the parsed code, so we
+  // rewrite all of those specifically to avoid rewritting declarations that
+  // shadow outer mappings.
+  for (const name of Object.keys(scopes[0].bindings)) {
+    const { refs } = scopes[0].bindings[name];
+    const mapping = mappings[name];
+    if (!refs.every(ref => ref.type === "ref") || !mapping || mapping === name) {
+      continue;
     }
 
-    const parentNode = parent.node;
-    if (t.isIdentifier(node) && t.isReferenced(node, parentNode)) {
-      if (mappings.hasOwnProperty(node.name)) {
-        const mapping = mappings[node.name];
-        if (mapping && mapping !== node.name) {
-          const mappingNode = getFirstExpression((0, _ast.parseScript)(mapping));
-          replaceNode(ancestors, mappingNode);
+    let node = nodes.get(name);
+    if (!node) {
+      node = getFirstExpression((0, _ast.parseScript)(mapping));
+      nodes.set(name, node);
+    }
 
-          didReplace = true;
-        }
+    for (const ref of refs) {
+      let { line, column } = ref.start;
+
+      // This shouldn't happen, just keeping Flow happy.
+      if (typeof column !== "number") {
+        column = 0;
       }
-    }
-  });
 
-  if (!didReplace) {
+      replacements.set(locationKey({ line, column }), node);
+    }
+  }
+
+  if (replacements.size === 0) {
     // Avoid the extra code generation work and also avoid potentially
     // reformatting the user's code unnecessarily.
     return expression;
   }
 
+  t.traverse(ast, (node, ancestors) => {
+    if (!t.isIdentifier(node) && !t.isThisExpression(node)) {
+      return;
+    }
+
+    const replacement = replacements.get(locationKey(node.loc.start));
+    if (replacement) {
+      replaceNode(ancestors, t.cloneNode(replacement));
+    }
+  });
+
   return (0, _generator2.default)(ast).code;
 }
-
-/***/ }),
-
-/***/ 3624:
-/***/ (function(module, exports, __webpack_require__) {
-
-var baseIteratee = __webpack_require__(814),
-    baseUniq = __webpack_require__(562);
-
-/**
- * This method is like `_.uniq` except that it accepts `iteratee` which is
- * invoked for each element in `array` to generate the criterion by which
- * uniqueness is computed. The order of result values is determined by the
- * order they occur in the array. The iteratee is invoked with one argument:
- * (value).
- *
- * @static
- * @memberOf _
- * @since 4.0.0
- * @category Array
- * @param {Array} array The array to inspect.
- * @param {Function} [iteratee=_.identity] The iteratee invoked per element.
- * @returns {Array} Returns the new duplicate free array.
- * @example
- *
- * _.uniqBy([2.1, 1.2, 2.3], Math.floor);
- * // => [2.1, 1.2]
- *
- * // The `_.property` iteratee shorthand.
- * _.uniqBy([{ 'x': 1 }, { 'x': 2 }, { 'x': 1 }], 'x');
- * // => [{ 'x': 1 }, { 'x': 2 }]
- */
-function uniqBy(array, iteratee) {
-  return (array && array.length) ? baseUniq(array, baseIteratee(iteratee, 2)) : [];
-}
-
-module.exports = uniqBy;
-
 
 /***/ }),
 

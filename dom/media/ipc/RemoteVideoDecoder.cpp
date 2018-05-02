@@ -3,13 +3,14 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "RemoteVideoDecoder.h"
 #include "VideoDecoderChild.h"
 #include "VideoDecoderManagerChild.h"
 #include "mozilla/layers/TextureClient.h"
+#include "mozilla/StaticPrefs.h"
 #include "base/thread.h"
 #include "MediaInfo.h"
-#include "MediaPrefs.h"
 #include "ImageContainer.h"
 #include "mozilla/layers/SynchronousTask.h"
 
@@ -24,8 +25,6 @@ using namespace gfx;
 RemoteVideoDecoder::RemoteVideoDecoder()
   : mActor(new VideoDecoderChild())
   , mDescription("RemoteVideoDecoder")
-  , mIsHardwareAccelerated{ false }
-  , mConversion{ MediaDataDecoder::ConversionRequired::kNeedNone }
 {
 }
 
@@ -172,7 +171,7 @@ IsRemoteAcceleratedCompositor(KnowsCompositor* aKnows)
 already_AddRefed<MediaDataDecoder>
 RemoteDecoderModule::CreateVideoDecoder(const CreateDecoderParams& aParams)
 {
-  if (!MediaPrefs::PDMUseGPUDecoder() ||
+  if (!StaticPrefs::MediaGpuProcessDecoder() ||
       !aParams.mKnowsCompositor ||
       !IsRemoteAcceleratedCompositor(aParams.mKnowsCompositor))
   {

@@ -13,14 +13,15 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
   FormHistory: "resource://gre/modules/FormHistory.jsm",
   Downloads: "resource://gre/modules/Downloads.jsm",
-  DownloadsCommon: "resource:///modules/DownloadsCommon.jsm",
   TelemetryStopwatch: "resource://gre/modules/TelemetryStopwatch.jsm",
   setTimeout: "resource://gre/modules/Timer.jsm",
+  ServiceWorkerCleanUp: "resource://gre/modules/ServiceWorkerCleanUp.jsm",
+  OfflineAppCacheHelper: "resource://gre/modules/offlineAppCache.jsm",
 });
 
-XPCOMUtils.defineLazyServiceGetter(this, "serviceWorkerManager",
-                                   "@mozilla.org/serviceworkers/manager;1",
-                                   "nsIServiceWorkerManager");
+XPCOMUtils.defineLazyServiceGetter(this, "sas",
+                                   "@mozilla.org/storage/activity-service;1",
+                                   "nsIStorageActivityService");
 XPCOMUtils.defineLazyServiceGetter(this, "quotaManagerService",
                                    "@mozilla.org/dom/quota-manager-service;1",
                                    "nsIQuotaManagerService");
@@ -268,10 +269,14 @@ var Sanitizer = {
     }
   },
 
-  QueryInterface: XPCOMUtils.generateQI([
+  QueryInterface: ChromeUtils.generateQI([
     Ci.nsiObserver,
     Ci.nsISupportsWeakReference
   ]),
+
+  // When making any changes to the sanitize implementations here,
+  // please check whether the changes are applicable to Android
+  // (mobile/android/modules/Sanitizer.jsm) as well.
 
   items: {
     cache: {
@@ -364,37 +369,48 @@ var Sanitizer = {
 
     offlineApps: {
       async clear(range) {
-        // AppCache
-        ChromeUtils.import("resource:///modules/offlineAppCache.jsm");
-        // This doesn't wait for the cleanup to be complete.
+        // AppCache: this doesn't wait for the cleanup to be complete.
         OfflineAppCacheHelper.clear();
+
+        if (range) {
+          let principals = sas.getActiveOrigins(range[0], range[1])
+                              .QueryInterface(Ci.nsIArray);
+
+          let promises = [];
+
+          for (let i = 0; i < principals.length; ++i) {
+            let principal = principals.queryElementAt(i, Ci.nsIPrincipal);
+
+            if (principal.URI.scheme != "http" &&
+                principal.URI.scheme != "https" &&
+                principal.URI.scheme != "file") {
+              continue;
+            }
+
+            // LocalStorage
+            Services.obs.notifyObservers(null, "browser:purge-domain-data", principal.URI.host);
+
+            // ServiceWorkers
+            await ServiceWorkerCleanUp.removeFromPrincipal(principal);
+
+            // QuotaManager
+            promises.push(new Promise(r => {
+              let req = quotaManagerService.clearStoragesForPrincipal(principal, null, false);
+              req.callback = () => { r(); };
+            }));
+          }
+
+          return Promise.all(promises);
+        }
 
         // LocalStorage
         Services.obs.notifyObservers(null, "extension:purge-localStorage");
 
         // ServiceWorkers
-        let promises = [];
-        let serviceWorkers = serviceWorkerManager.getAllRegistrations();
-        for (let i = 0; i < serviceWorkers.length; i++) {
-          let sw = serviceWorkers.queryElementAt(i, Ci.nsIServiceWorkerRegistrationInfo);
-
-          promises.push(new Promise(resolve => {
-            let unregisterCallback = {
-              unregisterSucceeded: () => { resolve(true); },
-              // We don't care about failures.
-              unregisterFailed: () => { resolve(true); },
-              QueryInterface: XPCOMUtils.generateQI(
-                [Ci.nsIServiceWorkerUnregisterCallback])
-            };
-
-            serviceWorkerManager.propagateUnregister(sw.principal, unregisterCallback, sw.scope);
-          }));
-        }
-
-        await Promise.all(promises);
+        await ServiceWorkerCleanUp.removeAll();
 
         // QuotaManager
-        promises = [];
+        let promises = [];
         await new Promise(resolve => {
           quotaManagerService.getUsage(request => {
             if (request.resultCode != Cr.NS_OK) {

@@ -7,7 +7,6 @@
 #if !defined(MozPromise_h_)
 #define MozPromise_h_
 
-#include "mozilla/IndexSequence.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Mutex.h"
@@ -242,9 +241,6 @@ protected:
   MozPromise(const char* aCreationSite, bool aIsCompletionPromise)
     : mCreationSite(aCreationSite)
     , mMutex("MozPromise Mutex")
-    , mMagic1{ sMagic }
-    , mMagic2{ sMagic }
-    , mMagic3{ sMagic }
     , mHaveRequest(false)
     , mIsCompletionPromise(aIsCompletionPromise)
 #ifdef PROMISE_DEBUG
@@ -419,11 +415,10 @@ protected:
       RefPtr<MozPromise> mPromise;
     };
 
-    ThenValueBase(nsISerialEventTarget* aResponseTarget, const char* aCallSite)
+    ThenValueBase(nsISerialEventTarget* aResponseTarget,
+                  const char* aCallSite)
       : mResponseTarget(aResponseTarget)
-      , mMagic1{ sMagic }
       , mCallSite(aCallSite)
-      , mMagic2{ sMagic }
     {
       MOZ_ASSERT(aResponseTarget);
     }

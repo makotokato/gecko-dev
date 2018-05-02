@@ -455,7 +455,6 @@ public:
                                NS_LITERAL_CSTRING("EventSource :: Init"))
     , mImpl(aEventSourceImpl)
     , mURL(aURL)
-    , mRv{ NS_ERROR_NOT_INITIALIZED }
   {
     MOZ_ASSERT(aWorkerPrivate);
     aWorkerPrivate->AssertIsOnWorkerThread();
@@ -1332,7 +1331,11 @@ EventSourceImpl::DispatchFailConnection()
                                   this,
                                   &EventSourceImpl::FailConnection),
                 NS_DISPATCH_NORMAL);
-  MOZ_ASSERT(NS_SUCCEEDED(rv));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    // if the worker is shutting down, the dispatching of normal WorkerRunnables
+    // fails.
+    return;
+  }
 }
 
 void
@@ -1451,11 +1454,7 @@ EventSourceImpl::DispatchCurrentMessageEvent()
     message->mLastEventID.Assign(mLastEventID);
   }
 
-  size_t sizeBefore = mMessagesToDispatch.GetSize();
   mMessagesToDispatch.Push(message.release());
-  NS_ENSURE_TRUE(mMessagesToDispatch.GetSize() == sizeBefore + 1,
-                 NS_ERROR_OUT_OF_MEMORY);
-
 
   if (!mGoingToDispatchAllMessages) {
     nsCOMPtr<nsIRunnable> event =
@@ -1929,7 +1928,6 @@ EventSourceImpl::CheckListenerChain()
 EventSource::EventSource(nsPIDOMWindowInner* aOwnerWindow,
                          bool aWithCredentials)
   : DOMEventTargetHelper(aOwnerWindow)
-  , mReadyState{}
   , mWithCredentials(aWithCredentials)
   , mIsMainThread(true)
   , mKeepingAlive(false)

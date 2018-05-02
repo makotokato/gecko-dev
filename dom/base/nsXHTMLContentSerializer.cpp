@@ -12,7 +12,6 @@
 
 #include "nsXHTMLContentSerializer.h"
 
-#include "nsIDOMElement.h"
 #include "nsIContent.h"
 #include "nsIDocument.h"
 #include "nsElementTable.h"
@@ -49,11 +48,6 @@ NS_NewXHTMLContentSerializer(nsIContentSerializer** aSerializer)
 
 nsXHTMLContentSerializer::nsXHTMLContentSerializer()
   : mIsHTMLSerializer(false)
-  , mDoHeader{ false }
-  , mIsCopying{ false }
-  , mDisableEntityEncoding{}
-  , mRewriteEncodingDeclaration{ false }
-  , mIsFirstChildOfOL{ false }
 {
 }
 
@@ -826,7 +820,7 @@ nsXHTMLContentSerializer::HasNoChildren(nsIContent* aContent) {
        child;
        child = child->GetNextSibling()) {
 
-    if (!child->IsNodeOfType(nsINode::eTEXT))
+    if (!child->IsText())
       return false;
 
     if (child->TextLength())

@@ -22,29 +22,22 @@
 #include "nsHttpHeaderArray.h"
 #include "mozilla/AutoRestore.h"
 
-nsPartChannel::nsPartChannel(nsIChannel* aMultipartChannel,
-                             uint32_t aPartID,
-                             nsIStreamListener* aListener)
-  : mMultipartChannel(aMultipartChannel)
-  , mListener(aListener)
-  , mStatus(NS_OK)
-  , mLoadFlags{}
-  , mContentDisposition{}
-  , mContentLength(UINT64_MAX)
-  , mIsByteRangeRequest(false)
-  , mByteRangeStart(0)
-  , mByteRangeEnd(0)
-  , mPartID(aPartID)
-  , mIsLastPart(false)
+nsPartChannel::nsPartChannel(nsIChannel *aMultipartChannel, uint32_t aPartID,
+                             nsIStreamListener* aListener) :
+  mMultipartChannel(aMultipartChannel),
+  mListener(aListener),
+  mStatus(NS_OK),
+  mContentLength(UINT64_MAX),
+  mIsByteRangeRequest(false),
+  mByteRangeStart(0),
+  mByteRangeEnd(0),
+  mPartID(aPartID),
+  mIsLastPart(false)
 {
     // Inherit the load flags from the original channel...
     mMultipartChannel->GetLoadFlags(&mLoadFlags);
 
     mMultipartChannel->GetLoadGroup(getter_AddRefs(mLoadGroup));
-}
-
-nsPartChannel::~nsPartChannel()
-{
 }
 
 void nsPartChannel::InitializeByteRange(int64_t aStart, int64_t aEnd)
@@ -817,33 +810,27 @@ nsMultiMixedConv::SwitchToControlParsing()
 }
 
 // nsMultiMixedConv methods
-nsMultiMixedConv::nsMultiMixedConv()
-  : mCurrentPartID(0)
-  , mInOnDataAvailable(false)
-  , mResponseHeader{ HEADER_UNKNOWN }
-  ,
-  // XXX: This is a hack to bypass the raw pointer to refcounted object in
-  // lambda analysis. It should be removed and replaced when the
-  // IncrementalTokenizer API is improved to avoid the need for such
-  // workarounds.
-  //
-  // This is safe because `mTokenizer` will not outlive `this`, meaning that
-  // this std::bind object will be destroyed before `this` dies.
-  mTokenizer(
-    std::bind(&nsMultiMixedConv::ConsumeToken, this, std::placeholders::_1))
-  , mRawDataLength{}
+nsMultiMixedConv::nsMultiMixedConv() :
+    mCurrentPartID(0),
+    mInOnDataAvailable(false),
+    // XXX: This is a hack to bypass the raw pointer to refcounted object in
+    // lambda analysis. It should be removed and replaced when the
+    // IncrementalTokenizer API is improved to avoid the need for such
+    // workarounds.
+    //
+    // This is safe because `mTokenizer` will not outlive `this`, meaning that
+    // this std::bind object will be destroyed before `this` dies.
+    mTokenizer(std::bind(&nsMultiMixedConv::ConsumeToken, this, std::placeholders::_1))
 {
-  mContentLength = UINT64_MAX;
-  mByteRangeStart = 0;
-  mByteRangeEnd = 0;
-  mTotalSent = 0;
-  mIsByteRangeRequest = false;
-  mParserState = INIT;
-  mRawData = nullptr;
-  mRequestListenerNotified = false;
+    mContentLength      = UINT64_MAX;
+    mByteRangeStart     = 0;
+    mByteRangeEnd       = 0;
+    mTotalSent          = 0;
+    mIsByteRangeRequest = false;
+    mParserState        = INIT;
+    mRawData            = nullptr;
+    mRequestListenerNotified = false;
 }
-
-nsMultiMixedConv::~nsMultiMixedConv() {}
 
 nsresult
 nsMultiMixedConv::SendStart()

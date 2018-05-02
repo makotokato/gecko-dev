@@ -31,6 +31,7 @@
 #include "gc/PublicIterators.h"
 #include "jit/arm/Simulator-arm.h"
 #include "jit/arm64/vixl/Simulator-vixl.h"
+#include "jit/IonBuilder.h"
 #include "jit/JitCompartment.h"
 #include "jit/mips32/Simulator-mips32.h"
 #include "jit/mips64/Simulator-mips64.h"
@@ -215,7 +216,7 @@ JSRuntime::init(JSContext* cx, uint32_t maxbytes, uint32_t maxNurseryBytes)
     if (!gc.init(maxbytes, maxNurseryBytes))
         return false;
 
-    ScopedJSDeletePtr<Zone> atomsZone(js_new<Zone>(this, nullptr));
+    ScopedJSDeletePtr<Zone> atomsZone(js_new<Zone>(this));
     if (!atomsZone || !atomsZone->init(true))
         return false;
 
@@ -291,7 +292,7 @@ JSRuntime::destroyRuntime()
         /*
          * Cancel any pending, in progress or completed Ion compilations and
          * parse tasks. Waiting for wasm and compression tasks is done
-         * synchronously (on the active thread or during parse tasks), so no
+         * synchronously (on the main thread or during parse tasks), so no
          * explicit canceling is needed for these.
          */
         CancelOffThreadIonCompile(this);
@@ -418,8 +419,13 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
             rtSizes->scriptData += mallocSizeOf(r.front());
     }
 
-    if (jitRuntime_)
+    if (jitRuntime_) {
         jitRuntime_->execAlloc().addSizeOfCode(&rtSizes->code);
+
+        // Sizes of the IonBuilders we are holding for lazy linking
+        for (auto builder : jitRuntime_->ionLazyLinkList(this))
+            rtSizes->jitLazyLink += builder->sizeOfExcludingThis(mallocSizeOf);
+    }
 
     rtSizes->wasmRuntime += wasmInstances.lock()->sizeOfExcludingThis(mallocSizeOf);
 }
@@ -792,17 +798,17 @@ JSRuntime::destroyAtomsAddedWhileSweepingTable()
 void
 JSRuntime::setUsedByHelperThread(Zone* zone)
 {
-    MOZ_ASSERT(!zone->group()->usedByHelperThread());
+    MOZ_ASSERT(!zone->usedByHelperThread());
     MOZ_ASSERT(!zone->wasGCStarted());
-    zone->group()->setUsedByHelperThread();
+    zone->setUsedByHelperThread();
     numActiveHelperThreadZones++;
 }
 
 void
 JSRuntime::clearUsedByHelperThread(Zone* zone)
 {
-    MOZ_ASSERT(zone->group()->usedByHelperThread());
-    zone->group()->clearUsedByHelperThread();
+    MOZ_ASSERT(zone->usedByHelperThread());
+    zone->clearUsedByHelperThread();
     numActiveHelperThreadZones--;
     JSContext* cx = mainContextFromOwnThread();
     if (gc.fullGCForAtomsRequested() && cx->canCollectAtoms())
@@ -820,7 +826,7 @@ js::CurrentThreadCanAccessZone(Zone* zone)
 {
     // Helper thread zones can only be used by their owning thread.
     if (zone->usedByHelperThread())
-        return zone->group()->ownedByCurrentHelperThread();
+        return zone->ownedByCurrentHelperThread();
 
     // Other zones can only be accessed by the runtime's active context.
     return CurrentThreadCanAccessRuntime(zone->runtime_);

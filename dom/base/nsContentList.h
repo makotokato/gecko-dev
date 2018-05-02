@@ -19,7 +19,6 @@
 #include "nsTArray.h"
 #include "nsString.h"
 #include "nsIHTMLCollection.h"
-#include "nsIDOMNodeList.h"
 #include "nsINodeList.h"
 #include "nsStubMutationObserver.h"
 #include "nsAtom.h"
@@ -582,18 +581,12 @@ public:
 #endif
 
 protected:
-  nsCacheableFuncStringContentList(
-    nsINode* aRootNode,
-    nsContentListMatchFunc aFunc,
-    nsContentListDestroyFunc aDestroyFunc,
-    nsFuncStringContentListDataAllocator aDataAllocator,
-    const nsAString& aString)
-    : nsContentList(aRootNode, aFunc, aDestroyFunc, nullptr)
-    ,
-#ifdef DEBUG
-    mType{ static_cast<ContentListType>(0) }
-    ,
-#endif
+  nsCacheableFuncStringContentList(nsINode* aRootNode,
+                                   nsContentListMatchFunc aFunc,
+                                   nsContentListDestroyFunc aDestroyFunc,
+                                   nsFuncStringContentListDataAllocator aDataAllocator,
+                                   const nsAString& aString) :
+    nsContentList(aRootNode, aFunc, aDestroyFunc, nullptr),
     mString(aString)
   {
     mData = (*aDataAllocator)(aRootNode, &mString);

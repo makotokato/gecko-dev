@@ -6,7 +6,6 @@
 #include "nsPluginStreamListenerPeer.h"
 #include "nsIContentPolicy.h"
 #include "nsContentPolicyUtils.h"
-#include "nsIDOMElement.h"
 #include "nsIStreamConverterService.h"
 #include "nsIStreamLoader.h"
 #include "nsIHttpChannel.h"
@@ -45,7 +44,6 @@ NS_IMPL_ISUPPORTS(nsPluginStreamListenerPeer,
                   nsIChannelEventSink)
 
 nsPluginStreamListenerPeer::nsPluginStreamListenerPeer()
-  : mLength{}
 {
   mStreamType = NP_NORMAL;
   mStartBinding = false;

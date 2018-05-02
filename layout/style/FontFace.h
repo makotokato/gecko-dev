@@ -8,6 +8,7 @@
 #define mozilla_dom_FontFace_h
 
 #include "mozilla/dom/FontFaceBinding.h"
+#include "mozilla/FontPropertyTypes.h"
 #include "gfxUserFontSet.h"
 #include "nsAutoPtr.h"
 #include "nsCSSPropertyID.h"
@@ -47,18 +48,20 @@ public:
   public:
     Entry(gfxUserFontSet* aFontSet,
           const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList,
-          uint32_t aWeight,
-          int32_t aStretch,
-          uint8_t aStyle,
+          WeightRange aWeight,
+          StretchRange aStretch,
+          SlantStyleRange aStyle,
           const nsTArray<gfxFontFeature>& aFeatureSettings,
           const nsTArray<gfxFontVariation>& aVariationSettings,
           uint32_t aLanguageOverride,
           gfxCharacterMap* aUnicodeRanges,
-          uint8_t aFontDisplay)
+          uint8_t aFontDisplay,
+          RangeFlags aRangeFlags)
       : gfxUserFontEntry(aFontSet, aFontFaceSrcList, aWeight, aStretch,
                          aStyle, aFeatureSettings, aVariationSettings,
                          aLanguageOverride,
-                         aUnicodeRanges, aFontDisplay) {}
+                         aUnicodeRanges, aFontDisplay,
+                         aRangeFlags) {}
 
     virtual void SetLoadState(UserFontLoadState aLoadState) override;
     virtual void GetUserFontSets(nsTArray<gfxUserFontSet*>& aResult) override;

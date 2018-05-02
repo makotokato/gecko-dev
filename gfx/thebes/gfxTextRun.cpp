@@ -19,6 +19,7 @@
 #include "nsUnicodeProperties.h"
 #include "nsUnicodeRange.h"
 #include "nsStyleConsts.h"
+#include "nsStyleUtil.h"
 #include "mozilla/Likely.h"
 #include "gfx2DGlue.h"
 #include "mozilla/gfx/Logging.h"        // for gfxCriticalError
@@ -469,11 +470,6 @@ gfxTextRun::DrawPartialLigature(gfxFont* aFont, Range aRange,
                                 gfx::ShapedTextFlags aOrientation) const
 {
     if (aRange.start >= aRange.end) {
-        return;
-    }
-
-    if (auto* textDrawer = aParams.context->GetTextDrawer()) {
-        textDrawer->FoundUnsupportedFeature();
         return;
     }
 
@@ -1766,11 +1762,15 @@ gfxTextRun::Dump(FILE* aOutput) {
         gfxFont* font = glyphRuns[i].mFont;
         const gfxFontStyle* style = font->GetStyle();
         NS_ConvertUTF16toUTF8 fontName(font->GetName());
+        nsAutoString styleString;
+        nsStyleUtil::AppendFontSlantStyle(style->style, styleString);
         nsAutoCString lang;
         style->language->ToUTF8String(lang);
-        fprintf(aOutput, "%d: %s %f/%d/%d/%s", glyphRuns[i].mCharacterOffset,
+        fprintf(aOutput, "%d: %s %f/%g/%s/%s", glyphRuns[i].mCharacterOffset,
                 fontName.get(), style->size,
-                style->weight, style->style, lang.get());
+                style->weight.ToFloat(),
+                NS_ConvertUTF16toUTF8(styleString).get(),
+                lang.get());
     }
     fputc(']', aOutput);
 }
@@ -2414,9 +2414,11 @@ gfxFontGroup::InitTextRun(DrawTarget* aDrawTarget,
                 nsAutoString families;
                 mFamilyList.ToString(families);
                 nsAutoCString str((const char*)aString, aLength);
+                nsAutoString styleString;
+                nsStyleUtil::AppendFontSlantStyle(mStyle.style, styleString);
                 MOZ_LOG(log, LogLevel::Warning,\
                        ("(%s) fontgroup: [%s] default: %s lang: %s script: %d "
-                        "len %d weight: %d width: %d style: %s size: %6.2f %zu-byte "
+                        "len %d weight: %g stretch: %g%% style: %s size: %6.2f %zu-byte "
                         "TEXTRUN [%s] ENDTEXTRUN\n",
                         (mStyle.systemFont ? "textrunui" : "textrun"),
                         NS_ConvertUTF16toUTF8(families).get(),
@@ -2425,10 +2427,9 @@ gfxFontGroup::InitTextRun(DrawTarget* aDrawTarget,
                          (mFamilyList.GetDefaultFontType() == eFamily_sans_serif ?
                           "sans-serif" : "none")),
                         lang.get(), static_cast<int>(Script::LATIN), aLength,
-                        uint32_t(mStyle.weight), uint32_t(mStyle.stretch),
-                        (mStyle.style & NS_FONT_STYLE_ITALIC ? "italic" :
-                        (mStyle.style & NS_FONT_STYLE_OBLIQUE ? "oblique" :
-                                                                "normal")),
+                        mStyle.weight.ToFloat(),
+                        mStyle.stretch.Percentage(),
+                        NS_ConvertUTF16toUTF8(styleString).get(),
                         mStyle.size,
                         sizeof(T),
                         str.get()));
@@ -2461,10 +2462,12 @@ gfxFontGroup::InitTextRun(DrawTarget* aDrawTarget,
                     mStyle.language->ToUTF8String(lang);
                     nsAutoString families;
                     mFamilyList.ToString(families);
+                    nsAutoString styleString;
+                    nsStyleUtil::AppendFontSlantStyle(mStyle.style, styleString);
                     uint32_t runLen = runLimit - runStart;
                     MOZ_LOG(log, LogLevel::Warning,\
                            ("(%s) fontgroup: [%s] default: %s lang: %s script: %d "
-                            "len %d weight: %d width: %d style: %s size: %6.2f "
+                            "len %d weight: %g stretch: %g%% style: %s size: %6.2f "
                             "%zu-byte TEXTRUN [%s] ENDTEXTRUN\n",
                             (mStyle.systemFont ? "textrunui" : "textrun"),
                             NS_ConvertUTF16toUTF8(families).get(),
@@ -2473,10 +2476,9 @@ gfxFontGroup::InitTextRun(DrawTarget* aDrawTarget,
                              (mFamilyList.GetDefaultFontType() == eFamily_sans_serif ?
                               "sans-serif" : "none")),
                             lang.get(), static_cast<int>(runScript), runLen,
-                            uint32_t(mStyle.weight), uint32_t(mStyle.stretch),
-                            (mStyle.style & NS_FONT_STYLE_ITALIC ? "italic" :
-                            (mStyle.style & NS_FONT_STYLE_OBLIQUE ? "oblique" :
-                                                                    "normal")),
+                            mStyle.weight.ToFloat(),
+                            mStyle.stretch.Percentage(),
+                            NS_ConvertUTF16toUTF8(styleString).get(),
                             mStyle.size,
                             sizeof(T),
                             NS_ConvertUTF16toUTF8(textPtr + runStart, runLen).get()));
@@ -2818,7 +2820,7 @@ gfxFontGroup::FindFallbackFaceForChar(gfxFontFamily* aFamily, uint32_t aCh)
         return nullptr;
     }
 
-    bool needsBold = mStyle.weight >= 600 && !fe->IsBold() &&
+    bool needsBold = mStyle.weight >= FontWeight(600) && !fe->IsBold() &&
                      mStyle.allowSyntheticWeight;
     return fe->FindOrMakeFont(&mStyle, needsBold);
 }
@@ -3444,7 +3446,7 @@ gfxFontGroup::WhichSystemFontSupportsChar(uint32_t aCh, uint32_t aNextCh,
         gfxPlatformFontList::PlatformFontList()->
             SystemFindFontForChar(aCh, aNextCh, aRunScript, &mStyle);
     if (fe) {
-        bool wantBold = mStyle.weight >= 600;
+        bool wantBold = mStyle.weight >= FontWeight(600);
         return fe->FindOrMakeFont(&mStyle, wantBold && !fe->IsBold());
     }
 

@@ -201,7 +201,6 @@ NS_IMPL_RELEASE_INHERITED(MessagePort, DOMEventTargetHelper)
 MessagePort::MessagePort(nsIGlobalObject* aGlobal)
   : DOMEventTargetHelper(aGlobal)
   , mInnerID(0)
-  , mState{ static_cast<State>(0) }
   , mMessageQueueEnabled(false)
   , mIsKeptAlive(false)
   , mHasBeenTransferredOrClosed(false)
@@ -298,8 +297,8 @@ MessagePort::Initialize(const nsID& aUUID,
       StrongWorkerRef::Create(workerPrivate, "MessagePort",
                               [self]() { self->CloseForced(); });
     if (NS_WARN_IF(!strongWorkerRef)) {
-      // The worker is shutting down. Let's return an already closed port.
-      mState = eStateDisentangledForClose;
+      // The worker is shutting down.
+      aRv.Throw(NS_ERROR_FAILURE);
       return;
     }
 

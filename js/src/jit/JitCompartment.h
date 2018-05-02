@@ -62,9 +62,9 @@ class JitRuntime
     friend class JitCompartment;
 
     // Executable allocator for all code except wasm code.
-    ActiveThreadData<ExecutableAllocator> execAlloc_;
+    MainThreadData<ExecutableAllocator> execAlloc_;
 
-    ActiveThreadData<uint64_t> nextCompilationId_;
+    MainThreadData<uint64_t> nextCompilationId_;
 
     // Shared exception-handler tail.
     ExclusiveAccessLockWriteOnceData<uint32_t> exceptionTailOffset_;
@@ -138,7 +138,7 @@ class JitRuntime
 #ifdef DEBUG
     // The number of possible bailing places encounters before forcefully bailing
     // in that place. Zero means inactive.
-    ActiveThreadData<uint32_t> ionBailAfter_;
+    MainThreadData<uint32_t> ionBailAfter_;
 #endif
 
     // Number of Ion compilations which were finished off thread and are
@@ -148,8 +148,8 @@ class JitRuntime
 
     // List of Ion compilation waiting to get linked.
     using IonBuilderList = mozilla::LinkedList<js::jit::IonBuilder>;
-    ActiveThreadData<IonBuilderList> ionLazyLinkList_;
-    ActiveThreadData<size_t> ionLazyLinkListSize_;
+    MainThreadData<IonBuilderList> ionLazyLinkList_;
+    MainThreadData<size_t> ionLazyLinkListSize_;
 
   private:
     void generateLazyLinkStub(MacroAssembler& masm);
@@ -610,7 +610,7 @@ class JitCompartment
 
     // Perform the necessary read barriers on stubs and SIMD template object
     // described by the bitmasks passed in. This function can only be called
-    // from the active thread.
+    // from the main thread.
     //
     // The stub and template object pointers must still be valid by the time
     // these methods are called. This is arranged by cancelling off-thread Ion
@@ -654,7 +654,7 @@ class MOZ_STACK_CLASS AutoWritableJitCode
       : AutoWritableJitCode(TlsContext.get()->runtime(), addr, size)
     {}
     explicit AutoWritableJitCode(JitCode* code)
-      : AutoWritableJitCode(code->runtimeFromActiveCooperatingThread(), code->raw(), code->bufferSize())
+      : AutoWritableJitCode(code->runtimeFromMainThread(), code->raw(), code->bufferSize())
     {}
     ~AutoWritableJitCode() {
         if (!ExecutableAllocator::makeExecutable(addr_, size_))

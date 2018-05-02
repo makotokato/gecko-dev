@@ -6,6 +6,7 @@
 #ifndef GFX_PLATFORM_H
 #define GFX_PLATFORM_H
 
+#include "mozilla/FontPropertyTypes.h"
 #include "mozilla/Logging.h"
 #include "mozilla/gfx/Types.h"
 #include "nsTArray.h"
@@ -158,6 +159,9 @@ class gfxPlatform {
     friend class SRGBOverrideObserver;
 
 public:
+    typedef mozilla::StretchRange StretchRange;
+    typedef mozilla::SlantStyleRange SlantStyleRange;
+    typedef mozilla::WeightRange WeightRange;
     typedef mozilla::gfx::Color Color;
     typedef mozilla::gfx::DataSourceSurface DataSourceSurface;
     typedef mozilla::gfx::DrawTarget DrawTarget;
@@ -298,7 +302,7 @@ public:
     // Get the default content backend that will be used with the default
     // compositor. If the compositor is known when calling this function,
     // GetContentBackendFor() should be called instead.
-    mozilla::gfx::BackendType GetDefaultContentBackend() {
+    mozilla::gfx::BackendType GetDefaultContentBackend() const {
       return mContentBackend;
     }
 
@@ -390,10 +394,10 @@ public:
      * Ownership of the returned gfxFontEntry is passed to the caller,
      * who must either AddRef() or delete.
      */
-    virtual gfxFontEntry* LookupLocalFont(const nsAString& aFontName,
-                                          uint16_t aWeight,
-                                          int16_t aStretch,
-                                          uint8_t aStyle);
+    gfxFontEntry* LookupLocalFont(const nsAString& aFontName,
+                                  WeightRange aWeightForEntry,
+                                  StretchRange aStretchForEntry,
+                                  SlantStyleRange aStyleForEntry);
 
     /**
      * Activate a platform font.  (Needed to support @font-face src url().)
@@ -403,12 +407,12 @@ public:
      * Ownership of the returned gfxFontEntry is passed to the caller,
      * who must either AddRef() or delete.
      */
-    virtual gfxFontEntry* MakePlatformFont(const nsAString& aFontName,
-                                           uint16_t aWeight,
-                                           int16_t aStretch,
-                                           uint8_t aStyle,
-                                           const uint8_t* aFontData,
-                                           uint32_t aLength);
+    gfxFontEntry* MakePlatformFont(const nsAString& aFontName,
+                                   WeightRange aWeightForEntry,
+                                   StretchRange aStretchForEntry,
+                                   SlantStyleRange aStyleForEntry,
+                                   const uint8_t* aFontData,
+                                   uint32_t aLength);
 
     /**
      * Whether to allow downloadable fonts via @font-face rules
@@ -720,6 +724,10 @@ public:
       return nullptr;
     }
 
+    bool HasVariationFontSupport() const {
+      return mHasVariationFontSupport;
+    }
+
     // you probably want to use gfxVars::UseWebRender() instead of this
     static bool WebRenderPrefEnabled();
     // you probably want to use gfxVars::UseWebRender() instead of this
@@ -809,6 +817,9 @@ protected:
     // whether to always search font cmaps globally
     // when doing system font fallback
     int8_t  mFallbackUsesCmaps;
+
+    // Whether the platform supports rendering OpenType font variations
+    bool    mHasVariationFontSupport;
 
     // max character limit for words in word cache
     int32_t mWordCacheCharLimit;

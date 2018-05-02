@@ -33,7 +33,8 @@ struct ScrollbarData {
                 CSSCoord aThumbLength,
                 bool aThumbIsAsyncDraggable,
                 CSSCoord aScrollTrackStart,
-                CSSCoord aScrollTrackLength)
+                CSSCoord aScrollTrackLength,
+                uint64_t aTargetViewId)
     : mDirection(Some(aDirection))
     , mScrollbarLayerType(aScrollbarLayerType)
     , mThumbRatio(aThumbRatio)
@@ -42,6 +43,7 @@ struct ScrollbarData {
     , mThumbIsAsyncDraggable(aThumbIsAsyncDraggable)
     , mScrollTrackStart(aScrollTrackStart)
     , mScrollTrackLength(aScrollTrackLength)
+    , mTargetViewId(aTargetViewId)
   {}
 
   /**
@@ -88,6 +90,10 @@ struct ScrollbarData {
   }
   bool operator!=(const ScrollbarData& aOther) const {
     return !(*this == aOther);
+  }
+
+  bool IsThumb() const {
+    return mScrollbarLayerType == ScrollbarLayerType::Thumb;
   }
 };
 
@@ -155,20 +161,6 @@ public:
       return false;
     }
     mScrollbarData = aScrollbarData;
-    return true;
-  }
-
-  bool SetScrollbarContainer(FrameMetrics::ViewID aTargetViewId,
-                             ScrollDirection aDirection) {
-    if (mScrollbarData.mScrollbarLayerType == ScrollbarLayerType::Container &&
-        mScrollbarData.mDirection &&
-        *mScrollbarData.mDirection == aDirection &&
-        mScrollbarData.mTargetViewId == aTargetViewId) {
-      return false;
-    }
-    mScrollbarData.mDirection = Some(aDirection);
-    mScrollbarData.mTargetViewId = aTargetViewId;
-    mScrollbarData.mScrollbarLayerType = ScrollbarLayerType::Container;
     return true;
   }
 
@@ -289,18 +281,8 @@ public:
     return mIsFixedPosition;
   }
 
-  FrameMetrics::ViewID GetScrollbarTargetViewId() const {
-    return mScrollbarData.mTargetViewId;
-  }
-
   const ScrollbarData& GetScrollbarData() const {
     return mScrollbarData;
-  }
-
-  Maybe<ScrollDirection> GetScrollbarContainerDirection() const {
-    return (mScrollbarData.mScrollbarLayerType == ScrollbarLayerType::Container)
-      ? mScrollbarData.mDirection
-      : Nothing();
   }
 
   gfx::CompositionOp GetMixBlendMode() const {

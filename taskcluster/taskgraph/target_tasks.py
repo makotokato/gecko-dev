@@ -275,6 +275,28 @@ def target_tasks_mozilla_release(full_task_graph, parameters, graph_config):
             filter_beta_release_tasks(t, parameters)]
 
 
+@_target_task('mozilla_esr60_tasks')
+def target_tasks_mozilla_esr60(full_task_graph, parameters, graph_config):
+    """Select the set of tasks required for a promotable beta or release build
+    of desktop, plus android CI. The candidates build process involves a pipeline
+    of builds and signing, but does not include beetmover or balrog jobs."""
+
+    def filter(task):
+        if not filter_beta_release_tasks(task, parameters):
+            return False
+
+        platform = task.attributes.get('build_platform')
+
+        # Android is not built on esr.
+        if platform and 'android' in platform:
+            return False
+
+        # All else was already filtered
+        return True
+
+    return [l for l, t in full_task_graph.tasks.iteritems() if filter(t)]
+
+
 @_target_task('promote_firefox')
 def target_tasks_promote_firefox(full_task_graph, parameters, graph_config):
     """Select the superset of tasks required to promote a beta or release build
@@ -581,6 +603,15 @@ def target_tasks_nightly_win64(full_task_graph, parameters, graph_config):
     return [l for l, t in full_task_graph.tasks.iteritems() if filter(t, parameters)]
 
 
+@_target_task('nightly_asan')
+def target_tasks_nightly_asan(full_task_graph, parameters, graph_config):
+    """Select the set of tasks required for a nightly build of asan. The
+    nightly build process involves a pipeline of builds, signing,
+    and, eventually, uploading the tasks to balrog."""
+    filter = make_nightly_filter({'linux64-asan-reporter-nightly'})
+    return [l for l, t in full_task_graph.tasks.iteritems() if filter(t, parameters)]
+
+
 @_target_task('nightly_desktop')
 def target_tasks_nightly_desktop(full_task_graph, parameters, graph_config):
     """Select the set of tasks required for a nightly build of linux, mac,
@@ -591,6 +622,7 @@ def target_tasks_nightly_desktop(full_task_graph, parameters, graph_config):
         | set(target_tasks_nightly_win64(full_task_graph, parameters, graph_config))
         | set(target_tasks_nightly_macosx(full_task_graph, parameters, graph_config))
         | set(target_tasks_nightly_linux(full_task_graph, parameters, graph_config))
+        | set(target_tasks_nightly_asan(full_task_graph, parameters, graph_config))
     )
 
 
@@ -619,5 +651,5 @@ def target_tasks_file_update(full_task_graph, parameters, graph_config):
     """
     def filter(task):
         # For now any task in the repo-update kind is ok
-        return task.kind in ['repo-update', 'repo-update-bb']
+        return task.kind in ['repo-update']
     return [l for l, t in full_task_graph.tasks.iteritems() if filter(t)]

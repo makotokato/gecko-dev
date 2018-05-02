@@ -146,9 +146,7 @@ public:
     return NS_OK;
   }
 private:
-  ~AddHeadersToChannelVisitor()
-  {
-  }
+  ~AddHeadersToChannelVisitor() = default;
 
   nsCOMPtr<nsIHttpChannel> mChannel;
 };
@@ -200,7 +198,6 @@ HttpBaseChannel::HttpBaseChannel()
   , mReferrerPolicy(NS_GetDefaultReferrerPolicy())
   , mRedirectCount(0)
   , mInternalRedirectCount(0)
-  , mChannelCreationTime{}
   , mForcePending(false)
   , mCorsIncludeCredentials(false)
   , mCorsMode(nsIHttpChannelInternal::CORS_MODE_NO_CORS)
@@ -221,13 +218,10 @@ HttpBaseChannel::HttpBaseChannel()
   , mAltDataForChild(false)
   , mForceMainDocumentChannel(false)
   , mIsTrackingResource(false)
-  , mChannelId{}
   , mLastRedirectFlags(0)
   , mReqContentLength(0U)
   , mReqContentLengthDetermined(false)
 {
-  this->mSelfAddr.inet = {};
-  this->mPeerAddr.inet = {};
   LOG(("Creating HttpBaseChannel @%p\n", this));
 
   // Subfields of unions cannot be targeted in an initializer list.
@@ -1145,7 +1139,7 @@ HttpBaseChannel::DoApplyContentConversions(nsIStreamListener* aNextListener,
 //
 class InterceptFailedOnStop : public nsIStreamListener
 {
-  virtual ~InterceptFailedOnStop() {}
+  virtual ~InterceptFailedOnStop() = default;
   nsCOMPtr<nsIStreamListener> mNext;
   HttpBaseChannel *mChannel;
 
@@ -1309,10 +1303,6 @@ HttpBaseChannel::nsContentEncodings::nsContentEncodings(nsIHttpChannel* aChannel
 {
   mCurEnd = aEncodingHeader + strlen(aEncodingHeader);
   mCurStart = mCurEnd;
-}
-
-HttpBaseChannel::nsContentEncodings::~nsContentEncodings()
-{
 }
 
 //-----------------------------------------------------------------------------
@@ -4254,11 +4244,6 @@ HttpBaseChannel::GetPerformanceStorage()
     return performanceStorage;
   }
 
-  // We don't need to report the resource timing entry for a TYPE_DOCUMENT load.
-  if (mLoadInfo->GetExternalContentPolicyType() == nsIContentPolicy::TYPE_DOCUMENT) {
-    return nullptr;
-  }
-
   nsCOMPtr<nsIDOMDocument> domDocument;
   mLoadInfo->GetLoadingDocument(getter_AddRefs(domDocument));
   if (!domDocument) {
@@ -4289,6 +4274,31 @@ HttpBaseChannel::GetPerformanceStorage()
   }
 
   return performance->AsPerformanceStorage();
+}
+
+void
+HttpBaseChannel::MaybeReportTimingData()
+{
+  // We don't need to report the resource timing entry for a TYPE_DOCUMENT load.
+  // But for the case that Server-Timing headers are existed for
+  // a document load, we have to create the document entry early
+  // with the timed channel. This is the only way to make
+  // server timing data availeble in the document entry.
+  if (mLoadInfo && mLoadInfo->GetExternalContentPolicyType() == nsIContentPolicy::TYPE_DOCUMENT) {
+    if ((mResponseHead && mResponseHead->HasHeader(nsHttp::Server_Timing)) ||
+        (mResponseTrailers && mResponseTrailers->HasHeader(nsHttp::Server_Timing))) {
+      mozilla::dom::PerformanceStorage* documentPerformance = GetPerformanceStorage();
+      if (documentPerformance) {
+        documentPerformance->CreateDocumentEntry(this);
+      }
+    }
+    return;
+  }
+
+  mozilla::dom::PerformanceStorage* documentPerformance = GetPerformanceStorage();
+  if (documentPerformance) {
+      documentPerformance->AddEntry(this, this);
+  }
 }
 
 NS_IMETHODIMP
@@ -4550,7 +4560,7 @@ HttpBaseChannel::CallTypeSniffers(void *aClosure, const uint8_t *aData,
 template <class T>
 static void
 ParseServerTimingHeader(const nsAutoPtr<T> &aHeader,
-                        nsIMutableArray* aOutput)
+                        nsTArray<nsCOMPtr<nsIServerTiming>>& aOutput)
 {
   if (!aHeader) {
     return;
@@ -4566,27 +4576,39 @@ ParseServerTimingHeader(const nsAutoPtr<T> &aHeader,
   parser.Parse();
 
   nsTArray<nsCOMPtr<nsIServerTiming>> array = parser.TakeServerTimingHeaders();
-  for (const auto &data : array) {
-    aOutput->AppendElement(data);
-  }
+  aOutput.AppendElements(array);
 }
 
 NS_IMETHODIMP
 HttpBaseChannel::GetServerTiming(nsIArray **aServerTiming)
 {
+  nsresult rv;
   NS_ENSURE_ARG_POINTER(aServerTiming);
+
+  nsCOMPtr<nsIMutableArray> array = do_CreateInstance(NS_ARRAY_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsTArray<nsCOMPtr<nsIServerTiming>> data;
+  rv = GetNativeServerTiming(data);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  for (const auto &entry : data) {
+    array->AppendElement(entry);
+  }
+
+  array.forget(aServerTiming);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+HttpBaseChannel::GetNativeServerTiming(nsTArray<nsCOMPtr<nsIServerTiming>>& aServerTiming)
+{
+  aServerTiming.Clear();
 
   bool isHTTPS = false;
   if (NS_SUCCEEDED(mURI->SchemeIs("https", &isHTTPS)) && isHTTPS) {
-    nsTArray<nsCOMPtr<nsIServerTiming>> data;
-    nsresult rv = NS_OK;
-    nsCOMPtr<nsIMutableArray> array = do_CreateInstance(NS_ARRAY_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    ParseServerTimingHeader(mResponseHead, array);
-    ParseServerTimingHeader(mResponseTrailers, array);
-
-    array.forget(aServerTiming);
+    ParseServerTimingHeader(mResponseHead, aServerTiming);
+    ParseServerTimingHeader(mResponseTrailers, aServerTiming);
   }
 
   return NS_OK;

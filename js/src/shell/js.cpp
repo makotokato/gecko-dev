@@ -482,6 +482,9 @@ static bool enableNativeRegExp = false;
 static bool enableSharedMemory = SHARED_MEMORY_DEFAULT;
 static bool enableWasmBaseline = false;
 static bool enableWasmIon = false;
+#ifdef ENABLE_WASM_GC
+static bool enableWasmGc = false;
+#endif
 static bool enableTestWasmAwaitTier2 = false;
 static bool enableAsyncStacks = false;
 static bool enableStreams = false;
@@ -838,6 +841,29 @@ RunFile(JSContext* cx, const char* filename, FILE* file, bool compileOnly)
     }
     return true;
 }
+
+#if defined(JS_BUILD_BINAST)
+
+static MOZ_MUST_USE bool
+RunBinAST(JSContext* cx, const char* filename, FILE* file)
+{
+    RootedScript script(cx);
+
+    {
+        CompileOptions options(cx);
+        options.setFileAndLine(filename, 0)
+               .setIsRunOnce(true)
+               .setNoScriptRval(true);
+
+        script = JS::DecodeBinAST(cx, options, file);
+        if (!script)
+            return false;
+    }
+
+    return JS_ExecuteScript(cx, script);
+}
+
+#endif // JS_BUILD_BINAST
 
 static bool
 InitModuleLoader(JSContext* cx)
@@ -1236,7 +1262,8 @@ ReadEvalPrintLoop(JSContext* cx, FILE* in, bool compileOnly)
 enum FileKind
 {
     FileScript,
-    FileModule
+    FileModule,
+    FileBinAST
 };
 
 static void
@@ -1273,12 +1300,23 @@ Process(JSContext* cx, const char* filename, bool forceTTY, FileKind kind = File
 
     if (!forceTTY && !isatty(fileno(file))) {
         // It's not interactive - just execute it.
-        if (kind == FileScript) {
+        switch (kind) {
+          case FileScript:
             if (!RunFile(cx, filename, file, compileOnly))
                 return false;
-        } else {
+            break;
+          case FileModule:
             if (!RunModule(cx, filename, file, compileOnly))
                 return false;
+            break;
+#if defined(JS_BUILD_BINAST)
+          case FileBinAST:
+            if (!RunBinAST(cx, filename, file))
+                return false;
+            break;
+#endif // JS_BUILD_BINAST
+          default:
+            MOZ_CRASH("Impossible FileKind!");
         }
     } else {
         // It's an interactive filehandle; drop into read-eval-print loop.
@@ -3545,34 +3583,22 @@ WorkerMain(void* arg)
         js_delete(input);
     });
 
-    if (input->parentRuntime)
-        sc->isWorker = true;
+    sc->isWorker = true;
     JS_SetContextPrivate(cx, sc);
     SetWorkerContextOptions(cx);
     JS::SetBuildIdOp(cx, ShellBuildId);
 
-    Maybe<EnvironmentPreparer> environmentPreparer;
-    if (input->parentRuntime) {
-        JS_SetFutexCanWait(cx);
-        JS::SetWarningReporter(cx, WarningReporter);
-        js::SetPreserveWrapperCallback(cx, DummyPreserveWrapperCallback);
-        JS_InitDestroyPrincipalsCallback(cx, ShellPrincipals::destroy);
+    JS_SetFutexCanWait(cx);
+    JS::SetWarningReporter(cx, WarningReporter);
+    js::SetPreserveWrapperCallback(cx, DummyPreserveWrapperCallback);
+    JS_InitDestroyPrincipalsCallback(cx, ShellPrincipals::destroy);
 
-        js::UseInternalJobQueues(cx);
+    js::UseInternalJobQueues(cx);
 
-        if (!JS::InitSelfHostedCode(cx))
-            return;
+    if (!JS::InitSelfHostedCode(cx))
+        return;
 
-        environmentPreparer.emplace(cx);
-    } else {
-        JS_AddInterruptCallback(cx, ShellInterruptCallback);
-
-        js::UseInternalJobQueues(cx, /* cooperative = */true);
-
-        // The Gecko Profiler requires that all cooperating contexts have
-        // profiling stacks installed.
-        MOZ_ALWAYS_TRUE(EnsureGeckoProfilingStackInstalled(cx, sc));
-    }
+    EnvironmentPreparer environmentPreparer(cx);
 
     do {
         JSAutoRequest ar(cx);
@@ -4293,14 +4319,17 @@ BinParse(JSContext* cx, unsigned argc, Value* vp)
                                   "parse", "0", "s");
         return false;
     }
+
+    // Extract argument 1: ArrayBuffer.
+
     if (!args[0].isObject()) {
         const char* typeName = InformalValueTypeName(args[0]);
         JS_ReportErrorASCII(cx, "expected object (ArrayBuffer) to parse, got %s", typeName);
         return false;
     }
 
-    RootedObject obj(cx, &args[0].toObject());
-    if (!JS_IsArrayBufferObject(obj)) {
+    RootedObject objBuf(cx, &args[0].toObject());
+    if (!JS_IsArrayBufferObject(objBuf)) {
         const char* typeName = InformalValueTypeName(args[0]);
         JS_ReportErrorASCII(cx, "expected ArrayBuffer to parse, got %s", typeName);
         return false;
@@ -4309,8 +4338,49 @@ BinParse(JSContext* cx, unsigned argc, Value* vp)
     uint32_t buf_length = 0;
     bool buf_isSharedMemory = false;
     uint8_t* buf_data = nullptr;
-    GetArrayBufferViewLengthAndData(obj, &buf_length, &buf_isSharedMemory, &buf_data);
+    GetArrayBufferLengthAndData(objBuf, &buf_length, &buf_isSharedMemory, &buf_data);
     MOZ_ASSERT(buf_data);
+
+    // Extract argument 2: Options.
+
+    bool useMultipart = true;
+
+    if (args.length() >= 2) {
+        if (!args[1].isObject()) {
+            const char* typeName = InformalValueTypeName(args[1]);
+            JS_ReportErrorASCII(cx, "expected object (options) to parse, got %s", typeName);
+            return false;
+        }
+        RootedObject objOptions(cx, &args[1].toObject());
+
+        RootedValue optionFormat(cx);
+        if (!JS_GetProperty(cx, objOptions, "format", &optionFormat))
+            return false;
+
+        if (optionFormat.isUndefined()) {
+            // By default, `useMultipart` is `true`.
+            useMultipart = true;
+        } else if (optionFormat.isString()) {
+            RootedString stringFormat(cx);
+            stringFormat = optionFormat.toString();
+            JS::Rooted<JSLinearString*> linearFormat(cx);
+            linearFormat = stringFormat->ensureLinear(cx);
+            if (StringEqualsAscii(linearFormat, "multipart")) {
+                useMultipart = true;
+            } else if (StringEqualsAscii(linearFormat, "simple")) {
+                useMultipart = false;
+            } else {
+                JSAutoByteString printable;
+                JS_ReportErrorASCII(cx, "Unknown value for option `format`, expected 'multipart' or 'simple', got %s", ValueToPrintableUTF8(cx, optionFormat, &printable));
+                return false;
+            }
+        } else {
+            const char* typeName = InformalValueTypeName(optionFormat);
+            JS_ReportErrorASCII(cx, "option `format` should be a string, got %s", typeName);
+            return false;
+        }
+    }
+
 
     CompileOptions options(cx);
     options.setIntroductionType("js shell bin parse")
@@ -4320,16 +4390,35 @@ BinParse(JSContext* cx, unsigned argc, Value* vp)
     if (!usedNames.init())
         return false;
 
-    BinASTParser reader(cx, cx->tempLifoAlloc(), usedNames, options);
+    JS::Result<ParseNode*> parsed(nullptr);
+    if (useMultipart) {
+        // Note: We need to keep `reader` alive as long as we can use `parsed`.
+        BinASTParser<BinTokenReaderMultipart> reader(cx, cx->tempLifoAlloc(), usedNames, options);
 
-    JS::Result<ParseNode*> parsed = reader.parse(buf_data, buf_length);
-    if (parsed.isErr())
-        return false;
+        parsed = reader.parse(buf_data, buf_length);
+
+        if (parsed.isErr())
+            return false;
 
 #ifdef DEBUG
-    Fprinter out(stderr);
-    DumpParseTree(parsed.unwrap(), out);
+        Fprinter out(stderr);
+        DumpParseTree(parsed.unwrap(), out);
 #endif
+
+    } else {
+        // Note: We need to keep `reader` alive as long as we can use `parsed`.
+        BinASTParser<BinTokenReaderTester> reader(cx, cx->tempLifoAlloc(), usedNames, options);
+
+        parsed = reader.parse(buf_data, buf_length);
+
+        if (parsed.isErr())
+            return false;
+
+#ifdef DEBUG
+        Fprinter out(stderr);
+        DumpParseTree(parsed.unwrap(), out);
+#endif
+    }
 
     args.rval().setUndefined();
     return true;
@@ -4355,6 +4444,29 @@ Parse(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
 
+    bool allowSyntaxParser = true;
+
+    if (args.length() >= 2) {
+        if (!args[1].isObject()) {
+            const char* typeName = InformalValueTypeName(args[1]);
+            JS_ReportErrorASCII(cx, "expected object (options) to parse, got %s", typeName);
+            return false;
+        }
+        RootedObject objOptions(cx, &args[1].toObject());
+
+        RootedValue optionAllowSyntaxParser(cx);
+        if (!JS_GetProperty(cx, objOptions, "allowSyntaxParser", &optionAllowSyntaxParser))
+            return false;
+
+        if (optionAllowSyntaxParser.isBoolean()) {
+            allowSyntaxParser = optionAllowSyntaxParser.toBoolean();
+        } else if (!optionAllowSyntaxParser.isUndefined()) {
+            const char* typeName = InformalValueTypeName(optionAllowSyntaxParser);
+            JS_ReportErrorASCII(cx, "option `allowSyntaxParser` should be a boolean, got %s", typeName);
+            return false;
+        }
+    }
+
     JSFlatString* scriptContents = args[0].toString()->ensureFlat(cx);
     if (!scriptContents)
         return false;
@@ -4368,7 +4480,8 @@ Parse(JSContext* cx, unsigned argc, Value* vp)
 
     CompileOptions options(cx);
     options.setIntroductionType("js shell parse")
-           .setFileAndLine("<string>", 1);
+           .setFileAndLine("<string>", 1)
+           .setAllowSyntaxParser(allowSyntaxParser);
 
     UsedNameTracker usedNames(cx);
     if (!usedNames.init())
@@ -5046,7 +5159,7 @@ NewGlobal(JSContext* cx, unsigned argc, Value* vp)
     JS::CompartmentBehaviors& behaviors = options.behaviors();
 
     SetStandardCompartmentOptions(options);
-    options.creationOptions().setNewZoneInExistingZoneGroup(cx->global());
+    options.creationOptions().setNewZone();
 
     CallArgs args = CallArgsFromVp(argc, vp);
     if (args.length() == 1 && args[0].isObject()) {
@@ -5732,13 +5845,6 @@ EnsureLatin1CharsLinearString(JSContext* cx, HandleValue value, JS::MutableHandl
 static bool
 ConsumeBufferSource(JSContext* cx, JS::HandleObject obj, JS::MimeType, JS::StreamConsumer* consumer)
 {
-    SharedMem<uint8_t*> dataPointer;
-    size_t byteLength;
-    if (!IsBufferSource(obj, &dataPointer, &byteLength)) {
-        JS_ReportErrorASCII(cx, "shell streaming consumes a buffer source (buffer or view)");
-        return false;
-    }
-
     {
         RootedValue url(cx);
         if (!JS_GetProperty(cx, obj, "url", &url))
@@ -5761,6 +5867,13 @@ ConsumeBufferSource(JSContext* cx, JS::HandleObject obj, JS::MimeType, JS::Strea
                                    mapUrlStr
                                    ? reinterpret_cast<const char*>(mapUrlStr->latin1Chars(nogc))
                                    : nullptr);
+    }
+
+    SharedMem<uint8_t*> dataPointer;
+    size_t byteLength;
+    if (!IsBufferSource(obj, &dataPointer, &byteLength)) {
+        JS_ReportErrorASCII(cx, "shell streaming consumes a buffer source (buffer or view)");
+        return false;
     }
 
     auto job = cx->make_unique<BufferStreamJob>(consumer);
@@ -6147,8 +6260,11 @@ EnsureMarkBitObservers(JSContext* cx)
 {
     ShellContext* sc = GetShellContext(cx);
     if (!sc->markObservers) {
-        sc->markObservers.reset(cx->new_<MarkBitObservers>(cx->runtime(),
-                                                         NonshrinkingGCObjectVector()));
+        auto* observers =
+            cx->new_<MarkBitObservers>(cx->runtime(), NonshrinkingGCObjectVector());
+        if (!observers)
+            return nullptr;
+        sc->markObservers.reset(observers);
     }
     return sc->markObservers.get();
 }
@@ -6156,8 +6272,15 @@ EnsureMarkBitObservers(JSContext* cx)
 static bool
 ClearMarkObservers(JSContext* cx, unsigned argc, Value* vp)
 {
+    CallArgs args = CallArgsFromVp(argc, vp);
+
     auto markObservers = EnsureMarkBitObservers(cx);
+    if (!markObservers)
+        return false;
+
     markObservers->get().clear();
+
+    args.rval().setUndefined();
     return true;
 }
 
@@ -6167,6 +6290,8 @@ AddMarkObservers(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     auto markObservers = EnsureMarkBitObservers(cx);
+    if (!markObservers)
+        return false;
 
     if (!args.get(0).isObject()) {
         JS_ReportErrorASCII(cx, "argument must be an Array of objects");
@@ -6554,8 +6679,6 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "      lineNumber: starting line number for error messages and debug info\n"
 "      columnNumber: starting column number for error messages and debug info\n"
 "      global: global in which to execute the code\n"
-"      zoneGroup: pick a global from another zone group with no current context\n"
-"         to execute the code in\n"
 "      newContext: if true, create and use a new cx (default: false)\n"
 "      catchTermination: if true, catch termination (failure without\n"
 "         an exception value, as for slow scripts or out-of-memory)\n"
@@ -7023,6 +7146,34 @@ JS_FN_HELP("parseBin", BinParse, 1, 0,
 "Sets the callback to be invoked whenever a Promise rejection is unhandled\n"
 "or a previously-unhandled rejection becomes handled."),
 
+    JS_FN_HELP("dumpScopeChain", DumpScopeChain, 1, 0,
+"dumpScopeChain(obj)",
+"  Prints the scope chain of an interpreted function or a module."),
+
+    JS_FN_HELP("grayRoot", EnsureGrayRoot, 0, 0,
+"grayRoot()",
+"  Create a gray root Array, if needed, for the current compartment, and\n"
+"  return it."),
+
+    JS_FN_HELP("addMarkObservers", AddMarkObservers, 1, 0,
+"addMarkObservers(array_of_objects)",
+"  Register an array of objects whose mark bits will be tested by calls to\n"
+"  getMarks. The objects will be in calling compartment. Objects from\n"
+"  multiple compartments may be monitored by calling this function in\n"
+"  different compartments."),
+
+    JS_FN_HELP("clearMarkObservers", ClearMarkObservers, 1, 0,
+"clearMarkObservers()",
+"  Clear out the list of objects whose mark bits will be tested.\n"),
+
+    JS_FN_HELP("getMarks", GetMarks, 0, 0,
+"getMarks()",
+"  Return an array of strings representing the current state of the mark\n"
+"  bits ('gray' or 'black', or 'dead' if the object has been collected)\n"
+"  for the objects registered via addMarkObservers. Note that some of the\n"
+"  objects tested may be from different compartments than the one in which\n"
+"  this function runs."),
+
     JS_FN_HELP("bindToAsyncStack", BindToAsyncStack, 2, 0,
 "bindToAsyncStack(fn, { stack, cause, explicit })",
 "  Returns a new function that calls 'fn' with no arguments, passing\n"
@@ -7113,34 +7264,6 @@ TestAssertRecoveredOnBailout,
 "  Returns an object describing the tracked optimizations of |fun|, if\n"
 "  any. If |fun| is not a scripted function or has not been compiled by\n"
 "  Ion, null is returned."),
-
-    JS_FN_HELP("dumpScopeChain", DumpScopeChain, 1, 0,
-"dumpScopeChain(obj)",
-"  Prints the scope chain of an interpreted function or a module."),
-
-    JS_FN_HELP("grayRoot", EnsureGrayRoot, 0, 0,
-"grayRoot()",
-"  Create a gray root Array, if needed, for the current compartment, and\n"
-"  return it."),
-
-    JS_FN_HELP("addMarkObservers", AddMarkObservers, 1, 0,
-"addMarkObservers(array_of_objects)",
-"  Register an array of objects whose mark bits will be tested by calls to\n"
-"  getMarks. The objects will be in calling compartment. Objects from\n"
-"  multiple compartments may be monitored by calling this function in\n"
-"  different compartments."),
-
-    JS_FN_HELP("clearMarkObservers", ClearMarkObservers, 1, 0,
-"clearMarkObservers()",
-"  Clear out the list of objects whose mark bits will be tested.\n"),
-
-    JS_FN_HELP("getMarks", GetMarks, 0, 0,
-"getMarks()",
-"  Return an array of strings representing the current state of the mark\n"
-"  bits ('gray' or 'black', or 'dead' if the object has been collected)\n"
-"  for the objects registered via addMarkObservers. Note that some of the\n"
-"  objects tested may be from different compartments than the one in which\n"
-"  this function runs."),
 
     JS_FN_HELP("crash", Crash, 0, 0,
 "crash([message, [{disable_minidump:true}]])",
@@ -7717,9 +7840,8 @@ static bool
 dom_genericSetter(JSContext* cx, unsigned argc, JS::Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    MOZ_ASSERT(args.length() == 1);
 
-    if (!args.thisv().isObject()) {
+    if (args.length() < 1 || !args.thisv().isObject()) {
         args.rval().setUndefined();
         return true;
     }
@@ -8210,10 +8332,15 @@ ProcessArgs(JSContext* cx, OptionParser* op)
     MultiStringRange filePaths = op->getMultiStringOption('f');
     MultiStringRange codeChunks = op->getMultiStringOption('e');
     MultiStringRange modulePaths = op->getMultiStringOption('m');
+    MultiStringRange binASTPaths(nullptr, nullptr);
+#if defined(JS_BUILD_BINAST)
+    binASTPaths = op->getMultiStringOption('B');
+#endif // JS_BUILD_BINAST
 
     if (filePaths.empty() &&
         codeChunks.empty() &&
         modulePaths.empty() &&
+        binASTPaths.empty() &&
         !op->getStringArg("script"))
     {
         return Process(cx, nullptr, true); /* Interactive. */
@@ -8239,17 +8366,18 @@ ProcessArgs(JSContext* cx, OptionParser* op)
     if (!modulePaths.empty() && !InitModuleLoader(cx))
         return false;
 
-    while (!filePaths.empty() || !codeChunks.empty() || !modulePaths.empty()) {
+    while (!filePaths.empty() || !codeChunks.empty() || !modulePaths.empty() || !binASTPaths.empty()) {
         size_t fpArgno = filePaths.empty() ? SIZE_MAX : filePaths.argno();
         size_t ccArgno = codeChunks.empty() ? SIZE_MAX : codeChunks.argno();
         size_t mpArgno = modulePaths.empty() ? SIZE_MAX : modulePaths.argno();
+        size_t baArgno = binASTPaths.empty() ? SIZE_MAX : binASTPaths.argno();
 
-        if (fpArgno < ccArgno && fpArgno < mpArgno) {
+        if (fpArgno < ccArgno && fpArgno < mpArgno && fpArgno < baArgno) {
             char* path = filePaths.front();
             if (!Process(cx, path, false, FileScript))
                 return false;
             filePaths.popFront();
-        } else if (ccArgno < fpArgno && ccArgno < mpArgno) {
+        } else if (ccArgno < fpArgno && ccArgno < mpArgno && ccArgno < baArgno) {
             const char* code = codeChunks.front();
             RootedValue rval(cx);
             JS::CompileOptions opts(cx);
@@ -8259,8 +8387,13 @@ ProcessArgs(JSContext* cx, OptionParser* op)
             codeChunks.popFront();
             if (sc->quitting)
                 break;
+        } else if (baArgno < fpArgno && baArgno < ccArgno && baArgno < mpArgno) {
+            char* path = binASTPaths.front();
+            if (!Process(cx, path, false, FileBinAST))
+                return false;
+            binASTPaths.popFront();
         } else {
-            MOZ_ASSERT(mpArgno < fpArgno && mpArgno < ccArgno);
+            MOZ_ASSERT(mpArgno < fpArgno && mpArgno < ccArgno && mpArgno < baArgno);
             char* path = modulePaths.front();
             if (!Process(cx, path, false, FileModule))
                 return false;
@@ -8295,6 +8428,9 @@ SetContextOptions(JSContext* cx, const OptionParser& op)
     enableNativeRegExp = !op.getBoolOption("no-native-regexp");
     enableWasmBaseline = !op.getBoolOption("no-wasm-baseline");
     enableWasmIon = !op.getBoolOption("no-wasm-ion");
+#ifdef ENABLE_WASM_GC
+    enableWasmGc = op.getBoolOption("wasm-gc");
+#endif
     enableTestWasmAwaitTier2 = op.getBoolOption("test-wasm-await-tier2");
     enableAsyncStacks = !op.getBoolOption("no-async-stacks");
     enableStreams = op.getBoolOption("enable-streams");
@@ -8306,6 +8442,9 @@ SetContextOptions(JSContext* cx, const OptionParser& op)
                              .setWasm(enableWasm)
                              .setWasmBaseline(enableWasmBaseline)
                              .setWasmIon(enableWasmIon)
+#ifdef ENABLE_WASM_GC
+                             .setWasmGc(enableWasmGc)
+#endif
                              .setTestWasmAwaitTier2(enableTestWasmAwaitTier2)
                              .setNativeRegExp(enableNativeRegExp)
                              .setAsyncStack(enableAsyncStacks)
@@ -8375,13 +8514,9 @@ SetContextOptions(JSContext* cx, const OptionParser& op)
         }
     }
 
-    if (const char* str = op.getStringOption("ion-aa")) {
-        if (strcmp(str, "flow-sensitive") == 0)
-            jit::JitOptions.disableFlowAA = false;
-        else if (strcmp(str, "flow-insensitive") == 0)
-            jit::JitOptions.disableFlowAA = true;
-        else
-            return OptionFailure("ion-aa", str);
+    if (op.getStringOption("ion-aa")) {
+        // Removed in bug 1455280, the option is preserved
+        // to ease transition for fuzzers and other tools
     }
 
     if (const char* str = op.getStringOption("ion-licm")) {
@@ -8608,6 +8743,9 @@ SetWorkerContextOptions(JSContext* cx)
                              .setWasm(enableWasm)
                              .setWasmBaseline(enableWasmBaseline)
                              .setWasmIon(enableWasmIon)
+#ifdef ENABLE_WASM_GC
+                             .setWasmGc(enableWasmGc)
+#endif
                              .setTestWasmAwaitTier2(enableTestWasmAwaitTier2)
                              .setNativeRegExp(enableNativeRegExp)
                              .setStreams(enableStreams)
@@ -8617,11 +8755,10 @@ SetWorkerContextOptions(JSContext* cx)
 
 #ifdef JS_GC_ZEAL
     if (gZealBits && gZealFrequency) {
-#define ZEAL_MODE(_, value)                        \
-        if (gZealBits & (1 << value))              \
-            cx->runtime()->gc.setZeal(value, gZealFrequency);
-        JS_FOR_EACH_ZEAL_MODE(ZEAL_MODE)
-#undef ZEAL_MODE
+        for (size_t i = 0; i < size_t(gc::ZealMode::Count); i++) {
+            if (gZealBits & (1 << i))
+                cx->runtime()->gc.setZeal(i, gZealFrequency);
+        }
     }
 #endif
 
@@ -8812,6 +8949,9 @@ main(int argc, char** argv, char** envp)
 
     if (!op.addMultiStringOption('f', "file", "PATH", "File path to run")
         || !op.addMultiStringOption('m', "module", "PATH", "Module path to run")
+#if defined(JS_BUILD_BINAST)
+        || !op.addMultiStringOption('B', "binast", "PATH", "BinAST path to run")
+#endif // JS_BUILD_BINAST
         || !op.addMultiStringOption('e', "execute", "CODE", "Inline code to run")
         || !op.addBoolOption('i', "shell", "Enter prompt after running code")
         || !op.addBoolOption('c', "compileonly", "Only compile, don't run (syntax checking mode)")
@@ -8851,6 +8991,11 @@ main(int argc, char** argv, char** envp)
         || !op.addBoolOption('\0', "no-wasm-ion", "Disable wasm ion compiler")
         || !op.addBoolOption('\0', "test-wasm-await-tier2", "Forcibly activate tiering and block "
                                    "instantiation on completion of tier2")
+#ifdef ENABLE_WASM_GC
+        || !op.addBoolOption('\0', "wasm-gc", "Enable wasm GC features")
+#else
+        || !op.addBoolOption('\0', "wasm-gc", "No-op")
+#endif
         || !op.addBoolOption('\0', "no-native-regexp", "Disable native regexp compilation")
         || !op.addBoolOption('\0', "no-unboxed-objects", "Disable creating unboxed plain objects")
         || !op.addBoolOption('\0', "enable-streams", "Enable WHATWG Streams")

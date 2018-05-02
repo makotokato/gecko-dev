@@ -47,10 +47,10 @@
 #include "mozilla/Scheduler.h"
 #include "mozilla/StackWalk.h"
 #include "mozilla/StaticPtr.h"
+#include "mozilla/SystemGroup.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Tuple.h"
-#include "mozilla/StaticPtr.h"
 #include "mozilla/extensions/WebExtensionPolicy.h"
 #include "ThreadInfo.h"
 #include "nsIHttpProtocolHandler.h"
@@ -112,7 +112,8 @@
 
 // Linux builds use LUL, which uses DWARF info to unwind stacks.
 #if defined(GP_PLAT_amd64_linux) || defined(GP_PLAT_x86_linux) || \
-    defined(GP_PLAT_mips64_linux)
+    defined(GP_PLAT_mips64_linux) || defined(GP_PLAT_arm64_linux) || \
+    defined(GP_PLAT_arm64_android)
 # define HAVE_NATIVE_UNWIND
 # define USE_LUL_STACKWALK
 # include "lul/LulMain.h"
@@ -1212,6 +1213,11 @@ DoLULBacktrace(PSLockRef aLock, const RegisteredThread& aRegisteredThread,
   startRegs.r12 = lul::TaggedUWord(mc->arm_ip);
   startRegs.r11 = lul::TaggedUWord(mc->arm_fp);
   startRegs.r7  = lul::TaggedUWord(mc->arm_r7);
+#elif defined(GP_PLAT_arm64_linux) || defined(GP_PLAT_arm64_android)
+  startRegs.pc  = lul::TaggedUWord(mc->pc);
+  startRegs.x29 = lul::TaggedUWord(mc->regs[29]);
+  startRegs.x30 = lul::TaggedUWord(mc->regs[30]);
+  startRegs.sp  = lul::TaggedUWord(mc->sp);
 #elif defined(GP_PLAT_x86_linux) || defined(GP_PLAT_x86_android)
   startRegs.xip = lul::TaggedUWord(mc->gregs[REG_EIP]);
   startRegs.xsp = lul::TaggedUWord(mc->gregs[REG_ESP]);
@@ -1264,6 +1270,9 @@ DoLULBacktrace(PSLockRef aLock, const RegisteredThread& aRegisteredThread,
 #elif defined(GP_PLAT_arm_linux) || defined(GP_PLAT_arm_android)
     uintptr_t rEDZONE_SIZE = 0;
     uintptr_t start = startRegs.r13.Value() - rEDZONE_SIZE;
+#elif defined(GP_PLAT_arm64_linux) || defined(GP_PLAT_arm64_android)
+    uintptr_t rEDZONE_SIZE = 0;
+    uintptr_t start = startRegs.sp.Value() - rEDZONE_SIZE;
 #elif defined(GP_PLAT_x86_linux) || defined(GP_PLAT_x86_android)
     uintptr_t rEDZONE_SIZE = 0;
     uintptr_t start = startRegs.xsp.Value() - rEDZONE_SIZE;
@@ -1666,57 +1675,36 @@ StreamMetaJSCustomObject(PSLockRef aLock, SpliceableJSONWriter& aWriter,
 }
 
 #if defined(GP_OS_android)
-static void
-BuildJavaThreadJSObject(SpliceableJSONWriter& aWriter)
+static UniquePtr<ProfileBuffer>
+CollectJavaThreadProfileData()
 {
-  aWriter.StringProperty("name", "Java Main Thread");
+  // locked_profiler_start uses sample count is 1000 for Java thread.
+  // This entry size is enough now, but we might have to estimate it
+  // if we can customize it
+  auto buffer = MakeUnique<ProfileBuffer>(1000 * 1000);
 
-  aWriter.StartArrayProperty("samples");
-  {
-    for (int sampleId = 0; true; sampleId++) {
-      bool firstRun = true;
-      for (int frameId = 0; true; frameId++) {
-        jni::String::LocalRef frameName =
-            java::GeckoJavaSampler::GetFrameName(0, sampleId, frameId);
+  int sampleId = 0;
+  while (true) {
+    double sampleTime = java::GeckoJavaSampler::GetSampleTime(0, sampleId);
+    if (sampleTime == 0.0) {
+      break;
+    }
 
-        // When we run out of frames, we stop looping.
-        if (!frameName) {
-          // If we found at least one frame, we have objects to close.
-          if (!firstRun) {
-            aWriter.EndArray();
-            aWriter.EndObject();
-          }
-          break;
-        }
-        // The first time around, open the sample object and frames array.
-        if (firstRun) {
-          firstRun = false;
-
-          double sampleTime =
-              java::GeckoJavaSampler::GetSampleTime(0, sampleId);
-
-          aWriter.StartObjectElement();
-            aWriter.DoubleProperty("time", sampleTime);
-
-            aWriter.StartArrayProperty("frames");
-        }
-
-        // Add a frame to the sample.
-        aWriter.StartObjectElement();
-        {
-          aWriter.StringProperty("location",
-                                 frameName->ToCString().BeginReading());
-        }
-        aWriter.EndObject();
-      }
-
-      // If we found no frames for this sample, we are done.
-      if (firstRun) {
+    buffer->AddThreadIdEntry(0);
+    buffer->AddEntry(ProfileBufferEntry::Time(sampleTime));
+    int frameId = 0;
+    while (true) {
+      jni::String::LocalRef frameName =
+        java::GeckoJavaSampler::GetFrameName(0, sampleId, frameId++);
+      if (!frameName) {
         break;
       }
+      buffer->CollectCodeLocation("", frameName->ToCString().get(), -1,
+                                  Nothing());
     }
+    sampleId++;
   }
-  aWriter.EndArray();
+  return Move(buffer);
 }
 #endif
 
@@ -1769,18 +1757,23 @@ locked_profiler_stream_json_for_this_process(PSLockRef aLock,
     }
 
 #if defined(GP_OS_android)
-    if (ActivePS::FeatureJava(aLock)) {
-      java::GeckoJavaSampler::Pause();
+  if (ActivePS::FeatureJava(aLock)) {
+     java::GeckoJavaSampler::Pause();
 
-      aWriter.Start();
-      {
-        BuildJavaThreadJSObject(aWriter);
-      }
-      aWriter.End();
+     UniquePtr<ProfileBuffer> javaBuffer = CollectJavaThreadProfileData();
 
-      java::GeckoJavaSampler::Unpause();
-    }
+     // Thread id of java Main thread is 0, if we support profiling of other
+     // java thread, we have to get thread id and name via JNI.
+     RefPtr<ThreadInfo> threadInfo =
+       new ThreadInfo("Java Main Thread", 0, false);
+     ProfiledThreadData profiledThreadData(threadInfo, nullptr);
+     profiledThreadData.StreamJSON(*javaBuffer.get(), nullptr, aWriter,
+                                   CorePS::ProcessStartTime(), aSinceTime);
+
+     java::GeckoJavaSampler::Unpause();
+  }
 #endif
+
   }
   aWriter.EndArray();
 
@@ -3145,7 +3138,11 @@ void
 profiler_unregister_thread()
 {
   MOZ_ASSERT_IF(NS_IsMainThread(), Scheduler::IsCooperativeThread());
-  MOZ_RELEASE_ASSERT(CorePS::Exists());
+
+  if (!CorePS::Exists()) {
+    // This function can be called after the main thread has already shut down.
+    return;
+  }
 
   PSAutoLock lock(gPSMutex);
 
@@ -3345,6 +3342,11 @@ profiler_add_marker_for_thread(int aThreadId,
 {
   MOZ_RELEASE_ASSERT(CorePS::Exists());
 
+  PSAutoLock lock(gPSMutex);
+  if (!ActivePS::Exists(lock)) {
+    return;
+  }
+
   // Create the ProfilerMarker which we're going to store.
   TimeStamp origin = (aPayload && !aPayload->GetStartTime().IsNull())
                    ? aPayload->GetStartTime()
@@ -3353,8 +3355,6 @@ profiler_add_marker_for_thread(int aThreadId,
   ProfilerMarker* marker =
     new ProfilerMarker(aMarkerName, aThreadId, Move(aPayload),
                        delta.ToMilliseconds());
-
-  PSAutoLock lock(gPSMutex);
 
 #ifdef DEBUG
   // Assert that our thread ID makes sense

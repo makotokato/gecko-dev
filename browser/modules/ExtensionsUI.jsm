@@ -8,18 +8,13 @@ var EXPORTED_SYMBOLS = ["ExtensionsUI"];
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 ChromeUtils.import("resource://gre/modules/EventEmitter.jsm");
 
-ChromeUtils.defineModuleGetter(this, "AddonManager",
-                               "resource://gre/modules/AddonManager.jsm");
-ChromeUtils.defineModuleGetter(this, "AddonManagerPrivate",
-                               "resource://gre/modules/AddonManager.jsm");
-ChromeUtils.defineModuleGetter(this, "AppMenuNotifications",
-                               "resource://gre/modules/AppMenuNotifications.jsm");
-ChromeUtils.defineModuleGetter(this, "ExtensionData",
-                               "resource://gre/modules/Extension.jsm");
-ChromeUtils.defineModuleGetter(this, "RecentWindow",
-                               "resource:///modules/RecentWindow.jsm");
-ChromeUtils.defineModuleGetter(this, "Services",
-                               "resource://gre/modules/Services.jsm");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  AddonManager: "resource://gre/modules/AddonManager.jsm",
+  AddonManagerPrivate: "resource://gre/modules/AddonManager.jsm",
+  AppMenuNotifications: "resource://gre/modules/AppMenuNotifications.jsm",
+  ExtensionData: "resource://gre/modules/Extension.jsm",
+  Services: "resource://gre/modules/Services.jsm"
+});
 
 XPCOMUtils.defineLazyPreferenceGetter(this, "WEBEXT_PERMISSION_PROMPTS",
                                       "extensions.webextPermissionPrompts", false);
@@ -97,13 +92,6 @@ var ExtensionsUI = {
         this.sideloaded.add(addon);
       }
         this._updateNotifications();
-    } else {
-      // This and all the accompanying about:newaddon code can eventually
-      // be removed.  See bug 1331521.
-      let win = RecentWindow.getMostRecentBrowserWindow();
-      for (let addon of sideloaded) {
-        win.openTrustedLinkIn(`about:newaddon?id=${addon.id}`, "tab");
-      }
     }
   },
 

@@ -442,7 +442,7 @@ RequestContext::ProcessTailQueue(nsresult aResult)
   nsTArray<PendingTailRequest> queue;
   queue.SwapElements(mTailQueue);
 
-  for (auto request : queue) {
+  for (const auto& request : queue) {
     LOG(("  untailing %p", request.get()));
     request->OnTailUnblock(aResult);
   }
@@ -464,8 +464,7 @@ RequestContextService *RequestContextService::sSelf = nullptr;
 NS_IMPL_ISUPPORTS(RequestContextService, nsIRequestContextService, nsIObserver)
 
 RequestContextService::RequestContextService()
-  : mRCIDNamespace{}
-  , mNextRCID(1)
+  : mNextRCID(1)
 {
   MOZ_ASSERT(!sSelf, "multiple rcs instances!");
   MOZ_ASSERT(NS_IsMainThread());

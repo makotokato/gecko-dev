@@ -26,6 +26,10 @@ namespace mozilla {
 
 class ErrorResult;
 
+namespace dom {
+class Event;
+} // namespace dom
+
 #define NS_DOMEVENTTARGETHELPER_IID \
 { 0xa28385c6, 0x9451, 0x4d7e, \
   { 0xa3, 0xdd, 0xf4, 0xb6, 0x87, 0x2f, 0xa4, 0x76 } }
@@ -46,7 +50,10 @@ public:
     , mHasOrHasHadOwnerWindow(false)
     , mIsKeptAlive(false)
   {
-    BindToOwner(aWindow);
+    // Be careful not to call the virtual BindToOwner() in a
+    // constructor.
+    nsIGlobalObject* global = aWindow ? aWindow->AsGlobal() : nullptr;
+    BindToOwnerInternal(global);
   }
   explicit DOMEventTargetHelper(nsIGlobalObject* aGlobalObject)
     : mParentObject(nullptr)
@@ -54,7 +61,9 @@ public:
     , mHasOrHasHadOwnerWindow(false)
     , mIsKeptAlive(false)
   {
-    BindToOwner(aGlobalObject);
+    // Be careful not to call the virtual BindToOwner() in a
+    // constructor.
+    BindToOwnerInternal(aGlobalObject);
   }
   explicit DOMEventTargetHelper(DOMEventTargetHelper* aOther)
     : mParentObject(nullptr)
@@ -62,13 +71,18 @@ public:
     , mHasOrHasHadOwnerWindow(false)
     , mIsKeptAlive(false)
   {
-    BindToOwner(aOther);
+    // Be careful not to call the virtual BindToOwner() in a
+    // constructor.
+    if (!aOther) {
+      BindToOwnerInternal(static_cast<nsIGlobalObject*>(nullptr));
+      return;
+    }
+    BindToOwnerInternal(aOther->GetParentObject());
+    mHasOrHasHadOwnerWindow = aOther->HasOrHasHadOwner();
   }
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS(DOMEventTargetHelper)
-
-  NS_DECL_NSIDOMEVENTTARGET
 
   virtual EventListenerManager* GetExistingListenerManager() const override;
   virtual EventListenerManager* GetOrCreateListenerManager() override;
@@ -142,9 +156,20 @@ public:
   // Returns the document associated with this event target, if that document is
   // the current document of its browsing context.  Will return null otherwise.
   nsIDocument* GetDocumentIfCurrent() const;
-  void BindToOwner(nsIGlobalObject* aOwner);
+
+  // DETH subclasses may override the BindToOwner(nsIGlobalObject*) method
+  // to take action when dynamically binding to a new global.  This is only
+  // called on rebind since virtual methods cannot be called from the
+  // constructor.  The other BindToOwner() methods will call into this
+  // method.
+  //
+  // NOTE: Any overrides of BindToOwner() *must* invoke
+  //       DOMEventTargetHelper::BindToOwner(aOwner).
+  virtual void BindToOwner(nsIGlobalObject* aOwner);
+
   void BindToOwner(nsPIDOMWindowInner* aOwner);
   void BindToOwner(DOMEventTargetHelper* aOther);
+
   virtual void DisconnectFromOwner();
   using EventTarget::GetParentObject;
   virtual nsIGlobalObject* GetOwnerGlobal() const override
@@ -179,7 +204,7 @@ protected:
 
   RefPtr<EventListenerManager> mListenerManager;
   // Make |event| trusted and dispatch |aEvent| to |this|.
-  nsresult DispatchTrustedEvent(nsIDOMEvent* aEvent);
+  nsresult DispatchTrustedEvent(dom::Event* aEvent);
 
   virtual void LastRelease() {}
 
@@ -188,6 +213,8 @@ protected:
 
   void IgnoreKeepAliveIfHasListenersFor(const nsAString& aType);
   void IgnoreKeepAliveIfHasListenersFor(nsAtom* aType);
+
+  void BindToOwnerInternal(nsIGlobalObject* aOwner);
 
 private:
   // The parent global object.  The global will clear this when

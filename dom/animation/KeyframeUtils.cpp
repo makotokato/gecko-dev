@@ -24,7 +24,6 @@
 #include "nsClassHashtable.h"
 #include "nsContentUtils.h" // For GetContextForContent, and
                             // AnimationsAPICoreEnabled
-#include "nsCSSParser.h"
 #include "nsCSSPropertyIDSet.h"
 #include "nsCSSProps.h"
 #include "nsCSSPseudoElements.h" // For CSSPseudoElementType
@@ -48,183 +47,6 @@ namespace mozilla {
 enum class ListAllowance { eDisallow, eAllow };
 
 /**
- * A comparator to sort nsCSSPropertyID values such that longhands are sorted
- * before shorthands, and shorthands with fewer components are sorted before
- * shorthands with more components.
- *
- * Using this allows us to prioritize values specified by longhands (or smaller
- * shorthand subsets) when longhands and shorthands are both specified
- * on the one keyframe.
- *
- * Example orderings that result from this:
- *
- *   margin-left, margin
- *
- * and:
- *
- *   border-top-color, border-color, border-top, border
- */
-class PropertyPriorityComparator
-{
-public:
-  PropertyPriorityComparator()
-    : mSubpropertyCountInitialized(false) {}
-
-  bool Equals(nsCSSPropertyID aLhs, nsCSSPropertyID aRhs) const
-  {
-    return aLhs == aRhs;
-  }
-
-  bool LessThan(nsCSSPropertyID aLhs,
-                nsCSSPropertyID aRhs) const
-  {
-    bool isShorthandLhs = nsCSSProps::IsShorthand(aLhs);
-    bool isShorthandRhs = nsCSSProps::IsShorthand(aRhs);
-
-    if (isShorthandLhs) {
-      if (isShorthandRhs) {
-        // First, sort shorthands by the number of longhands they have.
-        uint32_t subpropCountLhs = SubpropertyCount(aLhs);
-        uint32_t subpropCountRhs = SubpropertyCount(aRhs);
-        if (subpropCountLhs != subpropCountRhs) {
-          return subpropCountLhs < subpropCountRhs;
-        }
-        // Otherwise, sort by IDL name below.
-      } else {
-        // Put longhands before shorthands.
-        return false;
-      }
-    } else {
-      if (isShorthandRhs) {
-        // Put longhands before shorthands.
-        return true;
-      }
-    }
-    // For two longhand properties, or two shorthand with the same number
-    // of longhand components, sort by IDL name.
-    return nsCSSProps::PropertyIDLNameSortPosition(aLhs) <
-           nsCSSProps::PropertyIDLNameSortPosition(aRhs);
-  }
-
-  uint32_t SubpropertyCount(nsCSSPropertyID aProperty) const
-  {
-    if (!mSubpropertyCountInitialized) {
-      PodZero(&mSubpropertyCount);
-      mSubpropertyCountInitialized = true;
-    }
-    if (mSubpropertyCount[aProperty] == 0) {
-      uint32_t count = 0;
-      CSSPROPS_FOR_SHORTHAND_SUBPROPERTIES(
-          p, aProperty, CSSEnabledState::eForAllContent) {
-        ++count;
-      }
-      mSubpropertyCount[aProperty] = count;
-    }
-    return mSubpropertyCount[aProperty];
-  }
-
-private:
-  // Cache of shorthand subproperty counts.
-  mutable RangedArray<
-    uint32_t,
-    eCSSProperty_COUNT_no_shorthands,
-    eCSSProperty_COUNT - eCSSProperty_COUNT_no_shorthands> mSubpropertyCount;
-  mutable bool mSubpropertyCountInitialized;
-};
-
-/**
- * Adaptor for PropertyPriorityComparator to sort objects which have
- * a mProperty member.
- */
-template <typename T>
-class TPropertyPriorityComparator : PropertyPriorityComparator
-{
-public:
-  bool Equals(const T& aLhs, const T& aRhs) const
-  {
-    return PropertyPriorityComparator::Equals(aLhs.mProperty, aRhs.mProperty);
-  }
-  bool LessThan(const T& aLhs, const T& aRhs) const
-  {
-    return PropertyPriorityComparator::LessThan(aLhs.mProperty, aRhs.mProperty);
-  }
-};
-
-/**
- * Iterator to walk through a PropertyValuePair array using the ordering
- * provided by PropertyPriorityComparator.
- */
-class PropertyPriorityIterator
-{
-public:
-  explicit PropertyPriorityIterator(
-    const nsTArray<PropertyValuePair>& aProperties)
-    : mProperties(aProperties)
-  {
-    mSortedPropertyIndices.SetCapacity(mProperties.Length());
-    for (size_t i = 0, len = mProperties.Length(); i < len; ++i) {
-      PropertyAndIndex propertyIndex = { mProperties[i].mProperty, i };
-      mSortedPropertyIndices.AppendElement(propertyIndex);
-    }
-    mSortedPropertyIndices.Sort(PropertyAndIndex::Comparator());
-  }
-
-  class Iter
-  {
-  public:
-    explicit Iter(const PropertyPriorityIterator& aParent)
-      : mParent(aParent)
-      , mIndex(0) { }
-
-    static Iter EndIter(const PropertyPriorityIterator &aParent)
-    {
-      Iter iter(aParent);
-      iter.mIndex = aParent.mSortedPropertyIndices.Length();
-      return iter;
-    }
-
-    bool operator!=(const Iter& aOther) const
-    {
-      return mIndex != aOther.mIndex;
-    }
-
-    Iter& operator++()
-    {
-      MOZ_ASSERT(mIndex + 1 <= mParent.mSortedPropertyIndices.Length(),
-                 "Should not seek past end iterator");
-      mIndex++;
-      return *this;
-    }
-
-    const PropertyValuePair& operator*()
-    {
-      MOZ_ASSERT(mIndex < mParent.mSortedPropertyIndices.Length(),
-                 "Should not try to dereference an end iterator");
-      return mParent.mProperties[mParent.mSortedPropertyIndices[mIndex].mIndex];
-    }
-
-  private:
-    const PropertyPriorityIterator& mParent;
-    size_t mIndex;
-  };
-
-  Iter begin() { return Iter(*this); }
-  Iter end()   { return Iter::EndIter(*this); }
-
-private:
-  struct PropertyAndIndex
-  {
-    nsCSSPropertyID mProperty;
-    size_t mIndex; // Index of mProperty within mProperties
-
-    typedef TPropertyPriorityComparator<PropertyAndIndex> Comparator;
-  };
-
-  const nsTArray<PropertyValuePair>& mProperties;
-  nsTArray<PropertyAndIndex> mSortedPropertyIndices;
-};
-
-/**
  * A property-values pair obtained from the open-ended properties
  * discovered on a regular keyframe or property-indexed keyframe object.
  *
@@ -236,8 +58,6 @@ struct PropertyValuesPair
 {
   nsCSSPropertyID mProperty;
   nsTArray<nsString> mValues;
-
-  typedef TPropertyPriorityComparator<PropertyValuesPair> Comparator;
 };
 
 /**
@@ -357,7 +177,7 @@ AppendValueAsString(JSContext* aCx,
 
 static Maybe<PropertyValuePair>
 MakePropertyValuePair(nsCSSPropertyID aProperty, const nsAString& aStringValue,
-                      nsCSSParser& aParser, nsIDocument* aDocument);
+                      nsIDocument* aDocument);
 
 static bool
 HasValidOffsets(const nsTArray<Keyframe>& aKeyframes);
@@ -597,7 +417,6 @@ ConvertKeyframeSequence(JSContext* aCx,
                         nsTArray<Keyframe>& aResult)
 {
   JS::Rooted<JS::Value> value(aCx);
-  nsCSSParser parser(aDocument->CSSLoader());
   ErrorResult parseEasingResult;
 
   for (;;) {
@@ -663,8 +482,7 @@ ConvertKeyframeSequence(JSContext* aCx,
       MOZ_ASSERT(pair.mValues.Length() == 1);
 
       Maybe<PropertyValuePair> valuePair =
-        MakePropertyValuePair(pair.mProperty, pair.mValues[0], parser,
-                              aDocument);
+        MakePropertyValuePair(pair.mProperty, pair.mValues[0], aDocument);
       if (!valuePair) {
         continue;
       }
@@ -841,14 +659,13 @@ ReportInvalidPropertyValueToConsole(nsCSSPropertyID aProperty,
  *
  * @param aProperty The CSS property.
  * @param aStringValue The property value to parse.
- * @param aParser The CSS parser object to use.
  * @param aDocument The document to use when parsing.
  * @return The constructed PropertyValuePair, or Nothing() if |aStringValue| is
  *   an invalid property value.
  */
 static Maybe<PropertyValuePair>
 MakePropertyValuePair(nsCSSPropertyID aProperty, const nsAString& aStringValue,
-                      nsCSSParser& aParser, nsIDocument* aDocument)
+                      nsIDocument* aDocument)
 {
   MOZ_ASSERT(aDocument);
   Maybe<PropertyValuePair> result;
@@ -1229,7 +1046,6 @@ GetKeyframeListFromPropertyIndexedKeyframe(JSContext* aCx,
   }
 
   // Create a set of keyframes for each property.
-  nsCSSParser parser(aDocument->CSSLoader());
   nsClassHashtable<nsFloatHashKey, Keyframe> processedKeyframes;
   for (const PropertyValuesPair& pair : propertyValuesPairs) {
     size_t count = pair.mValues.Length();
@@ -1259,7 +1075,7 @@ GetKeyframeListFromPropertyIndexedKeyframe(JSContext* aCx,
       }
 
       Maybe<PropertyValuePair> valuePair =
-        MakePropertyValuePair(pair.mProperty, stringValue, parser, aDocument);
+        MakePropertyValuePair(pair.mProperty, stringValue, aDocument);
       if (!valuePair) {
         continue;
       }

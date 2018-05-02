@@ -16,12 +16,11 @@
 #include "nsIURIWithPrincipal.h"
 #include "nsSimpleURI.h"
 #include "nsIIPCSerializableURI.h"
-
+#include "nsProxyRelease.h"
 
 /**
- * These URIs refer to host objects: Blobs, with scheme "blob",
- * MediaStreams, with scheme "mediastream", and MediaSources, with scheme
- * "mediasource".
+ * These URIs refer to host objects with "blob" scheme. The underlying objects
+ * can be Blobs or MediaSources.
  */
 class nsHostObjectURI final
   : public mozilla::net::nsSimpleURI
@@ -30,8 +29,9 @@ class nsHostObjectURI final
 private:
   explicit nsHostObjectURI(nsIPrincipal* aPrincipal)
     : mozilla::net::nsSimpleURI()
-    , mPrincipal(aPrincipal)
-  {}
+  {
+    mPrincipal = new nsMainThreadPtrHolder<nsIPrincipal>("nsIPrincipal", aPrincipal, false);
+  }
 
   // For use only from deserialization
   explicit nsHostObjectURI()
@@ -64,7 +64,7 @@ public:
 
   NS_IMETHOD Mutate(nsIURIMutator * *_retval) override;
 
-  nsCOMPtr<nsIPrincipal> mPrincipal;
+  nsMainThreadPtrHandle<nsIPrincipal> mPrincipal;
 
 protected:
   virtual ~nsHostObjectURI() {}
@@ -102,7 +102,8 @@ public:
         if (!mURI) {
             return NS_ERROR_NULL_POINTER;
         }
-        mURI->mPrincipal = aPrincipal;
+        MOZ_ASSERT(NS_IsMainThread());
+        mURI->mPrincipal = new nsMainThreadPtrHolder<nsIPrincipal>("nsIPrincipal", aPrincipal, false);
         return NS_OK;
     }
 

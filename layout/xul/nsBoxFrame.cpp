@@ -57,11 +57,9 @@
 #include "nsWidgetsCID.h"
 #include "nsCSSAnonBoxes.h"
 #include "nsContainerFrame.h"
-#include "nsIDOMElement.h"
 #include "nsITheme.h"
 #include "nsTransform2D.h"
 #include "mozilla/EventStateManager.h"
-#include "nsIDOMEvent.h"
 #include "nsDisplayList.h"
 #include "mozilla/Preferences.h"
 #include "nsThemeConstants.h"
@@ -1390,7 +1388,6 @@ nsBoxFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     aLists.Content()->AppendToTop(
       MakeDisplayItem<nsDisplayOwnLayer>(aBuilder, this, &masterList, ownLayerASR,
                                          nsDisplayOwnLayerFlags::eNone,
-                                         mozilla::layers::FrameMetrics::NULL_SCROLL_ID,
                                          mozilla::layers::ScrollbarData{}, true, true));
   }
 }

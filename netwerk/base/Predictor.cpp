@@ -195,9 +195,6 @@ Predictor::Action::Action(bool fullUri, bool predict,
   }
 }
 
-Predictor::Action::~Action()
-{ }
-
 NS_IMETHODIMP
 Predictor::Action::OnCacheEntryCheck(nsICacheEntry *entry,
                                      nsIApplicationCache *appCache,
@@ -264,11 +261,8 @@ NS_IMPL_ISUPPORTS(Predictor,
                   nsINetworkPredictorVerifier)
 
 Predictor::Predictor()
-  : mInitialized(false)
-  , mCleanedUp{ false }
-  , mStartupTime{}
-  , mLastStartupTime{}
-  , mStartupCount(1)
+  :mInitialized(false)
+  ,mStartupCount(1)
 {
   MOZ_ASSERT(!sSelf, "multiple Predictor instances!");
   sSelf = this;
@@ -471,7 +465,7 @@ public:
     , mIOThread(ioThread)
     , mSuccess(success)
   { }
-  ~PredictorThreadShutdownRunner() { }
+  ~PredictorThreadShutdownRunner() = default;
 
   NS_IMETHOD Run() override
   {
@@ -498,7 +492,7 @@ public:
     , mDBFile(dbFile)
   { }
 
-  ~PredictorOldCleanupRunner() { }
+  ~PredictorOldCleanupRunner() = default;
 
   NS_IMETHOD Run() override
   {
@@ -555,7 +549,7 @@ public:
     , mOA(oa)
   { }
 
-  ~PredictorLearnRunnable() { }
+  ~PredictorLearnRunnable() = default;
 
   NS_IMETHOD Run() override
   {

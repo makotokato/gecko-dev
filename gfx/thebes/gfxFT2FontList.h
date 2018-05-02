@@ -43,9 +43,9 @@ public:
     // create a font entry for a downloaded font
     static FT2FontEntry* 
     CreateFontEntry(const nsAString& aFontName,
-                    uint16_t aWeight,
-                    int16_t aStretch,
-                    uint8_t aStyle,
+                    WeightRange aWeight,
+                    StretchRange aStretch,
+                    SlantStyleRange aStyle,
                     const uint8_t* aFontData,
                     uint32_t aLength);
 
@@ -87,6 +87,10 @@ public:
     virtual nsresult CopyFontTable(uint32_t aTableTag,
                                    nsTArray<uint8_t>& aBuffer) override;
 
+    bool HasVariations() override;
+    void GetVariationAxes(nsTArray<gfxFontVariationAxis>& aVariationAxes) override;
+    void GetVariationInstances(nsTArray<gfxFontVariationInstance>& aInstances) override;
+
     // Check for various kinds of brokenness, and set flags on the entry
     // accordingly so that we avoid using bad font tables
     void CheckForBrokenFont(gfxFontFamily *aFamily);
@@ -103,6 +107,9 @@ public:
     uint8_t   mFTFontIndex;
 
     mozilla::ThreadSafeWeakPtr<mozilla::gfx::UnscaledFontFreeType> mUnscaledFont;
+
+    bool mHasVariations = false;
+    bool mHasVariationsInitialized = false;
 };
 
 class FT2FontFamily : public gfxFontFamily
@@ -122,14 +129,14 @@ public:
     virtual ~gfxFT2FontList();
 
     virtual gfxFontEntry* LookupLocalFont(const nsAString& aFontName,
-                                          uint16_t aWeight,
-                                          int16_t aStretch,
-                                          uint8_t aStyle) override;
+                                          WeightRange aWeightForEntry,
+                                          StretchRange aStretchForEntry,
+                                          SlantStyleRange aStyleForEntry) override;
 
     virtual gfxFontEntry* MakePlatformFont(const nsAString& aFontName,
-                                           uint16_t aWeight,
-                                           int16_t aStretch,
-                                           uint8_t aStyle,
+                                           WeightRange aWeightForEntry,
+                                           StretchRange aStretchForEntry,
+                                           SlantStyleRange aStyleForEntry,
                                            const uint8_t* aFontData,
                                            uint32_t aLength) override;
 

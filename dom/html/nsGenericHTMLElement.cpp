@@ -25,7 +25,6 @@
 #include "nsIContentViewer.h"
 #include "nsIDocument.h"
 #include "nsIDocumentEncoder.h"
-#include "nsIDOMDocumentFragment.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMDocument.h"
 #include "nsMappedAttributes.h"
@@ -58,7 +57,6 @@
 #include "nsString.h"
 #include "nsUnicharUtils.h"
 #include "nsGkAtoms.h"
-#include "nsIDOMEvent.h"
 #include "nsDOMCSSDeclaration.h"
 #include "nsITextControlFrame.h"
 #include "nsIForm.h"
@@ -110,7 +108,6 @@ NS_IMPL_ADDREF_INHERITED(nsGenericHTMLElement, nsGenericHTMLElementBase)
 NS_IMPL_RELEASE_INHERITED(nsGenericHTMLElement, nsGenericHTMLElementBase)
 
 NS_INTERFACE_MAP_BEGIN(nsGenericHTMLElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNode)
 NS_INTERFACE_MAP_END_INHERITING(nsGenericHTMLElementBase)
 
@@ -171,6 +168,27 @@ static const nsAttrValue::EnumTable kDirTable[] = {
   { "auto", eDir_Auto },
   { nullptr, 0 }
 };
+
+void
+nsGenericHTMLElement::AddToNameTable(nsAtom* aName)
+{
+  MOZ_ASSERT(HasName(), "Node doesn't have name?");
+  nsIDocument* doc = GetUncomposedDoc();
+  if (doc && !IsInAnonymousSubtree()) {
+    doc->AddToNameTable(this, aName);
+  }
+}
+
+void
+nsGenericHTMLElement::RemoveFromNameTable()
+{
+  if (HasName() && CanHaveName(NodeInfo()->NameAtom())) {
+    if (nsIDocument* doc = GetUncomposedDoc()) {
+      doc->RemoveFromNameTable(this,
+                               GetParsedAttr(nsGkAtoms::name)->GetAtomValue());
+    }
+  }
+}
 
 void
 nsGenericHTMLElement::GetAccessKeyLabel(nsString& aLabel)
@@ -1270,11 +1288,11 @@ nsGenericHTMLElement::MapImageAlignAttributeInto(const nsMappedAttributes* aAttr
   const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::align);
   if (value && value->Type() == nsAttrValue::eEnum) {
     int32_t align = value->GetEnumValue();
-    if (!aData->PropertyIsSet(eCSSProperty_float_)) {
+    if (!aData->PropertyIsSet(eCSSProperty_float)) {
       if (align == NS_STYLE_TEXT_ALIGN_LEFT) {
-        aData->SetKeywordValue(eCSSProperty_float_, StyleFloat::Left);
+        aData->SetKeywordValue(eCSSProperty_float, StyleFloat::Left);
       } else if (align == NS_STYLE_TEXT_ALIGN_RIGHT) {
-        aData->SetKeywordValue(eCSSProperty_float_, StyleFloat::Right);
+        aData->SetKeywordValue(eCSSProperty_float, StyleFloat::Right);
       }
     }
     if (!aData->PropertyIsSet(eCSSProperty_vertical_align)) {
@@ -2551,7 +2569,7 @@ nsGenericHTMLElement::PerformAccesskey(bool aKeyCausesActivation,
 
     // Return true if the element became the current focus within its window.
     nsPIDOMWindowOuter* window = OwnerDoc()->GetWindow();
-    focused = (window && window->GetFocusedNode());
+    focused = (window && window->GetFocusedElement());
   }
 
   if (aKeyCausesActivation) {

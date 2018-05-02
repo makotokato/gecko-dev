@@ -445,7 +445,9 @@ gfxGDIFont::FillLogFont(LOGFONTW& aLogFont, gfxFloat aSize)
 {
     GDIFontEntry *fe = static_cast<GDIFontEntry*>(GetFontEntry());
 
-    uint16_t weight;
+    // Figure out the lfWeight value to use for GDI font selection,
+    // or zero to use the entry's current LOGFONT value.
+    LONG weight;
     if (fe->IsUserFont()) {
         if (fe->IsLocalUserFont()) {
             // for local user fonts, don't change the original weight
@@ -458,7 +460,10 @@ gfxGDIFont::FillLogFont(LOGFONTW& aLogFont, gfxFloat aSize)
             weight = mNeedsBold ? 700 : 200;
         }
     } else {
-        weight = mNeedsBold ? 700 : fe->Weight();
+        // GDI doesn't support variation fonts, so for system fonts we know
+        // that the entry has only a single weight, not a range.
+        MOZ_ASSERT(fe->Weight().IsSingle());
+        weight = mNeedsBold ? 700 : fe->Weight().Min().ToIntRounded();
     }
 
     fe->FillLogFont(&aLogFont, weight, aSize);

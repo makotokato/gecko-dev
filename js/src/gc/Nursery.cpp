@@ -761,8 +761,12 @@ js::Nursery::collect(JS::gcreason::Reason reason)
             }
         }
     }
+
+    mozilla::Maybe<AutoTraceSession> session;
     for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {
         if (shouldPretenure && zone->allocNurseryStrings && zone->tenuredStrings >= 30 * 1000) {
+            if (!session.isSome())
+                session.emplace(rt, JS::HeapState::MinorCollecting);
             CancelOffThreadIonCompile(zone);
             bool preserving = zone->isPreservingCode();
             zone->setPreservingCode(false);
@@ -778,6 +782,7 @@ js::Nursery::collect(JS::gcreason::Reason reason)
         }
         zone->tenuredStrings = 0;
     }
+    session.reset(); // End the minor GC session, if running one.
     endProfile(ProfileKey::Pretenure);
 
     // We ignore gcMaxBytes when allocating for minor collection. However, if we
@@ -827,8 +832,7 @@ js::Nursery::collect(JS::gcreason::Reason reason)
 }
 
 void
-js::Nursery::doCollection(JS::gcreason::Reason reason,
-                          TenureCountCache& tenureCounts)
+js::Nursery::doCollection(JS::gcreason::Reason reason, TenureCountCache& tenureCounts)
 {
     JSRuntime* rt = runtime();
     AutoTraceSession session(rt, JS::HeapState::MinorCollecting);
@@ -982,7 +986,7 @@ js::Nursery::freeMallocedBuffers()
     }
 
     if (!started)
-        freeMallocedBuffersTask->runFromActiveCooperatingThread(runtime());
+        freeMallocedBuffersTask->runFromMainThread(runtime());
 
     MOZ_ASSERT(mallocedBuffers.empty());
 }

@@ -134,9 +134,7 @@
 #include "nsIDocumentEncoder.h"
 #include "nsIDOMChromeWindow.h"
 #include "nsIDOMDocument.h"
-#include "nsIDOMElement.h"
 #include "nsIDOMNode.h"
-#include "nsIDOMNodeList.h"
 #include "nsIDOMWindowUtils.h"
 #include "nsIDragService.h"
 #include "nsIFormControl.h"
@@ -276,6 +274,7 @@ nsIInterfaceRequestor* nsContentUtils::sSameOriginChecker = nullptr;
 
 bool nsContentUtils::sIsHandlingKeyBoardEvent = false;
 bool nsContentUtils::sAllowXULXBL_for_file = false;
+bool nsContentUtils::sDisablePopups = false;
 
 nsString* nsContentUtils::sShiftText = nullptr;
 nsString* nsContentUtils::sControlText = nullptr;
@@ -732,6 +731,9 @@ nsContentUtils::Init()
 
   Preferences::AddBoolVarCache(&sIsBytecodeCacheEnabled,
                                "dom.script_loader.bytecode_cache.enabled", false);
+
+  Preferences::AddBoolVarCache(&sDisablePopups,
+                               "dom.disable_open_during_load", false);
 
   Preferences::AddIntVarCache(&sBytecodeCacheStrategy,
                               "dom.script_loader.bytecode_cache.strategy", 0);
@@ -2047,18 +2049,6 @@ nsContentUtils::Shutdown()
  */
 // static
 nsresult
-nsContentUtils::CheckSameOrigin(const nsINode *aTrustedNode,
-                                nsIDOMNode *aUnTrustedNode)
-{
-  MOZ_ASSERT(aTrustedNode);
-
-  // Make sure it's a real node.
-  nsCOMPtr<nsINode> unTrustedNode = do_QueryInterface(aUnTrustedNode);
-  NS_ENSURE_TRUE(unTrustedNode, NS_ERROR_UNEXPECTED);
-  return CheckSameOrigin(aTrustedNode, unTrustedNode);
-}
-
-nsresult
 nsContentUtils::CheckSameOrigin(const nsINode* aTrustedNode,
                                 const nsINode* unTrustedNode)
 {
@@ -2206,11 +2196,11 @@ nsContentUtils::InProlog(nsINode *aNode)
   NS_PRECONDITION(aNode, "missing node to nsContentUtils::InProlog");
 
   nsINode* parent = aNode->GetParentNode();
-  if (!parent || !parent->IsNodeOfType(nsINode::eDOCUMENT)) {
+  if (!parent || !parent->IsDocument()) {
     return false;
   }
 
-  nsIDocument* doc = static_cast<nsIDocument*>(parent);
+  nsIDocument* doc = parent->AsDocument();
   nsIContent* root = doc->GetRootElement();
 
   return !root || doc->ComputeIndexOf(aNode) < doc->ComputeIndexOf(root);
@@ -2408,10 +2398,11 @@ nsContentUtils::GetCrossDocParentNode(nsINode* aChild)
     parent = aChild->AsContent()->GetFlattenedTreeParent();
   }
 
-  if (parent || !aChild->IsNodeOfType(nsINode::eDOCUMENT))
+  if (parent || !aChild->IsDocument()) {
     return parent;
+  }
 
-  nsIDocument* doc = static_cast<nsIDocument*>(aChild);
+  nsIDocument* doc = aChild->AsDocument();
   nsIDocument* parentDoc = doc->GetParentDocument();
   return parentDoc ? parentDoc->FindContentForSubDocument(doc) : nullptr;
 }
@@ -2443,9 +2434,9 @@ nsContentUtils::ContentIsHostIncludingDescendantOf(
   do {
     if (aPossibleDescendant == aPossibleAncestor)
       return true;
-    if (aPossibleDescendant->NodeType() == nsINode::DOCUMENT_FRAGMENT_NODE) {
+    if (aPossibleDescendant->IsDocumentFragment()) {
       aPossibleDescendant =
-        static_cast<const DocumentFragment*>(aPossibleDescendant)->GetHost();
+        aPossibleDescendant->AsDocumentFragment()->GetHost();
     } else {
       aPossibleDescendant = aPossibleDescendant->GetParentNode();
     }
@@ -4434,8 +4425,7 @@ nsresult GetEventAndTarget(nsIDocument* aDoc, nsISupports* aTarget,
   event->InitEvent(aEventName, aCanBubble, aCancelable);
   event->SetTrusted(aTrusted);
 
-  nsresult rv = event->SetTarget(target);
-  NS_ENSURE_SUCCESS(rv, rv);
+  event->SetTarget(target);
 
   event.forget(aEvent);
   target.forget(aTargetOut);
@@ -4925,19 +4915,6 @@ nsContentUtils::IsValidNodeName(nsAtom *aLocalName, nsAtom *aPrefix,
          (aNamespaceID == kNameSpaceID_XML || aPrefix != nsGkAtoms::xml);
 }
 
-/* static */
-nsresult
-nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
-                                         const nsAString& aFragment,
-                                         bool aPreventScriptExecution,
-                                         nsIDOMDocumentFragment** aReturn)
-{
-  ErrorResult rv;
-  *aReturn = CreateContextualFragment(aContextNode, aFragment,
-                                      aPreventScriptExecution, rv).take();
-  return rv.StealNSResult();
-}
-
 already_AddRefed<DocumentFragment>
 nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
                                          const nsAString& aFragment,
@@ -5049,11 +5026,11 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
     content = content->GetParent();
   }
 
-  nsCOMPtr<nsIDOMDocumentFragment> frag;
+  RefPtr<DocumentFragment> frag;
   aRv = ParseFragmentXML(aFragment, document, tagStack,
                          aPreventScriptExecution, getter_AddRefs(frag),
                          aSanitize);
-  return frag.forget().downcast<DocumentFragment>();
+  return frag.forget();
 }
 
 /* static */
@@ -5164,7 +5141,7 @@ nsContentUtils::ParseFragmentXML(const nsAString& aSourceBuffer,
                                  nsIDocument* aDocument,
                                  nsTArray<nsString>& aTagStack,
                                  bool aPreventScriptExecution,
-                                 nsIDOMDocumentFragment** aReturn,
+                                 DocumentFragment** aReturn,
                                  SanitizeFragments aSanitize)
 {
   AutoTimelineMarker m(aDocument->GetDocShell(), "Parse XML");
@@ -5213,13 +5190,11 @@ nsContentUtils::ParseFragmentXML(const nsAString& aSourceBuffer,
     // Don't fire mutation events for nodes removed by the sanitizer.
     nsAutoScriptBlockerSuppressNodeRemoved scriptBlocker;
 
-    RefPtr<DocumentFragment> fragment = static_cast<DocumentFragment*>(*aReturn);
-
     nsTreeSanitizer sanitizer(nsIParserUtils::SanitizerAllowStyle |
                               nsIParserUtils::SanitizerAllowComments |
                               nsIParserUtils::SanitizerDropForms |
                               nsIParserUtils::SanitizerLogRemovals);
-    sanitizer.Sanitize(fragment);
+    sanitizer.Sanitize(*aReturn);
   }
 
   return rv;
@@ -5292,7 +5267,7 @@ nsContentUtils::SetNodeTextContent(nsIContent* aContent,
       for (child = aContent->GetFirstChild();
            child && child->GetParentNode() == aContent;
            child = child->GetNextSibling()) {
-        if (skipFirst && child->IsNodeOfType(nsINode::eTEXT)) {
+        if (skipFirst && child->IsText()) {
           skipFirst = false;
           continue;
         }
@@ -5413,7 +5388,7 @@ nsContentUtils::HasNonEmptyTextContent(nsINode* aNode,
   for (nsIContent* child = aNode->GetFirstChild();
        child;
        child = child->GetNextSibling()) {
-    if (child->IsNodeOfType(nsINode::eTEXT) &&
+    if (child->IsText() &&
         child->TextLength() > 0) {
         return true;
     }
@@ -5569,8 +5544,8 @@ nsContentUtils::TriggerLink(nsIContent *aContent, nsPresContext *aPresContext,
 
     handler->OnLinkClick(aContent, aLinkURI,
                          fileName.IsVoid() ? aTargetSpec.get() : EmptyString().get(),
-                         fileName, nullptr, -1, nullptr, aIsTrusted,
-                         aContent->NodePrincipal());
+                         fileName, nullptr, -1, nullptr, EventStateManager::IsHandlingUserInput(),
+                         aIsTrusted, aContent->NodePrincipal());
   }
 }
 
@@ -6426,41 +6401,24 @@ nsContentUtils::GetUTFOrigin(nsIURI* aURI, nsAString& aOrigin)
 {
   NS_PRECONDITION(aURI, "missing uri");
 
-  // For Blob URI we have to return the origin of page using its principal.
-  nsCOMPtr<nsIURIWithPrincipal> uriWithPrincipal = do_QueryInterface(aURI);
-  if (uriWithPrincipal) {
-    nsCOMPtr<nsIPrincipal> principal;
-    uriWithPrincipal->GetPrincipal(getter_AddRefs(principal));
+  bool isBlobURL = false;
+  nsresult rv = aURI->SchemeIs(BLOBURI_SCHEME, &isBlobURL);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    if (principal) {
-      nsCOMPtr<nsIURI> uri;
-      nsresult rv = principal->GetURI(getter_AddRefs(uri));
-      NS_ENSURE_SUCCESS(rv, rv);
+  // For Blob URI, the path is the URL of the owning page.
+  if (isBlobURL) {
+    nsAutoCString path;
+    rv = aURI->GetPathQueryRef(path);
+    NS_ENSURE_SUCCESS(rv, rv);
 
-      if (uri && uri != aURI) {
-        return GetUTFOrigin(uri, aOrigin);
-      }
-    } else {
-      // We are probably dealing with an unknown blob URL.
-      bool isBlobURL = false;
-      nsresult rv = aURI->SchemeIs(BLOBURI_SCHEME, &isBlobURL);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      if (isBlobURL) {
-        nsAutoCString path;
-        rv = aURI->GetPathQueryRef(path);
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        nsCOMPtr<nsIURI> uri;
-        nsresult rv = NS_NewURI(getter_AddRefs(uri), path);
-        if (NS_FAILED(rv)) {
-          aOrigin.AssignLiteral("null");
-          return NS_OK;
-        }
-
-        return GetUTFOrigin(uri, aOrigin);
-      }
+    nsCOMPtr<nsIURI> uri;
+    nsresult rv = NS_NewURI(getter_AddRefs(uri), path);
+    if (NS_FAILED(rv)) {
+      aOrigin.AssignLiteral("null");
+      return NS_OK;
     }
+
+    return GetUTFOrigin(uri, aOrigin);
   }
 
   aOrigin.Truncate();
@@ -6469,7 +6427,7 @@ nsContentUtils::GetUTFOrigin(nsIURI* aURI, nsAString& aOrigin)
   NS_ENSURE_TRUE(uri, NS_ERROR_UNEXPECTED);
 
   nsCString host;
-  nsresult rv = uri->GetHost(host);
+  rv = uri->GetHost(host);
 
   if (NS_SUCCEEDED(rv) && !host.IsEmpty()) {
     nsCString scheme;
@@ -6549,7 +6507,7 @@ nsContentUtils::CanAccessNativeAnon()
 /* static */ nsresult
 nsContentUtils::DispatchXULCommand(nsIContent* aTarget,
                                    bool aTrusted,
-                                   nsIDOMEvent* aSourceEvent,
+                                   Event* aSourceEvent,
                                    nsIPresShell* aShell,
                                    bool aCtrl,
                                    bool aAlt,
@@ -6567,8 +6525,7 @@ nsContentUtils::DispatchXULCommand(nsIContent* aTarget,
                                nsGlobalWindowInner::Cast(doc->GetInnerWindow()),
                                0, aCtrl, aAlt, aShift,
                                aMeta,
-                               aSourceEvent ?
-                                 aSourceEvent->InternalDOMEvent() : nullptr,
+                               aSourceEvent,
                                aInputSource, IgnoreErrors());
 
   if (aShell) {
@@ -6730,15 +6687,13 @@ nsContentUtils::IsFocusedContent(const nsIContent* aContent)
 {
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
 
-  return fm && fm->GetFocusedContent() == aContent;
+  return fm && fm->GetFocusedElement() == aContent;
 }
 
 bool
 nsContentUtils::IsSubDocumentTabbable(nsIContent* aContent)
 {
-  //XXXsmaug Shadow DOM spec issue!
-  //         We may need to change this to GetComposedDoc().
-  nsIDocument* doc = aContent->GetUncomposedDoc();
+  nsIDocument* doc = aContent->GetComposedDoc();
   if (!doc) {
     return false;
   }
@@ -7440,7 +7395,7 @@ nsContentUtils::GetSelectionInTextControl(Selection* aSelection,
                endContainer == lastChild, "Unexpected endContainer");
   // firstChild is either text or a <br> (hence an element).
   MOZ_ASSERT_IF(firstChild,
-                firstChild->IsNodeOfType(nsINode::eTEXT) || firstChild->IsElement());
+                firstChild->IsText() || firstChild->IsElement());
 #endif
   // Testing IsElement() is faster than testing IsNodeOfType(), since it's
   // non-virtual.
@@ -7984,7 +7939,7 @@ nsContentUtils::DataTransferItemToImage(const IPCDataTransferItem& aItem,
 
   RefPtr<DataSourceSurface> image =
       CreateDataSourceSurfaceFromData(size,
-                                      static_cast<SurfaceFormat>(imageDetails.format()),
+                                      imageDetails.format(),
                                       data.get<uint8_t>(),
                                       imageDetails.stride());
 
@@ -8142,7 +8097,7 @@ nsContentUtils::TransferableToIPCTransferable(nsITransferable* aTransferable,
             imageDetails.width() = size.width;
             imageDetails.height() = size.height;
             imageDetails.stride() = stride;
-            imageDetails.format() = static_cast<uint8_t>(dataSurface->GetFormat());
+            imageDetails.format() = dataSurface->GetFormat();
 
             continue;
           }
@@ -9742,13 +9697,12 @@ nsContentUtils::GetPresentationURL(nsIDocShell* aDocShell, nsAString& aPresentat
   }
 
   nsCOMPtr<nsILoadContext> loadContext(do_QueryInterface(aDocShell));
-  nsCOMPtr<nsIDOMElement> topFrameElement;
-  loadContext->GetTopFrameElement(getter_AddRefs(topFrameElement));
-  if (!topFrameElement) {
+  RefPtr<Element> topFrameElt;
+  loadContext->GetTopFrameElement(getter_AddRefs(topFrameElt));
+  if (!topFrameElt) {
     return;
   }
 
-  nsCOMPtr<Element> topFrameElt = do_QueryInterface(topFrameElement);
   topFrameElt->GetAttribute(NS_LITERAL_STRING("mozpresentation"), aPresentationUrl);
 }
 
@@ -10041,7 +9995,7 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
         if (nodeInfo->NamespaceEquals(kNameSpaceID_XHTML)) {
           NS_IF_ADDREF(*aResult = NS_NewHTMLUnknownElement(nodeInfo.forget(), aFromParser));
         } else {
-          NS_IF_ADDREF(*aResult = new nsXULElement(nodeInfo.forget()));
+          NS_IF_ADDREF(*aResult = nsXULElement::Construct(nodeInfo.forget()));
         }
       }
       return NS_OK;
@@ -10051,7 +10005,7 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
     if (nodeInfo->NamespaceEquals(kNameSpaceID_XHTML)) {
       NS_IF_ADDREF(*aResult = NS_NewHTMLElement(nodeInfo.forget(), aFromParser));
     } else {
-      NS_IF_ADDREF(*aResult = new nsXULElement(nodeInfo.forget()));
+      NS_IF_ADDREF(*aResult = nsXULElement::Construct(nodeInfo.forget()));
     }
     (*aResult)->SetCustomElementData(new CustomElementData(definition->mType));
     nsContentUtils::EnqueueUpgradeReaction(*aResult, definition);
@@ -10067,7 +10021,7 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
       *aResult = CreateHTMLElement(tag, nodeInfo.forget(), aFromParser).take();
     }
   } else {
-    NS_IF_ADDREF(*aResult = new nsXULElement(nodeInfo.forget()));
+    NS_IF_ADDREF(*aResult = nsXULElement::Construct(nodeInfo.forget()));
   }
 
   if (!*aResult) {
@@ -11029,4 +10983,25 @@ nsContentUtils::InnerOrOuterWindowDestroyed()
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(sInnerOrOuterWindowCount > 0);
   --sInnerOrOuterWindowCount;
+}
+
+/* static */ bool
+nsContentUtils::CanShowPopup(nsIPrincipal* aPrincipal)
+{
+  MOZ_ASSERT(aPrincipal);
+  uint32_t permit;
+  nsCOMPtr<nsIPermissionManager> permissionManager =
+    services::GetPermissionManager();
+
+  if (permissionManager &&
+      NS_SUCCEEDED(permissionManager->TestPermissionFromPrincipal(aPrincipal, "popup", &permit))) {
+    if (permit == nsIPermissionManager::ALLOW_ACTION) {
+      return true;
+    }
+    if (permit == nsIPermissionManager::DENY_ACTION) {
+      return false;
+    }
+  }
+
+  return !sDisablePopups;
 }

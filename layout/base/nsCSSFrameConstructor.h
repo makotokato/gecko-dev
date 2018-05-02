@@ -810,8 +810,7 @@ private:
     FindDataByTag(nsAtom* aTag, Element* aElement,
                   ComputedStyle* aComputedStyle,
                   const FrameConstructionDataByTag* aDataPtr,
-                  uint32_t aDataLength,
-                  bool* aTagFound = nullptr);
+                  uint32_t aDataLength);
 
   /* A class representing a list of FrameConstructionItems.  Instances of this
      class are only created as AutoFrameConstructionItemList, or as a member
@@ -1423,7 +1422,8 @@ private:
 
   // aParentFrame might be null.  If it is, that means it was an
   // inline frame.
-  static const FrameConstructionData* FindTextData(nsIFrame* aParentFrame);
+  static const FrameConstructionData* FindTextData(nsIFrame* aParentFrame,
+                                                   nsIContent* aTextContent);
 
   void ConstructTextFrame(const FrameConstructionData* aData,
                           nsFrameConstructorState& aState,
@@ -2119,17 +2119,6 @@ private:
   void QuotesDirty();
   void CountersDirty();
 
-  /**
-   * Add the pair (aContent, aComputedStyle) to the undisplayed items
-   * in aList as needed.  This method enforces the invariant that all
-   * styles in the undisplayed content map must be non-pseudo contexts and also
-   * handles unbinding undisplayed generated content as needed.
-   */
-  void SetAsUndisplayedContent(nsFrameConstructorState& aState,
-                               FrameConstructionItemList& aList,
-                               nsIContent* aContent,
-                               ComputedStyle* aComputedStyle,
-                               bool aIsGeneratedContent);
   // Create touch caret frame.
   void ConstructAnonymousContentForCanvas(nsFrameConstructorState& aState,
                                           nsIFrame* aFrame,

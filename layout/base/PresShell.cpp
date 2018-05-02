@@ -62,8 +62,6 @@
 #include "nsGkAtoms.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMNode.h"
-#include "nsIDOMNodeList.h"
-#include "nsIDOMElement.h"
 #include "nsRange.h"
 #include "nsWindowSizes.h"
 #include "nsCOMPtr.h"
@@ -753,84 +751,86 @@ PresShell::AccessibleCaretEnabled(nsIDocShell* aDocShell)
 }
 
 nsIPresShell::nsIPresShell()
-  : mFrameConstructor(nullptr)
-  , mViewManager(nullptr)
-  , mFrameManager(nullptr)
+    : mFrameConstructor(nullptr)
+    , mViewManager(nullptr)
+    , mFrameManager(nullptr)
 #ifdef ACCESSIBILITY
-  , mDocAccessible(nullptr)
+    , mDocAccessible(nullptr)
 #endif
 #ifdef DEBUG
-  , mDrawEventTargetFrame(nullptr)
+    , mDrawEventTargetFrame(nullptr)
 #endif
-  , mPaintCount(0)
-  , mAutoWeakFrames(nullptr)
-  , mCanvasBackgroundColor(NS_RGBA(0, 0, 0, 0))
-  , mSelectionFlags(0)
-  , mChangeNestCount(0)
-  , mRenderFlags(0)
-  , mDidInitialize(false)
-  , mIsDestroying(false)
-  , mIsReflowing(false)
-  , mIsObservingDocument(false)
-  , mIsDocumentGone(false)
-  , mPaintingSuppressed(false)
-  , mIsActive(false)
-  , mFrozen(false)
-  , mIsFirstPaint(false)
-  , mObservesMutationsForPrint(false)
-  , mWasLastReflowInterrupted(false)
-  , mScrollPositionClampingScrollPortSizeSet(false)
-  , mNeedLayoutFlush(true)
-  , mNeedStyleFlush(true)
-  , mObservingStyleFlushes(false)
-  , mObservingLayoutFlushes(false)
-  , mResizeEventPending(false)
-  , mNeedThrottledAnimationFlush(true)
-  , mPresShellId(0)
-  , mFontSizeInflationEmPerLine(0)
-  , mFontSizeInflationMinTwips(0)
-  , mFontSizeInflationLineThreshold(0)
-  , mFontSizeInflationForceEnabled(false)
-  , mFontSizeInflationDisabledInMasterProcess(false)
-  , mFontSizeInflationEnabled(false)
-  , mFontSizeInflationEnabledIsDirty{ false }
-  , mPaintingIsFrozen(false)
-  , mIsNeverPainting(false)
-  , mInFlush(false)
+    , mPaintCount(0)
+    , mAutoWeakFrames(nullptr)
+    , mCanvasBackgroundColor(NS_RGBA(0,0,0,0))
+    , mSelectionFlags(0)
+    , mChangeNestCount(0)
+    , mRenderFlags(0)
+    , mDidInitialize(false)
+    , mIsDestroying(false)
+    , mIsReflowing(false)
+    , mIsObservingDocument(false)
+    , mIsDocumentGone(false)
+    , mPaintingSuppressed(false)
+    , mIsActive(false)
+    , mFrozen(false)
+    , mIsFirstPaint(false)
+    , mObservesMutationsForPrint(false)
+    , mWasLastReflowInterrupted(false)
+    , mScrollPositionClampingScrollPortSizeSet(false)
+    , mNeedLayoutFlush(true)
+    , mNeedStyleFlush(true)
+    , mObservingStyleFlushes(false)
+    , mObservingLayoutFlushes(false)
+    , mResizeEventPending(false)
+    , mNeedThrottledAnimationFlush(true)
+    , mPresShellId(0)
+    , mFontSizeInflationEmPerLine(0)
+    , mFontSizeInflationMinTwips(0)
+    , mFontSizeInflationLineThreshold(0)
+    , mFontSizeInflationForceEnabled(false)
+    , mFontSizeInflationDisabledInMasterProcess(false)
+    , mFontSizeInflationEnabled(false)
+    , mPaintingIsFrozen(false)
+    , mIsNeverPainting(false)
+    , mInFlush(false)
   {}
 
-  PresShell::PresShell()
-    : mCaretEnabled(false)
+PresShell::PresShell()
+  : mCaretEnabled(false)
 #ifdef DEBUG
-    , mInVerifyReflow(false)
-    , mCurrentReflowRoot(nullptr)
-    , mUpdateCount(0)
+  , mInVerifyReflow(false)
+  , mCurrentReflowRoot(nullptr)
+  , mUpdateCount(0)
 #endif
 #ifdef MOZ_REFLOW_PERF
-    , mReflowCountMgr(nullptr)
+  , mReflowCountMgr(nullptr)
 #endif
-    , mMouseLocation(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE)
-    , mCurrentEventFrame(nullptr)
-    , mFirstCallbackEventRequest(nullptr)
-    , mLastCallbackEventRequest(nullptr)
-    , mLastReflowStart(0.0)
-    , mLastAnchorScrollPositionY(0)
-    , mAPZFocusSequenceNumber(0)
-    , mDocumentLoading(false)
-    , mIgnoreFrameDestruction(false)
-    , mHaveShutDown(false)
-    , mLastRootReflowHadUnconstrainedBSize(false)
-    , mNoDelayedMouseEvents(false)
-    , mNoDelayedKeyEvents(false)
-    , mShouldUnsuppressPainting(false)
-    , mApproximateFrameVisibilityVisited(false)
-    , mNextPaintCompressed(false)
-    , mHasCSSBackgroundColor(false)
-    , mScaleToResolution(false)
-    , mIsLastChromeOnlyEscapeKeyConsumed(false)
-    , mHasReceivedPaintMessage(false)
-    , mIsLastKeyDownCanceled{ false }
-    , mHasHandledUserInput(false)
+  , mMouseLocation(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE)
+  , mCurrentEventFrame(nullptr)
+  , mFirstCallbackEventRequest(nullptr)
+  , mLastCallbackEventRequest(nullptr)
+  , mLastReflowStart(0.0)
+  , mLastAnchorScrollPositionY(0)
+  , mAPZFocusSequenceNumber(0)
+  , mDocumentLoading(false)
+  , mIgnoreFrameDestruction(false)
+  , mHaveShutDown(false)
+  , mLastRootReflowHadUnconstrainedBSize(false)
+  , mNoDelayedMouseEvents(false)
+  , mNoDelayedKeyEvents(false)
+  , mShouldUnsuppressPainting(false)
+  , mApproximateFrameVisibilityVisited(false)
+  , mNextPaintCompressed(false)
+  , mHasCSSBackgroundColor(false)
+  , mScaleToResolution(false)
+  , mIsLastChromeOnlyEscapeKeyConsumed(false)
+  , mHasReceivedPaintMessage(false)
+  , mHasHandledUserInput(false)
+#ifdef NIGHTLY_BUILD
+  , mForceDispatchKeyPressEventsForNonPrintableKeys(false)
+  , mInitializedForceDispatchKeyPressEventsForNonPrintableKeys(false)
+#endif // #ifdef NIGHTLY_BUILD
 {
   MOZ_LOG(gLog, LogLevel::Debug, ("PresShell::PresShell this=%p", this));
 
@@ -1284,6 +1284,9 @@ PresShell::Destroy()
   }
 
   // release our pref style sheet, if we have one still
+  //
+  // FIXME(emilio): Why do we need to do this? The stylist is getting nixed with
+  // us anyway.
   RemovePreferenceStyles();
 
   mIsDestroying = true;
@@ -1501,7 +1504,11 @@ PresShell::UpdatePreferenceStyles()
 
   RemovePreferenceStyles();
 
-  mStyleSet->AppendStyleSheet(SheetType::User, newPrefSheet->AsServo());
+  // NOTE(emilio): This sheet is added as an agent sheet, because we don't want
+  // it to be modifiable from devtools and similar, see bugs 1239336 and
+  // 1436782. I think it conceptually should be a user sheet, and could be
+  // without too much trouble I'd think.
+  mStyleSet->AppendStyleSheet(SheetType::Agent, newPrefSheet->AsServo());
   mPrefStyleSheet = newPrefSheet;
 
   mStyleSet->EndUpdate();
@@ -1511,7 +1518,7 @@ void
 PresShell::RemovePreferenceStyles()
 {
   if (mPrefStyleSheet) {
-    mStyleSet->RemoveStyleSheet(SheetType::User, mPrefStyleSheet->AsServo());
+    mStyleSet->RemoveStyleSheet(SheetType::Agent, mPrefStyleSheet->AsServo());
     mPrefStyleSheet = nullptr;
   }
 }
@@ -6499,15 +6506,14 @@ PresShell::GetFocusedDOMWindowInOurWindow()
 already_AddRefed<nsIContent>
 nsIPresShell::GetFocusedContentInOurWindow() const
 {
-  nsCOMPtr<nsIContent> focusedContent;
   nsIFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm && mDocument) {
-    nsCOMPtr<nsIDOMElement> focusedElement;
+    RefPtr<Element> focusedElement;
     fm->GetFocusedElementForWindow(mDocument->GetWindow(), false, nullptr,
                                    getter_AddRefs(focusedElement));
-    focusedContent = do_QueryInterface(focusedElement);
+    return focusedElement.forget();
   }
-  return focusedContent.forget();
+  return nullptr;
 }
 
 already_AddRefed<nsIPresShell>
@@ -7203,14 +7209,15 @@ PresShell::HandleEvent(nsIFrame* aFrame,
         frame = targetFrame;
       }
 
-      AutoWeakFrame weakFrame(targetFrame);
+      AutoWeakFrame weakTargetFrame(targetFrame);
+      AutoWeakFrame weakFrame(frame);
       nsCOMPtr<nsIContent> targetContent;
       PointerEventHandler::DispatchPointerFromMouseOrTouch(
                              shell, targetFrame, targetElement, aEvent,
                              aDontRetargetEvents, aEventStatus,
                              getter_AddRefs(targetContent));
 
-      if (!weakFrame.IsAlive() && aEvent->mClass == eMouseEventClass) {
+      if (!weakTargetFrame.IsAlive() && aEvent->mClass == eMouseEventClass) {
         // Spec only defines that mouse events must be dispatched to the same
         // target as the pointer event. If the target is no longer participating
         // in its ownerDocument's tree, fire the event at the original target's
@@ -7223,6 +7230,8 @@ PresShell::HandleEvent(nsIFrame* aFrame,
         if (!shell) {
           return NS_OK;
         }
+      } else if (!weakFrame.IsAlive()) {
+        return NS_OK;
       }
     }
 
@@ -7814,7 +7823,103 @@ PresShell::HandleEventInternal(WidgetEvent* aEvent,
   return rv;
 }
 
+#ifdef NIGHTLY_BUILD
+static already_AddRefed<nsIURI>
+GetDocumentURIToCompareWithBlacklist(PresShell& aPresShell)
+{
+  nsPresContext* presContext = aPresShell.GetPresContext();
+  if (NS_WARN_IF(!presContext)) {
+    return nullptr;
+  }
+  // If the document is sandboxed document or data: document, we should
+  // get URI of the parent document.
+  for (nsIDocument* document = presContext->Document();
+       document && document->IsContentDocument();
+       document = document->GetParentDocument()) {
+    // The document URI may be about:blank even if it comes from actual web
+    // site.  Therefore, we need to check the URI of its principal.
+    nsIPrincipal* principal = document->NodePrincipal();
+    if (principal->GetIsNullPrincipal()) {
+      continue;
+    }
+    nsCOMPtr<nsIURI> uri;
+    principal->GetURI(getter_AddRefs(uri));
+    return uri.forget();
+  }
+  return nullptr;
+}
 
+static bool
+DispatchKeyPressEventsEvenForNonPrintableKeys(nsIURI* aURI)
+{
+  if (!aURI) {
+    return false;
+  }
+
+  nsAutoCString scheme;
+  aURI->GetScheme(scheme);
+  if (!scheme.EqualsLiteral("http") &&
+      !scheme.EqualsLiteral("https")) {
+    return false;
+  }
+
+  nsAutoCString host;
+  aURI->GetHost(host);
+  if (host.IsEmpty()) {
+    return false;
+  }
+
+  // The black list is comma separated domain list.  Each item may start with
+  // "*.".  If starts with "*.", it matches any sub-domains.
+  static const char* kPrefNameOfBlackList =
+    "dom.keyboardevent.keypress.hack.dispatch_non_printable_keys";
+
+  nsAutoCString blackList;
+  Preferences::GetCString(kPrefNameOfBlackList, blackList);
+  if (blackList.IsEmpty()) {
+    return false;
+  }
+
+  for (;;) {
+    int32_t index = blackList.Find(host, false);
+    if (index >= 0 &&
+        static_cast<uint32_t>(index) + host.Length() <= blackList.Length() &&
+        // If start of the black list or next to ","?
+        (!index || blackList[index - 1] == ',')) {
+      // If end of the black list or immediately before ","?
+      size_t indexAfterHost = index + host.Length();
+      if (indexAfterHost == blackList.Length() ||
+          blackList[indexAfterHost] == ',') {
+        return true;
+      }
+      // If next character is '/', we need to check the path too.
+      // We assume the path in blacklist means "/foo" + "*".
+      if (blackList[indexAfterHost] == '/') {
+        int32_t endOfPath = blackList.Find(",", false, indexAfterHost);
+        nsDependentCSubstring::size_type length =
+          endOfPath < 0 ? static_cast<nsDependentCSubstring::size_type>(-1) :
+                          endOfPath - indexAfterHost;
+        nsDependentCSubstring pathInBlackList(blackList,
+                                              indexAfterHost, length);
+        nsAutoCString filePath;
+        aURI->GetFilePath(filePath);
+        if (StringBeginsWith(filePath, pathInBlackList)) {
+          return true;
+        }
+      }
+    }
+    int32_t startIndexOfCurrentLevel = host[0] == '*' ? 1 : 0;
+    int32_t startIndexOfNextLevel =
+      host.Find(".", false, startIndexOfCurrentLevel + 1);
+    if (startIndexOfNextLevel <= 0) {
+      return false;
+    }
+    host = NS_LITERAL_CSTRING("*") +
+             nsDependentCSubstring(host, startIndexOfNextLevel);
+  }
+  return false;
+}
+#endif // #ifdef NIGHTLY_BUILD
 
 nsresult
 PresShell::DispatchEventToDOM(WidgetEvent* aEvent,
@@ -7842,6 +7947,26 @@ PresShell::DispatchEventToDOM(WidgetEvent* aEvent,
   if (eventTarget) {
     if (aEvent->IsBlockedForFingerprintingResistance()) {
       aEvent->mFlags.mOnlySystemGroupDispatchInContent = true;
+#ifdef NIGHTLY_BUILD
+    } else if (aEvent->mMessage == eKeyPress &&
+               aEvent->mFlags.mOnlySystemGroupDispatchInContent) {
+      // If eKeyPress event is marked as not dispatched in the default event
+      // group in web content, it's caused by non-printable key or key
+      // combination.  In this case, UI Events declares that browsers
+      // shouldn't dispatch keypress event.  However, some web apps may be
+      // broken with this strict behavior due to historical issue.
+      // Therefore, we need to keep dispatching keypress event for such keys
+      // even with breaking the standard.
+      if (!mInitializedForceDispatchKeyPressEventsForNonPrintableKeys) {
+        mInitializedForceDispatchKeyPressEventsForNonPrintableKeys = true;
+        nsCOMPtr<nsIURI> uri = GetDocumentURIToCompareWithBlacklist(*this);
+        mForceDispatchKeyPressEventsForNonPrintableKeys =
+          DispatchKeyPressEventsEvenForNonPrintableKeys(uri);
+      }
+      if (mForceDispatchKeyPressEventsForNonPrintableKeys) {
+        aEvent->mFlags.mOnlySystemGroupDispatchInContent = false;
+      }
+#endif // #ifdef NIGHTLY_BUILD
     }
 
     if (aEvent->mClass == eCompositionEventClass) {
@@ -7975,7 +8100,7 @@ PresShell::HandleDOMEventWithTarget(nsIContent* aTargetContent,
 // See the method above.
 nsresult
 PresShell::HandleDOMEventWithTarget(nsIContent* aTargetContent,
-                                    nsIDOMEvent* aEvent,
+                                    Event* aEvent,
                                     nsEventStatus* aStatus)
 {
   nsresult rv = NS_OK;
@@ -8062,10 +8187,11 @@ PresShell::AdjustContextMenuKeyEvent(WidgetMouseEvent* aEvent)
   // If we're here because of the key-equiv for showing context menus, we
   // have to reset the event target to the currently focused element. Get it
   // from the focus controller.
-  nsCOMPtr<nsIDOMElement> currentFocus;
-  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
-  if (fm)
-    fm->GetFocusedElement(getter_AddRefs(currentFocus));
+  RefPtr<Element> currentFocus;
+  nsFocusManager* fm = nsFocusManager::GetFocusManager();
+  if (fm) {
+    currentFocus = fm->GetFocusedElement();
+  }
 
   // Reset event coordinates relative to focused frame in view
   if (currentFocus) {
@@ -8205,12 +8331,12 @@ PresShell::PrepareToUseCaretPosition(nsIWidget* aEventWidget,
 }
 
 void
-PresShell::GetCurrentItemAndPositionForElement(nsIDOMElement *aCurrentEl,
+PresShell::GetCurrentItemAndPositionForElement(Element* aFocusedElement,
                                                nsIContent** aTargetToUse,
                                                LayoutDeviceIntPoint& aTargetPt,
                                                nsIWidget *aRootWidget)
 {
-  nsCOMPtr<nsIContent> focusedContent(do_QueryInterface(aCurrentEl));
+  nsCOMPtr<nsIContent> focusedContent = aFocusedElement;
   ScrollContentIntoView(focusedContent,
                         ScrollAxis(),
                         ScrollAxis(),
@@ -8228,7 +8354,7 @@ PresShell::GetCurrentItemAndPositionForElement(nsIDOMElement *aCurrentEl,
   // as is.
   nsCOMPtr<nsIDOMXULSelectControlItemElement> item;
   nsCOMPtr<nsIDOMXULMultiSelectControlElement> multiSelect =
-    do_QueryInterface(aCurrentEl);
+    do_QueryInterface(aFocusedElement);
   if (multiSelect) {
     checkLineHeight = false;
 
@@ -8260,11 +8386,10 @@ PresShell::GetCurrentItemAndPositionForElement(nsIDOMElement *aCurrentEl,
             nsCOMPtr<nsITreeColumn> col;
             cols->GetFirstColumn(getter_AddRefs(col));
             if (col) {
-              nsCOMPtr<nsIDOMElement> colElement;
+              RefPtr<Element> colElement;
               col->GetElement(getter_AddRefs(colElement));
-              nsCOMPtr<nsIContent> colContent(do_QueryInterface(colElement));
-              if (colContent) {
-                nsIFrame* frame = colContent->GetPrimaryFrame();
+              if (colElement) {
+                nsIFrame* frame = colElement->GetPrimaryFrame();
                 if (frame) {
                   extraTreeY += frame->GetSize().height;
                 }
@@ -8280,10 +8405,10 @@ PresShell::GetCurrentItemAndPositionForElement(nsIDOMElement *aCurrentEl,
   }
   else {
     // don't check menulists as the selected item will be inside a popup.
-    nsCOMPtr<nsIDOMXULMenuListElement> menulist = do_QueryInterface(aCurrentEl);
+    nsCOMPtr<nsIDOMXULMenuListElement> menulist = do_QueryInterface(aFocusedElement);
     if (!menulist) {
       nsCOMPtr<nsIDOMXULSelectControlElement> select =
-        do_QueryInterface(aCurrentEl);
+        do_QueryInterface(aFocusedElement);
       if (select) {
         checkLineHeight = false;
         select->GetSelectedItem(getter_AddRefs(item));

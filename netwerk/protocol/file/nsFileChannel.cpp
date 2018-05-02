@@ -194,7 +194,7 @@ public:
                        uint32_t count, nsIEventTarget *target) override;
 
 private:
-  virtual ~nsFileUploadContentStream() {}
+  virtual ~nsFileUploadContentStream() = default;
 
   void OnCopyComplete();
 
@@ -256,9 +256,8 @@ nsFileUploadContentStream::OnCopyComplete()
 
 //-----------------------------------------------------------------------------
 
-nsFileChannel::nsFileChannel(nsIURI* uri)
-  : mUploadLength{}
-  , mFileURI(uri)
+nsFileChannel::nsFileChannel(nsIURI *uri)
+  : mFileURI(uri)
 {
 }
 
@@ -318,10 +317,6 @@ nsFileChannel::Init()
   }
 
   return NS_OK;
-}
-
-nsFileChannel::~nsFileChannel()
-{
 }
 
 nsresult

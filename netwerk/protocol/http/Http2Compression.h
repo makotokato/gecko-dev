@@ -100,16 +100,11 @@ class Http2Decompressor final : public Http2BaseCompressor
 {
 public:
   Http2Decompressor()
-    : mOffset{}
-    , mData{ nullptr }
-    , mDataLen{}
-    , mSeenNonColonHeader{ false }
-    , mIsPush{ false }
   {
     mPeakSizeID = Telemetry::HPACK_PEAK_SIZE_DECOMPRESSOR;
     mPeakCountID = Telemetry::HPACK_PEAK_COUNT_DECOMPRESSOR;
   };
-  virtual ~Http2Decompressor() { } ;
+  virtual ~Http2Decompressor() = default;
 
   // NS_OK: Produces the working set of HTTP/1 formatted headers
   MOZ_MUST_USE nsresult DecodeHeaderBlock(const uint8_t *data,
@@ -170,7 +165,7 @@ public:
     mPeakSizeID = Telemetry::HPACK_PEAK_SIZE_COMPRESSOR;
     mPeakCountID = Telemetry::HPACK_PEAK_COUNT_COMPRESSOR;
   };
-  virtual ~Http2Compressor() { }
+  virtual ~Http2Compressor() = default;
 
   // HTTP/1 formatted header block as input - HTTP/2 formatted
   // header block as output

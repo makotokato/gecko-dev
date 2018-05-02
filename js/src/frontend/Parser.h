@@ -198,7 +198,7 @@ public:
     template<typename ParseHandler, typename CharT>
     SourceParseContext(GeneralParser<ParseHandler, CharT>* prs, SharedContext* sc,
                        Directives* newDirectives)
-      : ParseContext(prs->context, prs->pc, sc, prs->anyChars, prs->usedNames, newDirectives,
+      : ParseContext(prs->context, prs->pc, sc, prs->tokenStream, prs->usedNames, newDirectives,
                      mozilla::IsSame<ParseHandler, FullParseHandler>::value)
     { }
 };
@@ -393,6 +393,8 @@ class ParserBase
     bool leaveInnerFunction(ParseContext* outerpc);
 
     JSAtom* prefixAccessorName(PropertyType propType, HandleAtom propAtom);
+
+    MOZ_MUST_USE bool setSourceMapInfo();
 };
 
 inline
@@ -536,9 +538,6 @@ class PerHandlerParser
     inline void clearAbortedSyntaxParse();
 
   public:
-    void prepareNodeForMutation(Node node) { handler.prepareNodeForMutation(node); }
-    void freeTree(Node node) { handler.freeTree(node); }
-
     bool isValidSimpleAssignmentTarget(Node node,
                                        FunctionCallBehavior behavior = ForbidAssignmentToFunctionCalls);
 
@@ -1599,6 +1598,10 @@ mozilla::Maybe<VarScope::Data*>
 NewVarScopeData(JSContext* context, ParseContext::Scope& scope, LifoAlloc& alloc, ParseContext* pc);
 mozilla::Maybe<LexicalScope::Data*>
 NewLexicalScopeData(JSContext* context, ParseContext::Scope& scope, LifoAlloc& alloc, ParseContext* pc);
+
+JSFunction*
+AllocNewFunction(JSContext* cx, HandleAtom atom, FunctionSyntaxKind kind, GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
+                 HandleObject proto, bool isSelfHosting = false, bool inFunctionBox = false);
 
 } /* namespace frontend */
 } /* namespace js */

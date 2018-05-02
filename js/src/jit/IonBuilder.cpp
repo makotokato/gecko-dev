@@ -7324,7 +7324,7 @@ static size_t
 NumFixedSlots(JSObject* object)
 {
     // Note: we can't use object->numFixedSlots() here, as this will read the
-    // shape and can race with the active thread if we are building off thread.
+    // shape and can race with the main thread if we are building off thread.
     // The allocation kind and object class (which goes through the type) can
     // be read freely, however.
     gc::AllocKind kind = object->asTenured().getAllocKind();
@@ -7796,6 +7796,11 @@ IonBuilder::jsop_getelem()
         if (emitted)
             return Ok();
 
+        trackOptimizationAttempt(TrackedStrategy::GetElem_CallSiteObject);
+        MOZ_TRY(getElemTryCallSiteObject(&emitted, obj, index));
+        if (emitted)
+            return Ok();
+
         trackOptimizationAttempt(TrackedStrategy::GetElem_Dense);
         MOZ_TRY(getElemTryDense(&emitted, obj, index));
         if (emitted)
@@ -8244,6 +8249,52 @@ IonBuilder::getElemTryTypedArray(bool* emitted, MDefinition* obj, MDefinition* i
 }
 
 AbortReasonOr<Ok>
+IonBuilder::getElemTryCallSiteObject(bool* emitted, MDefinition* obj, MDefinition* index)
+{
+    MOZ_ASSERT(*emitted == false);
+
+    if (!obj->isConstant() || obj->type() != MIRType::Object) {
+        trackOptimizationOutcome(TrackedOutcome::NotObject);
+        return Ok();
+    }
+
+    if (!index->isConstant() || index->type() != MIRType::Int32) {
+        trackOptimizationOutcome(TrackedOutcome::IndexType);
+        return Ok();
+    }
+
+    JSObject* cst = &obj->toConstant()->toObject();
+    if (!cst->is<ArrayObject>()) {
+        trackOptimizationOutcome(TrackedOutcome::GenericFailure);
+        return Ok();
+    }
+
+    // Technically this code would work with any kind of frozen array,
+    // in pratice only CallSiteObjects can be constant and frozen.
+
+    ArrayObject* array = &cst->as<ArrayObject>();
+    if (array->lengthIsWritable() || array->hasEmptyElements() || !array->denseElementsAreFrozen()) {
+        trackOptimizationOutcome(TrackedOutcome::GenericFailure);
+        return Ok();
+    }
+
+    int32_t idx = index->toConstant()->toInt32();
+    if (idx < 0 || !array->containsDenseElement(uint32_t(idx))) {
+        trackOptimizationOutcome(TrackedOutcome::OutOfBounds);
+        return Ok();
+    }
+
+    obj->setImplicitlyUsedUnchecked();
+    index->setImplicitlyUsedUnchecked();
+
+    pushConstant(array->getDenseElement(uint32_t(idx)));
+
+    trackOptimizationSuccess();
+    *emitted = true;
+    return Ok();
+}
+
+AbortReasonOr<Ok>
 IonBuilder::getElemTryString(bool* emitted, MDefinition* obj, MDefinition* index)
 {
     MOZ_ASSERT(*emitted == false);
@@ -8647,7 +8698,7 @@ IonBuilder::addTypedArrayLengthAndData(MDefinition* obj,
         SharedMem<void*> data = tarr->as<TypedArrayObject>().viewDataEither();
         // Bug 979449 - Optimistically embed the elements and use TI to
         //              invalidate if we move them.
-        bool isTenured = !tarr->runtimeFromActiveCooperatingThread()->gc.nursery().isInside(data);
+        bool isTenured = !tarr->runtimeFromMainThread()->gc.nursery().isInside(data);
         if (isTenured && tarr->isSingleton()) {
             // The 'data' pointer of TypedArrayObject can change in rare circumstances
             // (ArrayBufferObject::changeContents).
@@ -13544,7 +13595,7 @@ JSObject*
 IonBuilder::checkNurseryObject(JSObject* obj)
 {
     // If we try to use any nursery pointers during compilation, make sure that
-    // the active thread will cancel this compilation before performing a minor
+    // the main thread will cancel this compilation before performing a minor
     // GC. All constants used during compilation should either go through this
     // function or should come from a type set (which has a similar barrier).
     if (obj && IsInsideNursery(obj)) {
@@ -13665,4 +13716,19 @@ IonBuilder::trace(JSTracer* trc)
 
     MOZ_ASSERT(rootList_);
     rootList_->trace(trc);
+}
+
+size_t
+IonBuilder::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const
+{
+    // See js::jit::FreeIonBuilder.
+    // The IonBuilder and most of its contents live in the LifoAlloc we point
+    // to. Note that this is only true for background IonBuilders.
+
+    size_t result = alloc_->lifoAlloc()->sizeOfIncludingThis(mallocSizeOf);
+
+    if (backgroundCodegen_)
+        result += mallocSizeOf(backgroundCodegen_);
+
+    return result;
 }

@@ -6,6 +6,7 @@
 
 .devtools-toolbar {
   display: flex;
+  line-height: 23px;
 }
 
 .devtools-toolbar-container {
@@ -21,9 +22,35 @@
   align-items: center;
 }
 
+.devtools-toolbar-group .devtools-separator {
+  height: 24px;
+}
+
+.devtools-toolbar-two-rows-1,
+.devtools-toolbar-two-rows-2,
+.devtools-toolbar-single-row {
+  flex-grow: 1;
+  min-height: var(--primary-toolbar-height);
+}
+
+.devtools-toolbar-two-rows-1 {
+  width: -moz-available;
+}
+
+.devtools-toolbar-two-rows-2 {
+  justify-content: space-between;
+  border-top: 1px solid var(--theme-splitter-color);
+}
+
 .requests-list-filter-buttons {
   display: flex;
   flex-wrap: wrap;
+  margin: 0 2px;
+}
+
+.devtools-button.devtools-pause-icon::before,
+.devtools-button.devtools-play-icon::before {
+  margin-bottom: 1px;
 }
 
 .devtools-button.devtools-pause-icon::before {
@@ -32,6 +59,26 @@
 
 .devtools-button.devtools-play-icon::before {
   background-image: var(--play-icon-url);
+}
+
+/* HAR button in the toolbar has a background only when hovered. */
+.devtools-button.devtools-har-button:not(:hover) {
+  background: transparent;
+}
+
+/* HAR button has label and icon, so make sure they don't overlap */
+.devtools-button.devtools-har-button::before {
+  content: "HAR";
+  width: 21px;
+  padding-right: 12px;
+  background-image: var(--drop-down-icon-url);
+  background-position: right center;
+  fill: var(--theme-toolbar-photon-icon-color);
+}
+
+/* Make sure the HAR button label is vertically centered on Mac */
+:root[platform="mac"] .devtools-button.devtools-har-button::before {
+  height: 14px;
 }
 
 .devtools-checkbox {
@@ -44,4 +91,18 @@
   margin-inline-start: 10px;
   margin-inline-end: 3px;
   white-space: nowrap;
+  margin-top: 1px;
+}
+
+/* Search box */
+
+.devtools-searchbox {
+  height: 100%;
+}
+
+.devtools-plaininput:focus {
+  border: 1px solid var(--blue-50);
+  margin-bottom: 0;
+  margin-top: 0;
+  box-shadow: none;
 }

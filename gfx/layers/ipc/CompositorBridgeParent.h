@@ -140,10 +140,10 @@ public:
 
   virtual void DidComposite(LayersId aId, TimeStamp& aCompositeStart, TimeStamp& aCompositeEnd) {}
 
-  virtual void NotifyDidCompositeToPipeline(const wr::PipelineId& aPipelineId,
-                                            const wr::Epoch& aEpoch,
-                                            TimeStamp& aCompositeStart,
-                                            TimeStamp& aCompositeEnd) { MOZ_ASSERT_UNREACHABLE("WebRender only"); }
+  virtual void NotifyPipelineRendered(const wr::PipelineId& aPipelineId,
+                                      const wr::Epoch& aEpoch,
+                                      TimeStamp& aCompositeStart,
+                                      TimeStamp& aCompositeEnd) { MOZ_ASSERT_UNREACHABLE("WebRender only"); }
   virtual void NotifyPipelineRemoved(const wr::PipelineId& aPipelineId) { MOZ_ASSERT_UNREACHABLE("WebRender only"); }
 
   // HostIPCAllocator
@@ -580,13 +580,13 @@ protected:
   using CompositorBridgeParentBase::DidComposite;
   void DidComposite(TimeStamp& aCompositeStart, TimeStamp& aCompositeEnd);
 
-  void NotifyDidCompositeToPipeline(const wr::PipelineId& aPipelineId,
-                                    const wr::Epoch& aEpoch,
-                                    TimeStamp& aCompositeStart,
-                                    TimeStamp& aCompositeEnd) override;
+  void NotifyPipelineRendered(const wr::PipelineId& aPipelineId,
+                              const wr::Epoch& aEpoch,
+                              TimeStamp& aCompositeStart,
+                              TimeStamp& aCompositeEnd) override;
   void NotifyPipelineRemoved(const wr::PipelineId& aPipelineId) override;
 
-  void NotifyDidComposite(uint64_t aTransactionId, TimeStamp& aCompositeStart, TimeStamp& aCompositeEnd);
+  void NotifyDidComposite(TransactionId aTransactionId, TimeStamp& aCompositeStart, TimeStamp& aCompositeEnd);
 
   // The indirect layer tree lock must be held before calling this function.
   // Callback should take (LayerTreeState* aState, const LayersId& aLayersId)
@@ -603,7 +603,7 @@ protected:
   CSSToLayoutDeviceScale mScale;
   TimeDuration mVsyncRate;
 
-  uint64_t mPendingTransaction;
+  TransactionId mPendingTransaction;
   TimeStamp mTxnStartTime;
   TimeStamp mFwdTime;
 

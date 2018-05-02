@@ -10,15 +10,17 @@
 #include "mozilla/dom/HTMLAudioElement.h"
 #include "mozilla/dom/HTMLVideoElement.h"
 #include "mozilla/dom/ElementInlines.h"
+#include "mozilla/dom/PlayPromise.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/ArrayUtils.h"
-#include "mozilla/NotNull.h"
-#include "mozilla/MathAlgorithms.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/dom/MediaEncryptedEvent.h"
 #include "mozilla/EMEUtils.h"
 #include "mozilla/EventDispatcher.h"
+#include "mozilla/NotNull.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Sprintf.h"
+#include "mozilla/StaticPrefs.h"
 
 #include "AutoplayPolicy.h"
 #include "base/basictypes.h"
@@ -53,7 +55,6 @@
 #include "nsITimer.h"
 
 #include "MediaError.h"
-#include "MediaPrefs.h"
 #include "MediaResource.h"
 
 #include "nsICategoryManager.h"
@@ -124,7 +125,7 @@
 #undef GetCurrentTime
 #endif
 
-static mozilla::LazyLogModule gMediaElementLog("nsMediaElement");
+mozilla::LazyLogModule gMediaElementLog("nsMediaElement");
 static mozilla::LazyLogModule gMediaElementEventsLog("nsMediaElementEvents");
 
 #define LOG(type, msg) MOZ_LOG(gMediaElementLog, type, msg)
@@ -182,7 +183,7 @@ static const unsigned short MEDIA_ERR_DECODE = 3;
 static const unsigned short MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
 
 static void
-ResolvePromisesWithUndefined(const nsTArray<RefPtr<Promise>>& aPromises)
+ResolvePromisesWithUndefined(const nsTArray<RefPtr<PlayPromise>>& aPromises)
 {
   for (auto& promise : aPromises) {
     promise->MaybeResolveWithUndefined();
@@ -190,7 +191,7 @@ ResolvePromisesWithUndefined(const nsTArray<RefPtr<Promise>>& aPromises)
 }
 
 static void
-RejectPromises(const nsTArray<RefPtr<Promise>>& aPromises, nsresult aError)
+RejectPromises(const nsTArray<RefPtr<PlayPromise>>& aPromises, nsresult aError)
 {
   for (auto& promise : aPromises) {
     promise->MaybeReject(aError);
@@ -301,16 +302,19 @@ public:
  */
 class HTMLMediaElement::nsResolveOrRejectPendingPlayPromisesRunner : public nsMediaEvent
 {
-  nsTArray<RefPtr<Promise>> mPromises;
+  nsTArray<RefPtr<PlayPromise>> mPromises;
   nsresult mError;
 
 public:
-  nsResolveOrRejectPendingPlayPromisesRunner(HTMLMediaElement* aElement,
-                                             nsTArray<RefPtr<Promise>>&& aPromises,
-                                             nsresult aError = NS_OK)
-  : nsMediaEvent("HTMLMediaElement::nsResolveOrRejectPendingPlayPromisesRunner", aElement)
-  , mPromises(Move(aPromises))
-  , mError(aError)
+  nsResolveOrRejectPendingPlayPromisesRunner(
+    HTMLMediaElement* aElement,
+    nsTArray<RefPtr<PlayPromise>>&& aPromises,
+    nsresult aError = NS_OK)
+    : nsMediaEvent(
+        "HTMLMediaElement::nsResolveOrRejectPendingPlayPromisesRunner",
+        aElement)
+    , mPromises(Move(aPromises))
+    , mError(aError)
   {
     mElement->mPendingPlayPromisesRunners.AppendElement(this);
   }
@@ -338,10 +342,11 @@ public:
 class HTMLMediaElement::nsNotifyAboutPlayingRunner : public nsResolveOrRejectPendingPlayPromisesRunner
 {
 public:
-  nsNotifyAboutPlayingRunner(HTMLMediaElement* aElement,
-                             nsTArray<RefPtr<Promise>>&& aPendingPlayPromises)
-  : nsResolveOrRejectPendingPlayPromisesRunner(aElement,
-                                               Move(aPendingPlayPromises))
+  nsNotifyAboutPlayingRunner(
+    HTMLMediaElement* aElement,
+    nsTArray<RefPtr<PlayPromise>>&& aPendingPlayPromises)
+    : nsResolveOrRejectPendingPlayPromisesRunner(aElement,
+                                                 Move(aPendingPlayPromises))
   {
   }
 
@@ -2092,8 +2097,7 @@ void HTMLMediaElement::SelectResource()
       mMediaSource = mSrcMediaSource;
       DDLINKCHILD("mediasource", mMediaSource.get());
       UpdatePreloadAction();
-      if (mPreloadAction == HTMLMediaElement::PRELOAD_NONE &&
-          !IsMediaStreamURI(mLoadingSrc) && !mMediaSource) {
+      if (mPreloadAction == HTMLMediaElement::PRELOAD_NONE && !mMediaSource) {
         // preload:none media, suspend the load here before we make any
         // network requests.
         SuspendLoad();
@@ -2422,8 +2426,7 @@ void HTMLMediaElement::LoadFromSourceChildren()
     NS_ASSERTION(mNetworkState == NETWORK_LOADING,
                  "Network state should be loading");
 
-    if (mPreloadAction == HTMLMediaElement::PRELOAD_NONE &&
-        !IsMediaStreamURI(mLoadingSrc) && !mMediaSource) {
+    if (mPreloadAction == HTMLMediaElement::PRELOAD_NONE && !mMediaSource) {
       // preload:none media, suspend the load here before we make any
       // network requests.
       SuspendLoad();
@@ -2570,20 +2573,6 @@ HTMLMediaElement::LoadResource()
       static_cast<ChannelMediaDecoder*>(other->mDecoder.get()));
     if (NS_SUCCEEDED(rv))
       return rv;
-  }
-
-  if (IsMediaStreamURI(mLoadingSrc)) {
-    RefPtr<DOMMediaStream> stream;
-    nsresult rv = NS_GetStreamForMediaStreamURI(mLoadingSrc, getter_AddRefs(stream));
-    if (NS_FAILED(rv)) {
-      nsAutoString spec;
-      GetCurrentSrc(spec);
-      const char16_t* params[] = { spec.get() };
-      ReportLoadError("MediaLoadInvalidURI", params, ArrayLength(params));
-      return MediaResult(rv, "MediaLoadInvalidURI");
-    }
-    SetupSrcMediaStreamPlayback(stream);
-    return NS_OK;
   }
 
   if (mMediaSource) {
@@ -3965,7 +3954,7 @@ HTMLMediaElement::Play(ErrorResult& aRv)
     // A blocked media element will be resumed later, so we return a pending
     // promise which might be resolved/rejected depends on the result of
     // resuming the blocked media element.
-    RefPtr<Promise> promise = CreateDOMPromise(aRv);
+    RefPtr<PlayPromise> promise = CreatePlayPromise(aRv);
 
     if (NS_WARN_IF(aRv.Failed())) {
       return nullptr;
@@ -3989,6 +3978,12 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
 {
   MOZ_ASSERT(!aRv.Failed());
 
+  RefPtr<PlayPromise> promise = CreatePlayPromise(aRv);
+
+  if (NS_WARN_IF(aRv.Failed())) {
+    return nullptr;
+  }
+
   // 4.8.12.8
   // When the play() method on a media element is invoked, the user agent must
   // run the following steps.
@@ -4005,8 +4000,8 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
     // NOTE: for promise-based-play, will return a rejected promise here.
     LOG(LogLevel::Debug,
         ("%p Play() promise rejected because not allowed to play.", this));
-    aRv.Throw(NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR);
-    return nullptr;
+    promise->MaybeReject(NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR);
+    return promise.forget();
   }
 
   // 4.8.12.8 - Step 2:
@@ -4016,17 +4011,13 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
   if (GetError() && GetError()->Code() == MEDIA_ERR_SRC_NOT_SUPPORTED) {
     LOG(LogLevel::Debug,
         ("%p Play() promise rejected because source not supported.", this));
-    aRv.Throw(NS_ERROR_DOM_MEDIA_NOT_SUPPORTED_ERR);
-    return nullptr;
+    promise->MaybeReject(NS_ERROR_DOM_MEDIA_NOT_SUPPORTED_ERR);
+    return promise.forget();
   }
 
   // 4.8.12.8 - Step 3:
   // Let promise be a new promise and append promise to the list of pending
   // play promises.
-  RefPtr<Promise> promise = CreateDOMPromise(aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    return nullptr;
-  }
   mPendingPlayPromises.AppendElement(promise);
 
   if (mPreloadAction == HTMLMediaElement::PRELOAD_NONE) {
@@ -4076,8 +4067,8 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
           LOG(LogLevel::Debug,
               ("%p Play() promise rejected because failed to play MediaDecoder.",
               this));
-          aRv.Throw(rv);
-          return nullptr;
+          promise->MaybeReject(rv);
+          return promise.forget();
         }
       }
     }
@@ -4099,8 +4090,12 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
   UpdatePreloadAction();
   UpdateSrcMediaStreamPlaying();
 
-  // once media start playing, we would always allow it to autoplay
-  mIsBlessed = true;
+  // Once play() has been called in a user generated event handler,
+  // it is allowed to autoplay. Note: we can reach here when not in
+  // a user generated event handler if our readyState has not yet
+  // reached HAVE_METADATA.
+  mIsBlessed |= EventStateManager::IsHandlingUserInput();
+
 
   // TODO: If the playback has ended, then the user agent must set
   // seek to the effective start.
@@ -4465,7 +4460,8 @@ void HTMLMediaElement::HiddenVideoStart()
   }
   NS_NewTimerWithFuncCallback(getter_AddRefs(mVideoDecodeSuspendTimer),
                               VideoDecodeSuspendTimerCallback, this,
-                              MediaPrefs::MDSMSuspendBackgroundVideoDelay(), nsITimer::TYPE_ONE_SHOT,
+                              StaticPrefs::MediaSuspendBkgndVideoDelayMs(),
+                              nsITimer::TYPE_ONE_SHOT,
                               "HTMLMediaElement::VideoDecodeSuspendTimerCallback",
                               mMainThreadEventTarget);
 }
@@ -4637,7 +4633,8 @@ HTMLMediaElement::ReportTelemetry()
         // Here, we have played *some* of the video, but didn't get more than 1
         // keyframe. Report '0' if we have played for longer than the video-
         // decode-suspend delay (showing recovery would be difficult).
-        uint32_t suspendDelay_ms = MediaPrefs::MDSMSuspendBackgroundVideoDelay();
+        uint32_t suspendDelay_ms =
+          StaticPrefs::MediaSuspendBkgndVideoDelayMs();
         if (uint32_t(playTime * 1000.0) > suspendDelay_ms) {
           Telemetry::Accumulate(Telemetry::VIDEO_INTER_KEYFRAME_MAX_MS,
                                 key,
@@ -5534,7 +5531,6 @@ void HTMLMediaElement::PlaybackEnded()
 
   if (!mPaused) {
     Pause();
-    AsyncRejectPendingPlayPromises(NS_ERROR_DOM_MEDIA_ABORT_ERR);
   }
 
   if (mSrcStream) {
@@ -5956,8 +5952,9 @@ HTMLMediaElement::ChangeReadyState(nsMediaReadyState aState)
         if (IsAllowedToPlay()) {
           mDecoder->Play();
         } else {
-          AsyncRejectPendingPlayPromises(NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR);
           mPaused = true;
+          DispatchAsyncEvent(NS_LITERAL_STRING("pause"));
+          AsyncRejectPendingPlayPromises(NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR);
         }
       }
       NotifyAboutPlaying();
@@ -6521,12 +6518,6 @@ void HTMLMediaElement::NotifyShutdownEvent()
   mShuttingDown = true;
   ResetState();
   AddRemoveSelfReference();
-}
-
-bool
-HTMLMediaElement::IsNodeOfType(uint32_t aFlags) const
-{
-  return !(aFlags & ~eMEDIA);
 }
 
 void HTMLMediaElement::DispatchAsyncSourceError(nsIContent* aSourceElement)
@@ -7593,7 +7584,7 @@ HTMLMediaElement::AbstractMainThread() const
   return mAbstractMainThread;
 }
 
-nsTArray<RefPtr<Promise>>
+nsTArray<RefPtr<PlayPromise>>
 HTMLMediaElement::TakePendingPlayPromises()
 {
   return Move(mPendingPlayPromises);
@@ -7605,6 +7596,22 @@ HTMLMediaElement::NotifyAboutPlaying()
   // Stick to the DispatchAsyncEvent() call path for now because we want to
   // trigger some telemetry-related codes in the DispatchAsyncEvent() method.
   DispatchAsyncEvent(NS_LITERAL_STRING("playing"));
+}
+
+already_AddRefed<PlayPromise>
+HTMLMediaElement::CreatePlayPromise(ErrorResult& aRv) const
+{
+  nsPIDOMWindowInner* win = OwnerDoc()->GetInnerWindow();
+
+  if (!win) {
+    aRv.Throw(NS_ERROR_UNEXPECTED);
+    return nullptr;
+  }
+
+  RefPtr<PlayPromise> promise = PlayPromise::Create(win->AsGlobal(), aRv);
+  LOG(LogLevel::Debug, ("%p created PlayPromise %p", this, promise.get()));
+
+  return promise.forget();
 }
 
 already_AddRefed<Promise>

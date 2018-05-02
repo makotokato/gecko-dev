@@ -30,7 +30,7 @@ class HpackStaticTableReporter final : public nsIMemoryReporter
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
 
-  HpackStaticTableReporter() {}
+  HpackStaticTableReporter() = default;
 
   NS_IMETHOD
   CollectReports(nsIHandleReportCallback* aHandleReport, nsISupports* aData,
@@ -47,7 +47,7 @@ public:
 private:
   MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf)
 
-  ~HpackStaticTableReporter() {}
+  ~HpackStaticTableReporter() = default;
 };
 
 NS_IMPL_ISUPPORTS(HpackStaticTableReporter, nsIMemoryReporter)
@@ -77,7 +77,7 @@ public:
 private:
   MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf)
 
-  ~HpackDynamicTableReporter() {}
+  ~HpackDynamicTableReporter() = default;
 
   Http2BaseCompressor* mCompressor;
 
@@ -285,7 +285,7 @@ Http2BaseCompressor::Http2BaseCompressor()
   , mSetInitialMaxBufferSizeAllowed(true)
   , mPeakSize(0)
   , mPeakCount(0)
-/* FIXME: initialize mPeakSizeID */ /* FIXME: initialize mPeakCountID */ {
+{
   mDynamicReporter = new HpackDynamicTableReporter(this);
   RegisterStrongMemoryReporter(mDynamicReporter);
 }

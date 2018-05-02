@@ -606,7 +606,7 @@ previewers.Object = [
 
     if (rawObj instanceof Ci.nsIDOMDocument && rawObj.location) {
       preview.location = hooks.createValueGrip(rawObj.location.href);
-    } else if (rawObj instanceof Ci.nsIDOMDocumentFragment) {
+    } else if (obj.class == "DocumentFragment") {
       preview.childNodesLength = rawObj.childNodes.length;
 
       if (hooks.getGripDepth() < 2) {
@@ -619,7 +619,7 @@ previewers.Object = [
           }
         }
       }
-    } else if (rawObj instanceof Ci.nsIDOMElement) {
+    } else if (Element.isInstance(rawObj)) {
       // For HTML elements (in an HTML document, at least), the nodeName is an
       // uppercased version of the actual element name.  Check for HTML
       // elements, that is elements in the HTML namespace, and lowercase the
@@ -646,7 +646,7 @@ previewers.Object = [
   },
 
   function DOMEvent({obj, hooks}, grip, rawObj) {
-    if (isWorker || !rawObj || !(rawObj instanceof Ci.nsIDOMEvent)) {
+    if (isWorker || !rawObj || !Event.isInstance(rawObj)) {
       return false;
     }
 

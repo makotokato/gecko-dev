@@ -362,13 +362,12 @@ private:
 class WalkDiskCacheRunnable : public WalkCacheRunnable
 {
 public:
-  WalkDiskCacheRunnable(nsILoadContextInfo* aLoadInfo,
+  WalkDiskCacheRunnable(nsILoadContextInfo *aLoadInfo,
                         bool aVisitEntries,
                         nsICacheStorageVisitor* aVisitor)
     : WalkCacheRunnable(aVisitor, aVisitEntries)
     , mLoadInfo(aLoadInfo)
     , mPass(COLLECT_STATS)
-    , mCount{}
   {
   }
 
@@ -397,11 +396,6 @@ private:
     explicit OnCacheEntryInfoRunnable(WalkDiskCacheRunnable* aWalker)
       : Runnable("net::WalkDiskCacheRunnable::OnCacheEntryInfoRunnable")
       , mWalker(aWalker)
-      , mDataSize{}
-      , mFetchCount{}
-      , mLastModifiedTime{}
-      , mExpirationTime{}
-      , mPinned{ false }
     {
     }
 
@@ -592,7 +586,7 @@ private:
 #endif
   }
 
-  virtual ~CleaupCacheDirectoriesRunnable() {}
+  virtual ~CleaupCacheDirectoriesRunnable() = default;
   nsCOMPtr<nsIFile> mCache1Dir, mCache2Dir;
 #if defined(MOZ_WIDGET_ANDROID)
   nsCOMPtr<nsIFile> mCache2Profileless;
@@ -1639,10 +1633,7 @@ public:
   NS_DECL_NSIRUNNABLE
 
   explicit CacheEntryDoomByKeyCallback(nsICacheEntryDoomCallback* aCallback)
-    : mCallback(aCallback)
-    , mResult{ NS_ERROR_NOT_INITIALIZED }
-  {
-  }
+    : mCallback(aCallback) { }
 
 private:
   virtual ~CacheEntryDoomByKeyCallback();

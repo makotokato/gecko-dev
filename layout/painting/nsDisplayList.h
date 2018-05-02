@@ -320,9 +320,6 @@ struct ActiveScrolledRoot {
 
 private:
   ActiveScrolledRoot()
-    : mScrollableFrame{ nullptr }
-    , mDepth{}
-    , mRetained{ false }
   {
   }
 
@@ -714,9 +711,7 @@ public:
   void RecomputeCurrentAnimatedGeometryRoot();
 
   void Check() {
-#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
     mPool.Check();
-#endif
   }
 
   /**
@@ -1192,7 +1187,6 @@ public:
     AutoSaveRestorePerspectiveIndex(nsDisplayListBuilder* aBuilder,
                                     const bool aChildrenHavePerspective)
       : mBuilder(nullptr)
-      , mCachedItemIndex{}
     {
       if (aChildrenHavePerspective) {
         mBuilder = aBuilder;
@@ -1749,6 +1743,12 @@ public:
       return true;
     }
     return false;
+  }
+
+  void RebuildAllItemsInCurrentSubtree()
+  {
+    mInInvalidSubtree = true;
+    mDirtyRect = mVisibleRect;
   }
 
   /**
@@ -2845,6 +2845,20 @@ public:
 
   mozilla::DisplayItemData* GetDisplayItemData() { return mDisplayItemData; }
 
+  // Set the nsDisplayList that this item belongs to, and what
+  // index it is within that list. Temporary state for merging
+  // used by RetainedDisplayListBuilder.
+  void SetOldListIndex(nsDisplayList* aList, OldListIndex aIndex)
+  {
+    mOldList = reinterpret_cast<uintptr_t>(aList);
+    mOldListIndex = aIndex;
+  }
+  OldListIndex GetOldListIndex(nsDisplayList* aList)
+  {
+    MOZ_ASSERT(mOldList == reinterpret_cast<uintptr_t>(aList));
+    return mOldListIndex;
+  }
+
 protected:
   nsDisplayItem() = delete;
 
@@ -2869,6 +2883,10 @@ protected:
   // of the item. Paint implementations can use this to limit their drawing.
   // Guaranteed to be contained in GetBounds().
   nsRect    mVisibleRect;
+
+  mozilla::DebugOnly<uintptr_t> mOldList;
+  OldListIndex mOldListIndex;
+
   bool      mForceNotVisible;
   bool      mDisableSubpixelAA;
   bool      mReusedItem;
@@ -3435,7 +3453,6 @@ public:
   {
     AppendToTop(&aOther);
     mDAG = mozilla::Move(aOther.mDAG);
-    mKeyLookup.SwapElements(aOther.mKeyLookup);
   }
   ~RetainedDisplayList()
   {
@@ -3448,7 +3465,6 @@ public:
     MOZ_ASSERT(mOldItems.IsEmpty(), "Can only move into an empty list!");
     AppendToTop(&aOther);
     mDAG = mozilla::Move(aOther.mDAG);
-    mKeyLookup.SwapElements(aOther.mKeyLookup);
     return *this;
   }
 
@@ -3466,7 +3482,6 @@ public:
   void ClearDAG();
 
   DirectedAcyclicGraph<MergedListUnits> mDAG;
-  nsDataHashtable<DisplayItemHashEntry, size_t> mKeyLookup;
 
   // Temporary state initialized during the preprocess pass
   // of RetainedDisplayListBuilder and then used during merging.
@@ -5000,13 +5015,15 @@ public:
   nsDisplayWrapList(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
                     nsDisplayList* aList,
                     const ActiveScrolledRoot* aActiveScrolledRoot,
-                    bool aClearClipChain = false);
+                    bool aClearClipChain = false,
+                    uint32_t aIndex = 0);
   nsDisplayWrapList(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
                     nsDisplayItem* aItem);
   nsDisplayWrapList(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame)
     : nsDisplayItem(aBuilder, aFrame)
     , mFrameActiveScrolledRoot(aBuilder->CurrentActiveScrolledRoot())
     , mOverrideZIndex(0)
+    , mIndex(0)
     , mHasZIndexOverride(false)
   {
     MOZ_COUNT_CTOR(nsDisplayWrapList);
@@ -5027,6 +5044,7 @@ public:
     , mBounds(aOther.mBounds)
     , mBaseVisibleRect(aOther.mBaseVisibleRect)
     , mOverrideZIndex(aOther.mOverrideZIndex)
+    , mIndex(aOther.mIndex)
     , mHasZIndexOverride(aOther.mHasZIndexOverride)
     , mClearingClipChain(aOther.mClearingClipChain)
   {
@@ -5095,6 +5113,11 @@ public:
   virtual void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
   virtual bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                  nsRegion* aVisibleRegion) override;
+
+  virtual uint32_t GetPerFrameKey() const override
+  {
+    return (mIndex << TYPE_BITS) | nsDisplayItem::GetPerFrameKey();
+  }
 
   virtual bool CanMerge(const nsDisplayItem* aItem) const override
   {
@@ -5210,6 +5233,7 @@ protected:
   // Our mVisibleRect may include the visible areas of children.
   nsRect mBaseVisibleRect;
   int32_t mOverrideZIndex;
+  uint32_t mIndex;
   bool mHasZIndexOverride;
   bool mClearingClipChain = false;
 };
@@ -5604,18 +5628,18 @@ public:
                     nsDisplayList* aList,
                     const ActiveScrolledRoot* aActiveScrolledRoot,
                     nsDisplayOwnLayerFlags aFlags = nsDisplayOwnLayerFlags::eNone,
-                    ViewID aScrollTarget = mozilla::layers::FrameMetrics::NULL_SCROLL_ID,
-                    const ScrollbarData& aThumbData = ScrollbarData{},
+                    const ScrollbarData& aScrollbarData = ScrollbarData{},
                     bool aForceActive = true,
                     bool aClearClipChain = false);
+
 #ifdef NS_BUILD_REFCNT_LOGGING
   virtual ~nsDisplayOwnLayer();
 #endif
+
   nsDisplayOwnLayer(nsDisplayListBuilder* aBuilder, const nsDisplayOwnLayer& aOther)
     : nsDisplayWrapList(aBuilder, aOther)
     , mFlags(aOther.mFlags)
-    , mScrollTarget(aOther.mScrollTarget)
-    , mThumbData(aOther.mThumbData)
+    , mScrollbarData(aOther.mScrollbarData)
     , mForceActive(aOther.mForceActive)
     , mWrAnimationId(aOther.mWrAnimationId)
   {
@@ -5655,12 +5679,15 @@ public:
   NS_DISPLAY_DECL_NAME("OwnLayer", TYPE_OWN_LAYER)
 protected:
   nsDisplayOwnLayerFlags mFlags;
-  ViewID mScrollTarget;
-  // If this nsDisplayOwnLayer represents a scroll thumb layer, mThumbData
-  // stores information about the scroll thumb. Otherwise, mThumbData will be
-  // default-constructed (in particular with mDirection == Nothing())
-  // and can be ignored.
-  ScrollbarData mThumbData;
+
+  /**
+   * If this nsDisplayOwnLayer represents a scroll thumb layer or a
+   * scrollbar container layer, mScrollbarData stores information
+   * about the scrollbar. Otherwise, mScrollbarData will be
+   * default-constructed (in particular with mDirection == Nothing())
+   * and can be ignored.
+   */
+  ScrollbarData mScrollbarData;
   bool mForceActive;
   uint64_t mWrAnimationId;
 };

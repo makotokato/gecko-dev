@@ -49,7 +49,6 @@ args = [
 [structs]
 headers = [
     "nsStyleStruct.h",
-    "mozilla/ServoPropPrefList.h",
     "mozilla/StyleAnimationValue.h",
     "gfxFontConstants.h",
     "gfxFontFeatures.h",
@@ -59,6 +58,7 @@ headers = [
     "mozilla/dom/AnimationEffectReadOnlyBinding.h",
     "mozilla/dom/HTMLSlotElement.h",
     "mozilla/dom/KeyframeEffectBinding.h",
+    "mozilla/dom/MediaList.h",
     "mozilla/dom/ShadowRoot.h",
     "mozilla/AnimationPropertySegment.h",
     "mozilla/ComputedTiming.h",
@@ -73,11 +73,11 @@ headers = [
     "mozilla/LookAndFeel.h",
     "mozilla/StaticPrefs.h",
     "mozilla/ServoBindings.h",
-    "mozilla/ServoMediaList.h",
     "mozilla/ComputedStyle.h",
     "mozilla/ServoDeclarationBlock.h",
     "mozilla/ServoTraversalStatistics.h",
     "mozilla/SizeOfState.h",
+    "nsCSSProps.h",
     "nsContentUtils.h",
     "nsNameSpaceManager.h",
     "nsMediaFeatures.h",
@@ -97,13 +97,11 @@ hide-types = [
     "nsString",
     ".*char_traits",
     ".*incompatible_char_type",
-    # JS::Value and JS::UninitializedValue use alignas(8) which bindgen
-    # can't represent correctly on Linux 32-bit.  See
-    # https://github.com/rust-lang-nursery/rust-bindgen/issues/917.
+    # JS::Value uses alignas(8) which bindgen can't represent correctly on Linux
+    # 32-bit.  See https://github.com/rust-lang-nursery/rust-bindgen/issues/917.
     # It's also not used by Stylo.  The following types are also hidden for
     # making use of it and being similarly unused by Stylo.
     "JS::Value",
-    "JS::UninitializedValue",
     "mozilla::binding_danger::TErrorResult.*",
     "mozilla::ErrorResult.*", # Causes JSWhyMagic to be included & handled incorrectly.
     "mozilla::dom::CallbackFunction",
@@ -191,9 +189,6 @@ rusty-enums = [
     "mozilla::StyleGeometryBox",
     "mozilla::SystemColor",
 ]
-constified-enum-variants = [
-    { enum = "nsCSSPropertyID", variants = ["eCSSProperty_COUNT.*"] },
-]
 whitelist-vars = [
     "NS_AUTHOR_SPECIFIED_.*",
     "NS_THEME_.*",
@@ -205,7 +200,6 @@ whitelist-vars = [
     "NS_RADIUS_.*",
     "BORDER_COLOR_.*",
     "BORDER_STYLE_.*",
-    "mozilla::SERVO_PREF_.*",
     "CSS_PSEUDO_ELEMENT_.*",
     "SERVO_CSS_PSEUDO_ELEMENT_FLAGS_.*",
     "kNameSpaceID_.*",
@@ -232,6 +226,7 @@ whitelist-types = [
     "mozilla::css::ErrorReporter",
     "mozilla::css::LoaderReusableStyleSheets",
     "mozilla::css::SheetLoadData",
+    "mozilla::css::SheetLoadDataHolder",
     "mozilla::css::SheetParsingMode",
     "mozilla::css::URLMatchingFunction",
     "mozilla::dom::IterationCompositeOperation",
@@ -278,6 +273,7 @@ whitelist-types = [
     "nsChangeHint",
     "nsCSSCounterDesc",
     "nsCSSFontDesc",
+    "nsCSSKTableEntry",
     "nsCSSKeyword",
     "nsCSSPropertyID",
     "nsCSSPropertyIDSet",
@@ -297,7 +293,6 @@ whitelist-types = [
     "nsMargin",
     "nsMediaFeature",
     "nsMediaFeatures",
-    "nsMediaList",
     "nsRect",
     "nsRestyleHint",
     "nsresult",
@@ -368,7 +363,7 @@ whitelist-types = [
     "mozilla::ParsingMode",
     "mozilla::InheritTarget",
     "mozilla::ServoDeclarationBlock",
-    "mozilla::ServoMediaList",
+    "mozilla::dom::MediaList",
     "mozilla::StyleRuleInclusion",
     "nsStyleTransformMatrix::MatrixTransformOperator",
 ]
@@ -463,6 +458,9 @@ structs-types = [
     "mozilla::dom::CallerType",
     "mozilla::AnonymousCounterStyle",
     "mozilla::AtomArray",
+    "mozilla::FontStretch",
+    "mozilla::FontSlantStyle",
+    "mozilla::FontWeight",
     "mozilla::MallocSizeOf",
     "mozilla::OriginFlags",
     "mozilla::UniquePtr",
@@ -589,6 +587,7 @@ structs-types = [
     "Loader",
     "LoaderReusableStyleSheets",
     "SheetLoadData",
+    "SheetLoadDataHolder",
     "ServoStyleSheet",
     "ServoComputedData",
     "ComputedStyleStrong",

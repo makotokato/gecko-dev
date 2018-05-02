@@ -76,7 +76,8 @@ void brush_vs(
     RectWithSize local_rect,
     ivec3 user_data,
     mat4 transform,
-    PictureTask pic_task
+    PictureTask pic_task,
+    vec4 unused
 ) {
     vec2 f = (vi.local_pos - local_rect.p0) / local_rect.size;
 
@@ -134,7 +135,7 @@ const mat3 YuvColorMatrix = mat3(
 );
 #endif
 
-vec4 brush_fs() {
+Fragment brush_fs() {
     vec3 yuv_value;
 
 #if defined (WR_FEATURE_YUV_PLANAR)
@@ -168,6 +169,6 @@ vec4 brush_fs() {
     color *= init_transform_fs(vLocalPos);
 #endif
 
-    return color;
+    return Fragment(color);
 }
 #endif

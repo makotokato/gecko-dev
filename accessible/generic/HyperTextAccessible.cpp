@@ -219,7 +219,7 @@ HyperTextAccessible::DOMPointToOffset(nsINode* aNode, int32_t aNodeOffset,
   if (aNodeOffset == -1) {
     findNode = aNode;
 
-  } else if (aNode->IsNodeOfType(nsINode::eTEXT)) {
+  } else if (aNode->IsText()) {
     // For text nodes, aNodeOffset comes in as a character offset
     // Text offset will be added at the end, if we find the offset in this hypertext
     // We want the "skipped" offset into the text (rendered text without the extra whitespace)
@@ -1272,6 +1272,16 @@ HyperTextAccessible::TextBounds(int32_t aStartOffset, int32_t aEndOffset,
     offset1 = 0;
   }
 
+  // This document may have a resolution set, we will need to multiply
+  // the document-relative coordinates by that value and re-apply the doc's
+  // screen coordinates.
+  nsPresContext* presContext = mDoc->PresContext();
+  nsIFrame* rootFrame = presContext->PresShell()->GetRootFrame();
+  nsIntRect orgRectPixels = rootFrame->GetScreenRectInAppUnits().ToNearestPixels(presContext->AppUnitsPerDevPixel());
+  bounds.MoveBy(-orgRectPixels.X(), -orgRectPixels.Y());
+  bounds.ScaleRoundOut(presContext->PresShell()->GetResolution());
+  bounds.MoveBy(orgRectPixels.X(), orgRectPixels.Y());
+
   auto boundsX = bounds.X();
   auto boundsY = bounds.Y();
   nsAccUtils::ConvertScreenCoordsTo(&boundsX, &boundsY, aCoordType, this);
@@ -1362,7 +1372,7 @@ HyperTextAccessible::SetSelectionRange(int32_t aStartPos, int32_t aEndPos)
     nsIDocument* docNode = mDoc->DocumentNode();
     NS_ENSURE_TRUE(docNode, NS_ERROR_FAILURE);
     nsCOMPtr<nsPIDOMWindowOuter> window = docNode->GetWindow();
-    nsCOMPtr<nsIDOMElement> result;
+    RefPtr<dom::Element> result;
     DOMFocusManager->MoveFocus(window, nullptr, nsIFocusManager::MOVEFOCUS_CARET,
                                nsIFocusManager::FLAG_BYMOVEFOCUS, getter_AddRefs(result));
   }
@@ -1393,7 +1403,7 @@ HyperTextAccessible::CaretOffset() const
     // Ignore offset if cached accessible isn't a text leaf.
     if (nsCoreUtils::IsAncestorOf(GetNode(), textNode))
       return TransformOffset(text,
-        textNode->IsNodeOfType(nsINode::eTEXT) ? caretOffset : 0, false);
+        textNode->IsText() ? caretOffset : 0, false);
   }
 
   // No caret if the focused node is not inside this DOM node and this DOM node

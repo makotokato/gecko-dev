@@ -10,7 +10,6 @@
 #include "nsContentCID.h"
 #include "nsIContent.h"
 #include "nsIDOMNode.h"
-#include "nsIDOMNodeList.h"
 #include "nsISelection.h"
 #include "nsISelectionController.h"
 #include "nsIFrame.h"
@@ -21,12 +20,12 @@
 #include "nsAtom.h"
 #include "nsServiceManagerUtils.h"
 #include "nsUnicharUtils.h"
-#include "nsIDOMElement.h"
 #include "nsCRT.h"
 #include "nsRange.h"
 #include "nsContentUtils.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/TextEditor.h"
+#include "mozilla/dom/Element.h"
 
 using namespace mozilla;
 
@@ -389,11 +388,9 @@ nsFindContentIterator::SetupInnerIterator(nsIContent* aContent)
     return;
   }
 
-  nsCOMPtr<nsIDOMElement> rootElement;
-  textEditor->GetRootElement(getter_AddRefs(rootElement));
+  RefPtr<dom::Element> rootElement = textEditor->GetRoot();
 
-  nsCOMPtr<nsINode> rootNode = do_QueryInterface(rootElement);
-  if (!rootNode) {
+  if (!rootElement) {
     return;
   }
 
@@ -407,7 +404,7 @@ nsFindContentIterator::SetupInnerIterator(nsIContent* aContent)
   mInnerIterator = do_CreateInstance(kCPreContentIteratorCID);
 
   if (mInnerIterator) {
-    innerRange->SelectNodeContents(*rootNode, IgnoreErrors());
+    innerRange->SelectNodeContents(*rootElement, IgnoreErrors());
 
     // fix up the inner bounds, we may have to only lookup a portion
     // of the text control if the current node is a boundary point
@@ -494,7 +491,7 @@ DumpNode(nsIDOMNode* aNode)
   nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
   nsString nodeName = node->NodeName();
   nsCOMPtr<nsIContent> textContent(do_QueryInterface(aNode));
-  if (textContent && textContent->IsNodeOfType(nsINode::eTEXT)) {
+  if (textContent && textContent->IsText()) {
     nsAutoString newText;
     textContent->AppendTextTo(newText);
     printf(">>>> Text node (node name %s): '%s'\n",
@@ -666,7 +663,7 @@ nsFind::NextNode(nsRange* aSearchRange,
     printf(":::::: Got the first node ");
     DumpNode(dnode);
 #endif
-    if (content && content->IsNodeOfType(nsINode::eTEXT) &&
+    if (content && content->IsText() &&
         !SkipNode(content)) {
       mIterNode = content;
       // Also set mIterOffset if appropriate:
@@ -727,7 +724,7 @@ nsFind::NextNode(nsRange* aSearchRange,
       continue;
     }
 
-    if (content->IsNodeOfType(nsINode::eTEXT)) {
+    if (content->IsText()) {
       break;
     }
 #ifdef DEBUG_FIND
@@ -859,7 +856,7 @@ nsFind::SkipNode(nsIContent* aContent)
 #ifdef HAVE_BIDI_ITERATOR
   // We may not need to skip comment nodes, now that IsTextNode distinguishes
   // them from real text nodes.
-  return aContent->IsNodeOfType(nsINode::eCOMMENT) ||
+  return aContent->IsComment() ||
          aContent->IsAnyOfHTMLElements(sScriptAtom, sNoframesAtom, sSelectAtom);
 
 #else /* HAVE_BIDI_ITERATOR */
@@ -869,7 +866,7 @@ nsFind::SkipNode(nsIContent* aContent)
 
   nsIContent* content = aContent;
   while (content) {
-    if (aContent->IsNodeOfType(nsINode::eCOMMENT) ||
+    if (aContent->IsComment() ||
         content->IsAnyOfHTMLElements(nsGkAtoms::script,
                                      nsGkAtoms::noframes,
                                      nsGkAtoms::select)) {

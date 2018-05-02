@@ -7,7 +7,7 @@ use api::{ApiMsg, BuiltDisplayList, ClearCache, DebugCommand};
 use api::{BuiltDisplayListIter, SpecificDisplayItem};
 use api::{DeviceIntPoint, DevicePixelScale, DeviceUintPoint, DeviceUintRect, DeviceUintSize};
 use api::{DocumentId, DocumentLayer, ExternalScrollId, FrameMsg, HitTestResult};
-use api::{IdNamespace, LayerPoint, PipelineId, RenderNotifier, SceneMsg, ScrollClamping};
+use api::{IdNamespace, LayoutPoint, PipelineId, RenderNotifier, SceneMsg, ScrollClamping};
 use api::{ScrollLocation, ScrollNodeState, TransactionMsg, WorldPoint};
 use api::channel::{MsgReceiver, Payload};
 #[cfg(feature = "capture")]
@@ -24,7 +24,7 @@ use hit_test::{HitTest, HitTester};
 use internal_types::{DebugOutput, FastHashMap, FastHashSet, RenderedDocument, ResultMsg};
 use profiler::{BackendProfileCounters, IpcProfileCounters, ResourceProfileCounters};
 use record::ApiRecordingReceiver;
-use renderer::PipelineInfo;
+use renderer::{AsyncPropertySampler, PipelineInfo};
 use resource_cache::ResourceCache;
 #[cfg(feature = "replay")]
 use resource_cache::PlainCacheOwn;
@@ -327,7 +327,7 @@ impl Document {
     /// Returns true if the node actually changed position or false otherwise.
     pub fn scroll_node(
         &mut self,
-        origin: LayerPoint,
+        origin: LayoutPoint,
         id: ExternalScrollId,
         clamp: ScrollClamping
     ) -> bool {
@@ -429,6 +429,7 @@ pub struct RenderBackend {
 
     notifier: Box<RenderNotifier>,
     recorder: Option<Box<ApiRecordingReceiver>>,
+    sampler: Option<Box<AsyncPropertySampler + Send>>,
 
     enable_render_on_scroll: bool,
 }
@@ -445,6 +446,7 @@ impl RenderBackend {
         notifier: Box<RenderNotifier>,
         frame_config: FrameBuilderConfig,
         recorder: Option<Box<ApiRecordingReceiver>>,
+        sampler: Option<Box<AsyncPropertySampler + Send>>,
         enable_render_on_scroll: bool,
     ) -> RenderBackend {
         // The namespace_id should start from 1.
@@ -464,6 +466,7 @@ impl RenderBackend {
             documents: FastHashMap::default(),
             notifier,
             recorder,
+            sampler,
             enable_render_on_scroll,
         }
     }
@@ -681,6 +684,10 @@ impl RenderBackend {
         let mut frame_counter: u32 = 0;
         let mut keep_going = true;
 
+        if let Some(ref sampler) = self.sampler {
+            sampler.register();
+        }
+
         while keep_going {
             profile_scope!("handle_msg");
 
@@ -724,6 +731,12 @@ impl RenderBackend {
                                 &mut profile_counters
                             );
                         }
+                    },
+                    SceneBuilderResult::FlushComplete(tx) => {
+                        tx.send(()).ok();
+                    }
+                    SceneBuilderResult::Stopped => {
+                        panic!("We haven't sent a Stop yet, how did we get a Stopped back?");
                     }
                 }
             }
@@ -740,7 +753,28 @@ impl RenderBackend {
         }
 
         let _ = self.scene_tx.send(SceneBuilderRequest::Stop);
+        // Ensure we read everything the scene builder is sending us from
+        // inflight messages, otherwise the scene builder might panic.
+        while let Ok(msg) = self.scene_rx.recv() {
+            match msg {
+                SceneBuilderResult::FlushComplete(tx) => {
+                    // If somebody's blocked waiting for a flush, how did they
+                    // trigger the RB thread to shut down? This shouldn't happen
+                    // but handle it gracefully anyway.
+                    debug_assert!(false);
+                    tx.send(()).ok();
+                }
+                SceneBuilderResult::Stopped => break,
+                _ => continue,
+            }
+        }
+
         self.notifier.shut_down();
+
+        if let Some(ref sampler) = self.sampler {
+            sampler.deregister();
+        }
+
     }
 
     fn process_api_msg(
@@ -753,6 +787,9 @@ impl RenderBackend {
             ApiMsg::WakeUp => {}
             ApiMsg::WakeSceneBuilder => {
                 self.scene_tx.send(SceneBuilderRequest::WakeUp).unwrap();
+            }
+            ApiMsg::FlushSceneBuilder(tx) => {
+                self.scene_tx.send(SceneBuilderRequest::Flush(tx)).unwrap();
             }
             ApiMsg::UpdateResources(updates) => {
                 self.resource_cache
@@ -946,6 +983,17 @@ impl RenderBackend {
             doc.render_on_hittest = true;
         }
 
+        // If we have a sampler, get more frame ops from it and add them
+        // to the transaction. This is a hook to allow the WR user code to
+        // fiddle with things after a potentially long scene build, but just
+        // before rendering. This is useful for rendering with the latest
+        // async transforms.
+        if transaction_msg.generate_frame {
+            if let Some(ref sampler) = self.sampler {
+                transaction_msg.frame_ops.append(&mut sampler.sample());
+            }
+        }
+
         for frame_msg in transaction_msg.frame_ops {
             let _timer = profile_counters.total_time.timer();
             op.combine(self.process_frame_msg(document_id, frame_msg));
@@ -1011,8 +1059,8 @@ impl RenderBackend {
             doc.render_on_hittest = false;
         }
 
-        if op.render || op.scroll {
-            self.notifier.new_document_ready(document_id, op.scroll, op.composite);
+        if transaction_msg.generate_frame {
+            self.notifier.new_frame_ready(document_id, op.scroll, op.composite);
         }
     }
 
@@ -1305,7 +1353,7 @@ impl RenderBackend {
             self.result_tx.send(msg_publish).unwrap();
             profile_counters.reset();
 
-            self.notifier.new_document_ready(id, false, true);
+            self.notifier.new_frame_ready(id, false, true);
             self.documents.insert(id, doc);
         }
     }

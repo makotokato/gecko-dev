@@ -77,6 +77,7 @@ public:
 
   void UpdateDynamicProperties(const nsTArray<wr::WrOpacityProperty>& aOpacityArray,
                                const nsTArray<wr::WrTransformProperty>& aTransformArray);
+  void AppendTransformProperties(const nsTArray<wr::WrTransformProperty>& aTransformArray);
 
   void SetWindowParameters(const LayoutDeviceIntSize& aWindowSize,
                            const LayoutDeviceIntRect& aDocRect);
@@ -146,6 +147,19 @@ protected:
   wr::ResourceUpdates* mResourceUpdates;
 };
 
+class TransactionWrapper
+{
+public:
+  explicit TransactionWrapper(Transaction* aTxn);
+
+  void AppendTransformProperties(const nsTArray<wr::WrTransformProperty>& aTransformArray);
+  void UpdateScrollPosition(const wr::WrPipelineId& aPipelineId,
+                            const layers::FrameMetrics::ViewID& aScrollId,
+                            const wr::LayoutPoint& aScrollPosition);
+private:
+  Transaction* mTxn;
+};
+
 class WebRenderAPI
 {
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(WebRenderAPI);
@@ -160,8 +174,8 @@ public:
   already_AddRefed<WebRenderAPI> CreateDocument(LayoutDeviceIntSize aSize, int8_t aLayerIndex);
 
   // Redirect the WR's log to gfxCriticalError/Note.
-  static void InitExternalLogHandler();
-  static void ShutdownExternalLogHandler();
+  static void InitRustLogForGpuProcess();
+  static void ShutdownRustLogForGpuProcess();
 
   already_AddRefed<WebRenderAPI> Clone();
 
@@ -184,6 +198,7 @@ public:
   bool Resume();
 
   void WakeSceneBuilder();
+  void FlushSceneBuilder();
 
   wr::WrIdNamespace GetNamespace();
   uint32_t GetMaxTextureSize() const { return mMaxTextureSize; }

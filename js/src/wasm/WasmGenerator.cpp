@@ -844,6 +844,7 @@ ModuleGenerator::finishMetadata(const ShareableBytes& bytecode)
     // Copy over data from the ModuleEnvironment.
 
     metadata_->memoryUsage = env_->memoryUsage;
+    metadata_->temporaryHasGcTypes = env_->gcTypesEnabled;
     metadata_->minMemoryLength = env_->minMemoryLength;
     metadata_->maxMemoryLength = env_->maxMemoryLength;
     metadata_->startFuncIndex = env_->startFuncIndex;
@@ -1027,4 +1028,29 @@ ModuleGenerator::finishTier2(Module& module)
     }
 
     return module.finishTier2(Move(linkDataTier_), Move(tier2), env_);
+}
+
+size_t
+CompiledCode::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const
+{
+    size_t trapSitesSize = 0;
+    for (const TrapSiteVector& vec : trapSites)
+        trapSitesSize += vec.sizeOfExcludingThis(mallocSizeOf);
+
+    return bytes.sizeOfExcludingThis(mallocSizeOf) +
+           codeRanges.sizeOfExcludingThis(mallocSizeOf) +
+           callSites.sizeOfExcludingThis(mallocSizeOf) +
+           callSiteTargets.sizeOfExcludingThis(mallocSizeOf) +
+           trapSitesSize +
+           callFarJumps.sizeOfExcludingThis(mallocSizeOf) +
+           symbolicAccesses.sizeOfExcludingThis(mallocSizeOf) +
+           codeLabels.sizeOfExcludingThis(mallocSizeOf);
+}
+
+size_t
+CompileTask::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const
+{
+    return lifo.sizeOfExcludingThis(mallocSizeOf) +
+           inputs.sizeOfExcludingThis(mallocSizeOf) +
+           output.sizeOfExcludingThis(mallocSizeOf);
 }

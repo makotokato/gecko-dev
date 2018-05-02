@@ -88,7 +88,7 @@ PlacesController.prototype = {
   // actually organising the trees.
   disableUserActions: false,
 
-  QueryInterface: XPCOMUtils.generateQI([
+  QueryInterface: ChromeUtils.generateQI([
     Ci.nsIClipboardOwner
   ]),
 
@@ -176,7 +176,9 @@ PlacesController.prototype = {
     case "placesCmd_show:info": {
       let selectedNode = this._view.selectedNode;
       return selectedNode && (PlacesUtils.nodeIsTagQuery(selectedNode) ||
-                              PlacesUtils.nodeIsBookmark(selectedNode));
+                              PlacesUtils.nodeIsBookmark(selectedNode) ||
+                              (PlacesUtils.nodeIsFolder(selectedNode) &&
+                               !PlacesUtils.isQueryGeneratedFolder(selectedNode)));
     }
     case "placesCmd_reload": {
       // Livemark containers

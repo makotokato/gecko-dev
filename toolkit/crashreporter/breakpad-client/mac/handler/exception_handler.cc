@@ -254,7 +254,7 @@ ExceptionHandler::ExceptionHandler(DirectCallback callback,
                                    void* callback_context,
                                    bool install_handler)
     : dump_path_(),
-      dump_path_c_{nullptr}, next_minidump_id_c_{nullptr}, next_minidump_path_c_{nullptr}, filter_(NULL),
+      filter_(NULL),
       callback_(NULL),
       callback_context_(callback_context),
       directCallback_(callback),
@@ -694,7 +694,14 @@ bool ExceptionHandler::UninstallHandler(bool in_exception) {
     mprotect(gProtectedData.protected_buffer, PAGE_SIZE,
         PROT_READ | PROT_WRITE);
 #endif
-    old_handler_.reset();
+    // If we're handling an exception, leak the sigaction struct
+    // because it is unsafe to delete objects while in exception
+    // handling context.
+    if (in_exception) {
+      old_handler_.release();
+    } else {
+      old_handler_.reset();
+    }
     gProtectedData.handler = NULL;
   }
 

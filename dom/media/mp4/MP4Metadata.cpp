@@ -13,7 +13,6 @@
 #include "MoofParser.h"
 #include "MP4Metadata.h"
 #include "ByteStream.h"
-#include "MediaPrefs.h"
 #include "mp4parse.h"
 
 #include <limits>
@@ -27,7 +26,6 @@ LazyLogModule gMP4MetadataLog("MP4Metadata");
 
 IndiceWrapper::IndiceWrapper(Mp4parseByteData& aIndice)
 {
-  this->mIndice.data = { nullptr };
   mIndice.length = aIndice.length;
   mIndice.indices = aIndice.indices;
 }

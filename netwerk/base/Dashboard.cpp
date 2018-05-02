@@ -50,9 +50,7 @@ public:
     nsIEventTarget *mEventTarget;
 
 private:
-    virtual ~SocketData()
-    {
-    }
+    virtual ~SocketData() = default;
 };
 
 static void GetErrorString(nsresult rv, nsAString& errorString);
@@ -63,9 +61,7 @@ NS_IMPL_ISUPPORTS0(SocketData)
 class HttpData
     : public nsISupports
 {
-    virtual ~HttpData()
-    {
-    }
+    virtual ~HttpData() = default;
 
 public:
     NS_DECL_THREADSAFE_ISUPPORTS
@@ -86,9 +82,7 @@ NS_IMPL_ISUPPORTS0(HttpData)
 class WebSocketRequest
     : public nsISupports
 {
-    virtual ~WebSocketRequest()
-    {
-    }
+    virtual ~WebSocketRequest() = default;
 
 public:
     NS_DECL_THREADSAFE_ISUPPORTS
@@ -108,9 +102,7 @@ NS_IMPL_ISUPPORTS0(WebSocketRequest)
 class DnsData
     : public nsISupports
 {
-    virtual ~DnsData()
-    {
-    }
+    virtual ~DnsData() = default;
 
 public:
     NS_DECL_THREADSAFE_ISUPPORTS
@@ -155,13 +147,10 @@ public:
     void StartTimer(uint32_t aTimeout);
     void StopTimer();
 
-    explicit ConnectionData(Dashboard* target)
-      : mPort{}
-      , mProtocol{ nullptr }
-      , mTimeout{}
+    explicit ConnectionData(Dashboard *target)
     {
-      mEventTarget = nullptr;
-      mDashboard = target;
+        mEventTarget = nullptr;
+        mDashboard = target;
     }
 
     nsCOMPtr<nsISocketTransport> mSocket;
@@ -185,9 +174,7 @@ NS_IMPL_ISUPPORTS(ConnectionData, nsITransportEventSink, nsITimerCallback, nsINa
 class RcwnData
     : public nsISupports
 {
-    virtual ~RcwnData()
-    {
-    }
+    virtual ~RcwnData() = default;
 
 public:
     NS_DECL_THREADSAFE_ISUPPORTS
@@ -268,9 +255,7 @@ class LookupHelper;
 class LookupArgument
     : public nsISupports
 {
-    virtual ~LookupArgument()
-    {
-    }
+    virtual ~LookupArgument() = default;
 
 public:
     NS_DECL_THREADSAFE_ISUPPORTS
@@ -302,11 +287,7 @@ public:
     NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_NSIDNSLISTENER
 
-    LookupHelper()
-      : mEventTarget{ nullptr }
-      , mStatus{ NS_ERROR_NOT_INITIALIZED }
-    {
-    }
+    LookupHelper() = default;
 
     nsresult ConstructAnswer(LookupArgument *aArgument);
 public:
@@ -381,10 +362,6 @@ NS_IMPL_ISUPPORTS(Dashboard, nsIDashboard, nsIDashboardEventNotifier)
 Dashboard::Dashboard()
 {
     mEnableLogging = false;
-}
-
-Dashboard::~Dashboard()
-{
 }
 
 NS_IMETHODIMP
@@ -1027,9 +1004,9 @@ ErrorEntry socketTransportStatuses[] = {
 static void
 GetErrorString(nsresult rv, nsAString& errorString)
 {
-    for (size_t i = 0; i < ArrayLength(socketTransportStatuses); ++i) {
-        if (socketTransportStatuses[i].key == rv) {
-            errorString.AssignASCII(socketTransportStatuses[i].error);
+    for (auto& socketTransportStatus : socketTransportStatuses) {
+        if (socketTransportStatus.key == rv) {
+            errorString.AssignASCII(socketTransportStatus.error);
             return;
         }
     }

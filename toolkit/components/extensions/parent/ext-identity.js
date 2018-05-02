@@ -14,7 +14,7 @@ var {
 const checkRedirected = (url, redirectURI) => {
   return new Promise((resolve, reject) => {
     let xhr = new XMLHttpRequest();
-    xhr.open("HEAD", url);
+    xhr.open("GET", url);
     // We expect this if the user has not authenticated.
     xhr.onload = () => {
       reject(0);
@@ -25,9 +25,9 @@ const checkRedirected = (url, redirectURI) => {
     };
     // Catch redirect to our redirect_uri before a new request is made.
     xhr.channel.notificationCallbacks = {
-      QueryInterface: XPCOMUtils.generateQI([Ci.nsIInterfaceRequestor, Ci.nsIChannelEventSync]),
+      QueryInterface: ChromeUtils.generateQI([Ci.nsIInterfaceRequestor, Ci.nsIChannelEventSync]),
 
-      getInterface: XPCOMUtils.generateQI([Ci.nsIChannelEventSink]),
+      getInterface: ChromeUtils.generateQI([Ci.nsIChannelEventSink]),
 
       asyncOnChannelRedirect(oldChannel, newChannel, flags, callback) {
         let responseURL = newChannel.URI.spec;

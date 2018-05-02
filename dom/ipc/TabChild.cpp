@@ -20,6 +20,7 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/EventListenerManager.h"
 #include "mozilla/dom/DataTransfer.h"
+#include "mozilla/dom/Event.h"
 #include "mozilla/dom/indexedDB/PIndexedDBPermissionRequestChild.h"
 #include "mozilla/dom/MessageManagerBinding.h"
 #include "mozilla/dom/MouseEventBinding.h"
@@ -70,7 +71,6 @@
 #include "nsIDocShellTreeOwner.h"
 #include "nsIDOMChromeWindow.h"
 #include "nsIDOMDocument.h"
-#include "nsIDOMEvent.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMWindowUtils.h"
 #include "nsFocusManager.h"
@@ -282,10 +282,10 @@ TabChildBase::ProcessUpdateFrame(const FrameMetrics& aFrameMetrics)
 }
 
 NS_IMETHODIMP
-ContentListener::HandleEvent(nsIDOMEvent* aEvent)
+ContentListener::HandleEvent(Event* aEvent)
 {
   RemoteDOMEvent remoteEvent;
-  remoteEvent.mEvent = do_QueryInterface(aEvent);
+  remoteEvent.mEvent = aEvent;
   NS_ENSURE_STATE(remoteEvent.mEvent);
   mTabChild->SendEvent(remoteEvent);
   return NS_OK;
@@ -405,9 +405,8 @@ TabChild::TabChild(nsIContentChild* aManager,
   , mChromeFlags(aChromeFlags)
   , mMaxTouchPoints(0)
   , mActiveSuppressDisplayport(0)
-  , mLayersId{ 0 }
+  , mLayersId{0}
   , mBeforeUnloadListeners(0)
-  , mLastBackgroundColor{}
   , mDidFakeShow(false)
   , mNotified(false)
   , mTriedBrowserInit(false)
@@ -2685,7 +2684,7 @@ TabChild::RecvNavigateByKey(const bool& aForward, const bool& aForDocumentNaviga
 {
   nsIFocusManager* fm = nsFocusManager::GetFocusManager();
   if (fm) {
-    nsCOMPtr<nsIDOMElement> result;
+    RefPtr<Element> result;
     nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
 
     // Move to the first or last document.
@@ -3125,7 +3124,7 @@ TabChild::GetFrom(layers::LayersId aLayersId)
 }
 
 void
-TabChild::DidComposite(uint64_t aTransactionId,
+TabChild::DidComposite(mozilla::layers::TransactionId aTransactionId,
                        const TimeStamp& aCompositeStart,
                        const TimeStamp& aCompositeEnd)
 {

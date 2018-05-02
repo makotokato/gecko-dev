@@ -1764,10 +1764,11 @@ window._gBrowser = {
   },
 
   _isPreloadingEnabled() {
-    // Preloading for the newtab page is enabled when the pref is true
+    // Preloading for the newtab page is enabled when the prefs are true
     // and the URL is "about:newtab". We do not support preloading for
-    // custom newtab URLs.
+    // custom newtab URLs -- only for the default Firefox Home page.
     return Services.prefs.getBoolPref("browser.newtab.preload") &&
+      Services.prefs.getBoolPref("browser.newtabpage.enabled") &&
       !aboutNewTabService.overridden;
   },
 
@@ -2745,8 +2746,14 @@ window._gBrowser = {
 
     // swapBrowsersAndCloseOther will take care of closing the window without animation.
     if (closeWindow && aAdoptedByTab) {
-      // Remove the tab's filter to avoid leaking.
+      // Remove the tab's filter and progress listener to avoid leaking.
       if (aTab.linkedPanel) {
+        const filter = this._tabFilters.get(aTab);
+        browser.webProgress.removeProgressListener(filter);
+        const listener = this._tabListeners.get(aTab);
+        filter.removeProgressListener(listener);
+        listener.destroy();
+        this._tabListeners.delete(aTab);
         this._tabFilters.delete(aTab);
       }
       return true;
@@ -2882,6 +2889,10 @@ window._gBrowser = {
 
     // Remove the tab ...
     this.tabContainer.removeChild(aTab);
+
+    // Update hashiddentabs if this tab was hidden.
+    if (aTab.hidden)
+      this.tabContainer._updateHiddenTabsStatus();
 
     // ... and fix up the _tPos properties immediately.
     for (let i = aTab._tPos; i < this.tabs.length; i++)
@@ -4563,16 +4574,11 @@ class TabProgressListener {
     return this._callProgressListeners("onRefreshAttempted",
                                        [aWebProgress, aURI, aDelay, aSameURI]);
   }
-
-  QueryInterface(aIID) {
-    if (aIID.equals(Ci.nsIWebProgressListener) ||
-        aIID.equals(Ci.nsIWebProgressListener2) ||
-        aIID.equals(Ci.nsISupportsWeakReference) ||
-        aIID.equals(Ci.nsISupports))
-      return this;
-    throw Cr.NS_NOINTERFACE;
-  }
 }
+TabProgressListener.prototype.QueryInterface = ChromeUtils.generateQI(
+  ["nsIWebProgressListener",
+   "nsIWebProgressListener2",
+   "nsISupportsWeakReference"]);
 
 var StatusPanel = {
   get panel() {
@@ -4636,16 +4642,22 @@ var StatusPanel = {
     }
 
     if (val) {
-      this._labelElement.value = val;
-      this.panel.removeAttribute("inactive");
       this._mouseTargetRect = null;
+      this._labelElement.value = val;
       MousePosTracker.addListener(this);
+      // The inactive state for the panel will be removed in onTrackingStarted,
+      // once the initial position of the mouse relative to the StatusPanel
+      // is figured out (to avoid both flicker and sync flushing).
     } else {
       this.panel.setAttribute("inactive", "true");
       MousePosTracker.removeListener(this);
     }
 
     return val;
+  },
+
+  onTrackingStarted() {
+    this.panel.removeAttribute("inactive");
   },
 
   getMouseTargetRect() {

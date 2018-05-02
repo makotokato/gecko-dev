@@ -140,6 +140,14 @@ GetBuildConfiguration(JSContext* cx, unsigned argc, Value* vp)
     if (!JS_SetProperty(cx, info, "release_or_beta", value))
         return false;
 
+#ifdef MOZ_CODE_COVERAGE
+    value = BooleanValue(true);
+#else
+    value = BooleanValue(false);
+#endif
+    if (!JS_SetProperty(cx, info, "coverage", value))
+        return false;
+
 #ifdef JS_HAS_CTYPES
     value = BooleanValue(true);
 #else
@@ -580,6 +588,19 @@ WasmSaturatingTruncationSupported(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 #ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
     bool isSupported = true;
+#else
+    bool isSupported = false;
+#endif
+    args.rval().setBoolean(isSupported);
+    return true;
+}
+
+static bool
+WasmGcEnabled(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+#ifdef ENABLE_WASM_GC
+    bool isSupported = cx->options().wasmBaseline() && cx->options().wasmGc();
 #else
     bool isSupported = false;
 #endif
@@ -1529,7 +1550,7 @@ OOMThreadTypes(JSContext* cx, unsigned argc, Value* vp)
 static bool
 CheckCanSimulateOOM(JSContext* cx)
 {
-    if (js::oom::GetThreadType() != js::THREAD_TYPE_COOPERATING) {
+    if (js::oom::GetThreadType() != js::THREAD_TYPE_MAIN) {
         JS_ReportErrorASCII(cx, "Simulated OOM failure is only supported on the main thread");
         return false;
     }
@@ -1566,7 +1587,7 @@ SetupOOMFailure(JSContext* cx, bool failAlways, unsigned argc, Value* vp)
         return false;
     }
 
-    uint32_t targetThread = js::THREAD_TYPE_COOPERATING;
+    uint32_t targetThread = js::THREAD_TYPE_MAIN;
     if (args.length() > 1 && !ToUint32(cx, args[1], &targetThread))
         return false;
 
@@ -1612,8 +1633,7 @@ static size_t
 CountCompartments(JSContext* cx)
 {
     size_t count = 0;
-    ZoneGroup* group = cx->compartment()->zone()->group();
-    for (auto zone : group->zones())
+    for (auto zone : cx->runtime()->gc.zones())
         count += zone->compartments().length();
     return count;
 }
@@ -2730,13 +2750,14 @@ SetIonCheckGraphCoherency(JSContext* cx, unsigned argc, Value* vp)
     return true;
 }
 
+// A JSObject that holds structured clone data, similar to the C++ class
+// JSAutoStructuredCloneBuffer.
 class CloneBufferObject : public NativeObject {
     static const JSPropertySpec props_[3];
 
     static const size_t DATA_SLOT = 0;
-    static const size_t LENGTH_SLOT = 1;
-    static const size_t SYNTHETIC_SLOT = 2;
-    static const size_t NUM_SLOTS = 3;
+    static const size_t SYNTHETIC_SLOT = 1;
+    static const size_t NUM_SLOTS = 2;
 
   public:
     static const Class class_;
@@ -2746,7 +2767,6 @@ class CloneBufferObject : public NativeObject {
         if (!obj)
             return nullptr;
         obj->as<CloneBufferObject>().setReservedSlot(DATA_SLOT, PrivateValue(nullptr));
-        obj->as<CloneBufferObject>().setReservedSlot(LENGTH_SLOT, Int32Value(0));
         obj->as<CloneBufferObject>().setReservedSlot(SYNTHETIC_SLOT, BooleanValue(false));
 
         if (!JS_DefineProperties(cx, obj, props_))
@@ -2781,14 +2801,16 @@ class CloneBufferObject : public NativeObject {
         MOZ_ASSERT(!data());
         setReservedSlot(DATA_SLOT, PrivateValue(aData));
         setReservedSlot(SYNTHETIC_SLOT, BooleanValue(synthetic));
+
+        // For testing only, and will be unnecessary once the scope is moved
+        // into JSStructuredCloneData.
+        if (synthetic)
+            aData->IgnoreTransferables();
     }
 
     // Discard an owned clone buffer.
     void discard() {
-        if (data()) {
-            JSAutoStructuredCloneBuffer clonebuf(JS::StructuredCloneScope::SameProcessSameThread, nullptr, nullptr);
-            clonebuf.adopt(Move(*data()));
-        }
+        js_delete(data());
         setReservedSlot(DATA_SLOT, PrivateValue(nullptr));
     }
 
@@ -2821,13 +2843,13 @@ class CloneBufferObject : public NativeObject {
             return false;
         }
 
-        auto buf = js::MakeUnique<JSStructuredCloneData>(0, 0, nbytes);
-        if (!buf || !buf->Init(nbytes, nbytes)) {
+        auto buf = js::MakeUnique<JSStructuredCloneData>();
+        if (!buf || !buf->Init(nbytes)) {
             ReportOutOfMemory(cx);
             return false;
         }
 
-        js_memcpy(buf->Start(), data, nbytes);
+        MOZ_ALWAYS_TRUE(buf->AppendBytes((const char*)data, nbytes));
         obj->discard();
         obj->setData(buf.release(), true);
 
@@ -2881,7 +2903,7 @@ class CloneBufferObject : public NativeObject {
             ReportOutOfMemory(cx);
             return false;
         }
-        auto iter = data->Iter();
+        auto iter = data->Start();
         data->ReadBytes(iter, buffer.get(), size);
         JSString* str = JS_NewStringCopyN(cx, buffer.get(), size);
         if (!str)
@@ -2911,7 +2933,7 @@ class CloneBufferObject : public NativeObject {
             ReportOutOfMemory(cx);
             return false;
         }
-        auto iter = data->Iter();
+        auto iter = data->Start();
         data->ReadBytes(iter, buffer.get(), size);
         JSObject* arrayBuffer = JS_NewArrayBufferWithContents(cx, size, buffer.release());
         if (!arrayBuffer)
@@ -2969,6 +2991,8 @@ ParseCloneScope(JSContext* cx, HandleString str)
         scope.emplace(JS::StructuredCloneScope::SameProcessDifferentThread);
     else if (strcmp(scopeStr.ptr(), "DifferentProcess") == 0)
         scope.emplace(JS::StructuredCloneScope::DifferentProcess);
+    else if (strcmp(scopeStr.ptr(), "DifferentProcessForIndexedDB") == 0)
+        scope.emplace(JS::StructuredCloneScope::DifferentProcessForIndexedDB);
 
     return scope;
 }
@@ -3071,6 +3095,12 @@ Deserialize(JSContext* cx, unsigned argc, Value* vp)
                 return false;
             }
 
+            if (*maybeScope < scope) {
+                JS_ReportErrorASCII(cx, "Cannot use less restrictive scope "
+                                    "than the deserialized clone buffer's scope");
+                return false;
+            }
+
             scope = *maybeScope;
         }
     }
@@ -3086,13 +3116,6 @@ Deserialize(JSContext* cx, unsigned argc, Value* vp)
     if (!JS_StructuredCloneHasTransferables(*obj->data(), &hasTransferable))
         return false;
 
-    if (obj->isSynthetic() &&
-        (scope != JS::StructuredCloneScope::DifferentProcess || hasTransferable))
-    {
-        JS_ReportErrorASCII(cx, "clone buffer data is synthetic but may contain pointers");
-        return false;
-    }
-
     RootedValue deserialized(cx);
     if (!JS_ReadStructuredClone(cx, *obj->data(),
                                 JS_STRUCTURED_CLONE_VERSION,
@@ -3103,6 +3126,8 @@ Deserialize(JSContext* cx, unsigned argc, Value* vp)
     }
     args.rval().set(deserialized);
 
+    // Consume any clone buffer with transferables; throw an error if it is
+    // deserialized again.
     if (hasTransferable)
         obj->discard();
 
@@ -5504,6 +5529,10 @@ gc::ZealModeHelpText),
 "  Returns a boolean indicating whether a given module has finished compiled code for tier2. \n"
 "This will return true early if compilation isn't two-tiered. "),
 
+    JS_FN_HELP("wasmGcEnabled", WasmGcEnabled, 1, 0,
+"wasmGcEnabled(bool)",
+"  Returns a boolean indicating whether the WebAssembly GC support is enabled."),
+
     JS_FN_HELP("isLazyFunction", IsLazyFunction, 1, 0,
 "isLazyFunction(fun)",
 "  True if fun is a lazy JSFunction."),
@@ -5564,20 +5593,22 @@ gc::ZealModeHelpText),
 "  clone buffer object. 'policy' may be an options hash. Valid keys:\n"
 "    'SharedArrayBuffer' - either 'allow' (the default) or 'deny'\n"
 "      to specify whether SharedArrayBuffers may be serialized.\n"
-"    'scope' - SameProcessSameThread, SameProcessDifferentThread, or\n"
-"      DifferentProcess. Determines how some values will be serialized.\n"
-"      Clone buffers may only be deserialized with a compatible scope.\n"
-"      NOTE - For DifferentProcess, must also set SharedArrayBuffer:'deny'\n"
-"      if data contains any shared memory object."),
+"    'scope' - SameProcessSameThread, SameProcessDifferentThread,\n"
+"      DifferentProcess, or DifferentProcessForIndexedDB. Determines how some\n"
+"      values will be serialized. Clone buffers may only be deserialized with a\n"
+"      compatible scope. NOTE - For DifferentProcess/DifferentProcessForIndexedDB,\n"
+"      must also set SharedArrayBuffer:'deny' if data contains any shared memory\n"
+"      object."),
 
     JS_FN_HELP("deserialize", Deserialize, 1, 0,
 "deserialize(clonebuffer[, opts])",
 "  Deserialize data generated by serialize. 'opts' is an options hash with one\n"
 "  recognized key 'scope', which limits the clone buffers that are considered\n"
 "  valid. Allowed values: 'SameProcessSameThread', 'SameProcessDifferentThread',\n"
-"  and 'DifferentProcess'. So for example, a DifferentProcess clone buffer\n"
-"  may be deserialized in any scope, but a SameProcessSameThread clone buffer\n"
-"  cannot be deserialized in a DifferentProcess scope."),
+"  'DifferentProcess', and 'DifferentProcessForIndexedDB'. So for example, a\n"
+"  DifferentProcessForIndexedDB clone buffer may be deserialized in any scope, but\n"
+"  a SameProcessSameThread clone buffer cannot be deserialized in a\n"
+"  DifferentProcess scope."),
 
     JS_FN_HELP("detachArrayBuffer", DetachArrayBuffer, 1, 0,
 "detachArrayBuffer(buffer)",

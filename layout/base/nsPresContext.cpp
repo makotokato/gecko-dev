@@ -86,7 +86,6 @@
 #include "imgIContainer.h"
 #include "nsIImageLoadingContent.h"
 
-#include "nsCSSParser.h"
 #include "nsBidiUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsBidi.h"
@@ -144,7 +143,7 @@ nsPresContext::IsDOMPaintEventPending()
     // Since we're promising that there will be a MozAfterPaint event
     // fired, we record an empty invalidation in case display list
     // invalidation doesn't invalidate anything further.
-    NotifyInvalidation(drpc->mRefreshDriver->LastTransactionId() + 1, nsRect(0, 0, 0, 0));
+    NotifyInvalidation(drpc->mRefreshDriver->LastTransactionId().Next(), nsRect(0, 0, 0, 0));
     return true;
   }
   return false;
@@ -843,8 +842,8 @@ nsPresContext::Init(nsDeviceContext* aDeviceContext)
 
   mAnimationEventDispatcher = new mozilla::AnimationEventDispatcher(this);
   mEffectCompositor = new mozilla::EffectCompositor(this);
-  mTransitionManager = new nsTransitionManager(this);
-  mAnimationManager = new nsAnimationManager(this);
+  mTransitionManager = MakeUnique<nsTransitionManager>(this);
+  mAnimationManager = MakeUnique<nsAnimationManager>(this);
 
   if (mDocument->GetDisplayDocument()) {
     NS_ASSERTION(mDocument->GetDisplayDocument()->GetPresContext(),
@@ -956,7 +955,7 @@ nsPresContext::AttachShell(nsIPresShell* aShell)
   MOZ_ASSERT(!mShell);
   mShell = aShell;
 
-  mRestyleManager = new mozilla::RestyleManager(this);
+  mRestyleManager = MakeUnique<mozilla::RestyleManager>(this);
 
   // Since CounterStyleManager is also the name of a method of
   // nsPresContext, it is necessary to prefix the class with the mozilla
@@ -1177,15 +1176,12 @@ nsPresContext::CompatibilityModeChanged()
     return;
   }
 
-  nsIDocument* doc = mShell->GetDocument();
-  if (!doc) {
-    return;
-  }
-
   ServoStyleSet* styleSet = mShell->StyleSet();
   styleSet->CompatibilityModeChanged();
 
-  if (doc->IsSVGDocument()) {
+  mShell->EnsureStyleFlush();
+
+  if (mDocument->IsSVGDocument()) {
     // SVG documents never load quirk.css.
     return;
   }
@@ -1463,13 +1459,11 @@ GetPropagatedScrollbarStylesForViewport(nsPresContext* aPresContext,
   // XXX this should be earlier; we shouldn't even look at the document root
   // for non-HTML documents. Fix this once we support explicit CSS styling
   // of the viewport
-  // XXX what about XHTML?
-  nsHTMLDocument* htmlDoc = document->AsHTMLDocument();
-  if (!htmlDoc || !docElement->IsHTMLElement()) {
+  if (!document->IsHTMLOrXHTML() || !docElement->IsHTMLElement()) {
     return nullptr;
   }
 
-  Element* bodyElement = htmlDoc->GetBodyElement();
+  Element* bodyElement = document->AsHTMLDocument()->GetBodyElement();
   if (!bodyElement) {
     // No body, nothing to do here.
     return nullptr;
@@ -2331,7 +2325,8 @@ nsPresContext::EnsureSafeToHandOutCSSRules()
 }
 
 void
-nsPresContext::FireDOMPaintEvent(nsTArray<nsRect>* aList, uint64_t aTransactionId,
+nsPresContext::FireDOMPaintEvent(nsTArray<nsRect>* aList,
+                                 TransactionId aTransactionId,
                                  mozilla::TimeStamp aTimeStamp /* = mozilla::TimeStamp() */)
 {
   nsPIDOMWindowInner* ourWindow = mDocument->GetInnerWindow();
@@ -2370,7 +2365,7 @@ nsPresContext::FireDOMPaintEvent(nsTArray<nsRect>* aList, uint64_t aTransactionI
   // it won't be blocking app execution though).
   RefPtr<NotifyPaintEvent> event =
     NS_NewDOMNotifyPaintEvent(eventTarget, this, nullptr, eAfterPaint, aList,
-                              aTransactionId, timeStamp);
+                              uint64_t(aTransactionId), timeStamp);
 
   // Even if we're not telling the window about the event (so eventTarget is
   // the chrome event handler, not the window), the window is still
@@ -2460,7 +2455,7 @@ nsPresContext::MayHavePaintEventListenerInSubDocument()
 }
 
 void
-nsPresContext::NotifyInvalidation(uint64_t aTransactionId, const nsIntRect& aRect)
+nsPresContext::NotifyInvalidation(TransactionId aTransactionId, const nsIntRect& aRect)
 {
   // Prevent values from overflow after DevPixelsToAppUnits().
   //
@@ -2481,7 +2476,7 @@ nsPresContext::NotifyInvalidation(uint64_t aTransactionId, const nsIntRect& aRec
 }
 
 nsPresContext::TransactionInvalidations*
-nsPresContext::GetInvalidations(uint64_t aTransactionId)
+nsPresContext::GetInvalidations(TransactionId aTransactionId)
 {
   for (TransactionInvalidations& t : mTransactions) {
     if (t.mTransactionId == aTransactionId) {
@@ -2492,7 +2487,7 @@ nsPresContext::GetInvalidations(uint64_t aTransactionId)
 }
 
 void
-nsPresContext::NotifyInvalidation(uint64_t aTransactionId, const nsRect& aRect)
+nsPresContext::NotifyInvalidation(TransactionId aTransactionId, const nsRect& aRect)
 {
   MOZ_ASSERT(GetContainerWeak(), "Invalidation in detached pres context");
 
@@ -2535,7 +2530,7 @@ nsPresContext::NotifySubDocInvalidation(ContainerLayer* aContainer,
     return;
   }
 
-  uint64_t transactionId = aContainer->Manager()->GetLastTransactionId();
+  TransactionId transactionId = aContainer->Manager()->GetLastTransactionId();
   IntRect visibleBounds = aContainer->GetVisibleRegion().GetBounds().ToUnknownRect();
 
   if (!aRegion) {
@@ -2570,7 +2565,7 @@ nsPresContext::ClearNotifySubDocInvalidationData(ContainerLayer* aContainer)
 }
 
 struct NotifyDidPaintSubdocumentCallbackClosure {
-  uint64_t mTransactionId;
+  TransactionId mTransactionId;
   const mozilla::TimeStamp& mTimeStamp;
 };
 /* static */ bool
@@ -2591,7 +2586,7 @@ public:
   DelayedFireDOMPaintEvent(
     nsPresContext* aPresContext,
     nsTArray<nsRect>* aList,
-    uint64_t aTransactionId,
+    TransactionId aTransactionId,
     const mozilla::TimeStamp& aTimeStamp = mozilla::TimeStamp())
     : mozilla::Runnable("DelayedFireDOMPaintEvent")
     , mPresContext(aPresContext)
@@ -2613,13 +2608,13 @@ public:
   }
 
   RefPtr<nsPresContext> mPresContext;
-  uint64_t mTransactionId;
+  TransactionId mTransactionId;
   const mozilla::TimeStamp mTimeStamp;
   nsTArray<nsRect> mList;
 };
 
 void
-nsPresContext::NotifyDidPaintForSubtree(uint64_t aTransactionId,
+nsPresContext::NotifyDidPaintForSubtree(TransactionId aTransactionId,
                                         const mozilla::TimeStamp& aTimeStamp)
 {
   if (IsRoot()) {
@@ -2916,6 +2911,18 @@ nsPresContext::NotifyNonBlankPaint()
     }
 
     mFirstNonBlankPaintTime = TimeStamp::Now();
+  }
+}
+
+void
+nsPresContext::NotifyDOMContentFlushed()
+{
+  NS_ENSURE_TRUE_VOID(mShell);
+  if (IsRootContentDocument()) {
+    RefPtr<nsDOMNavigationTiming> timing = mDocument->GetNavigationTiming();
+    if (timing) {
+      timing->NotifyDOMContentFlushedForRootContentDocument();
+    }
   }
 }
 
@@ -3285,7 +3292,7 @@ nsRootPresContext::CollectPluginGeometryUpdates(LayerManager* aLayerManager)
 }
 
 void
-nsRootPresContext::EnsureEventualDidPaintEvent(uint64_t aTransactionId)
+nsRootPresContext::EnsureEventualDidPaintEvent(TransactionId aTransactionId)
 {
   for (NotifyDidPaintTimer& t : mNotifyDidPaintTimers) {
     if (t.mTransactionId == aTransactionId) {
@@ -3311,7 +3318,7 @@ nsRootPresContext::EnsureEventualDidPaintEvent(uint64_t aTransactionId)
 }
 
 void
-nsRootPresContext::CancelDidPaintTimers(uint64_t aTransactionId)
+nsRootPresContext::CancelDidPaintTimers(TransactionId aTransactionId)
 {
   uint32_t i = 0;
   while (i < mNotifyDidPaintTimers.Length()) {

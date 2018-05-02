@@ -54,8 +54,6 @@
 #include "nsIContent.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeOwner.h"
-#include "nsIDOMElement.h"
-#include "nsIDOMEvent.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMWindowUtils.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -163,8 +161,6 @@ TabParent::TabParent(nsIContentParent* aManager,
   , mTabId(aTabId)
   , mCreatingWindow(false)
   , mCursor(eCursorInvalid)
-  , mCustomCursorHotspotX{}
-  , mCustomCursorHotspotY{}
   , mTabSetsCursor(false)
   , mHasContentOpener(false)
 #ifdef DEBUG
@@ -491,15 +487,14 @@ TabParent::RecvMoveFocus(const bool& aForward, const bool& aForDocumentNavigatio
 {
   nsCOMPtr<nsIFocusManager> fm = do_GetService(FOCUSMANAGER_CONTRACTID);
   if (fm) {
-    nsCOMPtr<nsIDOMElement> dummy;
+    RefPtr<Element> dummy;
 
     uint32_t type = aForward ?
       (aForDocumentNavigation ? static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_FORWARDDOC) :
                                 static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_FORWARD)) :
       (aForDocumentNavigation ? static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_BACKWARDDOC) :
                                 static_cast<uint32_t>(nsIFocusManager::MOVEFOCUS_BACKWARD));
-    nsCOMPtr<nsIDOMElement> frame = do_QueryInterface(mFrameElement);
-    fm->MoveFocus(nullptr, frame, type, nsIFocusManager::FLAG_BYKEY,
+    fm->MoveFocus(nullptr, mFrameElement, type, nsIFocusManager::FLAG_BYKEY,
                   getter_AddRefs(dummy));
   }
   return IPC_OK();
@@ -574,7 +569,7 @@ TabParent::RecvDropLinks(nsTArray<nsString>&& aLinks)
 mozilla::ipc::IPCResult
 TabParent::RecvEvent(const RemoteDOMEvent& aEvent)
 {
-  nsCOMPtr<nsIDOMEvent> event = do_QueryInterface(aEvent.mEvent);
+  RefPtr<Event> event = aEvent.mEvent;
   NS_ENSURE_TRUE(event, IPC_OK());
 
   nsCOMPtr<mozilla::dom::EventTarget> target = do_QueryInterface(mFrameElement);
@@ -582,7 +577,7 @@ TabParent::RecvEvent(const RemoteDOMEvent& aEvent)
 
   event->SetOwner(target);
 
-  target->DispatchEvent(*event->InternalDOMEvent());
+  target->DispatchEvent(*event);
   return IPC_OK();
 }
 
@@ -1745,7 +1740,7 @@ TabParent::RecvSetCustomCursor(const nsCString& aCursorData,
                                const uint32_t& aWidth,
                                const uint32_t& aHeight,
                                const uint32_t& aStride,
-                               const uint8_t& aFormat,
+                               const gfx::SurfaceFormat& aFormat,
                                const uint32_t& aHotspotX,
                                const uint32_t& aHotspotY,
                                const bool& aForce)
@@ -1763,7 +1758,7 @@ TabParent::RecvSetCustomCursor(const nsCString& aCursorData,
 
       RefPtr<gfx::DataSourceSurface> customCursor =
           gfx::CreateDataSourceSurfaceFromData(size,
-                                               static_cast<gfx::SurfaceFormat>(aFormat),
+                                               aFormat,
                                                reinterpret_cast<const uint8_t*>(aCursorData.BeginReading()),
                                                aStride);
 
@@ -1816,9 +1811,6 @@ TabParent::RecvSetStatus(const uint32_t& aType, const nsString& aStatus)
   }
 
   switch (aType) {
-   case nsIWebBrowserChrome::STATUS_SCRIPT:
-    xulBrowserWindow->SetJSStatus(aStatus);
-    break;
    case nsIWebBrowserChrome::STATUS_LINK:
     xulBrowserWindow->SetOverLink(aStatus, nullptr);
     break;
@@ -2035,8 +2027,8 @@ TabParent::RecvRequestFocus(const bool& aCanRaise)
   if (aCanRaise)
     flags |= nsIFocusManager::FLAG_RAISE;
 
-  nsCOMPtr<nsIDOMElement> node = do_QueryInterface(mFrameElement);
-  fm->SetFocus(node, flags);
+  RefPtr<Element> element = mFrameElement;
+  fm->SetFocus(element, flags);
   return IPC_OK();
 }
 
@@ -2154,7 +2146,7 @@ TabParent::RecvReplyKeyEvent(const WidgetKeyboardEvent& aEvent)
   WidgetKeyboardEvent localEvent(aEvent);
   localEvent.MarkAsHandledInRemoteProcess();
 
-  // Here we convert the WidgetEvent that we received to an nsIDOMEvent
+  // Here we convert the WidgetEvent that we received to an Event
   // to be able to dispatch it to the <browser> element as the target element.
   nsIDocument* doc = mFrameElement->OwnerDoc();
   nsPresContext* presContext = doc->GetPresContext();
@@ -2210,7 +2202,7 @@ TabParent::RecvAccessKeyNotHandled(const WidgetKeyboardEvent& aEvent)
   localEvent.MarkAsHandledInRemoteProcess();
   localEvent.mMessage = eAccessKeyNotFound;
 
-  // Here we convert the WidgetEvent that we received to an nsIDOMEvent
+  // Here we convert the WidgetEvent that we received to an Event
   // to be able to dispatch it to the <browser> element as the target element.
   nsIDocument* doc = mFrameElement->OwnerDoc();
   nsIPresShell* presShell = doc->GetShell();
@@ -2597,8 +2589,7 @@ TabParent::GetAuthPrompt(uint32_t aPromptReason, const nsIID& iid,
 
   nsCOMPtr<nsILoginManagerPrompter> prompter = do_QueryInterface(prompt);
   if (prompter) {
-    nsCOMPtr<nsIDOMElement> browser = do_QueryInterface(mFrameElement);
-    prompter->SetBrowser(browser);
+    prompter->SetBrowser(mFrameElement);
   }
 
   *aResult = prompt.forget().take();
@@ -3143,7 +3134,7 @@ TabParent::DeallocPPaymentRequestParent(PPaymentRequestParent* aActor)
 }
 
 nsresult
-TabParent::HandleEvent(nsIDOMEvent* aEvent)
+TabParent::HandleEvent(Event* aEvent)
 {
   nsAutoString eventType;
   aEvent->GetType(eventType);
@@ -3233,9 +3224,9 @@ public:
   }
   NS_IMETHOD GetAssociatedWindow(mozIDOMWindowProxy**) NO_IMPL
   NS_IMETHOD GetTopWindow(mozIDOMWindowProxy**) NO_IMPL
-  NS_IMETHOD GetTopFrameElement(nsIDOMElement** aElement) override
+  NS_IMETHOD GetTopFrameElement(Element** aElement) override
   {
-    nsCOMPtr<nsIDOMElement> elem = do_QueryInterface(mElement);
+    nsCOMPtr<Element> elem = mElement;
     elem.forget(aElement);
     return NS_OK;
   }
@@ -3297,7 +3288,7 @@ mozilla::ipc::IPCResult
 TabParent::RecvInvokeDragSession(nsTArray<IPCDataTransfer>&& aTransfers,
                                  const uint32_t& aAction,
                                  const OptionalShmem& aVisualDnDData,
-                                 const uint32_t& aStride, const uint8_t& aFormat,
+                                 const uint32_t& aStride, const gfx::SurfaceFormat& aFormat,
                                  const LayoutDeviceIntRect& aDragRect,
                                  const nsCString& aPrincipalURISpec)
 {
@@ -3334,7 +3325,7 @@ TabParent::RecvInvokeDragSession(nsTArray<IPCDataTransfer>&& aTransfers,
   } else {
     mDnDVisualization =
         gfx::CreateDataSourceSurfaceFromData(gfx::IntSize(aDragRect.width, aDragRect.height),
-                                             static_cast<gfx::SurfaceFormat>(aFormat),
+                                             aFormat,
                                              aVisualDnDData.get_Shmem().get<uint8_t>(),
                                              aStride);
   }

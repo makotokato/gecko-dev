@@ -671,9 +671,7 @@ class SyntheticDiversionListener final : public nsIStreamListener
 {
   RefPtr<HttpChannelChild> mChannel;
 
-  ~SyntheticDiversionListener()
-  {
-  }
+  ~SyntheticDiversionListener() = default;
 
 public:
   explicit SyntheticDiversionListener(HttpChannelChild* aChannel)
@@ -1213,10 +1211,7 @@ HttpChannelChild::DoPreOnStopRequest(nsresult aStatus)
 
   MaybeCallSynthesizedCallback();
 
-  PerformanceStorage* performanceStorage = GetPerformanceStorage();
-  if (performanceStorage) {
-      performanceStorage->AddEntry(this, this);
-  }
+  MaybeReportTimingData();
 
   if (!mCanceled && NS_SUCCEEDED(mStatus)) {
     mStatus = aStatus;
@@ -3104,12 +3099,12 @@ HttpChannelChild::GetAlternativeDataType(nsACString & aType)
 }
 
 NS_IMETHODIMP
-HttpChannelChild::OpenAlternativeOutputStream(const nsACString & aType, nsIOutputStream * *_retval)
+HttpChannelChild::OpenAlternativeOutputStream(const nsACString & aType, int64_t aPredictedSize, nsIOutputStream * *_retval)
 {
   MOZ_ASSERT(NS_IsMainThread(), "Main thread only");
 
   if (mSynthesizedCacheInfo) {
-    return mSynthesizedCacheInfo->OpenAlternativeOutputStream(aType, _retval);
+    return mSynthesizedCacheInfo->OpenAlternativeOutputStream(aType, aPredictedSize, _retval);
   }
 
   if (!mIPCOpen) {
@@ -3129,6 +3124,7 @@ HttpChannelChild::OpenAlternativeOutputStream(const nsACString & aType, nsIOutpu
 
   if (!gNeckoChild->SendPAltDataOutputStreamConstructor(stream,
                                                         nsCString(aType),
+                                                        aPredictedSize,
                                                         this)) {
     return NS_ERROR_FAILURE;
   }

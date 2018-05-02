@@ -92,6 +92,8 @@ public class GeckoSession extends LayerSession
 
     private final SessionTextInput mTextInput = new SessionTextInput(this, mNativeQueue);
 
+    private SessionAccessibility mSessionAccessibility;
+
     private String mId = UUID.randomUUID().toString().replace("-", "");
     /* package */ String getId() { return mId; }
 
@@ -161,6 +163,11 @@ public class GeckoSession extends LayerSession
                 }
             }
 
+            // The flags are already matched with nsIDocShell.idl.
+            private int filterFlags(int flags) {
+                return flags & NavigationDelegate.LOAD_REQUEST_IS_USER_TRIGGERED;
+            }
+
             @Override
             public void handleMessage(final NavigationDelegate delegate,
                                       final String event,
@@ -178,8 +185,10 @@ public class GeckoSession extends LayerSession
                 } else if ("GeckoView:OnLoadRequest".equals(event)) {
                     final String uri = message.getString("uri");
                     final int where = convertGeckoTarget(message.getInt("where"));
-                    delegate.onLoadRequest(GeckoSession.this, uri, where,
-                        new Response<Boolean>() {
+                    final int flags = filterFlags(message.getInt("flags"));
+
+                    delegate.onLoadRequest(GeckoSession.this, uri, where, flags,
+                        new GeckoResponse<Boolean>() {
                             @Override
                             public void respond(Boolean handled) {
                                 callback.sendSuccess(handled);
@@ -188,7 +197,7 @@ public class GeckoSession extends LayerSession
                 } else if ("GeckoView:OnNewSession".equals(event)) {
                     final String uri = message.getString("uri");
                     delegate.onNewSession(GeckoSession.this, uri,
-                        new Response<GeckoSession>() {
+                        new GeckoResponse<GeckoSession>() {
                             @Override
                             public void respond(GeckoSession session) {
                                 if (session == null) {
@@ -361,7 +370,7 @@ public class GeckoSession extends LayerSession
 
                     final String[] actions = message.getStringArray("actions");
                     final int seqNo = message.getInt("seqNo");
-                    final Response<String> response = new Response<String>() {
+                    final GeckoResponse<String> response = new GeckoResponse<String>() {
                         @Override
                         public void respond(final String action) {
                             final GeckoBundle response = new GeckoBundle(2);
@@ -825,6 +834,18 @@ public class GeckoSession extends LayerSession
         return mTextInput;
     }
 
+    /**
+      * Get the SessionAccessibility instance for this session.
+      *
+      * @return SessionAccessibility instance.
+      */
+    public @NonNull SessionAccessibility getAccessibility() {
+        if (mSessionAccessibility == null) {
+            mSessionAccessibility = new SessionAccessibility(this);
+        }
+        return mSessionAccessibility;
+    }
+
     @IntDef(flag = true,
             value = { LOAD_FLAGS_NONE, LOAD_FLAGS_BYPASS_CACHE, LOAD_FLAGS_BYPASS_PROXY,
                       LOAD_FLAGS_EXTERNAL, LOAD_FLAGS_ALLOW_POPUPS })
@@ -1049,6 +1070,93 @@ public class GeckoSession extends LayerSession
         final GeckoBundle msg = new GeckoBundle();
         msg.putBoolean("active", active);
         mEventDispatcher.dispatch("GeckoView:SetActive", msg);
+    }
+
+    /**
+     * Class representing a saved session state.
+     */
+    public static class SessionState implements Parcelable {
+        private String mState;
+
+        /**
+         * Construct a SessionState from a String.
+         *
+         * @param state A String representing a SessionState; should originate as output
+         *              of SessionState.toString().
+         */
+        public SessionState(final String state) {
+            mState = state;
+        }
+
+        @Override
+        public String toString() {
+            return mState;
+        }
+
+        @Override // Parcelable
+        public int describeContents() {
+            return 0;
+        }
+
+        @Override // Parcelable
+        public void writeToParcel(final Parcel dest, final int flags) {
+            dest.writeString(mState);
+        }
+
+        // AIDL code may call readFromParcel even though it's not part of Parcelable.
+        public void readFromParcel(final Parcel source) {
+            mState = source.readString();
+        }
+
+        public static final Parcelable.Creator<SessionState> CREATOR =
+                new Parcelable.Creator<SessionState>() {
+            @Override
+            public SessionState createFromParcel(final Parcel source) {
+                return new SessionState(source.readString());
+            }
+
+            @Override
+            public SessionState[] newArray(final int size) {
+                return new SessionState[size];
+            }
+        };
+    }
+
+    /**
+     * Save the current browsing session state of this GeckoSession. This session state
+     * includes the history, scroll position, zoom, and any form data that has been entered,
+     * but does not include information pertaining to the GeckoSession itself (for example,
+     * this does not include settings on the GeckoSession).
+     *
+     * @param response This is a response which will be called with the state once it has been
+     *                 saved. Can be null if we fail to save the state for any reason.
+     */
+    public void saveState(final GeckoResponse<SessionState> response) {
+        mEventDispatcher.dispatch("GeckoView:SaveState", null, new EventCallback() {
+            @Override
+            public void sendSuccess(final Object result) {
+                response.respond(new SessionState((String) result));
+            }
+
+            @Override
+            public void sendError(final Object result) {
+                Log.w(LOGTAG, "Failed to save state, as another save is already in progress.");
+                response.respond(null);
+            }
+        });
+    }
+
+    /**
+     * Restore a saved state to this GeckoSession; only data that is saved (history, scroll
+     * position, zoom, and form data) will be restored. These will overwrite the corresponding
+     * state of this GeckoSession.
+     *
+     * @param state A saved session state; this should originate from GeckoSession.saveState().
+     */
+    public void restoreState(final SessionState state) {
+        final GeckoBundle msg = new GeckoBundle(1);
+        msg.putString("state", state.toString());
+        mEventDispatcher.dispatch("GeckoView:RestoreState", msg);
     }
 
     public GeckoSessionSettings getSettings() {
@@ -1904,7 +2012,7 @@ public class GeckoSession extends LayerSession
          * multiple times to perform multiple actions at once.
          */
         void onShowActionRequest(GeckoSession session, Selection selection,
-                                 @Action String[] actions, Response<String> response);
+                                 @Action String[] actions, GeckoResponse<String> response);
 
         @IntDef({HIDE_REASON_NO_SELECTION,
                  HIDE_REASON_INVISIBLE_SELECTION,
@@ -1947,16 +2055,6 @@ public class GeckoSession extends LayerSession
         void onHideAction(GeckoSession session, @HideReason int reason);
     }
 
-    /**
-     * This is used to send responses in delegate methods that have asynchronous responses.
-     */
-    public interface Response<T> {
-        /**
-         * @param val The value contained in the response
-         */
-        void respond(T val);
-    }
-
     public interface NavigationDelegate {
         /**
         * A view has started loading content from the network.
@@ -1985,6 +2083,15 @@ public class GeckoSession extends LayerSession
         public static final int TARGET_WINDOW_CURRENT = 1;
         public static final int TARGET_WINDOW_NEW = 2;
 
+        @IntDef(flag = true,
+                value = {LOAD_REQUEST_IS_USER_TRIGGERED})
+        public @interface LoadRequestFlags {}
+        // Match with nsIDocShell.idl.
+        /**
+         * The load request was triggered by user input.
+         */
+        public static final int LOAD_REQUEST_IS_USER_TRIGGERED = 0x1000;
+
         /**
          * A request to open an URI. This is called before each page load to
          * allow custom behavior implementation.
@@ -1994,15 +2101,19 @@ public class GeckoSession extends LayerSession
          *
          * @param session The GeckoSession that initiated the callback.
          * @param uri The URI to be loaded.
-         * @param target The target where the window has requested to open. One of
-         *               TARGET_WINDOW_*.
+         * @param target The target where the window has requested to open.
+         *               One of {@link #TARGET_WINDOW_NONE TARGET_WINDOW_*}.
+         * @param flags The load request flags.
+         *              One or more of {@link #LOAD_REQUEST_IS_USER_TRIGGERED
+         *              LOAD_REQUEST_*}.
          * @param response A response which will state whether or not the load
          *                 was handled. If unhandled, Gecko will continue the
          *                 load as normal.
          */
         void onLoadRequest(GeckoSession session, String uri,
                            @TargetWindow int target,
-                           Response<Boolean> response);
+                           @LoadRequestFlags int flags,
+                           GeckoResponse<Boolean> response);
 
         /**
         * A request has been made to open a new session. The URI is provided only for
@@ -2014,7 +2125,7 @@ public class GeckoSession extends LayerSession
         *
         * @param response A Response which will hold the returned GeckoSession
         */
-        void onNewSession(GeckoSession session, String uri, Response<GeckoSession> response);
+        void onNewSession(GeckoSession session, String uri, GeckoResponse<GeckoSession> response);
     }
 
     /**

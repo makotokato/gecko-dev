@@ -34,7 +34,10 @@
 #include "mozilla/dom/CSSBinding.h"
 #include "mozilla/dom/CSSRuleBinding.h"
 #include "mozilla/dom/DirectoryBinding.h"
+#include "mozilla/dom/DOMParserBinding.h"
 #include "mozilla/dom/DOMPrefs.h"
+#include "mozilla/dom/ElementBinding.h"
+#include "mozilla/dom/EventBinding.h"
 #include "mozilla/dom/IndexedDatabaseManager.h"
 #include "mozilla/dom/Fetch.h"
 #include "mozilla/dom/FileBinding.h"
@@ -811,6 +814,12 @@ xpc::GlobalProperties::Parse(JSContext* cx, JS::HandleObject obj)
             CSSRule = true;
         } else if (!strcmp(name.ptr(), "Directory")) {
             Directory = true;
+        } else if (!strcmp(name.ptr(), "DOMParser")) {
+            DOMParser = true;
+        } else if (!strcmp(name.ptr(), "Element")) {
+            Element = true;
+        } else if (!strcmp(name.ptr(), "Event")) {
+            Event = true;
         } else if (!strcmp(name.ptr(), "File")) {
             File = true;
         } else if (!strcmp(name.ptr(), "FileReader")) {
@@ -883,6 +892,18 @@ xpc::GlobalProperties::Define(JSContext* cx, JS::HandleObject obj)
 
     if (Directory &&
         !dom::DirectoryBinding::GetConstructorObject(cx))
+        return false;
+
+    if (DOMParser &&
+        !dom::DOMParserBinding::GetConstructorObject(cx))
+        return false;
+
+    if (Element &&
+        !dom::ElementBinding::GetConstructorObject(cx))
+        return false;
+
+    if (Event &&
+        !dom::EventBinding::GetConstructorObject(cx))
         return false;
 
     if (File &&
@@ -1015,7 +1036,7 @@ xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp, nsISupports* prin
     if (options.sameZoneAs)
         creationOptions.setExistingZone(js::UncheckedUnwrap(options.sameZoneAs));
     else if (options.freshZone)
-        creationOptions.setNewZoneInSystemZoneGroup();
+        creationOptions.setNewZone();
     else
         creationOptions.setSystemZone();
 
