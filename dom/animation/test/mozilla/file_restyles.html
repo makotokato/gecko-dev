@@ -1149,11 +1149,11 @@ waitForAllPaints(() => {
     ok(!SpecialPowers.wrap(animation).isRunningOnCompositor);
 
     // Extend the duration.
-    animation.effect.timing.duration = 800 * MS_PER_SEC;
+    animation.effect.updateTiming({ duration: 800 * MS_PER_SEC });
     var markers = await observeStyling(5);
     is(markers.length, 1,
        'Animations running on the compositor should update style ' +
-       'when timing.duration is made longer than the current time');
+       'when duration is made longer than the current time');
 
     await ensureElementRemoval(div);
   });
@@ -1892,6 +1892,22 @@ waitForAllPaints(() => {
       await ensureElementRemoval(div);
     }
   );
+
+  add_task(async function restyling_visibility_animations_on_in_view_element() {
+    var div = addDiv(null);
+    var animation =
+      div.animate({ visibility: ['hidden', 'visible'] }, 100 * MS_PER_SEC);
+
+    await animation.ready;
+
+    var markers = await observeStyling(5);
+
+    is(markers.length, 5,
+       'Visibility animation running on the main-thread on in-view element ' +
+       'should not be throttled');
+    await ensureElementRemoval(div);
+  });
+
 });
 
 </script>

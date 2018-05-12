@@ -362,7 +362,9 @@ struct js::AsmJSMetadata : Metadata, AsmJSMetadataCacheablePod
     ScriptSource* maybeScriptSource() const override {
         return scriptSource.get();
     }
-    bool getFuncName(const Bytes* maybeBytecode, uint32_t funcIndex, UTF8Bytes* name) const override {
+    bool getFuncName(NameContext ctx, const Bytes* maybeBytecode, uint32_t funcIndex,
+                     UTF8Bytes* name) const override
+    {
         const char* p = asmJSFuncNames[funcIndex].get();
         if (!p)
             return true;
@@ -2486,7 +2488,7 @@ class MOZ_STACK_CLASS ModuleValidator
 
         ScriptedCaller scriptedCaller;
         if (parser_.ss->filename()) {
-            scriptedCaller.line = scriptedCaller.column = 0;  // unused
+            scriptedCaller.line = 0;  // unused
             scriptedCaller.filename = DuplicateString(parser_.ss->filename());
             if (!scriptedCaller.filename)
                 return nullptr;
@@ -8453,7 +8455,7 @@ class ModuleCharsForStore : ModuleChars
         if (!compressedBuffer_.resize(maxCompressedSize))
             return false;
 
-        const char16_t* chars = parser.tokenStream.rawCharPtrAt(beginOffset(parser));
+        const char16_t* chars = parser.tokenStream.codeUnitPtrAt(beginOffset(parser));
         const char* source = reinterpret_cast<const char*>(chars);
         size_t compressedSize = LZ4::compress(source, uncompressedSize_, compressedBuffer_.begin());
         if (!compressedSize || compressedSize > UINT32_MAX)
@@ -8537,7 +8539,7 @@ class ModuleCharsForLookup : ModuleChars
     }
 
     bool match(AsmJSParser& parser) const {
-        const char16_t* parseBegin = parser.tokenStream.rawCharPtrAt(beginOffset(parser));
+        const char16_t* parseBegin = parser.tokenStream.codeUnitPtrAt(beginOffset(parser));
         const char16_t* parseLimit = parser.tokenStream.rawLimit();
         MOZ_ASSERT(parseLimit >= parseBegin);
         if (uint32_t(parseLimit - parseBegin) < chars_.length())
@@ -8628,8 +8630,8 @@ StoreAsmJSModuleInCache(AsmJSParser& parser, Module& module, JSContext* cx)
     if (!open)
         return JS::AsmJSCache_Disabled_Internal;
 
-    const char16_t* begin = parser.tokenStream.rawCharPtrAt(ModuleChars::beginOffset(parser));
-    const char16_t* end = parser.tokenStream.rawCharPtrAt(ModuleChars::endOffset(parser));
+    const char16_t* begin = parser.tokenStream.codeUnitPtrAt(ModuleChars::beginOffset(parser));
+    const char16_t* end = parser.tokenStream.codeUnitPtrAt(ModuleChars::endOffset(parser));
 
     ScopedCacheEntryOpenedForWrite entry(cx, serializedSize);
     JS::AsmJSCacheResult openResult =
@@ -8667,7 +8669,7 @@ LookupAsmJSModuleInCache(JSContext* cx, AsmJSParser& parser, bool* loadedFromCac
     if (!open)
         return true;
 
-    const char16_t* begin = parser.tokenStream.rawCharPtrAt(ModuleChars::beginOffset(parser));
+    const char16_t* begin = parser.tokenStream.codeUnitPtrAt(ModuleChars::beginOffset(parser));
     const char16_t* limit = parser.tokenStream.rawLimit();
 
     ScopedCacheEntryOpenedForRead entry(cx);

@@ -357,7 +357,7 @@ nsPresContext::Destroy()
 
 nsPresContext::~nsPresContext()
 {
-  NS_PRECONDITION(!mShell, "Presshell forgot to clear our mShell pointer");
+  MOZ_ASSERT(!mShell, "Presshell forgot to clear our mShell pointer");
   DetachShell();
 
   Destroy();
@@ -1197,11 +1197,11 @@ nsPresContext::CompatibilityModeChanged()
   if (needsQuirkSheet) {
     // quirk.css needs to come after html.css; we just keep it at the end.
     DebugOnly<nsresult> rv =
-      styleSet->AppendStyleSheet(SheetType::Agent, sheet->AsServo());
+      styleSet->AppendStyleSheet(SheetType::Agent, sheet);
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "failed to insert quirk.css");
   } else {
     DebugOnly<nsresult> rv =
-      styleSet->RemoveStyleSheet(SheetType::Agent, sheet->AsServo());
+      styleSet->RemoveStyleSheet(SheetType::Agent, sheet);
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "failed to remove quirk.css");
   }
 
@@ -2084,7 +2084,8 @@ nsPresContext::FlushPendingMediaFeatureValuesChanged()
   // Copy pointers to all the lists into a new array, in case one of our
   // notifications modifies the list.
   nsTArray<RefPtr<mozilla::dom::MediaQueryList>> localMediaQueryLists;
-  for (auto* mql : mDocument->MediaQueryLists()) {
+  for (MediaQueryList* mql = mDocument->MediaQueryLists().getFirst(); mql;
+       mql = static_cast<LinkedListElement<MediaQueryList>*>(mql)->getNext()) {
     localMediaQueryLists.AppendElement(mql);
   }
 
@@ -2853,7 +2854,7 @@ nsPresContext::CheckForInterrupt(nsIFrame* aFrame)
 nsIFrame*
 nsPresContext::GetPrimaryFrameFor(nsIContent* aContent)
 {
-  NS_PRECONDITION(aContent, "Don't do that");
+  MOZ_ASSERT(aContent, "Don't do that");
   if (GetPresShell() &&
       GetPresShell()->GetDocument() == aContent->GetComposedDoc()) {
     return aContent->GetPrimaryFrame();

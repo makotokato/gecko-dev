@@ -34,13 +34,14 @@ ChromeUtils.defineModuleGetter(this, "FileTestUtils",
                                "resource://testing-common/FileTestUtils.jsm");
 ChromeUtils.defineModuleGetter(this, "HttpServer",
                                "resource://testing-common/httpd.js");
+ChromeUtils.defineModuleGetter(this, "InstallRDF",
+                               "resource://gre/modules/addons/RDFManifestConverter.jsm");
 ChromeUtils.defineModuleGetter(this, "MockRegistrar",
                                "resource://testing-common/MockRegistrar.jsm");
 
 XPCOMUtils.defineLazyServiceGetters(this, {
   aomStartup: ["@mozilla.org/addons/addon-manager-startup;1", "amIAddonManagerStartup"],
   proxyService: ["@mozilla.org/network/protocol-proxy-service;1", "nsIProtocolProxyService"],
-  rdfService: ["@mozilla.org/rdf/rdf-service;1", "nsIRDFService"],
   uuidGen: ["@mozilla.org/uuid-generator;1", "nsIUUIDGenerator"],
 });
 
@@ -60,14 +61,6 @@ const ArrayBufferInputStream = Components.Constructor(
 const nsFile = Components.Constructor(
   "@mozilla.org/file/local;1",
   "nsIFile", "initWithPath");
-
-const RDFXMLParser = Components.Constructor(
-  "@mozilla.org/rdf/xml-parser;1",
-  "nsIRDFXMLParser", "parseString");
-
-const RDFDataSource = Components.Constructor(
-  "@mozilla.org/rdf/datasource;1?name=in-memory-datasource",
-  "nsIRDFDataSource");
 
 const ZipReader = Components.Constructor(
   "@mozilla.org/libjar/zip-reader;1",
@@ -613,15 +606,8 @@ var AddonTestUtils = {
     let body = await fetch(manifestURI.spec);
 
     if (manifestURI.spec.endsWith(".rdf")) {
-      let data = await body.text();
-
-      let ds = new RDFDataSource();
-      new RDFXMLParser(ds, manifestURI, data);
-
-      let rdfID = ds.GetTarget(rdfService.GetResource("urn:mozilla:install-manifest"),
-                               rdfService.GetResource("http://www.mozilla.org/2004/em-rdf#id"),
-                               true);
-      return rdfID.QueryInterface(Ci.nsIRDFLiteral).Value;
+      let manifest = InstallRDF.loadFromBuffer(await body.arrayBuffer()).decode();
+      return manifest.id;
     }
 
     let manifest = await body.json();
@@ -729,18 +715,10 @@ var AddonTestUtils = {
 
   /**
    * Starts up the add-on manager as if it was started by the application.
-   *
-   * @param {boolean} [appChanged = true]
-   *        An optional boolean parameter to simulate the case where the
-   *        application has changed version since the last run. If not passed it
-   *        defaults to true
    */
-  async promiseStartupManager(appChanged = true) {
+  async promiseStartupManager() {
     if (this.addonIntegrationService)
       throw new Error("Attempting to startup manager that was already started.");
-
-    if (appChanged && this.addonStartup.exists())
-      this.addonStartup.remove(true);
 
     this.addonIntegrationService = Cc["@mozilla.org/addons/integration;1"]
           .getService(Ci.nsIObserver);
@@ -799,6 +777,18 @@ var AddonTestUtils = {
       });
   },
 
+  /**
+   * Asynchronously restart the AddonManager.  If newVersion is provided,
+   * simulate an application upgrade (or downgrade) where the version
+   * is changed to newVersion when re-started.
+   *
+   * @param {string} [newVersion]
+   *        If provided, the application version is changed to this string
+   *        after the AddonManager is shut down, before it is re-started.
+   *
+   * @returns {Promise}
+   *          Resolves when the AddonManager has been re-started.
+   */
   promiseRestartManager(newVersion) {
     return this.promiseShutdownManager()
       .then(() => {
@@ -893,7 +883,7 @@ var AddonTestUtils = {
 
     let props = ["id", "version", "type", "internalName", "updateURL",
                  "optionsURL", "optionsType", "aboutURL", "iconURL", "icon64URL",
-                 "skinnable", "bootstrap", "unpack", "strictCompatibility",
+                 "skinnable", "bootstrap", "strictCompatibility",
                  "hasEmbeddedWebExtension"];
     rdf += this._writeProps(data, props);
 

@@ -118,7 +118,6 @@
 #include "nsView.h"
 #include "nsViewManager.h"
 #include "nsISelectionController.h"
-#include "nsISelection.h"
 #include "nsIPrompt.h"
 #include "nsIPromptService.h"
 #include "nsIPromptFactory.h"
@@ -1415,7 +1414,7 @@ WindowStateHolder::WindowStateHolder(nsGlobalWindowInner* aWindow)
   : mInnerWindow(aWindow),
     mInnerWindowReflector(RootingCx(), aWindow->GetWrapper())
 {
-  NS_PRECONDITION(aWindow, "null window");
+  MOZ_ASSERT(aWindow, "null window");
 
   aWindow->Suspend();
 
@@ -1640,7 +1639,7 @@ nsGlobalWindowOuter::SetNewDocument(nsIDocument* aDocument,
                                     nsISupports* aState,
                                     bool aForceReuseInnerWindow)
 {
-  NS_PRECONDITION(mDocumentPrincipal == nullptr,
+  MOZ_ASSERT(mDocumentPrincipal == nullptr,
                   "mDocumentPrincipal prematurely set!");
   MOZ_ASSERT(aDocument);
 
@@ -3850,7 +3849,7 @@ nsGlobalWindowOuter::WindowExists(const nsAString& aName,
                                   bool aForceNoOpener,
                                   bool aLookForCallerOnJSStack)
 {
-  NS_PRECONDITION(mDocShell, "Must have docshell");
+  MOZ_ASSERT(mDocShell, "Must have docshell");
 
   if (aForceNoOpener) {
     return aName.LowerCaseEqualsLiteral("_self") ||
@@ -6275,7 +6274,7 @@ public:
 
 void
 nsGlobalWindowOuter::UpdateCommands(const nsAString& anAction,
-                                    nsISelection* aSel,
+                                    Selection* aSel,
                                     int16_t aReason)
 {
   // If this is a child process, redirect to the parent process.
@@ -6324,15 +6323,13 @@ nsGlobalWindowOuter::GetSelectionOuter()
   if (!presShell) {
     return nullptr;
   }
-  nsISelection* domSelection =
-    presShell->GetCurrentSelection(SelectionType::eNormal);
-  return domSelection ? domSelection->AsSelection() : nullptr;
+  return presShell->GetCurrentSelection(SelectionType::eNormal);
 }
 
-already_AddRefed<nsISelection>
+already_AddRefed<Selection>
 nsGlobalWindowOuter::GetSelection()
 {
-  nsCOMPtr<nsISelection> selection = GetSelectionOuter();
+  RefPtr<Selection> selection = GetSelectionOuter();
   return selection.forget();
 }
 
@@ -6901,10 +6898,11 @@ nsGlobalWindowOuter::OpenInternal(const nsAString& aUrl, const nsAString& aName,
   if (argv)
       argv->GetLength(&argc);
 #endif
-  NS_PRECONDITION(!aExtraArgument || (!argv && argc == 0),
-                  "Can't pass in arguments both ways");
-  NS_PRECONDITION(!aCalledNoScript || (!argv && argc == 0),
-                  "Can't pass JS args when called via the noscript methods");
+
+  MOZ_ASSERT(!aExtraArgument || (!argv && argc == 0),
+             "Can't pass in arguments both ways");
+  MOZ_ASSERT(!aCalledNoScript || (!argv && argc == 0),
+             "Can't pass JS args when called via the noscript methods");
 
   mozilla::Maybe<AutoUnblockScriptClosing> closeUnblocker;
 
@@ -7731,4 +7729,3 @@ nsAutoPopupStatePusherInternal::~nsAutoPopupStatePusherInternal()
 {
   nsContentUtils::PopPopupControlState(mOldState);
 }
-

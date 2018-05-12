@@ -1559,19 +1559,9 @@ WorkerPrivate::SetCSPFromHeaderValues(const nsACString& aCSPHeaderValue,
   rv = csp->GetAllowsEval(&reportEvalViolations, &evalAllowed);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Set ReferrerPolicy, default value is set in GetReferrerPolicy
-  bool hasReferrerPolicy = false;
-  uint32_t rp = mozilla::net::RP_Unset;
-  rv = csp->GetReferrerPolicy(&rp, &hasReferrerPolicy);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   mLoadInfo.mCSP = csp;
   mLoadInfo.mEvalAllowed = evalAllowed;
   mLoadInfo.mReportCSPViolations = reportEvalViolations;
-
-  if (hasReferrerPolicy) {
-    mLoadInfo.mReferrerPolicy = static_cast<net::ReferrerPolicy>(rp);
-  }
 
   return NS_OK;
 }
@@ -3278,11 +3268,13 @@ WorkerPrivate::DoRunLoop(JSContext* aCx)
 
       // If we're supposed to die then we should exit the loop.
       if (currentStatus == Killing) {
+        // The ClientSource should be cleared in NotifyInternal() when we reach
+        // or pass Terminating.
+        MOZ_DIAGNOSTIC_ASSERT(!mClientSource);
+
         // Flush uncaught rejections immediately, without
         // waiting for a next tick.
         PromiseDebugging::FlushUncaughtRejections();
-
-        mClientSource = nullptr;
 
         ShutdownGCTimers();
 
@@ -3500,12 +3492,17 @@ WorkerPrivate::EnsurePerformanceStorage()
   }
 }
 
-const ClientInfo&
+Maybe<ClientInfo>
 WorkerPrivate::GetClientInfo() const
 {
   AssertIsOnWorkerThread();
-  MOZ_DIAGNOSTIC_ASSERT(mClientSource);
-  return mClientSource->Info();
+  Maybe<ClientInfo> clientInfo;
+  if (!mClientSource) {
+    MOZ_DIAGNOSTIC_ASSERT(mStatus >= Terminating);
+    return Move(clientInfo);
+  }
+  clientInfo.emplace(mClientSource->Info());
+  return Move(clientInfo);
 }
 
 const ClientState
@@ -3519,9 +3516,15 @@ WorkerPrivate::GetClientState() const
 }
 
 const Maybe<ServiceWorkerDescriptor>
-WorkerPrivate::GetController() const
+WorkerPrivate::GetController()
 {
   AssertIsOnWorkerThread();
+  {
+    MutexAutoLock lock(mMutex);
+    if (mStatus >= Terminating) {
+      return Maybe<ServiceWorkerDescriptor>();
+    }
+  }
   MOZ_DIAGNOSTIC_ASSERT(mClientSource);
   return mClientSource->GetController();
 }
@@ -3530,9 +3533,15 @@ void
 WorkerPrivate::Control(const ServiceWorkerDescriptor& aServiceWorker)
 {
   AssertIsOnWorkerThread();
-  MOZ_DIAGNOSTIC_ASSERT(mClientSource);
   MOZ_DIAGNOSTIC_ASSERT(!IsChromeWorker());
   MOZ_DIAGNOSTIC_ASSERT(Type() != WorkerTypeService);
+  {
+    MutexAutoLock lock(mMutex);
+    if (mStatus >= Terminating) {
+      return;
+    }
+  }
+  MOZ_DIAGNOSTIC_ASSERT(mClientSource);
   mClientSource->SetController(aServiceWorker);
 }
 
@@ -3540,6 +3549,12 @@ void
 WorkerPrivate::ExecutionReady()
 {
   AssertIsOnWorkerThread();
+  {
+    MutexAutoLock lock(mMutex);
+    if (mStatus >= Terminating) {
+      return;
+    }
+  }
   MOZ_DIAGNOSTIC_ASSERT(mClientSource);
   mClientSource->WorkerExecutionReady(this);
 }
@@ -4045,11 +4060,7 @@ WorkerPrivate::NotifyHolders(WorkerStatus aStatus)
 {
   AssertIsOnWorkerThread();
 
-  NS_ASSERTION(aStatus > Running, "Bad status!");
-
-  if (aStatus >= Closing) {
-    CancelAllTimeouts();
-  }
+  NS_ASSERTION(aStatus > Closing, "Bad status!");
 
   nsTObserverArray<WorkerHolder*>::ForwardIterator iter(mHolders);
   while (iter.HasMore()) {
@@ -4514,8 +4525,9 @@ WorkerPrivate::NotifyInternal(WorkerStatus aStatus)
     }
 
     if (aStatus >= Terminating) {
+      MutexAutoUnlock unlock(mMutex);
+      mClientSource.reset();
       if (mScope) {
-        MutexAutoUnlock unlock(mMutex);
         mScope->NoteTerminating();
       }
     }
@@ -4552,8 +4564,14 @@ WorkerPrivate::NotifyInternal(WorkerStatus aStatus)
 
   MOZ_ASSERT(previousStatus != Pending);
 
+  if (aStatus >= Closing) {
+    CancelAllTimeouts();
+  }
+
   // Let all our holders know the new status.
-  NotifyHolders(aStatus);
+  if (aStatus > Closing) {
+    NotifyHolders(aStatus);
+  }
 
   // If this is the first time our status has changed then we need to clear the
   // main event queue.

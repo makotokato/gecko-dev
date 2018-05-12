@@ -23,6 +23,12 @@
 
 namespace js {
 
+inline uint32_t
+NativeObject::numFixedSlotsMaybeForwarded() const
+{
+    return gc::MaybeForwarded(lastProperty())->numFixedSlots();
+}
+
 inline uint8_t*
 NativeObject::fixedData(size_t nslots) const
 {
@@ -533,6 +539,7 @@ NativeObject::create(JSContext* cx, js::gc::AllocKind kind, js::gc::InitialHeap 
 
     const js::Class* clasp = group->clasp();
     MOZ_ASSERT(clasp->isNative());
+    MOZ_ASSERT(!clasp->isJSFunction(), "should use JSFunction::create");
 
     size_t nDynamicSlots = dynamicSlotsCount(shape->numFixedSlots(), shape->slotSpan(), clasp);
 
@@ -553,20 +560,6 @@ NativeObject::create(JSContext* cx, js::gc::AllocKind kind, js::gc::InitialHeap 
 
     if (size_t span = shape->slotSpan())
         nobj->initializeSlotRange(0, span);
-
-    // JSFunction's fixed slots expect POD-style initialization.
-    if (clasp->isJSFunction()) {
-        MOZ_ASSERT(kind == js::gc::AllocKind::FUNCTION ||
-                   kind == js::gc::AllocKind::FUNCTION_EXTENDED);
-        size_t size =
-            kind == js::gc::AllocKind::FUNCTION ? sizeof(JSFunction) : sizeof(js::FunctionExtended);
-        memset(nobj->as<JSFunction>().fixedSlots(), 0, size - sizeof(js::NativeObject));
-        if (kind == js::gc::AllocKind::FUNCTION_EXTENDED) {
-            // SetNewObjectMetadata may gc, which will be unhappy if flags &
-            // EXTENDED doesn't match the arena's AllocKind.
-            nobj->as<JSFunction>().setFlags(JSFunction::EXTENDED);
-        }
-    }
 
     if (clasp->shouldDelayMetadataBuilder())
         cx->compartment()->setObjectPendingMetadata(cx, nobj);
@@ -984,9 +977,12 @@ ThrowIfNotConstructing(JSContext *cx, const CallArgs &args, const char *builtinN
 inline bool
 IsPackedArray(JSObject* obj)
 {
-    return obj->is<ArrayObject>() && !obj->hasLazyGroup() &&
-           !obj->group()->hasAllFlags(OBJECT_FLAG_NON_PACKED) &&
-           obj->as<ArrayObject>().getDenseInitializedLength() == obj->as<ArrayObject>().length();
+    if (!obj->is<ArrayObject>() || obj->hasLazyGroup())
+        return false;
+    AutoSweepObjectGroup sweep(obj->group());
+    if (obj->group()->hasAllFlags(sweep, OBJECT_FLAG_NON_PACKED))
+        return false;
+    return obj->as<ArrayObject>().getDenseInitializedLength() == obj->as<ArrayObject>().length();
 }
 
 } // namespace js

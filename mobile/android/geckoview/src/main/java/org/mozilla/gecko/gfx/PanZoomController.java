@@ -53,7 +53,7 @@ public final class PanZoomController extends JNIObject {
 
     private boolean handleMotionEvent(MotionEvent event) {
         if (!mAttached) {
-            mQueuedEvents.add(new Pair(EVENT_SOURCE_MOTION, event));
+            mQueuedEvents.add(new Pair<>(EVENT_SOURCE_MOTION, event));
             return false;
         }
 
@@ -98,7 +98,7 @@ public final class PanZoomController extends JNIObject {
 
     private boolean handleScrollEvent(MotionEvent event) {
         if (!mAttached) {
-            mQueuedEvents.add(new Pair(EVENT_SOURCE_SCROLL, event));
+            mQueuedEvents.add(new Pair<>(EVENT_SOURCE_SCROLL, event));
             return false;
         }
 
@@ -127,7 +127,7 @@ public final class PanZoomController extends JNIObject {
 
     private boolean handleMouseEvent(MotionEvent event) {
         if (!mAttached) {
-            mQueuedEvents.add(new Pair(EVENT_SOURCE_MOUSE, event));
+            mQueuedEvents.add(new Pair<>(EVENT_SOURCE_MOUSE, event));
             return false;
         }
 
@@ -228,11 +228,6 @@ public final class PanZoomController extends JNIObject {
         } else if ((action == MotionEvent.ACTION_HOVER_MOVE) ||
                    (action == MotionEvent.ACTION_HOVER_ENTER) ||
                    (action == MotionEvent.ACTION_HOVER_EXIT)) {
-            if (event.getSource() == InputDevice.SOURCE_TOUCHSCREEN) {
-                // A hover is not possible on a touchscreen unless via accessibility
-                // and we handle that elsewhere.
-                return false;
-            }
             return handleMouseEvent(event);
         } else {
             return false;

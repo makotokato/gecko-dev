@@ -1563,8 +1563,8 @@ nsFocusManager::IsWindowVisible(nsPIDOMWindowOuter* aWindow)
 bool
 nsFocusManager::IsNonFocusableRoot(nsIContent* aContent)
 {
-  NS_PRECONDITION(aContent, "aContent must not be NULL");
-  NS_PRECONDITION(aContent->IsInComposedDoc(), "aContent must be in a document");
+  MOZ_ASSERT(aContent, "aContent must not be NULL");
+  MOZ_ASSERT(aContent->IsInComposedDoc(), "aContent must be in a document");
 
   // If aContent is in designMode, the root element is not focusable.
   // NOTE: in designMode, most elements are not focusable, just the document is
@@ -2461,7 +2461,7 @@ nsFocusManager::MoveCaretToFocus(nsIPresShell* aPresShell, nsIContent* aContent)
           newRange->SetEndBefore(*aContent, IgnoreErrors());
         }
         domSelection->AddRange(*newRange, IgnoreErrors());
-        domSelection->CollapseToStart();
+        domSelection->CollapseToStart(IgnoreErrors());
       }
     }
   }
@@ -2496,7 +2496,7 @@ nsFocusManager::SetCaretVisible(nsIPresShell* aPresShell,
 
   if (docFrameSelection && caret &&
      (frameSelection == docFrameSelection || !aContent)) {
-    nsISelection* domSelection =
+    Selection* domSelection =
       docFrameSelection->GetSelection(SelectionType::eNormal);
     if (domSelection) {
       nsCOMPtr<nsISelectionController> selCon(do_QueryInterface(aPresShell));

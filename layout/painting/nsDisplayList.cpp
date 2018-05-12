@@ -19,7 +19,8 @@
 #include "gfxContext.h"
 #include "gfxUtils.h"
 #include "mozilla/dom/TabChild.h"
-#include "mozilla/dom/KeyframeEffectReadOnly.h"
+#include "mozilla/dom/KeyframeEffect.h"
+#include "mozilla/dom/Selection.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/layers/PLayerTransaction.h"
 #include "nsCSSRendering.h"
@@ -79,7 +80,6 @@
 #include "FrameLayerBuilder.h"
 #include "mozilla/EventStateManager.h"
 #include "nsCaret.h"
-#include "nsISelection.h"
 #include "nsDOMTokenList.h"
 #include "nsCSSProps.h"
 #include "nsSVGMaskFrame.h"
@@ -605,18 +605,25 @@ AddAnimationsForProperty(nsIFrame* aFrame, nsDisplayListBuilder* aBuilder,
     aAnimationInfo.ClearAnimations();
   }
 
+  nsIFrame* styleFrame = nsLayoutUtils::GetStyleFrame(aFrame);
+  if (!styleFrame) {
+    return;
+  }
+
   // Update the animation generation on the layer. We need to do this before
   // any early returns since even if we don't add any animations to the
   // layer, we still need to mark it as up-to-date with regards to animations.
   // Otherwise, in RestyleManager we'll notice the discrepancy between the
   // animation generation numbers and update the layer indefinitely.
   uint64_t animationGeneration =
-    RestyleManager::GetAnimationGenerationForFrame(aFrame);
+    // Note that GetAnimationGenerationForFrame() calles EffectSet::GetEffectSet
+    // that expects to work with the style frame instead of the primary frame.
+    RestyleManager::GetAnimationGenerationForFrame(styleFrame);
   aAnimationInfo.SetAnimationGeneration(animationGeneration);
 
-  EffectCompositor::ClearIsRunningOnCompositor(aFrame, aProperty);
+  EffectCompositor::ClearIsRunningOnCompositor(styleFrame, aProperty);
   nsTArray<RefPtr<dom::Animation>> compositorAnimations =
-    EffectCompositor::GetAnimationsForCompositor(aFrame, aProperty);
+    EffectCompositor::GetAnimationsForCompositor(styleFrame, aProperty);
   if (compositorAnimations.IsEmpty()) {
     return;
   }
@@ -691,7 +698,7 @@ AddAnimationsForProperty(nsIFrame* aFrame, nsDisplayListBuilder* aBuilder,
       continue;
     }
 
-    dom::KeyframeEffectReadOnly* keyframeEffect =
+    dom::KeyframeEffect* keyframeEffect =
       anim->GetEffect() ? anim->GetEffect()->AsKeyframeEffect() : nullptr;
     MOZ_ASSERT(keyframeEffect,
                "A playing animation should have a keyframe effect");
@@ -707,7 +714,7 @@ AddAnimationsForProperty(nsIFrame* aFrame, nsDisplayListBuilder* aBuilder,
     // !important rules, we don't want to send them to the compositor.
     MOZ_ASSERT(anim->CascadeLevel() !=
                  EffectCompositor::CascadeLevel::Animations ||
-               !EffectSet::GetEffectSet(aFrame)->PropertiesWithImportantRules()
+               !EffectSet::GetEffectSet(styleFrame)->PropertiesWithImportantRules()
                   .HasProperty(aProperty),
                "GetEffectiveAnimationOfProperty already tested the property "
                "is not overridden by !important rules");
@@ -1021,8 +1028,8 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
   if (pc->IsRenderingOnlySelection()) {
     nsCOMPtr<nsISelectionController> selcon(do_QueryInterface(shell));
     if (selcon) {
-      selcon->GetSelection(nsISelectionController::SELECTION_NORMAL,
-                           getter_AddRefs(mBoundingSelection));
+      mBoundingSelection =
+        selcon->GetSelection(nsISelectionController::SELECTION_NORMAL);
     }
   }
 
@@ -1074,9 +1081,15 @@ nsDisplayListBuilder::MarkFrameForDisplay(nsIFrame* aFrame, nsIFrame* aStopAtFra
 }
 
 void
-nsDisplayListBuilder::MarkFrameForDisplayIfVisible(nsIFrame* aFrame, nsIFrame* aStopAtFrame)
+nsDisplayListBuilder::AddFrameMarkedForDisplayIfVisible(nsIFrame* aFrame)
 {
   mFramesMarkedForDisplayIfVisible.AppendElement(aFrame);
+}
+
+void
+nsDisplayListBuilder::MarkFrameForDisplayIfVisible(nsIFrame* aFrame, nsIFrame* aStopAtFrame)
+{
+  AddFrameMarkedForDisplayIfVisible(aFrame);
   for (nsIFrame* f = aFrame; f;
        f = nsLayoutUtils::GetParentOrPlaceholderForCrossDoc(f)) {
     if (f->ForceDescendIntoIfVisible())
@@ -1287,13 +1300,16 @@ nsDisplayListBuilder::EnterPresShell(nsIFrame* aReferenceFrame,
   state->mFirstFrameWithOOFData = mFramesWithOOFData.Length();
 
   nsIScrollableFrame* sf = state->mPresShell->GetRootScrollFrameAsScrollable();
-  if (sf) {
+  if (sf && IsInSubdocument()) {
     // We are forcing a rebuild of nsDisplayCanvasBackgroundColor to make sure
     // that the canvas background color will be set correctly, and that only one
     // unscrollable item will be created.
     // This is done to avoid, for example, a case where only scrollbar frames
     // are invalidated - we would skip creating nsDisplayCanvasBackgroundColor
     // and possibly end up with an extra nsDisplaySolidColor item.
+    // We skip this for the root document, since we don't want to use
+    // MarkFrameForDisplayIfVisible before ComputeRebuildRegion. We'll
+    // do it manually there.
     nsCanvasFrame* canvasFrame = do_QueryFrame(sf->GetScrolledFrame());
     if (canvasFrame) {
       MarkFrameForDisplayIfVisible(canvasFrame, aReferenceFrame);
@@ -3485,7 +3501,7 @@ nsDisplayBackgroundImage::GetInitData(nsDisplayListBuilder* aBuilder,
   // if it's affected by a transform.
   // See https://www.w3.org/Bugs/Public/show_bug.cgi?id=17521.
   bool shouldTreatAsFixed =
-    layer.mAttachment == NS_STYLE_IMAGELAYER_ATTACHMENT_FIXED && !isTransformedFixed;
+    layer.mAttachment == StyleImageLayerAttachment::Fixed && !isTransformedFixed;
 
   bool shouldFixToViewport = shouldTreatAsFixed && !layer.mImage.IsEmpty();
   bool isRasterImage = state.mImageRenderer.IsRasterImage();
@@ -5606,10 +5622,9 @@ nsDisplayBorder::CreateBorderImageWebRenderCommands(mozilla::wr::DisplayListBuil
                                !BackfaceIsHidden(),
                                wr::ToBorderWidths(widths[0], widths[1], widths[2], widths[3]),
                                key.value(),
-                               wr::ToNinePatchDescriptor(
-                                 (float)(mBorderImageRenderer->mImageSize.width) / appUnitsPerDevPixel,
-                                 (float)(mBorderImageRenderer->mImageSize.height) / appUnitsPerDevPixel,
-                                 wr::ToSideOffsets2D_u32(slice[0], slice[1], slice[2], slice[3])),
+                               (float)(mBorderImageRenderer->mImageSize.width) / appUnitsPerDevPixel,
+                               (float)(mBorderImageRenderer->mImageSize.height) / appUnitsPerDevPixel,
+                               wr::ToSideOffsets2D_u32(slice[0], slice[1], slice[2], slice[3]),
                                wr::ToSideOffsets2D_f32(outset[0], outset[1], outset[2], outset[3]),
                                wr::ToRepeatMode(mBorderImageRenderer->mRepeatModeHorizontal),
                                wr::ToRepeatMode(mBorderImageRenderer->mRepeatModeVertical));
@@ -6701,14 +6716,12 @@ nsDisplayOpacity::CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuil
 
   if (!animationInfo.GetAnimations().IsEmpty()) {
     opacityForSC = nullptr;
-    OptionalOpacity opacityForCompositor = mOpacity;
     prop.id = animationsId;
     prop.effect_type = wr::WrAnimationType::Opacity;
 
 
     OpAddCompositorAnimations
-      anim(CompositorAnimations(animationInfo.GetAnimations(), animationsId),
-           void_t(), opacityForCompositor);
+      anim(CompositorAnimations(animationInfo.GetAnimations(), animationsId));
     aManager->WrBridge()->AddWebRenderParentCommand(anim);
     aManager->AddActiveCompositorAnimationId(animationsId);
   } else if (animationsId) {
@@ -7088,13 +7101,39 @@ nsDisplaySubDocument::nsDisplaySubDocument(nsDisplayListBuilder* aBuilder,
   if (*mAnimatedGeometryRoot == mFrame && mAnimatedGeometryRoot->mParentAGR) {
     mAnimatedGeometryRoot = mAnimatedGeometryRoot->mParentAGR;
   }
+
+  if (mSubDocFrame && mSubDocFrame != mFrame) {
+    mSubDocFrame->AddDisplayItem(this);
+  }
 }
 
-#ifdef NS_BUILD_REFCNT_LOGGING
 nsDisplaySubDocument::~nsDisplaySubDocument() {
   MOZ_COUNT_DTOR(nsDisplaySubDocument);
+  if (mSubDocFrame) {
+    mSubDocFrame->RemoveDisplayItem(this);
+  }
 }
-#endif
+
+nsIFrame*
+nsDisplaySubDocument::FrameForInvalidation() const
+{
+  return mSubDocFrame ? mSubDocFrame : mFrame;
+}
+
+bool
+nsDisplaySubDocument::HasDeletedFrame() const
+{
+  return !mSubDocFrame || nsDisplayItem::HasDeletedFrame();
+}
+
+void
+nsDisplaySubDocument::RemoveFrame(nsIFrame* aFrame)
+{
+  if (aFrame == mSubDocFrame) {
+    mSubDocFrame = nullptr;
+  }
+  nsDisplayItem::RemoveFrame(aFrame);
+}
 
 UniquePtr<ScrollMetadata>
 nsDisplaySubDocument::ComputeScrollMetadata(LayerManager* aLayerManager,
@@ -7648,19 +7687,21 @@ nsDisplayStickyPosition::CreateWebRenderCommands(mozilla::wr::DisplayListBuilder
       NSAppUnitsToFloatPixels(appliedOffset.x, auPerDevPixel),
       NSAppUnitsToFloatPixels(appliedOffset.y, auPerDevPixel)
     };
-    wr::WrStickyId id = aBuilder.DefineStickyFrame(wr::ToRoundedLayoutRect(bounds),
+    wr::WrClipId id = aBuilder.DefineStickyFrame(wr::ToRoundedLayoutRect(bounds),
         topMargin.ptrOr(nullptr), rightMargin.ptrOr(nullptr),
         bottomMargin.ptrOr(nullptr), leftMargin.ptrOr(nullptr),
         vBounds, hBounds, applied);
 
-    aBuilder.PushStickyFrame(id, GetClipChain());
+    aBuilder.PushClip(id);
+    aManager->CommandBuilder().PushOverrideForASR(GetActiveScrolledRoot(), Some(id));
   }
 
   nsDisplayOwnLayer::CreateWebRenderCommands(aBuilder, aResources, aSc,
       aManager, aDisplayListBuilder);
 
   if (stickyScrollContainer) {
-    aBuilder.PopStickyFrame(GetClipChain());
+    aManager->CommandBuilder().PopOverrideForASR(GetActiveScrolledRoot());
+    aBuilder.PopClip();
   }
 
   return true;
@@ -7991,11 +8032,11 @@ nsDisplayTransform::GetDeltaToTransformOrigin(const nsIFrame* aFrame,
                                               float aAppUnitsPerPixel,
                                               const nsRect* aBoundsOverride)
 {
-  NS_PRECONDITION(aFrame, "Can't get delta for a null frame!");
-  NS_PRECONDITION(aFrame->IsTransformed() ||
-                  aFrame->BackfaceIsHidden() ||
-                  aFrame->Combines3DTransformWithAncestors(),
-                  "Shouldn't get a delta for an untransformed frame!");
+  MOZ_ASSERT(aFrame, "Can't get delta for a null frame!");
+  MOZ_ASSERT(aFrame->IsTransformed() ||
+             aFrame->BackfaceIsHidden() ||
+             aFrame->Combines3DTransformWithAncestors(),
+             "Shouldn't get a delta for an untransformed frame!");
 
   if (!aFrame->IsTransformed()) {
     return Point3D();
@@ -8066,12 +8107,12 @@ nsDisplayTransform::ComputePerspectiveMatrix(const nsIFrame* aFrame,
                                              float aAppUnitsPerPixel,
                                              Matrix4x4& aOutMatrix)
 {
-  NS_PRECONDITION(aFrame, "Can't get delta for a null frame!");
-  NS_PRECONDITION(aFrame->IsTransformed() ||
-                  aFrame->BackfaceIsHidden() ||
-                  aFrame->Combines3DTransformWithAncestors(),
-                  "Shouldn't get a delta for an untransformed frame!");
-  NS_PRECONDITION(aOutMatrix.IsIdentity(), "Must have a blank output matrix");
+  MOZ_ASSERT(aFrame, "Can't get delta for a null frame!");
+  MOZ_ASSERT(aFrame->IsTransformed() ||
+             aFrame->BackfaceIsHidden() ||
+             aFrame->Combines3DTransformWithAncestors(),
+             "Shouldn't get a delta for an untransformed frame!");
+  MOZ_ASSERT(aOutMatrix.IsIdentity(), "Must have a blank output matrix");
 
   if (!aFrame->IsTransformed()) {
     return false;
@@ -8554,13 +8595,8 @@ nsDisplayTransform::CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBu
     prop.id = animationsId;
     prop.effect_type = wr::WrAnimationType::Transform;
 
-    // Pass default transform to compositor in case gecko fails to
-    // get animated value after animation sampling.
-    OptionalTransform transformForCompositor = newTransformMatrix;
-
     OpAddCompositorAnimations
-      anim(CompositorAnimations(animationInfo.GetAnimations(), animationsId),
-           transformForCompositor, void_t());
+      anim(CompositorAnimations(animationInfo.GetAnimations(), animationsId));
     aManager->WrBridge()->AddWebRenderParentCommand(anim);
     aManager->AddActiveCompositorAnimationId(animationsId);
   } else if (animationsId) {
@@ -8578,6 +8614,12 @@ nsDisplayTransform::CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBu
     // nsDisplayTransform.
     transformForScrollData = Some(GetTransform().GetMatrix());
   }
+
+  // If it looks like we're animated, we should rasterize in local space
+  // (disabling subpixel-aa and global pixel snapping)
+  bool rasterizeLocally = ActiveLayerTracker::IsStyleMaybeAnimated(
+    Frame(), eCSSProperty_transform);
+
   StackingContextHelper sc(aSc,
                            aBuilder,
                            filters,
@@ -8590,7 +8632,9 @@ nsDisplayTransform::CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBu
                            gfx::CompositionOp::OP_OVER,
                            !BackfaceIsHidden(),
                            mFrame->Extend3DContext() && !mNoExtendContext,
-                           transformForScrollData);
+                           transformForScrollData,
+                           nullptr,
+                           rasterizeLocally);
 
   return mStoredList.CreateWebRenderCommands(aBuilder, aResources, sc,
                                              aManager, aDisplayListBuilder);
@@ -9002,7 +9046,7 @@ nsRect nsDisplayTransform::TransformRect(const nsRect &aUntransformedBounds,
                                          const nsIFrame* aFrame,
                                          const nsRect* aBoundsOverride)
 {
-  NS_PRECONDITION(aFrame, "Can't take the transform based on a null frame!");
+  MOZ_ASSERT(aFrame, "Can't take the transform based on a null frame!");
 
   float factor = aFrame->PresContext()->AppUnitsPerDevPixel();
 
@@ -9018,7 +9062,7 @@ bool nsDisplayTransform::UntransformRect(const nsRect &aTransformedBounds,
                                          const nsIFrame* aFrame,
                                          nsRect *aOutRect)
 {
-  NS_PRECONDITION(aFrame, "Can't take the transform based on a null frame!");
+  MOZ_ASSERT(aFrame, "Can't take the transform based on a null frame!");
 
   float factor = aFrame->PresContext()->AppUnitsPerDevPixel();
 
@@ -9692,34 +9736,41 @@ nsDisplayMask::CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuilder
   Maybe<wr::WrImageMask> mask = aManager->CommandBuilder().BuildWrMaskImage(this, aBuilder, aResources,
                                                                             aSc, aDisplayListBuilder,
                                                                             bounds);
+  Maybe<StackingContextHelper> layer;
+  const StackingContextHelper* sc = &aSc;
   if (mask) {
     auto layoutBounds = wr::ToRoundedLayoutRect(bounds);
-    wr::WrClipId clipId = aBuilder.DefineClip(Nothing(), Nothing(),
+    wr::WrClipId clipId = aBuilder.DefineClip(Nothing(),
         layoutBounds, nullptr, mask.ptr());
 
     // Create a new stacking context to attach the mask to, ensuring the mask is
     // applied to the aggregate, and not the individual elements.
 
     // The stacking context shouldn't have any offset.
-    layoutBounds.origin.x = 0;
-    layoutBounds.origin.y = 0;
+    bounds.MoveTo(0, 0);
 
-    aBuilder.PushStackingContext(/*aBounds: */ layoutBounds,
-                                 /*aClipNodeId: */ &clipId,
-                                 /*aAnimation: */ nullptr,
-                                 /*aOpacity: */ nullptr,
-                                 /*aTransform: */ nullptr,
-                                 /*aTransformStyle: */ wr::TransformStyle::Flat,
-                                 /*aPerspective: */ nullptr,
-                                 /*aMixBlendMode: */ wr::MixBlendMode::Normal,
-                                 /*aFilters: */ nsTArray<wr::WrFilterOp>(),
-                                 /*aBackfaceVisible: */ true);
+    layer.emplace(aSc,
+                  aBuilder,
+                  /*aFilters: */ nsTArray<wr::WrFilterOp>(),
+                  /*aBounds: */ bounds,
+                  /*aBoundTransform: */ nullptr,
+                  /*aAnimation: */ nullptr,
+                  /*aOpacity: */ nullptr,
+                  /*aTransform: */ nullptr,
+                  /*aPerspective: */ nullptr,
+                  /*aMixBlendMode: */ gfx::CompositionOp::OP_OVER,
+                  /*aBackfaceVisible: */ true,
+                  /*aIsPreserve3D: */ false,
+                  /*aTransformForScrollData: */ Nothing(),
+                  /*aClipNodeId: */ &clipId);
+    sc = layer.ptr();
+    aManager->CommandBuilder().PushOverrideForASR(GetActiveScrolledRoot(), Some(clipId));
   }
 
-  nsDisplaySVGEffects::CreateWebRenderCommands(aBuilder, aResources, aSc, aManager, aDisplayListBuilder);
+  nsDisplaySVGEffects::CreateWebRenderCommands(aBuilder, aResources, *sc, aManager, aDisplayListBuilder);
 
   if (mask) {
-    aBuilder.PopStackingContext();
+    aManager->CommandBuilder().PopOverrideForASR(GetActiveScrolledRoot());
   }
 
   return true;

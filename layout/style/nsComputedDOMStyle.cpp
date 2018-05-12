@@ -758,13 +758,6 @@ nsComputedDOMStyle::DocToUpdate()
   MOZ_CRASH("called nsComputedDOMStyle::DocToUpdate");
 }
 
-void
-nsComputedDOMStyle::GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv,
-                                             nsIPrincipal* aSubjectPrincipal)
-{
-  MOZ_CRASH("called nsComputedDOMStyle::GetCSSParsingEnvironment");
-}
-
 nsDOMCSSDeclaration::ServoCSSParsingEnvironment
 nsComputedDOMStyle::GetServoCSSParsingEnvironment(
   nsIPrincipal* aSubjectPrincipal) const
@@ -1195,7 +1188,7 @@ void
 nsComputedDOMStyle::SetValueFromComplexColor(nsROCSSPrimitiveValue* aValue,
                                              const StyleComplexColor& aColor)
 {
-  SetToRGBAColor(aValue, StyleColor()->CalcComplexColor(aColor));
+  SetToRGBAColor(aValue, aColor.CalcColor(mComputedStyle));
 }
 
 already_AddRefed<CSSValue>
@@ -1613,7 +1606,7 @@ nsComputedDOMStyle::DoGetTranslate()
       switch (nsStyleTransformMatrix::TransformFunctionOf(aData)) {
         /* translate : <length-percentage> */
         case eCSSKeyword_translatex: {
-          NS_PRECONDITION(aData->Count() == 2, "Invalid array!");
+          MOZ_ASSERT(aData->Count() == 2, "Invalid array!");
           float tx = ProcessTranslatePart(aData->Item(1),
                                           &refBox,
                                           &TransformReferenceBox::Width);
@@ -1623,7 +1616,7 @@ nsComputedDOMStyle::DoGetTranslate()
         }
         /* translate : <length-percentage> <length-percentage> */
         case eCSSKeyword_translate: {
-          NS_PRECONDITION(aData->Count() == 3, "Invalid array!");
+          MOZ_ASSERT(aData->Count() == 3, "Invalid array!");
           float tx = ProcessTranslatePart(aData->Item(1),
                                           &refBox,
                                           &TransformReferenceBox::Width);
@@ -1642,7 +1635,7 @@ nsComputedDOMStyle::DoGetTranslate()
         }
         /* translate : <length-percentage> <length-percentage> <length>*/
         case eCSSKeyword_translate3d: {
-          NS_PRECONDITION(aData->Count() == 4, "Invalid array!");
+          MOZ_ASSERT(aData->Count() == 4, "Invalid array!");
           float tx = ProcessTranslatePart(aData->Item(1),
                                           &refBox,
                                           &TransformReferenceBox::Width);
@@ -1683,12 +1676,12 @@ nsComputedDOMStyle::DoGetScale()
       switch (nsStyleTransformMatrix::TransformFunctionOf(aData)) {
         /* scale : <number> */
         case eCSSKeyword_scalex:
-          NS_PRECONDITION(aData->Count() == 2, "Invalid array!");
+          MOZ_ASSERT(aData->Count() == 2, "Invalid array!");
           aResult.AppendFloat(aData->Item(1).GetFloatValue());
           break;
         /* scale : <number> <number>*/
         case eCSSKeyword_scale: {
-          NS_PRECONDITION(aData->Count() == 3, "Invalid array!");
+          MOZ_ASSERT(aData->Count() == 3, "Invalid array!");
           aResult.AppendFloat(aData->Item(1).GetFloatValue());
 
           float sy = aData->Item(2).GetFloatValue();
@@ -1700,7 +1693,7 @@ nsComputedDOMStyle::DoGetScale()
         }
         /* scale : <number> <number> <number> */
         case eCSSKeyword_scale3d: {
-          NS_PRECONDITION(aData->Count() == 4, "Invalid array!");
+          MOZ_ASSERT(aData->Count() == 4, "Invalid array!");
           aResult.AppendFloat(aData->Item(1).GetFloatValue());
 
           float sy = aData->Item(2).GetFloatValue();
@@ -1731,7 +1724,7 @@ nsComputedDOMStyle::DoGetRotate()
       switch (nsStyleTransformMatrix::TransformFunctionOf(aData)) {
         /* rotate : <angle> */
         case eCSSKeyword_rotate: {
-          NS_PRECONDITION(aData->Count() == 2, "Invalid array!");
+          MOZ_ASSERT(aData->Count() == 2, "Invalid array!");
           float theta = aData->Item(1).GetAngleValueInDegrees();
           aResult.AppendFloat(theta);
           aResult.AppendLiteral("deg");
@@ -1739,7 +1732,7 @@ nsComputedDOMStyle::DoGetRotate()
         }
         /* rotate : <number> <number> <number> <angle> */
         case eCSSKeyword_rotate3d: {
-          NS_PRECONDITION(aData->Count() == 5, "Invalid array!");
+          MOZ_ASSERT(aData->Count() == 5, "Invalid array!");
           float rx = aData->Item(1).GetFloatValue();
           float ry = aData->Item(2).GetFloatValue();
           float rz = aData->Item(3).GetFloatValue();
@@ -5779,7 +5772,7 @@ nsComputedDOMStyle::SetValueToCoord(nsROCSSPrimitiveValue* aValue,
                                     nscoord aMinAppUnits,
                                     nscoord aMaxAppUnits)
 {
-  NS_PRECONDITION(aValue, "Must have a value to work with");
+  MOZ_ASSERT(aValue, "Must have a value to work with");
 
   switch (aCoord.GetUnit()) {
     case eStyleUnit_Normal:
@@ -5890,7 +5883,7 @@ nsComputedDOMStyle::StyleCoordToNSCoord(const nsStyleCoord& aCoord,
                                         nscoord aDefaultValue,
                                         bool aClampNegativeCalc)
 {
-  NS_PRECONDITION(aPercentageBaseGetter, "Must have a percentage base getter");
+  MOZ_ASSERT(aPercentageBaseGetter, "Must have a percentage base getter");
   if (aCoord.GetUnit() == eStyleUnit_Coord) {
     return aCoord.GetCoordValue();
   }

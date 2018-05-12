@@ -82,6 +82,7 @@ struct ModuleEnvironment
     // Fields decoded as part of the wasm module tail:
     ElemSegmentVector         elemSegments;
     DataSegmentVector         dataSegments;
+    Maybe<NameInBytecode>     moduleName;
     NameInBytecodeVector      funcNames;
     CustomSectionVector       customSections;
 
@@ -285,6 +286,12 @@ class Encoder
         static_assert(size_t(MozOp::Limit) <= 256, "fits");
         MOZ_ASSERT(size_t(op) < size_t(MozOp::Limit));
         return writeFixedU8(uint8_t(Op::MozPrefix)) &&
+               writeFixedU8(uint8_t(op));
+    }
+    MOZ_MUST_USE bool writeOp(CopyOrFillOp op) {
+        static_assert(size_t(CopyOrFillOp::Limit) <= 256, "fits");
+        MOZ_ASSERT(size_t(op) < size_t(CopyOrFillOp::Limit));
+        return writeFixedU8(uint8_t(Op::CopyOrFillPrefix)) &&
                writeFixedU8(uint8_t(op));
     }
     MOZ_MUST_USE bool writeOp(NumericOp op) {

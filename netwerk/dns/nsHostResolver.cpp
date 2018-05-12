@@ -298,6 +298,15 @@ nsHostRecord::ResolveComplete()
         }
     }
 
+    if (mTRRUsed && mNativeUsed) {
+        // both were used, accumulate comparative success
+        AccumulateCategorical(mNativeSuccess && mTRRSuccess?
+                              Telemetry::LABELS_DNS_TRR_COMPARE::BothWorked :
+                              ((mNativeSuccess ? Telemetry::LABELS_DNS_TRR_COMPARE::NativeWorked :
+                                (mTRRSuccess ? Telemetry::LABELS_DNS_TRR_COMPARE::TRRWorked:
+                                 Telemetry::LABELS_DNS_TRR_COMPARE::BothFailed))));
+    }
+
     switch(mResolverMode) {
     case MODE_NATIVEONLY:
     case MODE_TRROFF:
@@ -950,6 +959,14 @@ nsHostResolver::ResolveHost(const char             *host,
                              LOG_HOST(host, netInterface), callback.get()));
                     }
                 }
+            } else if (rec->mDidCallbacks) {
+                // record is still pending more (TRR) data; make the callback
+                // at once
+                result = rec;
+                // make it count as a hit
+                Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_HIT);
+                LOG(("  Host [%s%s%s] re-using early TRR resolve data\n",
+                     LOG_HOST(host, netInterface)));
             } else {
                 LOG(("  Host [%s%s%s] is being resolved. Appending callback "
                      "[%p].", LOG_HOST(host, netInterface), callback.get()));
@@ -1114,15 +1131,6 @@ nsHostResolver::TrrLookup(nsHostRecord *aRec, TRR *pushedTRR)
     rec->mTRRSuccess = 0; // bump for each successful TRR response
     rec->mTrrAUsed = nsHostRecord::INIT;
     rec->mTrrAAAAUsed = nsHostRecord::INIT;
-
-    if (gTRRService && gTRRService->IsTRRBlacklisted(rec->host, rec->pb, true)) {
-        Telemetry::Accumulate(Telemetry::DNS_TRR_BLACKLISTED, true);
-        MOZ_ASSERT(!rec->mTRRUsed);
-        // not really an error but no TRR is issued
-        return NS_ERROR_UNKNOWN_HOST;
-    }
-    Telemetry::Accumulate(Telemetry::DNS_TRR_BLACKLISTED, false);
-
     rec->mTrrStart = TimeStamp::Now();
     rec->mTRRUsed = true; // this record gets TRR treatment
 
@@ -1402,7 +1410,7 @@ nsHostResolver::PrepareRecordExpiration(nsHostRecord* rec) const
     unsigned int grace = mDefaultGracePeriod;
 
     unsigned int ttl = mDefaultCacheLifetime;
-    if (sGetTtlEnabled) {
+    if (sGetTtlEnabled || rec->addr_info->IsTRR()) {
         if (rec->addr_info && rec->addr_info->ttl != AddrInfo::NO_TTL_DATA) {
             ttl = rec->addr_info->ttl;
         }
@@ -1687,6 +1695,11 @@ nsHostResolver::CompleteLookup(nsHostRecord* rec, nsresult status, AddrInfo* aNe
                 TimeDuration age = TimeStamp::NowLoRes() - head->mValidStart;
                 Telemetry::Accumulate(Telemetry::DNS_CLEANUP_AGE,
                                       static_cast<uint32_t>(age.ToSeconds() / 60));
+                if (head->CheckExpiration(TimeStamp::Now()) !=
+                    nsHostRecord::EXP_EXPIRED) {
+                  Telemetry::Accumulate(Telemetry::DNS_PREMATURE_EVICTION,
+                                        static_cast<uint32_t>(age.ToSeconds() / 60));
+                }
             }
         }
     }

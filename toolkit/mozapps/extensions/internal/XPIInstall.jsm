@@ -42,9 +42,9 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   OS: "resource://gre/modules/osfile.jsm",
   ProductAddonChecker: "resource://gre/modules/addons/ProductAddonChecker.jsm",
   UpdateUtils: "resource://gre/modules/UpdateUtils.jsm",
-  ZipUtils: "resource://gre/modules/ZipUtils.jsm",
 
   AddonInternal: "resource://gre/modules/addons/XPIDatabase.jsm",
+  InstallRDF: "resource://gre/modules/addons/RDFManifestConverter.jsm",
   XPIDatabase: "resource://gre/modules/addons/XPIDatabase.jsm",
   XPIInternal: "resource://gre/modules/addons/XPIProvider.jsm",
   XPIProvider: "resource://gre/modules/addons/XPIProvider.jsm",
@@ -68,16 +68,11 @@ const FileOutputStream = Components.Constructor("@mozilla.org/network/file-outpu
 const ZipReader = Components.Constructor("@mozilla.org/libjar/zip-reader;1",
                                          "nsIZipReader", "open");
 
-const RDFDataSource = Components.Constructor(
-  "@mozilla.org/rdf/datasource;1?name=in-memory-datasource", "nsIRDFDataSource");
-const parseRDFString = Components.Constructor(
-  "@mozilla.org/rdf/xml-parser;1", "nsIRDFXMLParser", "parseString");
-
 XPCOMUtils.defineLazyServiceGetters(this, {
   gCertDB: ["@mozilla.org/security/x509certdb;1", "nsIX509CertDB"],
-  gRDF: ["@mozilla.org/rdf/rdf-service;1", "nsIRDFService"],
 });
 
+const hasOwnProperty = Function.call.bind(Object.prototype.hasOwnProperty);
 
 const PREF_ALLOW_NON_RESTARTLESS      = "extensions.legacy.non-restartless.enabled";
 const PREF_DISTRO_ADDONS_PERMS        = "extensions.distroAddons.promptForPermissions";
@@ -165,16 +160,12 @@ const KEY_APP_PROFILE                 = "app-profile";
 const DIR_STAGE                       = "staged";
 const DIR_TRASH                       = "trash";
 
-const RDFURI_INSTALL_MANIFEST_ROOT    = "urn:mozilla:install-manifest";
-const PREFIX_NS_EM                    = "http://www.mozilla.org/2004/em-rdf#";
-
 // Properties that exist in the install manifest
 const PROP_METADATA      = ["id", "version", "type", "internalName", "updateURL",
                             "optionsURL", "optionsType", "aboutURL",
                             "iconURL", "icon64URL"];
 const PROP_LOCALE_SINGLE = ["name", "description", "creator", "homepageURL"];
 const PROP_LOCALE_MULTI  = ["developers", "translators", "contributors"];
-const PROP_TARGETAPP     = ["id", "minVersion", "maxVersion"];
 
 // Map new string type identifiers to old style nsIUpdateItem types.
 // Retired values:
@@ -355,16 +346,12 @@ XPIPackage = class XPIPackage extends Package {
     super(file, getJarURI(file));
 
     this.zipReader = new ZipReader(file);
-    this.needFlush = false;
   }
 
   close() {
     this.zipReader.close();
     this.zipReader = null;
-
-    if (this.needFlush) {
-      this.flushCache();
-    }
+    this.flushCache();
   }
 
   async hasResource(...path) {
@@ -383,7 +370,6 @@ XPIPackage = class XPIPackage extends Package {
   }
 
   async readBinary(...path) {
-    this.needFlush = true;
     let response = await fetch(this.rootURI.resolve(path.join("/")));
     return response.arrayBuffer();
   }
@@ -410,7 +396,6 @@ XPIPackage = class XPIPackage extends Package {
 
   flushCache() {
     flushJarCache(this.file);
-    this.needFlush = false;
   }
 };
 
@@ -446,44 +431,6 @@ function waitForAllPromises(promises) {
     Promise.all(newPromises)
            .then((results) => shouldReject ? reject(rejectValue) : resolve(results));
   });
-}
-
-function EM_R(aProperty) {
-  return gRDF.GetResource(PREFIX_NS_EM + aProperty);
-}
-
-/**
- * Converts an RDF literal, resource or integer into a string.
- *
- * @param {nsISupports} aLiteral
- *        The RDF object to convert
- * @returns {string?}
- *        A string if the object could be converted or null
- */
-function getRDFValue(aLiteral) {
-  if (aLiteral instanceof Ci.nsIRDFLiteral)
-    return aLiteral.Value;
-  if (aLiteral instanceof Ci.nsIRDFResource)
-    return aLiteral.Value;
-  if (aLiteral instanceof Ci.nsIRDFInt)
-    return aLiteral.Value;
-  return null;
-}
-
-/**
- * Gets an RDF property as a string
- *
- * @param {nsIRDFDataSource} aDs
- *        The RDF datasource to read the property from
- * @param {nsIRDFResource} aResource
- *        The RDF resource to read the property from
- * @param {string} aProperty
- *        The property to read
- * @returns {string?}
- *        A string if the property existed or null
- */
-function getRDFProperty(aDs, aResource, aProperty) {
-  return getRDFValue(aDs.GetTarget(aResource, EM_R(aProperty), true));
 }
 
 /**
@@ -623,28 +570,19 @@ async function loadManifestFromWebManifest(aUri) {
  *        The URI that the manifest is being read from
  * @param {string} aData
  *        The manifest text
+ * @param {InstallPackage} aPackage
+ *        An install package instance for the extension.
  * @returns {AddonInternal}
  * @throws if the install manifest in the RDF stream is corrupt or could not
  *         be read
  */
-async function loadManifestFromRDF(aUri, aData) {
-  function getPropertyArray(aDs, aSource, aProperty) {
-    let values = [];
-    let targets = aDs.GetTargets(aSource, EM_R(aProperty), true);
-    while (targets.hasMoreElements())
-      values.push(getRDFValue(targets.getNext()));
-
-    return values;
-  }
-
+async function loadManifestFromRDF(aUri, aData, aPackage) {
   /**
    * Reads locale properties from either the main install manifest root or
    * an em:localized section in the install manifest.
    *
-   * @param {nsIRDFDataSource} aDs
-   *         The datasource to read from.
-   * @param {nsIRDFResource} aSource
-   *         The resource to read the properties from.
+   * @param {Object} aSource
+   *        The resource to read the properties from.
    * @param {boolean} isDefault
    *        True if the locale is to be read from the main install manifest
    *        root
@@ -655,13 +593,11 @@ async function loadManifestFromRDF(aUri, aData) {
    * @returns {Object}
    *        an object containing the locale properties
    */
-  function readLocale(aDs, aSource, isDefault, aSeenLocales) {
-    let locale = { };
+  function readLocale(aSource, isDefault, aSeenLocales) {
+    let locale = {};
     if (!isDefault) {
       locale.locales = [];
-      let targets = ds.GetTargets(aSource, EM_R("locale"), true);
-      while (targets.hasMoreElements()) {
-        let localeName = getRDFValue(targets.getNext());
+      for (let localeName of aSource.locales || []) {
         if (!localeName) {
           logger.warn("Ignoring empty locale in localized properties");
           continue;
@@ -680,32 +616,26 @@ async function loadManifestFromRDF(aUri, aData) {
       }
     }
 
-    for (let prop of PROP_LOCALE_SINGLE) {
-      locale[prop] = getRDFProperty(aDs, aSource, prop);
-    }
-
-    for (let prop of PROP_LOCALE_MULTI) {
-      // Don't store empty arrays
-      let props = getPropertyArray(aDs, aSource,
-                                   prop.substring(0, prop.length - 1));
-      if (props.length > 0)
-        locale[prop] = props;
+    for (let prop of [...PROP_LOCALE_SINGLE, ...PROP_LOCALE_MULTI]) {
+      if (hasOwnProperty(aSource, prop)) {
+        locale[prop] = aSource[prop];
+      }
     }
 
     return locale;
   }
 
-  let ds = new RDFDataSource();
-  parseRDFString(ds, aUri, aData);
+  let manifest = InstallRDF.loadFromString(aData).decode();
 
-  let root = gRDF.GetResource(RDFURI_INSTALL_MANIFEST_ROOT);
   let addon = new AddonInternal();
   for (let prop of PROP_METADATA) {
-    addon[prop] = getRDFProperty(ds, root, prop);
+    if (hasOwnProperty(manifest, prop)) {
+      addon[prop] = manifest[prop];
+    }
   }
 
   if (!addon.type) {
-    addon.type = addon.internalName ? "theme" : "extension";
+    addon.type = "extension";
   } else {
     let type = addon.type;
     addon.type = null;
@@ -727,16 +657,16 @@ async function loadManifestFromRDF(aUri, aData) {
   if (!addon.version)
     throw new Error("No version in install manifest");
 
-  addon.strictCompatibility = !(addon.type in COMPATIBLE_BY_DEFAULT_TYPES) ||
-                              getRDFProperty(ds, root, "strictCompatibility") == "true";
+  addon.strictCompatibility = (!(addon.type in COMPATIBLE_BY_DEFAULT_TYPES) ||
+                               manifest.strictCompatibility == "true");
 
   // Only read these properties for extensions.
   if (addon.type == "extension") {
-    addon.bootstrap = getRDFProperty(ds, root, "bootstrap") == "true";
+    addon.bootstrap = manifest.bootstrap == "true";
     if (!addon.bootstrap && !Services.prefs.getBoolPref(PREF_ALLOW_NON_RESTARTLESS, false))
         throw new Error(`Non-restartless extensions no longer supported`);
 
-    addon.hasEmbeddedWebExtension = getRDFProperty(ds, root, "hasEmbeddedWebExtension") == "true";
+    addon.hasEmbeddedWebExtension = manifest.hasEmbeddedWebExtension == "true";
 
     if (addon.optionsType &&
         addon.optionsType != AddonManager.OPTIONS_INLINE_BROWSER &&
@@ -761,6 +691,20 @@ async function loadManifestFromRDF(aUri, aData) {
     if (RESTARTLESS_TYPES.has(addon.type)) {
       addon.bootstrap = true;
     }
+    // Convert legacy dictionaries into a format the WebExtension
+    // dictionary loader can process.
+    if (addon.type === "dictionary") {
+      addon.type = "webextension-dictionary";
+      let dictionaries = {};
+      await aPackage.iterFiles(({path}) => {
+        let match = /^dictionaries\/([^\/]+)\.dic$/.exec(path);
+        if (match) {
+          let lang = match[1].replace(/_/g, "-");
+          dictionaries[lang] = match[0];
+        }
+      });
+      addon.startupData = {dictionaries};
+    }
 
     // Only extensions are allowed to provide an optionsURL, optionsType,
     // optionsBrowserStyle, or aboutURL. For all other types they are silently ignored
@@ -768,63 +712,42 @@ async function loadManifestFromRDF(aUri, aData) {
     addon.optionsBrowserStyle = null;
     addon.optionsType = null;
     addon.optionsURL = null;
-
-    if (addon.type == "theme") {
-      if (!addon.internalName)
-        throw new Error("Themes must include an internalName property");
-      addon.skinnable = getRDFProperty(ds, root, "skinnable") == "true";
-    }
   }
 
-  addon.defaultLocale = readLocale(ds, root, true);
+  addon.defaultLocale = readLocale(manifest, true);
 
   let seenLocales = [];
   addon.locales = [];
-  let targets = ds.GetTargets(root, EM_R("localized"), true);
-  while (targets.hasMoreElements()) {
-    let target = targets.getNext().QueryInterface(Ci.nsIRDFResource);
-    let locale = readLocale(ds, target, false, seenLocales);
+  for (let localeData of manifest.localized || []) {
+    let locale = readLocale(localeData, false, seenLocales);
     if (locale)
       addon.locales.push(locale);
   }
 
-  let dependencies = new Set();
-  targets = ds.GetTargets(root, EM_R("dependency"), true);
-  while (targets.hasMoreElements()) {
-    let target = targets.getNext().QueryInterface(Ci.nsIRDFResource);
-    let id = getRDFProperty(ds, target, "id");
-    dependencies.add(id);
-  }
+  let dependencies = new Set(manifest.dependencies);
   addon.dependencies = Object.freeze(Array.from(dependencies));
 
   let seenApplications = [];
   addon.targetApplications = [];
-  targets = ds.GetTargets(root, EM_R("targetApplication"), true);
-  while (targets.hasMoreElements()) {
-    let target = targets.getNext().QueryInterface(Ci.nsIRDFResource);
-    let targetAppInfo = {};
-    for (let prop of PROP_TARGETAPP) {
-      targetAppInfo[prop] = getRDFProperty(ds, target, prop);
-    }
-    if (!targetAppInfo.id || !targetAppInfo.minVersion ||
-        !targetAppInfo.maxVersion) {
+  for (let targetApp of manifest.targetApplications || []) {
+    if (!targetApp.id || !targetApp.minVersion ||
+        !targetApp.maxVersion) {
       logger.warn("Ignoring invalid targetApplication entry in install manifest");
       continue;
     }
-    if (seenApplications.includes(targetAppInfo.id)) {
-      logger.warn("Ignoring duplicate targetApplication entry for " + targetAppInfo.id +
+    if (seenApplications.includes(targetApp.id)) {
+      logger.warn("Ignoring duplicate targetApplication entry for " + targetApp.id +
            " in install manifest");
       continue;
     }
-    seenApplications.push(targetAppInfo.id);
-    addon.targetApplications.push(targetAppInfo);
+    seenApplications.push(targetApp.id);
+    addon.targetApplications.push(targetApp);
   }
 
   // Note that we don't need to check for duplicate targetPlatform entries since
   // the RDF service coalesces them for us.
-  let targetPlatforms = getPropertyArray(ds, root, "targetPlatform");
   addon.targetPlatforms = [];
-  for (let targetPlatform of targetPlatforms) {
+  for (let targetPlatform of manifest.targetPlatforms || []) {
     let platform = {
       os: null,
       abi: null
@@ -890,7 +813,7 @@ function generateTemporaryInstallID(aFile) {
 var loadManifest = async function(aPackage, aInstallLocation, aOldAddon) {
   async function loadFromRDF(aUri) {
     let manifest = await aPackage.readString("install.rdf");
-    let addon = await loadManifestFromRDF(aUri, manifest);
+    let addon = await loadManifestFromRDF(aUri, manifest, aPackage);
 
     if (await aPackage.hasResource("icon.png")) {
       addon.icons[32] = "icon.png";
@@ -1302,85 +1225,6 @@ SafeInstallOperation.prototype = {
     this._installedFiles.push({ oldFile, newFile });
   },
 
-  _installDirectory(aDirectory, aTargetDirectory, aCopy) {
-    if (aDirectory.contains(aTargetDirectory)) {
-      let err = new Error(`Not installing ${aDirectory} into its own descendent ${aTargetDirectory}`);
-      logger.error(err);
-      throw err;
-    }
-
-    let newDir = getFile(aDirectory.leafName, aTargetDirectory);
-    try {
-      newDir.create(Ci.nsIFile.DIRECTORY_TYPE, FileUtils.PERMS_DIRECTORY);
-    } catch (e) {
-      logger.error("Failed to create directory " + newDir.path, e);
-      throw e;
-    }
-    this._createdDirs.push(newDir);
-
-    // Use a snapshot of the directory contents to avoid possible issues with
-    // iterating over a directory while removing files from it (the YAFFS2
-    // embedded filesystem has this issue, see bug 772238), and to remove
-    // normal files before their resource forks on OSX (see bug 733436).
-    let entries = getDirectoryEntries(aDirectory, true);
-    for (let entry of entries) {
-      try {
-        this._installDirEntry(entry, newDir, aCopy);
-      } catch (e) {
-        logger.error("Failed to " + (aCopy ? "copy" : "move") + " entry " +
-                     entry.path, e);
-        throw e;
-      }
-    }
-
-    // If this is only a copy operation then there is nothing else to do
-    if (aCopy)
-      return;
-
-    // The directory should be empty by this point. If it isn't this will throw
-    // and all of the operations will be rolled back
-    try {
-      setFilePermissions(aDirectory, FileUtils.PERMS_DIRECTORY);
-      aDirectory.remove(false);
-    } catch (e) {
-      logger.error("Failed to remove directory " + aDirectory.path, e);
-      throw e;
-    }
-
-    // Note we put the directory move in after all the file moves so the
-    // directory is recreated before all the files are moved back
-    this._installedFiles.push({ oldFile: aDirectory, newFile: newDir });
-  },
-
-  _installDirEntry(aDirEntry, aTargetDirectory, aCopy) {
-    let isDir = null;
-
-    try {
-      isDir = aDirEntry.isDirectory() && !aDirEntry.isSymlink();
-    } catch (e) {
-      // If the file has already gone away then don't worry about it, this can
-      // happen on OSX where the resource fork is automatically moved with the
-      // data fork for the file. See bug 733436.
-      if (e.result == Cr.NS_ERROR_FILE_TARGET_DOES_NOT_EXIST)
-        return;
-
-      logger.error("Failure " + (aCopy ? "copying" : "moving") + " " + aDirEntry.path +
-            " to " + aTargetDirectory.path);
-      throw e;
-    }
-
-    try {
-      if (isDir)
-        this._installDirectory(aDirEntry, aTargetDirectory, aCopy);
-      else
-        this._installFile(aDirEntry, aTargetDirectory, aCopy);
-    } catch (e) {
-      logger.error("Failure " + (aCopy ? "copying" : "moving") + " " + aDirEntry.path +
-            " to " + aTargetDirectory.path);
-      throw e;
-    }
-  },
-
   /**
    * Moves a file or directory into a new directory. If an error occurs then all
    * files that have been moved will be moved back to their original location.
@@ -1393,7 +1237,7 @@ SafeInstallOperation.prototype = {
    */
   moveUnder(aFile, aTargetDirectory) {
     try {
-      this._installDirEntry(aFile, aTargetDirectory, false);
+      this._installFile(aFile, aTargetDirectory, false);
     } catch (e) {
       this.rollback();
       throw e;
@@ -1432,7 +1276,7 @@ SafeInstallOperation.prototype = {
    */
   copy(aFile, aTargetDirectory) {
     try {
-      this._installDirEntry(aFile, aTargetDirectory, true);
+      this._installFile(aFile, aTargetDirectory, true);
     } catch (e) {
       this.rollback();
       throw e;
@@ -2076,19 +1920,10 @@ class AddonInstall {
    *        add-on.
    */
   async stageInstall(restartRequired, stagedAddon, isUpgrade) {
-    // First stage the file regardless of whether restarting is necessary
-    if (this.addon.unpack) {
-      logger.debug("Addon " + this.addon.id + " will be installed as " +
-                   "an unpacked directory");
-      stagedAddon.leafName = this.addon.id;
-      await OS.File.makeDir(stagedAddon.path);
-      await ZipUtils.extractFilesAsync(this.file, stagedAddon);
-    } else {
-      logger.debug(`Addon ${this.addon.id} will be installed as a packed xpi`);
-      stagedAddon.leafName = this.addon.id + ".xpi";
+    logger.debug(`Addon ${this.addon.id} will be installed as a packed xpi`);
+    stagedAddon.leafName = this.addon.id + ".xpi";
 
-      await OS.File.copy(this.file.path, stagedAddon.path);
-    }
+    await OS.File.copy(this.file.path, stagedAddon.path);
 
     if (restartRequired) {
       // Point the add-on to its extracted files as the xpi may get deleted

@@ -770,7 +770,7 @@ nsresult nsContentUtils::RemoveWyciwygScheme(nsIURI* aURI, nsIURI** aReturn)
 #ifdef DEBUG
   bool isWyciwyg = false;
   aURI->SchemeIs("wyciwyg", &isWyciwyg);
-  NS_PRECONDITION(isWyciwyg, "Scheme should be wyciwyg");
+  MOZ_ASSERT(isWyciwyg, "Scheme should be wyciwyg");
 #endif
   nsAutoCString path;
   nsresult rv = aURI->GetPathQueryRef(path);
@@ -1061,7 +1061,7 @@ nsContentUtils::Atob(const nsAString& aAsciiBase64String,
 bool
 nsContentUtils::IsAutocompleteEnabled(mozilla::dom::HTMLInputElement* aInput)
 {
-  NS_PRECONDITION(aInput, "aInput should not be null!");
+  MOZ_ASSERT(aInput, "aInput should not be null!");
 
   nsAutoString autocomplete;
   aInput->GetAutocomplete(autocomplete);
@@ -2193,7 +2193,7 @@ nsContentUtils::IsAbsoluteURL(const nsACString& aURL)
 bool
 nsContentUtils::InProlog(nsINode *aNode)
 {
-  NS_PRECONDITION(aNode, "missing node to nsContentUtils::InProlog");
+  MOZ_ASSERT(aNode, "missing node to nsContentUtils::InProlog");
 
   nsINode* parent = aNode->GetParentNode();
   if (!parent || !parent->IsDocument()) {
@@ -2391,7 +2391,7 @@ nsContentUtils::LookupBindingMember(JSContext* aCx, nsIContent *aContent,
 nsINode*
 nsContentUtils::GetCrossDocParentNode(nsINode* aChild)
 {
-  NS_PRECONDITION(aChild, "The child is null!");
+  MOZ_ASSERT(aChild, "The child is null!");
 
   nsINode* parent = aChild->GetParentNode();
   if (parent && parent->IsContent() && aChild->IsContent()) {
@@ -2412,8 +2412,8 @@ bool
 nsContentUtils::ContentIsDescendantOf(const nsINode* aPossibleDescendant,
                                       const nsINode* aPossibleAncestor)
 {
-  NS_PRECONDITION(aPossibleDescendant, "The possible descendant is null!");
-  NS_PRECONDITION(aPossibleAncestor, "The possible ancestor is null!");
+  MOZ_ASSERT(aPossibleDescendant, "The possible descendant is null!");
+  MOZ_ASSERT(aPossibleAncestor, "The possible ancestor is null!");
 
   do {
     if (aPossibleDescendant == aPossibleAncestor)
@@ -2428,8 +2428,8 @@ bool
 nsContentUtils::ContentIsHostIncludingDescendantOf(
   const nsINode* aPossibleDescendant, const nsINode* aPossibleAncestor)
 {
-  NS_PRECONDITION(aPossibleDescendant, "The possible descendant is null!");
-  NS_PRECONDITION(aPossibleAncestor, "The possible ancestor is null!");
+  MOZ_ASSERT(aPossibleDescendant, "The possible descendant is null!");
+  MOZ_ASSERT(aPossibleAncestor, "The possible ancestor is null!");
 
   do {
     if (aPossibleDescendant == aPossibleAncestor)
@@ -2478,8 +2478,8 @@ bool
 nsContentUtils::ContentIsCrossDocDescendantOf(nsINode* aPossibleDescendant,
                                               nsINode* aPossibleAncestor)
 {
-  NS_PRECONDITION(aPossibleDescendant, "The possible descendant is null!");
-  NS_PRECONDITION(aPossibleAncestor, "The possible ancestor is null!");
+  MOZ_ASSERT(aPossibleDescendant, "The possible descendant is null!");
+  MOZ_ASSERT(aPossibleAncestor, "The possible ancestor is null!");
 
   do {
     if (aPossibleDescendant == aPossibleAncestor)
@@ -2497,8 +2497,8 @@ nsContentUtils::ContentIsFlattenedTreeDescendantOf(
   const nsINode* aPossibleDescendant,
   const nsINode* aPossibleAncestor)
 {
-  NS_PRECONDITION(aPossibleDescendant, "The possible descendant is null!");
-  NS_PRECONDITION(aPossibleAncestor, "The possible ancestor is null!");
+  MOZ_ASSERT(aPossibleDescendant, "The possible descendant is null!");
+  MOZ_ASSERT(aPossibleAncestor, "The possible ancestor is null!");
 
   do {
     if (aPossibleDescendant == aPossibleAncestor) {
@@ -2516,8 +2516,8 @@ nsContentUtils::ContentIsFlattenedTreeDescendantOfForStyle(
   const nsINode* aPossibleDescendant,
   const nsINode* aPossibleAncestor)
 {
-  NS_PRECONDITION(aPossibleDescendant, "The possible descendant is null!");
-  NS_PRECONDITION(aPossibleAncestor, "The possible ancestor is null!");
+  MOZ_ASSERT(aPossibleDescendant, "The possible descendant is null!");
+  MOZ_ASSERT(aPossibleAncestor, "The possible ancestor is null!");
 
   do {
     if (aPossibleDescendant == aPossibleAncestor) {
@@ -3451,9 +3451,9 @@ nsContentUtils::CanLoadImage(nsIURI* aURI, nsINode* aNode,
                              int16_t* aImageBlockingStatus,
                              uint32_t aContentType)
 {
-  NS_PRECONDITION(aURI, "Must have a URI");
-  NS_PRECONDITION(aLoadingDocument, "Must have a document");
-  NS_PRECONDITION(aLoadingPrincipal, "Must have a loading principal");
+  MOZ_ASSERT(aURI, "Must have a URI");
+  MOZ_ASSERT(aLoadingDocument, "Must have a document");
+  MOZ_ASSERT(aLoadingPrincipal, "Must have a loading principal");
 
   nsresult rv;
 
@@ -3676,11 +3676,11 @@ nsContentUtils::LoadImage(nsIURI* aURI, nsINode* aContext,
                           uint32_t aContentPolicyType,
                           bool aUseUrgentStartForChannel)
 {
-  NS_PRECONDITION(aURI, "Must have a URI");
-  NS_PRECONDITION(aContext, "Must have a context");
-  NS_PRECONDITION(aLoadingDocument, "Must have a document");
-  NS_PRECONDITION(aLoadingPrincipal, "Must have a principal");
-  NS_PRECONDITION(aRequest, "Null out param");
+  MOZ_ASSERT(aURI, "Must have a URI");
+  MOZ_ASSERT(aContext, "Must have a context");
+  MOZ_ASSERT(aLoadingDocument, "Must have a document");
+  MOZ_ASSERT(aLoadingPrincipal, "Must have a principal");
+  MOZ_ASSERT(aRequest, "Null out param");
 
   imgLoader* imgLoader = GetImgLoaderForDocument(aLoadingDocument);
   if (!imgLoader) {
@@ -3694,9 +3694,6 @@ nsContentUtils::LoadImage(nsIURI* aURI, nsINode* aContext,
 
   NS_ASSERTION(loadGroup || IsFontTableURI(documentURI),
                "Could not get loadgroup; onload may fire too early");
-
-  // Make the URI immutable so people won't change it under us
-  NS_TryToSetImmutable(aURI);
 
   // XXXbz using "documentURI" for the initialDocumentURI is not quite
   // right, but the best we can do here...
@@ -3788,7 +3785,7 @@ nsContentUtils::ContentIsDraggable(nsIContent* aContent)
 bool
 nsContentUtils::IsDraggableImage(nsIContent* aContent)
 {
-  NS_PRECONDITION(aContent, "Must have content node to test");
+  MOZ_ASSERT(aContent, "Must have content node to test");
 
   nsCOMPtr<nsIImageLoadingContent> imageContent(do_QueryInterface(aContent));
   if (!imageContent) {
@@ -4590,7 +4587,7 @@ nsContentUtils::MatchElementId(nsIContent *aContent, const nsAtom* aId)
 Element *
 nsContentUtils::MatchElementId(nsIContent *aContent, const nsAString& aId)
 {
-  NS_PRECONDITION(!aId.IsEmpty(), "Will match random elements");
+  MOZ_ASSERT(!aId.IsEmpty(), "Will match random elements");
 
   // ID attrs are generally stored as atoms, so just atomize this up front
   RefPtr<nsAtom> id(NS_Atomize(aId));
@@ -4737,9 +4734,9 @@ void
 nsContentUtils::MaybeFireNodeRemoved(nsINode* aChild, nsINode* aParent,
                                      nsIDocument* aOwnerDoc)
 {
-  NS_PRECONDITION(aChild, "Missing child");
-  NS_PRECONDITION(aChild->GetParentNode() == aParent, "Wrong parent");
-  NS_PRECONDITION(aChild->OwnerDoc() == aOwnerDoc, "Wrong owner-doc");
+  MOZ_ASSERT(aChild, "Missing child");
+  MOZ_ASSERT(aChild->GetParentNode() == aParent, "Wrong parent");
+  MOZ_ASSERT(aChild->OwnerDoc() == aOwnerDoc, "Wrong owner-doc");
 
   // Having an explicit check here since it's an easy mistake to fall into,
   // and there might be existing code with problems. We'd rather be safe
@@ -5407,10 +5404,8 @@ bool
 nsContentUtils::IsInSameAnonymousTree(const nsINode* aNode,
                                       const nsIContent* aContent)
 {
-  NS_PRECONDITION(aNode,
-                  "Must have a node to work with");
-  NS_PRECONDITION(aContent,
-                  "Must have a content to work with");
+  MOZ_ASSERT(aNode, "Must have a node to work with");
+  MOZ_ASSERT(aContent, "Must have a content to work with");
 
   if (!aNode->IsContent()) {
     /**
@@ -5491,11 +5486,10 @@ nsContentUtils::CombineResourcePrincipals(nsCOMPtr<nsIPrincipal>* aResourcePrinc
 void
 nsContentUtils::TriggerLink(nsIContent *aContent, nsPresContext *aPresContext,
                             nsIURI *aLinkURI, const nsString &aTargetSpec,
-                            bool aClick, bool aIsUserTriggered,
-                            bool aIsTrusted)
+                            bool aClick, bool aIsTrusted)
 {
   NS_ASSERTION(aPresContext, "Need a nsPresContext");
-  NS_PRECONDITION(aLinkURI, "No link URI");
+  MOZ_ASSERT(aLinkURI, "No link URI");
 
   if (aContent->IsEditable()) {
     return;
@@ -5515,10 +5509,7 @@ nsContentUtils::TriggerLink(nsIContent *aContent, nsPresContext *aPresContext,
   nsresult proceed = NS_OK;
 
   if (sSecurityManager) {
-    uint32_t flag =
-      aIsUserTriggered ?
-      (uint32_t)nsIScriptSecurityManager::STANDARD :
-      (uint32_t)nsIScriptSecurityManager::LOAD_IS_AUTOMATIC_DOCUMENT_REPLACEMENT;
+    uint32_t flag = static_cast<uint32_t>(nsIScriptSecurityManager::STANDARD);
     proceed =
       sSecurityManager->CheckLoadURIWithPrincipal(aContent->NodePrincipal(),
                                                   aLinkURI, flag);
@@ -6283,7 +6274,7 @@ SameOriginCheckerImpl::AsyncOnChannelRedirect(nsIChannel* aOldChannel,
                                               uint32_t aFlags,
                                               nsIAsyncVerifyRedirectCallback* cb)
 {
-  NS_PRECONDITION(aNewChannel, "Redirecting to null channel?");
+  MOZ_ASSERT(aNewChannel, "Redirecting to null channel?");
 
   nsresult rv = nsContentUtils::CheckSameOrigin(aOldChannel, aNewChannel);
   if (NS_SUCCEEDED(rv)) {
@@ -6303,7 +6294,7 @@ SameOriginCheckerImpl::GetInterface(const nsIID& aIID, void** aResult)
 nsresult
 nsContentUtils::GetASCIIOrigin(nsIPrincipal* aPrincipal, nsACString& aOrigin)
 {
-  NS_PRECONDITION(aPrincipal, "missing principal");
+  MOZ_ASSERT(aPrincipal, "missing principal");
 
   aOrigin.Truncate();
 
@@ -6324,7 +6315,7 @@ nsContentUtils::GetASCIIOrigin(nsIPrincipal* aPrincipal, nsACString& aOrigin)
 nsresult
 nsContentUtils::GetASCIIOrigin(nsIURI* aURI, nsACString& aOrigin)
 {
-  NS_PRECONDITION(aURI, "missing uri");
+  MOZ_ASSERT(aURI, "missing uri");
 
   // For Blob URI we have to return the origin of page using its principal.
   nsCOMPtr<nsIURIWithPrincipal> uriWithPrincipal = do_QueryInterface(aURI);
@@ -6378,7 +6369,7 @@ nsContentUtils::GetASCIIOrigin(nsIURI* aURI, nsACString& aOrigin)
 nsresult
 nsContentUtils::GetUTFOrigin(nsIPrincipal* aPrincipal, nsAString& aOrigin)
 {
-  NS_PRECONDITION(aPrincipal, "missing principal");
+  MOZ_ASSERT(aPrincipal, "missing principal");
 
   aOrigin.Truncate();
 
@@ -6399,7 +6390,7 @@ nsContentUtils::GetUTFOrigin(nsIPrincipal* aPrincipal, nsAString& aOrigin)
 nsresult
 nsContentUtils::GetUTFOrigin(nsIURI* aURI, nsAString& aOrigin)
 {
-  NS_PRECONDITION(aURI, "missing uri");
+  MOZ_ASSERT(aURI, "missing uri");
 
   bool isBlobURL = false;
   nsresult rv = aURI->SchemeIs(BLOBURI_SCHEME, &isBlobURL);

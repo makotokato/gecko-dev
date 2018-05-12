@@ -23,17 +23,23 @@ ExternalAppService.prototype = {
 
   doContent(mimeType, request, context, forceSave) {
     const channel = request.QueryInterface(Ci.nsIChannel);
-    const mm = context.QueryInterface(Ci.nsIDocShell).tabChild.messageManager;
-
     debug `doContent: uri=${channel.URI.displaySpec}
                       contentType=${channel.contentType}`;
 
-    EventDispatcher.forMessageManager(mm).sendRequest({
+    let filename = null;
+    try {
+      filename = channel.contentDispositionFilename;
+    } catch (e) {
+      // This throws NS_ERROR_NOT_AVAILABLE if there is not
+      // Content-disposition header.
+    }
+
+    GeckoViewUtils.getDispatcherForWindow(context).sendRequest({
       type: "GeckoView:ExternalResponse",
       uri: channel.URI.displaySpec,
       contentType: channel.contentType,
       contentLength: channel.contentLength,
-      filename: channel.contentDispositionFilename
+      filename: filename
     });
 
     request.cancel(Cr.NS_ERROR_ABORT);

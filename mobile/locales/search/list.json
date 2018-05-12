@@ -1,5 +1,6 @@
 {
   "default": {
+    "searchDefault": "Google",
     "visibleDefaultEngines": [
       "google", "bing", "amazondotcom", "ddg", "twitter", "wikipedia"
     ]
@@ -7,24 +8,6 @@
   "regionOverrides": {
     "US": {
       "google": "google-2018"
-    },
-    "KZ": {
-      "google": "google-nocodes"
-    },
-    "BY": {
-      "google": "google-nocodes"
-    },
-    "RU": {
-      "google": "google-nocodes"
-    },
-    "TR": {
-      "google": "google-nocodes"
-    },
-    "UA": {
-      "google": "google-nocodes"
-    },
-    "CN": {
-      "google": "google-nocodes"
     }
   },
   "locales": {
@@ -75,6 +58,18 @@
         "visibleDefaultEngines": [
           "google", "bing", "ddg", "wikipedia-be", "yandex.by"
         ]
+      },
+      "BY": {
+        "searchDefault": "Яндекс"
+      },
+      "KZ": {
+        "searchDefault": "Яндекс"
+      },
+      "RU": {
+        "searchDefault": "Яндекс"
+      },
+      "TR": {
+        "searchDefault": "Яндекс"
       }
     },
     "bg": {
@@ -429,6 +424,18 @@
         "visibleDefaultEngines": [
           "yandex", "google", "bing", "twitter", "wikipedia-kk"
         ]
+      },
+      "KZ": {
+        "searchDefault": "Яндекс"
+      },
+      "BY": {
+        "searchDefault": "Яндекс"
+      },
+      "RU": {
+        "searchDefault": "Яндекс"
+      },
+      "TR": {
+        "searchDefault": "Яндекс"
       }
     },
     "km": {
@@ -635,6 +642,18 @@
         "visibleDefaultEngines": [
           "google", "yandex-ru", "twitter", "wikipedia-ru"
         ]
+      },
+      "RU": {
+        "searchDefault": "Яндекс"
+      },
+      "BY": {
+        "searchDefault": "Яндекс"
+      },
+      "KZ": {
+        "searchDefault": "Яндекс"
+      },
+      "TR": {
+        "searchDefault": "Яндекс"
       }
     },
     "sk": {
@@ -712,11 +731,22 @@
         "visibleDefaultEngines": [
           "yandex-tr", "google", "twitter", "wikipedia-tr"
         ]
+      },
+      "TR": {
+        "searchDefault": "Yandex"
+      },
+      "BY": {
+        "searchDefault": "Yandex"
+      },
+      "KZ": {
+        "searchDefault": "Yandex"
+      },
+      "RU": {
+        "searchDefault": "Yandex"
       }
     },
     "trs": {
       "default": {
-        "searchDefault": "Google",
         "visibleDefaultEngines": [
           "amazondotcom", "bing", "google", "twitter", "wikipedia-es"
         ]
@@ -776,6 +806,9 @@
         "visibleDefaultEngines": [
           "google", "baidu", "bing", "taobao", "wikipedia-zh-CN"
         ]
+      },
+      "CN": {
+        "searchDefault": "百度"
       }
     },
     "zh-TW": {

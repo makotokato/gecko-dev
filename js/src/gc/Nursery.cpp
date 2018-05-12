@@ -43,19 +43,21 @@ using mozilla::TimeStamp;
 
 constexpr uintptr_t CanaryMagicValue = 0xDEADB15D;
 
-struct js::Nursery::FreeMallocedBuffersTask : public GCParallelTask
+struct js::Nursery::FreeMallocedBuffersTask : public GCParallelTaskHelper<FreeMallocedBuffersTask>
 {
-    explicit FreeMallocedBuffersTask(FreeOp* fop) : GCParallelTask(fop->runtime()), fop_(fop) {}
+    explicit FreeMallocedBuffersTask(FreeOp* fop)
+      : GCParallelTaskHelper(fop->runtime()),
+        fop_(fop) {}
     bool init() { return buffers_.init(); }
     void transferBuffersToFree(MallocedBuffersSet& buffersToFree,
                                const AutoLockHelperThreadState& lock);
-    ~FreeMallocedBuffersTask() override { join(); }
+    ~FreeMallocedBuffersTask() { join(); }
+
+    void run();
 
   private:
     FreeOp* fop_;
     MallocedBuffersSet buffers_;
-
-    virtual void run() override;
 };
 
 #ifdef JS_GC_ZEAL
@@ -676,6 +678,13 @@ js::Nursery::endProfile(ProfileKey key)
     totalDurations_[key] += profileDurations_[key];
 }
 
+bool
+js::Nursery::needIdleTimeCollection() const {
+    uint32_t threshold =
+        runtime()->gc.tunables.nurseryFreeThresholdForIdleCollection();
+    return minorGCRequested() || freeSpace() < threshold;
+}
+
 static inline bool
 IsFullStoreBufferReason(JS::gcreason::Reason reason)
 {
@@ -753,9 +762,10 @@ js::Nursery::collect(JS::gcreason::Reason reason)
         for (auto& entry : tenureCounts.entries) {
             if (entry.count >= 3000) {
                 ObjectGroup* group = entry.group;
-                if (group->canPreTenure()) {
-                    AutoCompartment ac(cx, group);
-                    group->setShouldPreTenure(cx);
+                AutoCompartment ac(cx, group);
+                AutoSweepObjectGroup sweep(group);
+                if (group->canPreTenure(sweep)) {
+                    group->setShouldPreTenure(sweep, cx);
                     pretenureCount++;
                 }
             }
@@ -824,7 +834,8 @@ js::Nursery::collect(JS::gcreason::Reason reason)
             for (auto& entry : tenureCounts.entries) {
                 if (entry.count >= reportTenurings_) {
                     fprintf(stderr, "  %d x ", entry.count);
-                    entry.group->print();
+                    AutoSweepObjectGroup sweep(entry.group);
+                    entry.group->print(sweep);
                 }
             }
         }

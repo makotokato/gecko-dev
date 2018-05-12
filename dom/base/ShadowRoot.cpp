@@ -15,6 +15,7 @@
 #include "mozilla/dom/HTMLSlotElement.h"
 #include "nsXBLPrototypeBinding.h"
 #include "mozilla/EventDispatcher.h"
+#include "mozilla/ServoStyleRuleMap.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
 
@@ -23,8 +24,15 @@ using namespace mozilla::dom;
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(ShadowRoot)
 
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(ShadowRoot,
-                                                  DocumentFragment)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(ShadowRoot, DocumentFragment)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStyleSheets)
+  for (StyleSheet* sheet : tmp->mStyleSheets) {
+    // mServoStyles keeps another reference to it if applicable.
+    if (sheet->IsApplicable()) {
+      NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mServoStyles->sheets[i]");
+      cb.NoteXPCOMChild(sheet);
+    }
+  }
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMStyleSheets)
   for (auto iter = tmp->mIdentifierMap.ConstIter(); !iter.Done();
        iter.Next()) {
@@ -267,7 +275,7 @@ void
 ShadowRoot::RuleAdded(StyleSheet& aSheet, css::Rule& aRule)
 {
   if (mStyleRuleMap) {
-    mStyleRuleMap->RuleAdded(*aSheet.AsServo(), aRule);
+    mStyleRuleMap->RuleAdded(aSheet, aRule);
   }
 
   Servo_AuthorStyles_ForceDirty(mServoStyles.get());
@@ -278,7 +286,7 @@ void
 ShadowRoot::RuleRemoved(StyleSheet& aSheet, css::Rule& aRule)
 {
   if (mStyleRuleMap) {
-    mStyleRuleMap->RuleRemoved(*aSheet.AsServo(), aRule);
+    mStyleRuleMap->RuleRemoved(aSheet, aRule);
   }
 
   Servo_AuthorStyles_ForceDirty(mServoStyles.get());
@@ -320,9 +328,9 @@ ShadowRoot::AppendStyleSheet(StyleSheet& aSheet)
 {
   DocumentOrShadowRoot::AppendStyleSheet(aSheet);
   if (aSheet.IsApplicable()) {
-    Servo_AuthorStyles_AppendStyleSheet(mServoStyles.get(), aSheet.AsServo());
+    Servo_AuthorStyles_AppendStyleSheet(mServoStyles.get(), &aSheet);
     if (mStyleRuleMap) {
-      mStyleRuleMap->SheetAdded(*aSheet.AsServo());
+      mStyleRuleMap->SheetAdded(aSheet);
     }
     ApplicableRulesChanged();
   }
@@ -364,7 +372,7 @@ ShadowRoot::InsertSheetIntoAuthorData(size_t aIndex, StyleSheet& aSheet)
   MOZ_ASSERT(aSheet.IsApplicable());
 
   if (mStyleRuleMap) {
-    mStyleRuleMap->SheetAdded(*aSheet.AsServo());
+    mStyleRuleMap->SheetAdded(aSheet);
   }
 
   for (size_t i = aIndex + 1; i < SheetCount(); ++i) {
@@ -374,12 +382,12 @@ ShadowRoot::InsertSheetIntoAuthorData(size_t aIndex, StyleSheet& aSheet)
     }
 
     Servo_AuthorStyles_InsertStyleSheetBefore(
-      mServoStyles.get(), aSheet.AsServo(), beforeSheet->AsServo());
+      mServoStyles.get(), &aSheet, beforeSheet);
     ApplicableRulesChanged();
     return;
   }
 
-  Servo_AuthorStyles_AppendStyleSheet(mServoStyles.get(), aSheet.AsServo());
+  Servo_AuthorStyles_AppendStyleSheet(mServoStyles.get(), &aSheet);
   ApplicableRulesChanged();
 }
 
@@ -393,9 +401,9 @@ ShadowRoot::StyleSheetApplicableStateChanged(StyleSheet& aSheet, bool aApplicabl
     InsertSheetIntoAuthorData(size_t(index), aSheet);
   } else {
     if (mStyleRuleMap) {
-      mStyleRuleMap->SheetRemoved(*aSheet.AsServo());
+      mStyleRuleMap->SheetRemoved(aSheet);
     }
-    Servo_AuthorStyles_RemoveStyleSheet(mServoStyles.get(), aSheet.AsServo());
+    Servo_AuthorStyles_RemoveStyleSheet(mServoStyles.get(), &aSheet);
     ApplicableRulesChanged();
   }
 }
@@ -406,9 +414,9 @@ ShadowRoot::RemoveSheet(StyleSheet* aSheet)
   DocumentOrShadowRoot::RemoveSheet(*aSheet);
   if (aSheet->IsApplicable()) {
     if (mStyleRuleMap) {
-      mStyleRuleMap->SheetRemoved(*aSheet->AsServo());
+      mStyleRuleMap->SheetRemoved(*aSheet);
     }
-    Servo_AuthorStyles_RemoveStyleSheet(mServoStyles.get(), aSheet->AsServo());
+    Servo_AuthorStyles_RemoveStyleSheet(mServoStyles.get(), aSheet);
     ApplicableRulesChanged();
   }
 }

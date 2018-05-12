@@ -324,7 +324,6 @@ var PlacesUtils = {
 
   LMANNO_FEEDURI: "livemark/feedURI",
   LMANNO_SITEURI: "livemark/siteURI",
-  READ_ONLY_ANNO: "placesInternal/READ_ONLY",
   CHARSET_ANNO: "URIProperties/characterSet",
   // Deprecated: This is only used for supporting import from older datasets.
   MOBILE_ROOT_ANNO: "mobile/bookmarksRoot",
@@ -1853,7 +1852,6 @@ var PlacesUtils = {
 XPCOMUtils.defineLazyGetter(PlacesUtils, "history", function() {
   let hs = Cc["@mozilla.org/browser/nav-history-service;1"]
              .getService(Ci.nsINavHistoryService)
-             .QueryInterface(Ci.nsIBrowserHistory)
              .QueryInterface(Ci.nsPIPlacesDatabase);
   return Object.freeze(new Proxy(hs, {
     get(target, name) {
@@ -1872,10 +1870,6 @@ XPCOMUtils.defineLazyGetter(PlacesUtils, "history", function() {
     }
   }));
 });
-
-XPCOMUtils.defineLazyServiceGetter(PlacesUtils, "asyncHistory",
-                                   "@mozilla.org/browser/history;1",
-                                   "mozIAsyncHistory");
 
 XPCOMUtils.defineLazyServiceGetter(PlacesUtils, "favicons",
                                    "@mozilla.org/browser/favicon-service;1",

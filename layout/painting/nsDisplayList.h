@@ -22,6 +22,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/EnumSet.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/RefPtr.h"
 #include "mozilla/TemplateLib.h" // mozilla::tl::Max
 #include "nsCOMPtr.h"
 #include "nsContainerFrame.h"
@@ -57,7 +58,6 @@ class gfxContext;
 class nsIContent;
 class nsDisplayList;
 class nsDisplayTableItem;
-class nsISelection;
 class nsIScrollableFrame;
 class nsSubDocumentFrame;
 class nsDisplayCompositorHitTestInfo;
@@ -80,6 +80,9 @@ class WebRenderLayerScrollData;
 namespace wr {
 class DisplayListBuilder;
 } // namespace wr
+namespace dom {
+class Selection;
+} // namespace dom
 } // namespace mozilla
 
 // A set of blend modes, that never includes OP_OVER (since it's
@@ -560,7 +563,7 @@ public:
    * @return the selection that painting should be restricted to (or nullptr
    * in the normal unrestricted case)
    */
-  nsISelection* GetBoundingSelection() { return mBoundingSelection; }
+  mozilla::dom::Selection* GetBoundingSelection() { return mBoundingSelection; }
 
   /**
    * @return the root of given frame's (sub)tree, whose origin
@@ -896,6 +899,7 @@ public:
                                 const nsFrameList& aFrames);
   void MarkFrameForDisplay(nsIFrame* aFrame, nsIFrame* aStopAtFrame);
   void MarkFrameForDisplayIfVisible(nsIFrame* aFrame, nsIFrame* aStopAtFrame);
+  void AddFrameMarkedForDisplayIfVisible(nsIFrame* aFrame);
 
   void ClearFixedBackgroundDisplayData();
   /**
@@ -1472,24 +1476,6 @@ public:
     nsRect mVisibleRect;
     nsRect mDirtyRect;
 
-    static bool
-    AnyContentAncestorModified(nsIFrame* aFrame,
-                               nsIFrame* aStopAtFrame = nullptr)
-    {
-      for (nsIFrame* f = aFrame; f;
-           f = nsLayoutUtils::GetParentOrPlaceholderForCrossDoc(f)) {
-        if (f->IsFrameModified()) {
-          return true;
-        }
-
-        if (aStopAtFrame && f == aStopAtFrame) {
-          break;
-        }
-      }
-
-      return false;
-    }
-
     static nsRect ComputeVisibleRectForFrame(nsDisplayListBuilder* aBuilder,
                                              nsIFrame* aFrame,
                                              const nsRect& aVisibleRect,
@@ -1535,13 +1521,6 @@ public:
       visible.IntersectRect(visible, overflowRect);
       aOutDirtyRect->IntersectRect(*aOutDirtyRect, overflowRect);
 
-      // If the nearest stacking context for the modified frame is an ancestor of
-      // of it, and if the stacking context is a descendant of the containing block
-      // of this OOF frame, we override the dirty rect to ensure that the frame will
-      // get marked.
-      if (AnyContentAncestorModified(aFrame, aFrame->GetParent())) {
-        *aOutDirtyRect = visible;
-      }
       return visible;
     }
 
@@ -1903,7 +1882,7 @@ private:
 
   nsPresArena mPool;
 
-  nsCOMPtr<nsISelection>         mBoundingSelection;
+  RefPtr<mozilla::dom::Selection> mBoundingSelection;
   AutoTArray<PresShellState,8> mPresShellStates;
   AutoTArray<nsIFrame*,400>    mFramesMarkedForDisplay;
   AutoTArray<nsIFrame*,40>       mFramesMarkedForDisplayIfVisible;
@@ -5702,9 +5681,7 @@ public:
   nsDisplaySubDocument(nsDisplayListBuilder* aBuilder,
                        nsIFrame* aFrame, nsSubDocumentFrame* aSubDocFrame,
                        nsDisplayList* aList, nsDisplayOwnLayerFlags aFlags);
-#ifdef NS_BUILD_REFCNT_LOGGING
   virtual ~nsDisplaySubDocument();
-#endif
 
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder,
                            bool* aSnap) const override;
@@ -5743,6 +5720,12 @@ public:
 
   mozilla::UniquePtr<ScrollMetadata> ComputeScrollMetadata(LayerManager* aLayerManager,
                                                            const ContainerLayerParameters& aContainerParameters);
+
+  virtual nsIFrame* FrameForInvalidation() const override;
+
+  virtual bool HasDeletedFrame() const override;
+
+  virtual void RemoveFrame(nsIFrame* aFrame) override;
 
 protected:
   ViewID mScrollParentId;

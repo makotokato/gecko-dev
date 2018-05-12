@@ -630,7 +630,7 @@ SetTreeOwnerAndChromeEventHandlerOnDocshellTree(nsIDocShellTreeItem* aItem,
                                                 nsIDocShellTreeOwner* aOwner,
                                                 EventTarget* aHandler)
 {
-  NS_PRECONDITION(aItem, "Must have item");
+  MOZ_ASSERT(aItem, "Must have item");
 
   aItem->SetTreeOwner(aOwner);
 
@@ -662,8 +662,8 @@ nsFrameLoader::AddTreeItemToTreeOwner(nsIDocShellTreeItem* aItem,
                                       int32_t aParentType,
                                       nsIDocShell* aParentNode)
 {
-  NS_PRECONDITION(aItem, "Must have docshell treeitem");
-  NS_PRECONDITION(mOwnerContent, "Must have owning content");
+  MOZ_ASSERT(aItem, "Must have docshell treeitem");
+  MOZ_ASSERT(mOwnerContent, "Must have owning content");
 
   nsAutoString value;
   bool isContent = mOwnerContent->AttrValueIs(
@@ -2963,7 +2963,8 @@ nsFrameLoader::EnsureMessageManager()
       return NS_ERROR_FAILURE;
     }
     mChildMessageManager =
-      new nsInProcessTabChildGlobal(mDocShell, mOwnerContent, mMessageManager);
+      nsInProcessTabChildGlobal::Create(mDocShell, mOwnerContent, mMessageManager);
+    NS_ENSURE_TRUE(mChildMessageManager, NS_ERROR_UNEXPECTED);
   }
   return NS_OK;
 }

@@ -50,14 +50,14 @@ class SVGContextPaint;
 class gfxCharacterMap : public gfxSparseBitSet {
 public:
     nsrefcnt AddRef() {
-        NS_PRECONDITION(int32_t(mRefCnt) >= 0, "illegal refcnt");
+        MOZ_ASSERT(int32_t(mRefCnt) >= 0, "illegal refcnt");
         ++mRefCnt;
         NS_LOG_ADDREF(this, mRefCnt, "gfxCharacterMap", sizeof(*this));
         return mRefCnt;
     }
 
     nsrefcnt Release() {
-        NS_PRECONDITION(0 != mRefCnt, "dup release");
+        MOZ_ASSERT(0 != mRefCnt, "dup release");
         --mRefCnt;
         NS_LOG_RELEASE(this, mRefCnt, "gfxCharacterMap");
         if (mRefCnt == 0) {
@@ -158,7 +158,8 @@ public:
     bool IsItalic() const { return SlantStyle().Min().IsItalic(); }
     bool IsOblique() const { return SlantStyle().Min().IsOblique(); }
     bool IsUpright() const { return SlantStyle().Min().IsNormal(); }
-    bool IsBold() const { return Weight().Max().IsBold(); } // bold == weights 600 and above
+    inline bool SupportsItalic();
+    inline bool SupportsBold(); // defined below, because of RangeFlags use
     bool IgnoreGDEF() const { return mIgnoreGDEF; }
     bool IgnoreGSUB() const { return mIgnoreGSUB; }
 
@@ -287,7 +288,6 @@ public:
     // the caller may only need to use the font temporarily and doesn't need
     // a strong reference.
     gfxFont* FindOrMakeFont(const gfxFontStyle *aStyle,
-                            bool aNeedsBold,
                             gfxCharacterMap* aUnicodeRangeMap = nullptr);
 
     // Get an existing font table cache entry in aBlob if it has been
@@ -379,6 +379,10 @@ public:
     virtual void
     GetVariationInstances(nsTArray<gfxFontVariationInstance>& aInstances) = 0;
 
+    bool HasBoldVariableWeight();
+    bool HasItalicVariation();
+    void CheckForVariationAxes();
+
     // Set up the entry's weight/stretch/style ranges according to axes found
     // by GetVariationAxes (for installed fonts; do NOT call this for user
     // fonts, where the ranges are provided by @font-face descriptors).
@@ -434,10 +438,27 @@ public:
         eNoFlags        = 0,
         eAutoWeight     = (1 << 0),
         eAutoStretch    = (1 << 1),
-        eAutoSlantStyle = (1 << 2)
+        eAutoSlantStyle = (1 << 2),
+
+        // Flag to record whether the face has a variable "wght" axis
+        // that supports "bold" values, used to disable the application
+        // of synthetic-bold effects.
+        eBoldVariableWeight = (1 << 3),
+        // Whether the face has an 'ital' axis.
+        eItalicVariation    = (1 << 4),
+
+        // Flags to record if the face uses a non-CSS-compatible scale
+        // for weight and/or stretch, in which case we won't map the
+        // properties to the variation axes (though they can still be
+        // explicitly set using font-variation-settings).
+        eNonCSSWeight   = (1 << 5),
+        eNonCSSStretch  = (1 << 6)
     };
     RangeFlags       mRangeFlags = RangeFlags::eNoFlags;
 
+    // NOTE that there are currently exactly 24 one-bit flags defined here,
+    // so together with the 8-bit RangeFlags above, this packs neatly to a
+    // 32-bit boundary. Worth considering if further flags are wanted.
     bool             mFixedPitch  : 1;
     bool             mIsBadUnderlineFont : 1;
     bool             mIsUserFontContainer : 1; // userfont entry
@@ -461,6 +482,7 @@ public:
     bool             mHasCmapTable : 1;
     bool             mGrFaceInitialized : 1;
     bool             mCheckedForColorGlyph : 1;
+    bool             mCheckedForVariationAxes : 1;
 
 protected:
     friend class gfxPlatformFontList;
@@ -475,8 +497,7 @@ protected:
     // Protected destructor, to discourage deletion outside of Release():
     virtual ~gfxFontEntry();
 
-    virtual gfxFont *CreateFontInstance(const gfxFontStyle *aFontStyle,
-                                        bool aNeedsBold) = 0;
+    virtual gfxFont *CreateFontInstance(const gfxFontStyle *aFontStyle) = 0;
 
     virtual void CheckForGraphiteTables();
 
@@ -644,6 +665,28 @@ private:
 
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(gfxFontEntry::RangeFlags)
 
+inline bool
+gfxFontEntry::SupportsItalic()
+{
+    return SlantStyle().Max().IsItalic() ||
+           ((mRangeFlags & RangeFlags::eAutoSlantStyle) ==
+               RangeFlags::eAutoSlantStyle &&
+            HasItalicVariation());
+}
+
+inline bool
+gfxFontEntry::SupportsBold()
+{
+    // bold == weights 600 and above
+    // We return true if the face has a max weight descriptor >= 600,
+    // OR if it's a user font with auto-weight (no descriptor) and has
+    // a weight axis that supports values >= 600
+    return Weight().Max().IsBold() ||
+           ((mRangeFlags & RangeFlags::eAutoWeight) ==
+               RangeFlags::eAutoWeight &&
+            HasBoldVariableWeight());
+}
+
 // used when iterating over all fonts looking for a match for a given character
 struct GlobalFontMatch {
     GlobalFontMatch(const uint32_t aCharacter,
@@ -733,16 +776,12 @@ public:
     // choose a specific face to match a style using CSS font matching
     // rules (weight matching occurs here).  may return a face that doesn't
     // precisely match (e.g. normal face when no italic face exists).
-    // aNeedsSyntheticBold is set to true when synthetic bolding is
-    // needed, false otherwise
     gfxFontEntry *FindFontForStyle(const gfxFontStyle& aFontStyle, 
-                                   bool& aNeedsSyntheticBold,
                                    bool aIgnoreSizeTolerance = false);
 
     virtual void
     FindAllFontsForStyle(const gfxFontStyle& aFontStyle,
                          nsTArray<gfxFontEntry*>& aFontEntryList,
-                         bool& aNeedsSyntheticBold,
                          bool aIgnoreSizeTolerance = false);
 
     // checks for a matching font within the family

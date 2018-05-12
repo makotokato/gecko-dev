@@ -395,22 +395,11 @@ nsHttpChannel::Init(nsIURI *uri,
 #ifdef MOZ_GECKO_PROFILER
     mLastStatusReported = TimeStamp::Now(); // in case we enable the profiler after Init()
     if (profiler_is_active()) {
-        // These do allocations/frees/etc; avoid if not active
-        nsAutoCString spec;
-        if (uri) {
-            uri->GetAsciiSpec(spec);
-        }
-        // top 32 bits are process id of the load
-        int32_t id = static_cast<int32_t>(channelId & 0xFFFFFFFF);
-        char name[64];
-        SprintfLiteral(name, "Load: %d", id);
-        rv = NS_OK; // ensure it's a fixed value (0)
-        profiler_add_marker(name,
-                            MakeUnique<NetworkMarkerPayload>(id,
-                                                             PromiseFlatCString(spec).get(),
-                                                             rv, // NS_OK means START
-                                                             mLastStatusReported,
-                                                             mLastStatusReported));
+        int32_t priority = PRIORITY_NORMAL;
+        GetPriority(&priority);
+        profiler_add_network_marker(uri, priority, channelId, NetworkLoadType::LOAD_START,
+                                    mChannelCreationTimestamp, mLastStatusReported,
+                                    0);
     }
 #endif
 
@@ -536,7 +525,7 @@ nsHttpChannel::OnBeforeConnect()
 void
 nsHttpChannel::OnBeforeConnectContinue()
 {
-    NS_PRECONDITION(!mCallOnResume, "How did that happen?");
+    MOZ_ASSERT(!mCallOnResume, "How did that happen?");
     nsresult rv;
 
     if (mSuspendCount) {
@@ -849,7 +838,7 @@ nsHttpChannel::ReleaseListeners()
 void
 nsHttpChannel::HandleAsyncRedirect()
 {
-    NS_PRECONDITION(!mCallOnResume, "How did that happen?");
+    MOZ_ASSERT(!mCallOnResume, "How did that happen?");
 
     if (mSuspendCount) {
         LOG(("Waiting until resume to do async redirect [this=%p]\n", this));
@@ -923,7 +912,7 @@ nsHttpChannel::ContinueHandleAsyncRedirect(nsresult rv)
 void
 nsHttpChannel::HandleAsyncNotModified()
 {
-    NS_PRECONDITION(!mCallOnResume, "How did that happen?");
+    MOZ_ASSERT(!mCallOnResume, "How did that happen?");
 
     if (mSuspendCount) {
         LOG(("Waiting until resume to do async not-modified [this=%p]\n",
@@ -947,7 +936,7 @@ nsHttpChannel::HandleAsyncNotModified()
 void
 nsHttpChannel::HandleAsyncFallback()
 {
-    NS_PRECONDITION(!mCallOnResume, "How did that happen?");
+    MOZ_ASSERT(!mCallOnResume, "How did that happen?");
 
     if (mSuspendCount) {
         LOG(("Waiting until resume to do async fallback [this=%p]\n", this));
@@ -2288,7 +2277,7 @@ nsHttpChannel::AsyncContinueProcessResponse()
 nsresult
 nsHttpChannel::ContinueProcessResponse1()
 {
-    NS_PRECONDITION(!mCallOnResume, "How did that happen?");
+    MOZ_ASSERT(!mCallOnResume, "How did that happen?");
     nsresult rv;
 
     if (mSuspendCount) {
@@ -2797,7 +2786,7 @@ nsHttpChannel::ProxyFailover()
 void
 nsHttpChannel::HandleAsyncRedirectChannelToHttps()
 {
-    NS_PRECONDITION(!mCallOnResume, "How did that happen?");
+    MOZ_ASSERT(!mCallOnResume, "How did that happen?");
 
     if (mSuspendCount) {
         LOG(("Waiting until resume to do async redirect to https [this=%p]\n", this));
@@ -2832,8 +2821,8 @@ nsHttpChannel::StartRedirectChannelToHttps()
 void
 nsHttpChannel::HandleAsyncAPIRedirect()
 {
-    NS_PRECONDITION(!mCallOnResume, "How did that happen?");
-    NS_PRECONDITION(mAPIRedirectToURI, "How did that happen?");
+    MOZ_ASSERT(!mCallOnResume, "How did that happen?");
+    MOZ_ASSERT(mAPIRedirectToURI, "How did that happen?");
 
     if (mSuspendCount) {
         LOG(("Waiting until resume to do async API redirect [this=%p]\n", this));
@@ -3008,7 +2997,7 @@ nsHttpChannel::ContinueDoReplaceWithProxy(nsresult rv)
     if (NS_FAILED(rv))
         return rv;
 
-    NS_PRECONDITION(mRedirectChannel, "No redirect channel?");
+    MOZ_ASSERT(mRedirectChannel, "No redirect channel?");
 
     // Make sure to do this after we received redirect veto answer,
     // i.e. after all sinks had been notified
@@ -3605,7 +3594,7 @@ nsHttpChannel::ContinueProcessFallback(nsresult rv)
     if (NS_FAILED(rv))
         return rv;
 
-    NS_PRECONDITION(mRedirectChannel, "No redirect channel?");
+    MOZ_ASSERT(mRedirectChannel, "No redirect channel?");
 
     // Make sure to do this after we received redirect veto answer,
     // i.e. after all sinks had been notified
@@ -3660,7 +3649,7 @@ nsHttpChannel::OpenCacheEntry(bool isHttps)
     LOG(("nsHttpChannel::OpenCacheEntry [this=%p]", this));
 
     // make sure we're not abusing this function
-    NS_PRECONDITION(!mCacheEntry, "cache entry already open");
+    MOZ_ASSERT(!mCacheEntry, "cache entry already open");
 
     if (mRequestHead.IsPost()) {
         // If the post id is already set then this is an attempt to replay
@@ -3864,7 +3853,7 @@ bypassCacheEntryOpen:
     // If there is an app cache to write to, open the entry right now in parallel.
 
     // make sure we're not abusing this function
-    NS_PRECONDITION(!mOfflineCacheEntry, "cache entry already open");
+    MOZ_ASSERT(!mOfflineCacheEntry, "cache entry already open");
 
     if (offline) {
         // only put things in the offline cache while online
@@ -5640,6 +5629,17 @@ nsHttpChannel::ContinueProcessRedirectionAfterFallback(nsresult rv)
         if (NS_FAILED(rv)) return rv;
     }
 
+#ifdef MOZ_GECKO_PROFILER
+    if (profiler_is_active()) {
+        int32_t priority = PRIORITY_NORMAL;
+        GetPriority(&priority);
+        profiler_add_network_marker(mURI, priority, mChannelId, NetworkLoadType::LOAD_REDIRECT,
+                                    mLastStatusReported, TimeStamp::Now(),
+                                    mLogicalOffset, nullptr,
+                                    mRedirectURI);
+    }
+#endif
+
     nsCOMPtr<nsIIOService> ioService;
     rv = gHttpHandler->GetIOService(getter_AddRefs(ioService));
     if (NS_FAILED(rv)) return rv;
@@ -5693,7 +5693,7 @@ nsHttpChannel::ContinueProcessRedirection(nsresult rv)
     if (NS_FAILED(rv))
         return rv;
 
-    NS_PRECONDITION(mRedirectChannel, "No redirect channel?");
+    MOZ_ASSERT(mRedirectChannel, "No redirect channel?");
 
     // Make sure to do this after we received redirect veto answer,
     // i.e. after all sinks had been notified
@@ -6293,7 +6293,7 @@ nsHttpChannel::BeginConnect()
 void
 nsHttpChannel::HandleBeginConnectContinue()
 {
-    NS_PRECONDITION(!mCallOnResume, "How did that happen?");
+    MOZ_ASSERT(!mCallOnResume, "How did that happen?");
     nsresult rv;
 
     if (mSuspendCount) {
@@ -6568,7 +6568,7 @@ nsresult
 nsHttpChannel::ContinueBeginConnectWithResult()
 {
     LOG(("nsHttpChannel::ContinueBeginConnectWithResult [this=%p]", this));
-    NS_PRECONDITION(!mCallOnResume, "How did that happen?");
+    MOZ_ASSERT(!mCallOnResume, "How did that happen?");
 
     nsresult rv;
 
@@ -7248,6 +7248,20 @@ nsHttpChannel::OnStopRequest(nsIRequest *request, nsISupports *ctxt, nsresult st
                 mDNSPrefetch->EndTimestamp();
         }
         mDNSPrefetch = nullptr;
+#ifdef MOZ_GECKO_PROFILER
+        if (profiler_is_active() && !mRedirectURI) {
+            // Don't include this if we already redirected
+            // These do allocations/frees/etc; avoid if not active
+            nsCOMPtr<nsIURI> uri;
+            GetURI(getter_AddRefs(uri));
+            int32_t priority = PRIORITY_NORMAL;
+            GetPriority(&priority);
+            profiler_add_network_marker(uri, priority, mChannelId, NetworkLoadType::LOAD_STOP,
+                                        mLastStatusReported, TimeStamp::Now(),
+                                        mLogicalOffset,
+                                        &mTransactionTimings);
+        }
+#endif
 
         // handle auth retry...
         if (authRetry) {
@@ -7733,24 +7747,6 @@ nsHttpChannel::OnTransportStatus(nsITransport *trans, nsresult status,
             }
         }
     }
-
-#ifdef MOZ_GECKO_PROFILER
-    if (profiler_is_active()) {
-        // These do allocations/frees/etc; avoid if not active
-        mozilla::TimeStamp now = TimeStamp::Now();
-        // top 32 bits are process id of the load
-        int32_t id = static_cast<int32_t>(mChannelId & 0xFFFFFFFF);
-        char name[64];
-        SprintfLiteral(name, "Load: %d", id);
-        profiler_add_marker(name,
-                            MakeUnique<NetworkMarkerPayload>(static_cast<int64_t>(mChannelId),
-                                                             nullptr,
-                                                             status,
-                                                             mLastStatusReported,
-                                                             now));
-        mLastStatusReported = now;
-    }
-#endif
 
     // block socket status event after Cancel or OnStopRequest has been called.
     if (mProgressSink && NS_SUCCEEDED(mStatus) && mIsPending) {

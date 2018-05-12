@@ -39,7 +39,9 @@ public:
                         const gfx::CompositionOp& aMixBlendMode = gfx::CompositionOp::OP_OVER,
                         bool aBackfaceVisible = true,
                         bool aIsPreserve3D = false,
-                        const Maybe<gfx::Matrix4x4>& aTransformForScrollData = Nothing());
+                        const Maybe<gfx::Matrix4x4>& aTransformForScrollData = Nothing(),
+                        const wr::WrClipId* aClipNodeId = nullptr,
+                        bool aRasterizeLocally = false);
   // This version of the constructor should only be used at the root level
   // of the tree, so that we have a StackingContextHelper to pass down into
   // the RenderLayer traversal, but don't actually want it to push a stacking
@@ -60,14 +62,17 @@ public:
   const Maybe<gfx::Matrix4x4>& GetTransformForScrollData() const;
 
   bool AffectsClipPositioning() const { return mAffectsClipPositioning; }
+  Maybe<wr::WrClipId> ReferenceFrameId() const { return mReferenceFrameId; }
 
 private:
   wr::DisplayListBuilder* mBuilder;
   gfx::Size mScale;
   gfx::Matrix mInheritedTransform;
   bool mAffectsClipPositioning;
+  Maybe<wr::WrClipId> mReferenceFrameId;
   Maybe<gfx::Matrix4x4> mTransformForScrollData;
   bool mIsPreserve3D;
+  bool mRasterizeLocally;
 };
 
 } // namespace layers

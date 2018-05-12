@@ -109,6 +109,7 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
   this._target = target;
   this._win = contentWindow;
   this.frameId = frameId;
+  this.telemetry = new Telemetry();
 
   // Map of the available DevTools WebExtensions:
   //   Map<extensionUUID, extensionName>
@@ -116,7 +117,6 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
 
   this._toolPanels = new Map();
   this._inspectorExtensionSidebars = new Map();
-  this._telemetry = new Telemetry();
 
   this._initInspector = null;
   this._inspector = null;
@@ -159,10 +159,12 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
   this._onPickerStopped = this._onPickerStopped.bind(this);
   this._onInspectObject = this._onInspectObject.bind(this);
   this._onNewSelectedNodeFront = this._onNewSelectedNodeFront.bind(this);
-  this.updatePickerButton = this.updatePickerButton.bind(this);
+  this._onToolSelected = this._onToolSelected.bind(this);
+  this.updateToolboxButtonsVisibility = this.updateToolboxButtonsVisibility.bind(this);
   this.selectTool = this.selectTool.bind(this);
   this._pingTelemetrySelectTool = this._pingTelemetrySelectTool.bind(this);
   this.toggleSplitConsole = this.toggleSplitConsole.bind(this);
+  this.toggleOptions = this.toggleOptions.bind(this);
 
   this._target.on("close", this.destroy);
 
@@ -184,9 +186,7 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
   this._target.on("inspect-object", this._onInspectObject);
 
   this.on("host-changed", this._refreshHostTitle);
-  this.on("select", this._refreshHostTitle);
-  this.on("select", this.updatePickerButton);
-
+  this.on("select", this._onToolSelected);
   this.on("ready", this._showDevEditionPromo);
 
   gDevTools.on("tool-registered", this._toolRegistered);
@@ -545,10 +545,10 @@ Toolbox.prototype = {
       let splitConsolePromise = promise.resolve();
       if (Services.prefs.getBoolPref(SPLITCONSOLE_ENABLED_PREF)) {
         splitConsolePromise = this.openSplitConsole();
-        this._telemetry.addEventProperty(
+        this.telemetry.addEventProperty(
           "devtools.main", "open", "tools", null, "splitconsole", true);
       } else {
-        this._telemetry.addEventProperty(
+        this.telemetry.addEventProperty(
           "devtools.main", "open", "tools", null, "splitconsole", false);
       }
 
@@ -590,7 +590,7 @@ Toolbox.prototype = {
   },
 
   get ToolboxController() {
-    return this.browserRequire("devtools/client/framework/components/toolbox-controller");
+    return this.browserRequire("devtools/client/framework/components/ToolboxController");
   },
 
   /**
@@ -716,22 +716,22 @@ Toolbox.prototype = {
   },
 
   _pingTelemetry: function() {
-    this._telemetry.toolOpened("toolbox");
+    this.telemetry.toolOpened("toolbox");
 
-    this._telemetry.logOncePerBrowserVersion(SCREENSIZE_HISTOGRAM,
+    this.telemetry.logOncePerBrowserVersion(SCREENSIZE_HISTOGRAM,
                                              system.getScreenDimensions());
-    this._telemetry.log(HOST_HISTOGRAM, this._getTelemetryHostId());
+    this.telemetry.log(HOST_HISTOGRAM, this._getTelemetryHostId());
 
     // Log current theme. The question we want to answer is:
     // "What proportion of users use which themes?"
     let currentTheme = Services.prefs.getCharPref("devtools.theme");
-    this._telemetry.logKeyedScalar(CURRENT_THEME_SCALAR, currentTheme, 1);
+    this.telemetry.logKeyedScalar(CURRENT_THEME_SCALAR, currentTheme, 1);
 
-    this._telemetry.preparePendingEvent(
+    this.telemetry.preparePendingEvent(
       "devtools.main", "open", "tools", null,
       ["entrypoint", "first_panel", "host", "splitconsole", "width"]
     );
-    this._telemetry.addEventProperty(
+    this.telemetry.addEventProperty(
       "devtools.main", "open", "tools", null, "host", this._getTelemetryHostString()
     );
   },
@@ -841,17 +841,7 @@ Toolbox.prototype = {
   },
 
   _buildOptions: function() {
-    let selectOptions = event => {
-      // Flip back to the last used panel if we are already
-      // on the options panel.
-      if (this.currentToolId === "options" &&
-          gDevTools.getToolDefinition(this.lastUsedToolId)) {
-        this.selectTool(this.lastUsedToolId, "toggle_settings_off");
-      } else {
-        this.selectTool("options", "toggle_settings_on");
-      }
-    };
-    this.shortcuts.on(L10N.getStr("toolbox.help.key"), selectOptions);
+    this.shortcuts.on(L10N.getStr("toolbox.help.key"), this.toggleOptions);
   },
 
   _splitConsoleOnKeypress: function(e) {
@@ -1061,8 +1051,7 @@ Toolbox.prototype = {
   get notificationBox() {
     if (!this._notificationBox) {
       let { NotificationBox, PriorityLevels } =
-        this.browserRequire(
-          "devtools/client/shared/components/NotificationBox");
+        this.browserRequire("devtools/client/shared/components/NotificationBox");
 
       NotificationBox = this.React.createFactory(NotificationBox);
 
@@ -1146,6 +1135,7 @@ Toolbox.prototype = {
       L10N,
       currentToolId: this.currentToolId,
       selectTool: this.selectTool,
+      toggleOptions: this.toggleOptions,
       toggleSplitConsole: this.toggleSplitConsole,
       toggleNoAutohide: this.toggleNoAutohide,
       closeToolbox: this.destroy,
@@ -1247,7 +1237,9 @@ Toolbox.prototype = {
         return target.activeTab && target.activeTab.traits.frames;
       },
       isCurrentlyVisible: () => {
-        return this.frameMap.size > 1;
+        const hasFrames = this.frameMap.size > 1;
+        const isOnOptionsPanel = this.currentToolId === "options";
+        return hasFrames || isOnOptionsPanel;
       },
       onKeyDown: this.handleKeyDownOnFramesButton
     });
@@ -1347,10 +1339,6 @@ Toolbox.prototype = {
     }
   },
 
- /**
-  * Return all toolbox buttons (command buttons, plus any others that were
-  * added manually).
-
   /**
    * Update the visibility of the buttons.
    */
@@ -1380,8 +1368,23 @@ Toolbox.prototype = {
       button.className = null;
       button.disabled = null;
     }
+  },
 
-    this.component.setToolboxButtons(this.toolbarButtons);
+  /**
+   * Update the visual state of the Frame picker button.
+   */
+  updateFrameButton() {
+    if (this.currentToolId === "options" && this.frameMap.size <= 1) {
+      // If the button is only visible because the user is on the Options panel, disable
+      // the button and set an appropriate description.
+      this.frameButton.disabled = true;
+      this.frameButton.description = L10N.getStr("toolbox.frames.disabled.tooltip");
+    } else {
+      // Otherwise, enable the button and update the description.
+      this.frameButton.disabled = false;
+      this.frameButton.description = L10N.getStr("toolbox.frames.tooltip");
+    }
+    this.frameButton.isVisible = this._commandIsVisible(this.frameButton);
   },
 
   /**
@@ -1849,7 +1852,7 @@ Toolbox.prototype = {
         id === "options" ||
         this.additionalToolDefinitions.get(id)) {
       if (this.currentToolId) {
-        this._telemetry.toolClosed(this.currentToolId);
+        this.telemetry.toolClosed(this.currentToolId);
       }
 
       this._pingTelemetrySelectTool(id, reason);
@@ -1884,22 +1887,22 @@ Toolbox.prototype = {
     const prevPanelName = this.getTelemetryPanelName(this.currentToolId);
     const cold = !this.getPanel(id);
 
-    this._telemetry.addEventProperties("devtools.main", "enter", panelName, null, {
+    this.telemetry.addEventProperties("devtools.main", "enter", panelName, null, {
       "host": this._hostType,
       "width": width,
       "start_state": reason,
-      "panel_name": id,
+      "panel_name": panelName,
       "cold": cold
     });
 
     // On first load this.currentToolId === undefined so we need to skip sending
     // a devtools.main.exit telemetry event.
     if (this.currentToolId) {
-      this._telemetry.recordEvent("devtools.main", "exit", prevPanelName, null, {
+      this.telemetry.recordEvent("devtools.main", "exit", prevPanelName, null, {
         "host": this._hostType,
         "width": width,
         "panel_name": prevPanelName,
-        "next_panel": id,
+        "next_panel": panelName,
         "reason": reason
       });
     }
@@ -1911,13 +1914,13 @@ Toolbox.prototype = {
       // Cold webconsole event message_count is handled in
       // devtools/client/webconsole/new-console-output-wrapper.js
       if (!cold) {
-        this._telemetry.addEventProperty(
+        this.telemetry.addEventProperty(
           "devtools.main", "enter", "webconsole", null, "message_count", 0);
       }
     }
-    this._telemetry.preparePendingEvent(
+    this.telemetry.preparePendingEvent(
       "devtools.main", "enter", panelName, null, pending);
-    this._telemetry.toolOpened(id);
+    this.telemetry.toolOpened(id);
   },
 
   /**
@@ -1985,7 +1988,7 @@ Toolbox.prototype = {
 
     return this.loadTool("webconsole").then(() => {
       this.component.setIsSplitConsoleActive(true);
-      this._telemetry.recordEvent("devtools.main", "activate", "split_console", null, {
+      this.telemetry.recordEvent("devtools.main", "activate", "split_console", null, {
         "host": this._getTelemetryHostString(),
         "width": Math.ceil(this.win.outerWidth / 50) * 50
       });
@@ -2006,7 +2009,7 @@ Toolbox.prototype = {
     this._refreshConsoleDisplay();
     this.component.setIsSplitConsoleActive(false);
 
-    this._telemetry.recordEvent("devtools.main", "deactivate", "split_console", null, {
+    this.telemetry.recordEvent("devtools.main", "deactivate", "split_console", null, {
       "host": this._getTelemetryHostString(),
       "width": Math.ceil(this.win.outerWidth / 50) * 50
     });
@@ -2034,6 +2037,21 @@ Toolbox.prototype = {
     }
 
     return promise.resolve();
+  },
+
+  /**
+   * Toggles the options panel.
+   * If the option panel is already selected then select the last selected panel.
+   */
+  toggleOptions: function() {
+    // Flip back to the last used panel if we are already
+    // on the options panel.
+    if (this.currentToolId === "options" &&
+        gDevTools.getToolDefinition(this.lastUsedToolId)) {
+      this.selectTool(this.lastUsedToolId, "toggle_settings_off");
+    } else {
+      this.selectTool("options", "toggle_settings_on");
+    }
   },
 
   /**
@@ -2379,7 +2397,7 @@ Toolbox.prototype = {
     }
 
     // We may need to hide/show the frames button now.
-    this.frameButton.isVisible = this._commandIsVisible(this.frameButton);
+    this.updateFrameButton();
     this.component.setToolboxButtons(this.toolbarButtons);
   },
 
@@ -2458,7 +2476,7 @@ Toolbox.prototype = {
     this.focusTool(this.currentToolId, true);
 
     this.emit("host-changed");
-    this._telemetry.log(HOST_HISTOGRAM, this._getTelemetryHostId());
+    this.telemetry.log(HOST_HISTOGRAM, this._getTelemetryHostId());
 
     this.component.setCurrentHostType(hostType);
   },
@@ -2631,6 +2649,16 @@ Toolbox.prototype = {
     this.inspectObjectActor(packet.objectActor, packet.inspectFromAnnotation);
   },
 
+  _onToolSelected: function() {
+    this._refreshHostTitle();
+
+    this.updatePickerButton();
+    this.updateFrameButton();
+
+    // Calling setToolboxButtons in case the visibility of a button changed.
+    this.component.setToolboxButtons(this.toolbarButtons);
+  },
+
   inspectObjectActor: async function(objectActor, inspectFromAnnotation) {
     if (objectActor.preview &&
         objectActor.preview.nodeType === domNodeConstants.ELEMENT_NODE) {
@@ -2736,8 +2764,7 @@ Toolbox.prototype = {
     this._target.off("will-navigate", this._onWillNavigate);
     this._target.off("navigate", this._refreshHostTitle);
     this._target.off("frame-update", this._updateFrames);
-    this.off("select", this._refreshHostTitle);
-    this.off("select", this.updatePickerButton);
+    this.off("select", this._onToolSelected);
     this.off("host-changed", this._refreshHostTitle);
     this.off("ready", this._showDevEditionPromo);
 
@@ -2842,19 +2869,19 @@ Toolbox.prototype = {
     const width = Math.ceil(win.outerWidth / 50) * 50;
     const prevPanelName = this.getTelemetryPanelName(this.currentToolId);
 
-    this._telemetry.toolClosed("toolbox");
-    this._telemetry.recordEvent("devtools.main", "close", "tools", null, {
+    this.telemetry.toolClosed("toolbox");
+    this.telemetry.recordEvent("devtools.main", "close", "tools", null, {
       host: host,
       width: width
     });
-    this._telemetry.recordEvent("devtools.main", "exit", prevPanelName, null, {
+    this.telemetry.recordEvent("devtools.main", "exit", prevPanelName, null, {
       "host": host,
       "width": width,
-      "panel_name": this.currentToolId,
+      "panel_name": this.getTelemetryPanelName(this.currentToolId),
       "next_panel": "none",
       "reason": "toolbox_close"
     });
-    this._telemetry.destroy();
+    this.telemetry.destroy();
 
     // Finish all outstanding tasks (which means finish destroying panels and
     // then destroying the host, successfully or not) before destroying the

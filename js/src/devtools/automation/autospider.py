@@ -501,7 +501,7 @@ if variant.get('ignore-test-failures'):
     logging.warning("Ignoring test results %s" % (results,))
     results = [0]
 
-if args.variant in ('tsan', 'msan'):
+if args.variant == 'msan':
     files = filter(lambda f: f.startswith("sanitize_log."), os.listdir(OUTDIR))
     fullfiles = [os.path.join(OUTDIR, f) for f in files]
 
@@ -533,43 +533,6 @@ if args.variant in ('tsan', 'msan'):
         if len(sites) > max_allowed:
             results.append(1)
 
-    if 'expect-errors' in variant:
-        # Line numbers may shift around between versions, so just look for
-        # matching filenames and function names. This will still produce false
-        # positives when functions are renamed or moved between files, or
-        # things change so that the actual race is in a different place. But it
-        # still seems preferable to saying "You introduced an additional race.
-        # Here are the 21 races detected; please ignore the 20 known ones in
-        # this other list."
-
-        for site in sites:
-            # Grab out the file and function names.
-            m = re.search(r'/([^/]+):\d+ in (.+)', site)
-            if m:
-                error = tuple(m.groups())
-            else:
-                # will get here if eg tsan symbolication fails
-                error = (site, '(unknown)')
-            errors[error] += 1
-
-        remaining = Counter(errors)
-        for expect in variant['expect-errors']:
-            # expect-errors is an array of (filename, function) tuples.
-            expect = tuple(expect)
-            if remaining[expect] == 0:
-                print("Did not see known error in %s function %s" % expect)
-            else:
-                remaining[expect] -= 1
-
-        status = 0
-        for filename, function in (e for e, c in remaining.items() if c > 0):
-            if AUTOMATION:
-                print("TinderboxPrint: tsan error<br/>%s function %s" % (filename, function))
-                status = 1
-            else:
-                print("*** tsan error in %s function %s" % (filename, function))
-        results.append(status)
-
     # Gather individual results into a tarball. Note that these are
     # distinguished only by pid of the JS process running within each test, so
     # given the 16-bit limitation of pids, it's totally possible that some of
@@ -581,7 +544,7 @@ if args.variant in ('tsan', 'msan'):
 
 # Generate stacks from minidumps.
 if use_minidump:
-    venv_python = os.path.join(OBJDIR, "_virtualenv", "bin", "python")
+    venv_python = os.path.join(OBJDIR, "_virtualenvs", "init", "bin", "python")
     run_command([
         venv_python,
         os.path.join(DIR.source, "testing/mozbase/mozcrash/mozcrash/mozcrash.py"),

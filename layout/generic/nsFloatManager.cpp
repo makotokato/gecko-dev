@@ -387,7 +387,7 @@ nsFloatManager::RemoveTrailingRegions(nsIFrame* aFrameList)
 void
 nsFloatManager::PushState(SavedState* aState)
 {
-  NS_PRECONDITION(aState, "Need a place to save state");
+  MOZ_ASSERT(aState, "Need a place to save state");
 
   // This is a cheap push implementation, which
   // only saves the (x,y) and last frame in the mFrameInfoMap
@@ -418,7 +418,7 @@ nsFloatManager::PushState(SavedState* aState)
 void
 nsFloatManager::PopState(SavedState* aState)
 {
-  NS_PRECONDITION(aState, "No state to restore?");
+  MOZ_ASSERT(aState, "No state to restore?");
 
   mLineLeft = aState->mLineLeft;
   mBlockStart = aState->mBlockStart;
@@ -563,6 +563,7 @@ public:
     nscoord aShapeMargin,
     nsIFrame* const aFrame,
     const LogicalRect& aShapeBoxRect,
+    const LogicalRect& aMarginRect,
     WritingMode aWM,
     const nsSize& aContainerSize);
 
@@ -584,7 +585,10 @@ public:
 
   static UniquePtr<ShapeInfo> CreatePolygon(
     const UniquePtr<StyleBasicShape>& aBasicShape,
+    nscoord aShapeMargin,
+    nsIFrame* const aFrame,
     const LogicalRect& aShapeBoxRect,
+    const LogicalRect& aMarginRect,
     WritingMode aWM,
     const nsSize& aContainerSize);
 
@@ -636,7 +640,39 @@ protected:
   // function returns aIntervals.Length().
   static size_t MinIntervalIndexContainingY(const nsTArray<nsRect>& aIntervals,
                                             const nscoord aTargetY);
+
+  // This interval function is designed to handle the arguments to ::LineLeft()
+  // and LineRight() and interpret them for the supplied aIntervals.
+  static nscoord LineEdge(const nsTArray<nsRect>& aIntervals,
+                          const nscoord aBStart,
+                          const nscoord aBEnd,
+                          bool aIsLineLeft);
+
+  // These types, constants, and functions are useful for ShapeInfos that
+  // allocate a distance field. Efficient distance field calculations use
+  // integer values that are 5X the Euclidean distance. MAX_MARGIN_5X is the
+  // largest possible margin that we can calculate (in 5X integer dev pixels),
+  // given these constraints.
+  typedef uint16_t dfType;
+  static const dfType MAX_CHAMFER_VALUE;
+  static const dfType MAX_MARGIN;
+  static const dfType MAX_MARGIN_5X;
+
+  // This function returns a typed, overflow-safe value of aShapeMargin in
+  // 5X integer dev pixels.
+  static dfType CalcUsedShapeMargin5X(nscoord aShapeMargin,
+                                      int32_t aAppUnitsPerDevPixel);
 };
+
+const nsFloatManager::ShapeInfo::dfType
+nsFloatManager::ShapeInfo::MAX_CHAMFER_VALUE = 11;
+
+const nsFloatManager::ShapeInfo::dfType
+nsFloatManager::ShapeInfo::MAX_MARGIN = (std::numeric_limits<dfType>::max() -
+                                         MAX_CHAMFER_VALUE) / 5;
+
+const nsFloatManager::ShapeInfo::dfType
+nsFloatManager::ShapeInfo::MAX_MARGIN_5X = MAX_MARGIN * 5;
 
 /////////////////////////////////////////////////////////////////////////////
 // EllipseShapeInfo
@@ -783,47 +819,31 @@ nsFloatManager::EllipseShapeInfo::EllipseShapeInfo(const nsPoint& aCenter,
   // Euclidean distance. The distances will be approximately 5x the true
   // distance, quantized in integer units. The 5x is factored away in the
   // comparison which builds the intervals.
+  dfType usedMargin5X = CalcUsedShapeMargin5X(aShapeMargin,
+                                              aAppUnitsPerDevPixel);
 
-  // Our distance field has to be able to hold values equal to the
-  // maximum shape-margin value that we care about faithfully rendering,
-  // times 5. A 16-bit unsigned int can represent up to ~ 65K which means
-  // we can handle a margin up to ~ 13K device pixels. That's good enough
-  // for practical usage. Any supplied shape-margin value higher than this
-  // maximum will be clamped.
-  typedef uint16_t dfType;
-  const dfType MAX_CHAMFER_VALUE = 11;
-  const dfType MAX_MARGIN = (std::numeric_limits<dfType>::max() -
-                             MAX_CHAMFER_VALUE) / 5;
-  const dfType MAX_MARGIN_5X = MAX_MARGIN * 5;
-
-  // Convert aShapeMargin to dev pixels, convert that into 5x-dev-pixel
-  // space, then clamp to MAX_MARGIN_5X.
-  float shapeMarginDevPixels =
-    NSAppUnitsToFloatPixels(aShapeMargin, aAppUnitsPerDevPixel);
-  int32_t shapeMarginDevPixelsInt5X =
-    NSToIntRound(5.0f * shapeMarginDevPixels);
-  NS_WARNING_ASSERTION(shapeMarginDevPixelsInt5X <= MAX_MARGIN_5X,
-                       "shape-margin is too large and is being clamped.");
-  dfType usedMargin5X = (dfType)std::min((int32_t)MAX_MARGIN_5X,
-                                         shapeMarginDevPixelsInt5X);
-
-  nsSize radiiPlusShapeMargin(mRadii.width + aShapeMargin,
-                              mRadii.height + aShapeMargin);
+  // Calculate the bounds of one quadrant of the ellipse, in integer device
+  // pixels. These bounds are equal to the rectangle defined by the radii,
+  // plus the shape-margin value in both dimensions.
   const LayoutDeviceIntSize bounds =
-    LayoutDevicePixel::FromAppUnitsRounded(radiiPlusShapeMargin,
-                                           aAppUnitsPerDevPixel);
+    LayoutDevicePixel::FromAppUnitsRounded(mRadii, aAppUnitsPerDevPixel) +
+    LayoutDeviceIntSize(usedMargin5X / 5, usedMargin5X / 5);
+
   // Since our distance field is computed with a 5x5 neighborhood, but only
   // looks in the negative block and negative inline directions, it is
   // effectively a 3x3 neighborhood. We need to expand our distance field
   // outwards by a further 2 pixels in both axes (on the minimum block edge
   // and the minimum inline edge). We call this edge area the expanded region.
 
-  // Our expansion amounts need to be non-negative for our math to work, but
-  // we don't want to deal with casting them from unsigned ints.
-  static const int32_t iExpand = 2;
-  static const int32_t bExpand = 2;
-  const int32_t iSize = bounds.width + iExpand;
-  const int32_t bSize = bounds.height + bExpand;
+  static const uint32_t iExpand = 2;
+  static const uint32_t bExpand = 2;
+
+  // Clamp the size of our distance field sizes to prevent multiplication
+  // overflow.
+  static const uint32_t DF_SIDE_MAX =
+    floor(sqrt((double)(std::numeric_limits<int32_t>::max())));
+  const uint32_t iSize = std::min(bounds.width + iExpand, DF_SIDE_MAX);
+  const uint32_t bSize = std::min(bounds.height + bExpand, DF_SIDE_MAX);
   auto df = MakeUniqueFallible<dfType[]>(iSize * bSize);
   if (!df) {
     // Without a distance field, we can't reason about the float area.
@@ -837,7 +857,7 @@ nsFloatManager::EllipseShapeInfo::EllipseShapeInfo(const nsPoint& aCenter,
   // 3) Other pixel: set to minimum neighborhood distance value, computed
   //                 with 5-7-11 chamfer.
 
-  for (int32_t b = 0; b < bSize; ++b) {
+  for (uint32_t b = 0; b < bSize; ++b) {
     bool bIsInExpandedRegion(b < bExpand);
     nscoord bInAppUnits = (b - bExpand) * aAppUnitsPerDevPixel;
     bool bIsMoreThanEllipseBEnd(bInAppUnits > mRadii.height);
@@ -845,7 +865,7 @@ nsFloatManager::EllipseShapeInfo::EllipseShapeInfo(const nsPoint& aCenter,
     // Find the i intercept of the ellipse edge for this block row, and
     // adjust it to compensate for the expansion of the inline dimension.
     // If we're in the expanded region, or if we're using a b that's more
-    // than the bStart of the ellipse, the intercept is nscoord_MIN.
+    // than the bEnd of the ellipse, the intercept is nscoord_MIN.
     const int32_t iIntercept = (bIsInExpandedRegion ||
                                 bIsMoreThanEllipseBEnd) ? nscoord_MIN :
       iExpand + NSAppUnitsToIntPixels(
@@ -855,9 +875,9 @@ nsFloatManager::EllipseShapeInfo::EllipseShapeInfo(const nsPoint& aCenter,
     // Set iMax in preparation for this block row.
     int32_t iMax = iIntercept;
 
-    for (int32_t i = 0; i < iSize; ++i) {
-      const int32_t index = i + b * iSize;
-      MOZ_ASSERT(index >= 0 && index < (iSize * bSize),
+    for (uint32_t i = 0; i < iSize; ++i) {
+      const uint32_t index = i + b * iSize;
+      MOZ_ASSERT(index < (iSize * bSize),
                  "Our distance field index should be in-bounds.");
 
       // Handle our three cases, in order.
@@ -865,7 +885,7 @@ nsFloatManager::EllipseShapeInfo::EllipseShapeInfo(const nsPoint& aCenter,
           bIsInExpandedRegion) {
         // Case 1: Expanded reqion pixel.
         df[index] = MAX_MARGIN_5X;
-      } else if (i <= iIntercept) {
+      } else if ((int32_t)i <= iIntercept) {
         // Case 2: Pixel within the ellipse.
         df[index] = 0;
       } else {
@@ -884,8 +904,8 @@ nsFloatManager::EllipseShapeInfo::EllipseShapeInfo(const nsPoint& aCenter,
         //
         // X should be set to the minimum of the values of all of the numbered
         // neighbors summed with the value in that chamfer cell.
-        MOZ_ASSERT(index - iSize - 2 >= 0 &&
-                   index - (iSize * 2) - 1 >= 0,
+        MOZ_ASSERT(index - iSize - 2 < (iSize * bSize) &&
+                   index - (iSize * 2) - 1 < (iSize * bSize),
                    "Our distance field most extreme indices should be "
                    "in-bounds.");
 
@@ -898,17 +918,25 @@ nsFloatManager::EllipseShapeInfo::EllipseShapeInfo(const nsPoint& aCenter,
         // Check the df value and see if it's less than or equal to the
         // usedMargin5X value.
         if (df[index] <= usedMargin5X) {
-          MOZ_ASSERT(iMax < i);
+          MOZ_ASSERT(iMax < (int32_t)i);
           iMax = i;
+        } else {
+          // Since we're computing the bottom-right quadrant, there's no way
+          // for a later i value in this row to be within the usedMargin5X
+          // value. Likewise, every row beyond us will encounter this
+          // condition with an i value less than or equal to our i value now.
+          // Since our chamfer only looks upward and leftward, we can stop
+          // calculating for the rest of the row, because the distance field
+          // values there will never be looked at in a later row's chamfer
+          // calculation.
+          break;
         }
       }
     }
 
-    NS_WARNING_ASSERTION(bIsInExpandedRegion || iMax > nscoord_MIN,
-                         "Once past the expanded region, we should always "
-                         "find a pixel within the shape-margin distance for "
-                         "each block row.");
-
+    // It's very likely, though not guaranteed that we will find an pixel
+    // within the shape-margin distance for each block row. This may not
+    // always be true due to rounding errors.
     if (iMax > nscoord_MIN) {
       // Origin for this interval is at the center of the ellipse, adjusted
       // in the positive block direction by bInAppUnits.
@@ -941,7 +969,7 @@ nsFloatManager::EllipseShapeInfo::LineEdge(const nscoord aBStart,
   // We are checking against our intervals. Make sure we have some.
   if (mIntervals.IsEmpty()) {
     NS_WARNING("With mShapeMargin > 0, we can't proceed without intervals.");
-    return 0;
+    return aIsLineLeft ? nscoord_MAX : nscoord_MIN;
   }
 
   // Map aBStart and aBEnd into our intervals. Our intervals are calculated
@@ -974,12 +1002,26 @@ nsFloatManager::EllipseShapeInfo::LineEdge(const nscoord aBStart,
 
   MOZ_ASSERT(bSmallestWithinIntervals >= mCenter.y &&
              bSmallestWithinIntervals < BEnd(),
-             "We should have a block value within the intervals.");
+             "We should have a block value within the float area.");
 
   size_t index = MinIntervalIndexContainingY(mIntervals,
                                              bSmallestWithinIntervals);
-  MOZ_ASSERT(index < mIntervals.Length(),
-             "We should have found a matching interval for this block value.");
+  if (index >= mIntervals.Length()) {
+    // This indicates that our intervals don't cover the block value
+    // bSmallestWithinIntervals. This can happen when rounding error in the
+    // distance field calculation resulted in the last block pixel row not
+    // contributing to the float area. As long as we're within one block pixel
+    // past the last interval, this is an expected outcome.
+#ifdef DEBUG
+    nscoord onePixelPastLastInterval =
+      mIntervals[mIntervals.Length() - 1].YMost() +
+      mIntervals[mIntervals.Length() - 1].Height();
+    NS_WARNING_ASSERTION(bSmallestWithinIntervals < onePixelPastLastInterval,
+                         "We should have found a matching interval for this "
+                         "block value.");
+#endif
+    return aIsLineLeft ? nscoord_MAX : nscoord_MIN;
+  }
 
   // The interval is storing the line right value. If aIsLineLeft is true,
   // return the line right value reflected about the center. Since this is
@@ -1207,6 +1249,10 @@ class nsFloatManager::PolygonShapeInfo final : public nsFloatManager::ShapeInfo
 {
 public:
   explicit PolygonShapeInfo(nsTArray<nsPoint>&& aVertices);
+  PolygonShapeInfo(nsTArray<nsPoint>&& aVertices,
+                   nscoord aShapeMargin,
+                   int32_t aAppUnitsPerDevPixel,
+                   const nsRect& aMarginRect);
 
   nscoord LineLeft(const nscoord aBStart,
                    const nscoord aBEnd) const override;
@@ -1219,6 +1265,10 @@ public:
   void Translate(nscoord aLineLeft, nscoord aBlockStart) override;
 
 private:
+  // Helper method for determining if the vertices define a float area at
+  // all, and to set mBStart and mBEnd based on the vertices' y extent.
+  void ComputeEmptinessAndExtent();
+
   // Helper method for implementing LineLeft() and LineRight().
   nscoord ComputeLineIntercept(
     const nscoord aBStart,
@@ -1236,6 +1286,15 @@ private:
   // The vertices of the polygon in the float manager's coordinate space.
   nsTArray<nsPoint> mVertices;
 
+  // An interval is slice of the float area defined by this PolygonShapeInfo.
+  // These are only generated and used in float area calculations for
+  // shape-margin > 0. Each interval is a rectangle that is one device pixel
+  // deep in the block axis. The values are stored as block edges in the y
+  // coordinates, and inline edges as the x coordinates.
+
+  // The intervals are stored in ascending order on y.
+  nsTArray<nsRect> mIntervals;
+
   // If mEmpty is true, that means the polygon encloses no area.
   bool mEmpty = false;
 
@@ -1251,6 +1310,340 @@ private:
 
 nsFloatManager::PolygonShapeInfo::PolygonShapeInfo(nsTArray<nsPoint>&& aVertices)
   : mVertices(aVertices)
+{
+  ComputeEmptinessAndExtent();
+}
+
+nsFloatManager::PolygonShapeInfo::PolygonShapeInfo(
+  nsTArray<nsPoint>&& aVertices,
+  nscoord aShapeMargin,
+  int32_t aAppUnitsPerDevPixel,
+  const nsRect& aMarginRect)
+  : mVertices(aVertices)
+{
+  MOZ_ASSERT(aShapeMargin > 0, "This constructor should only be used for a "
+                               "polygon with a positive shape-margin.");
+
+  ComputeEmptinessAndExtent();
+
+  // If we're empty, then the float area stays empty, even with a positive
+  // shape-margin.
+  if (mEmpty) {
+    return;
+  }
+
+  // With a positive aShapeMargin, we have to calculate a distance
+  // field from the opaque pixels, then build intervals based on
+  // them being within aShapeMargin distance to an opaque pixel.
+
+  // Roughly: for each pixel in the margin box, we need to determine the
+  // distance to the nearest opaque image-pixel.  If that distance is less
+  // than aShapeMargin, we consider this margin-box pixel as being part of
+  // the float area.
+
+  // Computing the distance field is a two-pass O(n) operation.
+  // We use a chamfer 5-7-11 5x5 matrix to compute minimum distance
+  // to an opaque pixel. This integer math computation is reasonably
+  // close to the true Euclidean distance. The distances will be
+  // approximately 5x the true distance, quantized in integer units.
+  // The 5x is factored away in the comparison used in the final
+  // pass which builds the intervals.
+  dfType usedMargin5X = CalcUsedShapeMargin5X(aShapeMargin,
+                                              aAppUnitsPerDevPixel);
+
+  // Allocate our distance field.  The distance field has to cover
+  // the entire aMarginRect, since aShapeMargin could bleed into it.
+  // Conveniently, our vertices have been converted into this same space,
+  // so if we cover the aMarginRect, we cover all the vertices.
+  const LayoutDeviceIntSize marginRectDevPixels =
+    LayoutDevicePixel::FromAppUnitsRounded(aMarginRect.Size(),
+                                           aAppUnitsPerDevPixel);
+
+  // Since our distance field is computed with a 5x5 neighborhood,
+  // we need to expand our distance field by a further 4 pixels in
+  // both axes, 2 on the leading edge and 2 on the trailing edge.
+  // We call this edge area the "expanded region".
+  static const uint32_t kiExpansionPerSide = 2;
+  static const uint32_t kbExpansionPerSide = 2;
+
+  // Clamp the size of our distance field sizes to prevent multiplication
+  // overflow.
+  static const uint32_t DF_SIDE_MAX =
+    floor(sqrt((double)(std::numeric_limits<int32_t>::max())));
+
+  // Clamp the margin plus 2X the expansion values between expansion + 1 and
+  // DF_SIDE_MAX. This ensures that the distance field allocation doesn't
+  // overflow during multiplication, and the reverse iteration doesn't
+  // underflow.
+  const uint32_t iSize = std::max(std::min(marginRectDevPixels.width +
+                                           (kiExpansionPerSide * 2),
+                                           DF_SIDE_MAX),
+                                  kiExpansionPerSide + 1);
+  const uint32_t bSize = std::max(std::min(marginRectDevPixels.height +
+                                           (kbExpansionPerSide * 2),
+                                           DF_SIDE_MAX),
+                                  kbExpansionPerSide + 1);
+
+  // Since the margin-box size is CSS controlled, and large values will
+  // generate large iSize and bSize values, we do a fallible allocation for
+  // the distance field. If allocation fails, we early exit and layout will
+  // be wrong, but we'll avoid aborting from OOM.
+  auto df = MakeUniqueFallible<dfType[]>(iSize * bSize);
+  if (!df) {
+    // Without a distance field, we can't reason about the float area.
+    return;
+  }
+
+  // First pass setting distance field, starting at top-left, three cases:
+  // 1) Expanded region pixel: set to MAX_MARGIN_5X.
+  // 2) Pixel within the polygon: set to 0.
+  // 3) Other pixel: set to minimum backward-looking neighborhood
+  //                 distance value, computed with 5-7-11 chamfer.
+
+  for (uint32_t b = 0; b < bSize; ++b) {
+    // Find the left and right i intercepts of the polygon edge for this
+    // block row, and adjust them to compensate for the expansion of the
+    // inline dimension. If we're in the expanded region, or if we're using
+    // a b that's less than the bStart of the polygon, the intercepts are
+    // the nscoord min and max limits.
+    nscoord bInAppUnits = (b - kbExpansionPerSide) * aAppUnitsPerDevPixel;
+    bool bIsInExpandedRegion(b < kbExpansionPerSide ||
+                             b >= bSize - kbExpansionPerSide);
+
+    // We now figure out the i values that correspond to the left edge and
+    // the right edge of the polygon at one-dev-pixel-thick strip of b. We
+    // have a ComputeLineIntercept function that takes and returns app unit
+    // coordinates in the space of aMarginRect. So to pass in b values, we
+    // first have to add the aMarginRect.y value. And for the values that we
+    // get out, we have to subtract away the aMarginRect.x value before
+    // converting the app units to dev pixels.
+    nscoord bInAppUnitsMarginRect = bInAppUnits + aMarginRect.y;
+    bool bIsLessThanPolygonBStart(bInAppUnitsMarginRect < mBStart);
+    bool bIsMoreThanPolygonBEnd(bInAppUnitsMarginRect >= mBEnd);
+
+    const int32_t iLeftEdge = (bIsInExpandedRegion ||
+                               bIsLessThanPolygonBStart ||
+                               bIsMoreThanPolygonBEnd) ? nscoord_MAX :
+      kiExpansionPerSide + NSAppUnitsToIntPixels(
+        ComputeLineIntercept(bInAppUnitsMarginRect,
+                             bInAppUnitsMarginRect + aAppUnitsPerDevPixel,
+                             std::min<nscoord>, nscoord_MAX) - aMarginRect.x,
+        aAppUnitsPerDevPixel);
+
+    const int32_t iRightEdge = (bIsInExpandedRegion ||
+                                bIsLessThanPolygonBStart ||
+                                bIsMoreThanPolygonBEnd) ? nscoord_MIN :
+      kiExpansionPerSide + NSAppUnitsToIntPixels(
+        ComputeLineIntercept(bInAppUnitsMarginRect,
+                             bInAppUnitsMarginRect + aAppUnitsPerDevPixel,
+                             std::max<nscoord>, nscoord_MIN) - aMarginRect.x,
+        aAppUnitsPerDevPixel);
+
+    for (uint32_t i = 0; i < iSize; ++i) {
+      const uint32_t index = i + b * iSize;
+      MOZ_ASSERT(index < (iSize * bSize),
+                 "Our distance field index should be in-bounds.");
+
+      // Handle our three cases, in order.
+      if (i < kiExpansionPerSide ||
+          i >= iSize - kiExpansionPerSide ||
+          bIsInExpandedRegion) {
+        // Case 1: Expanded pixel.
+        df[index] = MAX_MARGIN_5X;
+      } else if ((int32_t)i >= iLeftEdge && (int32_t)i < iRightEdge) {
+        // Case 2: Polygon pixel.
+        df[index] = 0;
+      } else {
+        // Case 3: Other pixel.
+
+        // Backward-looking neighborhood distance from target pixel X
+        // with chamfer 5-7-11 looks like:
+        //
+        // +--+--+--+--+--+
+        // |  |11|  |11|  |
+        // +--+--+--+--+--+
+        // |11| 7| 5| 7|11|
+        // +--+--+--+--+--+
+        // |  | 5| X|  |  |
+        // +--+--+--+--+--+
+        //
+        // X should be set to the minimum of MAX_MARGIN_5X and the
+        // values of all of the numbered neighbors summed with the
+        // value in that chamfer cell.
+        MOZ_ASSERT(index - (iSize * 2) - 1 < (iSize * bSize) &&
+                   index - iSize - 2 < (iSize * bSize),
+                   "Our distance field most extreme indices should be "
+                   "in-bounds.");
+
+        df[index] = std::min<dfType>(MAX_MARGIN_5X,
+                    std::min<dfType>(df[index - (iSize * 2) - 1] + 11,
+                    std::min<dfType>(df[index - (iSize * 2) + 1] + 11,
+                    std::min<dfType>(df[index - iSize - 2] + 11,
+                    std::min<dfType>(df[index - iSize - 1] + 7,
+                    std::min<dfType>(df[index - iSize] + 5,
+                    std::min<dfType>(df[index - iSize + 1] + 7,
+                    std::min<dfType>(df[index - iSize + 2] + 11,
+                                     df[index - 1] + 5))))))));
+      }
+    }
+  }
+
+  // Okay, time for the second pass. This pass is in reverse order from
+  // the first pass. All of our opaque pixels have been set to 0, and all
+  // of our expanded region pixels have been set to MAX_MARGIN_5X. Other
+  // pixels have been set to some value between those two (inclusive) but
+  // this hasn't yet taken into account the neighbors that were processed
+  // after them in the first pass. This time we reverse iterate so we can
+  // apply the forward-looking chamfer.
+
+  // This time, we constrain our outer and inner loop to ignore the
+  // expanded region pixels. For each pixel we iterate, we set the df value
+  // to the minimum forward-looking neighborhood distance value, computed
+  // with a 5-7-11 chamfer. We also check each df value against the
+  // usedMargin5X threshold, and use that to set the iMin and iMax values
+  // for the interval we'll create for that block axis value (b).
+
+  // At the end of each row, if any of the other pixels had a value less
+  // than usedMargin5X, we create an interval.
+  for (uint32_t b = bSize - kbExpansionPerSide - 1;
+       b >= kbExpansionPerSide; --b) {
+    // iMin tracks the first df pixel and iMax the last df pixel whose
+    // df[] value is less than usedMargin5X. Set iMin and iMax in
+    // preparation for this row or column.
+    int32_t iMin = iSize;
+    int32_t iMax = -1;
+
+    for (uint32_t i = iSize - kiExpansionPerSide - 1;
+         i >= kiExpansionPerSide; --i) {
+      const uint32_t index = i + b * iSize;
+      MOZ_ASSERT(index < (iSize * bSize),
+                 "Our distance field index should be in-bounds.");
+
+      // Only apply the chamfer calculation if the df value is not
+      // already 0, since the chamfer can only reduce the value.
+      if (df[index]) {
+        // Forward-looking neighborhood distance from target pixel X
+        // with chamfer 5-7-11 looks like:
+        //
+        // +--+--+--+--+--+
+        // |  |  | X| 5|  |
+        // +--+--+--+--+--+
+        // |11| 7| 5| 7|11|
+        // +--+--+--+--+--+
+        // |  |11|  |11|  |
+        // +--+--+--+--+--+
+        //
+        // X should be set to the minimum of its current value and
+        // the values of all of the numbered neighbors summed with
+        // the value in that chamfer cell.
+        MOZ_ASSERT(index + (iSize * 2) + 1 < (iSize * bSize) &&
+                   index + iSize + 2 < (iSize * bSize),
+                   "Our distance field most extreme indices should be "
+                   "in-bounds.");
+
+        df[index] = std::min<dfType>(df[index],
+                    std::min<dfType>(df[index + (iSize * 2) + 1] + 11,
+                    std::min<dfType>(df[index + (iSize * 2) - 1] + 11,
+                    std::min<dfType>(df[index + iSize + 2] + 11,
+                    std::min<dfType>(df[index + iSize + 1] + 7,
+                    std::min<dfType>(df[index + iSize] + 5,
+                    std::min<dfType>(df[index + iSize - 1] + 7,
+                    std::min<dfType>(df[index + iSize - 2] + 11,
+                                     df[index + 1] + 5))))))));
+      }
+
+      // Finally, we can check the df value and see if it's less than
+      // or equal to the usedMargin5X value.
+      if (df[index] <= usedMargin5X) {
+        if (iMax == -1) {
+          iMax = i;
+        }
+        MOZ_ASSERT(iMin > (int32_t)i);
+        iMin = i;
+      }
+    }
+
+    if (iMax != -1) {
+      // Our interval values, iMin, iMax, and b are all calculated from
+      // the expanded region, which is based on the margin rect. To create
+      // our interval, we have to subtract kiExpansionPerSide from iMin and
+      // iMax, and subtract kbExpansionPerSide from b to account for the
+      // expanded region edges.  This produces coords that are relative to
+      // our margin-rect.
+
+      // Origin for this interval is at the aMarginRect origin, adjusted in
+      // the block direction by b in app units, and in the inline direction
+      // by iMin in app units.
+      nsPoint origin(aMarginRect.x +
+                     (iMin - kiExpansionPerSide) * aAppUnitsPerDevPixel,
+                     aMarginRect.y +
+                     (b - kbExpansionPerSide) * aAppUnitsPerDevPixel);
+
+      // Size is the difference in iMax and iMin, plus 1 (to account for the
+      // whole pixel) dev pixels, by 1 block dev pixel. We don't bother
+      // subtracting kiExpansionPerSide from iMin and iMax in this case
+      // because we only care about the distance between them. We convert
+      // everything to app units.
+      nsSize size((iMax - iMin + 1) * aAppUnitsPerDevPixel,
+                  aAppUnitsPerDevPixel);
+
+      mIntervals.AppendElement(nsRect(origin, size));
+    }
+  }
+
+  // Reverse the intervals keep the array sorted on the block direction.
+  mIntervals.Reverse();
+
+  // Adjust our extents by aShapeMargin. This may cause overflow of some
+  // kind if aShapeMargin is large, so we do some clamping to maintain the
+  // invariant mBStart <= mBEnd.
+  mBStart = std::min(mBStart, mBStart - aShapeMargin);
+  mBEnd = std::max(mBEnd, mBEnd + aShapeMargin);
+}
+
+nscoord
+nsFloatManager::PolygonShapeInfo::LineLeft(const nscoord aBStart,
+                                           const nscoord aBEnd) const
+{
+  MOZ_ASSERT(!mEmpty, "Shouldn't be called if the polygon encloses no area.");
+
+  // Use intervals if we have them.
+  if (!mIntervals.IsEmpty()) {
+    return LineEdge(mIntervals, aBStart, aBEnd, true);
+  }
+
+  // We want the line-left-most inline-axis coordinate where the
+  // (block-axis) aBStart/aBEnd band crosses a line segment of the polygon.
+  // To get that, we start as line-right as possible (at nscoord_MAX). Then
+  // we iterate each line segment to compute its intersection point with the
+  // band (if any) and using std::min() successively to get the smallest
+  // inline-coordinates among those intersection points.
+  //
+  // Note: std::min<nscoord> means the function std::min() with template
+  // parameter nscoord, not the minimum value of nscoord.
+  return ComputeLineIntercept(aBStart, aBEnd, std::min<nscoord>, nscoord_MAX);
+}
+
+nscoord
+nsFloatManager::PolygonShapeInfo::LineRight(const nscoord aBStart,
+                                            const nscoord aBEnd) const
+{
+  MOZ_ASSERT(!mEmpty, "Shouldn't be called if the polygon encloses no area.");
+
+  // Use intervals if we have them.
+  if (!mIntervals.IsEmpty()) {
+    return LineEdge(mIntervals, aBStart, aBEnd, false);
+  }
+
+  // Similar to LineLeft(). Though here, we want the line-right-most
+  // inline-axis coordinate, so we instead start at nscoord_MIN and use
+  // std::max() to get the biggest inline-coordinate among those
+  // intersection points.
+  return ComputeLineIntercept(aBStart, aBEnd, std::max<nscoord>, nscoord_MIN);
+}
+
+void
+nsFloatManager::PolygonShapeInfo::ComputeEmptinessAndExtent()
 {
   // Polygons with fewer than three vertices result in an empty area.
   // https://drafts.csswg.org/css-shapes/#funcdef-polygon
@@ -1295,37 +1688,6 @@ nsFloatManager::PolygonShapeInfo::PolygonShapeInfo(nsTArray<nsPoint>&& aVertices
     mBStart = std::min(mBStart, vertex.y);
     mBEnd = std::max(mBEnd, vertex.y);
   }
-}
-
-nscoord
-nsFloatManager::PolygonShapeInfo::LineLeft(const nscoord aBStart,
-                                           const nscoord aBEnd) const
-{
-  MOZ_ASSERT(!mEmpty, "Shouldn't be called if the polygon encloses no area.");
-
-  // We want the line-left-most inline-axis coordinate where the
-  // (block-axis) aBStart/aBEnd band crosses a line segment of the polygon.
-  // To get that, we start as line-right as possible (at nscoord_MAX). Then
-  // we iterate each line segment to compute its intersection point with the
-  // band (if any) and using std::min() successively to get the smallest
-  // inline-coordinates among those intersection points.
-  //
-  // Note: std::min<nscoord> means the function std::min() with template
-  // parameter nscoord, not the minimum value of nscoord.
-  return ComputeLineIntercept(aBStart, aBEnd, std::min<nscoord>, nscoord_MAX);
-}
-
-nscoord
-nsFloatManager::PolygonShapeInfo::LineRight(const nscoord aBStart,
-                                            const nscoord aBEnd) const
-{
-  MOZ_ASSERT(!mEmpty, "Shouldn't be called if the polygon encloses no area.");
-
-  // Similar to LineLeft(). Though here, we want the line-right-most
-  // inline-axis coordinate, so we instead start at nscoord_MIN and use
-  // std::max() to get the biggest inline-coordinate among those
-  // intersection points.
-  return ComputeLineIntercept(aBStart, aBEnd, std::max<nscoord>, nscoord_MIN);
 }
 
 nscoord
@@ -1387,6 +1749,9 @@ nsFloatManager::PolygonShapeInfo::Translate(nscoord aLineLeft,
   for (nsPoint& vertex : mVertices) {
     vertex.MoveBy(aLineLeft, aBlockStart);
   }
+  for (nsRect& interval : mIntervals) {
+    interval.MoveBy(aLineLeft, aBlockStart);
+  }
   mBStart += aBlockStart;
   mBEnd += aBlockStart;
 }
@@ -1439,10 +1804,6 @@ public:
   void Translate(nscoord aLineLeft, nscoord aBlockStart) override;
 
 private:
-  nscoord LineEdge(const nscoord aBStart,
-                   const nscoord aBEnd,
-                   bool aLeft) const;
-
   // An interval is slice of the float area defined by this ImageShapeInfo.
   // Each interval is a rectangle that is one pixel deep in the block
   // axis. The values are stored as block edges in the y coordinates,
@@ -1484,8 +1845,11 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
              "The computed value of shape-image-threshold is wrong!");
 
   const uint8_t threshold = NSToIntFloor(aShapeImageThreshold * 255);
-  const int32_t w = aImageSize.width;
-  const int32_t h = aImageSize.height;
+
+  MOZ_ASSERT(aImageSize.width >= 0 && aImageSize.height >= 0,
+             "Image size must be non-negative for our math to work.");
+  const uint32_t w = aImageSize.width;
+  const uint32_t h = aImageSize.height;
 
   if (aShapeMargin <= 0) {
     // Without a positive aShapeMargin, all we have to do is a
@@ -1496,18 +1860,18 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
     // this row by row, from top to bottom. For vertical writing modes, we do
     // column by column, from left to right. We define the two loops
     // generically, then figure out the rows and cols within the inner loop.
-    const int32_t bSize = aWM.IsVertical() ? w : h;
-    const int32_t iSize = aWM.IsVertical() ? h : w;
-    for (int32_t b = 0; b < bSize; ++b) {
+    const uint32_t bSize = aWM.IsVertical() ? w : h;
+    const uint32_t iSize = aWM.IsVertical() ? h : w;
+    for (uint32_t b = 0; b < bSize; ++b) {
       // iMin and max store the start and end of the float area for the row
       // or column represented by this iteration of the outer loop.
       int32_t iMin = -1;
       int32_t iMax = -1;
 
-      for (int32_t i = 0; i < iSize; ++i) {
-        const int32_t col = aWM.IsVertical() ? b : i;
-        const int32_t row = aWM.IsVertical() ? i : b;
-        const int32_t index = col + row * aStride;
+      for (uint32_t i = 0; i < iSize; ++i) {
+        const uint32_t col = aWM.IsVertical() ? b : i;
+        const uint32_t row = aWM.IsVertical() ? i : b;
+        const uint32_t index = col + row * aStride;
 
         // Determine if the alpha pixel at this row and column has a value
         // greater than the threshold. If it does, update our iMin and iMax
@@ -1518,7 +1882,7 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
           if (iMin == -1) {
             iMin = i;
           }
-          MOZ_ASSERT(iMax < i);
+          MOZ_ASSERT(iMax < (int32_t)i);
           iMax = i;
         }
       }
@@ -1557,29 +1921,8 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
     // approximately 5x the true distance, quantized in integer units.
     // The 5x is factored away in the comparison used in the final
     // pass which builds the intervals.
-
-    // Our distance field has to be able to hold values equal to the
-    // maximum shape-margin value that we care about faithfully rendering,
-    // times 5. A 16-bit unsigned int can represent up to ~ 65K which means
-    // we can handle a margin up to ~ 13K device pixels. That's good enough
-    // for practical usage. Any supplied shape-margin value higher than this
-    // maximum will be clamped.
-    typedef uint16_t dfType;
-    const dfType MAX_CHAMFER_VALUE = 11;
-    const dfType MAX_MARGIN = (std::numeric_limits<dfType>::max() -
-                               MAX_CHAMFER_VALUE) / 5;
-    const dfType MAX_MARGIN_5X = MAX_MARGIN * 5;
-
-    // Convert aShapeMargin to dev pixels, convert that into 5x-dev-pixel
-    // space, then clamp to MAX_MARGIN_5X.
-    float shapeMarginDevPixels =
-      NSAppUnitsToFloatPixels(aShapeMargin, aAppUnitsPerDevPixel);
-    int32_t shapeMarginDevPixelsInt5X =
-      NSToIntRound(5.0f * shapeMarginDevPixels);
-    NS_WARNING_ASSERTION(shapeMarginDevPixelsInt5X <= MAX_MARGIN_5X,
-                         "shape-margin is too large and is being clamped.");
-    dfType usedMargin5X = (dfType)std::min((int32_t)MAX_MARGIN_5X,
-                                           shapeMarginDevPixelsInt5X);
+    dfType usedMargin5X = CalcUsedShapeMargin5X(aShapeMargin,
+                                                aAppUnitsPerDevPixel);
 
     // Allocate our distance field.  The distance field has to cover
     // the entire aMarginRect, since aShapeMargin could bleed into it,
@@ -1587,6 +1930,9 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
     // we calculate a dfOffset value which is the top left of the content
     // rect relative to the margin rect.
     nsPoint offsetPoint = aContentRect.TopLeft() - aMarginRect.TopLeft();
+    MOZ_ASSERT(offsetPoint.x >= 0 && offsetPoint.y >= 0,
+               "aContentRect should be within aMarginRect, which we need "
+               "for our math to make sense.");
     LayoutDeviceIntPoint dfOffset =
       LayoutDevicePixel::FromAppUnitsRounded(offsetPoint,
                                              aAppUnitsPerDevPixel);
@@ -1596,11 +1942,8 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
     // both axes, 2 on the leading edge and 2 on the trailing edge.
     // We call this edge area the "expanded region".
 
-    // Our expansion amounts need to be the same, and non-negative for our
-    // math to work, but we don't want to deal with casting them from
-    // unsigned ints.
-    static int32_t kExpansionPerSide = 2;
-
+    // Our expansion amounts need to be the same for our math to work.
+    static uint32_t kExpansionPerSide = 2;
     // Since dfOffset will be used in comparisons against expanded region
     // pixel values, it's convenient to add expansion amounts to dfOffset in
     // both axes, to simplify comparison math later.
@@ -1614,8 +1957,24 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
     const LayoutDeviceIntSize marginRectDevPixels =
       LayoutDevicePixel::FromAppUnitsRounded(aMarginRect.Size(),
                                              aAppUnitsPerDevPixel);
-    const int32_t wEx = marginRectDevPixels.width + (kExpansionPerSide * 2);
-    const int32_t hEx = marginRectDevPixels.height + (kExpansionPerSide * 2);
+
+    // Clamp the size of our distance field sizes to prevent multiplication
+    // overflow.
+    static const uint32_t DF_SIDE_MAX =
+      floor(sqrt((double)(std::numeric_limits<int32_t>::max())));
+
+    // Clamp the margin plus 2X the expansion values between expansion + 1
+    // and DF_SIDE_MAX. This ensures that the distance field allocation
+    // doesn't overflow during multiplication, and the reverse iteration
+    // doesn't underflow.
+    const uint32_t wEx = std::max(std::min(marginRectDevPixels.width +
+                                           (kExpansionPerSide * 2),
+                                           DF_SIDE_MAX),
+                                  kExpansionPerSide + 1);
+    const uint32_t hEx = std::max(std::min(marginRectDevPixels.height +
+                                           (kExpansionPerSide * 2),
+                                           DF_SIDE_MAX),
+                                  kExpansionPerSide + 1);
 
     // Since the margin-box size is CSS controlled, and large values will
     // generate large wEx and hEx values, we do a falliable allocation for
@@ -1627,8 +1986,8 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
       return;
     }
 
-    const int32_t bSize = aWM.IsVertical() ? wEx : hEx;
-    const int32_t iSize = aWM.IsVertical() ? hEx : wEx;
+    const uint32_t bSize = aWM.IsVertical() ? wEx : hEx;
+    const uint32_t iSize = aWM.IsVertical() ? hEx : wEx;
 
     // First pass setting distance field, starting at top-left, three cases:
     // 1) Expanded region pixel: set to MAX_MARGIN_5X.
@@ -1640,12 +1999,12 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
     // this row by row, from top to bottom. For vertical writing modes, we do
     // column by column, from left to right. We define the two loops
     // generically, then figure out the rows and cols within the inner loop.
-    for (int32_t b = 0; b < bSize; ++b) {
-      for (int32_t i = 0; i < iSize; ++i) {
-        const int32_t col = aWM.IsVertical() ? b : i;
-        const int32_t row = aWM.IsVertical() ? i : b;
-        const int32_t index = col + row * wEx;
-        MOZ_ASSERT(index >= 0 && index < (wEx * hEx),
+    for (uint32_t b = 0; b < bSize; ++b) {
+      for (uint32_t i = 0; i < iSize; ++i) {
+        const uint32_t col = aWM.IsVertical() ? b : i;
+        const uint32_t row = aWM.IsVertical() ? i : b;
+        const uint32_t index = col + row * wEx;
+        MOZ_ASSERT(index < (wEx * hEx),
                    "Our distance field index should be in-bounds.");
 
         // Handle our three cases, in order.
@@ -1655,50 +2014,88 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
             row >= hEx - kExpansionPerSide) {
           // Case 1: Expanded pixel.
           df[index] = MAX_MARGIN_5X;
-        } else if (col >= dfOffset.x &&
-                   col < (dfOffset.x + w) &&
-                   row >= dfOffset.y &&
-                   row < (dfOffset.y + h) &&
+        } else if (col >= (uint32_t)dfOffset.x &&
+                   col < (uint32_t)(dfOffset.x + w) &&
+                   row >= (uint32_t)dfOffset.y &&
+                   row < (uint32_t)(dfOffset.y + h) &&
                    aAlphaPixels[col - dfOffset.x +
                                 (row - dfOffset.y) * aStride] > threshold) {
           // Case 2: Image pixel that is opaque.
-          DebugOnly<int32_t> alphaIndex = col - dfOffset.x +
-                                          (row - dfOffset.y) * aStride;
-          MOZ_ASSERT(alphaIndex >= 0 && alphaIndex < (aStride * h),
+          DebugOnly<uint32_t> alphaIndex = col - dfOffset.x +
+                                           (row - dfOffset.y) * aStride;
+          MOZ_ASSERT(alphaIndex < (aStride * h),
             "Our aAlphaPixels index should be in-bounds.");
 
           df[index] = 0;
         } else {
           // Case 3: Other pixel.
+          if (aWM.IsVertical()) {
+            // Column-by-column, starting at the left, each column
+            // top-to-bottom.
+            // Backward-looking neighborhood distance from target pixel X
+            // with chamfer 5-7-11 looks like:
+            //
+            // +--+--+--+
+            // |  |11|  |   |    +
+            // +--+--+--+   |   /|
+            // |11| 7| 5|   |  / |
+            // +--+--+--+   | /  V
+            // |  | 5| X|   |/
+            // +--+--+--+   +
+            // |11| 7|  |
+            // +--+--+--+
+            // |  |11|  |
+            // +--+--+--+
+            //
+            // X should be set to the minimum of MAX_MARGIN_5X and the
+            // values of all of the numbered neighbors summed with the
+            // value in that chamfer cell.
+            MOZ_ASSERT(index - wEx - 2 < (iSize * bSize) &&
+                       index + wEx - 2 < (iSize * bSize) &&
+                       index - (wEx * 2) - 1 < (iSize * bSize),
+                       "Our distance field most extreme indices should be "
+                       "in-bounds.");
 
-          // Backward-looking neighborhood distance from target pixel X
-          // with chamfer 5-7-11 looks like:
-          //
-          // +--+--+--+--+--+
-          // |  |11|  |11|  |
-          // +--+--+--+--+--+
-          // |11| 7| 5| 7|11|
-          // +--+--+--+--+--+
-          // |  | 5| X|  |  |
-          // +--+--+--+--+--+
-          //
-          // X should be set to the minimum of MAX_MARGIN_5X and the
-          // values of all of the numbered neighbors summed with the
-          // value in that chamfer cell.
-          MOZ_ASSERT(index - (wEx * 2) - 1 >= 0 &&
-                     index - wEx - 2 >= 0,
-                     "Our distance field most extreme indices should be "
-                     "in-bounds.");
+            df[index] = std::min<dfType>(MAX_MARGIN_5X,
+                        std::min<dfType>(df[index - wEx - 2] + 11,
+                        std::min<dfType>(df[index + wEx - 2] + 11,
+                        std::min<dfType>(df[index - (wEx * 2) - 1] + 11,
+                        std::min<dfType>(df[index - wEx - 1] + 7,
+                        std::min<dfType>(df[index - 1] + 5,
+                        std::min<dfType>(df[index + wEx - 1] + 7,
+                        std::min<dfType>(df[index + (wEx * 2) - 1] + 11,
+                                         df[index - wEx] + 5))))))));
+          } else {
+            // Row-by-row, starting at the top, each row left-to-right.
+            // Backward-looking neighborhood distance from target pixel X
+            // with chamfer 5-7-11 looks like:
+            //
+            // +--+--+--+--+--+
+            // |  |11|  |11|  |   ----+
+            // +--+--+--+--+--+      /
+            // |11| 7| 5| 7|11|     /
+            // +--+--+--+--+--+    /
+            // |  | 5| X|  |  |   +-->
+            // +--+--+--+--+--+
+            //
+            // X should be set to the minimum of MAX_MARGIN_5X and the
+            // values of all of the numbered neighbors summed with the
+            // value in that chamfer cell.
+            MOZ_ASSERT(index - (wEx * 2) - 1 < (iSize * bSize) &&
+                       index - wEx - 2 < (iSize * bSize),
+                       "Our distance field most extreme indices should be "
+                       "in-bounds.");
 
-          df[index] = std::min<dfType>(MAX_MARGIN_5X,
-                      std::min<dfType>(df[index - (wEx * 2) - 1] + 11,
-                      std::min<dfType>(df[index - (wEx * 2) + 1] + 11,
-                      std::min<dfType>(df[index - wEx - 2] + 11,
-                      std::min<dfType>(df[index - wEx - 1] + 7,
-                      std::min<dfType>(df[index - wEx] + 5,
-                      std::min<dfType>(df[index - wEx + 1] + 7,
-                      std::min<dfType>(df[index - wEx + 2] + 11,
-                                       df[index - 1] + 5))))))));
+            df[index] = std::min<dfType>(MAX_MARGIN_5X,
+                        std::min<dfType>(df[index - (wEx * 2) - 1] + 11,
+                        std::min<dfType>(df[index - (wEx * 2) + 1] + 11,
+                        std::min<dfType>(df[index - wEx - 2] + 11,
+                        std::min<dfType>(df[index - wEx - 1] + 7,
+                        std::min<dfType>(df[index - wEx] + 5,
+                        std::min<dfType>(df[index - wEx + 1] + 7,
+                        std::min<dfType>(df[index - wEx + 2] + 11,
+                                         df[index - 1] + 5))))))));
+          }
         }
       }
     }
@@ -1722,7 +2119,7 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
     // if any of the other pixels had a value less than usedMargin5X,
     // we create an interval. Note: "bSize - kExpansionPerSide - 1" is the
     // index of the final row of pixels before the trailing expanded region.
-    for (int32_t b = bSize - kExpansionPerSide - 1;
+    for (uint32_t b = bSize - kExpansionPerSide - 1;
          b >= kExpansionPerSide; --b) {
       // iMin tracks the first df pixel and iMax the last df pixel whose
       // df[] value is less than usedMargin5X. Set iMin and iMax in
@@ -1732,45 +2129,84 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
 
       // Note: "iSize - kExpansionPerSide - 1" is the index of the final row
       // of pixels before the trailing expanded region.
-      for (int32_t i = iSize - kExpansionPerSide - 1;
+      for (uint32_t i = iSize - kExpansionPerSide - 1;
            i >= kExpansionPerSide; --i) {
-        const int32_t col = aWM.IsVertical() ? b : i;
-        const int32_t row = aWM.IsVertical() ? i : b;
-        const int32_t index = col + row * wEx;
-        MOZ_ASSERT(index >= 0 && index < (wEx * hEx),
+        const uint32_t col = aWM.IsVertical() ? b : i;
+        const uint32_t row = aWM.IsVertical() ? i : b;
+        const uint32_t index = col + row * wEx;
+        MOZ_ASSERT(index < (wEx * hEx),
                    "Our distance field index should be in-bounds.");
 
         // Only apply the chamfer calculation if the df value is not
         // already 0, since the chamfer can only reduce the value.
         if (df[index]) {
-          // Forward-looking neighborhood distance from target pixel X
-          // with chamfer 5-7-11 looks like:
-          //
-          // +--+--+--+--+--+
-          // |  |  | X| 5|  |
-          // +--+--+--+--+--+
-          // |11| 7| 5| 7|11|
-          // +--+--+--+--+--+
-          // |  |11|  |11|  |
-          // +--+--+--+--+--+
-          //
-          // X should be set to the minimum of its current value and
-          // the values of all of the numbered neighbors summed with
-          // the value in that chamfer cell.
-          MOZ_ASSERT(index + (wEx * 2) + 1 < (wEx * hEx) &&
-                     index + wEx + 2 < (wEx * hEx),
-                     "Our distance field most extreme indices should be "
-                     "in-bounds.");
+          if (aWM.IsVertical()) {
+            // Column-by-column, starting at the right, each column
+            // bottom-to-top.
+            // Forward-looking neighborhood distance from target pixel X
+            // with chamfer 5-7-11 looks like:
+            //
+            // +--+--+--+
+            // |  |11|  |        +
+            // +--+--+--+       /|
+            // |  | 7|11|   A  / |
+            // +--+--+--+   | /  |
+            // | X| 5|  |   |/   |
+            // +--+--+--+   +    |
+            // | 5| 7|11|
+            // +--+--+--+
+            // |  |11|  |
+            // +--+--+--+
+            //
+            // X should be set to the minimum of its current value and
+            // the values of all of the numbered neighbors summed with
+            // the value in that chamfer cell.
+            MOZ_ASSERT(index + wEx + 2 < (wEx * hEx) &&
+                       index + (wEx * 2) + 1 < (wEx * hEx) &&
+                       index - (wEx * 2) + 1 < (wEx * hEx),
+                       "Our distance field most extreme indices should be "
+                       "in-bounds.");
 
-          df[index] = std::min<dfType>(df[index],
-                      std::min<dfType>(df[index + (wEx * 2) + 1] + 11,
-                      std::min<dfType>(df[index + (wEx * 2) - 1] + 11,
-                      std::min<dfType>(df[index + wEx + 2] + 11,
-                      std::min<dfType>(df[index + wEx + 1] + 7,
-                      std::min<dfType>(df[index + wEx] + 5,
-                      std::min<dfType>(df[index + wEx - 1] + 7,
-                      std::min<dfType>(df[index + wEx - 2] + 11,
-                                       df[index + 1] + 5))))))));
+            df[index] = std::min<dfType>(df[index],
+                        std::min<dfType>(df[index + wEx + 2] + 11,
+                        std::min<dfType>(df[index - wEx + 2] + 11,
+                        std::min<dfType>(df[index + (wEx * 2) + 1] + 11,
+                        std::min<dfType>(df[index + wEx + 1] + 7,
+                        std::min<dfType>(df[index + 1] + 5,
+                        std::min<dfType>(df[index - wEx + 1] + 7,
+                        std::min<dfType>(df[index - (wEx * 2) + 1] + 11,
+                                         df[index + wEx] + 5))))))));
+          } else {
+            // Row-by-row, starting at the bottom, each row right-to-left.
+            // Forward-looking neighborhood distance from target pixel X
+            // with chamfer 5-7-11 looks like:
+            //
+            // +--+--+--+--+--+
+            // |  |  | X| 5|  |    <--+
+            // +--+--+--+--+--+      /
+            // |11| 7| 5| 7|11|     /
+            // +--+--+--+--+--+    /
+            // |  |11|  |11|  |   +----
+            // +--+--+--+--+--+
+            //
+            // X should be set to the minimum of its current value and
+            // the values of all of the numbered neighbors summed with
+            // the value in that chamfer cell.
+            MOZ_ASSERT(index + (wEx * 2) + 1 < (wEx * hEx) &&
+                       index + wEx + 2 < (wEx * hEx),
+                       "Our distance field most extreme indices should be "
+                       "in-bounds.");
+
+            df[index] = std::min<dfType>(df[index],
+                        std::min<dfType>(df[index + (wEx * 2) + 1] + 11,
+                        std::min<dfType>(df[index + (wEx * 2) - 1] + 11,
+                        std::min<dfType>(df[index + wEx + 2] + 11,
+                        std::min<dfType>(df[index + wEx + 1] + 7,
+                        std::min<dfType>(df[index + wEx] + 5,
+                        std::min<dfType>(df[index + wEx - 1] + 7,
+                        std::min<dfType>(df[index + wEx - 2] + 11,
+                                         df[index + 1] + 5))))))));
+          }
         }
 
         // Finally, we can check the df value and see if it's less than
@@ -1779,7 +2215,7 @@ nsFloatManager::ImageShapeInfo::ImageShapeInfo(
           if (iMax == -1) {
             iMax = i;
           }
-          MOZ_ASSERT(iMin > i);
+          MOZ_ASSERT(iMin > (int32_t)i);
           iMin = i;
         }
       }
@@ -1847,8 +2283,11 @@ nsFloatManager::ImageShapeInfo::CreateInterval(
     // That means that the intervals will be reversed after all have been
     // constructed. We add 1 to aB to capture the end of the block axis pixel.
     origin.MoveBy(aIMin * aAppUnitsPerDevPixel, (aB + 1) * -aAppUnitsPerDevPixel);
-  } else if (aWM.IsVerticalLR() && aWM.IsSideways()) {
+  } else if (aWM.IsVerticalLR() && !aWM.IsLineInverted()) {
     // sideways-lr.
+    // Checking IsLineInverted is the only reliable way to distinguish
+    // vertical-lr from sideways-lr. IsSideways and IsInlineReversed are both
+    // affected by bidi and text-direction, and so complicate detection.
     // These writing modes proceed from the bottom left, and each interval
     // moves in a negative inline direction and a positive block direction.
     // We add 1 to aIMax to capture the end of the inline axis pixel.
@@ -1864,57 +2303,17 @@ nsFloatManager::ImageShapeInfo::CreateInterval(
 }
 
 nscoord
-nsFloatManager::ImageShapeInfo::LineEdge(const nscoord aBStart,
-                                         const nscoord aBEnd,
-                                         bool aLeft) const
-{
-  MOZ_ASSERT(aBStart <= aBEnd,
-             "The band's block start is greater than its block end?");
-
-  // Find all the intervals whose rects overlap the aBStart to
-  // aBEnd range, and find the most constraining inline edge
-  // depending on the value of aLeft.
-
-  // Since the intervals are stored in block-axis order, we need
-  // to find the first interval that overlaps aBStart and check
-  // succeeding intervals until we get past aBEnd.
-
-  nscoord lineEdge = aLeft ? nscoord_MAX : nscoord_MIN;
-
-  size_t intervalCount = mIntervals.Length();
-  for (size_t i = MinIntervalIndexContainingY(mIntervals, aBStart);
-	   i < intervalCount; ++i) {
-    // We can always get the bCoord from the intervals' mLineLeft,
-    // since the y() coordinate is duplicated in both points in the
-    // interval.
-    auto& interval = mIntervals[i];
-    nscoord bCoord = interval.Y();
-    if (bCoord > aBEnd) {
-      break;
-    }
-    // Get the edge from the interval point indicated by aLeft.
-    if (aLeft) {
-      lineEdge = std::min(lineEdge, interval.X());
-    } else {
-      lineEdge = std::max(lineEdge, interval.XMost());
-    }
-  }
-
-  return lineEdge;
-}
-
-nscoord
 nsFloatManager::ImageShapeInfo::LineLeft(const nscoord aBStart,
                                          const nscoord aBEnd) const
 {
-  return LineEdge(aBStart, aBEnd, true);
+  return LineEdge(mIntervals, aBStart, aBEnd, true);
 }
 
 nscoord
 nsFloatManager::ImageShapeInfo::LineRight(const nscoord aBStart,
                                           const nscoord aBEnd) const
 {
-  return LineEdge(aBStart, aBEnd, false);
+  return LineEdge(mIntervals, aBStart, aBEnd, false);
 }
 
 void
@@ -2003,7 +2402,7 @@ nsFloatManager::FloatInfo::FloatInfo(nsIFrame* aFrame,
       LogicalRect shapeBoxRect =
         ShapeInfo::ComputeShapeBoxRect(shapeOutside, mFrame, aMarginRect, aWM);
       mShapeInfo = ShapeInfo::CreateBasicShape(basicShape, shapeMargin, mFrame,
-                                               shapeBoxRect, aWM,
+                                               shapeBoxRect, aMarginRect, aWM,
                                                aContainerSize);
       break;
     }
@@ -2186,12 +2585,14 @@ nsFloatManager::ShapeInfo::CreateBasicShape(
   nscoord aShapeMargin,
   nsIFrame* const aFrame,
   const LogicalRect& aShapeBoxRect,
+  const LogicalRect& aMarginRect,
   WritingMode aWM,
   const nsSize& aContainerSize)
 {
   switch (aBasicShape->GetShapeType()) {
     case StyleBasicShapeType::Polygon:
-      return CreatePolygon(aBasicShape, aShapeBoxRect, aWM, aContainerSize);
+      return CreatePolygon(aBasicShape, aShapeMargin, aFrame, aShapeBoxRect,
+                           aMarginRect, aWM, aContainerSize);
     case StyleBasicShapeType::Circle:
     case StyleBasicShapeType::Ellipse:
       return CreateCircleOrEllipse(aBasicShape, aShapeMargin, aFrame,
@@ -2334,7 +2735,10 @@ nsFloatManager::ShapeInfo::CreateCircleOrEllipse(
 /* static */ UniquePtr<nsFloatManager::ShapeInfo>
 nsFloatManager::ShapeInfo::CreatePolygon(
   const UniquePtr<StyleBasicShape>& aBasicShape,
+  nscoord aShapeMargin,
+  nsIFrame* const aFrame,
   const LogicalRect& aShapeBoxRect,
+  const LogicalRect& aMarginRect,
   WritingMode aWM,
   const nsSize& aContainerSize)
 {
@@ -2353,7 +2757,17 @@ nsFloatManager::ShapeInfo::CreatePolygon(
     vertex = ConvertToFloatLogical(vertex, aWM, aContainerSize);
   }
 
-  return MakeUnique<PolygonShapeInfo>(Move(vertices));
+  if (aShapeMargin == 0) {
+    return MakeUnique<PolygonShapeInfo>(Move(vertices));
+  }
+
+  nsRect marginRect = ConvertToFloatLogical(aMarginRect, aWM, aContainerSize);
+
+  // We have to use the full constructor for PolygonShapeInfo. This
+  // computes the float area using a rasterization method.
+  int32_t appUnitsPerDevPixel = aFrame->PresContext()->AppUnitsPerDevPixel();
+  return MakeUnique<PolygonShapeInfo>(Move(vertices), aShapeMargin,
+                                      appUnitsPerDevPixel, marginRect);
 }
 
 /* static */ UniquePtr<nsFloatManager::ShapeInfo>
@@ -2531,32 +2945,6 @@ nsFloatManager::ShapeInfo::ConvertToFloatLogical(
                  logicalPoint.B(aWM));
 }
 
-/* static */ size_t
-nsFloatManager::ShapeInfo::MinIntervalIndexContainingY(
-  const nsTArray<nsRect>& aIntervals,
-  const nscoord aTargetY)
-{
-  // Perform a binary search to find the minimum index of an interval
-  // that contains aTargetY. If no such interval exists, return a value
-  // equal to the number of intervals.
-  size_t startIdx = 0;
-  size_t endIdx = aIntervals.Length();
-  while (startIdx < endIdx) {
-    size_t midIdx = startIdx + (endIdx - startIdx) / 2;
-    if (aIntervals[midIdx].ContainsY(aTargetY)) {
-      return midIdx;
-    }
-    nscoord midY = aIntervals[midIdx].Y();
-    if (midY < aTargetY) {
-      startIdx = midIdx + 1;
-    } else {
-      endIdx = midIdx;
-    }
-  }
-
-  return endIdx;
-}
-
 /* static */ UniquePtr<nscoord[]>
 nsFloatManager::ShapeInfo::ConvertToFloatLogical(const nscoord aRadii[8],
                                                  WritingMode aWM)
@@ -2600,6 +2988,101 @@ nsFloatManager::ShapeInfo::ConvertToFloatLogical(const nscoord aRadii[8],
   }
 
   return logicalRadii;
+}
+
+/* static */ size_t
+nsFloatManager::ShapeInfo::MinIntervalIndexContainingY(
+  const nsTArray<nsRect>& aIntervals,
+  const nscoord aTargetY)
+{
+  // Perform a binary search to find the minimum index of an interval
+  // that contains aTargetY. If no such interval exists, return a value
+  // equal to the number of intervals.
+  size_t startIdx = 0;
+  size_t endIdx = aIntervals.Length();
+  while (startIdx < endIdx) {
+    size_t midIdx = startIdx + (endIdx - startIdx) / 2;
+    if (aIntervals[midIdx].ContainsY(aTargetY)) {
+      return midIdx;
+    }
+    nscoord midY = aIntervals[midIdx].Y();
+    if (midY < aTargetY) {
+      startIdx = midIdx + 1;
+    } else {
+      endIdx = midIdx;
+    }
+  }
+
+  return endIdx;
+}
+
+/* static */ nscoord
+nsFloatManager::ShapeInfo::LineEdge(const nsTArray<nsRect>& aIntervals,
+                                    const nscoord aBStart,
+                                    const nscoord aBEnd,
+                                    bool aIsLineLeft)
+{
+  MOZ_ASSERT(aBStart <= aBEnd,
+             "The band's block start is greater than its block end?");
+
+  // Find all the intervals whose rects overlap the aBStart to
+  // aBEnd range, and find the most constraining inline edge
+  // depending on the value of aLeft.
+
+  // Since the intervals are stored in block-axis order, we need
+  // to find the first interval that overlaps aBStart and check
+  // succeeding intervals until we get past aBEnd.
+
+  nscoord lineEdge = aIsLineLeft ? nscoord_MAX : nscoord_MIN;
+
+  size_t intervalCount = aIntervals.Length();
+  for (size_t i = MinIntervalIndexContainingY(aIntervals, aBStart);
+       i < intervalCount; ++i) {
+    // We can always get the bCoord from the intervals' mLineLeft,
+    // since the y() coordinate is duplicated in both points in the
+    // interval.
+    auto& interval = aIntervals[i];
+    nscoord bCoord = interval.Y();
+    if (bCoord >= aBEnd) {
+      break;
+    }
+    // Get the edge from the interval point indicated by aLeft.
+    if (aIsLineLeft) {
+      lineEdge = std::min(lineEdge, interval.X());
+    } else {
+      lineEdge = std::max(lineEdge, interval.XMost());
+    }
+  }
+
+  return lineEdge;
+}
+
+/* static */ nsFloatManager::ShapeInfo::dfType
+nsFloatManager::ShapeInfo::CalcUsedShapeMargin5X(
+  nscoord aShapeMargin,
+  int32_t aAppUnitsPerDevPixel)
+{
+  // Our distance field has to be able to hold values equal to the
+  // maximum shape-margin value that we care about faithfully rendering,
+  // times 5. A 16-bit unsigned int can represent up to ~ 65K which means
+  // we can handle a margin up to ~ 13K device pixels. That's good enough
+  // for practical usage. Any supplied shape-margin value higher than this
+  // maximum will be clamped.
+  static const float MAX_MARGIN_5X_FLOAT = (float)MAX_MARGIN_5X;
+
+  // Convert aShapeMargin to dev pixels, convert that into 5x-dev-pixel
+  // space, then clamp to MAX_MARGIN_5X_FLOAT.
+  float shapeMarginDevPixels5X = 5.0f *
+    NSAppUnitsToFloatPixels(aShapeMargin, aAppUnitsPerDevPixel);
+  NS_WARNING_ASSERTION(shapeMarginDevPixels5X <= MAX_MARGIN_5X_FLOAT,
+                       "shape-margin is too large and is being clamped.");
+
+  // We calculate a minimum in float space, which takes care of any overflow
+  // or infinity that may have occurred earlier from multiplication of
+  // too-large aShapeMargin values.
+  float usedMargin5XFloat = std::min(shapeMarginDevPixels5X,
+                                     MAX_MARGIN_5X_FLOAT);
+  return (dfType)NSToIntRound(usedMargin5XFloat);
 }
 
 //----------------------------------------------------------------------

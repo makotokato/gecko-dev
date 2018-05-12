@@ -175,6 +175,12 @@ class DesktopUnittest(TestingMixin, MercurialScript, BlobUploadMixin, MozbaseMix
             "default": "False",
             "help": "Run additional verification on modified tests using gpu instances."}
          ],
+        [["--run-slower"], {
+            "action": "store_true",
+            "dest": "run_slower",
+            "default": False,
+            "help": "Run additional verification on modified tests using gpu instances."}
+         ],
     ] + copy.deepcopy(testing_config_options) + \
         copy.deepcopy(blobupload_config_options) + \
         copy.deepcopy(code_coverage_config_options)
@@ -419,6 +425,13 @@ class DesktopUnittest(TestingMixin, MercurialScript, BlobUploadMixin, MozbaseMix
 
             if c['headless']:
                 base_cmd.append('--headless')
+
+            if c['run_slower']:
+                if suite_category == "reftest":
+                    base_cmd.append('--run-slower')
+                else:
+                    self.warning("--run-slow does not currently work with suites other than "
+                                 "reftest.")
 
             # set pluginsPath
             abs_res_plugins_dir = os.path.join(abs_res_dir, 'plugins')
@@ -854,6 +867,7 @@ class DesktopUnittest(TestingMixin, MercurialScript, BlobUploadMixin, MozbaseMix
                 env = self.query_env(partial_env=env, log_level=INFO)
                 cmd_timeout = self.get_timeout_for_category(suite_category)
 
+                summary = None
                 for per_test_args in self.query_args(suite):
                     if (datetime.now() - self.start_time) > max_per_test_time:
                         # Running tests has run out of time. That is okay! Stop running
@@ -905,8 +919,9 @@ class DesktopUnittest(TestingMixin, MercurialScript, BlobUploadMixin, MozbaseMix
                         # bug 1120644
                         success_codes = [0, 1]
 
-                    tbpl_status, log_level = parser.evaluate_parser(return_code,
-                                                                    success_codes=success_codes)
+                    tbpl_status, log_level, summary = parser.evaluate_parser(return_code,
+                                                                             success_codes,
+                                                                             summary)
                     parser.append_tinderboxprint_line(suite_name)
 
                     self.buildbot_status(tbpl_status, level=log_level)

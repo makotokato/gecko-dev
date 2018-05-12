@@ -210,15 +210,18 @@ private:
   void RemoveExternalImageId(const ExternalImageId& aImageId);
 
   LayersId GetLayersId() const;
-  void ProcessWebRenderParentCommands(const InfallibleTArray<WebRenderParentCommand>& aCommands);
+  void ProcessWebRenderParentCommands(const InfallibleTArray<WebRenderParentCommand>& aCommands,
+                                      wr::TransactionBuilder& aTxn);
 
   void ClearResources();
   uint64_t GetChildLayerObserverEpoch() const { return mChildLayerObserverEpoch; }
   bool ShouldParentObserveEpoch();
   mozilla::ipc::IPCResult HandleShutdown();
 
-  void AdvanceAnimations();
-  void SampleAnimations(nsTArray<wr::WrOpacityProperty>& aOpacityArray,
+  // Returns true if there is any animation (including animations in delay
+  // phase).
+  bool AdvanceAnimations();
+  bool SampleAnimations(nsTArray<wr::WrOpacityProperty>& aOpacityArray,
                         nsTArray<wr::WrTransformProperty>& aTransformArray);
 
   CompositorBridgeParent* GetRootCompositorBridgeParent() const;

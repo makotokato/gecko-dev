@@ -442,8 +442,8 @@ interface EagerMethod : Node {
 
 // `get PropertyName ( ) { FunctionBody }`
 interface EagerGetter : Node {
-  attribute AssertedVarScope? bodyScope;
   attribute PropertyName name;
+  attribute AssertedVarScope? bodyScope;
   attribute FunctionBody body;
 };
 
@@ -830,6 +830,9 @@ interface Block : Node {
 
 // `Catch`
 interface CatchClause : Node {
+  // `AssertedParameterScope` is used for catch bindings so the declared names
+  // are checked using BoundNames.
+  attribute AssertedParameterScope? bindingScope;
   attribute Binding binding;
   attribute Block body;
 };

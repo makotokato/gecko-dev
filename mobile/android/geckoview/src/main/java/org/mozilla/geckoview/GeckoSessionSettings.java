@@ -165,8 +165,8 @@ public final class GeckoSessionSettings implements Parcelable {
         }
     }
 
-    /* package */ GeckoBundle asBundle() {
-        return mBundle;
+    /* package */ GeckoBundle toBundle() {
+        return new GeckoBundle(mBundle);
     }
 
     @Override
@@ -178,6 +178,11 @@ public final class GeckoSessionSettings implements Parcelable {
     public boolean equals(final Object other) {
         return other instanceof GeckoSessionSettings &&
                 mBundle.equals(((GeckoSessionSettings) other).mBundle);
+    }
+
+    @Override
+    public int hashCode() {
+        return mBundle.hashCode();
     }
 
     private <T> boolean valueChangedLocked(final Key<T> key, T value) {
@@ -192,8 +197,8 @@ public final class GeckoSessionSettings implements Parcelable {
     }
 
     private void dispatchUpdate() {
-        if (mSession != null) {
-            mSession.getEventDispatcher().dispatch("GeckoView:UpdateSettings", null);
+        if (mSession != null && mSession.isOpen()) {
+            mSession.getEventDispatcher().dispatch("GeckoView:UpdateSettings", toBundle());
         }
     }
 

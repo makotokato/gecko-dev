@@ -62,6 +62,7 @@
 #include "vm/JSAtom-inl.h"
 #include "vm/JSCompartment-inl.h"
 #include "vm/JSContext-inl.h"
+#include "vm/JSFunction-inl.h"
 #include "vm/NativeObject-inl.h"
 #include "vm/NumberObject-inl.h"
 #include "vm/Shape-inl.h"
@@ -727,7 +728,9 @@ NewObject(JSContext* cx, HandleObjectGroup group, gc::AllocKind kind,
     gc::InitialHeap heap = GetInitialHeap(newKind, clasp);
 
     JSObject* obj;
-    if (MOZ_LIKELY(clasp->isNative())) {
+    if (clasp->isJSFunction()) {
+        JS_TRY_VAR_OR_RETURN_NULL(cx, obj, JSFunction::create(cx, kind, heap, shape, group));
+    } else if (MOZ_LIKELY(clasp->isNative())) {
         JS_TRY_VAR_OR_RETURN_NULL(cx, obj, NativeObject::create(cx, kind, heap, shape, group));
     } else {
         MOZ_ASSERT(IsTypedObjectClass(clasp));
@@ -867,11 +870,16 @@ static bool
 NewObjectWithGroupIsCachable(JSContext* cx, HandleObjectGroup group,
                              NewObjectKind newKind)
 {
-    return group->proto().isObject() &&
-           newKind == GenericObject &&
-           group->clasp()->isNative() &&
-           (!group->newScript() || group->newScript()->analyzed()) &&
-           !cx->helperThread();
+    if (!group->proto().isObject() ||
+        newKind != GenericObject ||
+        !group->clasp()->isNative() ||
+        cx->helperThread())
+    {
+        return false;
+    }
+
+    AutoSweepObjectGroup sweep(group);
+    return !group->newScript(sweep) || group->newScript(sweep)->analyzed();
 }
 
 /*
@@ -949,15 +957,23 @@ static inline JSObject*
 CreateThisForFunctionWithGroup(JSContext* cx, HandleObjectGroup group,
                                NewObjectKind newKind)
 {
-    if (group->maybeUnboxedLayout() && newKind != SingletonObject)
+    bool isUnboxed;
+    TypeNewScript* maybeNewScript;
+    {
+        AutoSweepObjectGroup sweep(group);
+        isUnboxed = group->maybeUnboxedLayout(sweep);
+        maybeNewScript = group->newScript(sweep);
+    }
+
+    if (isUnboxed && newKind != SingletonObject)
         return UnboxedPlainObject::create(cx, group, newKind);
 
-    if (TypeNewScript* newScript = group->newScript()) {
-        if (newScript->analyzed()) {
+    if (maybeNewScript) {
+        if (maybeNewScript->analyzed()) {
             // The definite properties analysis has been performed for this
             // group, so get the shape and alloc kind to use from the
             // TypeNewScript's template.
-            RootedPlainObject templateObject(cx, newScript->templateObject());
+            RootedPlainObject templateObject(cx, maybeNewScript->templateObject());
             MOZ_ASSERT(templateObject->group() == group);
 
             RootedPlainObject res(cx, CopyInitializerObject(cx, templateObject, newKind));
@@ -988,8 +1004,9 @@ CreateThisForFunctionWithGroup(JSContext* cx, HandleObjectGroup group,
             return nullptr;
 
         // Make sure group->newScript is still there.
-        if (newKind != SingletonObject && group->newScript())
-            group->newScript()->registerNewObject(res);
+        AutoSweepObjectGroup sweep(group);
+        if (newKind != SingletonObject && group->newScript(sweep))
+            group->newScript(sweep)->registerNewObject(res);
 
         return res;
     }
@@ -1015,16 +1032,20 @@ js::CreateThisForFunctionWithProto(JSContext* cx, HandleObject callee, HandleObj
         if (!group)
             return nullptr;
 
-        if (group->newScript() && !group->newScript()->analyzed()) {
-            bool regenerate;
-            if (!group->newScript()->maybeAnalyze(cx, group, &regenerate))
-                return nullptr;
-            if (regenerate) {
-                // The script was analyzed successfully and may have changed
-                // the new type table, so refetch the group.
-                group = ObjectGroup::defaultNewGroup(cx, nullptr, TaggedProto(proto),
-                                                     newTarget);
-                MOZ_ASSERT(group && group->newScript());
+        {
+            AutoSweepObjectGroup sweep(group);
+            if (group->newScript(sweep) && !group->newScript(sweep)->analyzed()) {
+                bool regenerate;
+                if (!group->newScript(sweep)->maybeAnalyze(cx, group, &regenerate))
+                    return nullptr;
+                if (regenerate) {
+                    // The script was analyzed successfully and may have changed
+                    // the new type table, so refetch the group.
+                    group = ObjectGroup::defaultNewGroup(cx, nullptr, TaggedProto(proto),
+                                                         newTarget);
+                    AutoSweepObjectGroup sweepNewGroup(group);
+                    MOZ_ASSERT(group && group->newScript(sweepNewGroup));
+                }
             }
         }
 
@@ -2084,7 +2105,8 @@ SetClassAndProto(JSContext* cx, HandleObject obj,
     obj->setGroup(newGroup);
 
     // Add the object's property types to the new group.
-    if (!newGroup->unknownProperties()) {
+    AutoSweepObjectGroup sweep(newGroup);
+    if (!newGroup->unknownProperties(sweep)) {
         if (obj->isNative())
             AddPropertyTypesAfterProtoChange(cx, &obj->as<NativeObject>(), oldGroup);
         else
@@ -3548,8 +3570,6 @@ JSObject::dump(js::GenericPrinter& out) const
             out.put(" had_elements_access");
         if (nobj->isIndexed())
             out.put(" indexed");
-        if (nobj->wasNewScriptCleared())
-            out.put(" new_script_cleared");
     } else {
         out.put(" not_native\n");
     }
@@ -3977,7 +3997,8 @@ JSObject::traceChildren(JSTracer* trc)
 static JSAtom*
 displayAtomFromObjectGroup(ObjectGroup& group)
 {
-    TypeNewScript* script = group.newScript();
+    AutoSweepObjectGroup sweep(&group);
+    TypeNewScript* script = group.newScript(sweep);
     if (!script)
         return nullptr;
 

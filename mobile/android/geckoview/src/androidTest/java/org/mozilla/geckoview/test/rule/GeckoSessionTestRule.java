@@ -362,6 +362,11 @@ public class GeckoSessionTestRule extends UiThreadTestRule {
             return false;
         }
 
+        @Override
+        public int hashCode() {
+            return method.hashCode();
+        }
+
         /* package */ int getOrder() {
             if (requirement == null || currentCount == 0) {
                 return 0;
@@ -720,7 +725,7 @@ public class GeckoSessionTestRule extends UiThreadTestRule {
             if (TimeoutMillis.class.equals(annotation.annotationType())) {
                 // Scale timeout based on the default timeout to account for the device under test.
                 final long value = ((TimeoutMillis) annotation).value();
-                final long timeout = value * getDefaultTimeoutMillis() / DEFAULT_TIMEOUT_MILLIS;
+                final long timeout = value * getScaledTimeoutMillis() / DEFAULT_TIMEOUT_MILLIS;
                 mTimeoutMillis = Math.max(timeout, 1000);
             } else if (Setting.class.equals(annotation.annotationType())) {
                 ((Setting) annotation).key().set(settings, ((Setting) annotation).value());
@@ -756,7 +761,7 @@ public class GeckoSessionTestRule extends UiThreadTestRule {
         return new RuntimeException(cause != null ? cause : e);
     }
 
-    private long getDefaultTimeoutMillis() {
+    private long getScaledTimeoutMillis() {
         if ("x86".equals(env.getCPUArch())) {
             return env.isEmulator() ? DEFAULT_X86_EMULATOR_TIMEOUT_MILLIS
                                     : DEFAULT_X86_DEVICE_TIMEOUT_MILLIS;
@@ -765,10 +770,14 @@ public class GeckoSessionTestRule extends UiThreadTestRule {
                                 : DEFAULT_ARM_DEVICE_TIMEOUT_MILLIS;
     }
 
+    private long getDefaultTimeoutMillis() {
+        return env.isDebugging() ? DEFAULT_IDE_DEBUG_TIMEOUT_MILLIS
+                                 : getScaledTimeoutMillis();
+    }
+
     protected void prepareStatement(final Description description) throws Throwable {
         final GeckoSessionSettings settings = new GeckoSessionSettings(mDefaultSettings);
-        mTimeoutMillis = env.isDebugging() ? DEFAULT_IDE_DEBUG_TIMEOUT_MILLIS
-                                           : getDefaultTimeoutMillis();
+        mTimeoutMillis = getDefaultTimeoutMillis();
         mNullDelegates = new HashSet<>();
         mClosedSession = false;
         mWithDevTools = false;
@@ -838,7 +847,10 @@ public class GeckoSessionTestRule extends UiThreadTestRule {
             final GeckoRuntimeSettings.Builder runtimeSettingsBuilder =
                 new GeckoRuntimeSettings.Builder();
             runtimeSettingsBuilder.arguments(new String[] { "-purgecaches" })
-                                  .extras(InstrumentationRegistry.getArguments());
+                    .extras(InstrumentationRegistry.getArguments())
+                    .nativeCrashReportingEnabled(true)
+                    .javaCrashReportingEnabled(true);
+
             sRuntime = GeckoRuntime.create(
                 InstrumentationRegistry.getTargetContext(),
                 runtimeSettingsBuilder.build());
@@ -887,8 +899,7 @@ public class GeckoSessionTestRule extends UiThreadTestRule {
                         dataDir + "/firefox-debugger-socket",
                         LocalSocketAddress.Namespace.FILESYSTEM);
                 sRDPConnection = new RDPConnection(address);
-                sRDPConnection.setTimeout((int) Math.min(DEFAULT_TIMEOUT_MILLIS,
-                                                         Integer.MAX_VALUE));
+                sRDPConnection.setTimeout((int) mTimeoutMillis);
             }
             final Tab tab = sRDPConnection.getMostRecentTab();
             tab.attach();

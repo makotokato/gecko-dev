@@ -618,9 +618,11 @@ WebRenderBridgeParent::RecvSetDisplayList(const gfx::IntSize& aSize,
 
   mAsyncImageManager->SetCompositionTime(TimeStamp::Now());
 
-  ProcessWebRenderParentCommands(aCommands);
-
   wr::TransactionBuilder txn;
+  wr::AutoTransactionSender sender(mApi, &txn);
+
+  ProcessWebRenderParentCommands(aCommands, txn);
+
   if (!UpdateResources(aResourceUpdates, aSmallShmems, aLargeShmems, txn)) {
     return IPC_FAIL(this, "Failed to deserialize resource updates");
   }
@@ -651,6 +653,13 @@ WebRenderBridgeParent::RecvSetDisplayList(const gfx::IntSize& aSize,
     txn.SetDisplayList(clearColor, wrEpoch, LayerSize(aSize.width, aSize.height),
                        mPipelineId, aContentSize,
                        dlDesc, dlData);
+    // The display list that we're sending to WR might contain references to
+    // other pipelines that we just added to the async image manager in the
+    // ProcessWebRenderParentCommands call above. If we send the display list
+    // alone then WR will not yet have the content for those other pipelines
+    // and so it will emit errors; the ApplyAsyncImages call below ensure that
+    // we provide the pipeline content to WR as part of the same transaction.
+    mAsyncImageManager->ApplyAsyncImages(txn);
 
     mApi->SendTransaction(txn);
 
@@ -701,7 +710,9 @@ WebRenderBridgeParent::RecvEmptyTransaction(const FocusTarget& aFocusTarget,
 
   if (!aCommands.IsEmpty()) {
     mAsyncImageManager->SetCompositionTime(TimeStamp::Now());
-    ProcessWebRenderParentCommands(aCommands);
+    wr::TransactionBuilder txn;
+    ProcessWebRenderParentCommands(aCommands, txn);
+    mApi->SendTransaction(txn);
     ScheduleGenerateFrame();
   }
 
@@ -744,14 +755,16 @@ WebRenderBridgeParent::RecvParentCommands(nsTArray<WebRenderParentCommand>&& aCo
   if (mDestroyed) {
     return IPC_OK();
   }
-  ProcessWebRenderParentCommands(aCommands);
+  wr::TransactionBuilder txn;
+  ProcessWebRenderParentCommands(aCommands, txn);
+  mApi->SendTransaction(txn);
   return IPC_OK();
 }
 
 void
-WebRenderBridgeParent::ProcessWebRenderParentCommands(const InfallibleTArray<WebRenderParentCommand>& aCommands)
+WebRenderBridgeParent::ProcessWebRenderParentCommands(const InfallibleTArray<WebRenderParentCommand>& aCommands,
+                                                      wr::TransactionBuilder& aTxn)
 {
-  wr::TransactionBuilder txn;
   for (InfallibleTArray<WebRenderParentCommand>::index_type i = 0; i < aCommands.Length(); ++i) {
     const WebRenderParentCommand& cmd = aCommands[i];
     switch (cmd.type()) {
@@ -764,7 +777,7 @@ WebRenderBridgeParent::ProcessWebRenderParentCommands(const InfallibleTArray<Web
       }
       case WebRenderParentCommand::TOpRemovePipelineIdForCompositable: {
         const OpRemovePipelineIdForCompositable& op = cmd.get_OpRemovePipelineIdForCompositable();
-        RemovePipelineIdForCompositable(op.pipelineId(), txn);
+        RemovePipelineIdForCompositable(op.pipelineId(), aTxn);
         break;
       }
       case WebRenderParentCommand::TOpAddExternalImageIdForCompositable: {
@@ -800,15 +813,6 @@ WebRenderBridgeParent::ProcessWebRenderParentCommands(const InfallibleTArray<Web
         if (data.animations().Length()) {
           mAnimStorage->SetAnimations(data.id(), data.animations());
           mActiveAnimations.insert(data.id());
-          // Store the default opacity
-          if (op.opacity().type() == OptionalOpacity::Tfloat) {
-            mAnimStorage->SetAnimatedValue(data.id(), op.opacity().get_float());
-          }
-          // Store the default transform
-          if (op.transform().type() == OptionalTransform::TMatrix4x4) {
-            Matrix4x4 transform(Move(op.transform().get_Matrix4x4()));
-            mAnimStorage->SetAnimatedValue(data.id(), Move(transform));
-          }
         }
         break;
       }
@@ -818,7 +822,6 @@ WebRenderBridgeParent::ProcessWebRenderParentCommands(const InfallibleTArray<Web
       }
     }
   }
-  mApi->SendTransaction(txn);
 }
 
 mozilla::ipc::IPCResult
@@ -1211,7 +1214,7 @@ WebRenderBridgeParent::ActorDestroy(ActorDestroyReason aWhy)
   Destroy();
 }
 
-void
+bool
 WebRenderBridgeParent::AdvanceAnimations()
 {
   if (CompositorBridgeParent* cbp = GetRootCompositorBridgeParent()) {
@@ -1222,31 +1225,31 @@ WebRenderBridgeParent::AdvanceAnimations()
       // refresh mode, on the testing mode animations on the compositor are
       // synchronously composed, so we don't need to worry about the time gap
       // between the main thread and compositor thread.
-      AnimationHelper::SampleAnimations(mAnimStorage, *testingTimeStamp);
-      return;
+      return AnimationHelper::SampleAnimations(mAnimStorage,
+                                               *testingTimeStamp,
+                                               *testingTimeStamp);
     }
   }
 
   TimeStamp lastComposeTime = mCompositorScheduler->GetLastComposeTime();
-  // if we have already mPreviousTimeStamp, use it since on the compositor the
-  // time in the previous tick is more closer to the main-thread tick time.
-  AnimationHelper::SampleAnimations(mAnimStorage,
-      !mPreviousFrameTimeStamp.IsNull()
-      ? mPreviousFrameTimeStamp
-      : lastComposeTime);
+  const bool isAnimating =
+    AnimationHelper::SampleAnimations(mAnimStorage,
+                                      mPreviousFrameTimeStamp,
+                                      lastComposeTime);
 
   // Reset the previous time stamp if we don't already have any running
   // animations to avoid using the time which is far behind for newly
   // started animations.
-  mPreviousFrameTimeStamp =
-    mAnimStorage->AnimatedValueCount() ? lastComposeTime : TimeStamp();
+  mPreviousFrameTimeStamp = isAnimating ? lastComposeTime : TimeStamp();
+
+  return isAnimating;
 }
 
-void
+bool
 WebRenderBridgeParent::SampleAnimations(nsTArray<wr::WrOpacityProperty>& aOpacityArray,
                                         nsTArray<wr::WrTransformProperty>& aTransformArray)
 {
-  AdvanceAnimations();
+  const bool isAnimating = AdvanceAnimations();
 
   // return the animated data if has
   if (mAnimStorage->AnimatedValueCount()) {
@@ -1262,6 +1265,8 @@ WebRenderBridgeParent::SampleAnimations(nsTArray<wr::WrOpacityProperty>& aOpacit
       }
     }
   }
+
+  return isAnimating;
 }
 
 void
@@ -1277,6 +1282,7 @@ WebRenderBridgeParent::CompositeToTarget(gfx::DrawTarget* aTarget, const gfx::In
 
   AUTO_PROFILER_TRACING("Paint", "CompositeToTraget");
   if (mPaused || !mReceivedDisplayList) {
+    mPreviousFrameTimeStamp = TimeStamp();
     return;
   }
 
@@ -1284,11 +1290,20 @@ WebRenderBridgeParent::CompositeToTarget(gfx::DrawTarget* aTarget, const gfx::In
       wr::RenderThread::Get()->TooManyPendingFrames(mApi->GetId())) {
     // Render thread is busy, try next time.
     mCompositorScheduler->ScheduleComposition();
+    mPreviousFrameTimeStamp = TimeStamp();
     return;
   }
 
   mAsyncImageManager->SetCompositionTime(TimeStamp::Now());
-  mAsyncImageManager->ApplyAsyncImages();
+
+  // TODO: We can improve upon this by using two transactions: one for everything that
+  // doesn't change the display list (in other words does not cause the scene to be
+  // re-built), and one for the rest. This way, if an async pipeline needs to re-build
+  // its display list, other async pipelines can still be rendered while the scene is
+  // building.
+  wr::TransactionBuilder txn;
+  mAsyncImageManager->ApplyAsyncImages(txn);
+  mApi->SendTransaction(txn);
 
   if (!mAsyncImageManager->GetCompositeUntilTime().IsNull()) {
     // Trigger another CompositeToTarget() call because there might be another
@@ -1300,16 +1315,14 @@ WebRenderBridgeParent::CompositeToTarget(gfx::DrawTarget* aTarget, const gfx::In
   if (!mAsyncImageManager->GetAndResetWillGenerateFrame() &&
       !mForceRendering) {
     // Could skip generating frame now.
+    mPreviousFrameTimeStamp = TimeStamp();
     return;
   }
-
-  wr::TransactionBuilder txn;
 
   nsTArray<wr::WrOpacityProperty> opacityArray;
   nsTArray<wr::WrTransformProperty> transformArray;
 
-  SampleAnimations(opacityArray, transformArray);
-  if (!transformArray.IsEmpty() || !opacityArray.IsEmpty()) {
+  if (SampleAnimations(opacityArray, transformArray)) {
     ScheduleGenerateFrame();
   }
   // We do this even if the arrays are empty, because it will clear out any

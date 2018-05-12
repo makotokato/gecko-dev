@@ -814,8 +814,8 @@ FragmentOrElement::FragmentOrElement(already_AddRefed<mozilla::dom::NodeInfo>&& 
 
 FragmentOrElement::~FragmentOrElement()
 {
-  NS_PRECONDITION(!IsInUncomposedDoc(),
-                  "Please remove this from the document properly");
+  MOZ_ASSERT(!IsInUncomposedDoc(),
+             "Please remove this from the document properly");
   if (GetParent()) {
     NS_RELEASE(mParent);
   }
@@ -1091,7 +1091,11 @@ nsIContent::GetEventTargetParent(EventChainPreVisitor& aVisitor)
             // point to a node in Shadow DOM.
             aVisitor.mEvent->mTarget = aVisitor.mTargetInKnownToBeHandledScope;
             return;
-          } else {
+          } else if (targetInKnownToBeHandledScope) {
+            // Note, if targetInKnownToBeHandledScope is null,
+            // mTargetInKnownToBeHandledScope could be Window object in content
+            // page and we're in chrome document in the same process.
+
             // Step 11.6
             aVisitor.mRetargetedRelatedTarget = retargetedRelatedTarget;
           }
@@ -1183,7 +1187,7 @@ FragmentOrElement::InsertChildBefore(nsIContent* aKid,
                                      nsIContent* aBeforeThis,
                                      bool aNotify)
 {
-  NS_PRECONDITION(aKid, "null ptr");
+  MOZ_ASSERT(aKid, "null ptr");
 
   int32_t index = aBeforeThis ? ComputeIndexOf(aBeforeThis) : GetChildCount();
   MOZ_ASSERT(index >= 0);
@@ -1196,7 +1200,7 @@ FragmentOrElement::InsertChildAt_Deprecated(nsIContent* aKid,
                                             uint32_t aIndex,
                                             bool aNotify)
 {
-  NS_PRECONDITION(aKid, "null ptr");
+  MOZ_ASSERT(aKid, "null ptr");
 
   return doInsertChildAt(aKid, aIndex, aNotify, mAttrsAndChildren);
 }

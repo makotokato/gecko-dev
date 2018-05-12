@@ -60,7 +60,6 @@
 #include "nsIHttpChannel.h"
 #include "nsIFile.h"
 #include "nsFrameSelection.h"
-#include "nsISelectionPrivate.h" //for toStringwithformat code
 
 #include "nsContentUtils.h"
 #include "nsJSUtils.h"
@@ -1042,7 +1041,6 @@ nsHTMLDocument::SetDomain(const nsAString& aDomain, ErrorResult& rv)
     return;
   }
 
-  NS_TryToSetImmutable(newURI);
   rv = NodePrincipal()->SetDomain(newURI);
 }
 
@@ -2256,7 +2254,7 @@ nsHTMLDocument::TearingDownEditor()
     if (!presShell)
       return;
 
-    nsTArray<RefPtr<ServoStyleSheet>> agentSheets;
+    nsTArray<RefPtr<StyleSheet>> agentSheets;
     presShell->GetAgentStyleSheets(agentSheets);
 
     auto cache = nsLayoutStylesheetCache::Singleton();
@@ -2401,14 +2399,13 @@ nsHTMLDocument::EditingStateChanged()
     // Before making this window editable, we need to modify UA style sheet
     // because new style may change whether focused element will be focusable
     // or not.
-    nsTArray<RefPtr<ServoStyleSheet>> agentSheets;
+    nsTArray<RefPtr<StyleSheet>> agentSheets;
     rv = presShell->GetAgentStyleSheets(agentSheets);
     NS_ENSURE_SUCCESS(rv, rv);
 
     auto cache = nsLayoutStylesheetCache::Singleton();
 
-    ServoStyleSheet* contentEditableSheet =
-      cache->ContentEditableSheet()->AsServo();
+    StyleSheet* contentEditableSheet = cache->ContentEditableSheet();
 
     if (!agentSheets.Contains(contentEditableSheet)) {
       agentSheets.AppendElement(contentEditableSheet);
@@ -2419,7 +2416,7 @@ nsHTMLDocument::EditingStateChanged()
     // specific states on the elements.
     if (designMode) {
       // designMode is being turned on (overrides contentEditable).
-      ServoStyleSheet* designModeSheet = cache->DesignModeSheet()->AsServo();
+      StyleSheet* designModeSheet = cache->DesignModeSheet();
       if (!agentSheets.Contains(designModeSheet)) {
         agentSheets.AppendElement(designModeSheet);
       }
@@ -2429,7 +2426,7 @@ nsHTMLDocument::EditingStateChanged()
     }
     else if (oldState == eDesignMode) {
       // designMode is being turned off (contentEditable is still on).
-      agentSheets.RemoveElement(cache->DesignModeSheet()->AsServo());
+      agentSheets.RemoveElement(cache->DesignModeSheet());
       updateState = true;
     }
 
@@ -2542,7 +2539,7 @@ nsHTMLDocument::EditingStateChanged()
     }
 
     RefPtr<Selection> spellCheckSelection =
-      selectionController->GetDOMSelection(
+      selectionController->GetSelection(
         nsISelectionController::SELECTION_SPELLCHECK);
     if (spellCheckSelection) {
       spellCheckSelection->RemoveAllRanges(IgnoreErrors());

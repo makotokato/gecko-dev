@@ -32,6 +32,7 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
+#include "mozilla/StaticPrefs.h"
 #include "mozilla/Telemetry.h"
 #include "gfxSVGGlyphs.h"
 #include "gfx2DGlue.h"
@@ -79,7 +80,8 @@ gfxFontEntry::gfxFontEntry() :
     mCheckedForGraphiteTables(false),
     mHasCmapTable(false),
     mGrFaceInitialized(false),
-    mCheckedForColorGlyph(false)
+    mCheckedForColorGlyph(false),
+    mCheckedForVariationAxes(false)
 {
     memset(&mDefaultSubSpaceFeatures, 0, sizeof(mDefaultSubSpaceFeatures));
     memset(&mNonDefaultSubSpaceFeatures, 0, sizeof(mNonDefaultSubSpaceFeatures));
@@ -108,7 +110,8 @@ gfxFontEntry::gfxFontEntry(const nsAString& aName, bool aIsStandardFace) :
     mCheckedForGraphiteTables(false),
     mHasCmapTable(false),
     mGrFaceInitialized(false),
-    mCheckedForColorGlyph(false)
+    mCheckedForColorGlyph(false),
+    mCheckedForVariationAxes(false)
 {
     memset(&mDefaultSubSpaceFeatures, 0, sizeof(mDefaultSubSpaceFeatures));
     memset(&mNonDefaultSubSpaceFeatures, 0, sizeof(mNonDefaultSubSpaceFeatures));
@@ -245,7 +248,6 @@ gfxFontEntry::RealFaceName()
 
 gfxFont*
 gfxFontEntry::FindOrMakeFont(const gfxFontStyle *aStyle,
-                             bool aNeedsBold,
                              gfxCharacterMap* aUnicodeRangeMap)
 {
     // the font entry name is the psname, not the family name
@@ -253,7 +255,7 @@ gfxFontEntry::FindOrMakeFont(const gfxFontStyle *aStyle,
         gfxFontCache::GetCache()->Lookup(this, aStyle, aUnicodeRangeMap);
 
     if (!font) {
-        gfxFont *newFont = CreateFontInstance(aStyle, aNeedsBold);
+        gfxFont *newFont = CreateFontInstance(aStyle);
         if (!newFont) {
             return nullptr;
         }
@@ -1023,7 +1025,9 @@ gfxFontEntry::SetupVariationRanges()
         switch (axis.mTag) {
         case HB_TAG('w','g','h','t'):
             // If the axis range looks like it doesn't fit the CSS font-weight
-            // scale, we don't hook up the high-level property. Setting 'wght'
+            // scale, we don't hook up the high-level property, and we mark
+            // the face (in mRangeFlags) as having non-standard weight. This
+            // means we won't map CSS font-weight to the axis. Setting 'wght'
             // with font-variation-settings will still work.
             // Strictly speaking, the min value should be checked against 1.0,
             // not 0.0, but we'll allow font makers that amount of leeway, as
@@ -1039,6 +1043,8 @@ gfxFontEntry::SetupVariationRanges()
                 mWeightRange =
                     WeightRange(FontWeight(std::max(1.0f, axis.mMinValue)),
                                 FontWeight(axis.mMaxValue));
+            } else {
+                mRangeFlags |= RangeFlags::eNonCSSWeight;
             }
             break;
 
@@ -1051,6 +1057,8 @@ gfxFontEntry::SetupVariationRanges()
                 mStretchRange =
                     StretchRange(FontStretch(axis.mMinValue),
                                  FontStretch(axis.mMaxValue));
+            } else {
+                mRangeFlags |= RangeFlags::eNonCSSStretch;
             }
             break;
 
@@ -1065,7 +1073,17 @@ gfxFontEntry::SetupVariationRanges()
             }
             break;
 
-        // case HB_TAG('i','t','a','l'): // XXX how to handle?
+        case HB_TAG('i','t','a','l'):
+            if (axis.mMinValue <= 0.0f && axis.mMaxValue >= 1.0f) {
+                if (axis.mDefaultValue != 0.0f) {
+                    mStandardFace = false;
+                }
+                mStyleRange =
+                    SlantStyleRange(FontSlantStyle::Normal(),
+                                    FontSlantStyle::Italic());
+            }
+            break;
+
         default:
             continue;
         }
@@ -1073,10 +1091,68 @@ gfxFontEntry::SetupVariationRanges()
 }
 
 void
+gfxFontEntry::CheckForVariationAxes()
+{
+    if (HasVariations()) {
+        AutoTArray<gfxFontVariationAxis,4> axes;
+        GetVariationAxes(axes);
+        for (const auto& axis : axes) {
+            if (axis.mTag == HB_TAG('w','g','h','t') &&
+                axis.mMaxValue >= 600.0f) {
+                mRangeFlags |= RangeFlags::eBoldVariableWeight;
+            } else if (axis.mTag == HB_TAG('i','t','a','l') &&
+                axis.mMaxValue >= 1.0f) {
+                mRangeFlags |= RangeFlags::eItalicVariation;
+            }
+        }
+    }
+    mCheckedForVariationAxes = true;
+}
+
+bool
+gfxFontEntry::HasBoldVariableWeight()
+{
+    MOZ_ASSERT(!mIsUserFontContainer,
+               "should not be called for user-font containers!");
+
+    if (!gfxPlatform::GetPlatform()->HasVariationFontSupport()) {
+        return false;
+    }
+
+    if (!mCheckedForVariationAxes) {
+        CheckForVariationAxes();
+    }
+
+    return bool(mRangeFlags & RangeFlags::eBoldVariableWeight);
+}
+
+bool
+gfxFontEntry::HasItalicVariation()
+{
+    MOZ_ASSERT(!mIsUserFontContainer,
+               "should not be called for user-font containers!");
+
+    if (!gfxPlatform::GetPlatform()->HasVariationFontSupport()) {
+        return false;
+    }
+
+    if (!mCheckedForVariationAxes) {
+        CheckForVariationAxes();
+    }
+
+    return bool(mRangeFlags & RangeFlags::eItalicVariation);
+}
+
+void
 gfxFontEntry::GetVariationsForStyle(nsTArray<gfxFontVariation>& aResult,
                                     const gfxFontStyle& aStyle)
 {
-    if (!gfxPlatform::GetPlatform()->HasVariationFontSupport()) {
+    if (!gfxPlatform::GetPlatform()->HasVariationFontSupport() ||
+        !StaticPrefs::layout_css_font_variations_enabled()) {
+        return;
+    }
+
+    if (!HasVariations()) {
         return;
     }
 
@@ -1085,19 +1161,36 @@ gfxFontEntry::GetVariationsForStyle(nsTArray<gfxFontVariation>& aResult,
     // The value used is clamped to the range available in the font face,
     // unless the face is a user font where no explicit descriptor was
     // given, indicated by the corresponding 'auto' range-flag.
-    float weight = (IsUserFont() && (mRangeFlags & RangeFlags::eAutoWeight))
-                   ? aStyle.weight.ToFloat()
-                   : Weight().Clamp(aStyle.weight).ToFloat();
-    aResult.AppendElement(gfxFontVariation{HB_TAG('w','g','h','t'),
-                                           weight});
 
-    float stretch = (IsUserFont() && (mRangeFlags & RangeFlags::eAutoStretch))
-                    ? aStyle.stretch.Percentage()
-                    : Stretch().Clamp(aStyle.stretch).Percentage();
-    aResult.AppendElement(gfxFontVariation{HB_TAG('w','d','t','h'),
-                                           stretch});
+    // We don't do these mappings if the font entry has weight and/or stretch
+    // ranges that do not appear to use the CSS property scale. Some older
+    // fonts created for QuickDrawGX/AAT may use "normalized" values where the
+    // standard variation is 1.0 rather than 400.0 (weight) or 100.0 (stretch).
 
-    if (SlantStyle().Min().IsOblique()) {
+    if (!(mRangeFlags & RangeFlags::eNonCSSWeight)) {
+        float weight =
+            (IsUserFont() && (mRangeFlags & RangeFlags::eAutoWeight))
+                ? aStyle.weight.ToFloat()
+                : Weight().Clamp(aStyle.weight).ToFloat();
+        aResult.AppendElement(gfxFontVariation{HB_TAG('w','g','h','t'),
+                                               weight});
+    }
+
+    if (!(mRangeFlags & RangeFlags::eNonCSSStretch)) {
+        float stretch =
+            (IsUserFont() && (mRangeFlags & RangeFlags::eAutoStretch))
+                ? aStyle.stretch.Percentage()
+                : Stretch().Clamp(aStyle.stretch).Percentage();
+        aResult.AppendElement(gfxFontVariation{HB_TAG('w','d','t','h'),
+                                               stretch});
+    }
+
+    if (aStyle.style.IsItalic() && SupportsItalic()) {
+        // The 'ital' axis is normally a binary toggle; intermediate values
+        // can only be set using font-variation-settings.
+        aResult.AppendElement(gfxFontVariation{HB_TAG('i','t','a','l'),
+                                               1.0f});
+    } else if (SlantStyle().Min().IsOblique()) {
         // Figure out what slant angle we should try to match from the
         // requested style.
         float angle =
@@ -1115,11 +1208,6 @@ gfxFontEntry::GetVariationsForStyle(nsTArray<gfxFontVariation>& aResult,
         aResult.AppendElement(gfxFontVariation{HB_TAG('s','l','n','t'),
                                                angle});
     }
-
-    // Although there is a registered tag 'ital', it is normally considered
-    // a binary toggle rather than a variable axis, so not set here.
-    // (For a non-standard font that implements 'ital' as an actual variation,
-    // authors can still use font-variation-settings to control it.)
 
     auto replaceOrAppend = [&aResult](const gfxFontVariation& aSetting) {
         struct TagEquals {
@@ -1283,12 +1371,10 @@ gfxFontFamily::HasOtherFamilyNames()
 
 gfxFontEntry*
 gfxFontFamily::FindFontForStyle(const gfxFontStyle& aFontStyle, 
-                                bool& aNeedsSyntheticBold,
                                 bool aIgnoreSizeTolerance)
 {
     AutoTArray<gfxFontEntry*,4> matched;
-    FindAllFontsForStyle(aFontStyle, matched, aNeedsSyntheticBold,
-                         aIgnoreSizeTolerance);
+    FindAllFontsForStyle(aFontStyle, matched, aIgnoreSizeTolerance);
     if (!matched.IsEmpty()) {
         return matched[0];
     }
@@ -1463,7 +1549,6 @@ WeightStyleStretchDistance(gfxFontEntry* aFontEntry,
 void
 gfxFontFamily::FindAllFontsForStyle(const gfxFontStyle& aFontStyle,
                                     nsTArray<gfxFontEntry*>& aFontEntryList,
-                                    bool& aNeedsSyntheticBold,
                                     bool aIgnoreSizeTolerance)
 {
     if (!mHasStyles) {
@@ -1473,9 +1558,6 @@ gfxFontFamily::FindAllFontsForStyle(const gfxFontStyle& aFontStyle,
     NS_ASSERTION(mAvailableFonts.Length() > 0, "font family with no faces!");
     NS_ASSERTION(aFontEntryList.IsEmpty(), "non-empty fontlist passed in");
 
-    aNeedsSyntheticBold = false;
-
-    bool wantBold = aFontStyle.weight >= FontWeight(600);
     gfxFontEntry *fe = nullptr;
 
     // If the family has only one face, we simply return it; no further
@@ -1483,8 +1565,6 @@ gfxFontFamily::FindAllFontsForStyle(const gfxFontStyle& aFontStyle,
     uint32_t count = mAvailableFonts.Length();
     if (count == 1) {
         fe = mAvailableFonts[0];
-        aNeedsSyntheticBold =
-            wantBold && !fe->IsBold() && aFontStyle.allowSyntheticWeight;
         aFontEntryList.AppendElement(fe);
         return;
     }
@@ -1500,6 +1580,7 @@ gfxFontFamily::FindAllFontsForStyle(const gfxFontStyle& aFontStyle,
         // Family has no more than the "standard" 4 faces, at fixed indexes;
         // calculate which one we want.
         // Note that we cannot simply return it as not all 4 faces are necessarily present.
+        bool wantBold = aFontStyle.weight >= FontWeight(600);
         bool wantItalic = !aFontStyle.style.IsNormal();
         uint8_t faceIndex = (wantItalic ? kItalicMask : 0) |
                             (wantBold ? kBoldMask : 0);
@@ -1507,7 +1588,6 @@ gfxFontFamily::FindAllFontsForStyle(const gfxFontStyle& aFontStyle,
         // if the desired style is available, return it directly
         fe = mAvailableFonts[faceIndex];
         if (fe) {
-            // no need to set aNeedsSyntheticBold here as we matched the boldness request
             aFontEntryList.AppendElement(fe);
             return;
         }
@@ -1525,9 +1605,6 @@ gfxFontFamily::FindAllFontsForStyle(const gfxFontStyle& aFontStyle,
             // check remaining faces in order of preference to find the first that actually exists
             fe = mAvailableFonts[order[trial]];
             if (fe) {
-                aNeedsSyntheticBold =
-                    wantBold && !fe->IsBold() &&
-                    aFontStyle.allowSyntheticWeight;
                 aFontEntryList.AppendElement(fe);
                 return;
             }
@@ -1574,10 +1651,6 @@ gfxFontFamily::FindAllFontsForStyle(const gfxFontStyle& aFontStyle,
 
     if (matched) {
         aFontEntryList.AppendElement(matched);
-        if (!matched->IsBold() && aFontStyle.weight >= FontWeight(600) &&
-            aFontStyle.allowSyntheticWeight) {
-            aNeedsSyntheticBold = true;
-        }
     }
 }
 
@@ -1616,7 +1689,7 @@ gfxFontFamily::CheckForSimpleFamily()
             return; // family with variation fonts is not considered "simple"
         }
         uint8_t faceIndex = (fe->IsItalic() ? kItalicMask : 0) |
-                            (fe->IsBold() ? kBoldMask : 0);
+                            (fe->SupportsBold() ? kBoldMask : 0);
         if (faces[faceIndex]) {
             return; // two faces resolve to the same slot; family isn't "simple"
         }
@@ -1678,9 +1751,9 @@ CalcStyleMatch(gfxFontEntry *aFontEntry, const gfxFontStyle *aStyle)
 
         // measure of closeness of weight to the desired value
         if (aFontEntry->Weight().Min() > aStyle->weight) {
-            rank += aFontEntry->Weight().Min() - aStyle->weight;
+            rank += 1000.0f - (aFontEntry->Weight().Min() - aStyle->weight);
         } else if (aFontEntry->Weight().Max() < aStyle->weight) {
-            rank += aStyle->weight - aFontEntry->Weight().Max();
+            rank += 1000.0f - (aStyle->weight - aFontEntry->Weight().Max());
         } else {
             rank += 2000.0f; // the font supports the exact weight wanted
         }
@@ -1689,7 +1762,7 @@ CalcStyleMatch(gfxFontEntry *aFontEntry, const gfxFontStyle *aStyle)
         if (aFontEntry->IsUpright()) {
             rank += 2000.0f;
         }
-        if (!aFontEntry->IsBold()) {
+        if (aFontEntry->Weight().Min() <= FontWeight(500)) {
             rank += 1000.0f;
         }
     }
@@ -1708,11 +1781,10 @@ gfxFontFamily::FindFontForChar(GlobalFontMatch *aMatchData)
         return;
     }
 
-    bool needsBold;
     gfxFontEntry *fe =
         FindFontForStyle(aMatchData->mStyle ? *aMatchData->mStyle
                                             : gfxFontStyle(),
-                         needsBold, true);
+                         true);
 
     if (fe && !fe->SkipDuringSystemFallback()) {
         float rank = 0;
@@ -1969,7 +2041,10 @@ gfxFontFamily::CheckForLegacyFamilyNames(gfxPlatformFontList* aFontList)
     mCheckedForLegacyFamilyNames = true;
     bool added = false;
     const uint32_t kNAME = TRUETYPE_TAG('n','a','m','e');
-    for (auto& fe : mAvailableFonts) {
+    // Make a local copy of the array of font faces, in case of changes
+    // during the iteration.
+    AutoTArray<RefPtr<gfxFontEntry>,8> faces(mAvailableFonts);
+    for (auto& fe : faces) {
         if (!fe) {
             continue;
         }

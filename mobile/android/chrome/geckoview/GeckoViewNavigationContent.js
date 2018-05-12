@@ -13,6 +13,10 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 
 // Implements nsILoadURIDelegate.
 class GeckoViewNavigationContent extends GeckoViewContentModule {
+  onInit() {
+    this.onEnable();
+  }
+
   onEnable() {
     debug `onEnable`;
 
@@ -35,8 +39,8 @@ class GeckoViewNavigationContent extends GeckoViewContentModule {
       addEventListener("click", ErrorPageEventHandler, true);
     }
 
-    return LoadURIDelegate.load(this.eventDispatcher, aUri, aWhere, aFlags,
-                                aTriggeringPrincipal);
+    return LoadURIDelegate.load(content, this.eventDispatcher,
+                                aUri, aWhere, aFlags);
   }
 }
 

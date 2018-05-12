@@ -2178,6 +2178,8 @@ BinASTParser<Tok>::parseSumParameter(const size_t start, const BinKind kind, con
       case BinKind::BindingIdentifier:
         MOZ_TRY_VAR(result, parseInterfaceBindingIdentifier(start, kind, fields));
         BINJS_TRY(parseContext_->positionalFormalParameterNames().append(result->pn_atom));
+        if (parseContext_->isFunctionBox())
+            parseContext_->functionBox()->length++;
         break;
       case BinKind::BindingWithInitializer:
         MOZ_TRY_VAR(result, parseInterfaceBindingWithInitializer(start, kind, fields));
@@ -3041,7 +3043,7 @@ BinASTParser<Tok>::parseInterfaceAssertedBlockScope(const size_t start, const Bi
 #endif // defined(DEBUG)
 
     MOZ_TRY(parseAndUpdateScopeNames(*parseContext_->innermostScope(), DeclarationKind::Let));
-    MOZ_TRY(parseAndUpdateCapturedNames());
+    MOZ_TRY(parseAndUpdateCapturedNames(kind));
 
 
 
@@ -3096,8 +3098,16 @@ BinASTParser<Tok>::parseInterfaceAssertedParameterScope(const size_t start, cons
     MOZ_TRY(tokenizer_->checkFields(kind, fields, expected_fields));
 #endif // defined(DEBUG)
 
-    MOZ_TRY(parseAndUpdateScopeNames(parseContext_->functionScope(), DeclarationKind:: PositionalFormalParameter));
-    MOZ_TRY(parseAndUpdateCapturedNames());
+    ParseContext::Statement* inStatement = parseContext_->innermostStatement();
+
+    // If we are in a `CatchClause`, the binding is a implicit CatchParameter
+    // and it goes into the innermost scope. Otherwise, we're in a function,
+    // so it goes in the function scope.
+    if (inStatement && inStatement->kind() == StatementKind::Catch)
+        MOZ_TRY(parseAndUpdateScopeNames(*parseContext_->innermostScope(), DeclarationKind::CatchParameter));
+    else
+        MOZ_TRY(parseAndUpdateScopeNames(parseContext_->functionScope(), DeclarationKind::PositionalFormalParameter));
+    MOZ_TRY(parseAndUpdateCapturedNames(kind));
 
 
 
@@ -3155,7 +3165,7 @@ BinASTParser<Tok>::parseInterfaceAssertedVarScope(const size_t start, const BinK
 
     MOZ_TRY(parseAndUpdateScopeNames(*parseContext_->innermostScope(), DeclarationKind::Let));
     MOZ_TRY(parseAndUpdateScopeNames(parseContext_->varScope(), DeclarationKind::Var));
-    MOZ_TRY(parseAndUpdateCapturedNames());
+    MOZ_TRY(parseAndUpdateCapturedNames(kind));
 
 
 
@@ -3266,6 +3276,7 @@ BinASTParser<Tok>::parseInterfaceAssignmentTargetIdentifier(const size_t start, 
 
     if (!IsIdentifier(name))
         return raiseError("Invalid identifier");
+    BINJS_TRY(usedNames_.noteUse(cx_, name, parseContext_->scriptId(), parseContext_->innermostScope()->id()));
     BINJS_TRY_DECL(result, factory_.newName(name->asPropertyName(), tokenizer_->pos(start), cx_));
     return result;
 }
@@ -3714,6 +3725,7 @@ BinASTParser<Tok>::parseInterfaceBlock(const size_t start, const BinKind kind, c
     BINJS_MOZ_TRY_DECL(statements, parseListOfStatement());
 
 
+    MOZ_TRY(checkClosedVars(currentScope));
     BINJS_TRY_DECL(bindings, NewLexicalScopeData(cx_, currentScope, alloc_, parseContext_));
     BINJS_TRY_DECL(result, factory_.newLexicalScope(*bindings, statements));
     return result;
@@ -3843,6 +3855,7 @@ BinASTParser<Tok>::parseInterfaceCallExpression(const size_t start, const BinKin
 
 /*
  interface CatchClause : Node {
+    AssertedParameterScope? bindingScope;
     Binding binding;
     Block body;
  }
@@ -3871,13 +3884,18 @@ BinASTParser<Tok>::parseInterfaceCatchClause(const size_t start, const BinKind k
 
 
 #if defined(DEBUG)
-    const BinField expected_fields[2] = { BinField::Binding, BinField::Body };
+    const BinField expected_fields[3] = { BinField::BindingScope, BinField::Binding, BinField::Body };
     MOZ_TRY(tokenizer_->checkFields(kind, fields, expected_fields));
 #endif // defined(DEBUG)
 
     ParseContext::Statement stmt(parseContext_, StatementKind::Catch);
     ParseContext::Scope currentScope(cx_, parseContext_, usedNames_);
     BINJS_TRY(currentScope.init(parseContext_));
+
+
+    MOZ_TRY(parseOptionalAssertedParameterScope());
+
+
 
 
     BINJS_MOZ_TRY_DECL(binding, parseBinding());
@@ -3887,12 +3905,6 @@ BinASTParser<Tok>::parseInterfaceCatchClause(const size_t start, const BinKind k
 
     BINJS_MOZ_TRY_DECL(body, parseBlock());
 
-
-    // Export implicit variables to the scope.
-    // FIXME: Handle cases other than Name.
-    MOZ_ASSERT(binding->isKind(ParseNodeKind::Name));
-    auto ptr = currentScope.lookupDeclaredNameForAdd(binding->name());
-    BINJS_TRY(currentScope.addDeclaredName(parseContext_, ptr, binding->name(), DeclarationKind::Let, start));
 
     BINJS_TRY_DECL(bindings, NewLexicalScopeData(cx_, currentScope, alloc_, parseContext_));
     BINJS_TRY_DECL(result, factory_.newLexicalScope(*bindings, body));
@@ -4726,8 +4738,8 @@ BinASTParser<Tok>::parseInterfaceEagerFunctionExpression(const size_t start, con
 
 /*
  interface EagerGetter : Node {
-    AssertedVarScope? bodyScope;
     PropertyName name;
+    AssertedVarScope? bodyScope;
     FunctionBody body;
  }
 */
@@ -4755,25 +4767,18 @@ BinASTParser<Tok>::parseInterfaceEagerGetter(const size_t start, const BinKind k
 
 
 #if defined(DEBUG)
-    const BinField expected_fields[3] = { BinField::BodyScope, BinField::Name, BinField::Body };
+    const BinField expected_fields[3] = { BinField::Name, BinField::BodyScope, BinField::Body };
     MOZ_TRY(tokenizer_->checkFields(kind, fields, expected_fields));
 #endif // defined(DEBUG)
 
 
 
 
-    MOZ_TRY(parseOptionalAssertedVarScope());
-
-
-
-
     BINJS_MOZ_TRY_DECL(name, parsePropertyName());
-
-
     BINJS_MOZ_TRY_DECL(funbox, buildFunctionBox(
         GeneratorKind::NotGenerator,
         FunctionAsyncKind::SyncFunction,
-        FunctionSyntaxKind::Getter, name));
+        FunctionSyntaxKind::Getter, /* name = */ nullptr));
 
     // Push a new ParseContext. It will be used to parse `scope`, the arguments, the function.
     BinParseContext funpc(cx_, this, funbox, /* newDirectives = */ nullptr);
@@ -4783,6 +4788,13 @@ BinASTParser<Tok>::parseInterfaceEagerGetter(const size_t start, const BinKind k
 
     ParseContext::Scope lexicalScope(cx_, parseContext_, usedNames_);
     BINJS_TRY(lexicalScope.init(parseContext_));
+
+
+
+    MOZ_TRY(parseOptionalAssertedVarScope());
+
+
+
 
     BINJS_MOZ_TRY_DECL(body, parseFunctionBody());
 
@@ -4930,7 +4942,19 @@ BinASTParser<Tok>::parseInterfaceEagerSetter(const size_t start, const BinKind k
 
 
     BINJS_MOZ_TRY_DECL(name, parsePropertyName());
+    BINJS_MOZ_TRY_DECL(funbox, buildFunctionBox(
+        GeneratorKind::NotGenerator,
+        FunctionAsyncKind::SyncFunction,
+        FunctionSyntaxKind::Setter, /* name = */ nullptr));
 
+    // Push a new ParseContext. It will be used to parse `scope`, the arguments, the function.
+    BinParseContext funpc(cx_, this, funbox, /* newDirectives = */ nullptr);
+    BINJS_TRY(funpc.init());
+    parseContext_->functionScope().useAsVarScope(parseContext_);
+    MOZ_ASSERT(parseContext_->isFunctionBox());
+
+    ParseContext::Scope lexicalScope(cx_, parseContext_, usedNames_);
+    BINJS_TRY(lexicalScope.init(parseContext_));
 
 
 
@@ -4947,19 +4971,7 @@ BinASTParser<Tok>::parseInterfaceEagerSetter(const size_t start, const BinKind k
     BINJS_MOZ_TRY_DECL(param, parseParameter());
 
 
-    BINJS_MOZ_TRY_DECL(funbox, buildFunctionBox(
-        GeneratorKind::NotGenerator,
-        FunctionAsyncKind::SyncFunction,
-        FunctionSyntaxKind::Setter, name));
 
-    // Push a new ParseContext. It will be used to parse `scope`, the arguments, the function.
-    BinParseContext funpc(cx_, this, funbox, /* newDirectives = */ nullptr);
-    BINJS_TRY(funpc.init());
-    parseContext_->functionScope().useAsVarScope(parseContext_);
-    MOZ_ASSERT(parseContext_->isFunctionBox());
-
-    ParseContext::Scope lexicalScope(cx_, parseContext_, usedNames_);
-    BINJS_TRY(lexicalScope.init(parseContext_));
 
     BINJS_MOZ_TRY_DECL(body, parseFunctionBody());
 
@@ -5623,6 +5635,7 @@ BinASTParser<Tok>::parseInterfaceIdentifierExpression(const size_t start, const 
 
     if (!IsIdentifier(name))
         return raiseError("Invalid identifier");
+    BINJS_TRY(usedNames_.noteUse(cx_, name, parseContext_->scriptId(), parseContext_->innermostScope()->id()));
     BINJS_TRY_DECL(result, factory_.newName(name->asPropertyName(), tokenizer_->pos(start), cx_));
     return result;
 }
@@ -6447,7 +6460,7 @@ BinASTParser<Tok>::parseInterfaceScript(const size_t start, const BinKind kind, 
     BINJS_MOZ_TRY_DECL(statements, parseListOfStatement());
 
 
-    BINJS_MOZ_TRY_DECL(result, appendDirectivesToBody(/* body = */ statements, /* directives = */ directives));
+    MOZ_TRY(checkClosedVars(parseContext_->varScope())); BINJS_MOZ_TRY_DECL(result, appendDirectivesToBody(/* body = */ statements, /* directives = */ directives));
     return result;
 }
 
@@ -7129,8 +7142,11 @@ MOZ_TRY(tokenizer_->checkFields0(kind, fields));
 
     TokenPos pos = tokenizer_->pos(start);
     ParseNode* thisName(nullptr);
-    if (parseContext_->sc()->thisBinding() == ThisBinding::Function)
-        BINJS_TRY_VAR(thisName, factory_.newName(cx_->names().dotThis, pos, cx_));
+    if (parseContext_->sc()->thisBinding() == ThisBinding::Function) {
+        HandlePropertyName dotThis = cx_->names().dotThis;
+        BINJS_TRY(usedNames_.noteUse(cx_, dotThis, parseContext_->scriptId(), parseContext_->innermostScope()->id()));
+        BINJS_TRY_VAR(thisName, factory_.newName(dotThis, pos, cx_));
+    }
 
     BINJS_TRY_DECL(result, factory_.newThisLiteral(pos, thisName));
     return result;

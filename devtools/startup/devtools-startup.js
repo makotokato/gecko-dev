@@ -595,7 +595,7 @@ DevToolsStartup.prototype = {
       // Record the timing at which this event started in order to compute later in
       // gDevTools.showToolbox, the complete time it takes to open the toolbox.
       // i.e. especially take `initDevTools` into account.
-      let startTime = window.performance.now();
+      let startTime = Cu.now();
       let require = this.initDevTools("KeyShortcut");
       let { gDevToolsBrowser } = require("devtools/client/framework/devtools-browser");
       gDevToolsBrowser.onKeyShortcut(window, key, startTime);
@@ -890,7 +890,7 @@ DevToolsStartup.prototype = {
   /* eslint-disable max-len */
 
   classID: Components.ID("{9e9a9283-0ce9-4e4a-8f1c-ba129a032c32}"),
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsICommandLineHandler]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsICommandLineHandler]),
 };
 
 /**

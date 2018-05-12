@@ -489,15 +489,6 @@
     "n_values": 10,
     "description": "GPU Device Reset Reason (ok, hung, removed, reset, internal error, invalid call, out of memory)"
   },
-  "FAMILY_SAFETY": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["seceng-telemetry@mozilla.com"],
-    "expires_in_version": "60",
-    "kind": "enumerated",
-    "n_values": 16,
-    "bug_numbers": [1239166],
-    "description": "Status of Family Safety detection and remediation. See nsNSSComponent.cpp."
-  },
   "FETCH_IS_MAINTHREAD": {
     "record_in_processes": ["main", "content"],
     "expires_in_version": "50",
@@ -3240,6 +3231,17 @@
     "n_buckets": 50,
     "description": "DNS Cache Entry Age at Removal Time (minutes)"
   },
+  "DNS_PREMATURE_EVICTION": {
+    "record_in_processes": ["main"],
+    "expires_in_version": "never",
+    "kind": "exponential",
+    "high": 1440,
+    "releaseChannelCollection": "opt-out",
+    "alert_emails": ["necko@mozilla.com", "dstenberg@mozilla.com"],
+    "bug_numbers": [1460305],
+    "n_buckets": 50,
+    "description": "DNS Cache Entry Age at Removal Time of non-expired entries (minutes)"
+  },
   "DNS_LOOKUP_TIME": {
     "record_in_processes": ["main"],
     "expires_in_version": "never",
@@ -3280,6 +3282,15 @@
     "labels": ["TRRFasterBy50", "TRRFaster", "NativeFaster", "NativeFasterBy50"],
     "bug_numbers": [1434852],
     "description": "DNS: TRR parallel resolve racing results"
+  },
+  "DNS_TRR_COMPARE": {
+    "record_in_processes": ["main"],
+    "alert_emails": ["necko@mozilla.com", "dstenberg@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "categorical",
+    "labels": ["BothWorked", "NativeWorked", "TRRWorked", "BothFailed"],
+    "bug_numbers": [1460589],
+    "description": "DNS: success distribution when both native and TRR were used"
   },
   "DNS_TRR_BLACKLISTED": {
     "record_in_processes": ["main"],
@@ -4803,14 +4814,6 @@
     "expires_in_version": "65",
     "kind": "count",
     "description": "Number of unique pages that contain an unsafe-eval CSP directive"
-  },
-  "CSP_REFERRER_DIRECTIVE": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["seceng-telemetry@mozilla.com"],
-    "bug_numbers": [1303685],
-    "expires_in_version": "65",
-    "kind": "boolean",
-    "description": "Whether a document with a CSP policy (report-only or enforcing) contains a referrer directive ('true') or not ('false')."
   },
   "PLACES_DATABASE_CORRUPTION_HANDLING_STAGE": {
     "record_in_processes": ["main"],
@@ -7503,6 +7506,53 @@
     "n_buckets": 10,
     "bug_numbers": [1335343],
     "description": "a testing histogram; not meant to be touched"
+  },
+  "TELEMETRY_TEST_DEFAULT_PRODUCTS": {
+    "record_in_processes": ["all"],
+    "alert_emails": ["telemetry-client-dev@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "linear",
+    "low": 1,
+    "high": 10000,
+    "n_buckets": 10,
+    "bug_numbers": [1452552],
+    "description": "a testing histogram; not meant to be touched"
+  },
+  "TELEMETRY_TEST_DESKTOP_ONLY": {
+    "record_in_processes": ["all"],
+    "alert_emails": ["telemetry-client-dev@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "linear",
+    "low": 1,
+    "high": 10000,
+    "n_buckets": 10,
+    "bug_numbers": [1452552],
+    "description": "a testing histogram; not meant to be touched",
+    "products": ["firefox"]
+  },
+  "TELEMETRY_TEST_MULTIPRODUCT": {
+    "record_in_processes": ["all"],
+    "alert_emails": ["telemetry-client-dev@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "linear",
+    "low": 1,
+    "high": 10000,
+    "n_buckets": 10,
+    "bug_numbers": [1452552],
+    "description": "a testing histogram; not meant to be touched",
+    "products": ["firefox", "fennec", "geckoview"]
+  },
+  "TELEMETRY_TEST_MOBILE_ONLY": {
+    "record_in_processes": ["all"],
+    "alert_emails": ["telemetry-client-dev@mozilla.com"],
+    "expires_in_version": "never",
+    "kind": "linear",
+    "low": 1,
+    "high": 10000,
+    "n_buckets": 10,
+    "bug_numbers": [1452552],
+    "description": "a testing histogram; not meant to be touched",
+    "products": ["fennec", "geckoview"]
   },
   "STARTUP_CRASH_DETECTED": {
     "record_in_processes": ["main", "content"],
@@ -12128,16 +12178,6 @@
     "releaseChannelCollection": "opt-out",
     "description": "Number of mobile devices associated with this Sync account. Recorded each time Sync successfully completes the 'clients' engine."
   },
-  "WEAVE_ENGINE_SYNC_ERRORS": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["sync-dev@mozilla.org"],
-    "bug_numbers": [1236383],
-    "expires_in_version": "never",
-    "kind": "count",
-    "keyed": true,
-    "releaseChannelCollection": "opt-out",
-    "description": "Exceptions thrown by a Sync engine. Keyed on the engine name."
-  },
   "CONTENT_DOCUMENTS_DESTROYED": {
     "record_in_processes": ["main", "content"],
     "expires_in_version": "never",
@@ -13822,5 +13862,65 @@
     "kind": "boolean",
     "keyed": true,
     "description": "Permission requests (showing a permission prompt) by whether they were requested from code handling a user input event."
+  },
+  "HTMLEDITORS_WITH_RESIZERS": {
+    "record_in_processes": ["content"],
+    "alert_emails": ["mnakano@mozilla.com"],
+    "bug_numbers": [1452538,1449564],
+    "expires_in_version": "65",
+    "kind": "boolean",
+    "releaseChannelCollection": "opt-out",
+    "description": "Number of HTML editors which has shown object resizers."
+  },
+  "HTMLEDITORS_WHOSE_RESIZERS_USED_BY_USER": {
+    "record_in_processes": ["content"],
+    "alert_emails": ["mnakano@mozilla.com"],
+    "bug_numbers": [1452538,1449564],
+    "expires_in_version": "65",
+    "kind": "linear",
+    "high": 50,
+    "n_buckets": 20,
+    "releaseChannelCollection": "opt-out",
+    "description": "Number of HTML editors whose object resizers are actually used by users."
+  },
+  "HTMLEDITORS_WITH_ABSOLUTE_POSITIONER": {
+    "record_in_processes": ["content"],
+    "alert_emails": ["mnakano@mozilla.com"],
+    "bug_numbers": [1452538,1449564],
+    "expires_in_version": "65",
+    "kind": "boolean",
+    "releaseChannelCollection": "opt-out",
+    "description": "Number of HTML editors which has shown grabber to move absolute positioned elements."
+  },
+  "HTMLEDITORS_WHOSE_ABSOLUTE_POSITIONER_USED_BY_USER": {
+    "record_in_processes": ["content"],
+    "alert_emails": ["mnakano@mozilla.com"],
+    "bug_numbers": [1452538,1449564],
+    "expires_in_version": "65",
+    "kind": "linear",
+    "high": 50,
+    "n_buckets": 20,
+    "releaseChannelCollection": "opt-out",
+    "description": "Number of HTML editors whose grabber to move absolute positioned elements is actually used by users."
+  },
+  "HTMLEDITORS_WITH_INLINE_TABLE_EDITOR": {
+    "record_in_processes": ["content"],
+    "alert_emails": ["mnakano@mozilla.com"],
+    "bug_numbers": [1452538,1449564],
+    "expires_in_version": "65",
+    "kind": "boolean",
+    "releaseChannelCollection": "opt-out",
+    "description": "Number of HTML editors which has shown inline table editing UI."
+  },
+  "HTMLEDITORS_WHOSE_INLINE_TABLE_EDITOR_USED_BY_USER": {
+    "record_in_processes": ["content"],
+    "alert_emails": ["mnakano@mozilla.com"],
+    "bug_numbers": [1452538,1449564],
+    "expires_in_version": "65",
+    "kind": "linear",
+    "high": 50,
+    "n_buckets": 20,
+    "releaseChannelCollection": "opt-out",
+    "description": "Number of HTML editors whose inline table editing UI is actually used by users."
   }
 }

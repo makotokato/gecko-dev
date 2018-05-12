@@ -667,6 +667,11 @@ class NativeObject : public ShapedObject
      * If sentinelAllowed then slot may equal the slot capacity.
      */
     bool slotInRange(uint32_t slot, SentinelAllowed sentinel = SENTINEL_NOT_ALLOWED) const;
+
+    /*
+     * Check whether a slot is a fixed slot.
+     */
+    bool slotIsFixed(uint32_t slot) const;
 #endif
 
     /*
@@ -713,11 +718,15 @@ class NativeObject : public ShapedObject
     uint32_t numFixedSlots() const {
         return reinterpret_cast<const shadow::Object*>(this)->numFixedSlots();
     }
+
+    // Get the number of fixed slots when the shape pointer may have been
+    // forwarded by a moving GC.
+    uint32_t numFixedSlotsMaybeForwarded() const;
+
     uint32_t numUsedFixedSlots() const {
         uint32_t nslots = lastProperty()->slotSpan(getClass());
         return Min(nslots, numFixedSlots());
     }
-    uint32_t numFixedSlotsForCompilation() const;
 
     uint32_t slotSpan() const {
         if (inDictionaryMode())
@@ -766,14 +775,6 @@ class NativeObject : public ShapedObject
      */
     bool hadElementsAccess() const {
         return hasAllFlags(js::BaseShape::HAD_ELEMENTS_ACCESS);
-    }
-
-    // Mark an object as having its 'new' script information cleared.
-    bool wasNewScriptCleared() const {
-        return hasAllFlags(js::BaseShape::NEW_SCRIPT_CLEARED);
-    }
-    static bool setNewScriptCleared(JSContext* cx, HandleNativeObject obj) {
-        return setFlags(cx, obj, js::BaseShape::NEW_SCRIPT_CLEARED);
     }
 
     bool hasInterestingSymbol() const {
@@ -1073,23 +1074,23 @@ class NativeObject : public ShapedObject
     /* For slots which are known to always be fixed, due to the way they are allocated. */
 
     HeapSlot& getFixedSlotRef(uint32_t slot) {
-        MOZ_ASSERT(slot < numFixedSlots());
+        MOZ_ASSERT(slotIsFixed(slot));
         return fixedSlots()[slot];
     }
 
     const Value& getFixedSlot(uint32_t slot) const {
-        MOZ_ASSERT(slot < numFixedSlots());
+        MOZ_ASSERT(slotIsFixed(slot));
         return fixedSlots()[slot];
     }
 
     void setFixedSlot(uint32_t slot, const Value& value) {
-        MOZ_ASSERT(slot < numFixedSlots());
+        MOZ_ASSERT(slotIsFixed(slot));
         checkStoredValue(value);
         fixedSlots()[slot].set(this, HeapSlot::Slot, slot, value);
     }
 
     void initFixedSlot(uint32_t slot, const Value& value) {
-        MOZ_ASSERT(slot < numFixedSlots());
+        MOZ_ASSERT(slotIsFixed(slot));
         checkStoredValue(value);
         fixedSlots()[slot].init(this, HeapSlot::Slot, slot, value);
     }
@@ -1420,6 +1421,10 @@ class NativeObject : public ShapedObject
     /* Access private data for an object with a known number of fixed slots. */
     inline void* getPrivate(uint32_t nfixed) const {
         return privateRef(nfixed);
+    }
+    void setPrivateUnbarriered(uint32_t nfixed, void* data) {
+        void** pprivate = &privateRef(nfixed);
+        *pprivate = data;
     }
 
     static inline NativeObject*

@@ -629,7 +629,7 @@ static uint32_t GetSkiaGlyphCacheSize()
     // Chromium uses 20mb and skia default uses 2mb.
     // We don't need to change the font cache count since we usually
     // cache thrash due to asian character sets in talos.
-    // Only increase memory on the content proces
+    // Only increase memory on the content process
     uint32_t cacheSize = gfxPrefs::SkiaContentFontCacheSize() * 1024 * 1024;
     if (mozilla::BrowserTabsRemoteAutostart()) {
       return XRE_IsContentProcess() ? cacheSize : kDefaultGlyphCacheSize;
@@ -1790,7 +1790,7 @@ gfxPlatform::GetLayerDiagnosticTypes()
 }
 
 BackendPrefsData
-gfxPlatform::GetBackendPrefs()
+gfxPlatform::GetBackendPrefs() const
 {
   BackendPrefsData data;
 
@@ -2506,8 +2506,16 @@ void
 gfxPlatform::InitWebRenderConfig()
 {
   bool prefEnabled = WebRenderPrefEnabled();
+  bool envvarEnabled = WebRenderEnvvarEnabled();
 
-  ScopedGfxFeatureReporter reporter("WR", prefEnabled);
+  // On Nightly:
+  //   WR? WR+   => means WR was enabled via gfx.webrender.all.qualified
+  //   WR! WR+   => means WR was enabled via gfx.webrender.{all,enabled} or envvar
+  // On Beta/Release:
+  //   WR? WR+   => means WR was enabled via gfx.webrender.all.qualified on qualified hardware
+  //   WR! WR+   => means WR was enabled via envvar, possibly on unqualified hardware.
+  // In all cases WR- means WR was not enabled, for one of many possible reasons.
+  ScopedGfxFeatureReporter reporter("WR", prefEnabled || envvarEnabled);
   if (!XRE_IsParentProcess()) {
     // The parent process runs through all the real decision-making code
     // later in this function. For other processes we still want to report
@@ -2525,10 +2533,33 @@ gfxPlatform::InitWebRenderConfig()
       "WebRender is an opt-in feature",
       NS_LITERAL_CSTRING("FEATURE_FAILURE_DEFAULT_OFF"));
 
-  if (prefEnabled) {
-    featureWebRender.UserEnable("Enabled by pref");
-  } else if (WebRenderEnvvarEnabled()) {
-    featureWebRender.UserEnable("Enabled by envvar");
+  // envvar works everywhere; we need this for testing in CI. Sadly this allows
+  // beta/release to enable it on unqualified hardware, but at least this is
+  // harder for the average person than flipping a pref.
+  if (envvarEnabled) {
+    featureWebRender.UserEnable("Force enabled by envvar");
+
+  // gfx.webrender.enabled and gfx.webrender.all only work on nightly
+#ifdef NIGHTLY_BUILD
+  } else if (prefEnabled) {
+    featureWebRender.UserEnable("Force enabled by pref");
+#endif
+
+  // gfx.webrender.all.qualified works on all channels
+  } else if (gfxPrefs::WebRenderAllQualified()) {
+    nsCOMPtr<nsIGfxInfo> gfxInfo = services::GetGfxInfo();
+    nsCString discardFailureId;
+    int32_t status;
+    if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_WEBRENDER,
+                                               discardFailureId, &status))) {
+      if (status == nsIGfxInfo::FEATURE_STATUS_OK) {
+        featureWebRender.UserEnable("Qualified enabled by pref ");
+      } else {
+        featureWebRender.ForceDisable(FeatureStatus::Blocked,
+                                      "Qualified enable blocked",
+                                      discardFailureId);
+      }
+    }
   }
 
   // HW_COMPOSITING being disabled implies interfacing with the GPU might break
@@ -2716,14 +2747,40 @@ gfxPlatform::UsesOffMainThreadCompositing()
 bool
 gfxPlatform::UsesTiling() const
 {
-  bool isSkiaPOMTP = XRE_IsContentProcess() &&
-      GetDefaultContentBackend() == BackendType::SKIA &&
-      gfxVars::UseOMTP() &&
-      (gfxPrefs::LayersOMTPPaintWorkers() == -1 ||
+  bool usesSkia = GetDefaultContentBackend() == BackendType::SKIA;
+
+  // We can't just test whether the PaintThread is initialized here because
+  // this function is used when initializing the PaintThread. So instead we
+  // check the conditions that enable OMTP with parallel painting.
+  bool usesPOMTP = XRE_IsContentProcess() &&
+    gfxVars::UseOMTP() &&
+    (gfxPrefs::LayersOMTPPaintWorkers() == -1 ||
       gfxPrefs::LayersOMTPPaintWorkers() > 1);
 
   return gfxPrefs::LayersTilesEnabled() ||
-    (gfxPrefs::LayersTilesEnabledIfSkiaPOMTP() && isSkiaPOMTP);
+    (gfxPrefs::LayersTilesEnabledIfSkiaPOMTP() &&
+      usesSkia &&
+      usesPOMTP);
+}
+
+bool
+gfxPlatform::ContentUsesTiling() const
+{
+  BackendPrefsData data = GetBackendPrefs();
+  BackendType contentBackend = GetContentBackendPref(data.mContentBitmask);
+  if (contentBackend == BackendType::NONE) {
+    contentBackend = data.mContentDefault;
+  }
+
+  bool contentUsesSkia = contentBackend == BackendType::SKIA;
+  bool contentUsesPOMTP = gfxVars::UseOMTP() &&
+    (gfxPrefs::LayersOMTPPaintWorkers() == -1 ||
+      gfxPrefs::LayersOMTPPaintWorkers() > 1);
+
+  return gfxPrefs::LayersTilesEnabled() ||
+    (gfxPrefs::LayersTilesEnabledIfSkiaPOMTP() &&
+      contentUsesSkia &&
+      contentUsesPOMTP);
 }
 
 /***

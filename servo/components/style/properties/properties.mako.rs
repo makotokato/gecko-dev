@@ -56,12 +56,6 @@ use style_adjuster::StyleAdjuster;
 
 pub use self::declaration_block::*;
 
-#[cfg(feature = "gecko")]
-#[macro_export]
-macro_rules! property_name {
-    ($s: tt) => { atom!($s) }
-}
-
 <%!
     from data import Method, Keyword, to_rust_ident, to_camel_case, SYSTEM_FONT_LONGHANDS
     import os.path
@@ -115,11 +109,11 @@ pub mod longhands {
     <%include file="/longhand/inherited_box.mako.rs" />
     <%include file="/longhand/inherited_table.mako.rs" />
     <%include file="/longhand/inherited_text.mako.rs" />
+    <%include file="/longhand/inherited_ui.mako.rs" />
     <%include file="/longhand/list.mako.rs" />
     <%include file="/longhand/margin.mako.rs" />
     <%include file="/longhand/outline.mako.rs" />
     <%include file="/longhand/padding.mako.rs" />
-    <%include file="/longhand/pointing.mako.rs" />
     <%include file="/longhand/position.mako.rs" />
     <%include file="/longhand/table.mako.rs" />
     <%include file="/longhand/text.mako.rs" />

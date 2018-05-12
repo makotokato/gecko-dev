@@ -197,6 +197,13 @@ struct gfxFontStyle {
     // variantSubSuper field) using size and baselineOffset instead.
     void AdjustForSubSuperscript(int32_t aAppUnitsPerDevPixel);
 
+    // Should this style cause the given font entry to use synthetic bold?
+    bool NeedsSyntheticBold(gfxFontEntry* aFontEntry) const {
+        return weight.IsBold() &&
+               allowSyntheticWeight &&
+               !aFontEntry->SupportsBold();
+    }
+
     bool Equals(const gfxFontStyle& other) const {
         return
             (*reinterpret_cast<const uint64_t*>(&size) ==
@@ -1458,7 +1465,7 @@ public:
     typedef mozilla::FontSlantStyle FontSlantStyle;
 
     nsrefcnt AddRef(void) {
-        NS_PRECONDITION(int32_t(mRefCnt) >= 0, "illegal refcnt");
+        MOZ_ASSERT(int32_t(mRefCnt) >= 0, "illegal refcnt");
         if (mExpirationState.IsTracked()) {
             gfxFontCache::GetCache()->RemoveObject(this);
         }
@@ -1467,7 +1474,7 @@ public:
         return mRefCnt;
     }
     nsrefcnt Release(void) {
-        NS_PRECONDITION(0 != mRefCnt, "dup release");
+        MOZ_ASSERT(0 != mRefCnt, "dup release");
         --mRefCnt;
         NS_LOG_RELEASE(this, mRefCnt, "gfxFont");
         if (mRefCnt == 0) {
@@ -1813,13 +1820,9 @@ public:
 
     virtual bool AllowSubpixelAA() { return true; }
 
-    bool IsSyntheticBold() { return mApplySyntheticBold; }
+    bool IsSyntheticBold() const { return mApplySyntheticBold; }
 
-    bool IsSyntheticOblique() {
-        return mFontEntry->IsUpright() &&
-               mStyle.style != FontSlantStyle::Normal() &&
-               mStyle.allowSyntheticStyle;
-    }
+    float SkewForSyntheticOblique() const;
 
     // Amount by which synthetic bold "fattens" the glyphs:
     // For size S up to a threshold size T, we use (0.25 + 3S / 4T),
@@ -2367,13 +2370,13 @@ struct MOZ_STACK_CLASS FontDrawParams {
     RefPtr<mozilla::gfx::ScaledFont>            scaledFont;
     mozilla::SVGContextPaint *contextPaint;
     mozilla::gfx::Float       synBoldOnePixelOffset;
+    mozilla::gfx::Float       obliqueSkew;
     int32_t                   extraStrikes;
     mozilla::gfx::DrawOptions drawOptions;
     gfxFloat                  advanceDirection;
     bool                      isVerticalFont;
     bool                      haveSVGGlyphs;
     bool                      haveColorGlyphs;
-    bool                      needsOblique;
 };
 
 struct MOZ_STACK_CLASS EmphasisMarkDrawParams {

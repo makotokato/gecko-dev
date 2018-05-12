@@ -45,7 +45,6 @@ class nsAutoCauseReflowNotifier;
 class AutoPointerEventTargetUpdater;
 
 namespace mozilla {
-class ServoStyleSheet;
 
 namespace dom {
 class Element;
@@ -88,9 +87,9 @@ public:
 
   void UpdatePreferenceStyles() override;
 
-  NS_IMETHOD GetSelection(RawSelectionType aRawSelectionType,
-                          nsISelection** aSelection) override;
-  dom::Selection* GetDOMSelection(RawSelectionType aRawSelectionType) override;
+  NS_IMETHOD GetSelectionFromScript(RawSelectionType aRawSelectionType,
+                                    dom::Selection** aSelection) override;
+  dom::Selection* GetSelection(RawSelectionType aRawSelectionType) override;
 
   dom::Selection* GetCurrentSelection(SelectionType aSelectionType) override;
 
@@ -159,9 +158,9 @@ public:
   void UnsuppressPainting() override;
 
   nsresult GetAgentStyleSheets(
-      nsTArray<RefPtr<ServoStyleSheet>>& aSheets) override;
+      nsTArray<RefPtr<StyleSheet>>& aSheets) override;
   nsresult SetAgentStyleSheets(
-      const nsTArray<RefPtr<ServoStyleSheet>>& aSheets) override;
+      const nsTArray<RefPtr<StyleSheet>>& aSheets) override;
 
   nsresult AddOverrideStyleSheet(StyleSheet* aSheet) override;
   nsresult RemoveOverrideStyleSheet(StyleSheet* aSheet) override;
@@ -542,7 +541,7 @@ private:
    */
   already_AddRefed<SourceSurface>
   PaintRangePaintInfo(const nsTArray<UniquePtr<RangePaintInfo>>& aItems,
-                      nsISelection* aSelection,
+                      dom::Selection* aSelection,
                       nsIntRegion* aRegion,
                       nsRect aArea,
                       const LayoutDeviceIntPoint aPoint,

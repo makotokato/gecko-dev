@@ -35,6 +35,44 @@
 using namespace mozilla;
 using namespace mozilla::dom;
 
+nsStyleLinkElement::SheetInfo::SheetInfo(
+  const nsIDocument& aDocument,
+  nsIContent* aContent,
+  already_AddRefed<nsIURI> aURI,
+  already_AddRefed<nsIPrincipal> aTriggeringPrincipal,
+  mozilla::net::ReferrerPolicy aReferrerPolicy,
+  mozilla::CORSMode aCORSMode,
+  const nsAString& aTitle,
+  const nsAString& aMedia,
+  HasAlternateRel aHasAlternateRel,
+  IsInline aIsInline
+)
+  : mContent(aContent)
+  , mURI(aURI)
+  , mTriggeringPrincipal(aTriggeringPrincipal)
+  , mReferrerPolicy(aReferrerPolicy)
+  , mCORSMode(aCORSMode)
+  , mTitle(aTitle)
+  , mMedia(aMedia)
+  , mHasAlternateRel(aHasAlternateRel == HasAlternateRel::Yes)
+  , mIsInline(aIsInline == IsInline::Yes)
+{
+  MOZ_ASSERT(!mIsInline || aContent);
+  MOZ_ASSERT_IF(aContent, aContent->OwnerDoc() == &aDocument);
+
+  if (mReferrerPolicy == net::ReferrerPolicy::RP_Unset) {
+    mReferrerPolicy = aDocument.GetReferrerPolicy();
+  }
+
+  if (!mIsInline && aContent && aContent->IsElement()) {
+    aContent->AsElement()->GetAttr(kNameSpaceID_None,
+                                   nsGkAtoms::integrity,
+                                   mIntegrity);
+  }
+}
+
+nsStyleLinkElement::SheetInfo::~SheetInfo() = default;
+
 nsStyleLinkElement::nsStyleLinkElement()
   : mDontLoadStyle(false)
   , mUpdatesEnabled(true)
@@ -45,6 +83,42 @@ nsStyleLinkElement::nsStyleLinkElement()
 nsStyleLinkElement::~nsStyleLinkElement()
 {
   nsStyleLinkElement::SetStyleSheet(nullptr);
+}
+
+void
+nsStyleLinkElement::GetTitleAndMediaForElement(const Element& aSelf,
+                                               nsString& aTitle,
+                                               nsString& aMedia)
+{
+  // Only honor title as stylesheet name for elements in the document (that is,
+  // ignore for Shadow DOM), per [1] and [2]. See [3].
+  //
+  // [1]: https://html.spec.whatwg.org/#attr-link-title
+  // [2]: https://html.spec.whatwg.org/#attr-style-title
+  // [3]: https://github.com/w3c/webcomponents/issues/535
+  if (aSelf.IsInUncomposedDoc()) {
+    aSelf.GetAttr(kNameSpaceID_None, nsGkAtoms::title, aTitle);
+    aTitle.CompressWhitespace();
+  }
+
+  aSelf.GetAttr(kNameSpaceID_None, nsGkAtoms::media, aMedia);
+  // The HTML5 spec is formulated in terms of the CSSOM spec, which specifies
+  // that media queries should be ASCII lowercased during serialization.
+  //
+  // FIXME(emilio): How does it matter? This is going to be parsed anyway, CSS
+  // should take care of serializing it properly.
+  nsContentUtils::ASCIIToLower(aMedia);
+}
+
+bool
+nsStyleLinkElement::IsCSSMimeTypeAttribute(const Element& aSelf)
+{
+  nsAutoString type;
+  nsAutoString mimeType;
+  nsAutoString notUsed;
+  aSelf.GetAttr(kNameSpaceID_None, nsGkAtoms::type, type);
+  nsContentUtils::SplitMimeType(type, mimeType, notUsed);
+  return mimeType.IsEmpty() || mimeType.LowerCaseEqualsLiteral("text/css");
 }
 
 void
@@ -261,14 +335,15 @@ nsStyleLinkElement::DoUpdateStyleSheet(nsIDocument* aOldDocument,
     return Update { };
   }
 
-  bool isInline;
-  nsCOMPtr<nsIPrincipal> triggeringPrincipal;
-  nsCOMPtr<nsIURI> uri = GetStyleSheetURL(&isInline, getter_AddRefs(triggeringPrincipal));
-
-  if (aForceUpdate == ForceUpdate::No && mStyleSheet && !isInline && uri) {
+  Maybe<SheetInfo> info = GetStyleSheetInfo();
+  if (aForceUpdate == ForceUpdate::No &&
+      mStyleSheet &&
+      info &&
+      !info->mIsInline &&
+      info->mURI) {
     if (nsIURI* oldURI = mStyleSheet->GetSheetURI()) {
       bool equal;
-      nsresult rv = oldURI->Equals(uri, &equal);
+      nsresult rv = oldURI->Equals(info->mURI, &equal);
       if (NS_SUCCEEDED(rv) && equal) {
         return Update { };
       }
@@ -288,28 +363,18 @@ nsStyleLinkElement::DoUpdateStyleSheet(nsIDocument* aOldDocument,
     nsStyleLinkElement::SetStyleSheet(nullptr);
   }
 
-  if (!uri && !isInline) {
+  if (!info) {
+    return Update { };
+  }
+
+  MOZ_ASSERT(info->mReferrerPolicy != net::RP_Unset ||
+             info->mReferrerPolicy == doc->GetReferrerPolicy());
+  if (!info->mURI && !info->mIsInline) {
     // If href is empty and this is not inline style then just bail
     return Update { };
   }
 
-  nsAutoString title, type, media;
-  bool hasAlternateRel;
-  GetStyleSheetInfo(title, type, media, &hasAlternateRel);
-  if (!type.LowerCaseEqualsLiteral("text/css")) {
-    return Update { };
-  }
-
-  // Load the link's referrerpolicy attribute. If the link does not provide a
-  // referrerpolicy attribute, ignore this and use the document's referrer
-  // policy
-
-  net::ReferrerPolicy referrerPolicy = GetLinkReferrerPolicy();
-  if (referrerPolicy == net::RP_Unset) {
-    referrerPolicy = doc->GetReferrerPolicy();
-  }
-
-  if (isInline) {
+  if (info->mIsInline) {
     nsAutoString text;
     if (!nsContentUtils::GetNodeTextContent(thisContent, false, text, fallible)) {
       return Err(NS_ERROR_OUT_OF_MEMORY);
@@ -322,7 +387,7 @@ nsStyleLinkElement::DoUpdateStyleSheet(nsIDocument* aOldDocument,
     nsresult rv = NS_OK;
     if (!nsStyleUtil::CSPAllowsInlineStyle(thisContent->AsElement(),
                                            thisContent->NodePrincipal(),
-                                           triggeringPrincipal,
+                                           info->mTriggeringPrincipal,
                                            doc->GetDocumentURI(),
                                            mLineNumber, text, &rv)) {
       if (NS_FAILED(rv)) {
@@ -332,10 +397,7 @@ nsStyleLinkElement::DoUpdateStyleSheet(nsIDocument* aOldDocument,
     }
 
     // Parse the style sheet.
-    return doc->CSSLoader()->
-      LoadInlineStyle(thisContent, text, triggeringPrincipal, mLineNumber,
-                      title, media, referrerPolicy,
-                      aObserver);
+    return doc->CSSLoader()->LoadInlineStyle(*info, text, mLineNumber, aObserver);
   }
   nsAutoString integrity;
   if (thisContent->IsElement()) {
@@ -347,17 +409,7 @@ nsStyleLinkElement::DoUpdateStyleSheet(nsIDocument* aOldDocument,
             ("nsStyleLinkElement::DoUpdateStyleSheet, integrity=%s",
              NS_ConvertUTF16toUTF8(integrity).get()));
   }
-  auto resultOrError =
-    doc->CSSLoader()->LoadStyleLink(thisContent,
-                                    uri,
-                                    triggeringPrincipal,
-                                    title,
-                                    media,
-                                    hasAlternateRel,
-                                    GetCORSMode(),
-                                    referrerPolicy,
-                                    integrity,
-                                    aObserver);
+  auto resultOrError = doc->CSSLoader()->LoadStyleLink(*info, aObserver);
   if (resultOrError.isErr()) {
     // Don't propagate LoadStyleLink() errors further than this, since some
     // consumers (e.g. nsXMLContentSink) will completely abort on innocuous

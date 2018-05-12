@@ -92,7 +92,7 @@ class GeckoViewNavigation extends GeckoViewModule {
     debug `receiveMessage: ${aMsg.name}`;
   }
 
-  waitAndSetOpener(aSessionId, aOpener) {
+  waitAndSetupWindow(aSessionId, { opener, nextTabParentId }) {
     if (!aSessionId) {
       return Promise.resolve(null);
     }
@@ -101,8 +101,12 @@ class GeckoViewNavigation extends GeckoViewModule {
       const handler = {
         observe(aSubject, aTopic, aData) {
           if (aTopic === "geckoview-window-created" && aSubject.name === aSessionId) {
-            if (aOpener) {
-              aSubject.browser.presetOpenerWindow(aOpener);
+            if (nextTabParentId) {
+              aSubject.browser.setAttribute("nextTabParentId", nextTabParentId.toString());
+            }
+
+            if (opener) {
+              aSubject.browser.presetOpenerWindow(opener);
             }
             Services.obs.removeObserver(handler, "geckoview-window-created");
             resolve(aSubject);
@@ -115,11 +119,11 @@ class GeckoViewNavigation extends GeckoViewModule {
     });
   }
 
-  handleNewSession(aUri, aOpener, aWhere, aFlags, aTriggeringPrincipal) {
+  handleNewSession(aUri, aOpener, aWhere, aFlags, aNextTabParentId) {
     debug `handleNewSession: uri=${aUri && aUri.spec}
                              where=${aWhere} flags=${aFlags}`;
 
-    if (!this.isRegistered) {
+    if (!this.enabled) {
       return null;
     }
 
@@ -130,17 +134,20 @@ class GeckoViewNavigation extends GeckoViewModule {
 
     let browser = undefined;
     this.eventDispatcher.sendRequestForResult(message).then(sessionId => {
-      return this.waitAndSetOpener(sessionId,
-        (aFlags & Ci.nsIBrowserDOMWindow.OPEN_NO_OPENER) ? null : aOpener);
+      return this.waitAndSetupWindow(sessionId, {
+        opener: (aFlags & Ci.nsIBrowserDOMWindow.OPEN_NO_OPENER) ? null : aOpener,
+        nextTabParentId: aNextTabParentId
+      });
     }).then(window => {
-      browser = (window && window.browser);
+      browser = (window && window.browser) || null;
     }, () => {
       browser = null;
     });
 
     // Wait indefinitely for app to respond with a browser or null
-    Services.tm.spinEventLoopUntil(() => browser !== undefined);
-    return browser;
+    Services.tm.spinEventLoopUntil(() =>
+        this.window.closed || browser !== undefined);
+    return browser || null;
   }
 
   // nsIBrowserDOMWindow.
@@ -148,15 +155,14 @@ class GeckoViewNavigation extends GeckoViewModule {
     debug `createContentWindow: uri=${aUri && aUri.spec}
                                 where=${aWhere} flags=${aFlags}`;
 
-    if (LoadURIDelegate.load(this.eventDispatcher, aUri, aWhere, aFlags,
-                             aTriggeringPrincipal)) {
+    if (LoadURIDelegate.load(this.window, this.eventDispatcher,
+                             aUri, aWhere, aFlags)) {
       // The app has handled the load, abort open-window handling.
       Components.returnCode = Cr.NS_ERROR_ABORT;
       return null;
     }
 
-    const browser = this.handleNewSession(aUri, aOpener, aWhere, aFlags,
-                                          aTriggeringPrincipal);
+    const browser = this.handleNewSession(aUri, aOpener, aWhere, aFlags, null);
     if (!browser) {
       Components.returnCode = Cr.NS_ERROR_ABORT;
       return null;
@@ -174,19 +180,19 @@ class GeckoViewNavigation extends GeckoViewModule {
                                        nextTabParentId=${aNextTabParentId}
                                        name=${aName}`;
 
-    if (LoadURIDelegate.load(this.eventDispatcher, aUri, aWhere, aFlags, null)) {
+    if (LoadURIDelegate.load(this.window, this.eventDispatcher,
+                             aUri, aWhere, aFlags)) {
       // The app has handled the load, abort open-window handling.
       Components.returnCode = Cr.NS_ERROR_ABORT;
       return null;
     }
 
-    const browser = this.handleNewSession(aUri, null, aWhere, aFlags, null);
+    const browser = this.handleNewSession(aUri, null, aWhere, aFlags, aNextTabParentId);
     if (!browser) {
       Components.returnCode = Cr.NS_ERROR_ABORT;
       return null;
     }
 
-    browser.setAttribute("nextTabParentId", aNextTabParentId);
     return browser;
   }
 
@@ -195,8 +201,8 @@ class GeckoViewNavigation extends GeckoViewModule {
     debug `handleOpenUri: uri=${aUri && aUri.spec}
                           where=${aWhere} flags=${aFlags}`;
 
-    if (LoadURIDelegate.load(this.eventDispatcher, aUri, aWhere, aFlags,
-                             aTriggeringPrincipal)) {
+    if (LoadURIDelegate.load(this.window, this.eventDispatcher,
+                             aUri, aWhere, aFlags)) {
       return null;
     }
 

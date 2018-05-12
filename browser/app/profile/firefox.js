@@ -80,6 +80,10 @@ pref("extensions.webextensions.default-content-security-policy", "script-src 'se
 pref("extensions.webextensions.remote", true);
 #endif
 
+#ifdef NIGHTLY_BUILD
+pref("extensions.webextensions.background-delayed-startup", true);
+#endif
+
 // Extensions that should not be flagged as legacy in about:addons
 pref("extensions.legacy.exceptions", "testpilot@cliqz.com,@testpilot-containers,jid1-NeEaf3sAHdKHPA@jetpack,@activity-streams,pulse@mozilla.com,@testpilot-addon,@min-vid,tabcentertest1@mozilla.com,snoozetabs@mozilla.com,speaktome@mozilla.com,hoverpad@mozilla.com");
 
@@ -251,11 +255,12 @@ pref("browser.startup.homepage",            "chrome://branding/locale/browsercon
 pref("browser.startup.firstrunSkipsHomepage", true);
 
 // Show an about:blank window as early as possible for quick startup feedback.
-#ifdef XP_MACOSX
+// Held to nightly and early beta on Linux due to bug 1450626.
 // Disabled on Mac because the bouncing dock icon already provides feedback.
-pref("browser.startup.blankWindow", false);
-#else
+#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK) && defined(EARLY_BETA_OR_EARLIER)
 pref("browser.startup.blankWindow", true);
+#else
+pref("browser.startup.blankWindow", false);
 #endif
 
 pref("browser.slowStartup.notificationDisabled", false);
@@ -382,9 +387,6 @@ pref("browser.helperApps.deleteTempFileOnExit", true);
 // search engines URL
 pref("browser.search.searchEnginesURL",      "https://addons.mozilla.org/%LOCALE%/firefox/search-engines/");
 
-// pointer to the default engine name
-pref("browser.search.defaultenginename",      "chrome://browser-region/locale/region.properties");
-
 // Ordering of Search Engines in the Engine list.
 pref("browser.search.order.1",                "chrome://browser-region/locale/region.properties");
 pref("browser.search.order.2",                "chrome://browser-region/locale/region.properties");
@@ -394,8 +396,7 @@ pref("browser.search.order.3",                "chrome://browser-region/locale/re
 pref("browser.search.geoSpecificDefaults", true);
 pref("browser.search.geoSpecificDefaults.url", "https://search.services.mozilla.com/1/%APP%/%VERSION%/%CHANNEL%/%LOCALE%/%REGION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%");
 
-// US specific default (used as a fallback if the geoSpecificDefaults request fails).
-pref("browser.search.defaultenginename.US",      "data:text/plain,browser.search.defaultenginename.US=Google");
+// US specific default
 pref("browser.search.order.US.1",                "data:text/plain,browser.search.order.US.1=Google");
 pref("browser.search.order.US.2",                "data:text/plain,browser.search.order.US.2=Bing");
 
@@ -454,6 +455,7 @@ pref("browser.link.open_newwindow.disabled_in_fullscreen", false);
 #endif
 
 // Tabbed browser
+pref("browser.tabs.multiselect", false);
 pref("browser.tabs.20FpsThrobber", false);
 pref("browser.tabs.30FpsThrobber", false);
 pref("browser.tabs.closeTabByDblclick", false);
@@ -626,8 +628,9 @@ pref("browser.snapshots.limit", 0);
 // 0: Nothing happens
 // 1: Scrolling contents
 // 2: Go back or go forward, in your history
-// 3: Zoom in or out.
+// 3: Zoom in or out (reflowing zoom).
 // 4: Treat vertical wheel as horizontal scroll
+// 5: Zoom in or out (pinch zoom).
 #ifdef XP_MACOSX
 // On macOS, if the wheel has one axis only, shift+wheel comes through as a
 // horizontal scroll event. Thus, we can't assign anything other than normal
@@ -1303,11 +1306,6 @@ pref("pdfjs.firstRun", true);
 // became the default.
 pref("pdfjs.previousHandler.preferredAction", 0);
 pref("pdfjs.previousHandler.alwaysAskBeforeHandling", false);
-
-// The maximum amount of decoded image data we'll willingly keep around (we
-// might keep around more than this, but we'll try to get down to this value).
-// (This is intentionally on the high side; see bug 746055.)
-pref("image.mem.max_decoded_image_kb", 256000);
 
 // Is the sidebar positioned ahead of the content browser
 pref("sidebar.position_start", true);

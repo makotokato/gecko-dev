@@ -219,7 +219,7 @@ XULDocument::~XULDocument()
 nsresult
 NS_NewXULDocument(nsIDocument** result)
 {
-    NS_PRECONDITION(result != nullptr, "null ptr");
+    MOZ_ASSERT(result != nullptr, "null ptr");
     if (! result)
         return NS_ERROR_NULL_POINTER;
 
@@ -1161,41 +1161,6 @@ XULDocument::Persist(const nsAString& aID,
     aRv = Persist(element, nameSpaceID, tag);
 }
 
-enum class ConversionDirection {
-    InnerToOuter,
-    OuterToInner,
-};
-
-static void
-ConvertWindowSize(nsIXULWindow* aWin,
-                  nsAtom* aAttr,
-                  ConversionDirection aDirection,
-                  nsAString& aInOutString)
-{
-    MOZ_ASSERT(aWin);
-    MOZ_ASSERT(aAttr == nsGkAtoms::width || aAttr == nsGkAtoms::height);
-
-    nsresult rv;
-    int32_t size = aInOutString.ToInteger(&rv);
-    if (NS_FAILED(rv)) {
-        return;
-    }
-
-    int32_t sizeDiff = aAttr == nsGkAtoms::width
-        ? aWin->GetOuterToInnerWidthDifferenceInCSSPixels()
-        : aWin->GetOuterToInnerHeightDifferenceInCSSPixels();
-
-    if (!sizeDiff) {
-        return;
-    }
-
-    int32_t multiplier =
-        aDirection == ConversionDirection::InnerToOuter ? 1 : - 1;
-
-    CopyASCIItoUTF16(nsPrintfCString("%d", size + multiplier * sizeDiff),
-                     aInOutString);
-}
-
 nsresult
 XULDocument::Persist(Element* aElement, int32_t aNameSpaceID,
                      nsAtom* aAttribute)
@@ -1236,16 +1201,9 @@ XULDocument::Persist(Element* aElement, int32_t aNameSpaceID,
         return mLocalStore->RemoveValue(uri, id, attrstr);
     }
 
-    // Make sure we store the <window> attributes as outer window size, see
-    // bug 1444525 & co.
-    if (aElement->IsXULElement(nsGkAtoms::window) &&
-        (aAttribute == nsGkAtoms::width || aAttribute == nsGkAtoms::height)) {
-        if (nsCOMPtr<nsIXULWindow> win = GetXULWindowIfToplevelChrome()) {
-            ConvertWindowSize(win,
-                              aAttribute,
-                              ConversionDirection::InnerToOuter,
-                              valuestr);
-        }
+    // Persisting attributes to windows is handled by nsXULWindow.
+    if (aElement->IsXULElement(nsGkAtoms::window)) {
+        return NS_OK;
     }
 
     return mLocalStore->SetValue(uri, id, attrstr, valuestr);
@@ -1622,7 +1580,7 @@ XULDocument::MatchAttribute(Element* aElement,
                             nsAtom* aAttrName,
                             void* aData)
 {
-    NS_PRECONDITION(aElement, "Must have content node to work with!");
+    MOZ_ASSERT(aElement, "Must have content node to work with!");
     nsString* attrValue = static_cast<nsString*>(aData);
     if (aNamespaceID != kNameSpaceID_Unknown &&
         aNamespaceID != kNameSpaceID_Wildcard) {
@@ -1837,21 +1795,9 @@ XULDocument::ApplyPersistentAttributesToElements(const nsAString &aID,
                  continue;
             }
 
-            // Convert attributes from outer size to inner size for top-level
-            // windows, see bug 1444525 & co.
-            if (element->IsXULElement(nsGkAtoms::window) &&
-                (attr == nsGkAtoms::width || attr == nsGkAtoms::height)) {
-                if (nsCOMPtr<nsIXULWindow> win = GetXULWindowIfToplevelChrome()) {
-                    nsAutoString maybeConvertedValue = value;
-                    ConvertWindowSize(win,
-                                      attr,
-                                      ConversionDirection::OuterToInner,
-                                      maybeConvertedValue);
-                    Unused <<
-                        element->SetAttr(kNameSpaceID_None, attr, maybeConvertedValue, true);
-
-                    continue;
-                }
+            // Applying persistent attributes to windows is handled by nsXULWindow.
+            if (element->IsXULElement(nsGkAtoms::window)) {
+                continue;
             }
 
             Unused << element->SetAttr(kNameSpaceID_None, attr, value, true);
@@ -2048,8 +1994,8 @@ nsresult
 XULDocument::CreateAndInsertPI(const nsXULPrototypePI* aProtoPI,
                                nsINode* aParent, nsINode* aBeforeThis)
 {
-    NS_PRECONDITION(aProtoPI, "null ptr");
-    NS_PRECONDITION(aParent, "null ptr");
+    MOZ_ASSERT(aProtoPI, "null ptr");
+    MOZ_ASSERT(aParent, "null ptr");
 
     RefPtr<ProcessingInstruction> node =
         NS_NewXMLProcessingInstruction(mNodeInfoManager, aProtoPI->mTarget,
@@ -2739,8 +2685,8 @@ XULDocument::GetXULWindowIfToplevelChrome() const
 nsresult
 XULDocument::DoneWalking()
 {
-    NS_PRECONDITION(mPendingSheets == 0, "there are sheets to be loaded");
-    NS_PRECONDITION(!mStillWalking, "walk not done");
+    MOZ_ASSERT(mPendingSheets == 0, "there are sheets to be loaded");
+    MOZ_ASSERT(!mStillWalking, "walk not done");
 
     // XXXldb This is where we should really be setting the chromehidden
     // attribute.
@@ -2959,7 +2905,7 @@ XULDocument::EndUpdate(nsUpdateType aUpdateType)
 void
 XULDocument::ReportMissingOverlay(nsIURI* aURI)
 {
-    NS_PRECONDITION(aURI, "Must have a URI");
+    MOZ_ASSERT(aURI, "Must have a URI");
 
     NS_ConvertUTF8toUTF16 utfSpec(aURI->GetSpecOrDefault());
     const char16_t* params[] = { utfSpec.get() };
@@ -3265,7 +3211,7 @@ XULDocument::OnScriptCompileComplete(JSScript* aScript, nsresult aStatus)
 nsresult
 XULDocument::ExecuteScript(nsXULPrototypeScript *aScript)
 {
-    NS_PRECONDITION(aScript != nullptr, "null ptr");
+    MOZ_ASSERT(aScript != nullptr, "null ptr");
     NS_ENSURE_TRUE(aScript, NS_ERROR_NULL_POINTER);
     NS_ENSURE_TRUE(mScriptGlobalObject, NS_ERROR_NOT_INITIALIZED);
 
@@ -3306,7 +3252,7 @@ XULDocument::CreateElementFromPrototype(nsXULPrototypeElement* aPrototype,
                                         bool aIsRoot)
 {
     // Create a content model element from a prototype element.
-    NS_PRECONDITION(aPrototype != nullptr, "null ptr");
+    MOZ_ASSERT(aPrototype != nullptr, "null ptr");
     if (! aPrototype)
         return NS_ERROR_NULL_POINTER;
 

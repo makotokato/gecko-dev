@@ -39,7 +39,7 @@ add_task(async function setup_to_default_browserish_state() {
     }
   }, profileDir);
 
-  startupManager();
+  await promiseStartupManager();
 
   // We can add an LWT only after the Addon Manager was started.
   LightweightThemeManager.currentTheme = {
@@ -223,4 +223,42 @@ add_task(async function uninstall_offers_undo() {
 
   theme.uninstall();
   await promiseRestartManager();
+});
+
+// Test that default_locale works with WE themes
+add_task(async function default_locale_themes() {
+  let addon = await promiseInstallWebExtension({
+    manifest: {
+      applications: {
+        gecko: {
+          id: "locale-theme@tests.mozilla.org",
+        }
+      },
+      default_locale: "en",
+      name: "__MSG_name__",
+      description: "__MSG_description__",
+      theme: {
+        "colors": {
+          "accentcolor": "black",
+          "textcolor": "white",
+        }
+      }
+    },
+    files: {
+      "_locales/en/messages.json": `{
+        "name": {
+          "message": "the name"
+        },
+        "description": {
+          "message": "the description"
+        }
+      }`
+    }
+  });
+
+  addon = await promiseAddonByID(addon.id);
+  equal(addon.name, "the name");
+  equal(addon.description, "the description");
+  equal(addon.type, "theme");
+  addon.uninstall();
 });

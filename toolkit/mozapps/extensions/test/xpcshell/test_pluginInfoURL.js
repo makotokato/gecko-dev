@@ -33,14 +33,12 @@ const PLUGINS = [
  * The entry point of the unit tests, which is also responsible of
  * copying the blocklist file to the profile folder.
  */
-function run_test() {
+add_task(async function setup() {
   copyBlocklistToProfile(do_get_file("data/pluginInfoURL_block.xml"));
 
   createAppInfo("xpcshell@tests.mozilla.org", "XPCShell", "3", "8");
-  startupManager();
-
-  run_next_test();
-}
+  await promiseStartupManager();
+});
 
 /**
  * Test that the blocklist service correctly loads and returns the infoURL for
@@ -71,8 +69,10 @@ add_task(async function test_altInfoURL() {
  * if the infoURL tag is missing in the blocklist.xml file.
  */
 add_task(async function test_infoURL_missing() {
-  Assert.strictEqual(await Blocklist.getPluginBlockURL(PLUGINS[2]),
-    "https://blocked.cdn.mozilla.net/test_plugin_noInfoURL.html",
+  let fallback_URL = Services.prefs.getStringPref("extensions.blocklist.detailsURL")
+    + "test_plugin_noInfoURL.html";
+
+  Assert.strictEqual(await Blocklist.getPluginBlockURL(PLUGINS[2]), fallback_URL,
     "Should be using fallback when no infoURL tag is available.");
 });
 

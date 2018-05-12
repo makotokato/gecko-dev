@@ -15,6 +15,8 @@ treeherder:
         'M-V': 'Mochitests on Valgrind'
         'R': 'Reftests'
         'R-e10s': 'Reftests with e10s'
+        'Rap': 'Raptor performance tests on Firefox'
+        'Rap-e10s': 'Raptor performance tests on Firefox with e10s'
         'T': 'Talos performance tests'
         'Tsd': 'Talos performance tests with Stylo disabled'
         'Tss': 'Talos performance tests with Stylo sequential'
@@ -38,8 +40,10 @@ treeherder:
         'BMR-L10n': 'Beetmover repackages for locales'
         'c-Up': 'Balrog submission of complete updates'
         'cs': 'Checksum signing'
+        'css': 'Checksum signing for source'
         'rs': 'Repackage signing'
-        'BMcs': 'Beetmover checksums,'
+        'BMcs': 'Beetmover checksums'
+        'BMcss': 'Beetmover checksums for source'
         'Aries': 'Aries Device Image'
         'Deb7': 'Packages for Debian 7'
         'Deb9': 'Packages for Debian 9'
@@ -60,6 +64,7 @@ treeherder:
         'Rel': 'Release promotion'
         'Snap': 'Snap image generation'
         'langpack': 'Langpack sigatures and uploads'
+        'TPS': 'Sync tests'
 
 index:
     products:
@@ -101,6 +106,12 @@ try:
             - 'sm-plain-win32'
             - 'sm-compacting-win32'
 
+release-promotion:
+    products:
+        - 'devedition'
+        - 'fennec'
+        - 'firefox'
+
 scriptworker:
     # See additional configuration in taskcluster/taskgraph/util/scriptworker.py
     scope-prefix: 'project:releng'
@@ -125,3 +136,12 @@ scriptworker:
             - 'project:releng:balrog:server:esr'
         'scriptworker-prov-v1/balrog-dev':
             - 'project:releng:balrog:server:dep'
+
+
+partner:
+    release:
+        release-partner-repack: git@github.com:mozilla-partners/repack-manifests.git
+        release-eme-free-repack: git@github.com:mozilla-partners/mozilla-EME-free-manifest
+    staging:
+        release-partner-repack: git@github.com:mozilla-releng/staging-repack-manifests.git
+        release-eme-free-repack: git@github.com:mozilla-releng/staging-repack-manifests.git

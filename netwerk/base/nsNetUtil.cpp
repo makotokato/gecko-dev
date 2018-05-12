@@ -2312,8 +2312,8 @@ NS_NewNotificationCallbacksAggregation(nsIInterfaceRequestor  *callbacks,
 nsresult
 NS_DoImplGetInnermostURI(nsINestedURI *nestedURI, nsIURI **result)
 {
-    NS_PRECONDITION(nestedURI, "Must have a nested URI!");
-    NS_PRECONDITION(!*result, "Must have null *result");
+    MOZ_ASSERT(nestedURI, "Must have a nested URI!");
+    MOZ_ASSERT(!*result, "Must have null *result");
 
     nsCOMPtr<nsIURI> inner;
     nsresult rv = nestedURI->GetInnerURI(getter_AddRefs(inner));
@@ -2343,70 +2343,10 @@ NS_ImplGetInnermostURI(nsINestedURI *nestedURI, nsIURI **result)
     return NS_DoImplGetInnermostURI(nestedURI, result);
 }
 
-nsresult
-NS_EnsureSafeToReturn(nsIURI *uri, nsIURI **result)
-{
-    NS_PRECONDITION(uri, "Must have a URI");
-
-    // Assume mutable until told otherwise
-    bool isMutable = true;
-    nsCOMPtr<nsIMutable> mutableObj(do_QueryInterface(uri));
-    if (mutableObj) {
-        nsresult rv = mutableObj->GetMutable(&isMutable);
-        isMutable = NS_FAILED(rv) || isMutable;
-    }
-
-    if (!isMutable) {
-        NS_ADDREF(*result = uri);
-        return NS_OK;
-    }
-
-    nsresult rv = uri->Clone(result);
-    if (NS_SUCCEEDED(rv) && !*result) {
-        NS_ERROR("nsIURI.clone contract was violated");
-        return NS_ERROR_UNEXPECTED;
-    }
-
-    return rv;
-}
-
-void
-NS_TryToSetImmutable(nsIURI *uri)
-{
-    nsCOMPtr<nsIMutable> mutableObj(do_QueryInterface(uri));
-    if (mutableObj) {
-        mutableObj->SetMutable(false);
-    }
-}
-
-already_AddRefed<nsIURI>
-NS_TryToMakeImmutable(nsIURI *uri,
-                      nsresult *outRv /* = nullptr */)
-{
-    nsresult rv;
-    nsCOMPtr<nsINetUtil> util = do_GetNetUtil(&rv);
-
-    nsCOMPtr<nsIURI> result;
-    if (NS_SUCCEEDED(rv)) {
-        NS_ASSERTION(util, "do_GetNetUtil lied");
-        rv = util->ToImmutableURI(uri, getter_AddRefs(result));
-    }
-
-    if (NS_FAILED(rv)) {
-        result = uri;
-    }
-
-    if (outRv) {
-        *outRv = rv;
-    }
-
-    return result.forget();
-}
-
 already_AddRefed<nsIURI>
 NS_GetInnermostURI(nsIURI *aURI)
 {
-    NS_PRECONDITION(aURI, "Must have URI");
+    MOZ_ASSERT(aURI, "Must have URI");
 
     nsCOMPtr<nsIURI> uri = aURI;
 

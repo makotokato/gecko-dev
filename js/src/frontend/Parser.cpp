@@ -979,6 +979,10 @@ TraceParser(JSTracer* trc, AutoGCRooter* parser)
 bool
 ParserBase::setSourceMapInfo()
 {
+    // Not all clients initialize ss. Can't update info to an object that isn't there.
+    if (!ss)
+        return true;
+
     if (anyChars.hasDisplayURL()) {
         if (!ss->setDisplayURL(context, anyChars.displayURL()))
             return false;
@@ -9162,7 +9166,11 @@ void
 GeneralParser<ParseHandler, CharT>::checkDestructuringAssignmentName(Node name, TokenPos namePos,
                                                                      PossibleError* possibleError)
 {
-    MOZ_ASSERT(handler.isName(name));
+#ifdef DEBUG
+    // GCC 8.0.1 crashes if this is a one-liner.
+    bool isName = handler.isName(name);
+    MOZ_ASSERT(isName);
+#endif
 
     // Return early if a pending destructuring error is already present.
     if (possibleError->hasPendingDestructuringError())

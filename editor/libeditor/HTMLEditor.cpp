@@ -11,6 +11,7 @@
 #include "mozilla/EditorDOMPoint.h"
 #include "mozilla/EventStates.h"
 #include "mozilla/mozInlineSpellChecker.h"
+#include "mozilla/Telemetry.h"
 #include "mozilla/TextEvents.h"
 
 #include "nsCRT.h"
@@ -103,15 +104,18 @@ HTMLEditor::HTMLEditor()
   : mCRInParagraphCreatesParagraph(false)
   , mCSSAware(false)
   , mSelectedCellIndex(0)
+  , mHasShownResizers(false)
   , mIsObjectResizingEnabled(true)
   , mIsResizing(false)
   , mPreserveRatio(false)
   , mResizedObjectIsAnImage(false)
   , mIsAbsolutelyPositioningEnabled(true)
   , mResizedObjectIsAbsolutelyPositioned(false)
+  , mHasShownGrabber(false)
   , mGrabberClicked(false)
   , mIsMoving(false)
   , mSnapToGridEnabled(false)
+  , mHasShownInlineTableEditor(false)
   , mIsInlineTableEditingEnabled(true)
   , mOriginalX(0)
   , mOriginalY(0)
@@ -127,6 +131,9 @@ HTMLEditor::HTMLEditor()
   , mYIncrementFactor(0)
   , mWidthIncrementFactor(0)
   , mHeightIncrementFactor(0)
+  , mResizerUsedCount(0)
+  , mGrabberUsedCount(0)
+  , mInlineTableEditorUsedCount(0)
   , mInfoXIncrement(20)
   , mInfoYIncrement(20)
   , mPositionedObjectX(0)
@@ -164,6 +171,31 @@ HTMLEditor::~HTMLEditor()
   RemoveEventListeners();
 
   HideAnonymousEditingUIs();
+
+  Telemetry::Accumulate(
+    Telemetry::HTMLEDITORS_WITH_RESIZERS,
+    mHasShownResizers ? 1 : 0);
+  if (mHasShownResizers) {
+    Telemetry::Accumulate(
+      Telemetry::HTMLEDITORS_WHOSE_RESIZERS_USED_BY_USER,
+      mResizerUsedCount);
+  }
+  Telemetry::Accumulate(
+    Telemetry::HTMLEDITORS_WITH_ABSOLUTE_POSITIONER,
+    mHasShownGrabber ? 1 : 0);
+  if (mHasShownGrabber) {
+    Telemetry::Accumulate(
+      Telemetry::HTMLEDITORS_WHOSE_ABSOLUTE_POSITIONER_USED_BY_USER,
+      mGrabberUsedCount);
+  }
+  Telemetry::Accumulate(
+    Telemetry::HTMLEDITORS_WITH_INLINE_TABLE_EDITOR,
+    mHasShownInlineTableEditor ? 1 : 0);
+  if (mHasShownInlineTableEditor) {
+    Telemetry::Accumulate(
+      Telemetry::HTMLEDITORS_WHOSE_INLINE_TABLE_EDITOR_USED_BY_USER,
+      mInlineTableEditorUsedCount);
+  }
 }
 
 void
@@ -325,22 +357,17 @@ HTMLEditor::PreDestroy(bool aDestroyingFrames)
 }
 
 NS_IMETHODIMP
-HTMLEditor::NotifySelectionChanged(nsIDOMDocument* aDOMDocument,
-                                   nsISelection* aSelection,
+HTMLEditor::NotifySelectionChanged(nsIDocument* aDocument,
+                                   Selection* aSelection,
                                    int16_t aReason)
 {
-  if (NS_WARN_IF(!aDOMDocument) || NS_WARN_IF(!aSelection)) {
+  if (NS_WARN_IF(!aDocument) || NS_WARN_IF(!aSelection)) {
     return NS_ERROR_INVALID_ARG;
-  }
-
-  RefPtr<Selection> selection = aSelection->AsSelection();
-  if (NS_WARN_IF(!selection)) {
-    return NS_ERROR_UNEXPECTED;
   }
 
   if (mTypeInState) {
     RefPtr<TypeInState> typeInState = mTypeInState;
-    typeInState->OnSelectionChange(*selection);
+    typeInState->OnSelectionChange(*aSelection);
 
     // We used a class which derived from nsISelectionListener to call
     // HTMLEditor::CheckSelectionStateForAnonymousButtons().  The lifetime of
@@ -354,7 +381,7 @@ HTMLEditor::NotifySelectionChanged(nsIDOMDocument* aDOMDocument,
       // FYI: This is an XPCOM method.  So, the caller, Selection, guarantees
       //      the lifetime of this instance.  So, don't need to grab this with
       //      local variable.
-      CheckSelectionStateForAnonymousButtons(selection);
+      CheckSelectionStateForAnonymousButtons(aSelection);
     }
   }
 
@@ -363,7 +390,7 @@ HTMLEditor::NotifySelectionChanged(nsIDOMDocument* aDOMDocument,
     updater->OnSelectionChange();
   }
 
-  return EditorBase::NotifySelectionChanged(aDOMDocument, aSelection, aReason);
+  return EditorBase::NotifySelectionChanged(aDocument, aSelection, aReason);
 }
 
 void
@@ -391,8 +418,8 @@ HTMLEditor::FindSelectionRoot(nsINode* aNode)
     return nullptr;
   }
 
-  NS_PRECONDITION(aNode->IsDocument() || aNode->IsContent(),
-                  "aNode must be content or document node");
+  MOZ_ASSERT(aNode->IsDocument() || aNode->IsContent(),
+             "aNode must be content or document node");
 
   nsCOMPtr<nsIDocument> doc = aNode->GetComposedDoc();
   if (!doc) {
@@ -1132,7 +1159,7 @@ HTMLEditor::InsertBrElementAtSelectionWithTransaction()
   RefPtr<Selection> selection = GetSelection();
   NS_ENSURE_STATE(selection);
 
-  if (!selection->Collapsed()) {
+  if (!selection->IsCollapsed()) {
     nsresult rv = DeleteSelectionAsAction(eNone, eStrip);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
@@ -1567,9 +1594,9 @@ HTMLEditor::InsertElementAtSelection(Element* aElement,
       // We collapse to insert element BEFORE the selection
       // For all other tags, we insert AFTER the selection
       if (HTMLEditUtils::IsNamedAnchor(aElement)) {
-        selection->CollapseToStart();
+        selection->CollapseToStart(IgnoreErrors());
       } else {
-        selection->CollapseToEnd();
+        selection->CollapseToEnd(IgnoreErrors());
       }
     }
 
@@ -1802,7 +1829,7 @@ HTMLEditor::GetCSSBackgroundColorState(bool* aMixed,
 
   // is the selection collapsed?
   nsCOMPtr<nsINode> nodeToExamine;
-  if (selection->Collapsed() || IsTextNode(parent)) {
+  if (selection->IsCollapsed() || IsTextNode(parent)) {
     // we want to look at the parent and ancestors
     nodeToExamine = parent;
   } else {
@@ -1998,7 +2025,7 @@ HTMLEditor::MakeOrChangeList(const nsAString& aListType,
     return rv;
   }
 
-  if (!handled && selection->Collapsed()) {
+  if (!handled && selection->IsCollapsed()) {
     nsRange* firstRange = selection->GetRangeAt(0);
     if (NS_WARN_IF(!firstRange)) {
       return NS_ERROR_FAILURE;
@@ -2166,7 +2193,7 @@ HTMLEditor::InsertBasicBlockWithTransaction(nsAtom& aTagName)
     return rv;
   }
 
-  if (!handled && selection->Collapsed()) {
+  if (!handled && selection->IsCollapsed()) {
     nsRange* firstRange = selection->GetRangeAt(0);
     if (NS_WARN_IF(!firstRange)) {
       return NS_ERROR_FAILURE;
@@ -2253,7 +2280,7 @@ HTMLEditor::Indent(const nsAString& aIndent)
     return rv;
   }
 
-  if (!handled && selection->Collapsed() && aIndent.EqualsLiteral("indent")) {
+  if (!handled && selection->IsCollapsed() && aIndent.EqualsLiteral("indent")) {
     nsRange* firstRange = selection->GetRangeAt(0);
     if (NS_WARN_IF(!firstRange)) {
       return NS_ERROR_FAILURE;
@@ -2468,7 +2495,7 @@ HTMLEditor::GetSelectedElement(const nsAString& aTagName,
   RefPtr<Selection> selection = GetSelection();
   NS_ENSURE_TRUE(selection, NS_ERROR_NULL_POINTER);
 
-  bool isCollapsed = selection->Collapsed();
+  bool isCollapsed = selection->IsCollapsed();
 
   nsAutoString domTagName;
   nsAutoString TagName(aTagName);
@@ -2705,7 +2732,7 @@ HTMLEditor::InsertLinkAroundSelection(Element* aAnchorElement)
   RefPtr<Selection> selection = GetSelection();
   NS_ENSURE_TRUE(selection, NS_ERROR_NULL_POINTER);
 
-  if (selection->Collapsed()) {
+  if (selection->IsCollapsed()) {
     NS_WARNING("InsertLinkAroundSelection called but there is no selection!!!");
     return NS_OK;
   }
@@ -3547,8 +3574,7 @@ HTMLEditor::SelectAll()
   nsIContent* anchorContent = anchorNode->AsContent();
   nsIContent* rootContent;
   if (anchorContent->HasIndependentSelection()) {
-    nsresult rv = selection->SetAncestorLimiter(nullptr);
-    NS_ENSURE_SUCCESS(rv, rv);
+    selection->SetAncestorLimiter(nullptr);
     rootContent = mRootElement;
   } else {
     nsCOMPtr<nsIPresShell> ps = GetPresShell();
@@ -3649,7 +3675,7 @@ HTMLEditor::GetEnclosingTable(nsINode* aNode)
 nsIDOMNode*
 HTMLEditor::GetEnclosingTable(nsIDOMNode* aNode)
 {
-  NS_PRECONDITION(aNode, "null node passed to HTMLEditor::GetEnclosingTable");
+  MOZ_ASSERT(aNode, "null node passed to HTMLEditor::GetEnclosingTable");
   nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
   NS_ENSURE_TRUE(node, nullptr);
   nsCOMPtr<Element> table = GetEnclosingTable(node);
@@ -4326,7 +4352,7 @@ HTMLEditor::SetCSSBackgroundColorWithTransaction(const nsAString& aColor)
   RefPtr<Selection> selection = GetSelection();
   NS_ENSURE_STATE(selection);
 
-  bool isCollapsed = selection->Collapsed();
+  bool isCollapsed = selection->IsCollapsed();
 
   AutoPlaceholderBatch batchIt(this);
   AutoRules beginRulesSniffing(this, EditAction::insertElement,
@@ -4677,7 +4703,7 @@ HTMLEditor::GetSelectionContainer()
 
   nsCOMPtr<nsINode> focusNode;
 
-  if (selection->Collapsed()) {
+  if (selection->IsCollapsed()) {
     focusNode = selection->GetFocusNode();
   } else {
     int32_t rangeCount = selection->RangeCount();

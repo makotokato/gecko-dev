@@ -1,4 +1,3 @@
-use std::env;
 use std::ffi::{CStr, CString};
 use std::{mem, slice};
 use std::path::PathBuf;
@@ -20,8 +19,6 @@ use moz2d_renderer::Moz2dImageRenderer;
 use app_units::Au;
 use rayon;
 use euclid::SideOffsets2D;
-use log;
-use env_logger::filter::Filter;
 
 #[cfg(target_os = "windows")]
 use dwrote::{FontDescriptor, FontWeight, FontStretch, FontStyle};
@@ -483,7 +480,6 @@ extern "C" {
     #[allow(dead_code)]
     fn gfx_critical_error(msg: *const c_char);
     fn gfx_critical_note(msg: *const c_char);
-    fn gecko_printf_stderr_output(msg: *const c_char);
 }
 
 struct CppNotifier {
@@ -985,8 +981,7 @@ pub unsafe extern "C" fn wr_api_shut_down(dh: &mut DocumentHandle) {
     dh.api.shut_down();
 }
 
-#[no_mangle]
-pub extern "C" fn wr_transaction_new(do_async: bool) -> *mut Transaction {
+fn make_transaction(do_async: bool) -> Transaction {
     let mut transaction = Transaction::new();
     // Ensure that we either use async scene building or not based on the
     // gecko pref, regardless of what the default is. We can remove this once
@@ -996,7 +991,12 @@ pub extern "C" fn wr_transaction_new(do_async: bool) -> *mut Transaction {
     } else {
         transaction.skip_scene_builder();
     }
-    Box::into_raw(Box::new(transaction))
+    transaction
+}
+
+#[no_mangle]
+pub extern "C" fn wr_transaction_new(do_async: bool) -> *mut Transaction {
+    Box::into_raw(Box::new(make_transaction(do_async)))
 }
 
 /// cbindgen:postfix=WR_DESTRUCTOR_SAFE_FUNC
@@ -1294,12 +1294,14 @@ pub extern "C" fn wr_resource_updates_delete_image(
 #[no_mangle]
 pub extern "C" fn wr_api_send_transaction(
     dh: &mut DocumentHandle,
-    transaction: &mut Transaction
+    transaction: &mut Transaction,
+    is_async: bool
 ) {
     if transaction.is_empty() {
         return;
     }
-    let txn = mem::replace(transaction, Transaction::new());
+    let new_txn = make_transaction(is_async);
+    let txn = mem::replace(transaction, new_txn);
     dh.api.send_transaction(dh.document_id, txn);
 }
 
@@ -1581,7 +1583,10 @@ pub extern "C" fn wr_dp_push_stacking_context(state: &mut WrState,
                                               mix_blend_mode: MixBlendMode,
                                               filters: *const WrFilterOp,
                                               filter_count: usize,
-                                              is_backface_visible: bool) {
+                                              is_backface_visible: bool,
+                                              glyph_raster_space: GlyphRasterSpace,
+                                              out_is_reference_frame: &mut bool,
+                                              out_reference_frame_id: &mut usize) {
     debug_assert!(unsafe { !is_in_render_thread() });
 
     let c_filters = make_slice(filters, filter_count);
@@ -1641,7 +1646,7 @@ pub extern "C" fn wr_dp_push_stacking_context(state: &mut WrState,
     prim_info.is_backface_visible = is_backface_visible;
     prim_info.tag = state.current_tag;
 
-    state.frame_builder
+    let ref_frame_id = state.frame_builder
          .dl_builder
          .push_stacking_context(&prim_info,
                                 clip_node_id,
@@ -1651,7 +1656,14 @@ pub extern "C" fn wr_dp_push_stacking_context(state: &mut WrState,
                                 perspective,
                                 mix_blend_mode,
                                 filters,
-                                GlyphRasterSpace::Screen);
+                                glyph_raster_space);
+    if let Some(ClipId::Clip(id, pipeline_id)) = ref_frame_id {
+        assert!(pipeline_id == state.pipeline_id);
+        *out_is_reference_frame = true;
+        *out_reference_frame_id = id;
+    } else {
+        *out_is_reference_frame = false;
+    }
 }
 
 #[no_mangle]
@@ -1660,31 +1672,23 @@ pub extern "C" fn wr_dp_pop_stacking_context(state: &mut WrState) {
     state.frame_builder.dl_builder.pop_stacking_context();
 }
 
-fn make_scroll_info(state: &mut WrState,
-                    scroll_id: Option<&usize>,
-                    clip_id: Option<&usize>)
-                    -> Option<ClipAndScrollInfo> {
-    if let Some(&sid) = scroll_id {
-        if let Some(&cid) = clip_id {
-            Some(ClipAndScrollInfo::new(
-                ClipId::Clip(sid , state.pipeline_id),
-                ClipId::Clip(cid, state.pipeline_id)))
-        } else {
-            Some(ClipAndScrollInfo::simple(
-                ClipId::Clip(sid, state.pipeline_id)))
-        }
-    } else if let Some(&cid) = clip_id {
-        Some(ClipAndScrollInfo::simple(
-            ClipId::Clip(cid, state.pipeline_id)))
-    } else {
-        None
-    }
+#[no_mangle]
+pub extern "C" fn wr_dp_define_clipchain(state: &mut WrState,
+                                         parent_clipchain_id: *const u64,
+                                         clips: *const usize,
+                                         clips_count: usize)
+                                         -> u64 {
+    debug_assert!(unsafe { is_in_main_thread() });
+    let parent = unsafe { parent_clipchain_id.as_ref() }.map(|id| ClipChainId(*id, state.pipeline_id));
+    let clips_slice : Vec<ClipId> = make_slice(clips, clips_count).iter().map(|id| ClipId::Clip(*id, state.pipeline_id)).collect();
+    let clipchain_id = state.frame_builder.dl_builder.define_clip_chain(parent, clips_slice);
+    assert!(clipchain_id.1 == state.pipeline_id);
+    clipchain_id.0
 }
 
 #[no_mangle]
 pub extern "C" fn wr_dp_define_clip(state: &mut WrState,
-                                    ancestor_scroll_id: *const usize,
-                                    ancestor_clip_id: *const usize,
+                                    parent_id: *const usize,
                                     clip_rect: LayoutRect,
                                     complex: *const ComplexClipRegion,
                                     complex_count: usize,
@@ -1692,17 +1696,15 @@ pub extern "C" fn wr_dp_define_clip(state: &mut WrState,
                                     -> usize {
     debug_assert!(unsafe { is_in_main_thread() });
 
-    let info = make_scroll_info(state,
-                                unsafe { ancestor_scroll_id.as_ref() },
-                                unsafe { ancestor_clip_id.as_ref() });
-
+    let parent_id = unsafe { parent_id.as_ref() };
     let complex_slice = make_slice(complex, complex_count);
     let complex_iter = complex_slice.iter().cloned();
     let mask : Option<ImageMask> = unsafe { mask.as_ref() }.map(|x| x.into());
 
-    let clip_id = if info.is_some() {
+    let clip_id = if let Some(&pid) = parent_id {
         state.frame_builder.dl_builder.define_clip_with_parent(
-            info.unwrap().scroll_node_id, clip_rect, complex_iter, mask)
+            ClipId::Clip(pid, state.pipeline_id),
+            clip_rect, complex_iter, mask)
     } else {
         state.frame_builder.dl_builder.define_clip(clip_rect, complex_iter, mask)
     };
@@ -1761,20 +1763,17 @@ pub extern "C" fn wr_dp_define_sticky_frame(state: &mut WrState,
 #[no_mangle]
 pub extern "C" fn wr_dp_define_scroll_layer(state: &mut WrState,
                                             scroll_id: u64,
-                                            ancestor_scroll_id: *const usize,
-                                            ancestor_clip_id: *const usize,
+                                            parent_id: *const usize,
                                             content_rect: LayoutRect,
                                             clip_rect: LayoutRect)
                                             -> usize {
     assert!(unsafe { is_in_main_thread() });
 
-    let info = make_scroll_info(state,
-                                unsafe { ancestor_scroll_id.as_ref() },
-                                unsafe { ancestor_clip_id.as_ref() });
+    let parent_id = unsafe { parent_id.as_ref() };
 
-    let new_id = if info.is_some() {
+    let new_id = if let Some(&pid) = parent_id {
         state.frame_builder.dl_builder.define_scroll_frame_with_parent(
-            info.unwrap().scroll_node_id,
+            ClipId::Clip(pid, state.pipeline_id),
             Some(ExternalScrollId(scroll_id, state.pipeline_id)),
             content_rect,
             clip_rect,
@@ -1819,11 +1818,19 @@ pub extern "C" fn wr_dp_pop_scroll_layer(state: &mut WrState) {
 #[no_mangle]
 pub extern "C" fn wr_dp_push_clip_and_scroll_info(state: &mut WrState,
                                                   scroll_id: usize,
-                                                  clip_id: *const usize) {
+                                                  clip_chain_id: *const u64) {
     debug_assert!(unsafe { is_in_main_thread() });
-    let info = make_scroll_info(state, Some(&scroll_id), unsafe { clip_id.as_ref() });
-    debug_assert!(info.is_some());
-    state.frame_builder.dl_builder.push_clip_and_scroll_info(info.unwrap());
+
+    let clip_chain_id = unsafe { clip_chain_id.as_ref() };
+    let info = if let Some(&ccid) = clip_chain_id {
+        ClipAndScrollInfo::new(
+            ClipId::Clip(scroll_id, state.pipeline_id),
+            ClipId::ClipChain(ClipChainId(ccid, state.pipeline_id)))
+    } else {
+        ClipAndScrollInfo::simple(
+            ClipId::Clip(scroll_id, state.pipeline_id))
+    };
+    state.frame_builder.dl_builder.push_clip_and_scroll_info(info);
 }
 
 #[no_mangle]
@@ -2076,20 +2083,23 @@ pub extern "C" fn wr_dp_push_border_image(state: &mut WrState,
                                           is_backface_visible: bool,
                                           widths: BorderWidths,
                                           image: WrImageKey,
-                                          patch: NinePatchDescriptor,
+                                          width: u32,
+                                          height: u32,
+                                          slice: SideOffsets2D<u32>,
                                           outset: SideOffsets2D<f32>,
                                           repeat_horizontal: RepeatMode,
                                           repeat_vertical: RepeatMode) {
     debug_assert!(unsafe { is_in_main_thread() });
-    let border_details =
-        BorderDetails::Image(ImageBorder {
-                                 image_key: image,
-                                 patch: patch.into(),
-                                 fill: false,
-                                 outset: outset.into(),
-                                 repeat_horizontal: repeat_horizontal.into(),
-                                 repeat_vertical: repeat_vertical.into(),
-                             });
+    let border_details = BorderDetails::NinePatch(NinePatchBorder {
+        source: NinePatchBorderSource::Image(image),
+        width,
+        height,
+        slice,
+        fill: false,
+        outset: outset.into(),
+        repeat_horizontal: repeat_horizontal.into(),
+        repeat_vertical: repeat_vertical.into(),
+    });
     let mut prim_info = LayoutPrimitiveInfo::with_clip_rect(rect, clip.into());
     prim_info.is_backface_visible = is_backface_visible;
     prim_info.tag = state.current_tag;
@@ -2354,83 +2364,6 @@ extern "C" {
                                dirty_rect: *const DeviceUintRect,
                                output: MutByteSlice)
                                -> bool;
-}
-
-type ExternalMessageHandler = unsafe extern "C" fn(msg: *const c_char);
-
-struct WrExternalLogHandler {
-    error_msg: ExternalMessageHandler,
-    warn_msg: ExternalMessageHandler,
-    info_msg: ExternalMessageHandler,
-    debug_msg: ExternalMessageHandler,
-    trace_msg: ExternalMessageHandler,
-    inner: Filter
-}
-
-impl WrExternalLogHandler {
-    fn new() -> Self {
-        use env_logger::filter::Builder;
-
-        // Filter cration code is borrowed from Servo_Initialize()
-        let mut builder = Builder::new();
-        let default_level = if cfg!(debug_assertions) { "warn" } else { "error" };
-        let builder = match env::var("RUST_LOG") {
-            Ok(v) => builder.parse(&v),
-            _ => builder.parse(default_level),
-        };
-
-        WrExternalLogHandler {
-            error_msg: gfx_critical_note,
-            warn_msg: gecko_printf_stderr_output,
-            info_msg: gecko_printf_stderr_output,
-            debug_msg: gecko_printf_stderr_output,
-            trace_msg: gecko_printf_stderr_output,
-            inner: builder.build(),
-        }
-    }
-
-    fn init() -> Result<(), log::SetLoggerError> {
-        let logger = Self::new();
-
-        log::set_max_level(logger.inner.filter());
-        log::set_boxed_logger(Box::new(logger))
-    }
-}
-
-impl log::Log for WrExternalLogHandler {
-    fn enabled(&self, metadata : &log::Metadata) -> bool {
-        self.inner.enabled(metadata)
-    }
-
-    fn log(&self, record: &log::Record) {
-        if self.enabled(record.metadata()) {
-            // For file path and line, please check the record.location().
-            let msg = CString::new(format!("WR: {}",
-                                           record.args())).unwrap();
-            unsafe {
-                match record.level() {
-                    log::Level::Error => (self.error_msg)(msg.as_ptr()),
-                    log::Level::Warn => (self.warn_msg)(msg.as_ptr()),
-                    log::Level::Info => (self.info_msg)(msg.as_ptr()),
-                    log::Level::Debug => (self.debug_msg)(msg.as_ptr()),
-                    log::Level::Trace => (self.trace_msg)(msg.as_ptr()),
-                }
-            }
-        }
-    }
-
-    fn flush(&self) {
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn wr_init_log_for_gpu_process() {
-    WrExternalLogHandler::init().unwrap();
-}
-
-#[no_mangle]
-pub extern "C" fn wr_shutdown_log_for_gpu_process() {
-    // log does not support shutdown
 }
 
 #[no_mangle]

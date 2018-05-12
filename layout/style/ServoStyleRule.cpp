@@ -92,16 +92,6 @@ ServoStyleRuleDeclaration::DocToUpdate()
   return nullptr;
 }
 
-void
-ServoStyleRuleDeclaration::GetCSSParsingEnvironment(
-  CSSParsingEnvironment& aCSSParseEnv,
-  nsIPrincipal* aSubjectPrincipal)
-{
-  MOZ_ASSERT_UNREACHABLE("GetCSSParsingEnvironment "
-                         "shouldn't be calling for a Servo rule");
-  GetCSSParsingEnvironmentForRule(Rule(), aCSSParseEnv);
-}
-
 nsDOMCSSDeclaration::ServoCSSParsingEnvironment
 ServoStyleRuleDeclaration::GetServoCSSParsingEnvironment(
   nsIPrincipal* aSubjectPrincipal) const
@@ -207,7 +197,6 @@ void
 ServoStyleRule::SetSelectorText(const nsAString& aSelectorText)
 {
   if (RefPtr<StyleSheet> sheet = GetStyleSheet()) {
-    ServoStyleSheet* servoSheet = sheet->AsServo();
     nsIDocument* doc = sheet->GetAssociatedDocument();
 
     mozAutoDocUpdate updateBatch(doc, UPDATE_STYLE, true);
@@ -217,9 +206,8 @@ ServoStyleRule::SetSelectorText(const nsAString& aSelectorText)
     sheet->AssertHasUniqueInner();
     sheet->WillDirty();
 
-    const RawServoStyleSheetContents* contents = servoSheet->RawContents();
+    const RawServoStyleSheetContents* contents = sheet->RawContents();
     if (Servo_StyleRule_SetSelectorText(contents, mRawRule, &aSelectorText)) {
-      sheet->DidDirty();
       sheet->RuleChanged(this);
     }
   }

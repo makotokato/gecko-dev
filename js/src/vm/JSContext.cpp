@@ -269,11 +269,9 @@ PopulateReportBlame(JSContext* cx, JSErrorReport* report)
         return;
 
     report->filename = iter.filename();
-    report->lineno = iter.computeLine(&report->column);
-    // XXX: Make the column 1-based as in other browsers, instead of 0-based
-    // which is how SpiderMonkey stores it internally. This will be
-    // unnecessary once bug 1144340 is fixed.
-    report->column++;
+    uint32_t column;
+    report->lineno = iter.computeLine(&column);
+    report->column = FixupColumnForDisplay(column);
     report->isMuted = iter.mutedErrors();
 }
 
@@ -1286,8 +1284,7 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
     asyncCauseForNewActivations(nullptr),
     asyncCallIsExplicit(false),
     interruptCallbackDisabled(false),
-    interrupt_(false),
-    interruptRegExpJit_(false),
+    interruptBits_(0),
     osrTempData_(nullptr),
     ionReturnOverride_(MagicValue(JS_ARG_POISON)),
     jitStackLimit(UINTPTR_MAX),

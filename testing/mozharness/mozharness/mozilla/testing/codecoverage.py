@@ -194,15 +194,11 @@ class CodeCoverageMixin(SingleTestMixin):
 
         self.gcov_dir, self.jsvm_dir = self.set_coverage_env(os.environ)
 
-    def parse_coverage_artifacts(self, gcov_dir, jsvm_dir, merge=False, output_format='lcov'):
+    def parse_coverage_artifacts(self, gcov_dir, jsvm_dir, merge=False, output_format='lcov', filter_covered=False):
         jsvm_output_file = 'jsvm_lcov_output.info'
         grcov_output_file = 'grcov_lcov_output.info'
 
         dirs = self.query_abs_dirs()
-
-        # Zip gcda files (will be given in input to grcov).
-        file_path_gcda = os.path.join(os.getcwd(), 'code-coverage-gcda.zip')
-        self.run_command(['zip', '-q', '-0', '-r', file_path_gcda, '.'], cwd=gcov_dir)
 
         sys.path.append(dirs['abs_test_install_dir'])
         sys.path.append(os.path.join(dirs['abs_test_install_dir'], 'mozbuild/codecoverage'))
@@ -211,6 +207,15 @@ class CodeCoverageMixin(SingleTestMixin):
         jsvm_files = [os.path.join(jsvm_dir, e) for e in os.listdir(jsvm_dir)]
         rewriter = LcovFileRewriter(os.path.join(self.grcov_dir, 'chrome-map.json'))
         rewriter.rewrite_files(jsvm_files, jsvm_output_file, '')
+
+        # Zip gcda files (will be given in input to grcov).
+        file_path_gcda = os.path.join(os.getcwd(), 'code-coverage-gcda.zip')
+        with zipfile.ZipFile(file_path_gcda, 'w', zipfile.ZIP_STORED) as z:
+            for topdir, _, files in os.walk(gcov_dir):
+                for f in files:
+                    full_path = os.path.join(topdir, f)
+                    rel_path = os.path.relpath(full_path, gcov_dir)
+                    z.write(full_path, rel_path)
 
         # Run grcov on the zipped .gcno and .gcda files.
         grcov_command = [
@@ -230,6 +235,9 @@ class CodeCoverageMixin(SingleTestMixin):
 
         if mozinfo.os == 'win':
             grcov_command += ['--llvm']
+
+        if filter_covered:
+            grcov_command += ['--filter', 'covered']
 
         # 'grcov_output' will be a tuple, the first variable is the path to the lcov output,
         # the other is the path to the standard error output.
@@ -253,7 +261,8 @@ class CodeCoverageMixin(SingleTestMixin):
 
     def add_per_test_coverage_report(self, gcov_dir, jsvm_dir, suite, test):
         grcov_file = self.parse_coverage_artifacts(
-            gcov_dir, jsvm_dir, merge=True, output_format='coveralls'
+            gcov_dir, jsvm_dir, merge=True, output_format='coveralls',
+            filter_covered=True,
         )
 
         report_file = str(uuid.uuid4()) + '.json'
@@ -264,6 +273,23 @@ class CodeCoverageMixin(SingleTestMixin):
         assert test not in self.per_test_reports[suite]
         self.per_test_reports[suite][test] = report_file
 
+    def is_covered(self, sf):
+        # For C/C++ source files, we can consider a file as being uncovered
+        # when all its source lines are uncovered.
+        all_lines_uncovered = all(c is None or c == 0 for c in sf['coverage'])
+        if all_lines_uncovered:
+            return False
+
+        # For JavaScript files, we can't do the same, as the top-level is always
+        # executed, even if it just contains declarations. So, we need to check if
+        # all its functions, except the top-level, are uncovered.
+        functions = sf['functions'] if 'functions' in sf else []
+        all_functions_uncovered = all(not f['exec'] or f['name'] == 'top-level' for f in functions)
+        if all_functions_uncovered and len(functions) > 1:
+            return False
+
+        return True
+
     @PostScriptAction('run-tests')
     def _package_coverage_data(self, action, success=None):
         dirs = self.query_abs_dirs()
@@ -272,15 +298,15 @@ class CodeCoverageMixin(SingleTestMixin):
             # Setup the command for compression
             jsdcov_dir = dirs['abs_blob_upload_dir']
             zipFile = os.path.join(jsdcov_dir, "jsdcov_artifacts.zip")
-            command = ["zip", "-r", "-q", zipFile, ".", "-i", "jscov*.json"]
 
             self.info("Beginning compression of JSDCov artifacts...")
-            self.run_command(command, cwd=jsdcov_dir)
-
-            # Delete already compressed JSCov artifacts.
-            for filename in os.listdir(jsdcov_dir):
-                if filename.startswith("jscov") and filename.endswith(".json"):
-                    os.remove(os.path.join(jsdcov_dir, filename))
+            with zipfile.ZipFile(zipFile, 'w', zipfile.ZIP_DEFLATED) as z:
+                for filename in os.listdir(jsdcov_dir):
+                    if filename.startswith("jscov") and filename.endswith(".json"):
+                        path = os.path.join(jsdcov_dir, filename)
+                        z.write(path, filename)
+                        # Delete already compressed JSCov artifacts.
+                        os.remove(path)
 
             self.info("Completed compression of JSDCov artifacts!")
             self.info("Path to JSDCov compressed artifacts: " + zipFile)
@@ -302,6 +328,9 @@ class CodeCoverageMixin(SingleTestMixin):
 
                         # TODO: Diff this coverage report with the baseline one.
 
+                        # Remove uncovered files, as they are unneeded for per-test coverage purposes.
+                        report['source_files'] = [sf for sf in report['source_files'] if self.is_covered(sf)]
+
                         with open(grcov_file, 'w') as f:
                             json.dump({
                                 'test': test,
@@ -320,13 +349,13 @@ class CodeCoverageMixin(SingleTestMixin):
             grcov_output_file, jsvm_output_file = self.parse_coverage_artifacts(self.gcov_dir, self.jsvm_dir)
 
             # Zip the grcov output and upload it.
-            self.run_command(
-                ['zip', '-q', os.path.join(dirs['abs_blob_upload_dir'], 'code-coverage-grcov.zip'), grcov_output_file]
-            )
+            grcov_zip_path = os.path.join(dirs['abs_blob_upload_dir'], 'code-coverage-grcov.zip')
+            with zipfile.ZipFile(grcov_zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
+                z.write(grcov_output_file)
 
             # Zip the JSVM coverage data and upload it.
-            self.run_command(
-                ['zip', '-q', os.path.join(dirs['abs_blob_upload_dir'], 'code-coverage-jsvm.zip'), jsvm_output_file]
-            )
+            jsvm_zip_path = os.path.join(dirs['abs_blob_upload_dir'], 'code-coverage-jsvm.zip')
+            with zipfile.ZipFile(jsvm_zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
+                z.write(jsvm_output_file)
 
         shutil.rmtree(self.grcov_dir)

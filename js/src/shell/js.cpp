@@ -252,8 +252,8 @@ class js::shell::OffThreadJob {
     ~OffThreadJob();
 
     void cancel();
-    void markDone(void* newToken);
-    void* waitUntilDone(JSContext* cx);
+    void markDone(JS::OffThreadToken* newToken);
+    JS::OffThreadToken* waitUntilDone(JSContext* cx);
 
     char16_t* sourceChars() { return source.as<UniqueTwoByteChars>().get(); }
     JS::TranscodeBuffer& xdrBuffer() { return source.as<JS::TranscodeBuffer>(); }
@@ -265,7 +265,7 @@ class js::shell::OffThreadJob {
   private:
     js::Monitor& monitor;
     State state;
-    void* token;
+    JS::OffThreadToken* token;
     Source source;
 };
 
@@ -433,7 +433,7 @@ OffThreadJob::cancel()
 }
 
 void
-OffThreadJob::markDone(void* newToken)
+OffThreadJob::markDone(JS::OffThreadToken* newToken)
 {
     AutoLockMonitor alm(monitor);
     MOZ_ASSERT(state == RUNNING);
@@ -445,7 +445,7 @@ OffThreadJob::markDone(void* newToken)
     alm.notifyAll();
 }
 
-void*
+JS::OffThreadToken*
 OffThreadJob::waitUntilDone(JSContext* cx)
 {
     AutoLockMonitor alm(monitor);
@@ -4559,7 +4559,7 @@ SyntaxParse(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static void
-OffThreadCompileScriptCallback(void* token, void* callbackData)
+OffThreadCompileScriptCallback(JS::OffThreadToken* token, void* callbackData)
 {
     auto job = static_cast<OffThreadJob*>(callbackData);
     job->markDone(token);
@@ -4666,7 +4666,7 @@ runOffThreadScript(JSContext* cx, unsigned argc, Value* vp)
     if (!job)
         return false;
 
-    void* token = job->waitUntilDone(cx);
+    JS::OffThreadToken* token = job->waitUntilDone(cx);
     MOZ_ASSERT(token);
 
     DeleteOffThreadJob(cx, job);
@@ -4752,7 +4752,7 @@ FinishOffThreadModule(JSContext* cx, unsigned argc, Value* vp)
     if (!job)
         return false;
 
-    void* token = job->waitUntilDone(cx);
+    JS::OffThreadToken* token = job->waitUntilDone(cx);
     MOZ_ASSERT(token);
 
     DeleteOffThreadJob(cx, job);
@@ -4857,7 +4857,7 @@ runOffThreadDecodedScript(JSContext* cx, unsigned argc, Value* vp)
     if (!job)
         return false;
 
-    void* token = job->waitUntilDone(cx);
+    JS::OffThreadToken* token = job->waitUntilDone(cx);
     MOZ_ASSERT(token);
 
     DeleteOffThreadJob(cx, job);
@@ -6215,7 +6215,7 @@ DumpScopeChain(JSContext* cx, unsigned argc, Value* vp)
 // where we can store a JSObject*, and create a new object if one doesn't
 // already exist.
 //
-// Note that ensureGrayRoot() will automatically blacken the returned object,
+// Note that EnsureGrayRoot() will automatically blacken the returned object,
 // so it will not actually end up marked gray until the following GC clears the
 // black bit (assuming nothing is holding onto it.)
 //
@@ -6246,6 +6246,9 @@ EnsureGrayRoot(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     auto priv = EnsureShellCompartmentPrivate(cx);
+    if (!priv)
+        return false;
+
     if (!priv->grayRoot) {
         if (!(priv->grayRoot = NewDenseEmptyArray(cx, nullptr, TenuredObject)))
             return false;

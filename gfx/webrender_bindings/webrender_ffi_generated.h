@@ -612,18 +612,6 @@ struct TypedSideOffsets2D {
 template<typename T>
 using SideOffsets2D = TypedSideOffsets2D<T, UnknownUnit>;
 
-struct NinePatchDescriptor {
-  uint32_t width;
-  uint32_t height;
-  SideOffsets2D<uint32_t> slice;
-
-  bool operator==(const NinePatchDescriptor& aOther) const {
-    return width == aOther.width &&
-           height == aOther.height &&
-           slice == aOther.slice;
-  }
-};
-
 struct Shadow {
   LayoutVector2D offset;
   ColorF color;
@@ -704,6 +692,51 @@ struct WrFilterOp {
   LayoutVector2D offset;
   ColorF color;
   float matrix[20];
+};
+
+union GlyphRasterSpace {
+  enum class Tag : uint32_t {
+    Local,
+    Screen,
+
+    Sentinel /* this must be last for serialization purposes. */
+  };
+
+  struct Local_Body {
+    Tag tag;
+    float _0;
+
+    bool operator==(const Local_Body& aOther) const {
+      return tag == aOther.tag &&
+             _0 == aOther._0;
+    }
+  };
+
+  struct {
+    Tag tag;
+  };
+  Local_Body local;
+
+  static GlyphRasterSpace Local(float const& a0) {
+    GlyphRasterSpace result;
+    result.local._0 = a0;
+    result.tag = Tag::Local;
+    return result;
+  }
+
+  static GlyphRasterSpace Screen() {
+    GlyphRasterSpace result;
+    result.tag = Tag::Screen;
+    return result;
+  }
+
+  bool IsLocal() const {
+    return tag == Tag::Local;
+  }
+
+  bool IsScreen() const {
+    return tag == Tag::Screen;
+  }
 };
 
 struct FontInstanceKey {
@@ -958,8 +991,6 @@ extern void apz_run_updater(WrWindowId aWindowId);
 extern void apz_sample_transforms(WrWindowId aWindowId,
                                   Transaction *aTransaction);
 
-extern void gecko_printf_stderr_output(const char *aMsg);
-
 extern void gecko_profiler_register_thread(const char *aName);
 
 extern void gecko_profiler_unregister_thread();
@@ -1042,7 +1073,8 @@ WR_DESTRUCTOR_SAFE_FUNC;
 
 WR_INLINE
 void wr_api_send_transaction(DocumentHandle *aDh,
-                             Transaction *aTransaction)
+                             Transaction *aTransaction,
+                             bool aIsAsync)
 WR_FUNC;
 
 WR_INLINE
@@ -1067,8 +1099,7 @@ WR_FUNC;
 
 WR_INLINE
 uintptr_t wr_dp_define_clip(WrState *aState,
-                            const uintptr_t *aAncestorScrollId,
-                            const uintptr_t *aAncestorClipId,
+                            const uintptr_t *aParentId,
                             LayoutRect aClipRect,
                             const ComplexClipRegion *aComplex,
                             uintptr_t aComplexCount,
@@ -1076,10 +1107,16 @@ uintptr_t wr_dp_define_clip(WrState *aState,
 WR_FUNC;
 
 WR_INLINE
+uint64_t wr_dp_define_clipchain(WrState *aState,
+                                const uint64_t *aParentClipchainId,
+                                const uintptr_t *aClips,
+                                uintptr_t aClipsCount)
+WR_FUNC;
+
+WR_INLINE
 uintptr_t wr_dp_define_scroll_layer(WrState *aState,
                                     uint64_t aScrollId,
-                                    const uintptr_t *aAncestorScrollId,
-                                    const uintptr_t *aAncestorClipId,
+                                    const uintptr_t *aParentId,
                                     LayoutRect aContentRect,
                                     LayoutRect aClipRect)
 WR_FUNC;
@@ -1150,7 +1187,9 @@ void wr_dp_push_border_image(WrState *aState,
                              bool aIsBackfaceVisible,
                              BorderWidths aWidths,
                              WrImageKey aImage,
-                             NinePatchDescriptor aPatch,
+                             uint32_t aWidth,
+                             uint32_t aHeight,
+                             SideOffsets2D<uint32_t> aSlice,
                              SideOffsets2D<float> aOutset,
                              RepeatMode aRepeatHorizontal,
                              RepeatMode aRepeatVertical)
@@ -1197,7 +1236,7 @@ WR_FUNC;
 WR_INLINE
 void wr_dp_push_clip_and_scroll_info(WrState *aState,
                                      uintptr_t aScrollId,
-                                     const uintptr_t *aClipId)
+                                     const uint64_t *aClipChainId)
 WR_FUNC;
 
 WR_INLINE
@@ -1291,7 +1330,10 @@ void wr_dp_push_stacking_context(WrState *aState,
                                  MixBlendMode aMixBlendMode,
                                  const WrFilterOp *aFilters,
                                  uintptr_t aFilterCount,
-                                 bool aIsBackfaceVisible)
+                                 bool aIsBackfaceVisible,
+                                 GlyphRasterSpace aGlyphRasterSpace,
+                                 bool *aOutIsReferenceFrame,
+                                 uintptr_t *aOutReferenceFrameId)
 WR_FUNC;
 
 WR_INLINE
@@ -1352,10 +1394,6 @@ WR_FUNC;
 
 WR_INLINE
 void wr_dump_display_list(WrState *aState)
-WR_FUNC;
-
-WR_INLINE
-void wr_init_log_for_gpu_process()
 WR_FUNC;
 
 extern bool wr_moz2d_render_cb(ByteSlice aBlob,
@@ -1545,10 +1583,6 @@ WR_INLINE
 void wr_set_item_tag(WrState *aState,
                      uint64_t aScrollId,
                      uint16_t aHitInfo)
-WR_FUNC;
-
-WR_INLINE
-void wr_shutdown_log_for_gpu_process()
 WR_FUNC;
 
 WR_INLINE

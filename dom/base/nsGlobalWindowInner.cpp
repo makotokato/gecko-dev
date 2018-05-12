@@ -121,7 +121,6 @@
 #include "nsView.h"
 #include "nsViewManager.h"
 #include "nsISelectionController.h"
-#include "nsISelection.h"
 #include "nsIPrompt.h"
 #include "nsIPromptService.h"
 #include "nsIPromptFactory.h"
@@ -1667,8 +1666,8 @@ nsGlobalWindowInner::SetNewDocument(nsIDocument* aDocument,
                                     nsISupports* aState,
                                     bool aForceReuseInnerWindow)
 {
-  NS_PRECONDITION(mDocumentPrincipal == nullptr,
-                  "mDocumentPrincipal prematurely set!");
+  MOZ_ASSERT(mDocumentPrincipal == nullptr,
+             "mDocumentPrincipal prematurely set!");
   MOZ_ASSERT(aDocument);
 
   if (!mOuterWindow) {
@@ -4432,7 +4431,7 @@ nsGlobalWindowInner::ConvertDialogOptions(const nsAString& aOptions,
 
 void
 nsGlobalWindowInner::UpdateCommands(const nsAString& anAction,
-                                    nsISelection* aSel,
+                                    Selection* aSel,
                                     int16_t aReason)
 {
   if (GetOuterWindowInternal()) {
@@ -4780,7 +4779,7 @@ public:
 
   NS_IMETHOD Run() override
   {
-    NS_PRECONDITION(NS_IsMainThread(), "Should be called on the main thread.");
+    MOZ_ASSERT(NS_IsMainThread(), "Should be called on the main thread.");
     return mWindow->FireHashchange(mOldURL, mNewURL);
   }
 
@@ -6510,41 +6509,23 @@ nsGlobalWindowInner::SetTimeout(JSContext* aCx, const nsAString& aHandler,
   return SetTimeoutOrInterval(aCx, aHandler, aTimeout, false, aError);
 }
 
-static bool
-IsInterval(const Optional<int32_t>& aTimeout, int32_t& aResultTimeout)
-{
-  if (aTimeout.WasPassed()) {
-    aResultTimeout = aTimeout.Value();
-    return true;
-  }
-
-  // If no interval was specified, treat this like a timeout, to avoid setting
-  // an interval of 0 milliseconds.
-  aResultTimeout = 0;
-  return false;
-}
-
 int32_t
 nsGlobalWindowInner::SetInterval(JSContext* aCx, Function& aFunction,
-                                 const Optional<int32_t>& aTimeout,
+                                 const int32_t aTimeout,
                                  const Sequence<JS::Value>& aArguments,
                                  ErrorResult& aError)
 {
-  int32_t timeout;
-  bool isInterval = IsInterval(aTimeout, timeout);
-  return SetTimeoutOrInterval(aCx, aFunction, timeout, aArguments, isInterval,
-                              aError);
+  return SetTimeoutOrInterval(
+    aCx, aFunction, aTimeout, aArguments, true, aError);
 }
 
 int32_t
 nsGlobalWindowInner::SetInterval(JSContext* aCx, const nsAString& aHandler,
-                                 const Optional<int32_t>& aTimeout,
+                                 const int32_t aTimeout,
                                  const Sequence<JS::Value>& /* unused */,
                                  ErrorResult& aError)
 {
-  int32_t timeout;
-  bool isInterval = IsInterval(aTimeout, timeout);
-  return SetTimeoutOrInterval(aCx, aHandler, timeout, isInterval, aError);
+  return SetTimeoutOrInterval(aCx, aHandler, aTimeout, true, aError);
 }
 
 int32_t

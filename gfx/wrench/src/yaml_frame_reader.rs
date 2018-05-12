@@ -198,7 +198,7 @@ pub struct YamlFrameReader {
     image_map: HashMap<(PathBuf, Option<i64>), (ImageKey, LayoutSize)>,
 
     fonts: HashMap<FontDescriptor, FontKey>,
-    font_instances: HashMap<(FontKey, Au, FontInstanceFlags), FontInstanceKey>,
+    font_instances: HashMap<(FontKey, Au, FontInstanceFlags, Option<ColorU>), FontInstanceKey>,
     font_render_mode: Option<FontRenderMode>,
     allow_mipmaps: bool,
 
@@ -544,19 +544,21 @@ impl YamlFrameReader {
         &mut self,
         font_key: FontKey,
         size: Au,
+        bg_color: Option<ColorU>,
         flags: FontInstanceFlags,
         wrench: &mut Wrench,
     ) -> FontInstanceKey {
         let font_render_mode = self.font_render_mode;
 
         *self.font_instances
-            .entry((font_key, size, flags))
+            .entry((font_key, size, flags, bg_color))
             .or_insert_with(|| {
                 wrench.add_font_instance(
                     font_key,
                     size,
                     flags,
                     font_render_mode,
+                    bg_color,
                 )
             })
     }
@@ -899,17 +901,15 @@ impl YamlFrameReader {
                         "space" => RepeatMode::Space,
                         s => panic!("Unknown box border image repeat mode {}", s),
                     };
-                    Some(BorderDetails::Image(ImageBorder {
-                        image_key,
-                        patch: NinePatchDescriptor {
-                            width: image_width as u32,
-                            height: image_height as u32,
-                            slice: SideOffsets2D::new(slice[0], slice[1], slice[2], slice[3]),
-                        },
+                    Some(BorderDetails::NinePatch(NinePatchBorder {
+                        source: NinePatchBorderSource::Image(image_key),
+                        width: image_width as u32,
+                        height: image_height as u32,
+                        slice: SideOffsets2D::new(slice[0], slice[1], slice[2], slice[3]),
                         fill,
-                        outset: SideOffsets2D::new(outset[0], outset[1], outset[2], outset[3]),
                         repeat_horizontal,
                         repeat_vertical,
+                        outset: SideOffsets2D::new(outset[0], outset[1], outset[2], outset[3]),
                     }))
                 }
                 "gradient" => {
@@ -1117,6 +1117,8 @@ impl YamlFrameReader {
     ) {
         let size = item["size"].as_pt_to_au().unwrap_or(Au::from_f32_px(16.0));
         let color = item["color"].as_colorf().unwrap_or(*BLACK_COLOR);
+        let bg_color = item["bg-color"].as_colorf().map(|c| c.into());
+
         let mut flags = FontInstanceFlags::empty();
         if item["synthetic-italics"].as_bool().unwrap_or(false) {
             flags |= FontInstanceFlags::SYNTHETIC_ITALICS;
@@ -1146,6 +1148,7 @@ impl YamlFrameReader {
         let font_key = self.get_or_create_font(desc, wrench);
         let font_instance_key = self.get_or_create_font_instance(font_key,
                                                                  size,
+                                                                 bg_color,
                                                                  flags,
                                                                  wrench);
 

@@ -1010,41 +1010,20 @@ function _loadURI(browser, uri, params = {}) {
     userContextId,
   } = params || {};
 
-  let currentRemoteType = browser.remoteType;
-  let requiredRemoteType;
-  try {
-    let fixupFlags = Ci.nsIURIFixup.FIXUP_FLAG_NONE;
-    if (flags & Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP) {
-      fixupFlags |= Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP;
-    }
-    if (flags & Ci.nsIWebNavigation.LOAD_FLAGS_FIXUP_SCHEME_TYPOS) {
-      fixupFlags |= Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS;
-    }
-    let uriObject = Services.uriFixup.createFixupURI(uri, fixupFlags);
-    if (handleUriInChrome(browser, uriObject)) {
-      // If we've handled the URI in Chrome then just return here.
-      return;
-    }
-
-    // Note that I had thought that we could set uri = uriObject.spec here, to
-    // save on fixup later on, but that changes behavior and breaks tests.
-    requiredRemoteType =
-      E10SUtils.getRemoteTypeForURIObject(uriObject, gMultiProcessBrowser,
-                                          currentRemoteType, browser.currentURI);
-  } catch (e) {
-    // createFixupURI throws if it can't create a URI. If that's the case then
-    // we still need to pass down the uri because docshell handles this case.
-    requiredRemoteType = gMultiProcessBrowser ? E10SUtils.DEFAULT_REMOTE_TYPE
-                                              : E10SUtils.NOT_REMOTE;
+  let {
+    uriObject,
+    requiredRemoteType,
+    mustChangeProcess,
+    newFrameloader,
+  } = E10SUtils.shouldLoadURIInBrowser(browser, uri, gMultiProcessBrowser,
+                                       flags);
+  if (uriObject && handleUriInChrome(browser, uriObject)) {
+    // If we've handled the URI in Chrome then just return here.
+    return;
   }
-
-  let mustChangeProcess = requiredRemoteType != currentRemoteType;
-  let newFrameloader = false;
-  if (browser.getAttribute("preloadedState") === "consumed" && uri != "about:newtab") {
-    // Leaving about:newtab from a used to be preloaded browser should run the process
-    // selecting algorithm again.
-    mustChangeProcess = true;
-    newFrameloader = true;
+  if (newFrameloader) {
+    // If a new frameloader is needed for process reselection because this used
+    // to be a preloaded browser, clear the preloaded state now.
     browser.removeAttribute("preloadedState");
   }
 
@@ -6389,6 +6368,22 @@ function UpdateCurrentCharset(target) {
   }
 }
 
+function UpdateDownloadsAutoHide(popup) {
+  let checkbox = popup.querySelector(".customize-context-autoHide");
+  let isDownloads = popup.triggerNode && ["downloads-button", "wrapper-downloads-button"].includes(popup.triggerNode.id);
+  checkbox.hidden = !isDownloads;
+  if (this.window.DownloadsButton.autoHideDownloadsButton) {
+    checkbox.setAttribute("checked", "true");
+  } else {
+    checkbox.removeAttribute("checked");
+  }
+}
+
+function onDownloadsAutoHideChange(event) {
+  let autoHide = event.target.getAttribute("checked") == "true";
+  Services.prefs.setBoolPref("browser.download.autohideButton", autoHide);
+}
+
 var gPageStyleMenu = {
   // This maps from a <browser> element (or, more specifically, a
   // browser's permanentKey) to an Object that contains the most recent
@@ -6940,7 +6935,7 @@ var WebAuthnPromptHelper = {
 
   register(mgr, {origin, tid}) {
     let mainAction = this.buildCancelAction(mgr, tid);
-    this.show(tid, "register", "webauthn.registerPrompt", origin, mainAction);
+    this.show(tid, "register", "webauthn.registerPrompt2", origin, mainAction);
   },
 
   registerDirect(mgr, {origin, tid}) {
@@ -6958,13 +6953,13 @@ var WebAuthnPromptHelper = {
       }
     };
 
-    this.show(tid, "register-direct", "webauthn.registerDirectPrompt",
+    this.show(tid, "register-direct", "webauthn.registerDirectPrompt2",
               origin, mainAction, secondaryActions, options);
   },
 
   sign(mgr, {origin, tid}) {
     let mainAction = this.buildCancelAction(mgr, tid);
-    this.show(tid, "sign", "webauthn.signPrompt", origin, mainAction);
+    this.show(tid, "sign", "webauthn.signPrompt2", origin, mainAction);
   },
 
   show(tid, id, stringId, origin, mainAction, secondaryActions = [], options = {}) {

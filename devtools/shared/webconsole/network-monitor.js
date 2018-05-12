@@ -7,6 +7,7 @@
 "use strict";
 
 const {Cc, Ci, Cm, Cu, Cr, components} = require("chrome");
+const ChromeUtils = require("ChromeUtils");
 const Services = require("Services");
 const { XPCOMUtils } = require("resource://gre/modules/XPCOMUtils.jsm");
 
@@ -21,7 +22,7 @@ loader.lazyServiceGetter(this, "gActivityDistributor",
                          "@mozilla.org/network/http-activity-distributor;1",
                          "nsIHttpActivityDistributor");
 const {NetworkThrottleManager} = require("devtools/shared/webconsole/throttle");
-
+const {CacheEntry} = require("devtools/shared/platform/cache-entry");
 // Network logging
 
 // The maximum uint32 value.
@@ -117,7 +118,7 @@ function ChannelEventSink() {
 }
 
 ChannelEventSink.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIChannelEventSink]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIChannelEventSink]),
 
   registerCollector(collector) {
     this.collectors.add(collector);
@@ -285,8 +286,8 @@ function NetworkResponseListener(owner, httpActivity) {
 
 NetworkResponseListener.prototype = {
   QueryInterface:
-    XPCOMUtils.generateQI([Ci.nsIStreamListener, Ci.nsIInputStreamCallback,
-                           Ci.nsIRequestObserver, Ci.nsIInterfaceRequestor]),
+    ChromeUtils.generateQI([Ci.nsIStreamListener, Ci.nsIInputStreamCallback,
+                            Ci.nsIRequestObserver, Ci.nsIInterfaceRequestor]),
 
   // nsIInterfaceRequestor implementation
 
@@ -519,6 +520,19 @@ NetworkResponseListener.prototype = {
   }),
 
   /**
+   * Fetches cache information from CacheEntry
+   * @private
+   */
+  _fetchCacheInformation: function() {
+    let httpActivity = this.httpActivity;
+    CacheEntry.getCacheEntry(this.request, (descriptor) => {
+      httpActivity.owner.addResponseCache({
+        responseCache: descriptor
+      });
+    });
+  },
+
+  /**
    * Handle the onStopRequest by closing the sink output stream.
    *
    * For more documentation about nsIRequestObserver go to:
@@ -571,7 +585,6 @@ NetworkResponseListener.prototype = {
       return;
     }
     this._foundOpenResponse = true;
-
     this.owner.openResponses.delete(channel);
 
     this.httpActivity.owner.addResponseHeaders(openResponse.headers);
@@ -592,6 +605,9 @@ NetworkResponseListener.prototype = {
     this.setAsyncListener(this.sink.inputStream, null);
 
     this._findOpenResponse();
+    if (this.request.fromCache || this.httpActivity.responseStatus == 304) {
+      this._fetchCacheInformation();
+    }
 
     if (!this.httpActivity.discardResponseBody && this.receivedData.length) {
       this._onComplete(this.receivedData);
@@ -1901,7 +1917,8 @@ NetworkEventActorProxy.prototype = {
   // Listeners for new network event data coming from the NetworkMonitor.
   let methods = ["addRequestHeaders", "addRequestCookies", "addRequestPostData",
                  "addResponseStart", "addSecurityInfo", "addResponseHeaders",
-                 "addResponseCookies", "addResponseContent", "addEventTimings"];
+                 "addResponseCookies", "addResponseContent", "addResponseCache",
+                 "addEventTimings"];
   let factory = NetworkEventActorProxy.methodFactory;
   for (let method of methods) {
     NetworkEventActorProxy.prototype[method] = factory(method);
@@ -2083,8 +2100,8 @@ ConsoleProgressListener.prototype = {
 
   _webProgress: null,
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIWebProgressListener,
-                                         Ci.nsISupportsWeakReference]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIWebProgressListener,
+                                          Ci.nsISupportsWeakReference]),
 
   /**
    * Initialize the ConsoleProgressListener.

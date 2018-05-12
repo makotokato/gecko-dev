@@ -57,7 +57,6 @@
 #include "nsTArray.h"
 #include "nsCOMArray.h"
 #include "nsContainerFrame.h"
-#include "nsISelection.h"
 #include "mozilla/dom/Selection.h"
 #include "nsGkAtoms.h"
 #include "nsIDOMDocument.h"
@@ -911,10 +910,10 @@ PresShell::Init(nsIDocument* aDocument,
                 nsViewManager* aViewManager,
                 UniquePtr<ServoStyleSet> aStyleSet)
 {
-  NS_PRECONDITION(aDocument, "null ptr");
-  NS_PRECONDITION(aPresContext, "null ptr");
-  NS_PRECONDITION(aViewManager, "null ptr");
-  NS_PRECONDITION(!mDocument, "already initialized");
+  MOZ_ASSERT(aDocument, "null ptr");
+  MOZ_ASSERT(aPresContext, "null ptr");
+  MOZ_ASSERT(aViewManager, "null ptr");
+  MOZ_ASSERT(!mDocument, "already initialized");
 
   if (!aDocument || !aPresContext || !aViewManager || mDocument) {
     return;
@@ -1508,7 +1507,7 @@ PresShell::UpdatePreferenceStyles()
   // it to be modifiable from devtools and similar, see bugs 1239336 and
   // 1436782. I think it conceptually should be a user sheet, and could be
   // without too much trouble I'd think.
-  mStyleSet->AppendStyleSheet(SheetType::Agent, newPrefSheet->AsServo());
+  mStyleSet->AppendStyleSheet(SheetType::Agent, newPrefSheet);
   mPrefStyleSheet = newPrefSheet;
 
   mStyleSet->EndUpdate();
@@ -1518,7 +1517,7 @@ void
 PresShell::RemovePreferenceStyles()
 {
   if (mPrefStyleSheet) {
-    mStyleSet->RemoveStyleSheet(SheetType::Agent, mPrefStyleSheet->AsServo());
+    mStyleSet->RemoveStyleSheet(SheetType::Agent, mPrefStyleSheet);
     mPrefStyleSheet = nullptr;
   }
 }
@@ -1541,13 +1540,13 @@ PresShell::AddUserSheet(StyleSheet* aSheet)
   // Iterate forwards when removing so the searches for RemoveStyleSheet are as
   // short as possible.
   for (StyleSheet* sheet : userSheets) {
-    mStyleSet->RemoveStyleSheet(SheetType::User, sheet->AsServo());
+    mStyleSet->RemoveStyleSheet(SheetType::User, sheet);
   }
 
   // Now iterate backwards, so that the order of userSheets will be the same as
   // the order of sheets from it in the style set.
   for (StyleSheet* sheet : Reversed(userSheets)) {
-    mStyleSet->PrependStyleSheet(SheetType::User, sheet->AsServo());
+    mStyleSet->PrependStyleSheet(SheetType::User, sheet);
   }
 
   mStyleSet->EndUpdate();
@@ -1559,7 +1558,7 @@ PresShell::AddAgentSheet(StyleSheet* aSheet)
 {
   // Make sure this does what nsDocumentViewer::CreateStyleSet does
   // wrt ordering.
-  mStyleSet->AppendStyleSheet(SheetType::Agent, aSheet->AsServo());
+  mStyleSet->AppendStyleSheet(SheetType::Agent, aSheet);
   RestyleForCSSRuleChanges();
 }
 
@@ -1571,10 +1570,10 @@ PresShell::AddAuthorSheet(StyleSheet* aSheet)
   StyleSheet* firstAuthorSheet =
     mDocument->GetFirstAdditionalAuthorSheet();
   if (firstAuthorSheet) {
-    mStyleSet->InsertStyleSheetBefore(SheetType::Doc, aSheet->AsServo(),
-                                      firstAuthorSheet->AsServo());
+    mStyleSet->InsertStyleSheetBefore(SheetType::Doc, aSheet,
+                                      firstAuthorSheet);
   } else {
-    mStyleSet->AppendStyleSheet(SheetType::Doc, aSheet->AsServo());
+    mStyleSet->AppendStyleSheet(SheetType::Doc, aSheet);
   }
 
   RestyleForCSSRuleChanges();
@@ -1583,7 +1582,7 @@ PresShell::AddAuthorSheet(StyleSheet* aSheet)
 void
 PresShell::RemoveSheet(SheetType aType, StyleSheet* aSheet)
 {
-  mStyleSet->RemoveStyleSheet(aType, aSheet->AsServo());
+  mStyleSet->RemoveStyleSheet(aType, aSheet);
   RestyleForCSSRuleChanges();
 }
 
@@ -1604,14 +1603,14 @@ PresShell::GetDisplaySelection(int16_t *aToggle)
 }
 
 NS_IMETHODIMP
-PresShell::GetSelection(RawSelectionType aRawSelectionType,
-                        nsISelection **aSelection)
+PresShell::GetSelectionFromScript(RawSelectionType aRawSelectionType,
+                                  Selection **aSelection)
 {
   if (!aSelection || !mSelection)
     return NS_ERROR_NULL_POINTER;
 
   RefPtr<nsFrameSelection> frameSelection = mSelection;
-  nsCOMPtr<nsISelection> selection =
+  RefPtr<Selection> selection =
     frameSelection->GetSelection(ToSelectionType(aRawSelectionType));
 
   if (!selection) {
@@ -1623,7 +1622,7 @@ PresShell::GetSelection(RawSelectionType aRawSelectionType,
 }
 
 Selection*
-PresShell::GetDOMSelection(RawSelectionType aRawSelectionType)
+PresShell::GetSelection(RawSelectionType aRawSelectionType)
 {
   if (!mSelection) {
     return nullptr;
@@ -1932,7 +1931,7 @@ PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight,
                                       nscoord aOldWidth, nscoord aOldHeight,
                                       ResizeReflowOptions aOptions)
 {
-  NS_PRECONDITION(!mIsReflowing, "Shouldn't be in reflow here!");
+  MOZ_ASSERT(!mIsReflowing, "Shouldn't be in reflow here!");
 
   nsIFrame* rootFrame = mFrameConstructor->GetRootFrame();
   if (!rootFrame) {
@@ -2544,7 +2543,7 @@ void
 PresShell::EndUpdate(nsIDocument *aDocument, nsUpdateType aUpdateType)
 {
 #ifdef DEBUG
-  NS_PRECONDITION(0 != mUpdateCount, "too many EndUpdate's");
+  MOZ_ASSERT(0 != mUpdateCount, "too many EndUpdate's");
   --mUpdateCount;
 #endif
 
@@ -2604,7 +2603,7 @@ PresShell::BeginLoad(nsIDocument *aDocument)
 void
 PresShell::EndLoad(nsIDocument *aDocument)
 {
-  NS_PRECONDITION(aDocument == mDocument, "Wrong document");
+  MOZ_ASSERT(aDocument == mDocument, "Wrong document");
 
   RestoreRootScrollPosition();
 
@@ -2677,14 +2676,17 @@ PresShell::FrameNeedsReflow(nsIFrame *aFrame, IntrinsicDirty aIntrinsicDirty,
                             nsFrameState aBitToAdd,
                             ReflowRootHandling aRootHandling)
 {
-  NS_PRECONDITION(aBitToAdd == NS_FRAME_IS_DIRTY ||
-                  aBitToAdd == NS_FRAME_HAS_DIRTY_CHILDREN ||
-                  !aBitToAdd,
-                  "Unexpected bits being added");
-  NS_PRECONDITION(!(aIntrinsicDirty == eStyleChange &&
-                    aBitToAdd == NS_FRAME_HAS_DIRTY_CHILDREN),
-                  "bits don't correspond to style change reason");
+  MOZ_ASSERT(aBitToAdd == NS_FRAME_IS_DIRTY ||
+             aBitToAdd == NS_FRAME_HAS_DIRTY_CHILDREN ||
+             !aBitToAdd,
+             "Unexpected bits being added");
 
+  // FIXME bug 478135
+  NS_ASSERTION(!(aIntrinsicDirty == eStyleChange &&
+                 aBitToAdd == NS_FRAME_HAS_DIRTY_CHILDREN),
+               "bits don't correspond to style change reason");
+
+  // FIXME bug 457400
   NS_ASSERTION(!mIsReflowing, "can't mark frame dirty during reflow");
 
   // If we've not yet done the initial reflow, then don't bother
@@ -2835,7 +2837,7 @@ void
 PresShell::FrameNeedsToContinueReflow(nsIFrame *aFrame)
 {
   NS_ASSERTION(mIsReflowing, "Must be in reflow when marking path dirty.");
-  NS_PRECONDITION(mCurrentReflowRoot, "Must have a current reflow root here");
+  MOZ_ASSERT(mCurrentReflowRoot, "Must have a current reflow root here");
   NS_ASSERTION(aFrame == mCurrentReflowRoot ||
                nsLayoutUtils::IsProperAncestorFrame(mCurrentReflowRoot, aFrame),
                "Frame passed in is not the descendant of mCurrentReflowRoot");
@@ -2859,12 +2861,10 @@ nsIPresShell::GetSelectedContentForScrolling() const
 {
   nsCOMPtr<nsIContent> selectedContent;
   if (mSelection) {
-    nsISelection* domSelection =
+    Selection* domSelection =
       mSelection->GetSelection(SelectionType::eNormal);
     if (domSelection) {
-      nsCOMPtr<nsIDOMNode> focusedNode;
-      domSelection->GetFocusNode(getter_AddRefs(focusedNode));
-      selectedContent = do_QueryInterface(focusedNode);
+      selectedContent = nsIContent::FromNodeOrNull(domSelection->GetFocusNode());
     }
   }
   return selectedContent.forget();
@@ -3256,7 +3256,7 @@ PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll,
       sel->AddRange(*jumpToRange, IgnoreErrors());
       if (!selectAnchor) {
         // Use a caret (collapsed selection) at the start of the anchor
-        sel->CollapseToStart();
+        sel->CollapseToStart(IgnoreErrors());
       }
     }
     // Selection is at anchor.
@@ -3767,13 +3767,37 @@ PresShell::GetRectVisibility(nsIFrame* aFrame,
     scrollPortRect = nsRect(nsPoint(0,0), rootFrame->GetSize());
   }
 
+  // scrollPortRect has the viewport visible area relative to rootFrame.
+  nsRect visibleAreaRect(scrollPortRect);
+  // Find the intersection of this and the frame's ancestor scrollable
+  // frames. We walk the whole ancestor chain to find all the scrollable
+  // frames.
+  nsIScrollableFrame* scrollAncestorFrame =
+    nsLayoutUtils::GetNearestScrollableFrame(aFrame,
+      nsLayoutUtils::SCROLLABLE_INCLUDE_HIDDEN);
+  while (scrollAncestorFrame) {
+    nsRect scrollAncestorRect = scrollAncestorFrame->GetScrollPortRect();
+    nsIFrame* f = do_QueryFrame(scrollAncestorFrame);
+    scrollAncestorRect += f->GetOffsetTo(rootFrame);
+
+    visibleAreaRect = visibleAreaRect.Intersect(scrollAncestorRect);
+
+    // Continue up the chain.
+    scrollAncestorFrame =
+      nsLayoutUtils::GetNearestScrollableFrame(f->GetParent(),
+        nsLayoutUtils::SCROLLABLE_INCLUDE_HIDDEN);
+  }
+
+  // aRect is in the aFrame coordinate space, so bring it into rootFrame
+  // coordinate space.
   nsRect r = aRect + aFrame->GetOffsetTo(rootFrame);
   // If aRect is entirely visible then we don't need to ensure that
   // at least aMinTwips of it is visible
-  if (scrollPortRect.Contains(r))
+  if (visibleAreaRect.Contains(r)) {
     return nsRectVisibility_kVisible;
+  }
 
-  nsRect insetRect = scrollPortRect;
+  nsRect insetRect = visibleAreaRect;
   insetRect.Deflate(aMinTwips, aMinTwips);
   if (r.YMost() <= insetRect.y)
     return nsRectVisibility_kAboveViewport;
@@ -3903,7 +3927,7 @@ nsIPresShell::ClearMouseCapture(nsIFrame* aFrame)
 nsresult
 PresShell::CaptureHistoryState(nsILayoutHistoryState** aState)
 {
-  NS_PRECONDITION(nullptr != aState, "null state pointer");
+  MOZ_ASSERT(nullptr != aState, "null state pointer");
 
   // We actually have to mess with the docshell here, since we want to
   // store the state back in it.
@@ -4377,8 +4401,8 @@ void
 PresShell::CharacterDataChanged(nsIContent* aContent,
                                 const CharacterDataChangeInfo& aInfo)
 {
-  NS_PRECONDITION(!mIsDocumentGone, "Unexpected CharacterDataChanged");
-  NS_PRECONDITION(aContent->OwnerDoc() == mDocument, "Unexpected document");
+  MOZ_ASSERT(!mIsDocumentGone, "Unexpected CharacterDataChanged");
+  MOZ_ASSERT(aContent->OwnerDoc() == mDocument, "Unexpected document");
 
   nsAutoCauseReflowNotifier crNotifier(this);
 
@@ -4391,8 +4415,8 @@ PresShell::ContentStateChanged(nsIDocument* aDocument,
                                nsIContent* aContent,
                                EventStates aStateMask)
 {
-  NS_PRECONDITION(!mIsDocumentGone, "Unexpected ContentStateChanged");
-  NS_PRECONDITION(aDocument == mDocument, "Unexpected aDocument");
+  MOZ_ASSERT(!mIsDocumentGone, "Unexpected ContentStateChanged");
+  MOZ_ASSERT(aDocument == mDocument, "Unexpected aDocument");
 
   if (mDidInitialize) {
     nsAutoCauseReflowNotifier crNotifier(this);
@@ -4403,8 +4427,8 @@ PresShell::ContentStateChanged(nsIDocument* aDocument,
 void
 PresShell::DocumentStatesChanged(nsIDocument* aDocument, EventStates aStateMask)
 {
-  NS_PRECONDITION(!mIsDocumentGone, "Unexpected DocumentStatesChanged");
-  NS_PRECONDITION(aDocument == mDocument, "Unexpected aDocument");
+  MOZ_ASSERT(!mIsDocumentGone, "Unexpected DocumentStatesChanged");
+  MOZ_ASSERT(aDocument == mDocument, "Unexpected aDocument");
   MOZ_ASSERT(!aStateMask.IsEmpty());
 
   if (mDidInitialize) {
@@ -4425,8 +4449,8 @@ PresShell::AttributeWillChange(Element* aElement,
                                int32_t aModType,
                                const nsAttrValue* aNewValue)
 {
-  NS_PRECONDITION(!mIsDocumentGone, "Unexpected AttributeWillChange");
-  NS_PRECONDITION(aElement->OwnerDoc() == mDocument, "Unexpected document");
+  MOZ_ASSERT(!mIsDocumentGone, "Unexpected AttributeWillChange");
+  MOZ_ASSERT(aElement->OwnerDoc() == mDocument, "Unexpected document");
 
   // XXXwaterson it might be more elegant to wait until after the
   // initial reflow to begin observing the document. That would
@@ -4446,8 +4470,8 @@ PresShell::AttributeChanged(Element* aElement,
                             int32_t aModType,
                             const nsAttrValue* aOldValue)
 {
-  NS_PRECONDITION(!mIsDocumentGone, "Unexpected AttributeChanged");
-  NS_PRECONDITION(aElement->OwnerDoc() == mDocument, "Unexpected document");
+  MOZ_ASSERT(!mIsDocumentGone, "Unexpected AttributeChanged");
+  MOZ_ASSERT(aElement->OwnerDoc() == mDocument, "Unexpected document");
 
   // XXXwaterson it might be more elegant to wait until after the
   // initial reflow to begin observing the document. That would
@@ -4463,8 +4487,8 @@ PresShell::AttributeChanged(Element* aElement,
 void
 PresShell::ContentAppended(nsIContent* aFirstNewContent)
 {
-  NS_PRECONDITION(!mIsDocumentGone, "Unexpected ContentAppended");
-  NS_PRECONDITION(aFirstNewContent->OwnerDoc() == mDocument,
+  MOZ_ASSERT(!mIsDocumentGone, "Unexpected ContentAppended");
+  MOZ_ASSERT(aFirstNewContent->OwnerDoc() == mDocument,
                   "Unexpected document");
 
   // We never call ContentAppended with a document as the container, so we can
@@ -4492,8 +4516,8 @@ PresShell::ContentAppended(nsIContent* aFirstNewContent)
 void
 PresShell::ContentInserted(nsIContent* aChild)
 {
-  NS_PRECONDITION(!mIsDocumentGone, "Unexpected ContentInserted");
-  NS_PRECONDITION(aChild->OwnerDoc() == mDocument, "Unexpected document");
+  MOZ_ASSERT(!mIsDocumentGone, "Unexpected ContentInserted");
+  MOZ_ASSERT(aChild->OwnerDoc() == mDocument, "Unexpected document");
 
   if (!mDidInitialize) {
     return;
@@ -4515,15 +4539,14 @@ PresShell::ContentInserted(nsIContent* aChild)
 void
 PresShell::ContentRemoved(nsIContent* aChild, nsIContent* aPreviousSibling)
 {
-  NS_PRECONDITION(!mIsDocumentGone, "Unexpected ContentRemoved");
-  NS_PRECONDITION(aChild->OwnerDoc() == mDocument, "Unexpected document");
+  MOZ_ASSERT(!mIsDocumentGone, "Unexpected ContentRemoved");
+  MOZ_ASSERT(aChild->OwnerDoc() == mDocument, "Unexpected document");
   nsINode* container = aChild->GetParentNode();
 
   // Notify the ESM that the content has been removed, so that
   // it can clean up any state related to the content.
 
-  mPresContext->EventStateManager()
-    ->ContentRemoved(mDocument, aChild->GetParent(), aChild);
+  mPresContext->EventStateManager()->ContentRemoved(mDocument, aChild);
 
   nsAutoCauseReflowNotifier crNotifier(this);
 
@@ -4567,8 +4590,8 @@ PresShell::NotifyCounterStylesAreDirty()
 void
 PresShell::ReconstructFrames()
 {
-  NS_PRECONDITION(!mFrameConstructor->GetRootFrame() || mDidInitialize,
-                  "Must not have root frame before initial reflow");
+  MOZ_ASSERT(!mFrameConstructor->GetRootFrame() || mDidInitialize,
+             "Must not have root frame before initial reflow");
   if (!mDidInitialize || mIsDestroying) {
     // Nothing to do here
     return;
@@ -4956,7 +4979,7 @@ PresShell::CreateRangePaintInfo(nsRange* aRange,
 
 already_AddRefed<SourceSurface>
 PresShell::PaintRangePaintInfo(const nsTArray<UniquePtr<RangePaintInfo>>& aItems,
-                               nsISelection* aSelection,
+                               Selection* aSelection,
                                nsIntRegion* aRegion,
                                nsRect aArea,
                                const LayoutDeviceIntPoint aPoint,
@@ -5085,7 +5108,7 @@ PresShell::PaintRangePaintInfo(const nsTArray<UniquePtr<RangePaintInfo>>& aItems
   // selection.
   RefPtr<nsFrameSelection> frameSelection;
   if (aSelection) {
-    frameSelection = aSelection->AsSelection()->GetFrameSelection();
+    frameSelection = aSelection->GetFrameSelection();
   }
   else {
     frameSelection = FrameSelection();
@@ -8237,18 +8260,16 @@ PresShell::PrepareToUseCaretPosition(nsIWidget* aEventWidget,
 
   // caret selection, this is a temporary weak reference, so no refcounting is
   // needed
-  nsISelection* domSelection = caret->GetSelection();
+  Selection* domSelection = caret->GetSelection();
   NS_ENSURE_TRUE(domSelection, false);
 
   // since the match could be an anonymous textnode inside a
   // <textarea> or text <input>, we need to get the outer frame
   // note: frames are not refcounted
   nsIFrame* frame = nullptr; // may be nullptr
-  nsCOMPtr<nsIDOMNode> node;
-  rv = domSelection->GetFocusNode(getter_AddRefs(node));
-  NS_ENSURE_SUCCESS(rv, false);
+  nsINode* node = domSelection->GetFocusNode();
   NS_ENSURE_TRUE(node, false);
-  nsCOMPtr<nsIContent> content(do_QueryInterface(node));
+  nsCOMPtr<nsIContent> content = nsIContent::FromNode(node);
   if (content) {
     nsIContent* nonNative = content->FindFirstNonChromeOnlyAccessContent();
     content = nonNative;
@@ -8576,7 +8597,7 @@ PresShell::IsVisible()
 }
 
 nsresult
-PresShell::GetAgentStyleSheets(nsTArray<RefPtr<ServoStyleSheet>>& aSheets)
+PresShell::GetAgentStyleSheets(nsTArray<RefPtr<StyleSheet>>& aSheets)
 {
   aSheets.Clear();
   int32_t sheetCount = mStyleSet->SheetCount(SheetType::Agent);
@@ -8586,7 +8607,7 @@ PresShell::GetAgentStyleSheets(nsTArray<RefPtr<ServoStyleSheet>>& aSheets)
   }
 
   for (int32_t i = 0; i < sheetCount; ++i) {
-    ServoStyleSheet* sheet = mStyleSet->StyleSheetAt(SheetType::Agent, i);
+    StyleSheet* sheet = mStyleSet->StyleSheetAt(SheetType::Agent, i);
     aSheets.AppendElement(sheet);
   }
 
@@ -8594,7 +8615,7 @@ PresShell::GetAgentStyleSheets(nsTArray<RefPtr<ServoStyleSheet>>& aSheets)
 }
 
 nsresult
-PresShell::SetAgentStyleSheets(const nsTArray<RefPtr<ServoStyleSheet>>& aSheets)
+PresShell::SetAgentStyleSheets(const nsTArray<RefPtr<StyleSheet>>& aSheets)
 {
   return mStyleSet->ReplaceSheets(SheetType::Agent, aSheets);
 }
@@ -8602,13 +8623,13 @@ PresShell::SetAgentStyleSheets(const nsTArray<RefPtr<ServoStyleSheet>>& aSheets)
 nsresult
 PresShell::AddOverrideStyleSheet(StyleSheet* aSheet)
 {
-  return mStyleSet->PrependStyleSheet(SheetType::Override, aSheet->AsServo());
+  return mStyleSet->PrependStyleSheet(SheetType::Override, aSheet);
 }
 
 nsresult
 PresShell::RemoveOverrideStyleSheet(StyleSheet* aSheet)
 {
-  return mStyleSet->RemoveStyleSheet(SheetType::Override, aSheet->AsServo());
+  return mStyleSet->RemoveStyleSheet(SheetType::Override, aSheet);
 }
 
 static void
@@ -8822,7 +8843,7 @@ PresShell::sReflowContinueCallback(nsITimer* aTimer, void* aPresShell)
 {
   RefPtr<PresShell> self = static_cast<PresShell*>(aPresShell);
 
-  NS_PRECONDITION(aTimer == self->mReflowContinueTimer, "Unexpected timer");
+  MOZ_ASSERT(aTimer == self->mReflowContinueTimer, "Unexpected timer");
   self->mReflowContinueTimer = nullptr;
   self->ScheduleReflow();
 }
@@ -8830,7 +8851,7 @@ PresShell::sReflowContinueCallback(nsITimer* aTimer, void* aPresShell)
 bool
 PresShell::ScheduleReflowOffTimer()
 {
-  NS_PRECONDITION(!mObservingLayoutFlushes, "Shouldn't get here");
+  MOZ_ASSERT(!mObservingLayoutFlushes, "Shouldn't get here");
   ASSERT_REFLOW_SCHEDULED_STATE();
 
   if (!mReflowContinueTimer) {
@@ -9680,7 +9701,7 @@ CopySheetsIntoClone(ServoStyleSet* aSet, ServoStyleSet* aClone)
 {
   int32_t i, n = aSet->SheetCount(SheetType::Override);
   for (i = 0; i < n; i++) {
-    ServoStyleSheet* ss = aSet->StyleSheetAt(SheetType::Override, i);
+    StyleSheet* ss = aSet->StyleSheetAt(SheetType::Override, i);
     if (ss)
       aClone->AppendStyleSheet(SheetType::Override, ss);
   }
@@ -9697,14 +9718,14 @@ CopySheetsIntoClone(ServoStyleSet* aSet, ServoStyleSet* aClone)
 
   n = aSet->SheetCount(SheetType::User);
   for (i = 0; i < n; i++) {
-    ServoStyleSheet* ss = aSet->StyleSheetAt(SheetType::User, i);
+    StyleSheet* ss = aSet->StyleSheetAt(SheetType::User, i);
     if (ss)
       aClone->AppendStyleSheet(SheetType::User, ss);
   }
 
   n = aSet->SheetCount(SheetType::Agent);
   for (i = 0; i < n; i++) {
-    ServoStyleSheet* ss = aSet->StyleSheetAt(SheetType::Agent, i);
+    StyleSheet* ss = aSet->StyleSheetAt(SheetType::Agent, i);
     if (ss)
       aClone->AppendStyleSheet(SheetType::Agent, ss);
   }
@@ -10416,7 +10437,7 @@ SetPluginIsActive(nsISupports* aSupports, void* aClosure)
 nsresult
 PresShell::SetIsActive(bool aIsActive)
 {
-  NS_PRECONDITION(mDocument, "should only be called with a document");
+  MOZ_ASSERT(mDocument, "should only be called with a document");
 
   mIsActive = aIsActive;
 

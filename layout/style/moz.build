@@ -100,7 +100,6 @@ EXPORTS.mozilla += [
     'ServoStyleRule.h',
     'ServoStyleSet.h',
     'ServoStyleSetInlines.h',
-    'ServoStyleSheet.h',
     'ServoSupportsRule.h',
     'ServoTraversalStatistics.h',
     'ServoTypes.h',
@@ -219,10 +218,10 @@ UNIFIED_SOURCES += [
     'ServoSpecifiedValues.cpp',
     'ServoStyleRule.cpp',
     'ServoStyleSet.cpp',
-    'ServoStyleSheet.cpp',
     'ServoSupportsRule.cpp',
     'StreamLoader.cpp',
     'StyleAnimationValue.cpp',
+    'StyleComplexColor.cpp',
     'StyleSheet.cpp',
     'URLExtraData.cpp',
 ]
@@ -304,7 +303,6 @@ if CONFIG['COMPILE_ENVIRONMENT']:
     css_props = GENERATED_FILES['nsCSSPropsGenerated.inc']
     css_props.script = 'GenerateCSSPropsGenerated.py:generate'
     css_props.inputs = [
-        'nsCSSPropsGenerated.inc.in',
         '!ServoCSSPropList.py',
     ]
 

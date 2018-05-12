@@ -40,14 +40,6 @@ def filter_on_platforms(task, platforms):
     return (platform in platforms)
 
 
-def filter_upload_symbols(task, parameters):
-    # Filters out symbols when there are not part of a nightly or a release build
-    # TODO Remove this too specific filter (bug 1353296)
-    return '-upload-symbols' not in task.label or \
-        task.attributes.get('nightly') or \
-        parameters.get('project') in ('mozilla-beta', 'mozilla-release')
-
-
 def filter_beta_release_tasks(task, parameters, ignore_kinds=None, allow_l10n=False):
     if not standard_filter(task, parameters):
         return False
@@ -65,6 +57,8 @@ def filter_beta_release_tasks(task, parameters, ignore_kinds=None, allow_l10n=Fa
             # On beta, Nightly builds are already PGOs
             'linux-pgo', 'linux64-pgo',
             'win32-pgo', 'win64-pgo',
+            # ASAN is central-only
+            'linux64-asan-reporter-nightly',
             ):
         return False
     if str(platform).startswith('android') and 'nightly' in str(platform):
@@ -76,7 +70,8 @@ def filter_beta_release_tasks(task, parameters, ignore_kinds=None, allow_l10n=Fa
             'win32', 'win64',
             ):
         if task.attributes['build_type'] == 'opt' and \
-           task.attributes.get('unittest_suite') != 'talos':
+           task.attributes.get('unittest_suite') != 'talos' and \
+           task.attributes.get('unittest_suite') != 'raptor':
             return False
 
     # skip l10n, beetmover, balrog
@@ -94,7 +89,7 @@ def filter_beta_release_tasks(task, parameters, ignore_kinds=None, allow_l10n=Fa
 def standard_filter(task, parameters):
     return all(
         filter_func(task, parameters) for filter_func in
-        (filter_out_nightly, filter_for_project, filter_upload_symbols)
+        (filter_out_nightly, filter_for_project)
     )
 
 
@@ -133,6 +128,11 @@ def _try_option_syntax(full_task_graph, parameters, graph_config):
         # If the developer wants test talos jobs to be rebuilt N times we add that value here
         if options.talos_trigger_tests > 1 and task.attributes.get('unittest_suite') == 'talos':
             task.attributes['task_duplicates'] = options.talos_trigger_tests
+            task.attributes['profile'] = options.profile
+
+        # If the developer wants test raptor jobs to be rebuilt N times we add that value here
+        if options.raptor_trigger_tests > 1 and task.attributes.get('unittest_suite') == 'raptor':
+            task.attributes['task_duplicates'] = options.raptor_trigger_tests
             task.attributes['profile'] = options.profile
 
         task.attributes.update(attributes)
@@ -200,6 +200,9 @@ def target_tasks_ash(full_task_graph, parameters, graph_config):
                 return False
             # don't run talos on ash
             if task.attributes.get('unittest_suite') == 'talos':
+                return False
+            # don't run raptor on ash
+            if task.attributes.get('unittest_suite') == 'raptor':
                 return False
         # don't upload symbols
         if task.attributes['kind'] == 'upload-symbols':

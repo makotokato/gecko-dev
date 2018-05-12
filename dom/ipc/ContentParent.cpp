@@ -2054,6 +2054,10 @@ ContentParent::LaunchSubprocess(ProcessPriority aInitialPriority /* = PROCESS_PR
     extraArgs.push_back("-safeMode");
   }
 
+  nsCString parentBuildID(mozilla::PlatformBuildID());
+  extraArgs.push_back("-parentBuildID");
+  extraArgs.push_back(parentBuildID.get());
+
   SetOtherProcessId(kInvalidProcessId, ProcessIdState::ePending);
   if (!mSubprocess->Launch(extraArgs)) {
     NS_ERROR("failed to launch child in the parent");
@@ -4270,7 +4274,7 @@ ContentParent::RecvRequestAnonymousTemporaryFile(const uint64_t& aID)
   // Make sure to send a callback to the child if we bail out early.
   nsresult rv = NS_OK;
   RefPtr<ContentParent> self(this);
-  auto autoNotifyChildOnError = MakeScopeExit([&]() {
+  auto autoNotifyChildOnError = MakeScopeExit([&, self]() {
     if (NS_FAILED(rv)) {
       FileDescOrError result(rv);
       Unused << self->SendProvideAnonymousTemporaryFile(aID, result);
@@ -4407,6 +4411,10 @@ ContentParent::UnregisterRemoteFrame(const TabId& aTabId,
   if (XRE_IsParentProcess()) {
     ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
     ContentParent* cp = cpm->GetContentProcessById(aCpId);
+
+    if (!cp) {
+      return;
+    }
 
     cp->NotifyTabDestroyed(aTabId, aMarkedDestroying);
 
@@ -5240,6 +5248,14 @@ ContentParent::RecvGetFilesRequest(const nsID& aUUID,
                                    const bool& aRecursiveFlag)
 {
   MOZ_ASSERT(!mGetFilesPendingRequests.GetWeak(aUUID));
+
+  if (!mozilla::Preferences::GetBool("dom.filesystem.pathcheck.disabled", false)) {
+    RefPtr<FileSystemSecurity> fss = FileSystemSecurity::Get();
+    if (NS_WARN_IF(!fss ||
+                   !fss->ContentProcessHasAccessTo(ChildID(), aDirectoryPath))) {
+      return IPC_FAIL_NO_REASON(this);
+    }
+  }
 
   ErrorResult rv;
   RefPtr<GetFilesHelper> helper =

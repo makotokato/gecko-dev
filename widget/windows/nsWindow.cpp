@@ -1273,7 +1273,7 @@ nsWindow::SetParent(nsIWidget *aNewParent)
 void
 nsWindow::ReparentNativeWidget(nsIWidget* aNewParent)
 {
-  NS_PRECONDITION(aNewParent, "");
+  MOZ_ASSERT(aNewParent, "null widget");
 
   mParent = aNewParent;
   if (mWindowType == eWindowType_popup) {
@@ -4090,7 +4090,7 @@ nsWindow::AddWindowOverlayWebRenderCommands(layers::WebRenderBridgeChild* aWrBri
       RoundedRect(ThebesRect(mWindowButtonsRect->ToUnknownRect()),
                   RectCornerRadii(0, 0, 3, 3))));
     wr::WrClipId clipId =
-      aBuilder.DefineClip(Nothing(), Nothing(), rect, &roundedClip);
+      aBuilder.DefineClip(Nothing(), rect, &roundedClip);
     aBuilder.PushClip(clipId);
     aBuilder.PushClearRect(rect);
     aBuilder.PopClip();
@@ -5919,6 +5919,9 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
     case WM_DISPLAYCHANGE:
     {
       ScreenHelperWin::RefreshScreens();
+      if (mWidgetListener) {
+        mWidgetListener->UIResolutionChanged();
+      }
       break;
     }
 

@@ -35,7 +35,6 @@ from ..frontend.data import (
     ComputedFlags,
     ConfigFileSubstitution,
     ContextDerived,
-    ContextWrapped,
     Defines,
     DirectoryTraversal,
     ExternalLibrary,
@@ -51,7 +50,6 @@ from ..frontend.data import (
     HostSources,
     InstallationTarget,
     JARManifest,
-    JavaJarData,
     Library,
     Linkable,
     LocalInclude,
@@ -64,7 +62,7 @@ from ..frontend.data import (
     RustLibrary,
     HostRustLibrary,
     RustProgram,
-    RustTest,
+    RustTests,
     SharedLibrary,
     SimpleProgram,
     Sources,
@@ -620,8 +618,8 @@ class RecursiveMakeBackend(CommonBackend):
             build_target = self._build_target_for_obj(obj)
             self._compile_graph[build_target]
 
-        elif isinstance(obj, RustTest):
-            self._process_rust_test(obj, backend_file)
+        elif isinstance(obj, RustTests):
+            self._process_rust_tests(obj, backend_file)
 
         elif isinstance(obj, Program):
             self._process_program(obj, backend_file)
@@ -652,17 +650,6 @@ class RecursiveMakeBackend(CommonBackend):
 
         elif isinstance(obj, InstallationTarget):
             self._process_installation_target(obj, backend_file)
-
-        elif isinstance(obj, ContextWrapped):
-            # Process a rich build system object from the front-end
-            # as-is.  Please follow precedent and handle CamelCaseData
-            # in a function named _process_camel_case_data.  At some
-            # point in the future, this unwrapping process may be
-            # automated.
-            if isinstance(obj.wrapped, JavaJarData):
-                self._process_java_jar_data(obj.wrapped, backend_file)
-            else:
-                return False
 
         elif isinstance(obj, RustLibrary):
             self.backend_input_files.add(obj.cargo_file)
@@ -1131,10 +1118,10 @@ class RecursiveMakeBackend(CommonBackend):
                                         'HOST_RUST_PROGRAMS',
                                         'HOST_RUST_CARGO_PROGRAMS')
 
-    def _process_rust_test(self, obj, backend_file):
+    def _process_rust_tests(self, obj, backend_file):
         self._no_skip['check'].add(backend_file.relobjdir)
         backend_file.write_once('CARGO_FILE := $(srcdir)/Cargo.toml\n')
-        backend_file.write_once('RUST_TEST := %s\n' % obj.name)
+        backend_file.write_once('RUST_TESTS := %s\n' % ' '.join(obj.names))
         backend_file.write_once('RUST_TEST_FEATURES := %s\n' % ' '.join(obj.features))
 
     def _process_simple_program(self, obj, backend_file):

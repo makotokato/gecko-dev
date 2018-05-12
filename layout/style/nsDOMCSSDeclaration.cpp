@@ -23,9 +23,7 @@
 
 using namespace mozilla;
 
-nsDOMCSSDeclaration::~nsDOMCSSDeclaration()
-{
-}
+nsDOMCSSDeclaration::~nsDOMCSSDeclaration() = default;
 
 /* virtual */ JSObject*
 nsDOMCSSDeclaration::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
@@ -40,8 +38,8 @@ nsresult
 nsDOMCSSDeclaration::GetPropertyValue(const nsCSSPropertyID aPropID,
                                       nsAString& aValue)
 {
-  NS_PRECONDITION(aPropID != eCSSProperty_UNKNOWN,
-                  "Should never pass eCSSProperty_UNKNOWN around");
+  MOZ_ASSERT(aPropID != eCSSProperty_UNKNOWN,
+             "Should never pass eCSSProperty_UNKNOWN around");
 
   aValue.Truncate();
   if (DeclarationBlock* decl = GetCSSDeclaration(eOperation_Read)) {
@@ -230,23 +228,6 @@ nsDOMCSSDeclaration::RemoveProperty(const nsAString& aPropertyName,
   return RemovePropertyInternal(aPropertyName);
 }
 
-/* static */ void
-nsDOMCSSDeclaration::GetCSSParsingEnvironmentForRule(css::Rule* aRule,
-                                                     CSSParsingEnvironment& aCSSParseEnv)
-{
-  StyleSheet* sheet = aRule ? aRule->GetStyleSheet() : nullptr;
-  if (!sheet) {
-    aCSSParseEnv.mPrincipal = nullptr;
-    return;
-  }
-
-  nsIDocument* document = sheet->GetAssociatedDocument();
-  aCSSParseEnv.mSheetURI = sheet->GetSheetURI();
-  aCSSParseEnv.mBaseURI = sheet->GetBaseURI();
-  aCSSParseEnv.mPrincipal = sheet->Principal();
-  aCSSParseEnv.mCSSLoader = document ? document->CSSLoader() : nullptr;
-}
-
 /* static */ nsDOMCSSDeclaration::ServoCSSParsingEnvironment
 nsDOMCSSDeclaration::GetServoCSSParsingEnvironmentForRule(const css::Rule* aRule)
 {
@@ -257,24 +238,23 @@ nsDOMCSSDeclaration::GetServoCSSParsingEnvironmentForRule(const css::Rule* aRule
 
   if (nsIDocument* document = aRule->GetDocument()) {
     return {
-      sheet->AsServo()->URLData(),
+      sheet->URLData(),
       document->GetCompatibilityMode(),
       document->CSSLoader(),
     };
   }
 
   return {
-    sheet->AsServo()->URLData(),
+    sheet->URLData(),
     eCompatibility_FullStandards,
     nullptr,
   };
 }
 
-template<typename GeckoFunc, typename ServoFunc>
+template<typename Func>
 nsresult
 nsDOMCSSDeclaration::ModifyDeclaration(nsIPrincipal* aSubjectPrincipal,
-                                       GeckoFunc aGeckoFunc,
-                                       ServoFunc aServoFunc)
+                                       Func aFunc)
 {
   DeclarationBlock* olddecl = GetCSSDeclaration(eOperation_Modify);
   if (!olddecl) {
@@ -290,13 +270,13 @@ nsDOMCSSDeclaration::ModifyDeclaration(nsIPrincipal* aSubjectPrincipal,
   RefPtr<DeclarationBlock> decl = olddecl->EnsureMutable();
 
   bool changed;
-  ServoCSSParsingEnvironment servoEnv = GetServoCSSParsingEnvironment(
-      aSubjectPrincipal);
+  ServoCSSParsingEnvironment servoEnv =
+    GetServoCSSParsingEnvironment(aSubjectPrincipal);
   if (!servoEnv.mUrlExtraData) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  changed = aServoFunc(decl->AsServo(), servoEnv);
+  changed = aFunc(decl->AsServo(), servoEnv);
 
   if (!changed) {
     // Parsing failed -- but we don't throw an exception for that.
@@ -314,9 +294,6 @@ nsDOMCSSDeclaration::ParsePropertyValue(const nsCSSPropertyID aPropID,
 {
   return ModifyDeclaration(
     aSubjectPrincipal,
-    [&](css::Declaration* decl, CSSParsingEnvironment& env, bool* changed) {
-      MOZ_CRASH("old style system disabled");
-    },
     [&](ServoDeclarationBlock* decl, ServoCSSParsingEnvironment& env) {
       NS_ConvertUTF16toUTF8 value(aPropValue);
       return Servo_DeclarationBlock_SetPropertyById(
@@ -334,9 +311,6 @@ nsDOMCSSDeclaration::ParseCustomPropertyValue(const nsAString& aPropertyName,
   MOZ_ASSERT(nsCSSProps::IsCustomPropertyName(aPropertyName));
   return ModifyDeclaration(
     aSubjectPrincipal,
-    [&](css::Declaration* decl, CSSParsingEnvironment& env, bool* changed) {
-      MOZ_CRASH("old style system disabled");
-    },
     [&](ServoDeclarationBlock* decl, ServoCSSParsingEnvironment& env) {
       NS_ConvertUTF16toUTF8 property(aPropertyName);
       NS_ConvertUTF16toUTF8 value(aPropValue);

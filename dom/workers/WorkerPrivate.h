@@ -553,14 +553,14 @@ public:
   void
   EnsurePerformanceCounter();
 
-  const ClientInfo&
+  Maybe<ClientInfo>
   GetClientInfo() const;
 
   const ClientState
   GetClientState() const;
 
   const Maybe<ServiceWorkerDescriptor>
-  GetController() const;
+  GetController();
 
   void
   Control(const ServiceWorkerDescriptor& aServiceWorker);

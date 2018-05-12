@@ -756,7 +756,7 @@ nsHtml5TreeOpExecutor::RunScript(nsIContent* aScriptElement)
 void
 nsHtml5TreeOpExecutor::Start()
 {
-  NS_PRECONDITION(!mStarted, "Tried to start when already started.");
+  MOZ_ASSERT(!mStarted, "Tried to start when already started.");
   mStarted = true;
 }
 
@@ -1155,15 +1155,6 @@ nsHtml5TreeOpExecutor::AddSpeculationCSP(const nsAString& aCSP)
                              false, // csp via meta tag can not be report only
                              true); // delivered through the meta tag
   NS_ENSURE_SUCCESS_VOID(rv);
-
-  // Record "speculated" referrer policy for preloads
-  bool hasReferrerPolicy = false;
-  uint32_t referrerPolicy = mozilla::net::RP_Unset;
-  rv = preloadCsp->GetReferrerPolicy(&referrerPolicy, &hasReferrerPolicy);
-  NS_ENSURE_SUCCESS_VOID(rv);
-  if (hasReferrerPolicy) {
-    SetSpeculationReferrerPolicy(static_cast<ReferrerPolicy>(referrerPolicy));
-  }
 
   mDocument->ApplySettingsFromCSP(true);
 }
