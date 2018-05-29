@@ -23,6 +23,8 @@
 #include "mozilla/Sprintf.h"
 #include "mozilla/TypeTraits.h"
 
+#include <new>
+
 #include "jsapi.h"
 #include "jstypes.h"
 
@@ -797,8 +799,10 @@ ParserBase::errorNoOffset(unsigned errorNumber, ...)
 ParserBase::ParserBase(JSContext* cx, LifoAlloc& alloc,
                        const ReadOnlyCompileOptions& options,
                        bool foldConstants,
-                       UsedNameTracker& usedNames)
-  : AutoGCRooter(cx, PARSER),
+                       UsedNameTracker& usedNames,
+                       ScriptSourceObject* sourceObject,
+                       ParseGoal parseGoal)
+  : AutoGCRooter(cx, AutoGCRooter::Tag::Parser),
     context(cx),
     alloc(alloc),
     anyChars(cx, options, thisForCtor()),
@@ -806,13 +810,15 @@ ParserBase::ParserBase(JSContext* cx, LifoAlloc& alloc,
     pc(nullptr),
     usedNames(usedNames),
     ss(nullptr),
+    sourceObject(cx, sourceObject),
     keepAtoms(cx),
     foldConstants(foldConstants),
 #ifdef DEBUG
     checkOptionsCalled(false),
 #endif
     isUnexpectedEOF_(false),
-    awaitHandling_(AwaitIsName)
+    awaitHandling_(AwaitIsName),
+    parseGoal_(uint8_t(parseGoal))
 {
     cx->frontendCollectionPool().addActiveCompilation();
     tempPoolMark = alloc.mark();
@@ -848,8 +854,10 @@ template <class ParseHandler>
 PerHandlerParser<ParseHandler>::PerHandlerParser(JSContext* cx, LifoAlloc& alloc,
                                                  const ReadOnlyCompileOptions& options,
                                                  bool foldConstants, UsedNameTracker& usedNames,
-                                                 LazyScript* lazyOuterFunction)
-  : ParserBase(cx, alloc, options, foldConstants, usedNames),
+                                                 LazyScript* lazyOuterFunction,
+                                                 ScriptSourceObject* sourceObject,
+                                                 ParseGoal parseGoal)
+  : ParserBase(cx, alloc, options, foldConstants, usedNames, sourceObject, parseGoal),
     handler(cx, alloc, lazyOuterFunction)
 {
 
@@ -862,8 +870,10 @@ GeneralParser<ParseHandler, CharT>::GeneralParser(JSContext* cx, LifoAlloc& allo
                                                   bool foldConstants,
                                                   UsedNameTracker& usedNames,
                                                   SyntaxParser* syntaxParser,
-                                                  LazyScript* lazyOuterFunction)
-  : Base(cx, alloc, options, foldConstants, usedNames, lazyOuterFunction),
+                                                  LazyScript* lazyOuterFunction,
+                                                  ScriptSourceObject* sourceObject,
+                                                  ParseGoal parseGoal)
+  : Base(cx, alloc, options, foldConstants, usedNames, lazyOuterFunction, sourceObject, parseGoal),
     tokenStream(cx, options, chars, length)
 {
     // The Mozilla specific JSOPTION_EXTRA_WARNINGS option adds extra warnings
@@ -1756,14 +1766,24 @@ template <typename Scope>
 typename Scope::Data*
 NewEmptyBindingData(JSContext* cx, LifoAlloc& alloc, uint32_t numBindings)
 {
+    using Data = typename Scope::Data;
     size_t allocSize = Scope::sizeOfData(numBindings);
-    typename Scope::Data* bindings = static_cast<typename Scope::Data*>(alloc.alloc(allocSize));
-    if (!bindings) {
+    auto* bindings = alloc.allocInSize<Data>(allocSize, numBindings);
+    if (!bindings)
         ReportOutOfMemory(cx);
-        return nullptr;
-    }
-    PodZero(bindings);
     return bindings;
+}
+
+/**
+ * Copy-construct |BindingName|s from |bindings| into |cursor|, then return
+ * the location one past the newly-constructed |BindingName|s.
+ */
+static MOZ_MUST_USE BindingName*
+FreshlyInitializeBindings(BindingName* cursor, const Vector<BindingName>& bindings)
+{
+    for (const BindingName& binding : bindings)
+        new (cursor++) BindingName(binding);
+    return cursor;
 }
 
 Maybe<GlobalScope::Data*>
@@ -1810,22 +1830,20 @@ NewGlobalScopeData(JSContext* context, ParseContext::Scope& scope, LifoAlloc& al
             return Nothing();
 
         // The ordering here is important. See comments in GlobalScope.
-        BindingName* start = bindings->names;
+        BindingName* start = bindings->trailingNames.start();
         BindingName* cursor = start;
 
-        PodCopy(cursor, funs.begin(), funs.length());
-        cursor += funs.length();
+        cursor = FreshlyInitializeBindings(cursor, funs);
 
         bindings->varStart = cursor - start;
-        PodCopy(cursor, vars.begin(), vars.length());
-        cursor += vars.length();
+        cursor = FreshlyInitializeBindings(cursor, vars);
 
         bindings->letStart = cursor - start;
-        PodCopy(cursor, lets.begin(), lets.length());
-        cursor += lets.length();
+        cursor = FreshlyInitializeBindings(cursor, lets);
 
         bindings->constStart = cursor - start;
-        PodCopy(cursor, consts.begin(), consts.length());
+        cursor = FreshlyInitializeBindings(cursor, consts);
+
         bindings->length = numBindings;
     }
 
@@ -1882,22 +1900,20 @@ NewModuleScopeData(JSContext* context, ParseContext::Scope& scope, LifoAlloc& al
             return Nothing();
 
         // The ordering here is important. See comments in ModuleScope.
-        BindingName* start = bindings->names;
+        BindingName* start = bindings->trailingNames.start();
         BindingName* cursor = start;
 
-        PodCopy(cursor, imports.begin(), imports.length());
-        cursor += imports.length();
+        cursor = FreshlyInitializeBindings(cursor, imports);
 
         bindings->varStart = cursor - start;
-        PodCopy(cursor, vars.begin(), vars.length());
-        cursor += vars.length();
+        cursor = FreshlyInitializeBindings(cursor, vars);
 
         bindings->letStart = cursor - start;
-        PodCopy(cursor, lets.begin(), lets.length());
-        cursor += lets.length();
+        cursor = FreshlyInitializeBindings(cursor, lets);
 
         bindings->constStart = cursor - start;
-        PodCopy(cursor, consts.begin(), consts.length());
+        cursor = FreshlyInitializeBindings(cursor, consts);
+
         bindings->length = numBindings;
     }
 
@@ -1938,16 +1954,16 @@ NewEvalScopeData(JSContext* context, ParseContext::Scope& scope, LifoAlloc& allo
         if (!bindings)
             return Nothing();
 
-        BindingName* start = bindings->names;
+        BindingName* start = bindings->trailingNames.start();
         BindingName* cursor = start;
 
         // Keep track of what vars are functions. This is only used in BCE to omit
         // superfluous DEFVARs.
-        PodCopy(cursor, funs.begin(), funs.length());
-        cursor += funs.length();
+        cursor = FreshlyInitializeBindings(cursor, funs);
 
         bindings->varStart = cursor - start;
-        PodCopy(cursor, vars.begin(), vars.length());
+        cursor = FreshlyInitializeBindings(cursor, vars);
+
         bindings->length = numBindings;
     }
 
@@ -2036,18 +2052,17 @@ NewFunctionScopeData(JSContext* context, ParseContext::Scope& scope, bool hasPar
             return Nothing();
 
         // The ordering here is important. See comments in FunctionScope.
-        BindingName* start = bindings->names;
+        BindingName* start = bindings->trailingNames.start();
         BindingName* cursor = start;
 
-        PodCopy(cursor, positionalFormals.begin(), positionalFormals.length());
-        cursor += positionalFormals.length();
+        cursor = FreshlyInitializeBindings(cursor, positionalFormals);
 
         bindings->nonPositionalFormalStart = cursor - start;
-        PodCopy(cursor, formals.begin(), formals.length());
-        cursor += formals.length();
+        cursor = FreshlyInitializeBindings(cursor, formals);
 
         bindings->varStart = cursor - start;
-        PodCopy(cursor, vars.begin(), vars.length());
+        cursor = FreshlyInitializeBindings(cursor, vars);
+
         bindings->length = numBindings;
     }
 
@@ -2084,10 +2099,11 @@ NewVarScopeData(JSContext* context, ParseContext::Scope& scope, LifoAlloc& alloc
             return Nothing();
 
         // The ordering here is important. See comments in FunctionScope.
-        BindingName* start = bindings->names;
+        BindingName* start = bindings->trailingNames.start();
         BindingName* cursor = start;
 
-        PodCopy(cursor, vars.begin(), vars.length());
+        cursor = FreshlyInitializeBindings(cursor, vars);
+
         bindings->length = numBindings;
     }
 
@@ -2137,14 +2153,14 @@ NewLexicalScopeData(JSContext* context, ParseContext::Scope& scope, LifoAlloc& a
             return Nothing();
 
         // The ordering here is important. See comments in LexicalScope.
-        BindingName* cursor = bindings->names;
+        BindingName* cursor = bindings->trailingNames.start();
         BindingName* start = cursor;
 
-        PodCopy(cursor, lets.begin(), lets.length());
-        cursor += lets.length();
+        cursor = FreshlyInitializeBindings(cursor, lets);
 
         bindings->constStart = cursor - start;
-        PodCopy(cursor, consts.begin(), consts.length());
+        cursor = FreshlyInitializeBindings(cursor, consts);
+
         bindings->length = numBindings;
     }
 
@@ -2534,11 +2550,13 @@ PerHandlerParser<SyntaxParseHandler>::finishFunction(bool isStandaloneFunction /
 
     FunctionBox* funbox = pc->functionBox();
     RootedFunction fun(context, funbox->function());
-    LazyScript* lazy = LazyScript::Create(context, fun, pc->closedOverBindingsForLazy(),
+    LazyScript* lazy = LazyScript::Create(context, fun, sourceObject,
+                                          pc->closedOverBindingsForLazy(),
                                           pc->innerFunctionsForLazy,
                                           funbox->bufStart, funbox->bufEnd,
                                           funbox->toStringStart,
-                                          funbox->startLine, funbox->startColumn);
+                                          funbox->startLine, funbox->startColumn,
+                                          parseGoal());
     if (!lazy)
         return false;
 
@@ -5338,6 +5356,22 @@ GeneralParser<ParseHandler, CharT>::importDeclaration()
     return asFinalParser()->importDeclaration();
 }
 
+template <class ParseHandler, typename CharT>
+inline typename ParseHandler::Node
+GeneralParser<ParseHandler, CharT>::importDeclarationOrImportMeta(YieldHandling yieldHandling)
+{
+    MOZ_ASSERT(anyChars.isCurrentTokenType(TokenKind::Import));
+
+    TokenKind tt;
+    if (!tokenStream.peekToken(&tt))
+        return null();
+
+    if (tt == TokenKind::Dot)
+        return expressionStatement(yieldHandling);
+
+    return importDeclaration();
+}
+
 template<typename CharT>
 bool
 Parser<FullParseHandler, CharT>::checkExportedName(JSAtom* exportName)
@@ -7686,7 +7720,7 @@ GeneralParser<ParseHandler, CharT>::statement(YieldHandling yieldHandling)
 
       // ImportDeclaration (only inside modules)
       case TokenKind::Import:
-        return importDeclaration();
+        return importDeclarationOrImportMeta(yieldHandling);
 
       // ExportDeclaration (only inside modules)
       case TokenKind::Export:
@@ -7879,7 +7913,7 @@ GeneralParser<ParseHandler, CharT>::statementListItem(YieldHandling yieldHandlin
 
       // ImportDeclaration (only inside modules)
       case TokenKind::Import:
-        return importDeclaration();
+        return importDeclarationOrImportMeta(yieldHandling);
 
       // ExportDeclaration (only inside modules)
       case TokenKind::Export:
@@ -8699,6 +8733,10 @@ GeneralParser<ParseHandler, CharT>::memberExpr(YieldHandling yieldHandling,
         if (!thisName)
             return null();
         lhs = handler.newSuperBase(thisName, pos());
+        if (!lhs)
+            return null();
+    } else if (tt == TokenKind::Import) {
+        lhs = importMeta();
         if (!lhs)
             return null();
     } else {
@@ -9875,6 +9913,45 @@ GeneralParser<ParseHandler, CharT>::tryNewTarget(Node &newTarget)
 
     newTarget = handler.newNewTarget(newHolder, targetHolder);
     return !!newTarget;
+}
+
+template <class ParseHandler, typename CharT>
+typename ParseHandler::Node
+GeneralParser<ParseHandler, CharT>::importMeta()
+{
+    MOZ_ASSERT(anyChars.isCurrentTokenType(TokenKind::Import));
+
+    uint32_t begin = pos().begin;
+
+    if (parseGoal() != ParseGoal::Module) {
+        errorAt(begin, JSMSG_IMPORT_OUTSIDE_MODULE);
+        return null();
+    }
+
+    Node importHolder = handler.newPosHolder(pos());
+    if (!importHolder)
+        return null();
+
+    TokenKind next;
+    if (!tokenStream.getToken(&next))
+        return null();
+    if (next != TokenKind::Dot) {
+        error(JSMSG_UNEXPECTED_TOKEN, "dot", TokenKindToDesc(next));
+        return null();
+    }
+
+    if (!tokenStream.getToken(&next))
+        return null();
+    if (next != TokenKind::Meta) {
+        error(JSMSG_UNEXPECTED_TOKEN, "meta", TokenKindToDesc(next));
+        return null();
+    }
+
+    Node metaHolder = handler.newPosHolder(pos());
+    if (!metaHolder)
+        return null();
+
+    return handler.newImportMeta(importHolder, metaHolder);
 }
 
 template <class ParseHandler, typename CharT>

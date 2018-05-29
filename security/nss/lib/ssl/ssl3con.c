@@ -5572,13 +5572,20 @@ ssl3_SendRSAClientKeyExchange(sslSocket *ss, SECKEYPublicKey *svrPubKey)
     }
 
     /* Get the wrapped (encrypted) pre-master secret, enc_pms */
-    enc_pms.len = SECKEY_PublicKeyStrength(svrPubKey);
+    unsigned int svrPubKeyBits = SECKEY_PublicKeyStrengthInBits(svrPubKey);
+    enc_pms.len = (svrPubKeyBits + 7) / 8;
+    /* Check that the RSA key isn't larger than 8k bit. */
+    if (svrPubKeyBits > SSL_MAX_RSA_KEY_BITS) {
+        (void)SSL3_SendAlert(ss, alert_fatal, illegal_parameter);
+        ssl_MapLowLevelError(SSL_ERROR_CLIENT_KEY_EXCHANGE_FAILURE);
+        goto loser;
+    }
     enc_pms.data = (unsigned char *)PORT_Alloc(enc_pms.len);
     if (enc_pms.data == NULL) {
         goto loser; /* err set by PORT_Alloc */
     }
 
-    /* wrap pre-master secret in server's public key. */
+    /* Wrap pre-master secret in server's public key. */
     rv = PK11_PubWrapSymKey(CKM_RSA_PKCS, svrPubKey, pms, &enc_pms);
     if (rv != SECSuccess) {
         ssl_MapLowLevelError(SSL_ERROR_CLIENT_KEY_EXCHANGE_FAILURE);
@@ -5681,7 +5688,7 @@ ssl3_SendDHClientKeyExchange(sslSocket *ss, SECKEYPublicKey *svrPubKey)
     };
     sslEphemeralKeyPair *keyPair = NULL;
     SECKEYPublicKey *pubKey;
-    PRUint8 dhData[1026]; /* Enough for the 8192-bit group. */
+    PRUint8 dhData[SSL_MAX_DH_KEY_BITS / 8 + 2];
     sslBuffer dhBuf = SSL_BUFFER(dhData);
 
     PORT_Assert(ss->opt.noLocks || ssl_HaveSSL3HandshakeLock(ss));
@@ -6164,28 +6171,38 @@ ssl_ClientSetCipherSuite(sslSocket *ss, SSL3ProtocolVersion version,
 static PRBool
 ssl_CheckServerSessionIdCorrectness(sslSocket *ss, SECItem *sidBytes)
 {
-    PRBool sid_match = PR_FALSE;
-    PRBool sent_fake_sid = ss->opt.enableTls13CompatMode && !IS_DTLS(ss);
+    sslSessionID *sid = ss->sec.ci.sid;
+    PRBool sidMatch = PR_FALSE;
+    PRBool sentFakeSid = PR_FALSE;
+    PRBool sentRealSid = sid && sid->version < SSL_LIBRARY_VERSION_TLS_1_3;
 
-    /* If in compat mode and we received a session ID with the right length
-     * then compare it to the fake one we sent in the ClientHello. */
-    if (sent_fake_sid && sidBytes->len == SSL3_SESSIONID_BYTES) {
-        PRUint8 buf[SSL3_SESSIONID_BYTES];
-        ssl_MakeFakeSid(ss, buf);
-        sid_match = PORT_Memcmp(buf, sidBytes->data, sidBytes->len) == 0;
+    /* If attempting to resume a TLS 1.2 connection, the session ID won't be a
+     * fake. Check for the real value. */
+    if (sentRealSid) {
+        sidMatch = (sidBytes->len == sid->u.ssl3.sessionIDLength) &&
+                   PORT_Memcmp(sid->u.ssl3.sessionID, sidBytes->data, sidBytes->len) == 0;
+    } else {
+        /* Otherwise, the session ID was a fake if TLS 1.3 compat mode is
+         * enabled.  If so, check for the fake value. */
+        sentFakeSid = ss->opt.enableTls13CompatMode && !IS_DTLS(ss);
+        if (sentFakeSid && sidBytes->len == SSL3_SESSIONID_BYTES) {
+            PRUint8 buf[SSL3_SESSIONID_BYTES];
+            ssl_MakeFakeSid(ss, buf);
+            sidMatch = PORT_Memcmp(buf, sidBytes->data, sidBytes->len) == 0;
+        }
     }
 
-    /* TLS 1.2: SessionID shouldn't match the fake one. */
+    /* TLS 1.2: Session ID shouldn't match if we sent a fake. */
     if (ss->version < SSL_LIBRARY_VERSION_TLS_1_3) {
-        return !sid_match;
+        return !sentFakeSid || !sidMatch;
     }
 
-    /* TLS 1.3: [Compat Mode] Session ID should match the fake one. */
-    if (sent_fake_sid) {
-        return sid_match;
+    /* TLS 1.3: We sent a session ID.  The server's should match. */
+    if (sentRealSid || sentFakeSid) {
+        return sidMatch;
     }
 
-    /* TLS 1.3: [Non-Compat Mode] Server shouldn't send a session ID. */
+    /* TLS 1.3: The server shouldn't send a session ID. */
     return sidBytes->len == 0;
 }
 
@@ -6716,6 +6733,10 @@ ssl_HandleDHServerKeyExchange(sslSocket *ss, PRUint8 *b, PRUint32 length)
     dh_p_bits = SECKEY_BigIntegerBitLength(&dh_p);
     if (dh_p_bits < (unsigned)minDH) {
         errCode = SSL_ERROR_WEAK_SERVER_EPHEMERAL_DH_KEY;
+        goto alert_loser;
+    }
+    if (dh_p_bits > SSL_MAX_DH_KEY_BITS) {
+        errCode = SSL_ERROR_DH_KEY_TOO_LONG;
         goto alert_loser;
     }
     rv = ssl3_ConsumeHandshakeVariable(ss, &dh_g, 2, &b, &length);
@@ -12166,6 +12187,14 @@ ssl3_HandleRecord(sslSocket *ss, SSL3Ciphertext *cText)
      * processed twice. */
     plaintext->len = 0;
 
+    /* We're waiting for another ClientHello, which will appear unencrypted.
+     * Use the content type to tell whether this should be discarded. */
+    if (ss->ssl3.hs.zeroRttIgnore == ssl_0rtt_ignore_hrr &&
+        cText->hdr[0] == content_application_data) {
+        PORT_Assert(ss->ssl3.hs.ws == wait_client_hello);
+        return SECSuccess;
+    }
+
     ssl_GetSpecReadLock(ss); /******************************************/
     spec = ssl3_GetCipherSpec(ss, cText);
     if (!spec) {
@@ -12196,18 +12225,6 @@ ssl3_HandleRecord(sslSocket *ss, SSL3Ciphertext *cText)
         return SECFailure;
     }
 
-    /* We're waiting for another ClientHello, which will appear unencrypted.
-     * Use the content type to tell whether this is should be discarded.
-     *
-     * XXX If we decide to remove the content type from encrypted records, this
-     *     will become much more difficult to manage. */
-    if (ss->ssl3.hs.zeroRttIgnore == ssl_0rtt_ignore_hrr &&
-        cText->hdr[0] == content_application_data) {
-        ssl_ReleaseSpecReadLock(ss); /*****************************/
-        PORT_Assert(ss->ssl3.hs.ws == wait_client_hello);
-        return SECSuccess;
-    }
-
     if (plaintext->space < MAX_FRAGMENT_LENGTH) {
         rv = sslBuffer_Grow(plaintext, MAX_FRAGMENT_LENGTH + 2048);
         if (rv != SECSuccess) {
@@ -12220,23 +12237,33 @@ ssl3_HandleRecord(sslSocket *ss, SSL3Ciphertext *cText)
         }
     }
 
-#ifdef UNSAFE_FUZZER_MODE
+    /* Most record types aside from protected TLS 1.3 records carry the content
+     * type in the first octet. TLS 1.3 will override this value later. */
     rType = cText->hdr[0];
-    rv = Null_Cipher(NULL, plaintext->buf, (int *)&plaintext->len,
-                     plaintext->space, cText->buf->buf, cText->buf->len);
-#else
-    /* IMPORTANT: Unprotect functions MUST NOT send alerts
-     * because we still hold the spec read lock. Instead, if they
-     * return SECFailure, they set *alert to the alert to be sent. */
-    if (spec->version < SSL_LIBRARY_VERSION_TLS_1_3 ||
-        spec->cipherDef->calg == ssl_calg_null) {
-        /* Unencrypted TLS 1.3 records use the pre-TLS 1.3 format. */
-        rType = cText->hdr[0];
-        rv = ssl3_UnprotectRecord(ss, spec, cText, plaintext, &alert);
+    /* Encrypted application data records could arrive before the handshake
+     * completes in DTLS 1.3. These can look like valid TLS 1.2 application_data
+     * records in epoch 0, which is never valid. Pretend they didn't decrypt. */
+    if (spec->epoch == 0 && rType == content_application_data) {
+        PORT_SetError(SSL_ERROR_RX_UNEXPECTED_APPLICATION_DATA);
+        alert = unexpected_message;
+        rv = SECFailure;
     } else {
-        rv = tls13_UnprotectRecord(ss, spec, cText, plaintext, &rType, &alert);
-    }
+#ifdef UNSAFE_FUZZER_MODE
+        rv = Null_Cipher(NULL, plaintext->buf, (int *)&plaintext->len,
+                         plaintext->space, cText->buf->buf, cText->buf->len);
+#else
+        /* IMPORTANT: Unprotect functions MUST NOT send alerts
+         * because we still hold the spec read lock. Instead, if they
+         * return SECFailure, they set *alert to the alert to be sent. */
+        if (spec->version < SSL_LIBRARY_VERSION_TLS_1_3 ||
+            spec->epoch == 0) {
+            rv = ssl3_UnprotectRecord(ss, spec, cText, plaintext, &alert);
+        } else {
+            rv = tls13_UnprotectRecord(ss, spec, cText, plaintext, &rType,
+                                       &alert);
+        }
 #endif
+    }
 
     if (rv != SECSuccess) {
         ssl_ReleaseSpecReadLock(ss); /***************************/
@@ -12246,10 +12273,10 @@ ssl3_HandleRecord(sslSocket *ss, SSL3Ciphertext *cText)
         /* Ensure that we don't process this data again. */
         plaintext->len = 0;
 
-        /* Ignore a CCS if the alternative handshake is negotiated.  Note that
-         * this will fail if the server fails to negotiate the alternative
-         * handshake type in a 0-RTT session that is resumed from a session that
-         * did negotiate it.  We don't care about that corner case right now. */
+        /* Ignore a CCS if compatibility mode is negotiated.  Note that this
+         * will fail if the server fails to negotiate compatibility mode in a
+         * 0-RTT session that is resumed from a session that did negotiate it.
+         * We don't care about that corner case right now. */
         if (ss->version >= SSL_LIBRARY_VERSION_TLS_1_3 &&
             cText->hdr[0] == content_change_cipher_spec &&
             ss->ssl3.hs.ws != idle_handshake &&
@@ -12258,19 +12285,20 @@ ssl3_HandleRecord(sslSocket *ss, SSL3Ciphertext *cText)
             /* Ignore the CCS. */
             return SECSuccess;
         }
+
         if (IS_DTLS(ss) ||
             (ss->sec.isServer &&
              ss->ssl3.hs.zeroRttIgnore == ssl_0rtt_ignore_trial)) {
             /* Silently drop the packet */
             return SECSuccess;
-        } else {
-            int errCode = PORT_GetError();
-            SSL3_SendAlert(ss, alert_fatal, alert);
-            /* Reset the error code in case SSL3_SendAlert called
-             * PORT_SetError(). */
-            PORT_SetError(errCode);
-            return SECFailure;
         }
+
+        int errCode = PORT_GetError();
+        SSL3_SendAlert(ss, alert_fatal, alert);
+        /* Reset the error code in case SSL3_SendAlert called
+         * PORT_SetError(). */
+        PORT_SetError(errCode);
+        return SECFailure;
     }
 
     /* SECSuccess */

@@ -60,8 +60,8 @@ namespace dom {
 inline bool
 IsSecureContextOrObjectIsFromSecureContext(JSContext* aCx, JSObject* aObj)
 {
-  return JS::CompartmentCreationOptionsRef(js::GetContextCompartment(aCx)).secureContext() ||
-         JS::CompartmentCreationOptionsRef(js::GetObjectCompartment(aObj)).secureContext();
+  return JS::RealmCreationOptionsRef(js::GetContextCompartment(aCx)).secureContext() ||
+         JS::RealmCreationOptionsRef(js::GetObjectCompartment(aObj)).secureContext();
 }
 
 typedef bool
@@ -186,7 +186,11 @@ enum PropertyType {
 #define NUM_BITS_PROPERTY_INFO_SPEC_INDEX 16
 
 struct PropertyInfo {
-  jsid id;
+private:
+  // MSVC generates static initializers if we store a jsid here, even if
+  // PropertyInfo has a constexpr constructor. See bug 1460341 and bug 1464036.
+  uintptr_t mIdBits;
+public:
   // One of PropertyType, will be used for accessing the corresponding Duo in
   // NativePropertiesN.duos[].
   uint32_t type: NUM_BITS_PROPERTY_INFO_TYPE;
@@ -194,6 +198,14 @@ struct PropertyInfo {
   uint32_t prefIndex: NUM_BITS_PROPERTY_INFO_PREF_INDEX;
   // The index to the corresponding spec in Duo.mPrefables[prefIndex].specs[].
   uint32_t specIndex: NUM_BITS_PROPERTY_INFO_SPEC_INDEX;
+
+  void SetId(jsid aId) {
+    static_assert(sizeof(jsid) == sizeof(mIdBits), "jsid should fit in mIdBits");
+    mIdBits = JSID_BITS(aId);
+  }
+  MOZ_ALWAYS_INLINE jsid Id() const {
+    return jsid::fromRawBits(mIdBits);
+  }
 };
 
 static_assert(ePropertyTypeCount <= 1ull << NUM_BITS_PROPERTY_INFO_TYPE,

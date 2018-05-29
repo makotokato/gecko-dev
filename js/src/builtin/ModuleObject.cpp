@@ -16,6 +16,7 @@
 #include "gc/Tracer.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
+#include "vm/SelfHosting.h"
 
 #include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
@@ -1000,6 +1001,25 @@ ModuleObject::evaluationError() const
     return getReservedSlot(EvaluationErrorSlot);
 }
 
+JSObject*
+ModuleObject::metaObject() const
+{
+    Value value = getReservedSlot(MetaObjectSlot);
+    if (value.isObject())
+        return &value.toObject();
+
+    MOZ_ASSERT(value.isUndefined());
+    return nullptr;
+}
+
+void
+ModuleObject::setMetaObject(JSObject* obj)
+{
+    MOZ_ASSERT(obj);
+    MOZ_ASSERT(!metaObject());
+    setReservedSlot(MetaObjectSlot, ObjectValue(*obj));
+}
+
 Value
 ModuleObject::hostDefinedField() const
 {
@@ -1131,12 +1151,11 @@ ModuleObject::createNamespace(JSContext* cx, HandleModuleObject self, HandleObje
 static bool
 InvokeSelfHostedMethod(JSContext* cx, HandleModuleObject self, HandlePropertyName name)
 {
-    RootedValue fval(cx);
-    if (!GlobalObject::getSelfHostedFunction(cx, cx->global(), name, name, 0, &fval))
-        return false;
+    RootedValue thisv(cx, ObjectValue(*self));
+    FixedInvokeArgs<0> args(cx);
 
     RootedValue ignored(cx);
-    return Call(cx, fval, self, &ignored);
+    return CallSelfHostedFunction(cx, name, thisv, args, &ignored);
 }
 
 /* static */ bool
@@ -1622,4 +1641,25 @@ ArrayObject* ModuleBuilder::createArray(const JS::Rooted<GCHashMap<K, V>>& map)
         array->initDenseElement(i++, ObjectValue(*r.front().value()));
 
     return array;
+}
+
+JSObject*
+js::GetOrCreateModuleMetaObject(JSContext* cx, HandleObject moduleArg)
+{
+    HandleModuleObject module = moduleArg.as<ModuleObject>();
+    if (JSObject* obj = module->metaObject())
+        return obj;
+
+    RootedObject metaObject(cx, NewObjectWithGivenProto<PlainObject>(cx, nullptr));
+    if (!metaObject)
+        return nullptr;
+
+    JS::ModuleMetadataHook func = cx->runtime()->moduleMetadataHook;
+    MOZ_ASSERT(func);
+    if (!func(cx, module, metaObject))
+        return nullptr;
+
+    module->setMetaObject(metaObject);
+
+    return metaObject;
 }

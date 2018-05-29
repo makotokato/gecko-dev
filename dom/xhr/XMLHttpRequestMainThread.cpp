@@ -32,7 +32,6 @@
 #include "mozilla/LoadInfo.h"
 #include "mozilla/LoadContext.h"
 #include "mozilla/MemoryReporting.h"
-#include "nsIDOMDocument.h"
 #include "mozilla/dom/ProgressEvent.h"
 #include "nsIJARChannel.h"
 #include "nsIJARURI.h"
@@ -1540,20 +1539,6 @@ XMLHttpRequestMainThread::SetOriginAttributes(const OriginAttributesDictionary& 
   }
 }
 
-void
-XMLHttpRequestMainThread::PopulateNetworkInterfaceId()
-{
-  if (mNetworkInterfaceId.IsEmpty()) {
-    return;
-  }
-  nsCOMPtr<nsIHttpChannelInternal> channel(do_QueryInterface(mChannel));
-  if (!channel) {
-    return;
-  }
-  DebugOnly<nsresult> rv = channel->SetNetworkInterfaceId(mNetworkInterfaceId);
-  MOZ_ASSERT(NS_SUCCEEDED(rv));
-}
-
 /*
  * "Copy" from a stream.
  */
@@ -2002,7 +1987,6 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
 
     // Create an empty document from it.
     const nsAString& emptyStr = EmptyString();
-    nsCOMPtr<nsIDOMDocument> responseDoc;
     nsIGlobalObject* global = DOMEventTargetHelper::GetParentObject();
 
     nsCOMPtr<nsIPrincipal> requestingPrincipal;
@@ -2010,13 +1994,12 @@ XMLHttpRequestMainThread::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
        GetChannelResultPrincipal(channel, getter_AddRefs(requestingPrincipal));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = NS_NewDOMDocument(getter_AddRefs(responseDoc),
+    rv = NS_NewDOMDocument(getter_AddRefs(mResponseXML),
                            emptyStr, emptyStr, nullptr, docURI,
                            baseURI, requestingPrincipal, true, global,
                            mIsHtml ? DocumentFlavorHTML :
                                      DocumentFlavorLegacyGuess);
     NS_ENSURE_SUCCESS(rv, rv);
-    mResponseXML = do_QueryInterface(responseDoc);
     mResponseXML->SetChromeXHRDocURI(chromeXHRDocURI);
     mResponseXML->SetChromeXHRDocBaseURI(chromeXHRDocBaseURI);
 
@@ -2791,8 +2774,6 @@ XMLHttpRequestMainThread::SendInternal(const BodyExtractorBase* aBody)
     mFlagSend = true; // so CloseRequestWithError sets us to DONE.
     return MaybeSilentSendFailure(NS_ERROR_DOM_NETWORK_ERR);
   }
-
-  PopulateNetworkInterfaceId();
 
   // XXX We should probably send a warning to the JS console
   //     if there are no event listeners set and we are doing

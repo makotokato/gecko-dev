@@ -157,18 +157,17 @@ NS_INTERFACE_MAP_END
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsFrameMessageManager)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsFrameMessageManager)
 
-nsresult 
-MessageManagerCallback::DoGetRemoteType(nsAString& aRemoteType) const
+void
+MessageManagerCallback::DoGetRemoteType(nsAString& aRemoteType,
+                                        ErrorResult& aError) const
 {
   aRemoteType.Truncate();
   mozilla::dom::ChromeMessageSender* parent = GetProcessMessageManager();
   if (!parent) {
-    return NS_OK;
+    return;
   }
 
-  ErrorResult rv;
-  parent->GetRemoteType(aRemoteType, rv);
-  return rv.StealNSResult();
+  parent->GetRemoteType(aRemoteType, aError);
 }
 
 bool
@@ -408,26 +407,6 @@ nsFrameMessageManager::GetDelayedScripts(JSContext* aCx,
   }
 }
 
-nsresult
-nsFrameMessageManager::GetDelayedScripts(JSContext* aCx,
-                                         JS::MutableHandle<JS::Value> aList)
-{
-  ErrorResult rv;
-  nsTArray<nsTArray<JS::Value>> list;
-  SequenceRooter<nsTArray<JS::Value>> listRooter(aCx, &list);
-  GetDelayedScripts(aCx, list, rv);
-  rv.WouldReportJSException();
-  if (rv.Failed()) {
-    return rv.StealNSResult();
-  }
-
-  if (!ToJSValue(aCx, list, aList)) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  return NS_OK;
-}
-
 static bool
 JSONCreator(const char16_t* aBuf, uint32_t aLen, void* aData)
 {
@@ -523,6 +502,11 @@ nsFrameMessageManager::SendMessage(JSContext* aCx,
                                    nsTArray<JS::Value>& aResult,
                                    ErrorResult& aError)
 {
+  NS_ASSERTION(!IsGlobal(), "Should not call SendSyncMessage in chrome");
+  NS_ASSERTION(!IsBroadcaster(), "Should not call SendSyncMessage in chrome");
+  NS_ASSERTION(!GetParentManager(),
+               "Should not have parent manager in content!");
+
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING(
     "nsFrameMessageManager::SendMessage", EVENTS, aMessageName);
 
@@ -539,39 +523,20 @@ nsFrameMessageManager::SendMessage(JSContext* aCx,
     return;
   }
 
-  SendMessage(aCx, aMessageName, data, aObjects, aPrincipal, aIsSync, aResult,
-              aError);
-}
-
-void
-nsFrameMessageManager::SendMessage(JSContext* aCx,
-                                   const nsAString& aMessageName,
-                                   StructuredCloneData& aData,
-                                   JS::Handle<JSObject*> aObjects,
-                                   nsIPrincipal* aPrincipal,
-                                   bool aIsSync,
-                                   nsTArray<JS::Value>& aResult,
-                                   ErrorResult& aError)
-{
-  NS_ASSERTION(!IsGlobal(), "Should not call SendSyncMessage in chrome");
-  NS_ASSERTION(!IsBroadcaster(), "Should not call SendSyncMessage in chrome");
-  NS_ASSERTION(!GetParentManager(),
-               "Should not have parent manager in content!");
-
-  if (!AllowMessage(aData.DataLength(), aMessageName)) {
-    aError.Throw(NS_ERROR_FAILURE);
-    return;
-  }
-
 #ifdef FUZZING
-  if (aData.DataLength() > 0) {
+  if (data.DataLength() > 0) {
     MessageManagerFuzzer::TryMutate(
       aCx,
       aMessageName,
-      &aData,
+      &data,
       JS::UndefinedHandleValue);
   }
 #endif
+
+  if (!AllowMessage(data.DataLength(), aMessageName)) {
+    aError.Throw(NS_ERROR_FAILURE);
+    return;
+  }
 
   if (!mCallback) {
     aError.Throw(NS_ERROR_NOT_INITIALIZED);
@@ -582,7 +547,7 @@ nsFrameMessageManager::SendMessage(JSContext* aCx,
 
   TimeStamp start = TimeStamp::Now();
   sSendingSyncMessage |= aIsSync;
-  bool ok = mCallback->DoSendBlockingMessage(aCx, aMessageName, aData, aObjects,
+  bool ok = mCallback->DoSendBlockingMessage(aCx, aMessageName, data, aObjects,
                                              aPrincipal, &retval, aIsSync);
   if (aIsSync) {
     sSendingSyncMessage = false;
@@ -643,39 +608,6 @@ nsFrameMessageManager::DispatchAsyncMessageInternal(JSContext* aCx,
   return NS_OK;
 }
 
-nsresult
-nsFrameMessageManager::DispatchAsyncMessage(const nsAString& aMessageName,
-                                            const JS::Value& aJSON,
-                                            const JS::Value& aObjects,
-                                            nsIPrincipal* aPrincipal,
-                                            const JS::Value& aTransfers,
-                                            JSContext* aCx,
-                                            uint8_t aArgc)
-{
-  StructuredCloneData data;
-  if (aArgc >= 2 && !GetParamsForMessage(aCx, aJSON, aTransfers, data)) {
-    return NS_ERROR_DOM_DATA_CLONE_ERR;
-  }
-
-#ifdef FUZZING
-  if (data.DataLength()) {
-    MessageManagerFuzzer::TryMutate(aCx, aMessageName, &data, aTransfers);
-  }
-#endif
-
-  if (!AllowMessage(data.DataLength(), aMessageName)) {
-    return NS_ERROR_FAILURE;
-  }
-
-  JS::Rooted<JSObject*> objects(aCx);
-  if (aArgc >= 3 && aObjects.isObject()) {
-    objects = &aObjects.toObject();
-  }
-
-  return DispatchAsyncMessageInternal(aCx, aMessageName, data, objects,
-                                      aPrincipal);
-}
-
 void
 nsFrameMessageManager::DispatchAsyncMessage(JSContext* aCx,
                                             const nsAString& aMessageName,
@@ -688,6 +620,17 @@ nsFrameMessageManager::DispatchAsyncMessage(JSContext* aCx,
   StructuredCloneData data;
   if (!aObj.isUndefined() && !GetParamsForMessage(aCx, aObj, aTransfers, data)) {
     aError.Throw(NS_ERROR_DOM_DATA_CLONE_ERR);
+    return;
+  }
+
+#ifdef FUZZING
+  if (data.DataLength()) {
+    MessageManagerFuzzer::TryMutate(aCx, aMessageName, &data, aTransfers);
+  }
+#endif
+
+  if (!AllowMessage(data.DataLength(), aMessageName)) {
+    aError.Throw(NS_ERROR_FAILURE);
     return;
   }
 
@@ -896,6 +839,7 @@ nsFrameMessageManager::ReceiveMessage(nsISupports* aTarget,
 
       if (aRetVal) {
         StructuredCloneData* data = aRetVal->AppendElement();
+        data->InitScope(JS::StructuredCloneScope::DifferentProcess);
         data->Write(cx, rval, aError);
         if (NS_WARN_IF(aError.Failed())) {
           aRetVal->RemoveLastElement();
@@ -1023,9 +967,9 @@ nsFrameMessageManager::GetInitialProcessData(JSContext* aCx,
   JS::RootedValue init(aCx, mInitialProcessData);
   if (mChrome && init.isUndefined()) {
     // We create the initial object in the junk scope. If we created it in a
-    // normal compartment, that compartment would leak until shutdown.
+    // normal realm, that realm would leak until shutdown.
     JS::RootedObject global(aCx, xpc::PrivilegedJunkScope());
-    JSAutoCompartment ac(aCx, global);
+    JSAutoRealm ar(aCx, global);
 
     JS::RootedObject obj(aCx, JS_NewPlainObject(aCx));
     if (!obj) {
@@ -1071,7 +1015,7 @@ nsFrameMessageManager::GetRemoteType(nsAString& aRemoteType, ErrorResult& aError
 {
   aRemoteType.Truncate();
   if (mCallback) {
-    aError = mCallback->DoGetRemoteType(aRemoteType);
+    mCallback->DoGetRemoteType(aRemoteType, aError);
   }
 }
 
@@ -1468,7 +1412,7 @@ nsMessageManagerScriptExecutor::InitChildGlobalInternal(const nsACString& aID)
 
   nsContentUtils::GetSecurityManager()->GetSystemPrincipal(getter_AddRefs(mPrincipal));
 
-  JS::CompartmentOptions options;
+  JS::RealmOptions options;
   options.creationOptions().setSystemZone();
 
   xpc::InitGlobalObjectOptions(options, mPrincipal);

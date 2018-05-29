@@ -26,6 +26,10 @@ var _Breakpoint = require("./Breakpoint");
 
 var _Breakpoint2 = _interopRequireDefault(_Breakpoint);
 
+var _SourceIcon = require("../shared/SourceIcon");
+
+var _SourceIcon2 = _interopRequireDefault(_SourceIcon);
+
 var _actions = require("../../actions/index");
 
 var _actions2 = _interopRequireDefault(_actions);
@@ -156,19 +160,23 @@ class Breakpoints extends _react.Component {
 
     const groupedBreakpoints = (0, _lodash.groupBy)((0, _lodash.sortBy)([...breakpoints.valueSeq()], bp => bp.location.line), bp => (0, _source.getRawSourceURL)(bp.source.url));
     return [...Object.keys(groupedBreakpoints).sort(sortFilenames).map(url => {
-      const file = (0, _source.getFilenameFromURL)(url);
       const groupBreakpoints = groupedBreakpoints[url].filter(bp => !bp.hidden && (bp.text || bp.originalText));
 
       if (!groupBreakpoints.length) {
         return null;
       }
 
+      const {
+        source
+      } = groupBreakpoints[0];
       return [_react2.default.createElement("div", {
         className: "breakpoint-heading",
         title: url,
         key: url,
-        onClick: () => this.props.selectSource(groupBreakpoints[0].source.id)
-      }, file), ...groupBreakpoints.map(bp => this.renderBreakpoint(bp))];
+        onClick: () => this.props.selectSource(source.id)
+      }, _react2.default.createElement(_SourceIcon2.default, {
+        source: source
+      }), (0, _source.getFilename)(source)), ...groupBreakpoints.map(bp => this.renderBreakpoint(bp))];
     })];
   }
 

@@ -12,6 +12,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/BindingDeclarations.h"
+#include "mozilla/dom/CustomElementRegistryBinding.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/FunctionBinding.h"
 #include "mozilla/dom/WebComponentsBinding.h"
@@ -151,7 +152,7 @@ struct CustomElementDefinition
                           nsAtom* aLocalName,
                           Function* aConstructor,
                           nsTArray<RefPtr<nsAtom>>&& aObservedAttributes,
-                          mozilla::dom::LifecycleCallbacks* aCallbacks);
+                          UniquePtr<LifecycleCallbacks>&& aCallbacks);
 
   // The type (name) for this custom element, for <button is="x-foo"> or <x-foo>
   // this would be x-foo.
@@ -167,7 +168,7 @@ struct CustomElementDefinition
   nsTArray<RefPtr<nsAtom>> mObservedAttributes;
 
   // The lifecycle callbacks to call for this custom element.
-  UniquePtr<mozilla::dom::LifecycleCallbacks> mCallbacks;
+  UniquePtr<LifecycleCallbacks> mCallbacks;
 
   // A construction stack. Use nullptr to represent an "already constructed marker".
   nsTArray<RefPtr<Element>> mConstructionStack;
@@ -225,8 +226,9 @@ public:
   // before the reactions in its reaction queue are invoked.
   // The element reaction queues are stored in CustomElementData.
   // We need to lookup ElementReactionQueueMap again to get relevant reaction queue.
-  // The choice of 1 for the auto size here is based on gut feeling.
-  typedef AutoTArray<RefPtr<Element>, 1> ElementQueue;
+  // The choice of 3 for the auto size here is based on running Custom Elements
+  // wpt tests.
+  typedef AutoTArray<RefPtr<Element>, 3> ElementQueue;
 
   /**
    * Enqueue a custom element upgrade reaction
@@ -366,12 +368,37 @@ public:
 
   explicit CustomElementRegistry(nsPIDOMWindowInner* aWindow);
 
+private:
+  class RunCustomElementCreationCallback : public mozilla::Runnable
+  {
+  public:
+    NS_DECL_NSIRUNNABLE
+    explicit RunCustomElementCreationCallback(CustomElementRegistry* aRegistry,
+                                              nsAtom* aAtom,
+                                              CustomElementCreationCallback* aCallback)
+      : mozilla::Runnable("CustomElementRegistry::RunCustomElementCreationCallback")
+#ifdef DEBUG
+      , mRegistry(aRegistry)
+#endif
+      , mAtom(aAtom)
+      , mCallback(aCallback)
+    {
+    }
+    private:
+#ifdef DEBUG
+      RefPtr<CustomElementRegistry> mRegistry;
+#endif
+      RefPtr<nsAtom> mAtom;
+      RefPtr<CustomElementCreationCallback> mCallback;
+  };
+
+public:
   /**
    * Looking up a custom element definition.
    * https://html.spec.whatwg.org/#look-up-a-custom-element-definition
    */
   CustomElementDefinition* LookupCustomElementDefinition(
-    nsAtom* aNameAtom, nsAtom* aTypeAtom) const;
+    nsAtom* aNameAtom, nsAtom* aTypeAtom);
 
   CustomElementDefinition* LookupCustomElementDefinition(
     JSContext* aCx, JSObject *aConstructor) const;
@@ -419,6 +446,8 @@ private:
 
   typedef nsRefPtrHashtable<nsRefPtrHashKey<nsAtom>, CustomElementDefinition>
     DefinitionMap;
+  typedef nsRefPtrHashtable<nsRefPtrHashKey<nsAtom>, CustomElementCreationCallback>
+    ElementCreationCallbackMap;
   typedef nsClassHashtable<nsRefPtrHashKey<nsAtom>,
                            nsTHashtable<nsRefPtrHashKey<nsIWeakReference>>>
     CandidateMap;
@@ -431,6 +460,11 @@ private:
   // Custom prototypes are stored in the compartment where definition was
   // defined.
   DefinitionMap mCustomDefinitions;
+
+  // Hashtable for chrome-only callbacks that is called *before* we return
+  // a CustomElementDefinition, when the typeAtom matches.
+  // The callbacks are registered with the setElementCreationCallback method.
+  ElementCreationCallbackMap mElementCreationCallbacks;
 
   // Hashtable for looking up definitions by using constructor as key.
   // Custom elements' name are stored here and we need to lookup
@@ -477,13 +511,18 @@ public:
 
   virtual JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override;
 
-  void Define(const nsAString& aName, Function& aFunctionConstructor,
+  void Define(JSContext* aCx, const nsAString& aName,
+              Function& aFunctionConstructor,
               const ElementDefinitionOptions& aOptions, ErrorResult& aRv);
 
   void Get(JSContext* cx, const nsAString& name,
            JS::MutableHandle<JS::Value> aRetVal);
 
   already_AddRefed<Promise> WhenDefined(const nsAString& aName, ErrorResult& aRv);
+
+  // Chrome-only method that give JS an opportunity to only load the custom
+  // element definition script when needed.
+  void SetElementCreationCallback(const nsAString& aName, CustomElementCreationCallback& aCallback, ErrorResult& aRv);
 };
 
 class MOZ_RAII AutoCEReaction final {

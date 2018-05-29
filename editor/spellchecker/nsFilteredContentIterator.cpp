@@ -13,7 +13,6 @@
 #include "nsAtom.h"
 #include "nsIContent.h"
 #include "nsIContentIterator.h"
-#include "nsIDOMNode.h"
 #include "nsINode.h"
 #include "nsISupportsBase.h"
 #include "nsISupportsUtils.h"
@@ -76,18 +75,17 @@ nsFilteredContentIterator::Init(nsINode* aRoot)
 
 //------------------------------------------------------------
 nsresult
-nsFilteredContentIterator::Init(nsIDOMRange* aRange)
+nsFilteredContentIterator::Init(nsRange* aRange)
 {
   if (NS_WARN_IF(!aRange)) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  nsRange* range = static_cast<nsRange*>(aRange);
-  if (NS_WARN_IF(!range->IsPositioned())) {
+  if (NS_WARN_IF(!aRange->IsPositioned())) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  mRange = range->CloneRange();
+  mRange = aRange->CloneRange();
 
   return InitWithRange();
 }
@@ -351,7 +349,7 @@ nsFilteredContentIterator::CheckAdvNode(nsINode* aNode, bool& aDidSkip, eDirecti
     nsCOMPtr<nsINode> currentNode = aNode;
     bool skipIt;
     while (1) {
-      nsresult rv = mFilter->Skip(aNode->AsDOMNode(), &skipIt);
+      nsresult rv = mFilter->Skip(aNode, &skipIt);
       if (NS_SUCCEEDED(rv) && skipIt) {
         aDidSkip = true;
         // Get the next/prev node and then

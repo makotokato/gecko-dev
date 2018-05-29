@@ -26,9 +26,9 @@
 #include "nsIWritablePropertyBag2.h"
 #include "nsSubDocumentFrame.h"
 #include "nsGenericHTMLElement.h"
+#include "nsStubMutationObserver.h"
 
 #include "nsILinkHandler.h"
-#include "nsIDOMDocument.h"
 #include "nsISelectionListener.h"
 #include "mozilla/dom/Selection.h"
 #include "nsContentUtils.h"
@@ -204,6 +204,108 @@ private:
     nsDocumentViewer*  mDocViewer;
 };
 
+namespace viewer_detail {
+
+/**
+ * Mutation observer for use until we hand ourselves over to our SHEntry.
+ */
+class BFCachePreventionObserver final : public nsStubMutationObserver
+{
+public:
+  explicit BFCachePreventionObserver(nsIDocument* aDocument)
+    : mDocument(aDocument)
+  {
+  }
+
+  NS_DECL_ISUPPORTS
+
+  NS_DECL_NSIMUTATIONOBSERVER_CHARACTERDATACHANGED
+  NS_DECL_NSIMUTATIONOBSERVER_ATTRIBUTECHANGED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTAPPENDED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTINSERTED
+  NS_DECL_NSIMUTATIONOBSERVER_CONTENTREMOVED
+  NS_DECL_NSIMUTATIONOBSERVER_NODEWILLBEDESTROYED
+
+  // Stop observing the document.
+  void Disconnect();
+
+private:
+  ~BFCachePreventionObserver() = default;
+
+  // Helper for the work that needs to happen when mutations happen.
+  void MutationHappened();
+
+  nsIDocument* mDocument; // Weak; we get notified if it dies
+};
+
+NS_IMPL_ISUPPORTS(BFCachePreventionObserver, nsIMutationObserver)
+
+void
+BFCachePreventionObserver::CharacterDataChanged(nsIContent* aContent,
+                                                const CharacterDataChangeInfo&)
+{
+  MutationHappened();
+}
+
+void
+BFCachePreventionObserver::AttributeChanged(Element* aElement,
+                                            int32_t aNameSpaceID,
+                                            nsAtom* aAttribute,
+                                            int32_t aModType,
+                                            const nsAttrValue* aOldValue)
+{
+  MutationHappened();
+}
+
+void
+BFCachePreventionObserver::ContentAppended(nsIContent* aFirstNewContent)
+{
+  MutationHappened();
+}
+
+void
+BFCachePreventionObserver::ContentInserted(nsIContent* aChild)
+{
+  MutationHappened();
+}
+
+void
+BFCachePreventionObserver::ContentRemoved(nsIContent* aChild,
+                                          nsIContent* aPreviousSibling)
+{
+  MutationHappened();
+}
+
+void
+BFCachePreventionObserver::NodeWillBeDestroyed(const nsINode* aNode)
+{
+  mDocument = nullptr;
+}
+
+void
+BFCachePreventionObserver::Disconnect()
+{
+  if (mDocument) {
+    mDocument->RemoveMutationObserver(this);
+    // It will no longer tell us when it goes away, so make sure we're
+    // not holding a dangling ref.
+    mDocument = nullptr;
+  }
+}
+
+void
+BFCachePreventionObserver::MutationHappened()
+{
+  MOZ_ASSERT(mDocument,
+             "How can we not have a document but be getting notified for mutations?");
+  mDocument->DisallowBFCaching();
+  Disconnect();
+}
+
+
+} // namespace viewer_detail
+
+using viewer_detail::BFCachePreventionObserver;
 
 //-------------------------------------------------------------
 class nsDocumentViewer final : public nsIContentViewer,
@@ -341,6 +443,9 @@ protected:
 
   nsCOMPtr<nsIContentViewer> mPreviousViewer;
   nsCOMPtr<nsISHEntry> mSHEntry;
+  // Observer that will prevent bfcaching if it gets notified.  This
+  // is non-null precisely when mSHEntry is non-null.
+  RefPtr<BFCachePreventionObserver> mBFCachePreventionObserver;
 
   nsIWidget* mParentWidget; // purposely won't be ref counted.  May be null
   bool mAttachedToParent; // view is attached to the parent widget
@@ -691,9 +796,6 @@ nsDocumentViewer::InitPresentationStuff(bool aDoInitialReflow)
   if (!mPresShell) {
     return NS_ERROR_FAILURE;
   }
-
-  // We're done creating the style set
-  mPresShell->StyleSet()->EndUpdate();
 
   if (aDoInitialReflow) {
     // Since Initialize() will create frames for *all* items
@@ -1566,6 +1668,14 @@ nsDocumentViewer::Close(nsISHEntry *aSHEntry)
   if (!mDocument)
     return NS_OK;
 
+  if (mSHEntry) {
+    if (mBFCachePreventionObserver) {
+      mBFCachePreventionObserver->Disconnect();
+    }
+    mBFCachePreventionObserver = new BFCachePreventionObserver(mDocument);
+    mDocument->AddMutationObserver(mBFCachePreventionObserver);
+  }
+
 #if defined(NS_PRINTING) && defined(NS_PRINT_PREVIEW)
   // Turn scripting back on
   // after PrintPreview had turned it off
@@ -1668,6 +1778,24 @@ nsDocumentViewer::Destroy()
   mAutoBeforeAndAfterPrint = nullptr;
 #endif
 
+  // We want to make sure to disconnect mBFCachePreventionObserver before we
+  // Sanitize() below.
+  if (mBFCachePreventionObserver) {
+    mBFCachePreventionObserver->Disconnect();
+    mBFCachePreventionObserver = nullptr;
+  }
+
+  if (mSHEntry && mDocument && !mDocument->IsBFCachingAllowed()) {
+    // Just drop the SHEntry now and pretend like we never even tried to bfcache
+    // this viewer.  This should only happen when someone calls
+    // DisallowBFCaching() after CanSavePresentation() already ran.  Ensure that
+    // the SHEntry has no viewer and its state is synced up.  We want to do this
+    // via a stack reference, in case those calls mess with our members.
+    nsCOMPtr<nsISHEntry> shEntry = mSHEntry.forget();
+    shEntry->SetContentViewer(nullptr);
+    shEntry->SyncPresentationState();
+  }
+
   // If we were told to put ourselves into session history instead of destroy
   // the presentation, do that now.
   if (mSHEntry) {
@@ -1677,8 +1805,6 @@ nsDocumentViewer::Destroy()
     // Make sure the presentation isn't torn down by Hide().
     mSHEntry->SetSticky(mIsSticky);
     mIsSticky = true;
-
-    bool savePresentation = mDocument ? mDocument->IsBFCachingAllowed() : true;
 
     // Remove our root view from the view hierarchy.
     if (mPresShell) {
@@ -1710,12 +1836,9 @@ nsDocumentViewer::Destroy()
 
     // Grab a reference to mSHEntry before calling into things like
     // SyncPresentationState that might mess with our members.
-    nsCOMPtr<nsISHEntry> shEntry = mSHEntry; // we'll need this below
-    mSHEntry = nullptr;
+    nsCOMPtr<nsISHEntry> shEntry = mSHEntry.forget(); // we'll need this below
 
-    if (savePresentation) {
-      shEntry->SetContentViewer(this);
-    }
+    shEntry->SetContentViewer(this);
 
     // Always sync the presentation state.  That way even if someone screws up
     // and shEntry has no window state at this point we'll be ok; we just won't
@@ -1837,10 +1960,12 @@ nsDocumentViewer::Stop(void)
 }
 
 NS_IMETHODIMP
-nsDocumentViewer::GetDOMDocument(nsISupports **aResult)
+nsDocumentViewer::GetDOMDocument(nsIDocument **aResult)
 {
   NS_ENSURE_TRUE(mDocument, NS_ERROR_NOT_AVAILABLE);
-  return CallQueryInterface(mDocument, aResult);
+  nsCOMPtr<nsIDocument> document = mDocument;
+  document.forget(aResult);
+  return NS_OK;
 }
 
 nsIDocument*
@@ -2314,8 +2439,6 @@ nsDocumentViewer::CreateStyleSet(nsIDocument* aDocument)
 
   UniquePtr<ServoStyleSet> styleSet = MakeUnique<ServoStyleSet>();
 
-  styleSet->BeginUpdate();
-
   // The document will fill in the document sheets when we create the presshell
 
   if (aDocument->IsBeingUsedAsImage()) {
@@ -2327,8 +2450,6 @@ nsDocumentViewer::CreateStyleSet(nsIDocument* aDocument)
     // xul.css) to be loaded on-demand.
     // XXXjwatt Nothing else is loaded on-demand, but I don't think that
     // should matter for SVG-as-an-image. If it does, I want to know why!
-
-    // Caller will handle calling EndUpdate, per contract.
     return styleSet;
   }
 
@@ -2435,7 +2556,6 @@ nsDocumentViewer::CreateStyleSet(nsIDocument* aDocument)
     }
   }
 
-  // Caller will handle calling EndUpdate, per contract.
   return styleSet;
 }
 

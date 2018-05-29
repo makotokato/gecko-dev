@@ -202,6 +202,12 @@ describe("ConsoleAPICall component:", () => {
       }, {
         key: "console.count | test counter: 3",
         expectedBodyText: "test counter: 3",
+      }, {
+        key: "console.countReset | test counter: 0",
+        expectedBodyText: "test counter: 0",
+      }, {
+        key: "console.countReset | counterDoesntExist",
+        expectedBodyText: "Counter “test counter” doesn’t exist.",
       }];
 
       for (const {key, expectedBodyText} of messages) {
@@ -239,6 +245,27 @@ describe("ConsoleAPICall component:", () => {
     });
   });
 
+  describe("console.timeLog", () => {
+    it("renders as expected", () => {
+      let message = stubPreparedMessages.get("console.timeLog('bar') - 1");
+      let wrapper = render(ConsoleApiCall({ message, serviceContainer }));
+
+      expect(wrapper.find(".message-body").text()).toBe(message.parameters[0]);
+      expect(wrapper.find(".message-body").text()).toMatch(/^bar: \d+(\.\d+)?ms$/);
+
+      message = stubPreparedMessages.get("console.timeLog('bar') - 2");
+      wrapper = render(ConsoleApiCall({ message, serviceContainer }));
+      expect(wrapper.find(".message-body").text())
+        .toMatch(/^bar: \d+(\.\d+)?ms second call Object \{ state\: 1 \}$/);
+    });
+    it("shows an error if the timer doesn't exist", () => {
+      const message = stubPreparedMessages.get("timeLog.timerDoesntExist");
+      const wrapper = render(ConsoleApiCall({ message, serviceContainer }));
+
+      expect(wrapper.find(".message-body").text()).toBe("Timer “bar” doesn’t exist.");
+    });
+  });
+
   describe("console.timeEnd", () => {
     it("renders as expected", () => {
       const message = stubPreparedMessages.get("console.timeEnd('bar')");
@@ -248,7 +275,7 @@ describe("ConsoleAPICall component:", () => {
       expect(wrapper.find(".message-body").text()).toMatch(/^bar: \d+(\.\d+)?ms$/);
     });
     it("shows an error if the timer doesn't exist", () => {
-      const message = stubPreparedMessages.get("timerDoesntExist");
+      const message = stubPreparedMessages.get("timeEnd.timerDoesntExist");
       const wrapper = render(ConsoleApiCall({ message, serviceContainer }));
 
       expect(wrapper.find(".message-body").text()).toBe("Timer “bar” doesn’t exist.");

@@ -14,7 +14,6 @@ import json
 
 import os
 import pprint
-import subprocess
 import time
 import uuid
 import copy
@@ -28,8 +27,8 @@ from mozharness.base.config import BaseConfig, parse_config_file, DEFAULT_CONFIG
 from mozharness.base.log import ERROR, OutputParser, FATAL
 from mozharness.base.script import PostScriptRun
 from mozharness.base.vcs.vcsbase import MercurialScript
-from mozharness.mozilla.buildbot import (
-    BuildbotMixin,
+from mozharness.mozilla.automation import (
+    AutomationMixin,
     EXIT_STATUS_DICT,
     TBPL_STATUS_DICT,
     TBPL_EXCEPTION,
@@ -39,7 +38,6 @@ from mozharness.mozilla.buildbot import (
     TBPL_SUCCESS,
     TBPL_WORST_LEVEL_TUPLE,
 )
-from mozharness.mozilla.purge import PurgeMixin
 from mozharness.mozilla.secrets import SecretsMixin
 from mozharness.mozilla.testing.errors import TinderBoxPrintRe
 from mozharness.mozilla.testing.unittest import tbox_print_summary
@@ -57,8 +55,7 @@ Please add this to your config."
 
 ERROR_MSGS = {
     'undetermined_repo_path': 'The repo could not be determined. \
-Please make sure that either "repo" is in your config or, if \
-you are running this in buildbot, "repo_path" is in your buildbot_config.',
+Please make sure that "repo" is in your config.',
     'comments_undetermined': '"comments" could not be determined. This may be \
 because it was a forced build.',
     'tooltool_manifest_undetermined': '"tooltool_manifest_src" not set, \
@@ -420,7 +417,8 @@ class BuildOptionParser(object):
         'asan-and-debug': 'builds/releng_sub_%s_configs/%s_asan_and_debug.py',
         'asan-tc-and-debug': 'builds/releng_sub_%s_configs/%s_asan_tc_and_debug.py',
         'stat-and-debug': 'builds/releng_sub_%s_configs/%s_stat_and_debug.py',
-        'code-coverage': 'builds/releng_sub_%s_configs/%s_code_coverage.py',
+        'code-coverage-debug': 'builds/releng_sub_%s_configs/%s_code_coverage_debug.py',
+        'code-coverage-opt': 'builds/releng_sub_%s_configs/%s_code_coverage_opt.py',
         'source': 'builds/releng_sub_%s_configs/%s_source.py',
         'noopt-debug': 'builds/releng_sub_%s_configs/%s_noopt_debug.py',
         'api-16-gradle-dependencies': 'builds/releng_sub_%s_configs/%s_api_16_gradle_dependencies.py',
@@ -586,7 +584,7 @@ class BuildOptionParser(object):
 # this global depends on BuildOptionParser and therefore can not go at the
 # top of the file
 BUILD_BASE_CONFIG_OPTIONS = [
-    [['--developer-run', '--skip-buildbot-actions'], {
+    [['--developer-run'], {
         "action": "store_false",
         "dest": "is_automation",
         "default": True,
@@ -657,7 +655,7 @@ BUILD_BASE_CONFIG_OPTIONS = [
     [['--who'], {
         "dest": "who",
         "default": '',
-        "help": "stores who made the created the buildbot change."}],
+        "help": "stores who made the created the change."}],
 ]
 
 
@@ -669,7 +667,7 @@ def generate_build_UID():
     return uuid.uuid4().hex
 
 
-class BuildScript(BuildbotMixin, PurgeMixin, BalrogMixin,
+class BuildScript(AutomationMixin, BalrogMixin,
                   VirtualenvMixin, MercurialScript,
                   SecretsMixin, PerfherderResourceOptionsMixin):
     def __init__(self, **kwargs):
@@ -677,7 +675,7 @@ class BuildScript(BuildbotMixin, PurgeMixin, BalrogMixin,
         # have that attribute before calling BaseScript.__init__
         self.objdir = None
         super(BuildScript, self).__init__(**kwargs)
-        # epoch is only here to represent the start of the buildbot build
+        # epoch is only here to represent the start of the build
         # that this mozharn script came from. until I can grab bbot's
         # status.build.gettime()[0] this will have to do as a rough estimate
         # although it is about 4s off from the time it would be if it was
@@ -833,26 +831,17 @@ or run without that action (ie: --no-{action})"
         if self.buildid:
             return self.buildid
 
-        buildid = None
-        if c.get("is_automation") and self.buildbot_config['properties'].get('buildid'):
-            self.info("Determining buildid from buildbot properties")
-            buildid = self.buildbot_config['properties']['buildid'].encode(
-                'ascii', 'replace'
-            )
-        else:
-            # for taskcluster, there are no buildbot properties, and we pass
-            # MOZ_BUILD_DATE into mozharness as an environment variable, only
-            # to have it pass the same value out with the same name.
-            buildid = os.environ.get('MOZ_BUILD_DATE')
+        # for taskcluster, we pass MOZ_BUILD_DATE into mozharness as an
+        # environment variable, only to have it pass the same value out with
+        # the same name.
+        buildid = os.environ.get('MOZ_BUILD_DATE')
 
         if not buildid:
             self.info("Creating buildid through current time")
             buildid = generate_build_ID()
 
         if c.get('is_automation') or os.environ.get("TASK_ID"):
-            self.set_buildbot_property('buildid',
-                                       buildid,
-                                       write_to_file=True)
+            self.set_property('buildid', buildid, write_to_file=True)
 
         self.buildid = buildid
         return self.buildid
@@ -873,7 +862,7 @@ or run without that action (ie: --no-{action})"
 
         # we actually supply the repo in mozharness so if it's in
         #  the config, we use that (automation does not require it in
-        # buildbot props)
+        # props)
         if not c.get('repo_path'):
             repo_path = 'projects/%s' % (self.branch,)
             self.info(
@@ -883,12 +872,6 @@ or run without that action (ie: --no-{action})"
             repo_path = c['repo_path']
         self.repo_path = '%s/%s' % (c['repo_base'], repo_path,)
         return self.repo_path
-
-    def _skip_buildbot_specific_action(self):
-        """ ignore actions from buildbot's infra."""
-        self.info("This action is specific to buildbot's infrastructure")
-        self.info("Skipping......")
-        return
 
     def query_is_nightly_promotion(self):
         platform_enabled = self.config.get('enable_nightly_promotion')
@@ -1085,32 +1068,20 @@ or run without that action (ie: --no-{action})"
     def query_revision(self, source_path=None):
         """ returns the revision of the build
 
-         first will look for it in buildbot_properties and then in
-         buildbot_config. Failing that, it will actually poll the source of
-         the repo if it exists yet.
-
          This method is used both to figure out what revision to check out and
          to figure out what revision *was* checked out.
         """
         revision = None
-        if 'revision' in self.buildbot_properties:
-            revision = self.buildbot_properties['revision']
-        elif (self.buildbot_config and
-                  self.buildbot_config.get('sourcestamp', {}).get('revision')):
-            revision = self.buildbot_config['sourcestamp']['revision']
-        elif self.buildbot_config and self.buildbot_config.get('revision'):
-            revision = self.buildbot_config['revision']
-        else:
-            if not source_path:
-                dirs = self.query_abs_dirs()
-                source_path = dirs['abs_src_dir']  # let's take the default
+        if not source_path:
+            dirs = self.query_abs_dirs()
+            source_path = dirs['abs_src_dir']  # let's take the default
 
-            # Look at what we have checked out
-            if os.path.exists(source_path):
-                hg = self.query_exe('hg', return_type='list')
-                revision = self.get_output_from_command(
-                    hg + ['parent', '--template', '{node}'], cwd=source_path
-                )
+        # Look at what we have checked out
+        if os.path.exists(source_path):
+            hg = self.query_exe('hg', return_type='list')
+            revision = self.get_output_from_command(
+                hg + ['parent', '--template', '{node}'], cwd=source_path
+            )
         return revision.encode('ascii', 'replace') if revision else None
 
     def _count_ctors(self):
@@ -1152,7 +1123,7 @@ or run without that action (ie: --no-{action})"
                     self.info(pprint.pformat(build_props))
             for key, prop in build_props.iteritems():
                 if prop != 'UNKNOWN':
-                    self.set_buildbot_property(key, prop, write_to_file=True)
+                    self.set_property(key, prop, write_to_file=True)
         else:
             self.info("No mach_build_properties.json found - not importing properties.")
 
@@ -1203,22 +1174,22 @@ or run without that action (ie: --no-{action})"
                 base_cmd + [prop['ini_name']], cwd=dirs['abs_obj_dir'],
                 halt_on_failure=halt_on_failure, env=env
             )
-            self.set_buildbot_property(prop['prop_name'],
+            self.set_property(prop['prop_name'],
                                        prop_val,
                                        write_to_file=True)
 
         if self.config.get('is_automation'):
             self.info("Verifying buildid from application.ini matches buildid "
-                      "from buildbot")
+                      "from automation")
             app_ini_buildid = self._query_build_prop_from_app_ini('BuildID')
             # it would be hard to imagine query_buildid evaluating to a falsey
             #  value (e.g. 0), but incase it does, force it to None
-            buildbot_buildid = self.query_buildid() or None
+            automation_buildid = self.query_buildid() or None
             self.info(
-                'buildid from application.ini: "%s". buildid from buildbot '
-                'properties: "%s"' % (app_ini_buildid, buildbot_buildid)
+                'buildid from application.ini: "%s". buildid from automation '
+                'properties: "%s"' % (app_ini_buildid, automation_buildid)
             )
-            if app_ini_buildid == buildbot_buildid != None:
+            if app_ini_buildid == automation_buildid is not None:
                 self.info('buildids match.')
             else:
                 self.error(
@@ -1268,22 +1239,17 @@ or run without that action (ie: --no-{action})"
         self.generate_build_props(console_output=True, halt_on_failure=True)
         self._generate_build_stats()
 
+    def static_analysis_autotest(self):
+        """Run mach static-analysis autotest, in order to make sure we dont regress"""
+        self.preflight_build()
+        self._run_mach_command_in_build_env(['static-analysis', 'autotest', '--intree-tool'])
+
     def _run_mach_command_in_build_env(self, args):
         """Run a mach command in a build context."""
         env = self.query_build_env()
         env.update(self.query_mach_build_env())
 
-        # XXX Bug 1037883 - mozconfigs can not find buildprops.json when builds
-        # are through mozharness. This is not pretty but it is a stopgap
-        # until an alternative solution is made or all builds that touch
-        # mozconfig.cache are converted to mozharness.
         dirs = self.query_abs_dirs()
-        buildprops = os.path.join(dirs['base_work_dir'], 'buildprops.json')
-        # not finding buildprops is not an error outside of buildbot
-        if os.path.exists(buildprops):
-            self.copyfile(
-                buildprops,
-                os.path.join(dirs['abs_work_dir'], 'buildprops.json'))
 
         if 'MOZILLABUILD' in os.environ:
             # We found many issues with intermittent build failures when not invoking mach via bash.
@@ -1326,22 +1292,11 @@ or run without that action (ie: --no-{action})"
         if branch == 'try':
             branch = 'mozilla-central'
 
-        # Some android versions share the same .json config - if
-        # multi_locale_config_platform is set, use that the .json name;
-        # otherwise, use the buildbot platform.
-        default_platform = self.buildbot_config['properties'].get('platform',
-                                                                  'android')
-
         multi_config_pf = self.config.get('multi_locale_config_platform',
-                                          default_platform)
+                                          'android')
 
-        # The l10n script location differs on buildbot and taskcluster
-        if self.config.get('taskcluster_nightly'):
-            multil10n_path = \
-                'build/src/testing/mozharness/scripts/multil10n.py'
-            base_work_dir = os.path.join(base_work_dir, 'workspace')
-        else:
-            multil10n_path = '%s/scripts/scripts/multil10n.py' % base_work_dir,
+        multil10n_path = 'build/src/testing/mozharness/scripts/multil10n.py'
+        base_work_dir = os.path.join(base_work_dir, 'workspace')
 
         cmd = [
             sys.executable,
@@ -1385,9 +1340,7 @@ or run without that action (ie: --no-{action})"
                          cwd=objdir, halt_on_failure=True,
                          output_parser=parser)
         for prop in parser.matches:
-            self.set_buildbot_property(prop,
-                                       parser.matches[prop],
-                                       write_to_file=True)
+            self.set_property(prop, parser.matches[prop], write_to_file=True)
         upload_files_cmd = [
             'make',
             'echo-variable-UPLOAD_FILES',
@@ -1666,6 +1619,90 @@ or run without that action (ie: --no-{action})"
                 "subtests": size_measurements
             })
 
+    def _get_sections(self, file, filter=None):
+        """
+        Returns a dictionary of sections and their sizes.
+        """
+        from StringIO import StringIO
+
+        # Check for binutils' `size` program
+        size_names = ('size', 'gsize')
+        size_prog = None
+        for name in size_names:
+            size_prog = self.which(name)
+            if size_prog:
+                break
+
+        if not size_prog:
+            self.info("Couldn't find `size` program")
+            return {}
+
+        # Call `size` and output with SysV format in decimal radix
+        cmd = [size_prog, '-A', '-d', file]
+        output = self.get_output_from_command(cmd)
+        if not output:
+            return {}
+
+        # Format is:
+        # <section-name> <size> <address>, ie:
+        # .data                  302160   101053344
+        size_section_re = re.compile(r"([\w\.]+)\s+(\d+)\s+(\d+)")
+        sections = {}
+        for line in output.splitlines():
+            m = size_section_re.match(line)
+            if m:
+                name = m.group(1)
+                if not filter or name in filter:
+                    sections[name] = int(m.group(2))
+
+        return sections
+
+    def _get_binary_metrics(self):
+        """
+        Provides metrics on interesting compenents of the built binaries.
+        Currently just the sizes of interesting sections.
+        """
+        lib_interests = {
+            'XUL': ('libxul.so', 'xul.dll', 'XUL'),
+            'NSS': ('libnss3.so', 'nss3.dll', 'libnss3.dylib'),
+            'NSPR': ('libnspr4.so', 'nspr4.dll', 'libnspr4.dylib'),
+            'avcodec': ('libmozavcodec.so', 'mozavcodec.dll', 'libmozavcodec.dylib'),
+            'avutil': ('libmozavutil.so', 'mozavutil.dll', 'libmozavutil.dylib')
+        }
+        # TODO(erahm): update for windows and osx. As-is we only have support
+        # for `size` on debian which gives us linux and android.
+        section_interests = ('.text', '.data', '.rodata', '.data.rel.ro', '.bss')
+        lib_details = []
+
+        dirs = self.query_abs_dirs()
+        dist_dir = os.path.join(dirs['abs_obj_dir'], 'dist')
+        bin_dir = os.path.join(dist_dir, 'bin')
+
+        for lib_type, lib_names in lib_interests.iteritems():
+            for lib_name in lib_names:
+                lib = os.path.join(bin_dir, lib_name)
+                if os.path.exists(lib):
+                    lib_size = 0
+                    section_details = self._get_sections(lib, section_interests)
+                    section_measurements = []
+                    # Build up the subtests
+                    for k, v in section_details.iteritems():
+                        section_measurements.append({'name': k, 'value': v})
+                        lib_size += v
+                    lib_details.append({
+                        'name': lib_type,
+                        'size': lib_size,
+                        'sections': section_measurements
+                    })
+
+        for lib_detail in lib_details:
+            yield {
+                "name": "%s section sizes" % lib_detail['name'],
+                "value": lib_detail['size'],
+                "shouldAlert": False,
+                "subtests": lib_detail['sections']
+            }
+
     def _generate_build_stats(self):
         """grab build stats following a compile.
 
@@ -1698,6 +1735,7 @@ or run without that action (ie: --no-{action})"
 
         if not c.get('debug_build') and not c.get('disable_package_metrics'):
             perfherder_data['suites'].extend(self._get_package_metrics())
+            perfherder_data['suites'].extend(self._get_binary_metrics())
 
         # Extract compiler warnings count.
         warnings = self.get_output_from_command(
@@ -1801,7 +1839,7 @@ or run without that action (ie: --no-{action})"
         from the script run.
         """
         if self.config.get("is_automation"):
-            # let's ignore all mention of buildbot/tbpl status until this
+            # let's ignore all mention of tbpl status until this
             # point so it will be easier to manage
             if self.return_code not in AUTOMATION_EXIT_CODES:
                 self.error("Return code is set to: %s and is outside of "
@@ -1811,5 +1849,5 @@ or run without that action (ie: --no-{action})"
                 self.return_code = 2
             for status, return_code in EXIT_STATUS_DICT.iteritems():
                 if return_code == self.return_code:
-                    self.buildbot_status(status, TBPL_STATUS_DICT[status])
+                    self.record_status(status, TBPL_STATUS_DICT[status])
         self.summary()

@@ -16,7 +16,7 @@ if (AppConstants.platform == "win" && AppConstants.DEBUG) {
   Services.prefs.setBoolPref("extensions.webextensions.remote", false);
 }
 
-PromiseTestUtils.expectUncaughtRejection(/Message manager disconnected/);
+PromiseTestUtils.whitelistRejectionsGlobally(/Message manager disconnected/);
 
 /* globals browser*/
 
@@ -170,6 +170,8 @@ add_task(async function delay_updates_complete() {
   Assert.ok(!addon_allowed.appDisabled);
   Assert.ok(addon_allowed.isActive);
   Assert.equal(addon_allowed.type, "extension");
+
+  await new Promise(executeSoon);
 
   if (stageDir.exists()) {
     do_throw("Staging directory should not exist for formerly-postponed extension");

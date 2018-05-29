@@ -16,77 +16,83 @@
 #include "vm/JSContext-inl.h"
 
 inline void
-JSCompartment::initGlobal(js::GlobalObject& global)
+JS::Realm::initGlobal(js::GlobalObject& global)
 {
-    MOZ_ASSERT(global.compartment() == this);
+    MOZ_ASSERT(global.realm() == this);
     MOZ_ASSERT(!global_);
     global_.set(&global);
 }
 
 js::GlobalObject*
-JSCompartment::maybeGlobal() const
+JS::Realm::maybeGlobal() const
 {
-    MOZ_ASSERT_IF(global_, global_->compartment() == this);
+    MOZ_ASSERT_IF(global_, global_->realm() == this);
     return global_;
 }
 
 js::GlobalObject*
-JSCompartment::unsafeUnbarrieredMaybeGlobal() const
+JS::Realm::unsafeUnbarrieredMaybeGlobal() const
 {
     return *global_.unsafeGet();
 }
 
 inline bool
-JSCompartment::globalIsAboutToBeFinalized()
+JS::Realm::globalIsAboutToBeFinalized()
 {
     MOZ_ASSERT(zone_->isGCSweeping());
     return global_ && js::gc::IsAboutToBeFinalizedUnbarriered(global_.unsafeGet());
 }
 
+/* static */ inline js::ObjectRealm&
+js::ObjectRealm::get(const JSObject* obj)
+{
+    return obj->realm()->objects_;
+}
+
 template <typename T>
-js::AutoCompartment::AutoCompartment(JSContext* cx, const T& target)
+js::AutoRealm::AutoRealm(JSContext* cx, const T& target)
   : cx_(cx),
-    origin_(cx->compartment()),
+    origin_(cx->realm()),
     maybeLock_(nullptr)
 {
-    cx_->enterCompartmentOf(target);
+    cx_->enterRealmOf(target);
 }
 
 // Protected constructor that bypasses assertions in enterCompartmentOf. Used
-// only for entering the atoms compartment.
-js::AutoCompartment::AutoCompartment(JSContext* cx, JSCompartment* target,
-                                     js::AutoLockForExclusiveAccess& lock)
+// only for entering the atoms realm.
+js::AutoRealm::AutoRealm(JSContext* cx, JS::Realm* target,
+                         js::AutoLockForExclusiveAccess& lock)
   : cx_(cx),
-    origin_(cx->compartment()),
+    origin_(cx->realm()),
     maybeLock_(&lock)
 {
-    MOZ_ASSERT(target->isAtomsCompartment());
-    cx_->enterAtomsCompartment(target, lock);
+    MOZ_ASSERT(target->isAtomsRealm());
+    cx_->enterAtomsRealm(target, lock);
 }
 
 // Protected constructor that bypasses assertions in enterCompartmentOf. Should
-// not be used to enter the atoms compartment.
-js::AutoCompartment::AutoCompartment(JSContext* cx, JSCompartment* target)
+// not be used to enter the atoms realm.
+js::AutoRealm::AutoRealm(JSContext* cx, JS::Realm* target)
   : cx_(cx),
-    origin_(cx->compartment()),
+    origin_(cx->realm()),
     maybeLock_(nullptr)
 {
-    MOZ_ASSERT(!target->isAtomsCompartment());
-    cx_->enterNonAtomsCompartment(target);
+    MOZ_ASSERT(!target->isAtomsRealm());
+    cx_->enterNonAtomsRealm(target);
 }
 
-js::AutoCompartment::~AutoCompartment()
+js::AutoRealm::~AutoRealm()
 {
-    cx_->leaveCompartment(origin_, maybeLock_);
+    cx_->leaveRealm(origin_, maybeLock_);
 }
 
-js::AutoAtomsCompartment::AutoAtomsCompartment(JSContext* cx,
-                                               js::AutoLockForExclusiveAccess& lock)
-  : AutoCompartment(cx, cx->atomsCompartment(lock), lock)
+js::AutoAtomsRealm::AutoAtomsRealm(JSContext* cx,
+                                   js::AutoLockForExclusiveAccess& lock)
+  : AutoRealm(cx, cx->atomsRealm(lock), lock)
 {}
 
-js::AutoCompartmentUnchecked::AutoCompartmentUnchecked(JSContext* cx, JSCompartment* target)
-  : AutoCompartment(cx, target)
+js::AutoRealmUnchecked::AutoRealmUnchecked(JSContext* cx, JS::Realm* target)
+  : AutoRealm(cx, target)
 {}
 
 inline bool
@@ -98,8 +104,8 @@ JSCompartment::wrap(JSContext* cx, JS::MutableHandleValue vp)
 
     /*
      * Symbols are GC things, but never need to be wrapped or copied because
-     * they are always allocated in the atoms compartment. They still need to
-     * be marked in the new compartment's zone, however.
+     * they are always allocated in the atoms zone. They still need to be
+     * marked in the new compartment's zone, however.
      */
     if (vp.isSymbol()) {
         cx->markAtomValue(vp);
@@ -114,6 +120,16 @@ JSCompartment::wrap(JSContext* cx, JS::MutableHandleValue vp)
         vp.setString(str);
         return true;
     }
+
+#ifdef ENABLE_BIGINT
+    if (vp.isBigInt()) {
+        JS::RootedBigInt bi(cx, vp.toBigInt());
+        if (!wrap(cx, &bi))
+            return false;
+        vp.setBigInt(bi);
+        return true;
+    }
+#endif
 
     MOZ_ASSERT(vp.isObject());
 
@@ -160,9 +176,9 @@ JSCompartment::wrap(JSContext* cx, JS::MutableHandleValue vp)
 }
 
 MOZ_ALWAYS_INLINE bool
-JSCompartment::objectMaybeInIteration(JSObject* obj)
+js::ObjectRealm::objectMaybeInIteration(JSObject* obj)
 {
-    MOZ_ASSERT(obj->compartment() == this);
+    MOZ_ASSERT(&ObjectRealm::get(obj) == this);
 
     // If the list is empty we're not iterating any objects.
     js::NativeIterator* next = enumerators->next();
@@ -171,7 +187,7 @@ JSCompartment::objectMaybeInIteration(JSObject* obj)
 
     // If the list contains a single object, check if it's |obj|.
     if (next->next() == enumerators)
-        return next->obj == obj;
+        return next->objectBeingIterated() == obj;
 
     return true;
 }

@@ -101,7 +101,8 @@ public:
     return nullptr;
   }
 
-  virtual nsresult DoGetRemoteType(nsAString& aRemoteType) const;
+  virtual void DoGetRemoteType(nsAString& aRemoteType,
+                               ErrorResult& aError) const;
 
 protected:
   bool BuildClonedMessageDataForParent(nsIContentParent* aParent,
@@ -256,14 +257,6 @@ public:
     return mCallback;
   }
 
-  nsresult DispatchAsyncMessage(const nsAString& aMessageName,
-                                const JS::Value& aJSON,
-                                const JS::Value& aObjects,
-                                nsIPrincipal* aPrincipal,
-                                const JS::Value& aTransfers,
-                                JSContext* aCx,
-                                uint8_t aArgc);
-
   nsresult DispatchAsyncMessageInternal(JSContext* aCx,
                                         const nsAString& aMessage,
                                         StructuredCloneData& aData,
@@ -311,22 +304,10 @@ protected:
                             JS::Handle<JS::Value> aTransfers,
                             mozilla::ErrorResult& aError);
 
-  nsresult SendMessage(const nsAString& aMessageName,
-                       JS::Handle<JS::Value> aJSON,
-                       JS::Handle<JS::Value> aObjects,
-                       nsIPrincipal* aPrincipal,
-                       JSContext* aCx,
-                       uint8_t aArgc,
-                       JS::MutableHandle<JS::Value> aRetval,
-                       bool aIsSync);
   void SendMessage(JSContext* aCx, const nsAString& aMessageName,
                    JS::Handle<JS::Value> aObj, JS::Handle<JSObject*> aObjects,
                    nsIPrincipal* aPrincipal, bool aIsSync, nsTArray<JS::Value>& aResult,
                    mozilla::ErrorResult& aError);
-  void SendMessage(JSContext* aCx, const nsAString& aMessageName,
-                   StructuredCloneData& aData, JS::Handle<JSObject*> aObjects,
-                   nsIPrincipal* aPrincipal, bool aIsSync,
-                   nsTArray<JS::Value>& aResult, mozilla::ErrorResult& aError);
 
   void ReceiveMessage(nsISupports* aTarget, nsFrameLoader* aTargetFrameLoader,
                       bool aTargetClosed, const nsAString& aMessage, bool aIsSync,
@@ -337,19 +318,8 @@ protected:
   void LoadScript(const nsAString& aURL, bool aAllowDelayedLoad,
                   bool aRunInGlobalScope, mozilla::ErrorResult& aError);
   void RemoveDelayedScript(const nsAString& aURL);
-  nsresult GetDelayedScripts(JSContext* aCx,
-                             JS::MutableHandle<JS::Value> aList);
   void GetDelayedScripts(JSContext* aCx, nsTArray<nsTArray<JS::Value>>& aList,
                          mozilla::ErrorResult& aError);
-
-  enum ProcessCheckerType {
-    PROCESS_CHECKER_PERMISSION,
-    PROCESS_CHECKER_MANIFEST_URL,
-    ASSERT_APP_HAS_PERMISSION
-  };
-  bool AssertProcessInternal(ProcessCheckerType aType,
-                             const nsAString& aCapability,
-                             mozilla::ErrorResult& aError);
 
   // We keep the message listeners as arrays in a hastable indexed by the
   // message name. That gives us fast lookups in ReceiveMessage().
@@ -465,7 +435,7 @@ protected:
                                     bool aRunInGlobalScope);
   bool InitChildGlobalInternal(const nsACString& aID);
   virtual bool WrapGlobalObject(JSContext* aCx,
-                                JS::CompartmentOptions& aOptions,
+                                JS::RealmOptions& aOptions,
                                 JS::MutableHandle<JSObject*> aReflector) = 0;
   void Trace(const TraceCallbacks& aCallbacks, void* aClosure);
   void Unlink();

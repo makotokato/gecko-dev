@@ -6,15 +6,15 @@ use api::{ApiMsg, BuiltDisplayList, ClearCache, DebugCommand};
 #[cfg(feature = "debugger")]
 use api::{BuiltDisplayListIter, SpecificDisplayItem};
 use api::{DeviceIntPoint, DevicePixelScale, DeviceUintPoint, DeviceUintRect, DeviceUintSize};
-use api::{DocumentId, DocumentLayer, ExternalScrollId, FrameMsg, HitTestResult};
+use api::{DocumentId, DocumentLayer, ExternalScrollId, FrameMsg, HitTestFlags, HitTestResult};
 use api::{IdNamespace, LayoutPoint, PipelineId, RenderNotifier, SceneMsg, ScrollClamping};
-use api::{ScrollLocation, ScrollNodeState, TransactionMsg, WorldPoint};
+use api::{ScrollLocation, ScrollNodeState, TransactionMsg};
 use api::channel::{MsgReceiver, Payload};
 #[cfg(feature = "capture")]
 use api::CaptureBits;
 #[cfg(feature = "replay")]
 use api::CapturedDocument;
-use clip_scroll_tree::ClipScrollTree;
+use clip_scroll_tree::{ClipScrollNodeIndex, ClipScrollTree};
 #[cfg(feature = "debugger")]
 use debug_server;
 use display_list_flattener::DisplayListFlattener;
@@ -42,6 +42,7 @@ use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 use std::mem::replace;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::u32;
+#[cfg(feature = "replay")]
 use tiling::Frame;
 use time::precise_time_ns;
 
@@ -170,13 +171,15 @@ impl Document {
 
     fn can_render(&self) -> bool { self.frame_builder.is_some() }
 
+    fn has_pixels(&self) -> bool {
+        !self.view.window_size.is_empty_or_negative()
+    }
+
     // TODO: We will probably get rid of this soon and always forward to the scene building thread.
     fn build_scene(&mut self, resource_cache: &mut ResourceCache) {
         let max_texture_size = resource_cache.max_texture_size();
 
-        if self.view.window_size.width == 0 ||
-           self.view.window_size.height == 0 ||
-           self.view.window_size.width > max_texture_size ||
+        if self.view.window_size.width > max_texture_size ||
            self.view.window_size.height > max_texture_size {
             error!("ERROR: Invalid window dimensions {}x{}. Please call api.set_window_size()",
                 self.view.window_size.width,
@@ -206,7 +209,6 @@ impl Document {
             &self.pending.scene,
             &mut self.clip_scroll_tree,
             resource_cache.get_font_instances(),
-            resource_cache.get_tiled_image_map(),
             &self.view,
             &self.output_pipelines,
             &self.frame_builder_config,
@@ -242,16 +244,11 @@ impl Document {
             ).unwrap_or(false);
 
         let scene_request = if build_scene {
-            if self.view.window_size.width == 0 || self.view.window_size.height == 0 {
-                error!("ERROR: Invalid window dimensions! Please call api.set_window_size()");
-            }
-
             Some(SceneRequest {
                 scene: self.pending.scene.clone(),
                 removed_pipelines: replace(&mut self.pending.removed_pipelines, Vec::new()),
                 view: self.view.clone(),
                 font_instances: resource_cache.get_font_instances(),
-                tiled_image_map: resource_cache.get_tiled_image_map(),
                 output_pipelines: self.output_pipelines.clone(),
             })
         } else {
@@ -275,7 +272,6 @@ impl Document {
     ) -> RenderedDocument {
         let accumulated_scale_factor = self.view.accumulated_scale_factor();
         let pan = self.view.pan.to_f32() / accumulated_scale_factor;
-        let removed_pipelines = replace(&mut self.current.removed_pipelines, Vec::new());
 
         let frame = {
             let frame_builder = self.frame_builder.as_mut().unwrap();
@@ -296,17 +292,15 @@ impl Document {
             frame
         };
 
-        self.make_rendered_document(frame, removed_pipelines)
+        RenderedDocument::new(frame)
     }
 
-    pub fn make_rendered_document(&mut self, frame: Frame, removed_pipelines: Vec<PipelineId>) -> RenderedDocument {
-        RenderedDocument::new(
-            PipelineInfo {
-                epochs: self.current.scene.pipeline_epochs.clone(),
-                removed_pipelines,
-            },
-            frame
-        )
+    pub fn updated_pipeline_info(&mut self) -> PipelineInfo {
+        let removed_pipelines = replace(&mut self.current.removed_pipelines, Vec::new());
+        PipelineInfo {
+            epochs: self.current.scene.pipeline_epochs.clone(),
+            removed_pipelines,
+        }
     }
 
     pub fn discard_frame_state_for_pipeline(&mut self, pipeline_id: PipelineId) {
@@ -315,12 +309,12 @@ impl Document {
     }
 
     /// Returns true if any nodes actually changed position or false otherwise.
-    pub fn scroll(
+    pub fn scroll_nearest_scrolling_ancestor(
         &mut self,
         scroll_location: ScrollLocation,
-        cursor: WorldPoint,
+        scroll_node_index: Option<ClipScrollNodeIndex>,
     ) -> bool {
-        self.clip_scroll_tree.scroll(scroll_location, cursor)
+        self.clip_scroll_tree.scroll_nearest_scrolling_ancestor(scroll_location, scroll_node_index)
     }
 
     /// Returns true if the node actually changed position or false otherwise.
@@ -620,9 +614,24 @@ impl RenderBackend {
             FrameMsg::Scroll(delta, cursor) => {
                 profile_scope!("Scroll");
 
-                let should_render = doc.scroll(delta, cursor)
-                    && doc.render_on_scroll == Some(true);
+                let mut should_render = true;
+                let node_index = match doc.hit_tester {
+                    Some(ref hit_tester) => {
+                        // Ideally we would call doc.scroll_nearest_scrolling_ancestor here, but
+                        // we need have to avoid a double-borrow.
+                        let test = HitTest::new(None, cursor, HitTestFlags::empty());
+                        hit_tester.find_node_under_point(test)
+                    }
+                    None => {
+                        should_render = false;
+                        None
+                    }
+                };
 
+                let should_render =
+                    should_render &&
+                    doc.scroll_nearest_scrolling_ancestor(delta, node_index) &&
+                    doc.render_on_scroll == Some(true);
                 DocumentOps {
                     scroll: true,
                     render: should_render,
@@ -804,11 +813,11 @@ impl RenderBackend {
                 self.resource_cache
                     .update_resources(updates, &mut profile_counters.resources);
             }
-            ApiMsg::GetGlyphDimensions(instance_key, glyph_keys, tx) => {
-                let mut glyph_dimensions = Vec::with_capacity(glyph_keys.len());
+            ApiMsg::GetGlyphDimensions(instance_key, glyph_indices, tx) => {
+                let mut glyph_dimensions = Vec::with_capacity(glyph_indices.len());
                 if let Some(font) = self.resource_cache.get_font_instance(instance_key) {
-                    for glyph_key in &glyph_keys {
-                        let glyph_dim = self.resource_cache.get_glyph_dimensions(&font, glyph_key);
+                    for glyph_index in &glyph_indices {
+                        let glyph_dim = self.resource_cache.get_glyph_dimensions(&font, *glyph_index);
                         glyph_dimensions.push(glyph_dim);
                     }
                 }
@@ -1031,7 +1040,7 @@ impl RenderBackend {
 
         debug_assert!(op.render || !op.composite);
 
-        if op.render {
+        if op.render && doc.has_pixels() {
             profile_scope!("generate frame");
 
             *frame_counter += 1;
@@ -1056,6 +1065,9 @@ impl RenderBackend {
                 (pending_update, rendered_document)
             };
 
+            let msg = ResultMsg::PublishPipelineInfo(doc.updated_pipeline_info());
+            self.result_tx.send(msg).unwrap();
+
             // Publish the frame
             let msg = ResultMsg::PublishDocument(
                 document_id,
@@ -1066,6 +1078,13 @@ impl RenderBackend {
             self.result_tx.send(msg).unwrap();
             profile_counters.reset();
             doc.render_on_hittest = false;
+        } else if op.render {
+            // WR-internal optimization to avoid doing a bunch of render work if
+            // there's no pixels. We still want to pretend to render and request
+            // a composite to make sure that the callbacks (particularly the
+            // new_frame_ready callback below) has the right flags.
+            let msg = ResultMsg::PublishPipelineInfo(doc.updated_pipeline_info());
+            self.result_tx.send(msg).unwrap();
         }
 
         if transaction_msg.generate_frame {
@@ -1227,7 +1246,7 @@ impl RenderBackend {
                     &mut self.gpu_cache,
                     &mut profile_counters.resources,
                 );
-                //TODO: write down full `RenderedDocument`?
+                //TODO: write down doc's pipeline info?
                 // it has `pipeline_epoch_map`,
                 // which may capture necessary details for some cases.
                 let file_name = format!("frame-{}-{}", (id.0).0, id.1);
@@ -1338,7 +1357,7 @@ impl RenderBackend {
             let render_doc = match CaptureConfig::deserialize::<Frame, _>(root, frame_name) {
                 Some(frame) => {
                     info!("\tloaded a built frame with {} passes", frame.passes.len());
-                    doc.make_rendered_document(frame, Vec::new())
+                    RenderedDocument::new(frame)
                 }
                 None => {
                     doc.build_scene(&mut self.resource_cache);

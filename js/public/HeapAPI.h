@@ -14,6 +14,8 @@
 #include "js/TraceKind.h"
 #include "js/Utility.h"
 
+struct JSStringFinalizer;
+
 /* These values are private to the JS engine. */
 namespace js {
 
@@ -201,6 +203,47 @@ struct Zone
     }
 };
 
+struct String
+{
+    static const uint32_t NON_ATOM_BIT     = JS_BIT(0);
+    static const uint32_t LINEAR_BIT       = JS_BIT(1);
+    static const uint32_t INLINE_CHARS_BIT = JS_BIT(3);
+    static const uint32_t LATIN1_CHARS_BIT = JS_BIT(6);
+    static const uint32_t EXTERNAL_FLAGS   = LINEAR_BIT | NON_ATOM_BIT | JS_BIT(5);
+    static const uint32_t TYPE_FLAGS_MASK  = JS_BIT(6) - 1;
+    static const uint32_t PERMANENT_ATOM_MASK    = NON_ATOM_BIT | JS_BIT(5);
+    static const uint32_t PERMANENT_ATOM_FLAGS   = JS_BIT(5);
+
+    uint32_t flags;
+    uint32_t length;
+    union {
+        const JS::Latin1Char* nonInlineCharsLatin1;
+        const char16_t* nonInlineCharsTwoByte;
+        JS::Latin1Char inlineStorageLatin1[1];
+        char16_t inlineStorageTwoByte[1];
+    };
+    const JSStringFinalizer* externalFinalizer;
+
+    static bool nurseryCellIsString(const js::gc::Cell* cell) {
+        MOZ_ASSERT(IsInsideNursery(cell));
+        return reinterpret_cast<const String*>(cell)->flags & NON_ATOM_BIT;
+    }
+
+    static bool isPermanentAtom(const js::gc::Cell* cell) {
+        uint32_t flags = reinterpret_cast<const String*>(cell)->flags;
+        return (flags & PERMANENT_ATOM_MASK) == PERMANENT_ATOM_FLAGS;
+    }
+};
+
+struct Symbol {
+    uint32_t code_;
+    static const uint32_t WellKnownAPILimit = 0x80000000;
+
+    static bool isWellKnownSymbol(const js::gc::Cell* cell) {
+        return reinterpret_cast<const Symbol*>(cell)->code_ < WellKnownAPILimit;
+    }
+};
+
 } /* namespace shadow */
 
 /**
@@ -272,9 +315,12 @@ class JS_FRIEND_API(GCCellPtr)
     }
 
     MOZ_ALWAYS_INLINE bool mayBeOwnedByOtherRuntime() const {
-        if (is<JSString>() || is<JS::Symbol>())
-            return mayBeOwnedByOtherRuntimeSlow();
-        return false;
+        if (!is<JSString>() && !is<JS::Symbol>())
+            return false;
+        if (is<JSString>())
+            return JS::shadow::String::isPermanentAtom(asCell());
+        MOZ_ASSERT(is<JS::Symbol>());
+        return JS::shadow::Symbol::isWellKnownSymbol(asCell());
     }
 
   private:
@@ -296,18 +342,6 @@ class JS_FRIEND_API(GCCellPtr)
     uintptr_t ptr;
 };
 
-inline bool
-operator==(const GCCellPtr& ptr1, const GCCellPtr& ptr2)
-{
-    return ptr1.asCell() == ptr2.asCell();
-}
-
-inline bool
-operator!=(const GCCellPtr& ptr1, const GCCellPtr& ptr2)
-{
-    return !(ptr1 == ptr2);
-}
-
 // Unwraps the given GCCellPtr and calls the given functor with a template
 // argument of the actual type of the pointer.
 template <typename F, typename... Args>
@@ -327,6 +361,21 @@ DispatchTyped(F f, GCCellPtr thing, Args&&... args)
 }
 
 } /* namespace JS */
+
+// These are defined in the toplevel namespace instead of within JS so that
+// they won't shadow other operator== overloads (see bug 1456512.)
+
+inline bool
+operator==(const JS::GCCellPtr& ptr1, const JS::GCCellPtr& ptr2)
+{
+    return ptr1.asCell() == ptr2.asCell();
+}
+
+inline bool
+operator!=(const JS::GCCellPtr& ptr1, const JS::GCCellPtr& ptr2)
+{
+    return !(ptr1 == ptr2);
+}
 
 namespace js {
 namespace gc {

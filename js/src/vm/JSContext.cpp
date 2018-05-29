@@ -256,15 +256,15 @@ ReportError(JSContext* cx, JSErrorReport* reportp, JSErrorCallback callback,
 static void
 PopulateReportBlame(JSContext* cx, JSErrorReport* report)
 {
-    JSCompartment* compartment = cx->compartment();
-    if (!compartment)
+    JS::Realm* realm = cx->realm();
+    if (!realm)
         return;
 
     /*
      * Walk stack until we find a frame that is associated with a non-builtin
      * rather than a builtin frame and which we're allowed to know about.
      */
-    NonBuiltinFrameIter iter(cx, compartment->principals());
+    NonBuiltinFrameIter iter(cx, realm->principals());
     if (iter.done())
         return;
 
@@ -370,7 +370,7 @@ checkReportFlags(JSContext* cx, unsigned* flags)
 {
     if (JSREPORT_IS_STRICT(*flags)) {
         /* Warning/error only when JSOPTION_STRICT is set. */
-        if (!cx->compartment()->behaviors().extraWarnings(cx))
+        if (!cx->realm()->behaviors().extraWarnings(cx))
             return true;
     }
 
@@ -1149,7 +1149,7 @@ js::RunJobs(JSContext* cx)
                 continue;
 
             cx->jobQueue->get()[i] = nullptr;
-            AutoCompartment ac(cx, job);
+            AutoRealm ar(cx, job);
             {
                 if (!JS::Call(cx, UndefinedHandleValue, job, args, &rval)) {
                     // Nothing we can do about uncatchable exceptions.
@@ -1219,7 +1219,7 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
     helperThread_(nullptr),
     options_(options),
     arenas_(nullptr),
-    enterCompartmentDepth_(0),
+    enterRealmDepth_(0),
     jitActivation(nullptr),
     activation_(nullptr),
     profilingActivation_(nullptr),
@@ -1355,7 +1355,7 @@ JSContext::getPendingException(MutableHandleValue rval)
 {
     MOZ_ASSERT(throwing);
     rval.set(unwrappedException());
-    if (IsAtomsCompartment(compartment()))
+    if (realm()->isAtomsRealm())
         return true;
     bool wasOverRecursed = overRecursed_;
     clearPendingException();
@@ -1482,8 +1482,8 @@ JSContext::trace(JSTracer* trc)
     cycleDetectorVector().trace(trc);
     geckoProfiler().trace(trc);
 
-    if (trc->isMarkingTracer() && compartment_)
-        compartment_->mark();
+    if (trc->isMarkingTracer() && realm_)
+        realm_->mark();
 }
 
 void*

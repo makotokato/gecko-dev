@@ -34,7 +34,7 @@ impl Example for App {
         &mut self,
         _api: &RenderApi,
         builder: &mut DisplayListBuilder,
-        _resources: &mut ResourceUpdates,
+        _txn: &mut Transaction,
         _framebuffer_size: DeviceUintSize,
         _pipeline_id: PipelineId,
         _document_id: DocumentId,
@@ -43,15 +43,14 @@ impl Example for App {
         let bounds = (0, 0).to(200, 200);
 
         let filters = vec![
-            FilterOp::Opacity(PropertyBinding::Binding(self.opacity_key), self.opacity),
+            FilterOp::Opacity(PropertyBinding::Binding(self.opacity_key, self.opacity), self.opacity),
         ];
 
         let info = LayoutPrimitiveInfo::new(bounds);
         builder.push_stacking_context(
             &info,
             None,
-            ScrollPolicy::Scrollable,
-            Some(PropertyBinding::Binding(self.property_key)),
+            Some(PropertyBinding::Binding(self.property_key, LayoutTransform::identity())),
             TransformStyle::Flat,
             None,
             MixBlendMode::Normal,

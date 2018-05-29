@@ -45,10 +45,6 @@
 using namespace mozilla;
 using namespace mozilla::dom;
 
-static_assert((((1 << nsStyleStructID_Length) - 1) &
-               ~(NS_STYLE_INHERIT_MASK)) == 0,
-              "Not enough bits in NS_STYLE_INHERIT_MASK");
-
 /* static */ const int32_t nsStyleGridLine::kMinLine;
 /* static */ const int32_t nsStyleGridLine::kMaxLine;
 
@@ -2100,27 +2096,7 @@ private:
 };
 
 nsStyleImageRequest::nsStyleImageRequest(Mode aModeFlags,
-                                         imgRequestProxy* aRequestProxy,
-                                         css::ImageValue* aImageValue,
-                                         ImageTracker* aImageTracker)
-  : mRequestProxy(aRequestProxy)
-  , mImageValue(aImageValue)
-  , mImageTracker(aImageTracker)
-  , mModeFlags(aModeFlags)
-  , mResolved(true)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(aImageValue);
-  MOZ_ASSERT(!!(aModeFlags & Mode::Track) == !!aImageTracker);
-
-  if (mRequestProxy) {
-    MaybeTrackAndLock();
-  }
-}
-
-nsStyleImageRequest::nsStyleImageRequest(
-    Mode aModeFlags,
-    mozilla::css::ImageValue* aImageValue)
+                                         css::ImageValue* aImageValue)
   : mImageValue(aImageValue)
   , mModeFlags(aModeFlags)
   , mResolved(false)
@@ -2199,11 +2175,12 @@ nsStyleImageRequest::Resolve(
   } else {
     mDocGroup = doc->GetDocGroup();
     mImageValue->Initialize(doc);
-
-    nsCSSValue value;
-    value.SetImageValue(mImageValue);
-    mRequestProxy = value.GetPossiblyStaticImageValue(aPresContext->Document(),
-                                                      aPresContext);
+    imgRequestProxy* request = mImageValue->mRequests.GetWeak(doc);
+    if (aPresContext->IsDynamic()) {
+      mRequestProxy = request;
+    } else if (request) {
+      request->GetStaticRequest(doc, getter_AddRefs(mRequestProxy));
+    }
   }
 
   if (!mRequestProxy) {
@@ -3716,7 +3693,7 @@ nsStyleDisplay::FinishStyle(
       // ImageValue is created, in both Gecko and Stylo. That will
       // avoid doing a mutation here.
       if (shapeImage->GetType() == eStyleImageType_Image) {
-        shapeImage->GetImageRequest()->GetImageValue()->SetCORSMode(
+        shapeImage->ImageRequest()->GetImageValue()->SetCORSMode(
           CORSMode::CORS_ANONYMOUS);
       }
       const nsStyleImage* oldShapeImage =
@@ -4619,6 +4596,8 @@ nsStyleUserInterface::nsStyleUserInterface(const nsPresContext* aContext)
   , mPointerEvents(NS_STYLE_POINTER_EVENTS_AUTO)
   , mCursor(NS_STYLE_CURSOR_AUTO)
   , mCaretColor(StyleComplexColor::Auto())
+  , mScrollbarFaceColor(StyleComplexColor::Auto())
+  , mScrollbarTrackColor(StyleComplexColor::Auto())
 {
   MOZ_COUNT_CTOR(nsStyleUserInterface);
 }
@@ -4631,6 +4610,8 @@ nsStyleUserInterface::nsStyleUserInterface(const nsStyleUserInterface& aSource)
   , mCursor(aSource.mCursor)
   , mCursorImages(aSource.mCursorImages)
   , mCaretColor(aSource.mCaretColor)
+  , mScrollbarFaceColor(aSource.mScrollbarFaceColor)
+  , mScrollbarTrackColor(aSource.mScrollbarTrackColor)
 {
   MOZ_COUNT_CTOR(nsStyleUserInterface);
 }
@@ -4699,7 +4680,9 @@ nsStyleUserInterface::CalcDifference(const nsStyleUserInterface& aNewData) const
     hint |= nsChangeHint_NeutralChange;
   }
 
-  if (mCaretColor != aNewData.mCaretColor) {
+  if (mCaretColor != aNewData.mCaretColor ||
+      mScrollbarFaceColor != aNewData.mScrollbarFaceColor ||
+      mScrollbarTrackColor != aNewData.mScrollbarTrackColor) {
     hint |= nsChangeHint_RepaintFrame;
   }
 

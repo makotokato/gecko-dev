@@ -8,7 +8,6 @@ from __future__ import absolute_import
 import json
 import os
 import sys
-import time
 
 import mozinfo
 
@@ -21,12 +20,19 @@ here = os.path.abspath(os.path.dirname(__file__))
 webext_dir = os.path.join(os.path.dirname(here), 'webext')
 sys.path.insert(0, here)
 
+try:
+    from mozbuild.base import MozbuildObject
+    build = MozbuildObject.from_environment(cwd=here)
+except ImportError:
+    build = None
+
 from cmdline import parse_args
 from control_server import RaptorControlServer
 from gen_test_config import gen_test_config
 from outputhandler import OutputHandler
-from playback import get_playback
 from manifest import get_raptor_test_list
+from playback import get_playback
+from results import RaptorResultsHandler
 
 
 class Raptor(object):
@@ -40,20 +46,24 @@ class Raptor(object):
 
         self.raptor_venv = os.path.join(os.getcwd(), 'raptor-venv')
         self.log = get_default_logger(component='raptor')
+        self.addons_installed = False
         self.control_server = None
         self.playback = None
 
         # Create the profile
-        pref_file = os.path.join(here, 'preferences', '{}.json'.format(self.config['app']))
-        prefs = {}
-        if os.path.isfile(pref_file):
-            with open(pref_file, 'r') as fh:
-                prefs = json.load(fh)
+        self.profile = create_profile(self.config['app'])
 
-        try:
-            self.profile = create_profile(self.config['app'], preferences=prefs)
-        except NotImplementedError:
-            self.profile = None
+        # Merge in base profiles
+        with open(os.path.join(self.profile_data_dir, 'profiles.json'), 'r') as fh:
+            base_profiles = json.load(fh)['raptor']
+
+        for name in base_profiles:
+            path = os.path.join(self.profile_data_dir, name)
+            self.log.info("Merging profile: {}".format(path))
+            self.profile.merge(path)
+
+        # create results holder
+        self.results_handler = RaptorResultsHandler()
 
         # Create the runner
         self.output_handler = OutputHandler()
@@ -64,8 +74,16 @@ class Raptor(object):
         self.runner = runner_cls(
             binary, profile=self.profile, process_args=process_args)
 
+    @property
+    def profile_data_dir(self):
+        if 'MOZ_DEVELOPER_REPO_DIR' in os.environ:
+            return os.path.join(os.environ['MOZ_DEVELOPER_REPO_DIR'], 'testing', 'profiles')
+        if build:
+            return os.path.join(build.topsrcdir, 'testing', 'profiles')
+        return os.path.join(here, 'profile_data')
+
     def start_control_server(self):
-        self.control_server = RaptorControlServer()
+        self.control_server = RaptorControlServer(self.results_handler)
         self.control_server.start()
 
     def get_playback_config(self, test):
@@ -81,9 +99,15 @@ class Raptor(object):
 
     def run_test(self, test, timeout=None):
         self.log.info("starting raptor test: %s" % test['name'])
-        gen_test_config(self.config['app'], test['name'], self.control_server.port)
+        gen_test_config(self.config['app'],
+                        test['name'],
+                        self.control_server.port)
 
-        self.profile.addons.install(os.path.join(webext_dir, 'raptor'))
+        # must intall raptor addon each time because we dynamically update some content
+        raptor_webext = os.path.join(webext_dir, 'raptor')
+        self.log.info("installing webext %s" % raptor_webext)
+        self.profile.addons.install(raptor_webext)
+        webext_id = self.profile.addons.addon_details(raptor_webext)['id']
 
         # some tests require tools to playback the test pages
         if test.get('playback', None) is not None:
@@ -93,9 +117,9 @@ class Raptor(object):
 
         self.runner.start()
 
-        first_time = int(time.time()) * 1000
         proc = self.runner.process_handler
         self.output_handler.proc = proc
+        self.control_server.browser_proc = proc
 
         try:
             self.runner.wait(timeout)
@@ -108,25 +132,21 @@ class Raptor(object):
         if self.playback is not None:
             self.playback.stop()
 
+        # remove the raptor webext; as it must be reloaded with each subtest anyway
+        self.log.info("removing webext %s" % raptor_webext)
+        self.profile.addons.remove_addon(webext_id)
+
         if self.runner.is_running():
             self.log("Application timed out after {} seconds".format(timeout))
             self.runner.stop()
 
-        proc.output.append(
-            "__startBeforeLaunchTimestamp%d__endBeforeLaunchTimestamp"
-            % first_time)
-        proc.output.append(
-            "__startAfterTerminationTimestamp%d__endAfterTerminationTimestamp"
-            % (int(time.time()) * 1000))
-
     def process_results(self):
-        self.log.info('todo: process results and dump in PERFHERDER_JSON blob')
-        self.log.info('- or - do we want the control server to do that?')
+        return self.results_handler.summarize_and_output(self.config)
 
     def clean_up(self):
         self.control_server.stop()
         self.runner.stop()
-        self.log.info("raptor finished")
+        self.log.info("finished")
 
 
 def main(args=sys.argv[1:]):
@@ -154,8 +174,13 @@ def main(args=sys.argv[1:]):
     for next_test in raptor_test_list:
         raptor.run_test(next_test)
 
-    raptor.process_results()
+    success = raptor.process_results()
     raptor.clean_up()
+
+    if not success:
+        # didn't get test results; test timed out or crashed, etc. we want job to fail
+        LOG.critical("error: no raptor test results were found")
+        os.sys.exit(1)
 
 
 if __name__ == "__main__":

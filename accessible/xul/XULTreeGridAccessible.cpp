@@ -33,7 +33,7 @@ XULTreeGridAccessible::~XULTreeGridAccessible()
 // XULTreeGridAccessible: Table
 
 uint32_t
-XULTreeGridAccessible::ColCount()
+XULTreeGridAccessible::ColCount() const
 {
   return nsCoreUtils::GetSensibleColumnCount(mTree);
 }
@@ -209,7 +209,7 @@ XULTreeGridAccessible::UnselectRow(uint32_t aRowIdx)
 // XULTreeGridAccessible: Accessible implementation
 
 role
-XULTreeGridAccessible::NativeRole()
+XULTreeGridAccessible::NativeRole() const
 {
   nsCOMPtr<nsITreeColumns> treeColumns;
   mTree->GetColumns(getter_AddRefs(treeColumns));
@@ -287,13 +287,13 @@ XULTreeGridRowAccessible::Shutdown()
 }
 
 role
-XULTreeGridRowAccessible::NativeRole()
+XULTreeGridRowAccessible::NativeRole() const
 {
   return roles::ROW;
 }
 
 ENameValueFlag
-XULTreeGridRowAccessible::Name(nsString& aName)
+XULTreeGridRowAccessible::Name(nsString& aName) const
 {
   aName.Truncate();
 
@@ -476,7 +476,7 @@ XULTreeGridCellAccessible::FocusedChild()
 }
 
 ENameValueFlag
-XULTreeGridCellAccessible::Name(nsString& aName)
+XULTreeGridCellAccessible::Name(nsString& aName) const
 {
   aName.Truncate();
 
@@ -535,7 +535,7 @@ XULTreeGridCellAccessible::BoundsInAppUnits() const
 }
 
 uint8_t
-XULTreeGridCellAccessible::ActionCount()
+XULTreeGridCellAccessible::ActionCount() const
 {
   bool isCycler = false;
   mColumn->GetCycler(&isCycler);
@@ -578,7 +578,7 @@ XULTreeGridCellAccessible::ActionNameAt(uint8_t aIndex, nsAString& aName)
 }
 
 bool
-XULTreeGridCellAccessible::DoAction(uint8_t aIndex)
+XULTreeGridCellAccessible::DoAction(uint8_t aIndex) const
 {
   if (aIndex != eAction_Click)
     return false;
@@ -682,13 +682,13 @@ XULTreeGridCellAccessible::NativeAttributes()
 }
 
 role
-XULTreeGridCellAccessible::NativeRole()
+XULTreeGridCellAccessible::NativeRole() const
 {
   return roles::GRID_CELL;
 }
 
 uint64_t
-XULTreeGridCellAccessible::NativeState()
+XULTreeGridCellAccessible::NativeState() const
 {
   if (!mTreeView)
     return states::DEFUNCT;
@@ -732,7 +732,7 @@ XULTreeGridCellAccessible::IndexInParent() const
 }
 
 Relation
-XULTreeGridCellAccessible::RelationByType(RelationType aType)
+XULTreeGridCellAccessible::RelationByType(RelationType aType) const
 {
   return Relation();
 }
@@ -805,7 +805,7 @@ XULTreeGridCellAccessible::GetSiblingAtOffset(int32_t aOffset,
 
 void
 XULTreeGridCellAccessible::DispatchClickEvent(nsIContent* aContent,
-                                              uint32_t aActionIndex)
+                                              uint32_t aActionIndex) const
 {
   if (IsDefunct())
     return;

@@ -114,12 +114,39 @@ var paymentRequest = {
 
     log.debug("onShowPaymentRequest: domReadyPromise resolved");
     log.debug("onShowPaymentRequest, isPrivate?", detail.isPrivate);
-    document.querySelector("payment-dialog").setStateFromParent({
+
+    let paymentDialog = document.querySelector("payment-dialog");
+    let state = {
       request: detail.request,
       savedAddresses: detail.savedAddresses,
       savedBasicCards: detail.savedBasicCards,
       isPrivate: detail.isPrivate,
-    });
+      page: {
+        id: "payment-summary",
+      },
+    };
+
+    // Onboarding wizard flow.
+    if (Object.keys(detail.savedAddresses).length == 0) {
+      state.page = {
+        id: "address-page",
+        onboardingWizard: true,
+      };
+
+      state["address-page"] = {
+        selectedStateKey: "selectedShippingAddress",
+        addressFields: null,
+        guid: null,
+        title: paymentDialog.dataset.shippingAddressTitleAdd,
+      };
+    } else if (Object.keys(detail.savedBasicCards).length == 0) {
+      state.page = {
+        id: "basic-card-page",
+        onboardingWizard: true,
+      };
+    }
+
+    paymentDialog.setStateFromParent(state);
   },
 
   cancel() {
@@ -204,6 +231,11 @@ var paymentRequest = {
   onPaymentRequestUnload() {
     // remove listeners that may be used multiple times here
     window.removeEventListener("paymentChromeToContent", this);
+  },
+
+  getAddresses(state) {
+    let addresses = Object.assign({}, state.savedAddresses, state.tempAddresses);
+    return addresses;
   },
 
   getBasicCards(state) {

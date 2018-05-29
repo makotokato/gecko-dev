@@ -11,7 +11,6 @@ const SPLITCONSOLE_ENABLED_PREF = "devtools.toolbox.splitconsoleEnabled";
 const SPLITCONSOLE_HEIGHT_PREF = "devtools.toolbox.splitconsoleHeight";
 const DISABLE_AUTOHIDE_PREF = "ui.popup.disable_autohide";
 const HOST_HISTOGRAM = "DEVTOOLS_TOOLBOX_HOST";
-const SCREENSIZE_HISTOGRAM = "DEVTOOLS_SCREEN_RESOLUTION_ENUMERATED_PER_USER";
 const CURRENT_THEME_SCALAR = "devtools.current_theme";
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 const REGEX_PANEL = /webconsole|inspector|jsdebugger|styleeditor|netmonitor|storage/;
@@ -19,6 +18,7 @@ const REGEX_PANEL = /webconsole|inspector|jsdebugger|styleeditor|netmonitor|stor
 var {Ci, Cc} = require("chrome");
 var promise = require("promise");
 var defer = require("devtools/shared/defer");
+const { debounce } = require("devtools/shared/debounce");
 var Services = require("Services");
 var ChromeUtils = require("ChromeUtils");
 var {gDevTools} = require("devtools/client/framework/devtools");
@@ -47,12 +47,8 @@ loader.lazyRequireGetter(this, "InspectorFront",
   "devtools/shared/fronts/inspector", true);
 loader.lazyRequireGetter(this, "flags",
   "devtools/shared/flags");
-loader.lazyRequireGetter(this, "showDoorhanger",
-  "devtools/client/shared/doorhanger", true);
 loader.lazyRequireGetter(this, "createPerformanceFront",
   "devtools/shared/fronts/performance", true);
-loader.lazyRequireGetter(this, "system",
-  "devtools/shared/system");
 loader.lazyRequireGetter(this, "getPreferenceFront",
   "devtools/shared/fronts/preference", true);
 loader.lazyRequireGetter(this, "KeyShortcuts",
@@ -147,7 +143,6 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
   this._saveSplitConsoleHeight = this._saveSplitConsoleHeight.bind(this);
   this._onFocus = this._onFocus.bind(this);
   this._onBrowserMessage = this._onBrowserMessage.bind(this);
-  this._showDevEditionPromo = this._showDevEditionPromo.bind(this);
   this._updateTextBoxMenuItems = this._updateTextBoxMenuItems.bind(this);
   this._onPerformanceFrontEvent = this._onPerformanceFrontEvent.bind(this);
   this._onTabsOrderUpdated = this._onTabsOrderUpdated.bind(this);
@@ -187,7 +182,6 @@ function Toolbox(target, selectedTool, hostType, contentWindow, frameId) {
 
   this.on("host-changed", this._refreshHostTitle);
   this.on("select", this._onToolSelected);
-  this.on("ready", this._showDevEditionPromo);
 
   gDevTools.on("tool-registered", this._toolRegistered);
   gDevTools.on("tool-unregistered", this._toolUnregistered);
@@ -718,14 +712,12 @@ Toolbox.prototype = {
   _pingTelemetry: function() {
     this.telemetry.toolOpened("toolbox");
 
-    this.telemetry.logOncePerBrowserVersion(SCREENSIZE_HISTOGRAM,
-                                             system.getScreenDimensions());
-    this.telemetry.log(HOST_HISTOGRAM, this._getTelemetryHostId());
+    this.telemetry.getHistogramById(HOST_HISTOGRAM).add(this._getTelemetryHostId());
 
     // Log current theme. The question we want to answer is:
     // "What proportion of users use which themes?"
     let currentTheme = Services.prefs.getCharPref("devtools.theme");
-    this.telemetry.logKeyedScalar(CURRENT_THEME_SCALAR, currentTheme, 1);
+    this.telemetry.keyedScalarAdd(CURRENT_THEME_SCALAR, currentTheme, 1);
 
     this.telemetry.preparePendingEvent(
       "devtools.main", "open", "tools", null,
@@ -1883,8 +1875,8 @@ Toolbox.prototype = {
 
   _pingTelemetrySelectTool(id, reason) {
     const width = Math.ceil(this.win.outerWidth / 50) * 50;
-    const panelName = this.getTelemetryPanelName(id);
-    const prevPanelName = this.getTelemetryPanelName(this.currentToolId);
+    const panelName = this.getTelemetryPanelNameOrOther(id);
+    const prevPanelName = this.getTelemetryPanelNameOrOther(this.currentToolId);
     const cold = !this.getPanel(id);
 
     this.telemetry.addEventProperties("devtools.main", "enter", panelName, null, {
@@ -1912,7 +1904,7 @@ Toolbox.prototype = {
       pending.push("message_count");
 
       // Cold webconsole event message_count is handled in
-      // devtools/client/webconsole/new-console-output-wrapper.js
+      // devtools/client/webconsole/webconsole-output-wrapper.js
       if (!cold) {
         this.telemetry.addEventProperty(
           "devtools.main", "enter", "webconsole", null, "message_count", 0);
@@ -2140,8 +2132,7 @@ Toolbox.prototype = {
     let delay = this.win.performance.now() - start;
 
     let telemetryKey = "DEVTOOLS_TOOLBOX_PAGE_RELOAD_DELAY_MS";
-    let histogram = Services.telemetry.getKeyedHistogramById(telemetryKey);
-    histogram.add(toolId, delay);
+    this.telemetry.getKeyedHistogramById(telemetryKey).add(toolId, delay);
   },
 
   /**
@@ -2287,7 +2278,7 @@ Toolbox.prototype = {
     let rect = target.getBoundingClientRect();
     let screenX = target.ownerDocument.defaultView.mozInnerScreenX;
     let screenY = target.ownerDocument.defaultView.mozInnerScreenY;
-    menu.popup(rect.left + screenX, rect.bottom + screenY, this);
+    menu.popupWithZoom(rect.left + screenX, rect.bottom + screenY, this);
 
     return menu;
   },
@@ -2397,8 +2388,33 @@ Toolbox.prototype = {
     }
 
     // We may need to hide/show the frames button now.
+    const wasVisible = this.frameButton.isVisible;
+    const wasDisabled = this.frameButton.disabled;
     this.updateFrameButton();
-    this.component.setToolboxButtons(this.toolbarButtons);
+
+    const toolbarUpdate = () => {
+      if (this.frameButton.isVisible === wasVisible &&
+          this.frameButton.disabled === wasDisabled) {
+        return;
+      }
+      this.component.setToolboxButtons(this.toolbarButtons);
+    };
+
+    // If we are navigating/reloading, however (in which case data.destroyAll
+    // will be true), we should debounce the update to avoid unnecessary
+    // flickering/rendering.
+    if (data.destroyAll && !this.debouncedToolbarUpdate) {
+      this.debouncedToolbarUpdate = debounce(() => {
+        toolbarUpdate();
+        this.debouncedToolbarUpdate = null;
+      }, 200, this);
+    }
+
+    if (this.debouncedToolbarUpdate) {
+      this.debouncedToolbarUpdate();
+    } else {
+      toolbarUpdate();
+    }
   },
 
   /**
@@ -2476,7 +2492,7 @@ Toolbox.prototype = {
     this.focusTool(this.currentToolId, true);
 
     this.emit("host-changed");
-    this.telemetry.log(HOST_HISTOGRAM, this._getTelemetryHostId());
+    this.telemetry.getHistogramById(HOST_HISTOGRAM).add(this._getTelemetryHostId());
 
     this.component.setCurrentHostType(hostType);
   },
@@ -2766,7 +2782,6 @@ Toolbox.prototype = {
     this._target.off("frame-update", this._updateFrames);
     this.off("select", this._onToolSelected);
     this.off("host-changed", this._refreshHostTitle);
-    this.off("ready", this._showDevEditionPromo);
 
     gDevTools.off("tool-registered", this._toolRegistered);
     gDevTools.off("tool-unregistered", this._toolUnregistered);
@@ -2774,6 +2789,10 @@ Toolbox.prototype = {
     Services.prefs.removeObserver("devtools.cache.disabled", this._applyCacheSettings);
     Services.prefs.removeObserver("devtools.serviceWorkers.testing.enabled",
                                   this._applyServiceWorkersTestingSettings);
+
+    // We normally handle toolClosed from selectTool() but in the event of the
+    // toolbox closing we need to handle it here instead.
+    this.telemetry.toolClosed(this.currentToolId);
 
     this._lastFocusedElement = null;
 
@@ -2867,7 +2886,7 @@ Toolbox.prototype = {
     const win = this.win;
     const host = this._getTelemetryHostString();
     const width = Math.ceil(win.outerWidth / 50) * 50;
-    const prevPanelName = this.getTelemetryPanelName(this.currentToolId);
+    const prevPanelName = this.getTelemetryPanelNameOrOther(this.currentToolId);
 
     this.telemetry.toolClosed("toolbox");
     this.telemetry.recordEvent("devtools.main", "close", "tools", null, {
@@ -2877,11 +2896,10 @@ Toolbox.prototype = {
     this.telemetry.recordEvent("devtools.main", "exit", prevPanelName, null, {
       "host": host,
       "width": width,
-      "panel_name": this.getTelemetryPanelName(this.currentToolId),
+      "panel_name": this.getTelemetryPanelNameOrOther(this.currentToolId),
       "next_panel": "none",
       "reason": "toolbox_close"
     });
-    this.telemetry.destroy();
 
     // Finish all outstanding tasks (which means finish destroying panels and
     // then destroying the host, successfully or not) before destroying the
@@ -2960,18 +2978,6 @@ Toolbox.prototype = {
 
   _highlighterHidden: function() {
     this.emit("highlighter-hide");
-  },
-
-  /**
-   * For displaying the promotional Doorhanger on first opening of
-   * the developer tools, promoting the Developer Edition.
-   */
-  _showDevEditionPromo: function() {
-    // Do not display in browser toolbox
-    if (this.target.chrome) {
-      return;
-    }
-    showDoorhanger({ window: this.win, type: "deveditionpromo" });
   },
 
   /**
@@ -3291,10 +3297,10 @@ Toolbox.prototype = {
     return extInfo && Services.prefs.getBoolPref(extInfo.pref, false);
   },
 
-  getTelemetryPanelName: function(id) {
+  getTelemetryPanelNameOrOther: function(id) {
     if (!REGEX_PANEL.test(id)) {
       return "other";
     }
     return id;
-  }
+  },
 };

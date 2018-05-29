@@ -16,14 +16,14 @@ use time::precise_time_ns;
 use {AlphaType, BorderDetails, BorderDisplayItem, BorderRadius, BorderWidths, BoxShadowClipMode};
 use {BoxShadowDisplayItem, ClipAndScrollInfo, ClipChainId, ClipChainItem, ClipDisplayItem, ClipId};
 use {ColorF, ComplexClipRegion, DisplayItem, ExtendMode, ExternalScrollId, FilterOp};
-use {FontInstanceKey, GlyphInstance, GlyphOptions, GlyphRasterSpace, Gradient, GradientDisplayItem, GradientStop};
-use {IframeDisplayItem, ImageDisplayItem, ImageKey, ImageMask, ImageRendering};
-use {LayoutPoint, LayoutPrimitiveInfo, LayoutRect, LayoutSize, LayoutTransform, LayoutVector2D};
-use {LineDisplayItem, LineOrientation, LineStyle, MixBlendMode, PipelineId, PropertyBinding};
-use {PushStackingContextDisplayItem, RadialGradient, RadialGradientDisplayItem};
-use {RectangleDisplayItem, ScrollFrameDisplayItem, ScrollPolicy, ScrollSensitivity, Shadow};
-use {SpecificDisplayItem, StackingContext, StickyFrameDisplayItem, StickyOffsetBounds};
-use {TextDisplayItem, TransformStyle, YuvColorSpace, YuvData, YuvImageDisplayItem};
+use {FontInstanceKey, GlyphInstance, GlyphOptions, GlyphRasterSpace, Gradient};
+use {GradientDisplayItem, GradientStop, IframeDisplayItem, ImageDisplayItem, ImageKey, ImageMask};
+use {ImageRendering, LayoutPoint, LayoutPrimitiveInfo, LayoutRect, LayoutSize, LayoutTransform};
+use {LayoutVector2D, LineDisplayItem, LineOrientation, LineStyle, MixBlendMode, PipelineId};
+use {PropertyBinding, PushStackingContextDisplayItem, RadialGradient, RadialGradientDisplayItem};
+use {RectangleDisplayItem, ScrollFrameDisplayItem, ScrollSensitivity, Shadow, SpecificDisplayItem};
+use {StackingContext, StickyFrameDisplayItem, StickyOffsetBounds, TextDisplayItem, TransformStyle};
+use {YuvColorSpace, YuvData, YuvImageDisplayItem};
 
 // We don't want to push a long text-run. If a text-run is too long, split it into several parts.
 // This needs to be set to (renderer::MAX_VERTEX_TEXTURE_WIDTH - VECS_PER_PRIM_HEADER - VECS_PER_TEXT_RUN) * 2
@@ -1281,7 +1281,6 @@ impl DisplayListBuilder {
         &mut self,
         info: &LayoutPrimitiveInfo,
         clip_node_id: Option<ClipId>,
-        scroll_policy: ScrollPolicy,
         transform: Option<PropertyBinding<LayoutTransform>>,
         transform_style: TransformStyle,
         perspective: Option<LayoutTransform>,
@@ -1297,7 +1296,6 @@ impl DisplayListBuilder {
 
         let item = SpecificDisplayItem::PushStackingContext(PushStackingContextDisplayItem {
             stacking_context: StackingContext {
-                scroll_policy,
                 transform,
                 transform_style,
                 perspective,
@@ -1493,10 +1491,16 @@ impl DisplayListBuilder {
         assert!(!self.clip_stack.is_empty());
     }
 
-    pub fn push_iframe(&mut self, info: &LayoutPrimitiveInfo, pipeline_id: PipelineId) {
+    pub fn push_iframe(
+        &mut self,
+        info: &LayoutPrimitiveInfo,
+        pipeline_id: PipelineId,
+        ignore_missing_pipeline: bool
+    ) {
         let item = SpecificDisplayItem::Iframe(IframeDisplayItem {
             clip_id: self.generate_clip_id(),
             pipeline_id,
+            ignore_missing_pipeline,
         });
         self.push_item(item, info);
     }

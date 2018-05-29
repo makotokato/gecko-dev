@@ -26,10 +26,6 @@ const kDebuggerPrefs = [
   "devtools.chrome.enabled"
 ];
 
-// If devtools.toolbar.visible is set to true, the developer toolbar should appear on
-// startup.
-const TOOLBAR_VISIBLE_PREF = "devtools.toolbar.visible";
-
 const DEVTOOLS_ENABLED_PREF = "devtools.enabled";
 
 const DEVTOOLS_POLICY_DISABLED_PREF = "devtools.policy.disabled";
@@ -89,12 +85,6 @@ XPCOMUtils.defineLazyGetter(this, "KeyShortcuts", function() {
       id: "toggleToolboxF12",
       shortcut: KeyShortcutsBundle.GetStringFromName("toggleToolboxF12.commandkey"),
       modifiers: "" // F12 is the only one without modifiers
-    },
-    // Toggle the visibility of the Developer Toolbar (=gcli)
-    {
-      id: "toggleToolbar",
-      shortcut: KeyShortcutsBundle.GetStringFromName("toggleToolbar.commandkey"),
-      modifiers: "shift"
     },
     // Open WebIDE window
     {
@@ -196,7 +186,7 @@ DevToolsStartup.prototype = {
   /**
    * Boolean flag to check if the devtools initialization was already sent to telemetry.
    * We only want to record one devtools entry point per Firefox run, but we are not
-   * interested in all the entry points (e.g. devtools.toolbar.visible).
+   * interested in all the entry points.
    */
   recorded: false,
 
@@ -289,12 +279,6 @@ DevToolsStartup.prototype = {
 
     this.hookWindow(window);
 
-    if (Services.prefs.getBoolPref(TOOLBAR_VISIBLE_PREF, false)) {
-      // Loading devtools-browser will open the developer toolbar by also checking this
-      // pref.
-      this.initDevTools("DeveloperToolbar");
-    }
-
     // This listener is called for all Firefox windows, but we want to execute some code
     // only once.
     if (!this._firstWindowReadyReceived) {
@@ -335,7 +319,7 @@ DevToolsStartup.prototype = {
     }
 
     let scalarId = "devtools.onboarding.is_devtools_user";
-    this.telemetry.logScalar(scalarId, this.isDevToolsUser());
+    this.telemetry.scalarSet(scalarId, this.isDevToolsUser());
     Services.prefs.setBoolPref(alreadyLoggedPref, true);
   },
 
@@ -557,8 +541,7 @@ DevToolsStartup.prototype = {
     // "regular" experiment group.
     let isDevToolsUser = isRegularExperiment && this.isDevToolsUser();
 
-    let hasToolbarPref = Services.prefs.getBoolPref(TOOLBAR_VISIBLE_PREF, false);
-    if (hasDevToolsFlag || hasToolbarPref || isDevToolsUser) {
+    if (hasDevToolsFlag || isDevToolsUser) {
       Services.prefs.setBoolPref(DEVTOOLS_ENABLED_PREF, true);
     }
   },
@@ -861,7 +844,7 @@ DevToolsStartup.prototype = {
     // won't necessarely start the tool. For example key shortcuts may
     // only change the currently selected tool.
     try {
-      this.telemetry.log("DEVTOOLS_ENTRY_POINT", reason);
+      this.telemetry.getHistogramById("DEVTOOLS_ENTRY_POINT").add(reason);
     } catch (e) {
       dump("DevTools telemetry entry point failed: " + e + "\n");
     }

@@ -136,7 +136,7 @@ EnterBaseline(JSContext* cx, EnterJitData& data)
 
     data.result.setInt32(data.numActualArgs);
     {
-        AssertCompartmentUnchanged pcc(cx);
+        AssertRealmUnchanged aru(cx);
         ActivationEntryMonitor entryMonitor(cx, data.calleeToken);
         JitActivation activation(cx);
 
@@ -282,12 +282,12 @@ CanEnterBaselineJIT(JSContext* cx, HandleScript script, InterpreterFrame* osrFra
     if (script->hasBaselineScript())
         return Method_Compiled;
 
-    // Check this before calling ensureJitCompartmentExists, so we're less
+    // Check this before calling ensureJitRealmExists, so we're less
     // likely to report OOM in JSRuntime::createJitRuntime.
     if (!CanLikelyAllocateMoreExecutableMemory())
         return Method_Skipped;
 
-    if (!cx->compartment()->ensureJitCompartmentExists(cx))
+    if (!cx->realm()->ensureJitRealmExists(cx))
         return Method_Error;
 
     // Check script warm-up counter.

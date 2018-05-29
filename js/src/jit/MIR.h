@@ -7041,7 +7041,7 @@ class MRandom : public MNullaryInstruction
 
 class MSign
   : public MUnaryInstruction,
-    public NoFloatPolicy<0>::Data
+    public SignPolicy::Data
 {
   private:
     MSign(MDefinition* input, MIRType resultType)
@@ -7049,6 +7049,7 @@ class MSign
     {
         MOZ_ASSERT(IsNumberType(input->type()));
         MOZ_ASSERT(resultType == MIRType::Int32 || resultType == MIRType::Double);
+        specialization_ = input->type();
         setResultType(resultType);
         setMovable();
     }
@@ -10130,20 +10131,21 @@ class MStoreElementHole
     ALLOW_CLONE(MStoreElementHole)
 };
 
-// Try to store a value to a dense array slots vector. May fail due to the object being frozen.
-// Cannot be used on an object that has extra indexed properties.
+// Try to store a value to a dense array slots vector. May fail due to the
+// object being non-extensible/sealed/frozen. Cannot be used on an object that
+// has extra indexed properties.
 class MFallibleStoreElement
   : public MQuaternaryInstruction,
     public MStoreElementCommon,
     public MixPolicy<SingleObjectPolicy, NoFloatPolicy<3> >::Data
 {
-    bool strict_;
+    bool needsHoleCheck_;
 
     MFallibleStoreElement(MDefinition* object, MDefinition* elements,
                           MDefinition* index, MDefinition* value,
-                          bool strict)
+                          bool needsHoleCheck)
       : MQuaternaryInstruction(classOpcode, object, elements, index, value),
-        strict_(strict)
+        needsHoleCheck_(needsHoleCheck)
     {
         MOZ_ASSERT(elements->type() == MIRType::Elements);
         MOZ_ASSERT(index->type() == MIRType::Int32);
@@ -10157,8 +10159,8 @@ class MFallibleStoreElement
     AliasSet getAliasSet() const override {
         return AliasSet::Store(AliasSet::ObjectFields | AliasSet::Element);
     }
-    bool strict() const {
-        return strict_;
+    bool needsHoleCheck() const {
+        return needsHoleCheck_;
     }
 
     ALLOW_CLONE(MFallibleStoreElement)
@@ -15235,7 +15237,7 @@ bool ElementAccessIsTypedArray(CompilerConstraintList* constraints,
                                Scalar::Type* arrayType);
 bool ElementAccessIsPacked(CompilerConstraintList* constraints, MDefinition* obj);
 bool ElementAccessMightBeCopyOnWrite(CompilerConstraintList* constraints, MDefinition* obj);
-bool ElementAccessMightBeFrozen(CompilerConstraintList* constraints, MDefinition* obj);
+bool ElementAccessMightBeNonExtensible(CompilerConstraintList* constraints, MDefinition* obj);
 AbortReasonOr<bool>
 ElementAccessHasExtraIndexedProperty(IonBuilder* builder, MDefinition* obj);
 MIRType DenseNativeElementType(CompilerConstraintList* constraints, MDefinition* obj);

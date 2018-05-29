@@ -372,7 +372,7 @@ pub struct BorderSide {
 }
 
 #[repr(u32)]
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, Hash, Eq)]
 pub enum BorderStyle {
     None = 0,
     Solid = 1,
@@ -469,7 +469,6 @@ pub struct PushStackingContextDisplayItem {
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct StackingContext {
-    pub scroll_policy: ScrollPolicy,
     pub transform: Option<PropertyBinding<LayoutTransform>>,
     pub transform_style: TransformStyle,
     pub perspective: Option<LayoutTransform>,
@@ -479,12 +478,6 @@ pub struct StackingContext {
     pub glyph_raster_space: GlyphRasterSpace,
 } // IMPLICIT: filters: Vec<FilterOp>
 
-#[repr(u32)]
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum ScrollPolicy {
-    Scrollable = 0,
-    Fixed = 1,
-}
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -550,6 +543,7 @@ pub enum FilterOp {
 pub struct IframeDisplayItem {
     pub clip_id: ClipId,
     pub pipeline_id: PipelineId,
+    pub ignore_missing_pipeline: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -831,6 +825,13 @@ impl ClipId {
     }
 
     pub fn is_root_scroll_node(&self) -> bool {
+        match *self {
+            ClipId::Clip(1, _) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_root_reference_frame(&self) -> bool {
         match *self {
             ClipId::Clip(1, _) => true,
             _ => false,

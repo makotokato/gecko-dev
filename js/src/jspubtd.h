@@ -35,7 +35,7 @@ class JS_FRIEND_API(CompileOptions);
 class JS_FRIEND_API(ReadOnlyCompileOptions);
 class JS_FRIEND_API(OwningCompileOptions);
 class JS_FRIEND_API(TransitiveCompileOptions);
-class JS_PUBLIC_API(CompartmentOptions);
+class JS_PUBLIC_API(RealmOptions);
 
 } // namespace JS
 
@@ -49,6 +49,9 @@ enum JSType {
     JSTYPE_BOOLEAN,             /* boolean */
     JSTYPE_NULL,                /* null */
     JSTYPE_SYMBOL,              /* symbol */
+#ifdef ENABLE_BIGINT
+    JSTYPE_BIGINT,              /* BigInt */
+#endif
     JSTYPE_LIMIT
 };
 

@@ -11,7 +11,7 @@
 #include "gc/PublicIterators.h"
 #include "jit/BaselineJIT.h"
 #include "jit/Ion.h"
-#include "jit/JitCompartment.h"
+#include "jit/JitRealm.h"
 #include "vm/Debugger.h"
 #include "vm/Runtime.h"
 
@@ -294,10 +294,10 @@ Zone::createJitZone(JSContext* cx)
 }
 
 bool
-Zone::hasMarkedCompartments()
+Zone::hasMarkedRealms()
 {
-    for (CompartmentsInZoneIter comp(this); !comp.done(); comp.next()) {
-        if (comp->marked)
+    for (RealmsInZoneIter realm(this); !realm.done(); realm.next()) {
+        if (realm->marked())
             return true;
     }
     return false;
@@ -322,8 +322,8 @@ Zone::notifyObservingDebuggers()
     JSRuntime* rt = runtimeFromMainThread();
     JSContext* cx = rt->mainContextFromOwnThread();
 
-    for (CompartmentsInZoneIter comps(this); !comps.done(); comps.next()) {
-        RootedGlobalObject global(cx, comps->unsafeUnbarrieredMaybeGlobal());
+    for (RealmsInZoneIter realms(this); !realms.done(); realms.next()) {
+        RootedGlobalObject global(cx, realms->unsafeUnbarrieredMaybeGlobal());
         if (!global)
             continue;
 
@@ -397,7 +397,7 @@ Zone::deleteEmptyCompartment(JSCompartment* comp)
     for (auto& i : compartments()) {
         if (i == comp) {
             compartments().erase(&i);
-            comp->destroy(runtimeFromMainThread()->defaultFreeOp());
+            JS::GetRealmForCompartment(comp)->destroy(runtimeFromMainThread()->defaultFreeOp());
             return;
         }
     }

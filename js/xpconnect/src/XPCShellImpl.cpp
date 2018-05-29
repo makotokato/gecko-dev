@@ -542,7 +542,7 @@ XPCShellInterruptCallback(JSContext* cx)
     if (callback.isUndefined())
         return true;
 
-    JSAutoCompartment ac(cx, &callback.toObject());
+    JSAutoRealm ar(cx, &callback.toObject());
     RootedValue rv(cx);
     if (!JS_CallFunctionValue(cx, nullptr, callback, JS::HandleValueArray::empty(), &rv) ||
         !rv.isBoolean())
@@ -1282,7 +1282,7 @@ XRE_XPCShellMain(int argc, char** argv, char** envp,
 
         // Make the default XPCShell global use a fresh zone (rather than the
         // System Zone) to improve cross-zone test coverage.
-        JS::CompartmentOptions options;
+        JS::RealmOptions options;
         options.creationOptions().setNewZone();
         if (xpc::SharedMemoryEnabled())
             options.creationOptions().setSharedMemoryAndAtomicsEnabled(true);
@@ -1335,11 +1335,11 @@ XRE_XPCShellMain(int argc, char** argv, char** envp,
             // Even if we're building in a configuration where source is
             // discarded, there's no reason to do that on XPCShell, and doing so
             // might break various automation scripts.
-            JS::CompartmentBehaviorsRef(glob).setDiscardSource(false);
+            JS::RealmBehaviorsRef(glob).setDiscardSource(false);
 
             backstagePass->SetGlobalObject(glob);
 
-            JSAutoCompartment ac(cx, glob);
+            JSAutoRealm ar(cx, glob);
 
             if (!JS_InitReflectParse(cx, glob)) {
                 return 1;

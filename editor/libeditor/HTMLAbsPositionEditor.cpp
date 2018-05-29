@@ -14,7 +14,6 @@
 #include "mozilla/EditorUtils.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/TextEditRules.h"
-#include "mozilla/dom/CSSPrimitiveValueBinding.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/EventTarget.h"
@@ -528,7 +527,7 @@ HTMLEditor::SetPositionToStatic(Element& aElement)
     RefPtr<HTMLEditRules> htmlRules =
       static_cast<HTMLEditRules*>(mRules.get());
     NS_ENSURE_TRUE(htmlRules, NS_ERROR_FAILURE);
-    nsresult rv = htmlRules->MakeSureElemStartsOrEndsOnCR(aElement);
+    nsresult rv = htmlRules->MakeSureElemStartsAndEndsOnCR(aElement);
     NS_ENSURE_SUCCESS(rv, rv);
     rv = RemoveContainerWithTransaction(aElement);
     NS_ENSURE_SUCCESS(rv, rv);

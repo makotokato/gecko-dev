@@ -55,17 +55,14 @@ struct nsHostKey
     uint16_t flags;
     uint16_t af;
     bool     pb;
-    const nsCString netInterface;
     const nsCString originSuffix;
 
     nsHostKey(const nsACString& host, uint16_t flags,
-              uint16_t af, bool pb, const nsACString& netInterface,
-              const nsACString& originSuffix)
+              uint16_t af, bool pb, const nsACString& originSuffix)
         : host(host)
         , flags(flags)
         , af(af)
         , pb(pb)
-        , netInterface(netInterface)
         , originSuffix(originSuffix) {
     }
 
@@ -176,21 +173,26 @@ private:
 
     explicit nsHostRecord(const nsHostKey& key);
     mozilla::LinkedList<RefPtr<nsResolveHostCallback>> mCallbacks;
-
-    int     mResolving;  // counter of outstanding resolving calls
-    bool    mNative;     // true if this record is being resolved "natively",
-                         // which means that it is either on the pending queue
-                         // or owned by one of the worker threads. */
-    int     mTRRSuccess; // number of successful TRR responses
-    bool    mTRRUsed;    // TRR was used on this record
-    bool    mNativeUsed;
-    int     mNativeSuccess; // number of native lookup responses
     nsAutoPtr<mozilla::net::AddrInfo> mFirstTRR; // partial TRR storage
-    bool    onQueue; // true if pending and on the queue (not yet given to getaddrinfo())
-    bool    usingAnyThread; // true if off queue and contributing to mActiveAnyThreadCount
-    bool    mDoomed; // explicitly expired
-    bool    mDidCallbacks;
-    bool    mGetTtl;
+
+    uint16_t  mResolving;  // counter of outstanding resolving calls
+    uint8_t   mTRRSuccess; // number of successful TRR responses
+    uint8_t   mNativeSuccess; // number of native lookup responses
+
+    uint16_t    mNative : 1;     // true if this record is being resolved "natively",
+                                 // which means that it is either on the pending queue
+                                 // or owned by one of the worker threads. */
+    uint16_t    mTRRUsed : 1;    // TRR was used on this record
+    uint16_t    mNativeUsed : 1;
+    uint16_t    onQueue : 1;    // true if pending and on the queue (not yet given to getaddrinfo())
+    uint16_t    usingAnyThread : 1; // true if off queue and contributing to mActiveAnyThreadCount
+    uint16_t    mDoomed : 1;    // explicitly expired
+    uint16_t    mDidCallbacks : 1;
+    uint16_t    mGetTtl : 1;
+
+    // when the results from this resolve is returned, it is not to be
+    // trusted, but instead a new resolve must be made!
+    uint16_t    mResolveAgain : 1;
 
     enum {
         INIT, STARTED, OK, FAILED
@@ -203,10 +205,6 @@ private:
     // The number of times ReportUnusable() has been called in the record's
     // lifetime.
     uint32_t mBlacklistedCount;
-
-    // when the results from this resolve is returned, it is not to be
-    // trusted, but instead a new resolve must be made!
-    bool    mResolveAgain;
 
     // a list of addresses associated with this record that have been reported
     // as unusable. the list is kept as a set of strings to make it independent
@@ -281,7 +279,6 @@ public:
     virtual LookupStatus CompleteLookup(nsHostRecord *, nsresult, mozilla::net::AddrInfo *, bool pb) = 0;
     virtual nsresult GetHostRecord(const char *host,
                                    uint16_t flags, uint16_t af, bool pb,
-                                   const nsCString &netInterface,
                                    const nsCString &originSuffix,
                                    nsHostRecord **result)
     {
@@ -336,7 +333,6 @@ public:
                          const mozilla::OriginAttributes &aOriginAttributes,
                          uint16_t                         flags,
                          uint16_t                         af,
-                         const char                      *netInterface,
                          nsResolveHostCallback           *callback);
 
     /**
@@ -349,7 +345,6 @@ public:
                         const mozilla::OriginAttributes &aOriginAttributes,
                         uint16_t                         flags,
                         uint16_t                         af,
-                        const char                      *netInterface,
                         nsResolveHostCallback           *callback,
                         nsresult                         status);
 
@@ -364,7 +359,6 @@ public:
                             const mozilla::OriginAttributes &aOriginAttributes,
                             uint16_t                         flags,
                             uint16_t                         af,
-                            const char                      *netInterface,
                             nsIDNSListener                  *aListener,
                             nsresult                         status);
     /**
@@ -398,7 +392,6 @@ public:
     LookupStatus CompleteLookup(nsHostRecord *, nsresult, mozilla::net::AddrInfo *, bool pb) override;
     nsresult GetHostRecord(const char *host,
                            uint16_t flags, uint16_t af, bool pb,
-                           const nsCString &netInterface,
                            const nsCString &originSuffix,
                            nsHostRecord **result) override;
     nsresult TrrLookup_unlocked(nsHostRecord *, mozilla::net::TRR *pushedTRR = nullptr) override;

@@ -3,7 +3,6 @@ job-defaults:
     max-run-time: 5400
     mozharness:
         script: web_platform_tests.py
-        no-read-buildbot-config: true
         config:
             by-test-platform:
                 windows.*:
@@ -137,7 +136,7 @@ web-platform-tests-wdspec-headless:
 
 test-verify-wpt:
     description: "Extra verification of web-platform tests modified on this push"
-    suite: test-verify-wpt
+    suite: test-verify
     treeherder-symbol: TVw
     max-run-time: 10800
     run-on-projects:

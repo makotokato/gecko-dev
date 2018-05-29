@@ -4,7 +4,10 @@
 
 "use strict";
 
-var EXPORTED_SYMBOLS = ["RemoteSettings"];
+var EXPORTED_SYMBOLS = [
+  "RemoteSettings",
+  "jexlFilterFunc"
+];
 
 ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -21,6 +24,8 @@ ChromeUtils.defineModuleGetter(this, "UptakeTelemetry",
                                "resource://services-common/uptake-telemetry.js");
 ChromeUtils.defineModuleGetter(this, "ClientEnvironmentBase",
                                "resource://gre/modules/components-utils/ClientEnvironment.jsm");
+ChromeUtils.defineModuleGetter(this, "FilterExpressions",
+                               "resource://gre/modules/components-utils/FilterExpressions.jsm");
 
 const PREF_SETTINGS_SERVER             = "services.settings.server";
 const PREF_SETTINGS_DEFAULT_BUCKET     = "services.settings.default_bucket";
@@ -60,6 +65,32 @@ class ClientEnvironment extends ClientEnvironmentBase {
     Services.appinfo.QueryInterface(Ci.nsIXULAppInfo);
     return Services.appinfo.ID;
   }
+
+  static get toolkitVersion() {
+    Services.appinfo.QueryInterface(Ci.nsIPlatformInfo);
+    return Services.appinfo.platformVersion;
+  }
+}
+
+/**
+ * Default entry filtering function, in charge of excluding remote settings entries
+ * where the JEXL expression evaluates into a falsy value.
+ */
+async function jexlFilterFunc(entry, environment) {
+  const { filters } = entry;
+  if (!filters) {
+    return entry;
+  }
+  let result;
+  try {
+    const context = {
+      environment
+    };
+    result = await FilterExpressions.eval(filters, context);
+  } catch (e) {
+    Cu.reportError(e);
+  }
+  return result ? entry : null;
 }
 
 
@@ -150,7 +181,7 @@ async function fetchLatestChanges(url, lastEtag) {
 
 class RemoteSettingsClient {
 
-  constructor(collectionName, { bucketName, signerName, filterFunc, lastCheckTimePref }) {
+  constructor(collectionName, { bucketName, signerName, filterFunc = jexlFilterFunc, lastCheckTimePref }) {
     this.collectionName = collectionName;
     this.bucketName = bucketName;
     this.signerName = signerName;
@@ -213,6 +244,21 @@ class RemoteSettingsClient {
     // whose target is matched.
     const { filters = {}, order } = options;
     const c = await this.openCollection();
+
+    const timestamp = await c.db.getLastModified();
+    // If the local database was never synchronized, then we attempt to load
+    // a packaged JSON dump.
+    if (timestamp == null) {
+      try {
+        const { data } = await this._loadDumpFile();
+        await c.loadDump(data);
+      } catch (e) {
+        // Report but return an empty list since there will be no data anyway.
+        Cu.reportError(e);
+        return [];
+      }
+    }
+
     const { data } = await c.list({ filters, order });
     return this._filterEntries(data);
   }
@@ -402,7 +448,7 @@ class RemoteSettingsClient {
   async _loadDumpFile() {
     // Replace OS specific path separator by / for URI.
     const { components: folderFile } = OS.Path.split(this.filename);
-    const fileURI = `resource://app/defaults/${folderFile.join("/")}`;
+    const fileURI = `resource://app/defaults/settings/${folderFile.join("/")}`;
     const response = await fetch(fileURI);
     if (!response.ok) {
       throw new Error(`Could not read from '${fileURI}'`);

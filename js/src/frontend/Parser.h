@@ -247,7 +247,7 @@ enum AwaitHandling : uint8_t { AwaitIsName, AwaitIsKeyword, AwaitIsModuleKeyword
 template <class ParseHandler, typename CharT>
 class AutoAwaitIsKeyword;
 
-class ParserBase
+class MOZ_STACK_CLASS ParserBase
   : public StrictModeGetter,
     private JS::AutoGCRooter
 {
@@ -276,6 +276,8 @@ class ParserBase
 
     ScriptSource*       ss;
 
+    RootedScriptSourceObject sourceObject;
+
     /* Root atoms and objects allocated for the parsed tree. */
     AutoKeepAtoms       keepAtoms;
 
@@ -293,15 +295,22 @@ class ParserBase
 
     /* AwaitHandling */ uint8_t awaitHandling_:2;
 
+    /* ParseGoal */ uint8_t parseGoal_:1;
+
   public:
     bool awaitIsKeyword() const {
       return awaitHandling_ != AwaitIsName;
     }
 
+    ParseGoal parseGoal() const {
+        return ParseGoal(parseGoal_);
+    }
+
     template<class, typename> friend class AutoAwaitIsKeyword;
 
     ParserBase(JSContext* cx, LifoAlloc& alloc, const ReadOnlyCompileOptions& options,
-               bool foldConstants, UsedNameTracker& usedNames);
+               bool foldConstants, UsedNameTracker& usedNames,
+               ScriptSourceObject* sourceObject, ParseGoal parseGoal);
     ~ParserBase();
 
     bool checkOptions();
@@ -433,7 +442,7 @@ enum FunctionCallBehavior {
 };
 
 template <class ParseHandler>
-class PerHandlerParser
+class MOZ_STACK_CLASS PerHandlerParser
   : public ParserBase
 {
   private:
@@ -465,7 +474,9 @@ class PerHandlerParser
   protected:
     PerHandlerParser(JSContext* cx, LifoAlloc& alloc, const ReadOnlyCompileOptions& options,
                      bool foldConstants, UsedNameTracker& usedNames,
-                     LazyScript* lazyOuterFunction);
+                     LazyScript* lazyOuterFunction,
+                     ScriptSourceObject* sourceObject,
+                     ParseGoal parseGoal);
 
     static Node null() { return ParseHandler::null(); }
 
@@ -636,7 +647,7 @@ template <class ParseHandler, typename CharT>
 class Parser;
 
 template <class ParseHandler, typename CharT>
-class GeneralParser
+class MOZ_STACK_CLASS GeneralParser
   : public PerHandlerParser<ParseHandler>
 {
   public:
@@ -658,6 +669,7 @@ class GeneralParser
 
     using Base::alloc;
     using Base::awaitIsKeyword;
+    using Base::parseGoal;
 #if DEBUG
     using Base::checkOptionsCalled;
 #endif
@@ -867,7 +879,9 @@ class GeneralParser
     GeneralParser(JSContext* cx, LifoAlloc& alloc, const ReadOnlyCompileOptions& options,
                   const CharT* chars, size_t length, bool foldConstants,
                   UsedNameTracker& usedNames, SyntaxParser* syntaxParser,
-                  LazyScript* lazyOuterFunction);
+                  LazyScript* lazyOuterFunction,
+                  ScriptSourceObject* sourceObject,
+                  ParseGoal parseGoal);
 
     inline void setAwaitHandling(AwaitHandling awaitHandling);
 
@@ -1008,6 +1022,7 @@ class GeneralParser
     Node lexicalDeclaration(YieldHandling yieldHandling, DeclarationKind kind);
 
     inline Node importDeclaration();
+    Node importDeclarationOrImportMeta(YieldHandling yieldHandling);
 
     Node exportFrom(uint32_t begin, Node specList);
     Node exportBatch(uint32_t begin);
@@ -1106,6 +1121,8 @@ class GeneralParser
                       TripledotHandling tripledotHandling, PossibleError* possibleError = nullptr);
 
     bool tryNewTarget(Node& newTarget);
+
+    Node importMeta();
 
     Node methodDefinition(uint32_t toStringStart, PropertyType propType, HandleAtom funName);
 
@@ -1248,7 +1265,7 @@ class GeneralParser
 };
 
 template <typename CharT>
-class Parser<SyntaxParseHandler, CharT> final
+class MOZ_STACK_CLASS Parser<SyntaxParseHandler, CharT> final
   : public GeneralParser<SyntaxParseHandler, CharT>
 {
     using Base = GeneralParser<SyntaxParseHandler, CharT>;
@@ -1358,7 +1375,7 @@ class Parser<SyntaxParseHandler, CharT> final
 };
 
 template <typename CharT>
-class Parser<FullParseHandler, CharT> final
+class MOZ_STACK_CLASS Parser<FullParseHandler, CharT> final
   : public GeneralParser<FullParseHandler, CharT>
 {
     using Base = GeneralParser<FullParseHandler, CharT>;

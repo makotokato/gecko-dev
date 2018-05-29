@@ -8,7 +8,7 @@
 
 #include "gc/GC.h"
 #include "jit/Ion.h"
-#include "jit/JitCompartment.h"
+#include "jit/JitRealm.h"
 
 #include "vm/JSCompartment-inl.h"
 
@@ -257,13 +257,13 @@ CompileCompartment::runtime()
 const void*
 CompileCompartment::addressOfRandomNumberGenerator()
 {
-    return compartment()->randomNumberGenerator.ptr();
+    return JS::GetRealmForCompartment(compartment())->addressOfRandomNumberGenerator();
 }
 
-const JitCompartment*
-CompileCompartment::jitCompartment()
+const JitRealm*
+CompileCompartment::jitRealm()
 {
-    return compartment()->jitCompartment();
+    return JS::GetRealmForCompartment(compartment())->jitRealm();
 }
 
 const GlobalObject*
@@ -272,13 +272,19 @@ CompileCompartment::maybeGlobal()
     // This uses unsafeUnbarrieredMaybeGlobal() so as not to trigger the read
     // barrier on the global from off thread.  This is safe because we
     // abort Ion compilation when we GC.
-    return compartment()->unsafeUnbarrieredMaybeGlobal();
+    return JS::GetRealmForCompartment(compartment())->unsafeUnbarrieredMaybeGlobal();
+}
+
+const uint32_t*
+CompileCompartment::addressOfGlobalWriteBarriered()
+{
+    return &JS::GetRealmForCompartment(compartment())->globalWriteBarriered;
 }
 
 bool
 CompileCompartment::hasAllocationMetadataBuilder()
 {
-    return compartment()->hasAllocationMetadataBuilder();
+    return JS::GetRealmForCompartment(compartment())->hasAllocationMetadataBuilder();
 }
 
 // Note: This function is thread-safe because setSingletonAsValue sets a boolean
@@ -291,7 +297,7 @@ CompileCompartment::hasAllocationMetadataBuilder()
 void
 CompileCompartment::setSingletonsAsValues()
 {
-    compartment()->behaviors().setSingletonsAsValues();
+    JS::GetRealmForCompartment(compartment())->behaviors().setSingletonsAsValues();
 }
 
 JitCompileOptions::JitCompileOptions()
@@ -303,7 +309,7 @@ JitCompileOptions::JitCompileOptions()
 
 JitCompileOptions::JitCompileOptions(JSContext* cx)
 {
-    cloneSingletons_ = cx->compartment()->creationOptions().cloneSingletons();
+    cloneSingletons_ = cx->realm()->creationOptions().cloneSingletons();
     profilerSlowAssertionsEnabled_ = cx->runtime()->geckoProfiler().enabled() &&
                                      cx->runtime()->geckoProfiler().slowAssertionsEnabled();
     offThreadCompilationAvailable_ = OffThreadCompilationAvailable(cx);

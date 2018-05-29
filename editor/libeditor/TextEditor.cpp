@@ -41,7 +41,6 @@
 #include "nsIClipboard.h"
 #include "nsIContent.h"
 #include "nsIContentIterator.h"
-#include "nsIDOMNode.h"
 #include "nsIDocumentEncoder.h"
 #include "nsINode.h"
 #include "nsIPresShell.h"
@@ -328,7 +327,7 @@ TextEditor::UpdateMetaCharset(nsIDocument& aDocument,
   return false;
 }
 
-NS_IMETHODIMP
+nsresult
 TextEditor::InitRules()
 {
   if (!mRules) {
@@ -750,10 +749,10 @@ TextEditor::DeleteSelectionWithTransaction(EDirection aDirection,
   if (mRules && mRules->AsHTMLEditRules()) {
     if (!deleteNode) {
       RefPtr<HTMLEditRules> htmlEditRules = mRules->AsHTMLEditRules();
-      htmlEditRules->WillDeleteSelection(selection);
+      htmlEditRules->WillDeleteSelection(*selection);
     } else if (!deleteCharData) {
       RefPtr<HTMLEditRules> htmlEditRules = mRules->AsHTMLEditRules();
-      htmlEditRules->WillDeleteNode(deleteNode);
+      htmlEditRules->WillDeleteNode(*selection, *deleteNode);
     }
   }
 
@@ -776,8 +775,9 @@ TextEditor::DeleteSelectionWithTransaction(EDirection aDirection,
   nsresult rv = DoTransaction(deleteSelectionTransaction);
 
   if (mRules && mRules->AsHTMLEditRules() && deleteCharData) {
+    MOZ_ASSERT(deleteNode);
     RefPtr<HTMLEditRules> htmlEditRules = mRules->AsHTMLEditRules();
-    htmlEditRules->DidDeleteText(deleteNode, deleteCharOffset, 1);
+    htmlEditRules->DidDeleteText(*selection, *deleteNode, deleteCharOffset, 1);
   }
 
   if (mTextServicesDocument && NS_SUCCEEDED(rv) &&
@@ -799,7 +799,7 @@ TextEditor::DeleteSelectionWithTransaction(EDirection aDirection,
       }
     } else {
       for (auto& listener : mActionListeners) {
-        listener->DidDeleteNode(deleteNode->AsDOMNode(), rv);
+        listener->DidDeleteNode(deleteNode, rv);
       }
     }
   }
@@ -1736,21 +1736,21 @@ TextEditor::OutputToString(const nsAString& aFormatType,
   // Protect the edit rules object from dying
   RefPtr<TextEditRules> rules(mRules);
 
-  nsString resultString;
   RulesInfo ruleInfo(EditAction::outputText);
-  ruleInfo.outString = &resultString;
+  ruleInfo.outString = &aOutputString;
   ruleInfo.flags = aFlags;
-  // XXX Struct should store a nsAReadable*
-  nsAutoString str(aFormatType);
-  ruleInfo.outputFormat = &str;
+  ruleInfo.outputFormat = &aFormatType;
+  Selection* selection = GetSelection();
+  if (NS_WARN_IF(!selection)) {
+    return NS_ERROR_FAILURE;
+  }
   bool cancel, handled;
-  nsresult rv = rules->WillDoAction(nullptr, &ruleInfo, &cancel, &handled);
+  nsresult rv = rules->WillDoAction(selection, &ruleInfo, &cancel, &handled);
   if (cancel || NS_FAILED(rv)) {
     return rv;
   }
   if (handled) {
-    // This case will get triggered by password fields.
-    aOutputString.Assign(*(ruleInfo.outString));
+    // This case will get triggered by password fields or single text node only.
     return rv;
   }
 
@@ -1823,7 +1823,7 @@ TextEditor::PasteAsQuotation(int32_t aSelectionType)
 
 NS_IMETHODIMP
 TextEditor::InsertAsQuotation(const nsAString& aQuotedText,
-                              nsIDOMNode** aNodeInserted)
+                              nsINode** aNodeInserted)
 {
   // Protect the edit rules object from dying
   RefPtr<TextEditRules> rules(mRules);
@@ -1877,7 +1877,7 @@ NS_IMETHODIMP
 TextEditor::InsertAsCitedQuotation(const nsAString& aQuotedText,
                                    const nsAString& aCitation,
                                    bool aInsertHTML,
-                                   nsIDOMNode** aNodeInserted)
+                                   nsINode** aNodeInserted)
 {
   return InsertAsQuotation(aQuotedText, aNodeInserted);
 }

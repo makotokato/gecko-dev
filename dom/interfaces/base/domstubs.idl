@@ -30,13 +30,9 @@ class DOMException;
 
 // Base
 interface nsIDOMWindow;
-interface nsIDOMWindowCollection;
 
 // Events
 interface nsIDOMEventListener;
 
 // HTML
 interface nsIDOMHTMLHeadElement;
-
-// Range
-interface nsIDOMRange;

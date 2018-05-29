@@ -75,7 +75,7 @@ BEGIN_TEST(test_ubiNodeZone)
     CHECK(global1);
     CHECK(JS::ubi::Node(global1).zone() == cx->zone());
 
-    JS::CompartmentOptions globalOptions;
+    JS::RealmOptions globalOptions;
     RootedObject global2(cx, JS_NewGlobalObject(cx, getGlobalClass(), nullptr,
                                                 JS::FireOnNewGlobalHook, globalOptions));
     CHECK(global2);
@@ -94,7 +94,7 @@ BEGIN_TEST(test_ubiNodeZone)
     {
         // ... and then enter global2's zone and create a string and script
         // there, too.
-        JSAutoCompartment ac(cx, global2);
+        JSAutoRealm ar(cx, global2);
 
         RootedString string2(cx, JS_NewStringCopyZ(cx, "A million household uses!"));
         CHECK(string2);
@@ -119,7 +119,7 @@ BEGIN_TEST(test_ubiNodeCompartment)
     CHECK(global1);
     CHECK(JS::ubi::Node(global1).compartment() == cx->compartment());
 
-    JS::CompartmentOptions globalOptions;
+    JS::RealmOptions globalOptions;
     RootedObject global2(cx, JS_NewGlobalObject(cx, getGlobalClass(), nullptr,
                                                 JS::FireOnNewGlobalHook, globalOptions));
     CHECK(global2);
@@ -129,14 +129,14 @@ BEGIN_TEST(test_ubiNodeCompartment)
 
     JS::CompileOptions options(cx);
 
-    // Create a script in the original compartment...
+    // Create a script in the original realm...
     RootedScript script1(cx);
     CHECK(JS::Compile(cx, options, "", 0, &script1));
 
     {
-        // ... and then enter global2's compartment and create a script
+        // ... and then enter global2's realm and create a script
         // there, too.
-        JSAutoCompartment ac(cx, global2);
+        JSAutoRealm ar(cx, global2);
 
         RootedScript script2(cx);
         CHECK(JS::Compile(cx, options, "", 0, &script2));

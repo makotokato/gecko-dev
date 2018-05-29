@@ -255,7 +255,7 @@ Cell::getTraceKind() const
 {
     if (isTenured())
         return asTenured().getTraceKind();
-    if (js::shadow::String::nurseryCellIsString(this))
+    if (JS::shadow::String::nurseryCellIsString(this))
         return JS::TraceKind::String;
     return JS::TraceKind::Object;
 }
@@ -393,7 +393,7 @@ TenuredCell::readBarrier(TenuredCell* thing)
     if (thing->isMarkedGray()) {
         // There shouldn't be anything marked grey unless we're on the main thread.
         MOZ_ASSERT(CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread()));
-        if (!RuntimeFromMainThreadIsHeapMajorCollecting(shadowZone))
+        if (!JS::CurrentThreadIsHeapCollecting())
             JS::UnmarkGrayGCThingRecursively(JS::GCCellPtr(thing, thing->getTraceKind()));
     }
 }

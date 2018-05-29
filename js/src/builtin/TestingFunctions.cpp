@@ -599,6 +599,19 @@ WasmSaturatingTruncationSupported(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
+WasmBulkMemSupported(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+#ifdef ENABLE_WASM_BULKMEM_OPS
+    bool isSupported = true;
+#else
+    bool isSupported = false;
+#endif
+    args.rval().setBoolean(isSupported);
+    return true;
+}
+
+static bool
 WasmGcEnabled(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -981,6 +994,11 @@ SelectForGC(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
+    if (gc::GCRuntime::temporaryAbortIfWasmGc(cx)) {
+        JS_ReportErrorASCII(cx, "API temporarily unavailable under wasm gc");
+        return false;
+    }
+
     /*
      * The selectedForMarking set is intended to be manually marked at slice
      * start to detect missing pre-barriers. It is invalid for nursery things
@@ -1253,7 +1271,7 @@ SetSavedStacksRNGState(JSContext* cx, unsigned argc, Value* vp)
 
     // Either one or the other of the seed arguments must be non-zero;
     // make this true no matter what value 'seed' has.
-    cx->compartment()->savedStacks().setRNGState(seed, (seed + 1) * 33);
+    cx->realm()->savedStacks().setRNGState(seed, (seed + 1) * 33);
     return true;
 }
 
@@ -1261,7 +1279,7 @@ static bool
 GetSavedFrameCount(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setNumber(cx->compartment()->savedStacks().count());
+    args.rval().setNumber(cx->realm()->savedStacks().count());
     return true;
 }
 
@@ -1270,13 +1288,12 @@ ClearSavedFrames(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    js::SavedStacks& savedStacks = cx->compartment()->savedStacks();
+    js::SavedStacks& savedStacks = cx->realm()->savedStacks();
     if (savedStacks.initialized())
         savedStacks.clear();
 
-    for (ActivationIterator iter(cx); !iter.done(); ++iter) {
+    for (ActivationIterator iter(cx); !iter.done(); ++iter)
         iter->clearLiveSavedFrameCache();
-    }
 
     args.rval().setUndefined();
     return true;
@@ -1318,9 +1335,9 @@ SaveStack(JSContext* cx, unsigned argc, Value* vp)
 
     RootedObject stack(cx);
     {
-        Maybe<AutoCompartment> ac;
+        Maybe<AutoRealm> ar;
         if (compartmentObject)
-            ac.emplace(cx, compartmentObject);
+            ar.emplace(cx, compartmentObject);
         if (!JS::CaptureCurrentStack(cx, &stack, mozilla::Move(capture)))
             return false;
     }
@@ -1351,7 +1368,7 @@ CaptureFirstSubsumedFrame(JSContext* cx, unsigned argc, JS::Value* vp)
         return false;
     }
 
-    JS::StackCapture capture(JS::FirstSubsumedFrame(cx, obj->compartment()->principals()));
+    JS::StackCapture capture(JS::FirstSubsumedFrame(cx, obj->realm()->principals()));
     if (args.length() > 1)
         capture.as<JS::FirstSubsumedFrame>().ignoreSelfHosted = JS::ToBoolean(args[1]);
 
@@ -2170,10 +2187,10 @@ ResolvePromise(JSContext* cx, unsigned argc, Value* vp)
 
     RootedObject promise(cx, &args[0].toObject());
     RootedValue resolution(cx, args[1]);
-    mozilla::Maybe<AutoCompartment> ac;
+    mozilla::Maybe<AutoRealm> ar;
     if (IsWrapper(promise)) {
         promise = UncheckedUnwrap(promise);
-        ac.emplace(cx, promise);
+        ar.emplace(cx, promise);
         if (!cx->compartment()->wrap(cx, &resolution))
             return false;
     }
@@ -2202,10 +2219,10 @@ RejectPromise(JSContext* cx, unsigned argc, Value* vp)
 
     RootedObject promise(cx, &args[0].toObject());
     RootedValue reason(cx, args[1]);
-    mozilla::Maybe<AutoCompartment> ac;
+    mozilla::Maybe<AutoRealm> ar;
     if (IsWrapper(promise)) {
         promise = UncheckedUnwrap(promise);
-        ac.emplace(cx, promise);
+        ar.emplace(cx, promise);
         if (!cx->compartment()->wrap(cx, &reason))
             return false;
     }
@@ -2832,7 +2849,7 @@ class CloneBufferObject : public NativeObject {
         Rooted<CloneBufferObject*> obj(cx, Create(cx));
         if (!obj)
             return nullptr;
-        auto data = js::MakeUnique<JSStructuredCloneData>();
+        auto data = js::MakeUnique<JSStructuredCloneData>(buffer->scope());
         if (!data) {
             ReportOutOfMemory(cx);
             return nullptr;
@@ -2854,11 +2871,6 @@ class CloneBufferObject : public NativeObject {
         MOZ_ASSERT(!data());
         setReservedSlot(DATA_SLOT, PrivateValue(aData));
         setReservedSlot(SYNTHETIC_SLOT, BooleanValue(synthetic));
-
-        // For testing only, and will be unnecessary once the scope is moved
-        // into JSStructuredCloneData.
-        if (synthetic)
-            aData->IgnoreTransferables();
     }
 
     // Discard an owned clone buffer.
@@ -2896,7 +2908,7 @@ class CloneBufferObject : public NativeObject {
             return false;
         }
 
-        auto buf = js::MakeUnique<JSStructuredCloneData>();
+        auto buf = js::MakeUnique<JSStructuredCloneData>(JS::StructuredCloneScope::DifferentProcess);
         if (!buf || !buf->Init(nbytes)) {
             ReportOutOfMemory(cx);
             return false;
@@ -3281,7 +3293,7 @@ static bool
 SharedMemoryEnabled(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setBoolean(cx->compartment()->creationOptions().getSharedMemoryAndAtomicsEnabled());
+    args.rval().setBoolean(cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled());
     return true;
 }
 
@@ -3914,7 +3926,7 @@ EvalReturningScope(JSContext* cx, unsigned argc, Value* vp)
         // If we're switching globals here, ExecuteInGlobalAndReturnScope will
         // take care of cloning the script into that compartment before
         // executing it.
-        AutoCompartment ac(cx, global);
+        AutoRealm ar(cx, global);
 
         if (!js::ExecuteInGlobalAndReturnScope(cx, global, script, &lexicalScope))
             return false;
@@ -3989,7 +4001,7 @@ ShellCloneAndExecuteScript(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
 
-    AutoCompartment ac(cx, global);
+    AutoRealm ar(cx, global);
 
     JS::RootedValue rval(cx);
     if (!JS::CloneAndExecuteScript(cx, script, &rval))
@@ -4112,7 +4124,7 @@ SetLazyParsingDisabled(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     bool disable = !args.hasDefined(0) || ToBoolean(args[0]);
-    cx->compartment()->behaviors().setDisableLazyParsing(disable);
+    cx->realm()->behaviors().setDisableLazyParsing(disable);
 
     args.rval().setUndefined();
     return true;
@@ -4124,7 +4136,7 @@ SetDiscardSource(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     bool discard = !args.hasDefined(0) || ToBoolean(args[0]);
-    cx->compartment()->behaviors().setDiscardSource(discard);
+    cx->realm()->behaviors().setDiscardSource(discard);
 
     args.rval().setUndefined();
     return true;
@@ -4374,7 +4386,7 @@ GetLcovInfo(JSContext* cx, unsigned argc, Value* vp)
     size_t length = 0;
     char* content = nullptr;
     {
-        AutoCompartment ac(cx, global);
+        AutoRealm ar(cx, global);
         content = js::GetCodeCoverageSummary(cx, &length);
     }
 
@@ -4415,8 +4427,7 @@ SetRNGState(JSContext* cx, unsigned argc, Value* vp)
         return false;
     }
 
-    cx->compartment()->ensureRandomNumberGenerator();
-    cx->compartment()->randomNumberGenerator.ref().setState(seed0, seed1);
+    cx->realm()->getOrCreateRandomNumberGenerator().setState(seed0, seed1);
 
     args.rval().setUndefined();
     return true;
@@ -5178,7 +5189,7 @@ BaselineCompile(JSContext* cx, unsigned argc, Value* vp)
 
     const char* returnedStr = nullptr;
     do {
-        AutoCompartment ac(cx, script);
+        AutoRealm ar(cx, script);
         if (script->hasBaselineScript()) {
             if (forceDebug && !script->baselineScript()->hasDebugInstrumentation()) {
                 // There isn't an easy way to do this for a script that might be on
@@ -5200,7 +5211,7 @@ BaselineCompile(JSContext* cx, unsigned argc, Value* vp)
             returnedStr = "can't compile";
             break;
         }
-        if (!cx->compartment()->ensureJitCompartmentExists(cx))
+        if (!cx->realm()->ensureJitRealmExists(cx))
             return false;
 
         jit::MethodStatus status = jit::BaselineCompile(cx, script, forceDebug);
@@ -5561,6 +5572,11 @@ gc::ZealModeHelpText),
     JS_FN_HELP("wasmSaturatingTruncationSupported", WasmSaturatingTruncationSupported, 0, 0,
 "wasmSaturatingTruncationSupported()",
 "  Returns a boolean indicating whether the WebAssembly saturating truncates opcodes are\n"
+"  supported on the current device."),
+
+    JS_FN_HELP("wasmBulkMemSupported", WasmBulkMemSupported, 0, 0,
+"wasmBulkMemSupported()",
+"  Returns a boolean indicating whether the WebAssembly bulk memory proposal is\n"
 "  supported on the current device."),
 
     JS_FN_HELP("wasmCompileMode", WasmCompileMode, 0, 0,

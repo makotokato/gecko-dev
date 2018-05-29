@@ -29,8 +29,7 @@ const PREF_EM_LAST_PLATFORM_VERSION   = "extensions.lastPlatformVersion";
 const PREF_EM_AUTOUPDATE_DEFAULT      = "extensions.update.autoUpdateDefault";
 const PREF_EM_STRICT_COMPATIBILITY    = "extensions.strictCompatibility";
 const PREF_EM_CHECK_UPDATE_SECURITY   = "extensions.checkUpdateSecurity";
-const PREF_APP_UPDATE_ENABLED         = "app.update.enabled";
-const PREF_APP_UPDATE_AUTO            = "app.update.auto";
+const PREF_SYS_ADDON_UPDATE_ENABLED   = "extensions.systemAddon.update.enabled";
 
 const PREF_MIN_WEBEXT_PLATFORM_VERSION = "extensions.webExtensionsMinPlatformVersion";
 const PREF_WEBAPI_TESTING             = "extensions.webapi.testing";
@@ -1249,8 +1248,7 @@ var AddonManagerInternal = {
 
   // Returns true if System Addons should be updated
   systemUpdateEnabled() {
-    if (!Services.prefs.getBoolPref(PREF_APP_UPDATE_ENABLED) ||
-        !Services.prefs.getBoolPref(PREF_APP_UPDATE_AUTO)) {
+    if (!Services.prefs.getBoolPref(PREF_SYS_ADDON_UPDATE_ENABLED)) {
       return false;
     }
     if (Services.policies && !Services.policies.isAllowed("SysAddonUpdate")) {
@@ -2056,19 +2054,6 @@ var AddonManagerInternal = {
                                .installTemporaryAddon(aFile);
   },
 
-  installAddonFromSources(aFile) {
-    if (!gStarted)
-      throw Components.Exception("AddonManager is not initialized",
-                                 Cr.NS_ERROR_NOT_INITIALIZED);
-
-    if (!(aFile instanceof Ci.nsIFile))
-      throw Components.Exception("aFile must be a nsIFile",
-                                 Cr.NS_ERROR_INVALID_ARG);
-
-    return AddonManagerInternal._getProviderByName("XPIProvider")
-                               .installAddonFromSources(aFile);
-  },
-
   /**
    * Returns an Addon corresponding to an instance ID.
    * @param aInstanceID
@@ -2344,37 +2329,6 @@ var AddonManagerInternal = {
                                  Cr.NS_ERROR_NOT_INITIALIZED);
 
     return this.getAddonsByTypes(null);
-  },
-
-  /**
-   * Asynchronously gets add-ons that have operations waiting for an application
-   * restart to complete.
-   *
-   * @param  aTypes
-   *         An optional array of types to retrieve. Each type is a string name
-   */
-  getAddonsWithOperationsByTypes(aTypes) {
-    if (!gStarted)
-      throw Components.Exception("AddonManager is not initialized",
-                                 Cr.NS_ERROR_NOT_INITIALIZED);
-
-    if (aTypes && !Array.isArray(aTypes))
-      throw Components.Exception("aTypes must be an array or null",
-                                 Cr.NS_ERROR_INVALID_ARG);
-
-    return (async () => {
-      let addons = [];
-
-      for (let provider of this.providers) {
-        let providerAddons = await promiseCallProvider(
-          provider, "getAddonsWithOperationsByTypes", aTypes);
-
-        if (providerAddons)
-          addons.push(...providerAddons);
-      }
-
-      return addons;
-    })();
   },
 
   /**
@@ -2895,17 +2849,6 @@ var AddonManagerPrivate = {
                                .getNewSideloads();
   },
 
-  /**
-   * Gets a set of (ids of) distribution addons which were installed into the
-   * current profile at browser startup, or null if none were installed.
-   *
-   * @return {Set<String> | null}
-   */
-  getNewDistroAddons() {
-    return AddonManagerInternal._getProviderByName("XPIProvider")
-                               .getNewDistroAddons();
-  },
-
   get browserUpdated() {
     return gBrowserUpdated;
   },
@@ -3020,6 +2963,15 @@ var AddonManagerPrivate = {
     return {
       done: () => this.recordSimpleMeasure(aName, Math.round(Cu.now() - startTime))
     };
+  },
+
+  async recordTiming(name, task) {
+    let timer = this.simpleTimer(name);
+    try {
+      return await task();
+    } finally {
+      timer.done();
+    }
   },
 
   /**
@@ -3395,10 +3347,6 @@ var AddonManager = {
     return AddonManagerInternal.getAddonsByIDs(aIDs);
   },
 
-  getAddonsWithOperationsByTypes(aTypes) {
-    return AddonManagerInternal.getAddonsWithOperationsByTypes(aTypes);
-  },
-
   getAddonsByTypes(aTypes) {
     return AddonManagerInternal.getAddonsByTypes(aTypes);
   },
@@ -3439,10 +3387,6 @@ var AddonManager = {
 
   installTemporaryAddon(aDirectory) {
     return AddonManagerInternal.installTemporaryAddon(aDirectory);
-  },
-
-  installAddonFromSources(aDirectory) {
-    return AddonManagerInternal.installAddonFromSources(aDirectory);
   },
 
   getAddonByInstanceID(aInstanceID) {

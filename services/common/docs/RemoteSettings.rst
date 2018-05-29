@@ -90,6 +90,30 @@ When an entry has a file attached to it, it has an ``attachment`` attribute, whi
           }
         });
 
+Initial data
+------------
+
+For newly created user profiles, the list of entries returned by the ``.get()`` method will be empty until the first synchronization happens.
+
+It is possible to package a dump of the server records that will be loaded into the local database when no synchronization has happened yet. It will thus serve as the default dataset and also reduce the amount of data to be downloaded on the first synchronization.
+
+#. Place the JSON dump of the server records in the ``services/settings/dumps/main/`` folder
+#. Add the filename to the ``FINAL_TARGET_FILES`` list in ``services/settings/dumps/main/moz.build``
+
+Now, when ``RemoteSettings("some-key").get()`` is called from an empty profile, the ``some-key.json`` file is going to be loaded before the results are returned.
+
+
+Targets and A/B testing
+=======================
+
+In order to deliver settings to subsets of the population, you can set targets on entries (platform, language, channel, version range, preferences values, samples, etc.) when editing records on the server.
+
+From the client API standpoint, this is completely transparent: the ``.get()`` method — as well as the event data — will always filter the entries on which the target matches.
+
+.. note::
+
+    The remote settings targets follow the same approach as the :ref:`Normandy recipe client <components/normandy>` (ie. JEXL filters),
+
 
 Uptake Telemetry
 ================

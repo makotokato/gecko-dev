@@ -881,7 +881,8 @@ NativeObject::putDataProperty(JSContext* cx, HandleNativeObject obj, HandleId id
         }
 
         if (!shape) {
-            MOZ_ASSERT(obj->nonProxyIsExtensible(),
+            MOZ_ASSERT(obj->isExtensible() ||
+                       (JSID_IS_INT(id) && obj->containsDenseElement(JSID_TO_INT(id))),
                        "Can't add new property to non-extensible object");
             return addDataPropertyInternal(cx, obj, id, SHAPE_INVALID_SLOT, attrs, table, entry,
                                            keep);
@@ -987,7 +988,8 @@ NativeObject::putAccessorProperty(JSContext* cx, HandleNativeObject obj, HandleI
         }
 
         if (!shape) {
-            MOZ_ASSERT(obj->nonProxyIsExtensible(),
+            MOZ_ASSERT(obj->isExtensible() ||
+                       (JSID_IS_INT(id) && obj->containsDenseElement(JSID_TO_INT(id))),
                        "Can't add new property to non-extensible object");
             return addAccessorPropertyInternal(cx, obj, id, getter, setter, attrs, table, entry,
                                                keep);
@@ -2158,8 +2160,8 @@ NewObjectCache::invalidateEntriesForShape(JSContext* cx, HandleShape shape, Hand
     }
 
     EntryIndex entry;
-    for (CompartmentsInZoneIter comp(shape->zone()); !comp.done(); comp.next()) {
-        if (GlobalObject* global = comp->unsafeUnbarrieredMaybeGlobal()) {
+    for (RealmsInZoneIter realm(shape->zone()); !realm.done(); realm.next()) {
+        if (GlobalObject* global = realm->unsafeUnbarrieredMaybeGlobal()) {
             if (lookupGlobal(clasp, global, kind, &entry))
                 PodZero(&entries[entry]);
         }

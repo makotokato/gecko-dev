@@ -230,13 +230,35 @@ private:
   nsString mResolvedPath;
 };
 
-class nsDriveEnumerator : public nsISimpleEnumerator
+class nsDriveEnumerator : public nsIDirectoryEnumerator
 {
 public:
   nsDriveEnumerator();
   NS_DECL_ISUPPORTS
   NS_DECL_NSISIMPLEENUMERATOR
   nsresult Init();
+
+  NS_IMETHOD GetNextFile(nsIFile** aResult) override
+  {
+    bool hasMore = false;
+    nsresult rv = HasMoreElements(&hasMore);
+    if (NS_FAILED(rv) || !hasMore) {
+      return rv;
+    }
+    nsCOMPtr<nsISupports> next;
+    rv = GetNext(getter_AddRefs(next));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIFile> result = do_QueryInterface(next);
+    result.forget(aResult);
+    return NS_OK;
+  }
+
+  NS_IMETHOD Close() override
+  {
+    return NS_OK;
+  }
+
 private:
   virtual ~nsDriveEnumerator();
 
@@ -658,8 +680,7 @@ CloseDir(nsDir*& aDir)
 //-----------------------------------------------------------------------------
 
 class nsDirEnumerator final
-  : public nsISimpleEnumerator
-  , public nsIDirectoryEnumerator
+  : public nsIDirectoryEnumerator
 {
 private:
   ~nsDirEnumerator()
@@ -1989,36 +2010,30 @@ nsLocalFile::CopyMove(nsIFile* aParentDir, const nsAString& aNewName,
       return rv;
     }
 
-    bool more = false;
-    while (NS_SUCCEEDED(dirEnum->HasMoreElements(&more)) && more) {
-      nsCOMPtr<nsISupports> item;
-      nsCOMPtr<nsIFile> file;
-      dirEnum->GetNext(getter_AddRefs(item));
-      file = do_QueryInterface(item);
-      if (file) {
-        bool isDir, isLink;
+    nsCOMPtr<nsIFile> file;
+    while (NS_SUCCEEDED(dirEnum->GetNextFile(getter_AddRefs(file))) && file) {
+      bool isDir, isLink;
 
-        file->IsDirectory(&isDir);
-        file->IsSymlink(&isLink);
+      file->IsDirectory(&isDir);
+      file->IsSymlink(&isLink);
 
-        if (move) {
-          if (followSymlinks) {
-            return NS_ERROR_FAILURE;
-          }
+      if (move) {
+        if (followSymlinks) {
+          return NS_ERROR_FAILURE;
+        }
 
-          rv = file->MoveTo(target, EmptyString());
-          if (NS_FAILED(rv)) {
-            return rv;
-          }
+        rv = file->MoveTo(target, EmptyString());
+        if (NS_FAILED(rv)) {
+          return rv;
+        }
+      } else {
+        if (followSymlinks) {
+          rv = file->CopyToFollowingLinks(target, EmptyString());
         } else {
-          if (followSymlinks) {
-            rv = file->CopyToFollowingLinks(target, EmptyString());
-          } else {
-            rv = file->CopyTo(target, EmptyString());
-          }
-          if (NS_FAILED(rv)) {
-            return rv;
-          }
+          rv = file->CopyTo(target, EmptyString());
+        }
+        if (NS_FAILED(rv)) {
+          return rv;
         }
       }
     }
@@ -3074,7 +3089,7 @@ nsLocalFile::SetFollowLinks(bool aFollowLinks)
 
 
 NS_IMETHODIMP
-nsLocalFile::GetDirectoryEntries(nsISimpleEnumerator** aEntries)
+nsLocalFile::GetDirectoryEntriesImpl(nsIDirectoryEnumerator** aEntries)
 {
   nsresult rv;
 
@@ -3511,7 +3526,7 @@ nsLocalFile::GetHashCode(uint32_t* aResult)
   return NS_OK;
 }
 
-NS_IMPL_ISUPPORTS(nsDriveEnumerator, nsISimpleEnumerator)
+NS_IMPL_ISUPPORTS(nsDriveEnumerator, nsIDirectoryEnumerator, nsISimpleEnumerator)
 
 nsDriveEnumerator::nsDriveEnumerator()
 {

@@ -23,7 +23,6 @@
 #include "nsICommandManager.h"
 #include "nsIDocShell.h"
 #include "nsIDocument.h"
-#include "nsIDOMDocument.h"
 #include "nsPIDOMWindow.h"
 #include "nsIEditingSession.h"
 #include "nsIFrame.h"
@@ -171,7 +170,7 @@ NS_IMPL_RELEASE_INHERITED(DocAccessible, HyperTextAccessible)
 // nsIAccessible
 
 ENameValueFlag
-DocAccessible::Name(nsString& aName)
+DocAccessible::Name(nsString& aName) const
 {
   aName.Truncate();
 
@@ -194,7 +193,7 @@ DocAccessible::Name(nsString& aName)
 
 // Accessible public method
 role
-DocAccessible::NativeRole()
+DocAccessible::NativeRole() const
 {
   nsCOMPtr<nsIDocShell> docShell = nsCoreUtils::GetDocShellFor(mDocumentNode);
   if (docShell) {
@@ -237,7 +236,7 @@ DocAccessible::Description(nsString& aDescription)
 
 // Accessible public method
 uint64_t
-DocAccessible::NativeState()
+DocAccessible::NativeState() const
 {
   // Document is always focusable.
   uint64_t state = states::FOCUSABLE; // keep in sync with NativeInteractiveState() impl
@@ -321,7 +320,7 @@ DocAccessible::FocusedChild()
 }
 
 void
-DocAccessible::TakeFocus()
+DocAccessible::TakeFocus() const
 {
   // Focus the document.
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
@@ -699,7 +698,6 @@ DocAccessible::OnPivotChanged(nsIAccessiblePivot* aPivot,
 
 NS_IMPL_NSIDOCUMENTOBSERVER_CORE_STUB(DocAccessible)
 NS_IMPL_NSIDOCUMENTOBSERVER_LOAD_STUB(DocAccessible)
-NS_IMPL_NSIDOCUMENTOBSERVER_STYLE_STUB(DocAccessible)
 
 void
 DocAccessible::AttributeWillChange(dom::Element* aElement,

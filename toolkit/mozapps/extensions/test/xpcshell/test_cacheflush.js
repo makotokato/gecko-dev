@@ -84,9 +84,9 @@ add_task(async function test_flush_uninstall() {
   gExpectedFile.append("extensions");
   gExpectedFile.append("addon2@tests.mozilla.org.xpi");
 
-  addon.uninstall();
+  await addon.uninstall();
 
-  equal(gCacheFlushCount, 1);
+  ok(gCacheFlushCount >= 1);
   gExpectedFile = null;
   gCacheFlushCount = 0;
 });

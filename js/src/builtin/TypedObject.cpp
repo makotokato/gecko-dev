@@ -18,6 +18,7 @@
 #include "vm/GlobalObject.h"
 #include "vm/JSCompartment.h"
 #include "vm/JSFunction.h"
+#include "vm/SelfHosting.h"
 #include "vm/StringType.h"
 #include "vm/TypedArrayObject.h"
 
@@ -116,10 +117,6 @@ ConvertAndCopyTo(JSContext* cx,
                  HandleAtom name,
                  HandleValue val)
 {
-    RootedFunction func(cx, SelfHostedFunction(cx, cx->names().ConvertAndCopyTo));
-    if (!func)
-        return false;
-
     FixedInvokeArgs<5> args(cx);
 
     args[0].setObject(*typeObj);
@@ -131,9 +128,8 @@ ConvertAndCopyTo(JSContext* cx,
         args[3].setNull();
     args[4].set(val);
 
-    RootedValue fval(cx, ObjectValue(*func));
     RootedValue dummy(cx); // ignored by ConvertAndCopyTo
-    return js::Call(cx, fval, dummy, args, &dummy);
+    return CallSelfHostedFunction(cx, cx->names().ConvertAndCopyTo, dummy, args, &dummy);
 }
 
 static bool
@@ -154,18 +150,13 @@ Reify(JSContext* cx,
       size_t offset,
       MutableHandleValue to)
 {
-    RootedFunction func(cx, SelfHostedFunction(cx, cx->names().Reify));
-    if (!func)
-        return false;
-
     FixedInvokeArgs<3> args(cx);
 
     args[0].setObject(*type);
     args[1].setObject(*typedObj);
     args[2].setInt32(offset);
 
-    RootedValue fval(cx, ObjectValue(*func));
-    return js::Call(cx, fval, UndefinedHandleValue, args, to);
+    return CallSelfHostedFunction(cx, cx->names().Reify, UndefinedHandleValue, args, to);
 }
 
 // Extracts the `prototype` property from `obj`, throwing if it is
@@ -1358,7 +1349,7 @@ bool
 TypedObject::isAttached() const
 {
     if (is<InlineTransparentTypedObject>()) {
-        ObjectWeakMap* table = compartment()->lazyArrayBuffers;
+        ObjectWeakMap* table = ObjectRealm::get(this).lazyArrayBuffers.get();
         if (table) {
             JSObject* buffer = table->lookup(this);
             if (buffer)
@@ -2152,12 +2143,16 @@ InlineTypedObject::obj_moved(JSObject* dst, JSObject* src)
 ArrayBufferObject*
 InlineTransparentTypedObject::getOrCreateBuffer(JSContext* cx)
 {
-    ObjectWeakMap*& table = cx->compartment()->lazyArrayBuffers;
-    if (!table) {
-        table = cx->new_<ObjectWeakMap>(cx);
+    ObjectRealm& realm = ObjectRealm::get(this);
+    if (!realm.lazyArrayBuffers) {
+        auto table = cx->make_unique<ObjectWeakMap>(cx);
         if (!table || !table->init())
             return nullptr;
+
+        realm.lazyArrayBuffers = Move(table);
     }
+
+    ObjectWeakMap* table = realm.lazyArrayBuffers.get();
 
     JSObject* obj = table->lookup(this);
     if (obj)
@@ -2341,9 +2336,9 @@ TypedObject::create(JSContext* cx, js::gc::AllocKind kind, js::gc::InitialHeap h
     tobj->initShape(shape);
 
     MOZ_ASSERT(clasp->shouldDelayMetadataBuilder());
-    cx->compartment()->setObjectPendingMetadata(cx, tobj);
+    cx->realm()->setObjectPendingMetadata(cx, tobj);
 
-    js::gc::TraceCreateObject(tobj);
+    js::gc::gcTracer.traceCreateObject(tobj);
 
     return tobj;
 }

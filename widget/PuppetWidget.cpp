@@ -748,6 +748,15 @@ PuppetWidget::DefaultProcOfPluginEvent(const WidgetPluginEvent& aEvent)
   mTabChild->SendDefaultProcOfPluginEvent(aEvent);
 }
 
+// When this widget caches input context and currently managed by
+// IMEStateManager, the cache is valid.
+bool
+PuppetWidget::HaveValidInputContextCache() const
+{
+  return (mInputContext.mIMEState.mEnabled != IMEState::UNKNOWN &&
+          IMEStateManager::GetWidgetForActiveInputContext() == this);
+}
+
 void
 PuppetWidget::SetInputContext(const InputContext& aContext,
                               const InputContextAction& aAction)
@@ -776,11 +785,9 @@ PuppetWidget::GetInputContext()
   // XXX Currently, we don't support retrieving IME open state from child
   //     process.
 
-  // When this widget caches input context and currently managed by
-  // IMEStateManager, the cache is valid.  Only in this case, we can
-  // avoid to use synchronous IPC.
-  if (mInputContext.mIMEState.mEnabled != IMEState::UNKNOWN &&
-      IMEStateManager::GetWidgetForActiveInputContext() == this) {
+  // If the cache of input context is valid, we can avoid to use synchronous
+  // IPC.
+  if (HaveValidInputContextCache()) {
     return mInputContext;
   }
 
@@ -1150,7 +1157,8 @@ PuppetWidget::MemoryPressureObserver::Observe(nsISupports* aSubject,
   }
 
   if (strcmp("memory-pressure", aTopic) == 0 &&
-      !NS_LITERAL_STRING("lowering-priority").Equals(aData)) {
+      !StringBeginsWith(nsDependentString(aData),
+                        NS_LITERAL_STRING("low-memory-ongoing"))) {
     if (!mWidget->mVisible && mWidget->mLayerManager &&
         XRE_IsContentProcess()) {
       mWidget->mLayerManager->ClearCachedResources();
@@ -1399,6 +1407,25 @@ PuppetWidget::SetCandidateWindowForPlugin(
   }
 
   mTabChild->SendSetCandidateWindowForPlugin(aPosition);
+}
+
+void
+PuppetWidget::EnableIMEForPlugin(bool aEnable)
+{
+  if (!mTabChild) {
+    return;
+  }
+
+  // If current IME state isn't plugin, we ignore this call.
+  if (NS_WARN_IF(HaveValidInputContextCache() &&
+                 mInputContext.mIMEState.mEnabled != IMEState::UNKNOWN &&
+                 mInputContext.mIMEState.mEnabled != IMEState::PLUGIN)) {
+    return;
+  }
+
+  // We don't have valid state in cache or state is plugin, so delegate to
+  // chrome process.
+  mTabChild->SendEnableIMEForPlugin(aEnable);
 }
 
 void

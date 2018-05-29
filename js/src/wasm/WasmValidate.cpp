@@ -801,28 +801,32 @@ DecodeFunctionBodyExprs(const ModuleEnvironment& env, const Sig& sig, const ValT
             CHECK(iter.readReturn(&nothing));
           case uint16_t(Op::Unreachable):
             CHECK(iter.readUnreachable());
-          case uint16_t(Op::NumericPrefix): {
-#ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
+          case uint16_t(Op::MiscPrefix): {
             switch (op.b1) {
-              case uint16_t(NumericOp::I32TruncSSatF32):
-              case uint16_t(NumericOp::I32TruncUSatF32):
+#ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
+              case uint16_t(MiscOp::I32TruncSSatF32):
+              case uint16_t(MiscOp::I32TruncUSatF32):
                 CHECK(iter.readConversion(ValType::F32, ValType::I32, &nothing));
-              case uint16_t(NumericOp::I32TruncSSatF64):
-              case uint16_t(NumericOp::I32TruncUSatF64):
+              case uint16_t(MiscOp::I32TruncSSatF64):
+              case uint16_t(MiscOp::I32TruncUSatF64):
                 CHECK(iter.readConversion(ValType::F64, ValType::I32, &nothing));
-              case uint16_t(NumericOp::I64TruncSSatF32):
-              case uint16_t(NumericOp::I64TruncUSatF32):
+              case uint16_t(MiscOp::I64TruncSSatF32):
+              case uint16_t(MiscOp::I64TruncUSatF32):
                 CHECK(iter.readConversion(ValType::F32, ValType::I64, &nothing));
-              case uint16_t(NumericOp::I64TruncSSatF64):
-              case uint16_t(NumericOp::I64TruncUSatF64):
+              case uint16_t(MiscOp::I64TruncSSatF64):
+              case uint16_t(MiscOp::I64TruncUSatF64):
                 CHECK(iter.readConversion(ValType::F64, ValType::I64, &nothing));
+#endif
+#ifdef ENABLE_WASM_BULKMEM_OPS
+              case uint16_t(MiscOp::MemCopy):
+                CHECK(iter.readMemCopy(&nothing, &nothing, &nothing));
+              case uint16_t(MiscOp::MemFill):
+                CHECK(iter.readMemFill(&nothing, &nothing, &nothing));
+#endif
               default:
                 return iter.unrecognizedOpcode(&op);
             }
             break;
-#else
-            return iter.unrecognizedOpcode(&op);
-#endif
           }
 #ifdef ENABLE_WASM_GC
           case uint16_t(Op::RefNull): {
@@ -1245,11 +1249,6 @@ GlobalIsJSCompatible(Decoder& d, ValType type, bool isMutable)
       default:
         return d.fail("unexpected variable type in global import/export");
     }
-
-#if !(defined(ENABLE_WASM_GLOBAL) && defined(EARLY_BETA_OR_EARLIER))
-    if (isMutable)
-        return d.fail("can't import/export mutable globals in the MVP");
-#endif
 
     return true;
 }
@@ -2088,7 +2087,7 @@ wasm::Validate(JSContext* cx, const ShareableBytes& bytecode, UniqueChars* error
 #endif
 
     ModuleEnvironment env(CompileMode::Once, Tier::Ion, DebugEnabled::False, gcSupport,
-                          cx->compartment()->creationOptions().getSharedMemoryAndAtomicsEnabled()
+                          cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled()
                           ? Shareable::True
                           : Shareable::False);
     if (!DecodeModuleEnvironment(d, &env))

@@ -405,7 +405,6 @@ UNIFIED_SOURCES += [
     'wasm/WasmBinaryToText.cpp',
     'wasm/WasmBuiltins.cpp',
     'wasm/WasmCode.cpp',
-    'wasm/WasmCompartment.cpp',
     'wasm/WasmCompile.cpp',
     'wasm/WasmDebug.cpp',
     'wasm/WasmFrameIter.cpp',
@@ -416,6 +415,7 @@ UNIFIED_SOURCES += [
     'wasm/WasmModule.cpp',
     'wasm/WasmOpIter.cpp',
     'wasm/WasmProcess.cpp',
+    'wasm/WasmRealm.cpp',
     'wasm/WasmSignalHandlers.cpp',
     'wasm/WasmStubs.cpp',
     'wasm/WasmTable.cpp',
@@ -457,6 +457,12 @@ SOURCES += [
     'vm/JSAtom.cpp',
     'vm/ProfilingStack.cpp',
 ]
+
+if CONFIG['ENABLE_BIGINT']:
+    SOURCES += [
+        'builtin/BigInt.cpp',
+        'vm/BigIntType.cpp',
+    ]
 
 if CONFIG['JS_POSIX_NSPR']:
     UNIFIED_SOURCES += [
@@ -695,13 +701,6 @@ if CONFIG['NIGHTLY_BUILD']:
     DEFINES['ENABLE_WASM_SIGNEXTEND_OPS'] = True
     DEFINES['ENABLE_WASM_THREAD_OPS'] = True
     DEFINES['ENABLE_WASM_GC'] = True
-
-# An experiment we want to run on Nightly and early Beta: Can we change the JS
-# representation of an exported global from the global's value to an instance
-# of WebAssembly.Global without breaking existing wasm content?
-#
-# Additionally guarded by EARLY_BETA_OR_EARLIER in the code.
-DEFINES['ENABLE_WASM_GLOBAL'] = True
 
 if CONFIG['JS_BUILD_BINAST']:
     # Using SOURCES, as UNIFIED_SOURCES causes mysterious bugs on 32-bit platforms.

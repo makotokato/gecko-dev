@@ -76,6 +76,7 @@ struct BoxQuadOptions;
 struct ConvertCoordinateOptions;
 class DocGroup;
 class DocumentFragment;
+class DocumentOrShadowRoot;
 class DOMPoint;
 class DOMQuad;
 class DOMRectReadOnly;
@@ -686,6 +687,12 @@ public:
   {
     return IsInUncomposedDoc() || (IsInShadowTree() && GetComposedDocInternal());
   }
+
+  /**
+   * Returns OwnerDoc() if the node is in uncomposed document and ShadowRoot if
+   * the node is in Shadow DOM and is in composed document.
+   */
+  mozilla::dom::DocumentOrShadowRoot* GetUncomposedDocOrConnectedShadowRoot() const;
 
   /**
    * The values returned by this function are the ones defined for
@@ -2136,12 +2143,6 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsINode, NS_INODE_IID)
 
 inline nsISupports*
 ToSupports(nsINode* aPointer)
-{
-  return aPointer;
-}
-
-inline nsISupports*
-ToCanonicalSupports(nsINode* aPointer)
 {
   return aPointer;
 }

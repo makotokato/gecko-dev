@@ -133,7 +133,6 @@
 #include "nsIDocument.h"
 #include "nsIDocumentEncoder.h"
 #include "nsIDOMChromeWindow.h"
-#include "nsIDOMDocument.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMWindowUtils.h"
 #include "nsIDragService.h"
@@ -525,6 +524,35 @@ class SameOriginCheckerImpl final : public nsIChannelEventSink,
 
 } // namespace
 
+class nsContentUtils::nsContentUtilsReporter final : public nsIMemoryReporter
+{
+  MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf);
+
+  ~nsContentUtilsReporter() = default;
+
+public:
+  NS_DECL_ISUPPORTS
+
+  NS_IMETHOD
+  CollectReports(nsIHandleReportCallback* aHandleReport,
+                 nsISupports* aData, bool aAnonymize) override
+  {
+    int64_t amt = 0;
+    for (int32_t i = 0; i < PropertiesFile_COUNT; ++i) {
+      if (sStringBundles[i]) {
+        amt += sStringBundles[i]->SizeOfIncludingThisIfUnshared(MallocSizeOf);
+      }
+    }
+
+    MOZ_COLLECT_REPORT("explicit/dom/content-utils-string-bundles", KIND_HEAP, UNITS_BYTES,
+                       amt, "string-bundles in ContentUtils");
+
+    return NS_OK;
+  }
+};
+
+NS_IMPL_ISUPPORTS(nsContentUtils::nsContentUtilsReporter, nsIMemoryReporter)
+
 /**
  * This class is used to determine whether or not the user is currently
  * interacting with the browser. It listens to observer events to toggle the
@@ -625,6 +653,7 @@ nsContentUtils::Init()
       new PLDHashTable(&hash_table_ops, sizeof(EventListenerManagerMapEntry));
 
     RegisterStrongMemoryReporter(new DOMEventListenerManagersHashReporter());
+    RegisterStrongMemoryReporter(new nsContentUtilsReporter());
   }
 
   sBlockedScriptRunners = new AutoTArray<nsCOMPtr<nsIRunnable>, 8>;
@@ -3124,7 +3153,7 @@ nsContentUtils::SubjectPrincipal()
   JSCompartment *compartment = js::GetContextCompartment(cx);
 
   // When an AutoJSAPI is instantiated, we are in a null compartment until the
-  // first JSAutoCompartment, which is kind of a purgatory as far as permissions
+  // first JSAutoRealm, which is kind of a purgatory as far as permissions
   // go. It would be nice to just hard-abort if somebody does a security check
   // in this purgatory zone, but that would be too fragile, since it could be
   // triggered by random IsCallerChrome() checks 20-levels deep.
@@ -3184,13 +3213,8 @@ nsContentUtils::NewURIWithDocumentCharset(nsIURI** aResult,
 
 // static
 bool
-nsContentUtils::IsCustomElementName(nsAtom* aName, uint32_t aNameSpaceID)
+nsContentUtils::IsNameWithDash(nsAtom* aName)
 {
-  // Allow non-dashed names in XUL for XBL to Custom Element migrations.
-  if (aNameSpaceID == kNameSpaceID_XUL) {
-    return true;
-  }
-
   // A valid custom element name is a sequence of characters name which
   // must match the PotentialCustomElementName production:
   // PotentialCustomElementName ::= [a-z] (PCENChar)* '-' (PCENChar)*
@@ -3240,6 +3264,19 @@ nsContentUtils::IsCustomElementName(nsAtom* aName, uint32_t aNameSpaceID)
     }
   }
 
+  return hasDash;
+}
+
+// static
+bool
+nsContentUtils::IsCustomElementName(nsAtom* aName, uint32_t aNameSpaceID)
+{
+  // Allow non-dashed names in XUL for XBL to Custom Element migrations.
+  if (aNameSpaceID == kNameSpaceID_XUL) {
+    return true;
+  }
+
+  bool hasDash = IsNameWithDash(aName);
   if (!hasDash) {
     return false;
   }
@@ -3643,8 +3680,7 @@ nsContentUtils::IsImageInCache(nsIURI* aURI, nsIDocument* aDocument)
     // If something unexpected happened we return false, otherwise if props
     // is set, the image is cached and we return true
     nsCOMPtr<nsIProperties> props;
-    nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(aDocument);
-    nsresult rv = cache->FindEntryProperties(aURI, domDoc, getter_AddRefs(props));
+    nsresult rv = cache->FindEntryProperties(aURI, aDocument, getter_AddRefs(props));
     return (NS_SUCCEEDED(rv) && props);
 }
 
@@ -4731,12 +4767,11 @@ nsContentUtils::HasMutationListeners(nsIDocument* aDocument,
 }
 
 void
-nsContentUtils::MaybeFireNodeRemoved(nsINode* aChild, nsINode* aParent,
-                                     nsIDocument* aOwnerDoc)
+nsContentUtils::MaybeFireNodeRemoved(nsINode* aChild, nsINode* aParent)
 {
   MOZ_ASSERT(aChild, "Missing child");
   MOZ_ASSERT(aChild->GetParentNode() == aParent, "Wrong parent");
-  MOZ_ASSERT(aChild->OwnerDoc() == aOwnerDoc, "Wrong owner-doc");
+  MOZ_ASSERT(aChild->OwnerDoc() == aParent->OwnerDoc(), "Wrong owner-doc");
 
   // Having an explicit check here since it's an easy mistake to fall into,
   // and there might be existing code with problems. We'd rather be safe
@@ -4757,7 +4792,7 @@ nsContentUtils::MaybeFireNodeRemoved(nsINode* aChild, nsINode* aParent,
     if (!(aChild->IsContent() && aChild->AsContent()->IsInNativeAnonymousSubtree()) &&
         !sDOMNodeRemovedSuppressCount) {
       NS_ERROR("Want to fire DOMNodeRemoved event, but it's not safe");
-      WarnScriptWasIgnored(aOwnerDoc);
+      WarnScriptWasIgnored(aChild->OwnerDoc());
     }
     return;
   }
@@ -4767,7 +4802,7 @@ nsContentUtils::MaybeFireNodeRemoved(nsINode* aChild, nsINode* aParent,
     InternalMutationEvent mutation(true, eLegacyNodeRemoved);
     mutation.mRelatedNode = do_QueryInterface(aParent);
 
-    mozAutoSubtreeModified subtree(aOwnerDoc, aParent);
+    mozAutoSubtreeModified subtree(aParent->OwnerDoc(), aParent);
     EventDispatcher::Dispatch(aChild, nullptr, &mutation);
   }
 }
@@ -5207,8 +5242,8 @@ nsContentUtils::ConvertToPlainText(const nsAString& aSourceBuffer,
   nsCOMPtr<nsIURI> uri;
   NS_NewURI(getter_AddRefs(uri), "about:blank");
   nsCOMPtr<nsIPrincipal> principal = NullPrincipal::CreateWithoutOriginAttributes();
-  nsCOMPtr<nsIDOMDocument> domDocument;
-  nsresult rv = NS_NewDOMDocument(getter_AddRefs(domDocument),
+  nsCOMPtr<nsIDocument> document;
+  nsresult rv = NS_NewDOMDocument(getter_AddRefs(document),
                                   EmptyString(),
                                   EmptyString(),
                                   nullptr,
@@ -5220,7 +5255,6 @@ nsContentUtils::ConvertToPlainText(const nsAString& aSourceBuffer,
                                   DocumentFlavorHTML);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIDocument> document = do_QueryInterface(domDocument);
   rv = nsContentUtils::ParseDocumentHTML(aSourceBuffer, document,
     !(aFlags & nsIDocumentEncoder::OutputNoScriptContent));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -5228,7 +5262,7 @@ nsContentUtils::ConvertToPlainText(const nsAString& aSourceBuffer,
   nsCOMPtr<nsIDocumentEncoder> encoder = do_CreateInstance(
     "@mozilla.org/layout/documentEncoder;1?type=text/plain");
 
-  rv = encoder->Init(domDocument, NS_LITERAL_STRING("text/plain"), aFlags);
+  rv = encoder->Init(document, NS_LITERAL_STRING("text/plain"), aFlags);
   NS_ENSURE_SUCCESS(rv, rv);
 
   encoder->SetWrapColumn(aWrapCol);
@@ -5268,15 +5302,14 @@ nsContentUtils::SetNodeTextContent(nsIContent* aContent,
           skipFirst = false;
           continue;
         }
-        nsContentUtils::MaybeFireNodeRemoved(child, aContent, doc);
+        nsContentUtils::MaybeFireNodeRemoved(child, aContent);
       }
     }
   }
 
   // Might as well stick a batch around this since we're performing several
   // mutations.
-  mozAutoDocUpdate updateBatch(aContent->GetComposedDoc(),
-    UPDATE_CONTENT_MODEL, true);
+  mozAutoDocUpdate updateBatch(aContent->GetComposedDoc(), true);
   nsAutoMutationBatch mb;
 
   if (aTryReuse && !aValue.IsEmpty()) {
@@ -5535,7 +5568,7 @@ nsContentUtils::TriggerLink(nsIContent *aContent, nsPresContext *aPresContext,
 
     handler->OnLinkClick(aContent, aLinkURI,
                          fileName.IsVoid() ? aTargetSpec.get() : EmptyString().get(),
-                         fileName, nullptr, -1, nullptr, EventStateManager::IsHandlingUserInput(),
+                         fileName, nullptr, nullptr, EventStateManager::IsHandlingUserInput(),
                          aIsTrusted, aContent->NodePrincipal());
   }
 }
@@ -5996,9 +6029,8 @@ nsContentUtils::CheckForSubFrameDrop(nsIDragSession* aDragSession,
 
   // If there is no source node, then this is a drag from another
   // application, which should be allowed.
-  nsCOMPtr<nsIDOMDocument> sourceDocument;
-  aDragSession->GetSourceDocument(getter_AddRefs(sourceDocument));
-  nsCOMPtr<nsIDocument> doc = do_QueryInterface(sourceDocument);
+  nsCOMPtr<nsIDocument> doc;
+  aDragSession->GetSourceDocument(getter_AddRefs(doc));
   if (doc) {
     // Get each successive parent of the source document and compare it to
     // the drop document. If they match, then this is a drag from a child frame.
@@ -7077,7 +7109,7 @@ nsContentUtils::IsPatternMatching(nsAString& aValue, nsAString& aPattern,
 
   // We can use the junk scope here, because we're just using it for
   // regexp evaluation, not actual script execution.
-  JSAutoCompartment ac(cx, xpc::UnprivilegedJunkScope());
+  JSAutoRealm ar(cx, xpc::UnprivilegedJunkScope());
 
   // The pattern has to match the entire value.
   aPattern.InsertLiteral(u"^(?:", 0);
@@ -9892,8 +9924,22 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
     tag = nsHTMLTags::CaseSensitiveAtomTagToId(name);
     isCustomElementName = (tag == eHTMLTag_userdefined &&
                            nsContentUtils::IsCustomElementName(name, kNameSpaceID_XHTML));
-  } else {
-    isCustomElementName = nsContentUtils::IsCustomElementName(name, kNameSpaceID_XUL);
+  } else { // kNameSpaceID_XUL
+    if (aIsAtom) {
+      // Make sure the customized built-in element to be constructed confirms
+      // to our naming requirement, i.e. [is] must be a dashed name and
+      // the tag name must not.
+      // if so, set isCustomElementName to false to kick off all the logics
+      // that pick up aIsAtom.
+      if (nsContentUtils::IsNameWithDash(aIsAtom) &&
+          !nsContentUtils::IsNameWithDash(name)) {
+        isCustomElementName = false;
+      } else {
+        isCustomElementName = nsContentUtils::IsCustomElementName(name, kNameSpaceID_XUL);
+      }
+    } else {
+      isCustomElementName = nsContentUtils::IsCustomElementName(name, kNameSpaceID_XUL);
+    }
   }
 
   RefPtr<nsAtom> tagAtom = nodeInfo->NameAtom();
@@ -9962,9 +10008,11 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
       // CustomElementData setup, if not we will hit the assertion in
       // SetCustomElementData().
       // Built-in element
-      MOZ_ASSERT(nodeInfo->NamespaceEquals(kNameSpaceID_XHTML),
-                 "Custom built-in XUL elements are not supported yet.");
-      *aResult = CreateHTMLElement(tag, nodeInfo.forget(), aFromParser).take();
+      if (nodeInfo->NamespaceEquals(kNameSpaceID_XHTML)) {
+        *aResult = CreateHTMLElement(tag, nodeInfo.forget(), aFromParser).take();
+      } else {
+        NS_IF_ADDREF(*aResult = nsXULElement::Construct(nodeInfo.forget()));
+      }
       (*aResult)->SetCustomElementData(new CustomElementData(typeAtom));
       if (synchronousCustomElements) {
         CustomElementRegistry::Upgrade(*aResult, definition, rv);
@@ -10496,19 +10544,6 @@ nsContentUtils::ShouldBlockReservedKeys(WidgetKeyboardEvent* aKeyEvent)
   return false;
 }
 
-/* static */ Element*
-nsContentUtils::GetClosestNonNativeAnonymousAncestor(Element* aElement)
-{
-  MOZ_ASSERT(aElement);
-  MOZ_ASSERT(aElement->IsNativeAnonymous());
-
-  Element* e = aElement;
-  while (e && e->IsNativeAnonymous()) {
-    e = e->GetParentElement();
-  }
-  return e;
-}
-
 /**
  * Checks whether the given type is a supported document type for
  * loading within the nsObjectLoadingContent specified by aContent.
@@ -10624,9 +10659,8 @@ nsContentUtils::GetEventTargetByLoadInfo(nsILoadInfo* aLoadInfo, TaskCategory aC
     return nullptr;
   }
 
-  nsCOMPtr<nsIDOMDocument> domDoc;
-  aLoadInfo->GetLoadingDocument(getter_AddRefs(domDoc));
-  nsCOMPtr<nsIDocument> doc = do_QueryInterface(domDoc);
+  nsCOMPtr<nsIDocument> doc;
+  aLoadInfo->GetLoadingDocument(getter_AddRefs(doc));
   nsCOMPtr<nsISerialEventTarget> target;
   if (doc) {
     if (DocGroup* group = doc->GetDocGroup()) {

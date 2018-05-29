@@ -9,7 +9,7 @@
 #include "gc/Marking.h"
 #include "jit/BaselineFrame.h"
 #include "jit/JitcodeMap.h"
-#include "jit/JitCompartment.h"
+#include "jit/JitRealm.h"
 #include "vm/Debugger.h"
 #include "vm/JSContext.h"
 #include "vm/Opcodes.h"
@@ -385,8 +385,8 @@ InterpreterFrame::trace(JSTracer* trc, Value* sp, jsbytecode* pc)
         traceValues(trc, 0, nlivefixed);
     }
 
-    if (script->compartment()->debugEnvs)
-        script->compartment()->debugEnvs->traceLiveFrame(trc, this);
+    if (auto* debugEnvs = script->realm()->debugEnvs())
+        debugEnvs->traceLiveFrame(trc, this);
 }
 
 void
@@ -673,12 +673,14 @@ FrameIter::settleOnActivation()
 
         Activation* activation = data_.activations_.activation();
 
-        // If the caller supplied principals, only show activations which are subsumed (of the same
-        // origin or of an origin accessible) by these principals.
+        // If the caller supplied principals, only show activations which are
+        // subsumed (of the same origin or of an origin accessible) by these
+        // principals.
         if (data_.principals_) {
             JSContext* cx = data_.cx_;
             if (JSSubsumesOp subsumes = cx->runtime()->securityCallbacks->subsumes) {
-                if (!subsumes(data_.principals_, activation->compartment()->principals())) {
+                JS::Realm* realm = JS::GetRealmForCompartment(activation->compartment());
+                if (!subsumes(data_.principals_, realm->principals())) {
                     ++data_.activations_;
                     continue;
                 }
@@ -897,6 +899,17 @@ FrameIter::compartment() const
         return data_.activations_->compartment();
     }
     MOZ_CRASH("Unexpected state");
+}
+
+Realm*
+FrameIter::realm() const
+{
+    MOZ_ASSERT(!done());
+
+    if (hasScript())
+        return script()->realm();
+
+    return wasmInstance()->realm();
 }
 
 bool
@@ -1620,9 +1633,9 @@ jit::JitActivation::getRematerializedFrame(JSContext* cx, const JSJitFrameIter& 
         MaybeReadFallback recover(cx, this, &iter);
 
         // Frames are often rematerialized with the cx inside a Debugger's
-        // compartment. To recover slots and to create CallObjects, we need to
-        // be in the activation's compartment.
-        AutoCompartmentUnchecked ac(cx, compartment_);
+        // realm. To recover slots and to create CallObjects, we need to
+        // be in the script's realm.
+        AutoRealmUnchecked ar(cx, iter.script()->realm());
 
         if (!RematerializedFrame::RematerializeInlineFrames(cx, top, inlineIter, recover, frames))
             return nullptr;
@@ -1655,7 +1668,7 @@ jit::JitActivation::removeRematerializedFramesFromDebugger(JSContext* cx, uint8_
     // Ion bailout can fail due to overrecursion and OOM. In such cases we
     // cannot honor any further Debugger hooks on the frame, and need to
     // ensure that its Debugger.Frame entry is cleaned up.
-    if (!cx->compartment()->isDebuggee() || !rematerializedFrames_)
+    if (!cx->realm()->isDebuggee() || !rematerializedFrames_)
         return;
     if (RematerializedFrameTable::Ptr p = rematerializedFrames_->lookup(top)) {
         for (uint32_t i = 0; i < p->value().length(); i++)
@@ -1985,6 +1998,7 @@ JS::ProfilingFrameIterator::getPhysicalFrameAndEntry(jit::JitcodeGlobalEntry* en
         frame.returnAddress = nullptr;
         frame.activation = activation_;
         frame.label = nullptr;
+        frame.endStackAddress = activation_->asJit()->jsOrWasmExitFP();
         return mozilla::Some(frame);
     }
 
@@ -2011,6 +2025,7 @@ JS::ProfilingFrameIterator::getPhysicalFrameAndEntry(jit::JitcodeGlobalEntry* en
     frame.returnAddress = returnAddr;
     frame.activation = activation_;
     frame.label = nullptr;
+    frame.endStackAddress = activation_->asJit()->jsOrWasmExitFP();
     return mozilla::Some(frame);
 }
 

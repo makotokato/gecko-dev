@@ -294,7 +294,7 @@ public class GeckoSession extends LayerSession
                 "GeckoView:AndroidPermission",
                 "GeckoView:ContentPermission",
                 "GeckoView:MediaPermission"
-            }, /* alwaysListen */ true
+            }
         ) {
             @Override
             public void handleMessage(final PermissionDelegate delegate,
@@ -315,7 +315,7 @@ public class GeckoSession extends LayerSession
                     final int type;
                     if ("geolocation".equals(typeString)) {
                         type = PermissionDelegate.PERMISSION_GEOLOCATION;
-                    } else if ("desktop_notification".equals(typeString)) {
+                    } else if ("desktop-notification".equals(typeString)) {
                         type = PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION;
                     } else {
                         throw new IllegalArgumentException("Unknown permission request: " + typeString);
@@ -742,8 +742,14 @@ public class GeckoSession extends LayerSession
     }
 
     private GeckoBundle createInitData() {
-        final GeckoBundle initData = new GeckoBundle(1);
+        final GeckoBundle initData = new GeckoBundle(2);
         initData.putBundle("settings", mSettings.toBundle());
+
+        final GeckoBundle modules = new GeckoBundle(mSessionHandlers.length);
+        for (final GeckoSessionHandler<?> handler : mSessionHandlers) {
+            modules.putBoolean(handler.getName(), handler.isEnabled());
+        }
+        initData.putBundle("modules", modules);
         return initData;
     }
 
@@ -827,15 +833,6 @@ public class GeckoSession extends LayerSession
     private void onWindowChanged(int change, boolean inProgress) {
         if ((change == WINDOW_OPEN || change == WINDOW_TRANSFER_IN) && !inProgress) {
             mTextInput.onWindowChanged(mWindow);
-        }
-
-        if (change == WINDOW_CLOSE) {
-            // Detach when window is closing, and reattach immediately after window is closed.
-            // We reattach immediate after closing because we want any actions performed while the
-            // session is closed to be properly queued, until the session is open again.
-            for (final GeckoSessionHandler<?> handler : mSessionHandlers) {
-                handler.setSessionIsReady(this, !inProgress);
-            }
         }
     }
 

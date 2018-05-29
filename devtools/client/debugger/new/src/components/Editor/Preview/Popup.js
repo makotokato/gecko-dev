@@ -31,6 +31,8 @@ var _PreviewFunction2 = _interopRequireDefault(_PreviewFunction);
 
 var _editor = require("../../../utils/editor/index");
 
+var _preview = require("../../../utils/preview");
+
 var _Svg = require("devtools/client/debugger/new/dist/vendors").vendored["Svg"];
 
 var _Svg2 = _interopRequireDefault(_Svg);
@@ -68,7 +70,7 @@ class Popup extends _react.Component {
     return _temp = super(...args), this.onMouseLeave = e => {
       const relatedTarget = e.relatedTarget;
 
-      if (relatedTarget && (relatedTarget.classList.contains("popover") || relatedTarget.classList.contains("debug-expression") || relatedTarget.classList.contains("editor-mount"))) {
+      if (relatedTarget && relatedTarget.classList && (relatedTarget.classList.contains("popover") || relatedTarget.classList.contains("debug-expression") || relatedTarget.classList.contains("editor-mount"))) {
         return;
       }
 
@@ -135,22 +137,31 @@ class Popup extends _react.Component {
     });
   }
 
-  getChildren() {
+  getObjectProperties() {
     const {
       popupObjectProperties
     } = this.props;
     const root = this.getRoot();
     const value = getValue(root);
-    const actor = value ? value.actor : null;
-    const loadedRootProperties = popupObjectProperties[actor];
 
-    if (!loadedRootProperties) {
+    if (!value) {
+      return null;
+    }
+
+    return popupObjectProperties[value.actor];
+  }
+
+  getChildren() {
+    const properties = this.getObjectProperties();
+    const root = this.getRoot();
+
+    if (!properties) {
       return null;
     }
 
     const children = getChildren({
       item: root,
-      loadedProperties: new Map([[root.path, loadedRootProperties]])
+      loadedProperties: new Map([[root.path, properties]])
     });
 
     if (children.length > 0) {
@@ -183,7 +194,7 @@ class Popup extends _react.Component {
     }));
   }
 
-  renderReact(react, roots) {
+  renderReact(react) {
     const reactHeader = react.displayName || "React Component";
     return _react2.default.createElement("div", {
       className: "header-container"
@@ -221,12 +232,12 @@ class Popup extends _react.Component {
 
     let header = null;
 
-    if (extra.immutable) {
+    if ((0, _preview.isImmutable)(this.getObjectProperties())) {
       header = this.renderImmutable(extra.immutable);
       roots = roots.filter(r => r.type != NODE_TYPES.PROTOTYPE);
     }
 
-    if (extra.react) {
+    if ((0, _preview.isReactComponent)(this.getObjectProperties())) {
       header = this.renderReact(extra.react);
       roots = roots.filter(r => ["state", "props"].includes(r.name));
     }
@@ -264,19 +275,19 @@ class Popup extends _react.Component {
   }
 
   renderPreview() {
+    // We don't have to check and
+    // return on `false`, `""`, `0`, `undefined` etc,
+    // these falsy simple typed value because we want to
+    // do `renderSimplePreview` on these values below.
     const {
       value
     } = this.props;
 
-    if (!value) {
-      return null;
-    }
-
-    if (value.class === "Function") {
+    if (value && value.class === "Function") {
       return this.renderFunctionPreview();
     }
 
-    if (value.type === "object") {
+    if (value && value.type === "object") {
       return _react2.default.createElement("div", null, this.renderObjectPreview());
     }
 

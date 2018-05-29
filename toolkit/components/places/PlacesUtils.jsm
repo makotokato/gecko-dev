@@ -857,7 +857,7 @@ var PlacesUtils = {
       if (PlacesUtils.nodeIsFolder(node) &&
           node.type != Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER_SHORTCUT &&
           asQuery(node).queryOptions.excludeItems) {
-        let folderRoot = PlacesUtils.getFolderContents(node.itemId, false, true).root;
+        let folderRoot = PlacesUtils.getFolderContents(node.bookmarkGuid, false, true).root;
         try {
           return gatherDataFunc(folderRoot);
         } finally {
@@ -1145,7 +1145,7 @@ var PlacesUtils = {
 
   /**
    * Generates a nsINavHistoryResult for the contents of a folder.
-   * @param   folderId
+   * @param   aFolderGuid
    *          The folder to open
    * @param   [optional] excludeItems
    *          True to hide all items (individual bookmarks). This is used on
@@ -1157,13 +1157,12 @@ var PlacesUtils = {
    * @returns A nsINavHistoryResult containing the contents of the
    *          folder. The result.root is guaranteed to be open.
    */
-  getFolderContents:
-  function PU_getFolderContents(aFolderId, aExcludeItems, aExpandQueries) {
-    if (typeof aFolderId !== "number") {
-      throw new Error("aFolderId should be a number.");
+  getFolderContents(aFolderGuid, aExcludeItems, aExpandQueries) {
+    if (!this.isValidGuid(aFolderGuid)) {
+      throw new Error("aFolderGuid should be a valid GUID.");
     }
     var query = this.history.getNewQuery();
-    query.setFolders([aFolderId], 1);
+    query.setParents([aFolderGuid], 1);
     var options = this.history.getNewQueryOptions();
     options.excludeItems = aExcludeItems;
     options.expandQueries = aExpandQueries;
@@ -1851,8 +1850,7 @@ var PlacesUtils = {
 
 XPCOMUtils.defineLazyGetter(PlacesUtils, "history", function() {
   let hs = Cc["@mozilla.org/browser/nav-history-service;1"]
-             .getService(Ci.nsINavHistoryService)
-             .QueryInterface(Ci.nsPIPlacesDatabase);
+             .getService(Ci.nsINavHistoryService);
   return Object.freeze(new Proxy(hs, {
     get(target, name) {
       let property, object;
@@ -1873,7 +1871,7 @@ XPCOMUtils.defineLazyGetter(PlacesUtils, "history", function() {
 
 XPCOMUtils.defineLazyServiceGetter(PlacesUtils, "favicons",
                                    "@mozilla.org/browser/favicon-service;1",
-                                   "mozIAsyncFavicons");
+                                   "nsIFaviconService");
 
 XPCOMUtils.defineLazyServiceGetter(this, "bmsvc",
                                    "@mozilla.org/browser/nav-bookmarks-service;1",
@@ -2242,7 +2240,7 @@ PlacesUtils.keywords = {
                               GENERATE_GUID()))
               `, { url: url.href, rev_host: PlacesUtils.getReversedHost(url),
                    frecency: url.protocol == "place:" ? 0 : -1 });
-            await db.executeCached("DELETE FROM moz_updatehostsinsert_temp");
+            await db.executeCached("DELETE FROM moz_updateoriginsinsert_temp");
 
             // A new keyword could be assigned to an url that already has one,
             // then we must replace the old keyword with the new one.

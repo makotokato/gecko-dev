@@ -13,7 +13,6 @@
 #include "mozilla/Preferences.h"
 
 #include "nsError.h"
-#include "mozilla/dom/CSSPrimitiveValueBinding.h"
 #include "nsIFrame.h"
 #include "nsIFrameInlines.h"
 #include "mozilla/ComputedStyle.h"
@@ -758,11 +757,11 @@ nsComputedDOMStyle::DocToUpdate()
   MOZ_CRASH("called nsComputedDOMStyle::DocToUpdate");
 }
 
-nsDOMCSSDeclaration::ServoCSSParsingEnvironment
-nsComputedDOMStyle::GetServoCSSParsingEnvironment(
+nsDOMCSSDeclaration::ParsingEnvironment
+nsComputedDOMStyle::GetParsingEnvironment(
   nsIPrincipal* aSubjectPrincipal) const
 {
-  MOZ_CRASH("called nsComputedDOMStyle::GetServoCSSParsingEnvironment");
+  MOZ_CRASH("called nsComputedDOMStyle::GetParsingEnvironment");
 }
 
 void
@@ -988,16 +987,6 @@ nsComputedDOMStyle::ClearCurrentStyleSources()
 }
 
 already_AddRefed<CSSValue>
-nsComputedDOMStyle::GetPropertyCSSValue(const nsAString& aPropertyName,
-                                        ErrorResult& aRv)
-{
-  if (nsCOMPtr<nsIDocument> document = do_QueryReferent(mDocumentWeak)) {
-    document->WarnOnceAbout(nsIDocument::eGetPropertyCSSValue);
-  }
-  return GetPropertyCSSValueWithoutWarning(aPropertyName, aRv);
-}
-
-already_AddRefed<CSSValue>
 nsComputedDOMStyle::GetPropertyCSSValueWithoutWarning(
   const nsAString& aPropertyName,
   ErrorResult& aRv)
@@ -1191,6 +1180,32 @@ nsComputedDOMStyle::SetValueFromComplexColor(nsROCSSPrimitiveValue* aValue,
   SetToRGBAColor(aValue, aColor.CalcColor(mComputedStyle));
 }
 
+void
+nsComputedDOMStyle::SetValueForWidgetColor(nsROCSSPrimitiveValue* aValue,
+                                           const StyleComplexColor& aColor,
+                                           uint8_t aWidgetType)
+{
+  if (!aColor.mIsAuto) {
+    SetToRGBAColor(aValue, aColor.CalcColor(mComputedStyle));
+    return;
+  }
+  nsPresContext* presContext = mPresShell->GetPresContext();
+  MOZ_ASSERT(presContext);
+  if (nsContentUtils::ShouldResistFingerprinting(presContext->GetDocShell())) {
+    // Return transparent when resisting fingerprinting.
+    SetToRGBAColor(aValue, NS_RGBA(0, 0, 0, 0));
+    return;
+  }
+  if (nsITheme* theme = presContext->GetTheme()) {
+    nscolor color = theme->GetWidgetAutoColor(mComputedStyle, aWidgetType);
+    SetToRGBAColor(aValue, color);
+  } else {
+    // If we don't have theme, we don't know what value it should be,
+    // just give it a transparent fallback.
+    SetToRGBAColor(aValue, NS_RGBA(0, 0, 0, 0));
+  }
+}
+
 already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetColor()
 {
@@ -1377,7 +1392,7 @@ nsComputedDOMStyle::DoGetContent()
         nsAutoString str;
         nsStyleUtil::AppendEscapedCSSIdent(
           nsDependentString(data.GetAttr()->mName->GetUTF16String()), str);
-        val->SetString(str, CSSPrimitiveValueBinding::CSS_ATTR);
+        val->SetString(str, nsROCSSPrimitiveValue::CSS_ATTR);
         break;
       }
       case eStyleContentType_Counter:
@@ -1402,7 +1417,7 @@ nsComputedDOMStyle::DoGetContent()
         }
 
         str.Append(char16_t(')'));
-        val->SetString(str, CSSPrimitiveValueBinding::CSS_COUNTER);
+        val->SetString(str, nsROCSSPrimitiveValue::CSS_COUNTER);
         break;
       }
       case eStyleContentType_OpenQuote:
@@ -3779,6 +3794,24 @@ nsComputedDOMStyle::DoGetScrollSnapCoordinate()
     }
     return valueList.forget();
   }
+}
+
+already_AddRefed<CSSValue>
+nsComputedDOMStyle::DoGetScrollbarFaceColor()
+{
+  RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
+  SetValueForWidgetColor(val, StyleUserInterface()->mScrollbarFaceColor,
+                         NS_THEME_SCROLLBARTHUMB_VERTICAL);
+  return val.forget();
+}
+
+already_AddRefed<CSSValue>
+nsComputedDOMStyle::DoGetScrollbarTrackColor()
+{
+  RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
+  SetValueForWidgetColor(val, StyleUserInterface()->mScrollbarTrackColor,
+                         NS_THEME_SCROLLBAR_VERTICAL);
+  return val.forget();
 }
 
 already_AddRefed<CSSValue>

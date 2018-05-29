@@ -1519,6 +1519,10 @@ ContentParent::OnChannelConnected(int32_t pid)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
+#ifndef ASYNC_CONTENTPROC_LAUNCH
+  SetOtherProcessId(pid);
+#endif
+
 #if defined(ANDROID) || defined(LINUX)
   // Check nice preference
   int32_t nice = Preferences::GetInt("dom.ipc.content.nice", 0);
@@ -1543,7 +1547,7 @@ ContentParent::OnChannelConnected(int32_t pid)
   }
 #endif
 
-#ifdef MOZ_CODE_COVERAGE
+#if defined(MOZ_CODE_COVERAGE) && defined(ASYNC_CONTENTPROC_LAUNCH)
   Unused << SendShareCodeCoverageMutex(
               CodeCoverageHandler::Get()->GetMutexHandle(pid));
 #endif
@@ -1595,7 +1599,8 @@ ContentParent::RecvAllocateLayerTreeId(const ContentParentId& aCpId,
   // child of it.
   ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
   RefPtr<ContentParent> contentParent = cpm->GetContentProcessById(aCpId);
-  if (ChildID() != aCpId && !contentParent->CanCommunicateWith(ChildID())) {
+  if (!contentParent ||
+      (ChildID() != aCpId && !contentParent->CanCommunicateWith(ChildID()))) {
     return IPC_FAIL_NO_REASON(this);
   }
 
@@ -2059,13 +2064,27 @@ ContentParent::LaunchSubprocess(ProcessPriority aInitialPriority /* = PROCESS_PR
   extraArgs.push_back(parentBuildID.get());
 
   SetOtherProcessId(kInvalidProcessId, ProcessIdState::ePending);
+#ifdef ASYNC_CONTENTPROC_LAUNCH
   if (!mSubprocess->Launch(extraArgs)) {
+#else
+  if (!mSubprocess->LaunchAndWaitForProcessHandle(extraArgs)) {
+#endif
     NS_ERROR("failed to launch child in the parent");
     MarkAsDead();
     return false;
   }
 
+#ifdef ASYNC_CONTENTPROC_LAUNCH
   OpenWithAsyncPid(mSubprocess->GetChannel());
+#else
+  base::ProcessId procId =
+    base::GetProcId(mSubprocess->GetChildProcessHandle());
+  Open(mSubprocess->GetChannel(), procId);
+#ifdef MOZ_CODE_COVERAGE
+  Unused << SendShareCodeCoverageMutex(
+              CodeCoverageHandler::Get()->GetMutexHandle(procId));
+#endif
+#endif // ASYNC_CONTENTPROC_LAUNCH
 
   InitInternal(aInitialPriority);
 
@@ -2076,8 +2095,9 @@ ContentParent::LaunchSubprocess(ProcessPriority aInitialPriority /* = PROCESS_PR
   // Set a reply timeout for CPOWs.
   SetReplyTimeoutMs(Preferences::GetInt("dom.ipc.cpow.timeout", 0));
 
-  // TODO: If OtherPid() is not called between mSubprocess->Launch() and this,
-  // then we're not really measuring how long it took to spawn the process.
+  // TODO: In ASYNC_CONTENTPROC_LAUNCH, if OtherPid() is not called between
+  // mSubprocess->Launch() and this, then we're not really measuring how long it
+  // took to spawn the process.
   Telemetry::Accumulate(Telemetry::CONTENT_PROCESS_LAUNCH_TIME_MS,
                         static_cast<uint32_t>((TimeStamp::Now() - mLaunchTS)
                                               .ToMilliseconds()));
@@ -2448,6 +2468,11 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority)
     nsTArray<BlobURLRegistrationData> registrations;
     if (nsHostObjectProtocolHandler::GetAllBlobURLEntries(registrations,
                                                           this)) {
+      for (const BlobURLRegistrationData& registration : registrations) {
+        nsresult rv = TransmitPermissionsForPrincipal(registration.principal());
+        Unused << NS_WARN_IF(NS_FAILED(rv));
+      }
+
       Unused << SendInitBlobURLs(registrations);
     }
   }
@@ -2809,6 +2834,10 @@ ContentParent::Observe(nsISupports* aSubject,
 {
   if (mSubprocess && (!strcmp(aTopic, "profile-before-change") ||
                       !strcmp(aTopic, "xpcom-shutdown"))) {
+    // Make sure that our process will get scheduled.
+    ProcessPriorityManager::SetProcessPriority(this,
+                                               PROCESS_PRIORITY_FOREGROUND);
+
     // Okay to call ShutDownProcess multiple times.
     ShutDownProcess(SEND_SHUTDOWN_MESSAGE);
 
@@ -2823,9 +2852,7 @@ ContentParent::Observe(nsISupports* aSubject,
     return NS_OK;
 
   // listening for memory pressure event
-  if (!strcmp(aTopic, "memory-pressure") &&
-      !StringEndsWith(nsDependentString(aData),
-                      NS_LITERAL_STRING("-no-forward"))) {
+  if (!strcmp(aTopic, "memory-pressure")) {
       Unused << SendFlushMemory(nsDependentString(aData));
   }
   else if (!strcmp(aTopic, "nsPref:changed")) {
@@ -5128,8 +5155,13 @@ ContentParent::BroadcastBlobURLRegistration(const nsACString& aURI,
 
   for (auto* cp : AllProcesses(eLive)) {
     if (cp != aIgnoreThisCP) {
+      nsresult rv = cp->TransmitPermissionsForPrincipal(principal);
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        break;
+      }
+
       IPCBlob ipcBlob;
-      nsresult rv = IPCBlobUtils::Serialize(aBlobImpl, cp, ipcBlob);
+      rv = IPCBlobUtils::Serialize(aBlobImpl, cp, ipcBlob);
       if (NS_WARN_IF(NS_FAILED(rv))) {
         break;
       }
@@ -5291,12 +5323,17 @@ ContentParent::SendGetFilesResponseAndForget(const nsID& aUUID,
 }
 
 void
-ContentParent::ForceTabPaint(TabParent* aTabParent, uint64_t aLayerObserverEpoch)
+ContentParent::PaintTabWhileInterruptingJS(TabParent* aTabParent,
+                                           bool aForceRepaint,
+                                           uint64_t aLayerObserverEpoch)
 {
   if (!mHangMonitorActor) {
     return;
   }
-  ProcessHangMonitor::ForcePaint(mHangMonitorActor, aTabParent, aLayerObserverEpoch);
+  ProcessHangMonitor::PaintWhileInterruptingJS(mHangMonitorActor,
+                                               aTabParent,
+                                               aForceRepaint,
+                                               aLayerObserverEpoch);
 }
 
 void

@@ -20,7 +20,6 @@
 #include "nsCaret.h"
 #include "nsContentUtils.h"
 #include "nsFocusManager.h"
-#include "nsIDOMRange.h"
 #include "nsIEditingSession.h"
 #include "nsContainerFrame.h"
 #include "nsFrameSelection.h"
@@ -31,6 +30,7 @@
 #include "nsIServiceManager.h"
 #include "nsITextControlElement.h"
 #include "nsIMathMLFrame.h"
+#include "nsRange.h"
 #include "nsTextFragment.h"
 #include "mozilla/BinarySearch.h"
 #include "mozilla/dom/Element.h"
@@ -57,7 +57,7 @@ HyperTextAccessible::
 }
 
 role
-HyperTextAccessible::NativeRole()
+HyperTextAccessible::NativeRole() const
 {
   a11y::role r = GetAccService()->MarkupRole(mContent);
   if (r != roles::NOTHING)
@@ -71,7 +71,7 @@ HyperTextAccessible::NativeRole()
 }
 
 uint64_t
-HyperTextAccessible::NativeState()
+HyperTextAccessible::NativeState() const
 {
   uint64_t states = AccessibleWrap::NativeState();
 
@@ -1868,7 +1868,7 @@ HyperTextAccessible::RangeAtPoint(int32_t aX, int32_t aY,
 
 // Accessible protected
 ENameValueFlag
-HyperTextAccessible::NativeName(nsString& aName)
+HyperTextAccessible::NativeName(nsString& aName) const
 {
   // Check @alt attribute for invalid img elements.
   bool hasImgAlt = false;
@@ -1922,7 +1922,7 @@ HyperTextAccessible::InsertChildAt(uint32_t aIndex, Accessible* aChild)
 }
 
 Relation
-HyperTextAccessible::RelationByType(RelationType aType)
+HyperTextAccessible::RelationByType(RelationType aType) const
 {
   Relation rel = Accessible::RelationByType(aType);
 

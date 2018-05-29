@@ -171,7 +171,15 @@ add_task(async function() {
       };
 
       let target;
-      if (packed) {
+      if (!packed) {
+        // Unpacked extensions don't support signing, which means that
+        // our mock signing service is not able to give them a
+        // privileged signed state, and we can't install them on release
+        // builds.
+        if (!AppConstants.MOZ_ALLOW_LEGACY_EXTENSIONS) {
+          continue;
+        }
+
         target = tempdir.clone();
         target.append(ID);
 
@@ -214,6 +222,8 @@ add_task(async function() {
 
       addon = await promiseAddonByID(ID);
 
+      let signedState = packed ? AddonManager.SIGNEDSTATE_PRIVILEGED : AddonManager.SIGNEDSTATE_UNKNOWN;
+
       // temporary add-on is installed and started
       Assert.notEqual(addon, null);
       Assert.equal(addon.version, newversion);
@@ -222,7 +232,7 @@ add_task(async function() {
       Assert.ok(!addon.appDisabled);
       Assert.ok(addon.isActive);
       Assert.equal(addon.type, "extension");
-      Assert.equal(addon.signedState, mozinfo.addon_signing ? AddonManager.SIGNEDSTATE_PRIVILEGED : AddonManager.SIGNEDSTATE_NOT_REQUIRED);
+      Assert.equal(addon.signedState, mozinfo.addon_signing ? signedState : AddonManager.SIGNEDSTATE_NOT_REQUIRED);
 
       // Now restart, the temporary addon will go away which should
       // be the opposite action (ie, if the temporary addon was an
@@ -279,7 +289,7 @@ add_task(async function() {
   }
 
   // remove original add-on
-  addon.uninstall();
+  await addon.uninstall();
 
   BootstrapMonitor.checkAddonNotInstalled(ID);
   BootstrapMonitor.checkAddonNotStarted(ID);
@@ -307,10 +317,7 @@ add_task(async function test_samefile() {
     }
   });
 
-  await Promise.all([
-    AddonManager.installTemporaryAddon(webext),
-    promiseWebExtensionStartup(),
-  ]);
+  await AddonManager.installTemporaryAddon(webext);
   let addon = await promiseAddonByID(ID);
 
   // temporary add-on is installed and started
@@ -337,10 +344,7 @@ add_task(async function test_samefile() {
     }
   });
 
-  await Promise.all([
-    AddonManager.installTemporaryAddon(webext),
-    promiseWebExtensionStartup(),
-  ]);
+  await AddonManager.installTemporaryAddon(webext);
   addon = await promiseAddonByID(ID);
 
   // temporary add-on is installed and started
@@ -354,12 +358,17 @@ add_task(async function test_samefile() {
   Assert.ok(addon.isWebExtension);
   Assert.equal(addon.signedState, mozinfo.addon_signing ? AddonManager.SIGNEDSTATE_PRIVILEGED : AddonManager.SIGNEDSTATE_NOT_REQUIRED);
 
-  addon.uninstall();
+  await addon.uninstall();
 });
 
 // Install a temporary add-on over the top of an existing add-on.
 // Uninstall it and make sure the existing add-on comes back.
 add_task(async function() {
+  // We can't install unpacked add-ons on release builds. See above.
+  if (!AppConstants.MOZ_ALLOW_LEGACY_EXTENSIONS) {
+    return;
+  }
+
   await promiseInstallAllFiles([do_get_addon("test_bootstrap1_1")], true);
 
   BootstrapMonitor.checkAddonInstalled(ID, "1.0");
@@ -430,9 +439,9 @@ add_task(async function() {
   Assert.ok(!addon.appDisabled);
   Assert.ok(addon.isActive);
   Assert.equal(addon.type, "extension");
-  Assert.equal(addon.signedState, mozinfo.addon_signing ? AddonManager.SIGNEDSTATE_PRIVILEGED : AddonManager.SIGNEDSTATE_NOT_REQUIRED);
+  Assert.equal(addon.signedState, mozinfo.addon_signing ? AddonManager.SIGNEDSTATE_UNKNOWN : AddonManager.SIGNEDSTATE_NOT_REQUIRED);
 
-  addon.uninstall();
+  await addon.uninstall();
 
   await new Promise(executeSoon);
   addon = await promiseAddonByID(ID);
@@ -451,7 +460,7 @@ add_task(async function() {
   Assert.equal(addon.signedState, mozinfo.addon_signing ? AddonManager.SIGNEDSTATE_PRIVILEGED : AddonManager.SIGNEDSTATE_NOT_REQUIRED);
 
   unpacked_addon.remove(true);
-  addon.uninstall();
+  await addon.uninstall();
 
   BootstrapMonitor.checkAddonNotInstalled(ID);
   BootstrapMonitor.checkAddonNotStarted(ID);
@@ -462,6 +471,11 @@ add_task(async function() {
 // Install a temporary add-on as a version upgrade over the top of an
 // existing temporary add-on.
 add_task(async function() {
+  // We can't install unpacked add-ons on release builds. See above.
+  if (!AppConstants.MOZ_ALLOW_LEGACY_EXTENSIONS) {
+    return;
+  }
+
   const tempdir = gTmpD.clone();
 
   await promiseWriteInstallRDFToDir(sampleRDFManifest, tempdir, "bootstrap1@tests.mozilla.org", "bootstrap.js");
@@ -504,7 +518,7 @@ add_task(async function() {
   equal(startup.data.oldVersion, "1.0");
 
   const addon = await promiseAddonByID(ID);
-  addon.uninstall();
+  await addon.uninstall();
 
   unpackedAddon.remove(true);
   await promiseRestartManager();
@@ -513,6 +527,11 @@ add_task(async function() {
 // Install a temporary add-on as a version downgrade over the top of an
 // existing temporary add-on.
 add_task(async function() {
+  // We can't install unpacked add-ons on release builds. See above.
+  if (!AppConstants.MOZ_ALLOW_LEGACY_EXTENSIONS) {
+    return;
+  }
+
   const tempdir = gTmpD.clone();
 
   await promiseWriteInstallRDFToDir(sampleRDFManifest, tempdir, "bootstrap1@tests.mozilla.org", "bootstrap.js");
@@ -553,7 +572,7 @@ add_task(async function() {
   equal(startup.reason, BOOTSTRAP_REASONS.ADDON_DOWNGRADE);
 
   const addon = await promiseAddonByID(ID);
-  addon.uninstall();
+  await addon.uninstall();
 
   unpackedAddon.remove(true);
   await promiseRestartManager();
@@ -562,6 +581,11 @@ add_task(async function() {
 // Installing a temporary add-on over an existing add-on with the same
 // version number should be installed as an upgrade.
 add_task(async function() {
+  // We can't install unpacked add-ons on release builds. See above.
+  if (!AppConstants.MOZ_ALLOW_LEGACY_EXTENSIONS) {
+    return;
+  }
+
   const tempdir = gTmpD.clone();
 
   await promiseWriteInstallRDFToDir(sampleRDFManifest, tempdir, "bootstrap1@tests.mozilla.org", "bootstrap.js");
@@ -610,7 +634,7 @@ add_task(async function() {
   equal(startup.reason, BOOTSTRAP_REASONS.ADDON_UPGRADE);
 
   const addon = await promiseAddonByID(ID);
-  addon.uninstall();
+  await addon.uninstall();
 
   unpackedAddon.remove(true);
   await promiseRestartManager();
@@ -619,6 +643,11 @@ add_task(async function() {
 // Install a temporary add-on over the top of an existing disabled add-on.
 // After restart, the existing add-on should continue to be installed and disabled.
 add_task(async function() {
+  // We can't install unpacked add-ons on release builds. See above.
+  if (!AppConstants.MOZ_ALLOW_LEGACY_EXTENSIONS) {
+    return;
+  }
+
   await promiseInstallAllFiles([do_get_addon("test_bootstrap1_1")], true);
 
   BootstrapMonitor.checkAddonInstalled(ID, "1.0");
@@ -626,7 +655,7 @@ add_task(async function() {
 
   let addon = await promiseAddonByID(ID);
 
-  addon.userDisabled = true;
+  await addon.disable();
 
   BootstrapMonitor.checkAddonInstalled(ID, "1.0");
   BootstrapMonitor.checkAddonNotStarted(ID);
@@ -676,12 +705,12 @@ add_task(async function() {
   Assert.ok(!tempAddon.appDisabled);
   Assert.ok(tempAddon.isActive);
   Assert.equal(tempAddon.type, "extension");
-  Assert.equal(tempAddon.signedState, mozinfo.addon_signing ? AddonManager.SIGNEDSTATE_PRIVILEGED : AddonManager.SIGNEDSTATE_NOT_REQUIRED);
+  Assert.equal(tempAddon.signedState, mozinfo.addon_signing ? AddonManager.SIGNEDSTATE_UNKNOWN : AddonManager.SIGNEDSTATE_NOT_REQUIRED);
 
-  tempAddon.uninstall();
+  await tempAddon.uninstall();
   unpacked_addon.remove(true);
 
-  addon.userDisabled = false;
+  await addon.enable();
   await new Promise(executeSoon);
   addon = await promiseAddonByID(ID);
 
@@ -698,7 +727,7 @@ add_task(async function() {
   Assert.equal(addon.type, "extension");
   Assert.equal(addon.signedState, mozinfo.addon_signing ? AddonManager.SIGNEDSTATE_PRIVILEGED : AddonManager.SIGNEDSTATE_NOT_REQUIRED);
 
-  addon.uninstall();
+  await addon.uninstall();
 
   BootstrapMonitor.checkAddonNotInstalled(ID);
   BootstrapMonitor.checkAddonNotStarted(ID);
@@ -757,4 +786,24 @@ add_task(async function() {
   equal(addon.temporarilyInstalled, false);
 
   await promiseRestartManager();
+});
+
+// Tests that XPIs with a .zip extension work when loaded temporarily.
+add_task({ skip_if: () => AppConstants.MOZ_APP_NAME == "thunderbird" },
+         async function test_zip_extension() {
+  let xpi = createTempWebExtensionFile({
+    background() {
+      /* globals browser */
+      browser.test.sendMessage("started", "Hello.");
+    },
+  });
+  xpi.moveTo(null, xpi.leafName.replace(/\.xpi$/, ".zip"));
+
+  let extension = ExtensionTestUtils.loadExtensionXPI(xpi);
+  await extension.startup();
+
+  let msg = await extension.awaitMessage("started");
+  equal(msg, "Hello.", "Got expected background script message");
+
+  await extension.unload();
 });

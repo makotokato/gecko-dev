@@ -127,6 +127,9 @@ var StarUI = {
 
         switch (aEvent.keyCode) {
           case KeyEvent.DOM_VK_ESCAPE:
+            if (this._isNewBookmark) {
+              this._removeBookmarksOnPopupHidden = true;
+            }
             this.panel.hidePopup();
             break;
           case KeyEvent.DOM_VK_RETURN:
@@ -218,12 +221,6 @@ var StarUI = {
       return;
     }
     this._bookmarkPopupInitialized = true;
-    // Move the header (star, title, button) into the grid,
-    // so that it aligns nicely with the other items (bug 484022).
-    let header = this._element("editBookmarkPanelHeader");
-    let rows = this._element("editBookmarkPanelGrid").lastChild;
-    rows.insertBefore(header, rows.firstChild);
-    header.hidden = false;
 
     await this._doShowEditBookmarkPanel(aNode, aAnchorElement, aPosition, aUrl);
   },
@@ -240,22 +237,29 @@ var StarUI = {
         gNavigatorBundle.getString("editBookmarkPanel.editBookmarkTitle");
 
     // No description; show the Done, Remove;
-    this._element("editBookmarkPanelDescription").textContent = "";
     this._element("editBookmarkPanelBottomButtons").hidden = false;
     this._element("editBookmarkPanelContent").hidden = false;
 
-    // The label of the remove button differs if the URI is bookmarked
-    // multiple times.
     this._itemGuids = [];
-
     await PlacesUtils.bookmarks.fetch({url: aUrl},
       bookmark => this._itemGuids.push(bookmark.guid));
 
-    let forms = gNavigatorBundle.getString("editBookmark.removeBookmarks.label");
-    let bookmarksCount = this._itemGuids.length;
-    let label = PluralForm.get(bookmarksCount, forms)
-                          .replace("#1", bookmarksCount);
-    this._element("editBookmarkPanelRemoveButton").label = label;
+    let removeButton = this._element("editBookmarkPanelRemoveButton");
+    if (this._isNewBookmark) {
+      removeButton.label = gNavigatorBundle.getString("editBookmarkPanel.cancel.label");
+      removeButton.setAttribute("accesskey",
+        gNavigatorBundle.getString("editBookmarkPanel.cancel.accesskey"));
+    } else {
+      // The label of the remove button differs if the URI is bookmarked
+      // multiple times.
+      let bookmarksCount = this._itemGuids.length;
+      let forms = gNavigatorBundle.getString("editBookmark.removeBookmarks.label");
+      let label = PluralForm.get(bookmarksCount, forms)
+                            .replace("#1", bookmarksCount);
+      removeButton.label = label;
+      removeButton.setAttribute("accesskey",
+        gNavigatorBundle.getString("editBookmark.removeBookmarks.accesskey"));
+    }
 
     this.beginBatch();
 
@@ -581,9 +585,7 @@ var PlacesCommandHook = {
   },
 
   searchBookmarks() {
-    if (!focusAndSelectUrlBar()) {
-      return;
-    }
+    focusAndSelectUrlBar();
     for (let char of ["*", " "]) {
       let code = char.charCodeAt(0);
       gURLBar.inputField.dispatchEvent(new KeyboardEvent("keypress", {
@@ -1005,8 +1007,6 @@ var PlacesMenuDNDHandler = {
  * toolbar.
  */
 var PlacesToolbarHelper = {
-  _place: "place:folder=TOOLBAR",
-
   get _viewElt() {
     return document.getElementById("PlacesToolbar");
   },
@@ -1037,7 +1037,7 @@ var PlacesToolbarHelper = {
       return;
     }
 
-    new PlacesToolbar(this._place);
+    new PlacesToolbar(`place:parent=${PlacesUtils.bookmarks.toolbarGuid}`);
   },
 
   handleEvent(event) {
@@ -1342,7 +1342,7 @@ var BookmarkingUI = {
     if (node.parentNode._placesView)
       return;
 
-    new PlacesMenu(event, "place:folder=BOOKMARKS_MENU", {
+    new PlacesMenu(event, `place:parent=${PlacesUtils.bookmarks.menuGuid}`, {
       extraClasses: {
         entry: "subviewbutton",
         footer: "panel-subview-footer"

@@ -89,7 +89,8 @@ class GCZonesIter
     JS::Zone* operator->() const { return get(); }
 };
 
-typedef CompartmentsIterT<GCZonesIter> GCCompartmentsIter;
+using GCCompartmentsIter = CompartmentsIterT<GCZonesIter>;
+using GCRealmsIter = RealmsIterT<GCZonesIter>;
 
 /* Iterates over all zones in the current sweep group. */
 class SweepGroupZonesIter {
@@ -117,7 +118,8 @@ class SweepGroupZonesIter {
     JS::Zone* operator->() const { return get(); }
 };
 
-typedef CompartmentsIterT<SweepGroupZonesIter> SweepGroupCompartmentsIter;
+using SweepGroupCompartmentsIter = CompartmentsIterT<SweepGroupZonesIter>;
+using SweepGroupRealmsIter = RealmsIterT<SweepGroupZonesIter>;
 
 // Iterate the free cells in an arena. See also ArenaCellIterImpl which iterates
 // the allocated cells.

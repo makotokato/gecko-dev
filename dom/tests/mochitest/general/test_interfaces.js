@@ -257,8 +257,6 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "CSSPageRule", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "CSSPrimitiveValue", insecureContext: true},
-// IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "CSSPseudoElement", insecureContext: true, release: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "CSSRule", insecureContext: true},
@@ -275,10 +273,6 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "CSSTransition", insecureContext: true, release: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "CSSValue", insecureContext: true},
-// IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "CSSValueList", insecureContext: true},
-// IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "CustomElementRegistry", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "CustomEvent", insecureContext: true},
@@ -291,13 +285,13 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "DelayNode", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "DeviceLightEvent", insecureContext: true, disabled: isEarlyBetaOrEarlier},
+    {name: "DeviceLightEvent", insecureContext: true, disabled: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "DeviceMotionEvent", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "DeviceOrientationEvent", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "DeviceProximityEvent", insecureContext: true, disabled: isEarlyBetaOrEarlier},
+    {name: "DeviceProximityEvent", insecureContext: true, disabled: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "Directory", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -815,13 +809,9 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "Range", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "Rect", insecureContext: true},
-// IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "Request", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "Response", insecureContext: true},
-// IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "RGBColor", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "RTCCertificate", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -1155,7 +1145,7 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "URLSearchParams", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "UserProximityEvent", insecureContext: true, disabled: isEarlyBetaOrEarlier},
+    {name: "UserProximityEvent", insecureContext: true, disabled: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "ValidityState", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -1244,8 +1234,6 @@ var interfaceNamesInGlobalScope =
     {name: "XMLHttpRequestUpload", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "XMLSerializer", insecureContext: true},
-// IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "XMLStylesheetProcessingInstruction", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "XPathEvaluator", insecureContext: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!

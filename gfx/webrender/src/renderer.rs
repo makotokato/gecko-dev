@@ -128,6 +128,10 @@ const GPU_TAG_CACHE_CLIP: GpuProfileTag = GpuProfileTag {
     label: "C_Clip",
     color: debug_colors::PURPLE,
 };
+const GPU_TAG_CACHE_BORDER: GpuProfileTag = GpuProfileTag {
+    label: "C_Border",
+    color: debug_colors::CORNSILK,
+};
 const GPU_TAG_SETUP_TARGET: GpuProfileTag = GpuProfileTag {
     label: "target init",
     color: debug_colors::SLATEGREY,
@@ -135,10 +139,6 @@ const GPU_TAG_SETUP_TARGET: GpuProfileTag = GpuProfileTag {
 const GPU_TAG_SETUP_DATA: GpuProfileTag = GpuProfileTag {
     label: "data init",
     color: debug_colors::LIGHTGREY,
-};
-const GPU_TAG_PRIM_IMAGE: GpuProfileTag = GpuProfileTag {
-    label: "Image",
-    color: debug_colors::GREEN,
 };
 const GPU_TAG_PRIM_SPLIT_COMPOSITE: GpuProfileTag = GpuProfileTag {
     label: "SplitComposite",
@@ -183,12 +183,6 @@ impl TransformBatchKind {
     fn debug_name(&self) -> &'static str {
         match *self {
             TransformBatchKind::TextRun(..) => "TextRun",
-            TransformBatchKind::Image(image_buffer_kind, ..) => match image_buffer_kind {
-                ImageBufferKind::Texture2D => "Image (2D)",
-                ImageBufferKind::TextureRect => "Image (Rect)",
-                ImageBufferKind::TextureExternal => "Image (External)",
-                ImageBufferKind::Texture2DArray => "Image (Array)",
-            },
             TransformBatchKind::BorderCorner => "BorderCorner",
             TransformBatchKind::BorderEdge => "BorderEdge",
         }
@@ -197,7 +191,6 @@ impl TransformBatchKind {
     fn sampler_tag(&self) -> GpuProfileTag {
         match *self {
             TransformBatchKind::TextRun(..) => GPU_TAG_PRIM_TEXT_RUN,
-            TransformBatchKind::Image(..) => GPU_TAG_PRIM_IMAGE,
             TransformBatchKind::BorderCorner => GPU_TAG_PRIM_BORDER_CORNER,
             TransformBatchKind::BorderEdge => GPU_TAG_PRIM_BORDER_EDGE,
         }
@@ -401,6 +394,53 @@ pub(crate) mod desc {
         ],
     };
 
+    pub const BORDER: VertexDescriptor = VertexDescriptor {
+        vertex_attributes: &[
+            VertexAttribute {
+                name: "aPosition",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+        ],
+        instance_attributes: &[
+            VertexAttribute {
+                name: "aTaskOrigin",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aRect",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aColor0",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aColor1",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aFlags",
+                count: 1,
+                kind: VertexAttributeKind::I32,
+            },
+            VertexAttribute {
+                name: "aWidths",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aRadii",
+                count: 2,
+                kind: VertexAttributeKind::F32,
+            },
+        ],
+    };
+
     pub const CLIP: VertexDescriptor = VertexDescriptor {
         vertex_attributes: &[
             VertexAttribute {
@@ -584,6 +624,7 @@ pub(crate) enum VertexArrayKind {
     DashAndDot,
     VectorStencil,
     VectorCover,
+    Border,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1304,6 +1345,7 @@ pub struct RendererVAOs {
     blur_vao: VAO,
     clip_vao: VAO,
     dash_and_dot_vao: VAO,
+    border_vao: VAO,
 }
 
 /// The renderer is responsible for submitting to the GPU the work prepared by the
@@ -1590,6 +1632,8 @@ impl Renderer {
 
         let blur_vao = device.create_vao_with_new_instances(&desc::BLUR, &prim_vao);
         let clip_vao = device.create_vao_with_new_instances(&desc::CLIP, &prim_vao);
+        let border_vao =
+            device.create_vao_with_new_instances(&desc::BORDER, &prim_vao);
         let dash_and_dot_vao =
             device.create_vao_with_new_instances(&desc::BORDER_CORNER_DASH_AND_DOT, &prim_vao);
         let texture_cache_upload_pbo = device.create_pbo();
@@ -1745,6 +1789,7 @@ impl Renderer {
                 blur_vao,
                 clip_vao,
                 dash_and_dot_vao,
+                border_vao,
             },
             node_data_texture,
             local_clip_rects_texture,
@@ -1809,19 +1854,18 @@ impl Renderer {
         // Pull any pending results and return the most recent.
         while let Ok(msg) = self.result_rx.try_recv() {
             match msg {
+                ResultMsg::PublishPipelineInfo(mut pipeline_info) => {
+                    for (pipeline_id, epoch) in pipeline_info.epochs {
+                        self.pipeline_info.epochs.insert(pipeline_id, epoch);
+                    }
+                    self.pipeline_info.removed_pipelines.extend(pipeline_info.removed_pipelines.drain(..));
+                }
                 ResultMsg::PublishDocument(
                     document_id,
                     mut doc,
                     texture_update_list,
                     profile_counters,
                 ) => {
-                    // Update the list of available epochs for use during reftests.
-                    // This is a workaround for https://github.com/servo/servo/issues/13149.
-                    for (pipeline_id, epoch) in &doc.pipeline_info.epochs {
-                        self.pipeline_info.epochs.insert(*pipeline_id, *epoch);
-                    }
-                    self.pipeline_info.removed_pipelines.extend(doc.pipeline_info.removed_pipelines.drain(..));
-
                     // Add a new document to the active set, expressed as a `Vec` in order
                     // to re-order based on `DocumentLayer` during rendering.
                     match self.active_documents.iter().position(|&(id, _)| id == document_id) {
@@ -1909,7 +1953,7 @@ impl Renderer {
 
         let desc = ImageDescriptor::new(1024, 768, ImageFormat::BGRA8, true, false);
         let data = self.device.read_pixels(&desc);
-        let screenshot = debug_server::Screenshot::new(desc.width, desc.height, data);
+        let screenshot = debug_server::Screenshot::new(desc.size.width, desc.size.height, data);
 
         serde_json::to_string(&screenshot).unwrap()
     }
@@ -3260,8 +3304,35 @@ impl Renderer {
         self.device.disable_depth_write();
         self.device.set_blend(false);
 
+        for rect in &target.clears {
+            self.device.clear_target(Some([0.0, 0.0, 0.0, 0.0]), None, Some(*rect));
+        }
+
         // Handle any blits to this texture from child tasks.
         self.handle_blits(&target.blits, render_tasks);
+
+        // Draw any borders for this target.
+        if !target.border_segments.is_empty() {
+            let _timer = self.gpu_profile.start_timer(GPU_TAG_CACHE_BORDER);
+
+            self.device.set_blend(true);
+            self.device.set_blend_mode_premultiplied_alpha();
+
+            self.shaders.cs_border_segment.bind(
+                &mut self.device,
+                &projection,
+                &mut self.renderer_errors,
+            );
+
+            self.draw_instanced_batch(
+                &target.border_segments,
+                VertexArrayKind::Border,
+                &BatchTextures::no_texture(),
+                stats,
+            );
+
+            self.device.set_blend(false);
+        }
 
         // Draw any blurs for this target.
         if !target.horizontal_blurs.is_empty() {
@@ -3865,6 +3936,7 @@ impl Renderer {
         self.device.delete_vao(self.vaos.clip_vao);
         self.device.delete_vao(self.vaos.blur_vao);
         self.device.delete_vao(self.vaos.dash_and_dot_vao);
+        self.device.delete_vao(self.vaos.border_vao);
 
         #[cfg(feature = "debug_renderer")]
         {
@@ -4422,7 +4494,7 @@ impl Renderer {
                         let (layer_count, filter) = (1, TextureFilter::Linear);
                         let plain_tex = PlainTexture {
                             data: e.key().clone(),
-                            size: (descriptor.width, descriptor.height, layer_count),
+                            size: (descriptor.size.width, descriptor.size.height, layer_count),
                             format: descriptor.format,
                             filter,
                             render_target: None,
@@ -4460,6 +4532,7 @@ fn get_vao<'a>(vertex_array_kind: VertexArrayKind,
         VertexArrayKind::DashAndDot => &vaos.dash_and_dot_vao,
         VertexArrayKind::VectorStencil => &gpu_glyph_renderer.vector_stencil_vao,
         VertexArrayKind::VectorCover => &gpu_glyph_renderer.vector_cover_vao,
+        VertexArrayKind::Border => &vaos.border_vao,
     }
 }
 
@@ -4474,5 +4547,6 @@ fn get_vao<'a>(vertex_array_kind: VertexArrayKind,
         VertexArrayKind::Blur => &vaos.blur_vao,
         VertexArrayKind::DashAndDot => &vaos.dash_and_dot_vao,
         VertexArrayKind::VectorStencil | VertexArrayKind::VectorCover => unreachable!(),
+        VertexArrayKind::Border => &vaos.border_vao,
     }
 }

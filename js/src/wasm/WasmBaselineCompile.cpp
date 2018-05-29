@@ -4531,14 +4531,9 @@ class BaseCompiler final : public BaseCompilerInterface
             MOZ_ASSERT(dest.i64() == specific_.abiReturnRegI64);
             masm.wasmLoadI64(*access, srcAddr, dest.i64());
         } else {
-            ScratchI8 scratch(*this);
-            bool byteRegConflict = access->byteSize() == 1 && !ra.isSingleByteI32(dest.i32());
-            AnyRegister out = byteRegConflict ? AnyRegister(scratch) : dest.any();
-
-            masm.wasmLoad(*access, srcAddr, out);
-
-            if (byteRegConflict)
-                masm.mov(scratch, dest.i32());
+            // For 8 bit loads, this will generate movsbl or movzbl, so
+            // there's no constraint on what the output register may be.
+            masm.wasmLoad(*access, srcAddr, dest.any());
         }
 #elif defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
         if (IsUnaligned(*access)) {
@@ -9205,7 +9200,7 @@ BaseCompiler::emitMemCopy()
     uint32_t lineOrBytecode = readCallSiteLineOrBytecode();
 
     Nothing nothing;
-    if (!iter_.readMemCopy(ValType::I32, &nothing, &nothing, &nothing))
+    if (!iter_.readMemCopy(&nothing, &nothing, &nothing))
         return false;
 
     if (deadCode_)
@@ -9227,7 +9222,7 @@ BaseCompiler::emitMemFill()
     uint32_t lineOrBytecode = readCallSiteLineOrBytecode();
 
     Nothing nothing;
-    if (!iter_.readMemFill(ValType::I32, &nothing, &nothing, &nothing))
+    if (!iter_.readMemFill(&nothing, &nothing, &nothing))
         return false;
 
     if (deadCode_)
@@ -9803,21 +9798,6 @@ BaseCompiler::emitBody()
           case uint16_t(Op::CurrentMemory):
             CHECK_NEXT(emitCurrentMemory());
 
-#ifdef ENABLE_WASM_BULKMEM_OPS
-          // Bulk memory operations
-          case uint16_t(Op::CopyOrFillPrefix): {
-            switch (op.b1) {
-              case uint16_t(CopyOrFillOp::Copy):
-                CHECK_NEXT(emitMemCopy());
-              case uint16_t(CopyOrFillOp::Fill):
-                CHECK_NEXT(emitMemFill());
-              default:
-                return iter_.unrecognizedOpcode(&op);
-            }
-            break;
-          }
-#endif
-
 #ifdef ENABLE_WASM_GC
           case uint16_t(Op::RefNull):
             if (env_.gcTypesEnabled == HasGcTypes::False)
@@ -9831,23 +9811,23 @@ BaseCompiler::emitBody()
             break;
 #endif
 
-          // Numeric operations
-          case uint16_t(Op::NumericPrefix): {
-#ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
+          // "Miscellaneous" operations
+          case uint16_t(Op::MiscPrefix): {
             switch (op.b1) {
-              case uint16_t(NumericOp::I32TruncSSatF32):
+#ifdef ENABLE_WASM_SATURATING_TRUNC_OPS
+              case uint16_t(MiscOp::I32TruncSSatF32):
                 CHECK_NEXT(emitConversionOOM(emitTruncateF32ToI32<TRUNC_SATURATING>,
                                              ValType::F32, ValType::I32));
-              case uint16_t(NumericOp::I32TruncUSatF32):
+              case uint16_t(MiscOp::I32TruncUSatF32):
                 CHECK_NEXT(emitConversionOOM(emitTruncateF32ToI32<TRUNC_UNSIGNED | TRUNC_SATURATING>,
                                              ValType::F32, ValType::I32));
-              case uint16_t(NumericOp::I32TruncSSatF64):
+              case uint16_t(MiscOp::I32TruncSSatF64):
                 CHECK_NEXT(emitConversionOOM(emitTruncateF64ToI32<TRUNC_SATURATING>,
                                              ValType::F64, ValType::I32));
-              case uint16_t(NumericOp::I32TruncUSatF64):
+              case uint16_t(MiscOp::I32TruncUSatF64):
                 CHECK_NEXT(emitConversionOOM(emitTruncateF64ToI32<TRUNC_UNSIGNED | TRUNC_SATURATING>,
                                              ValType::F64, ValType::I32));
-              case uint16_t(NumericOp::I64TruncSSatF32):
+              case uint16_t(MiscOp::I64TruncSSatF32):
 #ifdef RABALDR_FLOAT_TO_I64_CALLOUT
                 CHECK_NEXT(emitCalloutConversionOOM(emitConvertFloatingToInt64Callout,
                                                     SymbolicAddress::SaturatingTruncateDoubleToInt64,
@@ -9856,7 +9836,7 @@ BaseCompiler::emitBody()
                 CHECK_NEXT(emitConversionOOM(emitTruncateF32ToI64<TRUNC_SATURATING>,
                                              ValType::F32, ValType::I64));
 #endif
-              case uint16_t(NumericOp::I64TruncUSatF32):
+              case uint16_t(MiscOp::I64TruncUSatF32):
 #ifdef RABALDR_FLOAT_TO_I64_CALLOUT
                 CHECK_NEXT(emitCalloutConversionOOM(emitConvertFloatingToInt64Callout,
                                                     SymbolicAddress::SaturatingTruncateDoubleToUint64,
@@ -9865,7 +9845,7 @@ BaseCompiler::emitBody()
                 CHECK_NEXT(emitConversionOOM(emitTruncateF32ToI64<TRUNC_UNSIGNED | TRUNC_SATURATING>,
                                              ValType::F32, ValType::I64));
 #endif
-              case uint16_t(NumericOp::I64TruncSSatF64):
+              case uint16_t(MiscOp::I64TruncSSatF64):
 #ifdef RABALDR_FLOAT_TO_I64_CALLOUT
                 CHECK_NEXT(emitCalloutConversionOOM(emitConvertFloatingToInt64Callout,
                                                     SymbolicAddress::SaturatingTruncateDoubleToInt64,
@@ -9874,7 +9854,7 @@ BaseCompiler::emitBody()
                 CHECK_NEXT(emitConversionOOM(emitTruncateF64ToI64<TRUNC_SATURATING>,
                                              ValType::F64, ValType::I64));
 #endif
-              case uint16_t(NumericOp::I64TruncUSatF64):
+              case uint16_t(MiscOp::I64TruncUSatF64):
 #ifdef RABALDR_FLOAT_TO_I64_CALLOUT
                 CHECK_NEXT(emitCalloutConversionOOM(emitConvertFloatingToInt64Callout,
                                                     SymbolicAddress::SaturatingTruncateDoubleToUint64,
@@ -9883,13 +9863,17 @@ BaseCompiler::emitBody()
                 CHECK_NEXT(emitConversionOOM(emitTruncateF64ToI64<TRUNC_UNSIGNED | TRUNC_SATURATING>,
                                              ValType::F64, ValType::I64));
 #endif
+#endif // ENABLE_WASM_SATURATING_TRUNC_OPS
+#ifdef ENABLE_WASM_BULKMEM_OPS
+              case uint16_t(MiscOp::MemCopy):
+                CHECK_NEXT(emitMemCopy());
+              case uint16_t(MiscOp::MemFill):
+                CHECK_NEXT(emitMemFill());
+#endif // ENABLE_WASM_BULKMEM_OPS
               default:
-                return iter_.unrecognizedOpcode(&op);
-            }
-            break;
-#else
+                break;
+            } // switch (op.b1)
             return iter_.unrecognizedOpcode(&op);
-#endif
           }
 
           // Thread operations

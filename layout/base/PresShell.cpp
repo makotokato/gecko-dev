@@ -59,7 +59,6 @@
 #include "nsContainerFrame.h"
 #include "mozilla/dom/Selection.h"
 #include "nsGkAtoms.h"
-#include "nsIDOMDocument.h"
 #include "nsIDOMNode.h"
 #include "nsRange.h"
 #include "nsWindowSizes.h"
@@ -178,6 +177,7 @@
 #include "nsLayoutStylesheetCache.h"
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layers/FocusTarget.h"
+#include "mozilla/ServoBindings.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
@@ -800,7 +800,6 @@ PresShell::PresShell()
 #ifdef DEBUG
   , mInVerifyReflow(false)
   , mCurrentReflowRoot(nullptr)
-  , mUpdateCount(0)
 #endif
 #ifdef MOZ_REFLOW_PERF
   , mReflowCountMgr(nullptr)
@@ -1443,7 +1442,7 @@ nsIPresShell::SetAuthorStyleDisabled(bool aStyleDisabled)
 {
   if (aStyleDisabled != mStyleSet->GetAuthorStyleDisabled()) {
     mStyleSet->SetAuthorStyleDisabled(aStyleDisabled);
-    RestyleForCSSRuleChanges();
+    ApplicableStylesChanged();
 
     nsCOMPtr<nsIObserverService> observerService =
       mozilla::services::GetObserverService();
@@ -1499,8 +1498,6 @@ PresShell::UpdatePreferenceStyles()
     return;
   }
 
-  mStyleSet->BeginUpdate();
-
   RemovePreferenceStyles();
 
   // NOTE(emilio): This sheet is added as an agent sheet, because we don't want
@@ -1509,8 +1506,6 @@ PresShell::UpdatePreferenceStyles()
   // without too much trouble I'd think.
   mStyleSet->AppendStyleSheet(SheetType::Agent, newPrefSheet);
   mPrefStyleSheet = newPrefSheet;
-
-  mStyleSet->EndUpdate();
 }
 
 void
@@ -1533,8 +1528,6 @@ PresShell::AddUserSheet(StyleSheet* aSheet)
   nsCOMPtr<nsIStyleSheetService> dummy =
     do_GetService(NS_STYLESHEETSERVICE_CONTRACTID);
 
-  mStyleSet->BeginUpdate();
-
   nsStyleSheetService* sheetService = nsStyleSheetService::gInstance;
   nsTArray<RefPtr<StyleSheet>>& userSheets = *sheetService->UserStyleSheets();
   // Iterate forwards when removing so the searches for RemoveStyleSheet are as
@@ -1549,8 +1542,7 @@ PresShell::AddUserSheet(StyleSheet* aSheet)
     mStyleSet->PrependStyleSheet(SheetType::User, sheet);
   }
 
-  mStyleSet->EndUpdate();
-  RestyleForCSSRuleChanges();
+  ApplicableStylesChanged();
 }
 
 void
@@ -1559,7 +1551,7 @@ PresShell::AddAgentSheet(StyleSheet* aSheet)
   // Make sure this does what nsDocumentViewer::CreateStyleSet does
   // wrt ordering.
   mStyleSet->AppendStyleSheet(SheetType::Agent, aSheet);
-  RestyleForCSSRuleChanges();
+  ApplicableStylesChanged();
 }
 
 void
@@ -1576,14 +1568,14 @@ PresShell::AddAuthorSheet(StyleSheet* aSheet)
     mStyleSet->AppendStyleSheet(SheetType::Doc, aSheet);
   }
 
-  RestyleForCSSRuleChanges();
+  ApplicableStylesChanged();
 }
 
 void
 PresShell::RemoveSheet(SheetType aType, StyleSheet* aSheet)
 {
   mStyleSet->RemoveStyleSheet(aType, aSheet);
-  RestyleForCSSRuleChanges();
+  ApplicableStylesChanged();
 }
 
 NS_IMETHODIMP
@@ -2527,32 +2519,6 @@ PresShell::GetCanvasFrame() const
 {
   nsIFrame* frame = mFrameConstructor->GetDocElementContainingBlock();
   return do_QueryFrame(frame);
-}
-
-void
-PresShell::BeginUpdate(nsIDocument *aDocument, nsUpdateType aUpdateType)
-{
-#ifdef DEBUG
-  mUpdateCount++;
-#endif
-  if (aUpdateType & UPDATE_STYLE)
-    mStyleSet->BeginUpdate();
-}
-
-void
-PresShell::EndUpdate(nsIDocument *aDocument, nsUpdateType aUpdateType)
-{
-#ifdef DEBUG
-  MOZ_ASSERT(0 != mUpdateCount, "too many EndUpdate's");
-  --mUpdateCount;
-#endif
-
-  if (aUpdateType & UPDATE_STYLE) {
-    mStyleSet->EndUpdate();
-    if (mStyleSet->StyleSheetsHaveChanged()) {
-      RestyleForCSSRuleChanges();
-    }
-  }
 }
 
 void
@@ -3814,6 +3780,10 @@ PresShell::GetRectVisibility(nsIFrame* aFrame,
 void
 PresShell::ScheduleViewManagerFlush(PaintType aType)
 {
+  if (MOZ_UNLIKELY(mIsDestroying)) {
+    return;
+  }
+
   if (aType == PAINT_DELAYED_COMPRESS) {
     // Delay paint for 1 second.
     static const uint32_t kPaintDelayPeriod = 1000;
@@ -4615,7 +4585,7 @@ PresShell::ReconstructFrames()
 }
 
 void
-nsIPresShell::RestyleForCSSRuleChanges()
+nsIPresShell::ApplicableStylesChanged()
 {
   if (mIsDestroying) {
     // We don't want to mess with restyles at this point
@@ -4628,14 +4598,8 @@ nsIPresShell::RestyleForCSSRuleChanges()
   if (mPresContext) {
     mPresContext->MarkCounterStylesDirty();
     mPresContext->MarkFontFeatureValuesDirty();
+    mPresContext->RestyleManager()->NextRestyleIsForCSSRuleChanges();
   }
-
-  if (!mDidInitialize) {
-    // Nothing to do here, since we have no frames yet
-    return;
-  }
-
-  mStyleSet->InvalidateStyleForCSSRuleChanges();
 }
 
 nsresult
@@ -6186,6 +6150,7 @@ void
 nsIPresShell::RecordShadowStyleChange(ShadowRoot& aShadowRoot)
 {
   mStyleSet->RecordShadowStyleChange(aShadowRoot);
+  ApplicableStylesChanged();
 }
 
 void

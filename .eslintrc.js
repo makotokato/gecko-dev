@@ -39,15 +39,6 @@ module.exports = {
     "env": {
       "mozilla/browser-window": true
     }
-  },{
-    // XXX Bug 1421969. These files/directories are still being fixed,
-    // so turn off mozilla/use-services for them for now.
-    "files": [
-      "extensions/pref/**",
-    ],
-    "rules": {
-      "mozilla/use-services": "off",
-    }
   }, {
     // XXX Bug 1436303. These directories are still being fixed, so turn off
     // mozilla/no-cc-etc for now.
@@ -56,6 +47,33 @@ module.exports = {
     ],
     "rules": {
       "mozilla/no-define-cc-etc": "off",
+    }
+  }, {
+    // XXX Bug 1452706. These directories are still being fixed, so turn off
+    //  mozilla/require-expected-throws-or-rejects for now.
+    "files": [
+      "browser/extensions/formautofill/test/unit/test_storage_tombstones.js",
+      "browser/modules/test/browser/**",
+      "browser/tools/mozscreenshots/browser_boundingbox.js",
+      "devtools/client/inspector/extensions/test/head_devtools_inspector_sidebar.js",
+      "storage/test/unit/**",
+      "testing/marionette/test/unit/**",
+      "toolkit/components/**",
+      "toolkit/modules/tests/xpcshell/**",
+      "toolkit/mozapps/extensions/test/xpcshell/**"
+    ],
+    "rules": {
+      "mozilla/require-expected-throws-or-rejects": "off",
+    }
+  }, {
+    // XXX Bug 1452706. These directories are still being fixed, so turn off
+    //  mozilla/require-expected-throws-or-rejects for now.
+    "files": [
+      "services/fxaccounts/**",
+      "toolkit/components/**",
+    ],
+    "rules": {
+      "mozilla/rejects-requires-await": "off",
     }
   }]
 };

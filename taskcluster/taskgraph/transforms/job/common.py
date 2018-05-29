@@ -8,7 +8,9 @@ consistency.
 """
 
 from __future__ import absolute_import, print_function, unicode_literals
-from taskgraph.util.taskcluster import get_artifact_prefix
+
+import json
+from taskgraph.util.taskcluster import get_artifact_url, get_artifact_prefix
 
 SECRET_SCOPE = 'secrets:get:project/releng/gecko/{}/level-{}/{}'
 
@@ -55,25 +57,6 @@ def generic_worker_add_artifacts(config, job, taskdesc):
     # mean the artifacts will be public or private; that is set via the name
     # attribute in add_artifacts.
     add_artifacts(config, job, taskdesc, path=get_artifact_prefix(taskdesc))
-
-
-def docker_worker_add_gecko_vcs_env_vars(config, job, taskdesc):
-    """Add the GECKO_BASE_* and GECKO_HEAD_* env vars to the worker."""
-    env = taskdesc['worker'].setdefault('env', {})
-    env.update({
-        'GECKO_BASE_REPOSITORY': config.params['base_repository'],
-        'GECKO_HEAD_REF': config.params['head_rev'],
-        'GECKO_HEAD_REPOSITORY': config.params['head_repository'],
-        'GECKO_HEAD_REV': config.params['head_rev'],
-    })
-
-    if 'comm_base_repository' in config.params:
-        taskdesc['worker']['env'].update({
-            'COMM_BASE_REPOSITORY': config.params['comm_base_repository'],
-            'COMM_HEAD_REF': config.params['comm_head_rev'],
-            'COMM_HEAD_REPOSITORY': config.params['comm_head_repository'],
-            'COMM_HEAD_REV': config.params['comm_head_rev'],
-        })
 
 
 def support_vcs_checkout(config, job, taskdesc, sparse=False):
@@ -130,6 +113,34 @@ def support_vcs_checkout(config, job, taskdesc, sparse=False):
         taskdesc['worker']['taskcluster-proxy'] = True
 
 
+def generic_worker_hg_commands(base_repo, head_repo, head_rev, path):
+    """Obtain commands needed to obtain a Mercurial checkout on generic-worker.
+
+    Returns two command strings. One performs the checkout. Another logs.
+    """
+    args = [
+        r'"c:\Program Files\Mercurial\hg.exe"',
+        'robustcheckout',
+        '--sharebase', r'y:\hg-shared',
+        '--purge',
+        '--upstream', base_repo,
+        '--revision', head_rev,
+        head_repo,
+        path,
+    ]
+
+    logging_args = [
+        b":: TinderboxPrint:<a href={source_repo}/rev/{revision} "
+        b"title='Built from {repo_name} revision {revision}'>{revision}</a>"
+        b"\n".format(
+            revision=head_rev,
+            source_repo=head_repo,
+            repo_name=head_repo.split('/')[-1]),
+    ]
+
+    return [' '.join(args), ' '.join(logging_args)]
+
+
 def docker_worker_setup_secrets(config, job, taskdesc):
     """Set up access to secrets via taskcluster-proxy.  The value of
     run['secrets'] should be a boolean or a list of secret names that
@@ -181,3 +192,26 @@ def docker_worker_add_tooltool(config, job, taskdesc, internal=False):
         taskdesc['scopes'].extend([
             'docker-worker:relengapi-proxy:tooltool.download.internal',
         ])
+
+
+def docker_worker_use_artifacts(config, job, taskdesc, use_artifacts):
+    """Set a JSON object of artifact URLs in an environment variable.
+
+    This will tell the run-task script to download the artifacts.
+    """
+    urls = {}
+    prefix = get_artifact_prefix(taskdesc)
+    for kind, artifacts in use_artifacts.items():
+        if kind not in taskdesc['dependencies']:
+            raise Exception("{label} can't use '{kind}' artifacts because it has no '{kind}' "
+                            "dependency!".format(label=job['label'], kind=kind))
+        task_id = '<{}>'.format(kind)
+        urls[kind] = []
+
+        for artifact in artifacts:
+            path = '/'.join([prefix, artifact])
+            urls[kind].append(get_artifact_url(task_id, path))
+
+    env = taskdesc['worker'].setdefault('env', {})
+    env['USE_ARTIFACT_URLS'] = {'task-reference': json.dumps(urls)}
+    env['USE_ARTIFACT_PATH'] = '/builds/worker/use-artifacts'

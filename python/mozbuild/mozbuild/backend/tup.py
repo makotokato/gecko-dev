@@ -588,10 +588,6 @@ class TupBackend(CommonBackend):
             # TODO: AB_CD only exists in Makefiles at the moment.
             acdefines_flags += ' -DAB_CD=en-US'
 
-            # TODO: BOOKMARKS_INCLUDE_DIR is used by bookmarks.html.in, and is
-            # only defined in browser/locales/Makefile.in
-            acdefines_flags += ' -DBOOKMARKS_INCLUDE_DIR=%s/browser/locales/en-US/profile' % self.environment.topsrcdir
-
             # Use BUILD_FASTER to avoid CXXFLAGS/CPPFLAGS in
             # toolkit/content/buildconfig.html
             acdefines_flags += ' -DBUILD_FASTER=1'
@@ -629,6 +625,7 @@ class TupBackend(CommonBackend):
                 obj.method,
                 obj.outputs[0],
                 '%s.pp' % obj.outputs[0], # deps file required
+                'unused', # deps target is required
             ])
             full_inputs = [f.full_path for f in obj.inputs]
             cmd.extend(full_inputs)
@@ -653,8 +650,17 @@ class TupBackend(CommonBackend):
                 extra_outputs = [self._installed_files] if obj.required_for_compile else []
                 full_inputs += [self._early_generated_files]
 
+            if len(outputs) > 3:
+                display_outputs = ', '.join(outputs[0:3]) + ', ...'
+            else:
+                display_outputs = ', '.join(outputs)
+            display = 'python {script}:{method} -> [{display_outputs}]'.format(
+                script=obj.script,
+                method=obj.method,
+                display_outputs=display_outputs
+            )
             backend_file.rule(
-                display='python {script}:{method} -> [%o]'.format(script=obj.script, method=obj.method),
+                display=display,
                 cmd=cmd,
                 inputs=full_inputs,
                 outputs=outputs,
@@ -779,16 +785,14 @@ class TupBackend(CommonBackend):
         if self.environment.is_artifact_build:
             return
 
-        dist_idl_backend_file = self._get_backend_file('dist/idl')
-        for idl in manager.idls.values():
-            dist_idl_backend_file.symlink_rule(idl['source'], output_group=self._installed_idls)
-
         backend_file = self._get_backend_file('xpcom/xpidl')
         backend_file.export_shell()
 
+        all_idl_directories = set()
+        all_idl_directories.update(*map(lambda x: x[1], manager.modules.itervalues()))
+
         all_xpts = []
-        for module, data in sorted(manager.modules.iteritems()):
-            _, idls = data
+        for module, (idls, _) in sorted(manager.modules.iteritems()):
             cmd = [
                 '$(PYTHON_PATH)',
                 '$(PLY_INCLUDE)',
@@ -797,19 +801,25 @@ class TupBackend(CommonBackend):
                 '$(topsrcdir)/python/mozbuild/mozbuild/action/xpidl-process.py',
                 '--cache-dir', '$(IDL_PARSER_CACHE_DIR)',
                 '--bindings-conf', '$(topsrcdir)/dom/bindings/Bindings.conf',
-                '$(DIST)/idl',
+            ]
+
+            for d in all_idl_directories:
+                cmd.extend(['-I', d])
+
+            cmd.extend([
                 '$(DIST)/include',
                 '$(DIST)/xpcrs',
                 '.',
                 module,
-            ]
+            ])
             cmd.extend(sorted(idls))
 
             all_xpts.append('$(MOZ_OBJ_ROOT)/%s/%s.xpt' % (backend_file.relobjdir, module))
             outputs = ['%s.xpt' % module]
-            outputs.extend(['$(MOZ_OBJ_ROOT)/dist/include/%s.h' % f for f in sorted(idls)])
-            outputs.extend(['$(MOZ_OBJ_ROOT)/dist/xpcrs/rt/%s.rs' % f for f in sorted(idls)])
-            outputs.extend(['$(MOZ_OBJ_ROOT)/dist/xpcrs/bt/%s.rs' % f for f in sorted(idls)])
+            stems = sorted(mozpath.splitext(mozpath.basename(idl))[0] for idl in idls)
+            outputs.extend(['$(MOZ_OBJ_ROOT)/dist/include/%s.h' % f for f in stems])
+            outputs.extend(['$(MOZ_OBJ_ROOT)/dist/xpcrs/rt/%s.rs' % f for f in stems])
+            outputs.extend(['$(MOZ_OBJ_ROOT)/dist/xpcrs/bt/%s.rs' % f for f in stems])
             backend_file.rule(
                 inputs=[
                     '$(MOZ_OBJ_ROOT)/xpcom/idl-parser/xpidl/xpidllex.py',

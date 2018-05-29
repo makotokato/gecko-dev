@@ -51,7 +51,7 @@ struct Line {
 
 class TransactionBuilder {
 public:
-  TransactionBuilder();
+  explicit TransactionBuilder(bool aUseSceneBuilderThread = true);
 
   ~TransactionBuilder();
 
@@ -75,7 +75,6 @@ public:
 
   void UpdateDynamicProperties(const nsTArray<wr::WrOpacityProperty>& aOpacityArray,
                                const nsTArray<wr::WrTransformProperty>& aTransformArray);
-  void AppendTransformProperties(const nsTArray<wr::WrTransformProperty>& aTransformArray);
 
   void SetWindowParameters(const LayoutDeviceIntSize& aWindowSize,
                            const LayoutDeviceIntRect& aDocRect);
@@ -140,11 +139,9 @@ public:
 
   bool UseSceneBuilderThread() const { return mUseSceneBuilderThread; }
   Transaction* Raw() { return mTxn; }
-  wr::ResourceUpdates* RawUpdates() { return mResourceUpdates; }
 protected:
   bool mUseSceneBuilderThread;
   Transaction* mTxn;
-  wr::ResourceUpdates* mResourceUpdates;
 };
 
 class TransactionWrapper
@@ -393,7 +390,8 @@ public:
 
   void PushIFrame(const wr::LayoutRect& aBounds,
                   bool aIsBackfaceVisible,
-                  wr::PipelineId aPipeline);
+                  wr::PipelineId aPipeline,
+                  bool aIgnoreMissingPipeline);
 
   // XXX WrBorderSides are passed with Range.
   // It is just to bypass compiler bug. See Bug 1357734.

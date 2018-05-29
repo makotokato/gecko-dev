@@ -24,12 +24,14 @@
 #include "mozilla/HTMLEditor.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/TextEditor.h"
+#include "mozilla/TouchEvents.h"
 #include "mozilla/URLExtraData.h"
 #include "mozilla/dom/Attr.h"
 #include "nsDOMAttributeMap.h"
 #include "nsAtom.h"
 #include "mozilla/dom/NodeInfo.h"
 #include "mozilla/dom/Event.h"
+#include "mozilla/dom/TouchEvent.h"
 #include "nsIDocumentInlines.h"
 #include "nsIDocumentEncoder.h"
 #include "nsIContentIterator.h"
@@ -645,6 +647,7 @@ static_assert(sizeof(FragmentOrElement::nsDOMSlots) <= MaxDOMSlotSizeAllowed,
 void
 nsIContent::nsExtendedContentSlots::Unlink()
 {
+  mBindingParent = nullptr;
   mXBLInsertionPoint = nullptr;
   mContainingShadow = nullptr;
   mAssignedSlot = nullptr;
@@ -653,6 +656,9 @@ nsIContent::nsExtendedContentSlots::Unlink()
 void
 nsIContent::nsExtendedContentSlots::Traverse(nsCycleCollectionTraversalCallback& aCb)
 {
+  NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCb, "mExtendedSlots->mBindingParent");
+  aCb.NoteXPCOMChild(NS_ISUPPORTS_CAST(nsIContent*, mBindingParent));
+
   NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCb, "mExtendedSlots->mContainingShadow");
   aCb.NoteXPCOMChild(NS_ISUPPORTS_CAST(nsIContent*, mContainingShadow));
 
@@ -664,7 +670,6 @@ nsIContent::nsExtendedContentSlots::Traverse(nsCycleCollectionTraversalCallback&
 }
 
 nsIContent::nsExtendedContentSlots::nsExtendedContentSlots()
-  : mBindingParent(nullptr)
 {
 }
 
@@ -736,8 +741,9 @@ FragmentOrElement::nsDOMSlots::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) c
   // - mChildrenList
   // - mClassList
 
-  // The following members are not measured:
-  // - mBindingParent / mControllers: because they're   non-owning
+  // The following member are not measured:
+  // - mControllers: because it is non-owning
+  // - mBindingParent: because it is some ancestor element.
   return n;
 }
 
@@ -1101,6 +1107,30 @@ nsIContent::GetEventTargetParent(EventChainPreVisitor& aVisitor)
           }
         }
       }
+    }
+
+    if (aVisitor.mEvent->mClass == eTouchEventClass) {
+      // Retarget touch objects.
+      MOZ_ASSERT(!aVisitor.mRetargetedTouchTargets.isSome());
+      aVisitor.mRetargetedTouchTargets.emplace();
+      WidgetTouchEvent* touchEvent = aVisitor.mEvent->AsTouchEvent();
+      WidgetTouchEvent::TouchArray& touches = touchEvent->mTouches;
+      for (uint32_t i = 0; i < touches.Length(); ++i) {
+        Touch* touch = touches[i];
+        EventTarget* originalTarget = touch->mOriginalTarget;
+        EventTarget* touchTarget = originalTarget;
+        nsCOMPtr<nsINode> targetAsNode = do_QueryInterface(originalTarget);
+        if (targetAsNode) {
+          EventTarget* retargeted = nsContentUtils::Retarget(targetAsNode, this);
+          if (retargeted) {
+            touchTarget = retargeted;
+          }
+        }
+        aVisitor.mRetargetedTouchTargets->AppendElement(touchTarget);
+        touch->mTarget = touchTarget;
+      }
+      MOZ_ASSERT(aVisitor.mRetargetedTouchTargets->Length() ==
+                   touches.Length());
     }
   }
 
@@ -1551,7 +1581,7 @@ FragmentOrElement::RemoveBlackMarkedNode(nsINode* aNode)
 static bool
 IsCertainlyAliveNode(nsINode* aNode, nsIDocument* aDoc)
 {
-  MOZ_ASSERT(aNode->GetUncomposedDoc() == aDoc);
+  MOZ_ASSERT(aNode->GetComposedDoc() == aDoc);
 
   // Marked to be in-CC-generation or if the document is an svg image that's
   // being kept alive by the image cache. (Note that an svg image's internal
@@ -1573,9 +1603,7 @@ FragmentOrElement::CanSkipInCC(nsINode* aNode)
     return false;
   }
 
-  //XXXsmaug Need to figure out in which cases Shadow DOM can be optimized out
-  //         from the CC graph.
-  nsIDocument* currentDoc = aNode->GetUncomposedDoc();
+  nsIDocument* currentDoc = aNode->GetComposedDoc();
   if (currentDoc && IsCertainlyAliveNode(aNode, currentDoc)) {
     return !NeedsScriptTraverse(aNode);
   }
@@ -1752,7 +1780,7 @@ FragmentOrElement::CanSkip(nsINode* aNode, bool aRemovingAllowed)
   }
 
   bool unoptimizable = aNode->UnoptimizableCCNode();
-  nsIDocument* currentDoc = aNode->GetUncomposedDoc();
+  nsIDocument* currentDoc = aNode->GetComposedDoc();
   if (currentDoc && IsCertainlyAliveNode(aNode, currentDoc) &&
       (!unoptimizable || NodeHasActiveFrame(currentDoc, aNode) ||
        OwnedByBindingManager(currentDoc, aNode))) {
@@ -1880,7 +1908,7 @@ FragmentOrElement::CanSkipThis(nsINode* aNode)
   if (aNode->HasKnownLiveWrapper()) {
     return true;
   }
-  nsIDocument* c = aNode->GetUncomposedDoc();
+  nsIDocument* c = aNode->GetComposedDoc();
   return
     ((c && IsCertainlyAliveNode(aNode, c)) || aNode->InCCBlackTree()) &&
     !NeedsScriptTraverse(aNode);
@@ -2281,7 +2309,7 @@ FragmentOrElement::SetInnerHTMLInternal(const nsAString& aInnerHTML, ErrorResult
   target->FireNodeRemovedForChildren();
 
   // Needed when innerHTML is used in combination with contenteditable
-  mozAutoDocUpdate updateBatch(doc, UPDATE_CONTENT_MODEL, true);
+  mozAutoDocUpdate updateBatch(doc, true);
 
   // Remove childnodes.
   nsAutoMutationBatch mb(target, true, false);
@@ -2344,13 +2372,11 @@ FragmentOrElement::FireNodeRemovedForChildren()
     return;
   }
 
-  nsCOMPtr<nsIDocument> owningDoc = doc;
-
   nsCOMPtr<nsINode> child;
   for (child = GetFirstChild();
        child && child->GetParentNode() == this;
        child = child->GetNextSibling()) {
-    nsContentUtils::MaybeFireNodeRemoved(child, this, doc);
+    nsContentUtils::MaybeFireNodeRemoved(child, this);
   }
 }
 

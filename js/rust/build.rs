@@ -73,6 +73,10 @@ fn build_jsapi_bindings() {
             .clang_arg("-DJS_DEBUG");
     }
 
+    if cfg!(feature = "bigint") {
+        builder = builder.clang_arg("-DENABLE_BIGINT");
+    }
+
     let include_dir = get_mozjs_include_dir();
     let include_dir = include_dir.to_str()
         .expect("Path to mozjs include dir should be utf-8");
@@ -97,6 +101,10 @@ fn build_jsapi_bindings() {
 
     for func in WHITELIST_FUNCTIONS {
         builder = builder.whitelist_function(func);
+    }
+
+    if cfg!(feature = "bigint") {
+        builder = builder.whitelist_type("JS::BigInt");
     }
 
     for ty in OPAQUE_TYPES {
@@ -148,7 +156,7 @@ const WHITELIST_TYPES: &'static [&'static str] = &[
     "JS::AutoObjectVector",
     "JS::CallArgs",
     "js::Class",
-    "JS::CompartmentOptions",
+    "JS::RealmOptions",
     "JS::ContextOptions",
     "js::DOMCallbacks",
     "js::DOMProxyShadowsResult",
@@ -162,7 +170,7 @@ const WHITELIST_TYPES: &'static [&'static str] = &[
     "JS::HandleValue",
     "JS::HandleValueArray",
     "JS::IsAcceptableThis",
-    "JSAutoCompartment",
+    "JSAutoRealm",
     "JSAutoStructuredCloneBuffer",
     "JSClass",
     "JSClassOps",
@@ -316,7 +324,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "js::Dump.*",
     "JS_EncodeStringToUTF8",
     "JS_EndRequest",
-    "JS_EnterCompartment",
+    "JS::EnterRealm",
     "JS_EnumerateStandardClasses",
     "JS_ErrorFromException",
     "JS_FireOnNewGlobalObject",
@@ -353,7 +361,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_IsExceptionPending",
     "JS_IsGlobalObject",
     "JS::IsCallable",
-    "JS_LeaveCompartment",
+    "JS::LeaveRealm",
     "JS_LinkConstructorAndPrototype",
     "JS_MayResolveStandardClass",
     "JS_NewArrayBuffer",

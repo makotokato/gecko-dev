@@ -9,8 +9,8 @@ const {
   RESET_EDITOR,
   UPDATE_AXIS_VALUE,
   UPDATE_CUSTOM_INSTANCE,
-  UPDATE_EDITOR_VISIBILITY,
   UPDATE_EDITOR_STATE,
+  UPDATE_PROPERTY_VALUE,
 } = require("./index");
 
 module.exports = {
@@ -26,14 +26,6 @@ module.exports = {
       type: APPLY_FONT_VARIATION_INSTANCE,
       name,
       values,
-    };
-  },
-
-  toggleFontEditor(isVisible, selector = "") {
-    return {
-      type: UPDATE_EDITOR_VISIBILITY,
-      isVisible,
-      selector,
     };
   },
 
@@ -56,6 +48,14 @@ module.exports = {
       type: UPDATE_EDITOR_STATE,
       fonts,
       properties,
+    };
+  },
+
+  updateFontProperty(property, value) {
+    return {
+      type: UPDATE_PROPERTY_VALUE,
+      property,
+      value,
     };
   },
 

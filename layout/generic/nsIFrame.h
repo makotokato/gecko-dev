@@ -612,7 +612,6 @@ public:
     , mFrameIsModified(false)
     , mHasOverrideDirtyRegion(false)
     , mMayHaveWillChangeBudget(false)
-    , mBuiltBlendContainer(false)
     , mIsPrimaryFrame(false)
     , mMayHaveTransformAnimation(false)
     , mMayHaveOpacityAnimation(false)
@@ -781,6 +780,7 @@ public:
   void SetComputedStyle(ComputedStyle* aStyle)
   {
     if (aStyle != mComputedStyle) {
+      MOZ_DIAGNOSTIC_ASSERT(PresShell() == aStyle->PresContextForFrame()->PresShell());
       RefPtr<ComputedStyle> oldComputedStyle = mComputedStyle.forget();
       mComputedStyle = aStyle;
       DidSetComputedStyle(oldComputedStyle);
@@ -796,6 +796,7 @@ public:
   void SetComputedStyleWithoutNotification(ComputedStyle* aStyle)
   {
     if (aStyle != mComputedStyle) {
+      MOZ_DIAGNOSTIC_ASSERT(PresShell() == aStyle->PresContextForFrame()->PresShell());
       mComputedStyle = aStyle;
     }
   }
@@ -1858,10 +1859,7 @@ public:
     return HasPerspective(StyleDisplay());
   }
 
-  bool ChildrenHavePerspective(const nsStyleDisplay* aStyleDisplay) const {
-    MOZ_ASSERT(aStyleDisplay == StyleDisplay());
-    return aStyleDisplay->HasPerspectiveStyle();
-  }
+  bool ChildrenHavePerspective(const nsStyleDisplay* aStyleDisplay) const;
   bool ChildrenHavePerspective() const {
     return ChildrenHavePerspective(StyleDisplay());
   }
@@ -4006,14 +4004,6 @@ public:
     return !HasAllStateBits(NS_FRAME_SVG_LAYOUT | NS_FRAME_IS_NONDISPLAY);
   }
 
-  /**
-   * Returns the content node within the anonymous content that this frame
-   * generated and which corresponds to the specified pseudo-element type,
-   * or nullptr if there is no such anonymous content.
-   */
-  virtual mozilla::dom::Element*
-  GetPseudoElement(mozilla::CSSPseudoElementType aType);
-
   /*
    * @param aStyleDisplay:  If the caller has this->StyleDisplay(), providing
    *   it here will improve performance.
@@ -4144,9 +4134,6 @@ public:
 
   bool MayHaveWillChangeBudget() { return mMayHaveWillChangeBudget; }
   void SetMayHaveWillChangeBudget(bool aHasBudget) { mMayHaveWillChangeBudget = aHasBudget; }
-
-  bool BuiltBlendContainer() { return mBuiltBlendContainer; }
-  void SetBuiltBlendContainer(bool aBuilt) { mBuiltBlendContainer = aBuilt; }
 
   /**
    * Returns the set of flags indicating the properties of the frame that the
@@ -4345,12 +4332,6 @@ protected:
    */
   bool mMayHaveWillChangeBudget : 1;
 
-  /**
-   * True if we built an nsDisplayBlendContainer last time
-   * we did retained display list building for this frame.
-   */
-  bool mBuiltBlendContainer : 1;
-
 private:
   /**
    * True if this is the primary frame for mContent.
@@ -4372,7 +4353,7 @@ private:
 
 protected:
 
-  // There is no gap left here.
+  // There is a 1-bit gap left here.
 
   // Helpers
   /**

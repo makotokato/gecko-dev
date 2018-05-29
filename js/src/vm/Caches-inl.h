@@ -71,12 +71,12 @@ NewObjectCache::newObjectFromHit(JSContext* cx, EntryIndex entryIndex, gc::Initi
     copyCachedToObject(obj, templateObj, entry->kind);
 
     if (group->clasp()->shouldDelayMetadataBuilder())
-        cx->compartment()->setObjectPendingMetadata(cx, obj);
+        cx->realm()->setObjectPendingMetadata(cx, obj);
     else
         obj = static_cast<NativeObject*>(SetNewObjectMetadata(cx, obj));
 
     probes::CreateObject(cx, obj);
-    gc::TraceCreateObject(obj);
+    gc::gcTracer.traceCreateObject(obj);
     return obj;
 }
 

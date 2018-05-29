@@ -64,12 +64,7 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsTreeColumn)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
   NS_INTERFACE_MAP_ENTRY(nsITreeColumn)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
-  if (aIID.Equals(NS_GET_IID(nsTreeColumn))) {
-    AddRef();
-    *aInstancePtr = this;
-    return NS_OK;
-  }
-  else
+  NS_INTERFACE_MAP_ENTRY_CONCRETE(nsTreeColumn)
 NS_INTERFACE_MAP_END
 
 nsIFrame*
@@ -265,7 +260,7 @@ nsTreeColumn::Invalidate()
   NS_ENSURE_TRUE(frame, NS_ERROR_FAILURE);
 
   // Fetch the Id.
-  mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::id, mId);
+  mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::id, mId);
 
   // If we have an Id, cache the Id as an atom.
   if (!mId.IsEmpty()) {
@@ -273,7 +268,7 @@ nsTreeColumn::Invalidate()
   }
 
   // Cache our index.
-  nsTreeUtils::GetColumnIndex(mContent->AsElement(), &mIndex);
+  nsTreeUtils::GetColumnIndex(mContent, &mIndex);
 
   const nsStyleVisibility* vis = frame->StyleVisibility();
 
@@ -294,38 +289,38 @@ nsTreeColumn::Invalidate()
 
   // Figure out if we're the primary column (that has to have indentation
   // and twisties drawn.
-  mIsPrimary = mContent->AsElement()->AttrValueIs(kNameSpaceID_None,
-                                                  nsGkAtoms::primary,
-                                                  nsGkAtoms::_true,
-                                                  eCaseMatters);
+  mIsPrimary = mContent->AttrValueIs(kNameSpaceID_None,
+                                     nsGkAtoms::primary,
+                                     nsGkAtoms::_true,
+                                     eCaseMatters);
 
   // Figure out if we're a cycling column (one that doesn't cause a selection
   // to happen).
   mIsCycler =
-    mContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::cycler,
-                                       nsGkAtoms::_true, eCaseMatters);
+    mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::cycler,
+                          nsGkAtoms::_true, eCaseMatters);
 
   mIsEditable =
-    mContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::editable,
-                                       nsGkAtoms::_true, eCaseMatters);
+    mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::editable,
+                          nsGkAtoms::_true, eCaseMatters);
 
   mIsSelectable =
-    !mContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::selectable,
-                                        nsGkAtoms::_false, eCaseMatters);
+    !mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::selectable,
+                           nsGkAtoms::_false, eCaseMatters);
 
   mOverflow =
-    mContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::overflow,
-                                       nsGkAtoms::_true, eCaseMatters);
+    mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::overflow,
+                          nsGkAtoms::_true, eCaseMatters);
 
   // Figure out our column type. Default type is text.
   mType = nsITreeColumn::TYPE_TEXT;
   static Element::AttrValuesArray typestrings[] =
     {&nsGkAtoms::checkbox, &nsGkAtoms::password,
      nullptr};
-  switch (mContent->AsElement()->FindAttrValueIn(kNameSpaceID_None,
-                                                 nsGkAtoms::type,
-                                                 typestrings,
-                                                 eCaseMatters)) {
+  switch (mContent->FindAttrValueIn(kNameSpaceID_None,
+                                    nsGkAtoms::type,
+                                    typestrings,
+                                    eCaseMatters)) {
     case 0: mType = nsITreeColumn::TYPE_CHECKBOX; break;
     case 1: mType = nsITreeColumn::TYPE_PASSWORD; break;
   }
@@ -334,9 +329,9 @@ nsTreeColumn::Invalidate()
   mCropStyle = 0;
   static Element::AttrValuesArray cropstrings[] =
     {&nsGkAtoms::center, &nsGkAtoms::left, &nsGkAtoms::start, nullptr};
-  switch (mContent->AsElement()->FindAttrValueIn(kNameSpaceID_None,
-                                                 nsGkAtoms::crop, cropstrings,
-                                                 eCaseMatters)) {
+  switch (mContent->FindAttrValueIn(kNameSpaceID_None,
+                                    nsGkAtoms::crop, cropstrings,
+                                    eCaseMatters)) {
     case 0:
       mCropStyle = 1;
       break;
@@ -535,11 +530,10 @@ nsTreeColumns::GetKeyColumn()
   for (nsTreeColumn* currCol = mFirstColumn; currCol; currCol = currCol->GetNext()) {
     // Skip hidden columns.
     if (!currCol->mContent ||
-        !currCol->mContent->IsElement() ||
-        currCol->mContent->AsElement()->AttrValueIs(kNameSpaceID_None,
-                                                    nsGkAtoms::hidden,
-                                                    nsGkAtoms::_true,
-                                                    eCaseMatters))
+        currCol->mContent->AttrValueIs(kNameSpaceID_None,
+                                       nsGkAtoms::hidden,
+                                       nsGkAtoms::_true,
+                                       eCaseMatters))
       continue;
 
     // Skip non-text column

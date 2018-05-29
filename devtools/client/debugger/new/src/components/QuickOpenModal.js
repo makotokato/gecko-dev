@@ -289,10 +289,6 @@ class QuickOpenModal extends _react.Component {
         }
 
         if (results) {
-          if (this.isShortcutQuery()) {
-            return this.setModifier(results[selectedIndex]);
-          }
-
           return this.selectResultItem(e, results[selectedIndex]);
         }
       }
@@ -360,18 +356,6 @@ class QuickOpenModal extends _react.Component {
       });
     };
 
-    this.renderLoading = () => {
-      const {
-        symbolsLoading
-      } = this.props;
-
-      if ((this.isFunctionQuery() || this.isVariableQuery()) && symbolsLoading) {
-        return _react2.default.createElement("div", {
-          className: "loading-indicator"
-        }, L10N.getStr("loadingText"));
-      }
-    };
-
     this.state = {
       results: null,
       selectedIndex: 0
@@ -416,6 +400,18 @@ class QuickOpenModal extends _react.Component {
     return !this.getResultCount() && !!query;
   }
 
+  getSummaryMessage() {
+    let summaryMsg = "";
+
+    if (this.isGotoQuery()) {
+      summaryMsg = L10N.getStr("shortcuts.gotoLine");
+    } else if ((this.isFunctionQuery() || this.isVariableQuery()) && this.props.symbolsLoading) {
+      summaryMsg = L10N.getStr("loadingText");
+    }
+
+    return summaryMsg;
+  }
+
   render() {
     const {
       enabled,
@@ -436,19 +432,22 @@ class QuickOpenModal extends _react.Component {
     return _react2.default.createElement(_Modal2.default, {
       "in": enabled,
       handleClose: this.closeModal
-    }, _react2.default.createElement(_SearchInput2.default, {
+    }, _react2.default.createElement(_SearchInput2.default, _extends({
       query: query,
       hasPrefix: true,
       count: this.getResultCount(),
       placeholder: L10N.getStr("sourceSearch.search"),
-      summaryMsg: "",
+      summaryMsg: this.getSummaryMessage(),
       showErrorEmoji: this.shouldShowErrorEmoji(),
       onChange: this.onChange,
       onKeyDown: this.onKeyDown,
       handleClose: this.closeModal,
       expanded: expanded,
+      showClose: false,
       selectedItemId: expanded && items[selectedIndex] ? items[selectedIndex].id : ""
-    }), this.renderLoading(), newResults && _react2.default.createElement(_ResultList2.default, _extends({
+    }, this.isSourceSearch() ? {
+      size: "big"
+    } : {})), newResults && _react2.default.createElement(_ResultList2.default, _extends({
       key: "results",
       items: items,
       selected: selectedIndex,
@@ -469,7 +468,7 @@ function mapStateToProps(state) {
   const selectedSource = (0, _selectors.getSelectedSource)(state);
   return {
     enabled: (0, _selectors.getQuickOpenEnabled)(state),
-    sources: (0, _quickOpen.formatSources)((0, _selectors.getRelativeSources)(state), (0, _selectors.getTabs)(state).toArray()),
+    sources: (0, _quickOpen.formatSources)((0, _selectors.getRelativeSources)(state).toArray(), (0, _selectors.getTabs)(state).toArray()),
     selectedSource,
     symbols: (0, _quickOpen.formatSymbols)((0, _selectors.getSymbols)(state, selectedSource)),
     symbolsLoading: (0, _selectors.isSymbolsLoading)(state, selectedSource),

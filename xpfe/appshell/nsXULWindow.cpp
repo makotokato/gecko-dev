@@ -26,7 +26,6 @@
 #include "nsIServiceManager.h"
 #include "nsIContentViewer.h"
 #include "nsIDocument.h"
-#include "nsIDOMDocument.h"
 #include "nsPIDOMWindow.h"
 #include "nsScreen.h"
 #include "nsIEmbeddingSiteWindow.h"
@@ -92,7 +91,6 @@ nsXULWindow::nsXULWindow(uint32_t aChromeFlags)
     mContinueModalLoop(false),
     mDebuting(false),
     mChromeLoaded(false),
-    mPersistentWindowStateLoaded(false),
     mSizingShellFromXUL(false),
     mShowAfterLoad(false),
     mIntrinsicallySized(false),
@@ -130,9 +128,7 @@ NS_INTERFACE_MAP_BEGIN(nsXULWindow)
   NS_INTERFACE_MAP_ENTRY(nsIBaseWindow)
   NS_INTERFACE_MAP_ENTRY(nsIInterfaceRequestor)
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
-  if (aIID.Equals(NS_GET_IID(nsXULWindow)))
-    foundInterface = reinterpret_cast<nsISupports*>(this);
-  else
+  NS_INTERFACE_MAP_ENTRY_CONCRETE(nsXULWindow)
 NS_INTERFACE_MAP_END
 
 //*****************************************************************************
@@ -452,6 +448,9 @@ NS_IMETHODIMP nsXULWindow::Create()
 
 NS_IMETHODIMP nsXULWindow::Destroy()
 {
+  MOZ_DIAGNOSTIC_ASSERT(!mSyncingAttributesToWidget,
+                        "Destroying the window from SyncAttributesToWidget?");
+
   if (!mWindow)
      return NS_OK;
 
@@ -1124,7 +1123,6 @@ void nsXULWindow::OnChromeLoaded()
   if (NS_SUCCEEDED(rv)) {
     mChromeLoaded = true;
     ApplyChromeFlags();
-    LoadPersistentWindowState();
     SyncAttributesToWidget();
     SizeShell();
 
@@ -1552,6 +1550,11 @@ void nsXULWindow::SyncAttributesToWidget()
   if (!windowElement)
     return;
 
+  AutoRestore<bool> scope { mSyncingAttributesToWidget };
+  mSyncingAttributesToWidget = true;
+
+  MOZ_DIAGNOSTIC_ASSERT(mWindow, "No widget on SyncAttributesToWidget?");
+
   nsAutoString attr;
 
   // "hidechrome" attribute
@@ -1559,6 +1562,8 @@ void nsXULWindow::SyncAttributesToWidget()
                                  nsGkAtoms::_true, eCaseMatters)) {
     mWindow->HideWindowChrome(true);
   }
+
+  NS_ENSURE_TRUE_VOID(mWindow);
 
   // "chromemargin" attribute
   nsIntMargin margins;
@@ -1568,11 +1573,15 @@ void nsXULWindow::SyncAttributesToWidget()
     mWindow->SetNonClientMargins(tmp);
   }
 
+  NS_ENSURE_TRUE_VOID(mWindow);
+
   // "windowtype" attribute
   windowElement->GetAttribute(WINDOWTYPE_ATTRIBUTE, attr);
   if (!attr.IsEmpty()) {
     mWindow->SetWindowClass(attr);
   }
+
+  NS_ENSURE_TRUE_VOID(mWindow);
 
   // "id" attribute for icon
   windowElement->GetAttribute(NS_LITERAL_STRING("id"), attr);
@@ -1581,17 +1590,25 @@ void nsXULWindow::SyncAttributesToWidget()
   }
   mWindow->SetIcon(attr);
 
+  NS_ENSURE_TRUE_VOID(mWindow);
+
   // "drawtitle" attribute
   windowElement->GetAttribute(NS_LITERAL_STRING("drawtitle"), attr);
   mWindow->SetDrawsTitle(attr.LowerCaseEqualsLiteral("true"));
+
+  NS_ENSURE_TRUE_VOID(mWindow);
 
   // "toggletoolbar" attribute
   windowElement->GetAttribute(NS_LITERAL_STRING("toggletoolbar"), attr);
   mWindow->SetShowsToolbarButton(attr.LowerCaseEqualsLiteral("true"));
 
+  NS_ENSURE_TRUE_VOID(mWindow);
+
   // "fullscreenbutton" attribute
   windowElement->GetAttribute(NS_LITERAL_STRING("fullscreenbutton"), attr);
   mWindow->SetShowsFullScreenButton(attr.LowerCaseEqualsLiteral("true"));
+
+  NS_ENSURE_TRUE_VOID(mWindow);
 
   // "macanimationtype" attribute
   windowElement->GetAttribute(NS_LITERAL_STRING("macanimationtype"), attr);
@@ -2416,12 +2433,6 @@ nsXULWindow::BeforeStartLayout()
 void
 nsXULWindow::LoadPersistentWindowState()
 {
-  // Only apply the persisted state once.
-  if (mPersistentWindowStateLoaded) {
-    return;
-  }
-  mPersistentWindowStateLoaded = true;
-
   nsCOMPtr<dom::Element> docShellElement = GetWindowDOMElement();
   if (!docShellElement) {
     return;

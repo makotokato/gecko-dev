@@ -51,7 +51,7 @@ struct DevTools : public ::testing::Test {
     global.init(cx, createGlobal());
     if (!global)
       return;
-    JS_EnterCompartment(cx, global);
+    JS::EnterRealm(cx, global);
 
     compartment = js::GetContextCompartment(cx);
     zone = js::GetContextZone(cx);
@@ -88,13 +88,13 @@ struct DevTools : public ::testing::Test {
   {
     /* Create the global object. */
     JS::RootedObject newGlobal(cx);
-    JS::CompartmentOptions options;
+    JS::RealmOptions options;
     newGlobal = JS_NewGlobalObject(cx, getGlobalClass(), nullptr,
                                    JS::FireOnNewGlobalHook, options);
     if (!newGlobal)
       return nullptr;
 
-    JSAutoCompartment ac(cx, newGlobal);
+    JSAutoRealm ar(cx, newGlobal);
 
     /* Populate the global object with the standard globals, like Object and
        Array. */
@@ -108,7 +108,7 @@ struct DevTools : public ::testing::Test {
     _initialized = false;
 
     if (global) {
-      JS_LeaveCompartment(cx, nullptr);
+      JS::LeaveRealm(cx, nullptr);
       global = nullptr;
     }
     if (cx)

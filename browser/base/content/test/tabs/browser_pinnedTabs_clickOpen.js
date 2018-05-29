@@ -1,6 +1,5 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* Any copyright is dedicated to the Public Domain.
+ * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
@@ -19,14 +18,17 @@ async function testNewTabPosition(expectedPosition, modifiers = {}) {
 // Test that a tab opened from a pinned tab is not in the pinned region.
 add_task(async function test_pinned_content_click() {
   let testUri = "data:text/html;charset=utf-8,<a href=\"http://mochi.test:8888/\" target=\"_blank\" id=\"link\">link</a>";
-  let tabs = [gBrowser.selectedTab, BrowserTestUtils.addTab(gBrowser, testUri), BrowserTestUtils.addTab(gBrowser)];
+  let tabs = [
+    gBrowser.selectedTab,
+    await BrowserTestUtils.openNewForegroundTab(gBrowser, testUri),
+    BrowserTestUtils.addTab(gBrowser),
+  ];
   gBrowser.pinTab(tabs[1]);
   gBrowser.pinTab(tabs[2]);
 
   // First test new active tabs open at the start of non-pinned tabstrip.
-  await BrowserTestUtils.switchTab(gBrowser, tabs[1]);
   let newtab1 = await testNewTabPosition(2);
-
+  // Switch back to our test tab.
   await BrowserTestUtils.switchTab(gBrowser, tabs[1]);
   let newtab2 = await testNewTabPosition(2);
 

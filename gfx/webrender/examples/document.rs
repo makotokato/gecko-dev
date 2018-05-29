@@ -87,7 +87,7 @@ impl Example for App {
         &mut self,
         api: &RenderApi,
         base_builder: &mut DisplayListBuilder,
-        _: &mut ResourceUpdates,
+        _txn: &mut Transaction,
         framebuffer_size: DeviceUintSize,
         _: PipelineId,
         _: DocumentId,
@@ -113,7 +113,6 @@ impl Example for App {
             builder.push_stacking_context(
                 &LayoutPrimitiveInfo::new(doc.content_rect),
                 None,
-                ScrollPolicy::Fixed,
                 None,
                 TransformStyle::Flat,
                 None,

@@ -24,7 +24,6 @@
 #include "nsGkAtoms.h"
 #include "nsAtom.h"
 #include "nsIContent.h"
-#include "nsIDOMNode.h"
 #include "nsIFrame.h"
 #include "nsINode.h"
 #include "nsIPresShell.h"
@@ -1388,7 +1387,7 @@ HTMLEditor::SelectBlockOfCells(Element* aStartCell,
 
   RefPtr<Element> cell;
   int32_t currentRowIndex, currentColIndex;
-  nsCOMPtr<nsIDOMRange> range;
+  RefPtr<nsRange> range;
   rv = GetFirstSelectedCell(getter_AddRefs(range), getter_AddRefs(cell));
   NS_ENSURE_SUCCESS(rv, rv);
   if (rv == NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND) {
@@ -1401,7 +1400,7 @@ HTMLEditor::SelectBlockOfCells(Element* aStartCell,
 
     if (currentRowIndex < maxRow || currentRowIndex > maxRow ||
         currentColIndex < maxColumn || currentColIndex > maxColumn) {
-      selection->RemoveRange(*static_cast<nsRange*>(range.get()), IgnoreErrors());
+      selection->RemoveRange(*range, IgnoreErrors());
       // Since we've removed the range, decrement pointer to next range
       mSelectedCellIndex--;
     }
@@ -2894,7 +2893,7 @@ HTMLEditor::GetCellFromRange(nsRange* aRange,
 }
 
 NS_IMETHODIMP
-HTMLEditor::GetFirstSelectedCell(nsIDOMRange** aRange,
+HTMLEditor::GetFirstSelectedCell(nsRange** aRange,
                                  Element** aCell)
 {
   NS_ENSURE_TRUE(aCell, NS_ERROR_NULL_POINTER);
@@ -2923,8 +2922,7 @@ HTMLEditor::GetFirstSelectedCell(nsIDOMRange** aRange,
   }
 
   if (aRange) {
-    *aRange = range.get();
-    NS_ADDREF(*aRange);
+    range.forget(aRange);
   }
 
   // Setup for next cell
@@ -2934,7 +2932,7 @@ HTMLEditor::GetFirstSelectedCell(nsIDOMRange** aRange,
 }
 
 NS_IMETHODIMP
-HTMLEditor::GetNextSelectedCell(nsIDOMRange** aRange,
+HTMLEditor::GetNextSelectedCell(nsRange** aRange,
                                 Element** aCell)
 {
   NS_ENSURE_TRUE(aCell, NS_ERROR_NULL_POINTER);
@@ -2974,8 +2972,7 @@ HTMLEditor::GetNextSelectedCell(nsIDOMRange** aRange,
   NS_ENSURE_TRUE(*aCell, NS_SUCCESS_EDITOR_ELEMENT_NOT_FOUND);
 
   if (aRange) {
-    *aRange = range.get();
-    NS_ADDREF(*aRange);
+    range.forget(aRange);
   }
 
   // Setup for next cell

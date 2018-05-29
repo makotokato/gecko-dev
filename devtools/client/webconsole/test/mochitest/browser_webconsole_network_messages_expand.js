@@ -94,6 +94,9 @@ async function openRequestAfterUpdates(target, hud) {
   let urlNode = messageNode.querySelector(".url");
   urlNode.click();
 
+  let toggleButtonNode = messageNode.querySelector(".sidebar-toggle");
+  ok(!toggleButtonNode, "Sidebar toggle button shouldn't be shown");
+
   await payload;
   await testNetworkMessage(toolbox, messageNode);
 }
@@ -119,7 +122,7 @@ async function openRequestBeforeUpdates(target, hud, tab) {
   let payload = waitForPayloadReady(toolbox);
 
   // Set the default panel.
-  const state = hud.ui.newConsoleOutput.getStore().getState();
+  const state = hud.ui.consoleOutput.getStore().getState();
   state.ui.networkMessageActiveTabId = tab.id;
 
   // Expand network log

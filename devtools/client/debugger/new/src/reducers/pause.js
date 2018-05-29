@@ -24,6 +24,7 @@ exports.getFrameScope = getFrameScope;
 exports.getSelectedScope = getSelectedScope;
 exports.getSelectedScopeMappings = getSelectedScopeMappings;
 exports.getSelectedFrameId = getSelectedFrameId;
+exports.getSelectedComponentIndex = getSelectedComponentIndex;
 exports.getTopFrame = getTopFrame;
 exports.getDebuggeeUrl = getDebuggeeUrl;
 exports.getSkipPausing = getSkipPausing;
@@ -47,6 +48,7 @@ const createPauseState = exports.createPauseState = () => ({
   isWaitingOnBreak: false,
   frames: undefined,
   selectedFrameId: undefined,
+  selectedComponentIndex: undefined,
   frameScopes: {
     generated: {},
     original: {},
@@ -177,6 +179,11 @@ function update(state = createPauseState(), action) {
         selectedFrameId: action.frame.id
       });
 
+    case "SELECT_COMPONENT":
+      return _objectSpread({}, state, {
+        selectedComponentIndex: action.componentIndex
+      });
+
     case "SET_POPUP_OBJECT_PROPERTIES":
       if (!action.properties) {
         return _objectSpread({}, state);
@@ -212,7 +219,7 @@ function update(state = createPauseState(), action) {
       {
         return action.status === "start" ? _objectSpread({}, state, emptyPauseState, {
           command: action.command,
-          previousLocation: buildPreviousLocation(state, action)
+          previousLocation: getPauseLocation(state, action)
         }) : _objectSpread({}, state, {
           command: null
         });
@@ -246,17 +253,18 @@ function update(state = createPauseState(), action) {
   return state;
 }
 
-function buildPreviousLocation(state, action) {
+function getPauseLocation(state, action) {
   const {
     frames,
     previousLocation
-  } = state;
+  } = state; // NOTE: We store the previous location so that we ensure that we
+  // do not stop at the same location twice when we step over.
 
   if (action.command !== "stepOver") {
     return null;
   }
 
-  const frame = frames && frames.length > 0 ? frames[0] : null;
+  const frame = frames && frames[0];
 
   if (!frame) {
     return previousLocation;
@@ -384,6 +392,10 @@ function getSelectedScopeMappings(state) {
 
 function getSelectedFrameId(state) {
   return state.pause.selectedFrameId;
+}
+
+function getSelectedComponentIndex(state) {
+  return state.pause.selectedComponentIndex;
 }
 
 function getTopFrame(state) {

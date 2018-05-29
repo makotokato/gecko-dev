@@ -22,8 +22,6 @@
 #include "nsAtom.h"
 #include "nsIContent.h"
 #include "nsIDocument.h"
-#include "nsIDOMDocument.h"
-#include "nsIDOMRange.h"
 #include "nsIFrame.h"
 #include "nsINode.h"
 #include "nsIPresShell.h"
@@ -31,6 +29,7 @@
 #include "nsISupports.h"
 #include "nsIWidget.h"
 #include "nsPresContext.h"
+#include "nsRange.h"
 #include "nsRefreshDriver.h"
 #include "nsWeakReference.h"
 #include "WritingModes.h"
@@ -2293,13 +2292,9 @@ IMEContentObserver::DocumentObserver::Destroy()
 }
 
 void
-IMEContentObserver::DocumentObserver::BeginUpdate(nsIDocument* aDocument,
-                                                  nsUpdateType aUpdateType)
+IMEContentObserver::DocumentObserver::BeginUpdate(nsIDocument* aDocument)
 {
   if (NS_WARN_IF(Destroyed()) || NS_WARN_IF(!IsObserving())) {
-    return;
-  }
-  if (!(aUpdateType & UPDATE_CONTENT_MODEL)) {
     return;
   }
   mDocumentUpdating++;
@@ -2307,14 +2302,10 @@ IMEContentObserver::DocumentObserver::BeginUpdate(nsIDocument* aDocument,
 }
 
 void
-IMEContentObserver::DocumentObserver::EndUpdate(nsIDocument* aDocument,
-                                                nsUpdateType aUpdateType)
+IMEContentObserver::DocumentObserver::EndUpdate(nsIDocument* aDocument)
 {
   if (NS_WARN_IF(Destroyed()) || NS_WARN_IF(!IsObserving()) ||
       NS_WARN_IF(!IsUpdating())) {
-    return;
-  }
-  if (!(aUpdateType & UPDATE_CONTENT_MODEL)) {
     return;
   }
   mDocumentUpdating--;

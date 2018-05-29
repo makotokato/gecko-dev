@@ -70,6 +70,7 @@
 #include <limits>
 
 #include "nsWindow.h"
+#include "nsAppRunner.h"
 
 #include <shellapi.h>
 #include <windows.h>
@@ -350,6 +351,9 @@ static NS_DEFINE_CID(kCClipboardCID, NS_CLIPBOARD_CID);
 
 // General purpose user32.dll hook object
 static WindowsDllInterceptor sUser32Intercept;
+
+// AddHook success checks
+static mozilla::Maybe<bool> sHookedGetWindowInfo;
 
 // 2 pixel offset for eTransparencyBorderlessGlass which equals the size of
 // the default window border Windows paints. Glass will be extended inward
@@ -2496,11 +2500,15 @@ nsWindow::UpdateGetWindowInfoCaptionStatus(bool aActiveCaption)
   if (!mWnd)
     return;
 
-  if (!sGetWindowInfoPtrStub) {
+  if (sHookedGetWindowInfo.isNothing()) {
     sUser32Intercept.Init("user32.dll");
-    if (!sUser32Intercept.AddHook("GetWindowInfo", reinterpret_cast<intptr_t>(GetWindowInfoHook),
-                                  (void**) &sGetWindowInfoPtrStub))
+    sHookedGetWindowInfo =
+      Some(sUser32Intercept.AddHook("GetWindowInfo",
+                                    reinterpret_cast<intptr_t>(GetWindowInfoHook),
+                                    (void**) &sGetWindowInfoPtrStub));
+    if (!sHookedGetWindowInfo.value()) {
       return;
+    }
   }
   // Update our internally tracked caption status
   SetPropW(mWnd, kManageWindowInfoProperty, 
@@ -5030,6 +5038,20 @@ LRESULT CALLBACK nsWindow::WindowProcInternal(HWND hWnd, UINT msg, WPARAM wParam
   return res;
 }
 
+const char16_t*
+GetQuitType()
+{
+  if (Preferences::GetBool(PREF_WIN_REGISTER_APPLICATION_RESTART, false)) {
+    DWORD cchCmdLine = 0;
+    HRESULT rc =
+      ::GetApplicationRestartSettings(::GetCurrentProcess(), nullptr, &cchCmdLine, nullptr);
+    if (rc == S_OK) {
+      return u"os-restart";
+    }
+  }
+  return nullptr;
+}
+
 // The main windows message processing method for plugins.
 // The result means whether this method processed the native
 // event for plugin. If false, the native event should be
@@ -5202,7 +5224,9 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
         nsCOMPtr<nsISupportsPRBool> cancelQuit =
           do_CreateInstance(NS_SUPPORTS_PRBOOL_CONTRACTID);
         cancelQuit->SetData(false);
-        obsServ->NotifyObservers(cancelQuit, "quit-application-requested", nullptr);
+
+        const char16_t* quitType = GetQuitType();
+        obsServ->NotifyObservers(cancelQuit, "quit-application-requested", quitType);
 
         bool abortQuit;
         cancelQuit->GetData(&abortQuit);
@@ -5233,9 +5257,11 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
           mozilla::services::GetObserverService();
         const char16_t* context = u"shutdown-persist";
         const char16_t* syncShutdown = u"syncShutdown";
+        const char16_t* quitType = GetQuitType();
+
         obsServ->NotifyObservers(nullptr, "quit-application-granted", syncShutdown);
         obsServ->NotifyObservers(nullptr, "quit-application-forced", nullptr);
-        obsServ->NotifyObservers(nullptr, "quit-application", nullptr);
+        obsServ->NotifyObservers(nullptr, "quit-application", quitType);
         obsServ->NotifyObservers(nullptr, "profile-change-net-teardown", context);
         obsServ->NotifyObservers(nullptr, "profile-change-teardown", context);
         obsServ->NotifyObservers(nullptr, "profile-before-change", context);
@@ -8355,6 +8381,23 @@ nsWindow::DefaultProcOfPluginEvent(const WidgetPluginEvent& aEvent)
 
   CallWindowProcW(GetPrevWindowProc(), mWnd, pPluginEvent->event,
                   pPluginEvent->wParam, pPluginEvent->lParam);
+}
+
+void
+nsWindow::EnableIMEForPlugin(bool aEnable)
+{
+  // Current IME state isn't plugin, ignore this call
+  if (NS_WARN_IF(mInputContext.mIMEState.mEnabled != IMEState::PLUGIN)) {
+    return;
+  }
+
+  InputContext inputContext = GetInputContext();
+  if (aEnable) {
+    inputContext.mHTMLInputType.AssignLiteral("text");
+  } else {
+    inputContext.mHTMLInputType.AssignLiteral("password");
+  }
+  SetInputContext(inputContext, InputContextAction());
 }
 
 nsresult

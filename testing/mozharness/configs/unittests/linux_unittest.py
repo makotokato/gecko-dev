@@ -34,7 +34,6 @@ else:
 
 #####
 config = {
-    "buildbot_json_path": "buildprops.json",
     ###
     "installer_path": INSTALLER_PATH,
     "binary_path": BINARY_PATH,
@@ -205,20 +204,10 @@ config = {
                         "--setpref=layers.acceleration.force-enabled=true"],
             "tests": ["tests/reftest/tests/layout/reftests/reftest.list"]
         },
-        "reftest-fonts": {
-            "options": ["--suite=reftest",
-                        "--setpref=layers.acceleration.force-enabled=true"],
-            "tests": ["tests/reftest/tests/layout/reftests/reftest_fonts.list"]
-        },
         "reftest-no-accel": {
             "options": ["--suite=reftest",
                         "--setpref=layers.acceleration.disabled=true"],
             "tests": ["tests/reftest/tests/layout/reftests/reftest.list"]
-        },
-        "reftest-no-accel-fonts": {
-            "options": ["--suite=reftest",
-                        "--setpref=layers.acceleration.disabled=true"],
-            "tests": ["tests/reftest/tests/layout/reftests/reftest_fonts.list"]
         },
     },
     "all_xpcshell_suites": {
@@ -280,7 +269,6 @@ config = {
     ],
     "vcs_output_timeout": 1000,
     "minidump_save_path": "%(abs_work_dir)s/../minidumps",
-    "buildbot_max_log_size": 209715200,
     "default_blob_upload_servers": [
         "https://blobupload.elasticbeanstalk.com",
     ],

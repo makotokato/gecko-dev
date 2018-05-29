@@ -1181,7 +1181,7 @@ nsSVGUtils::GetBBox(nsIFrame* aFrame, uint32_t aFlags,
         }
         matrix = clipContent->PrependLocalTransformsTo(matrix, eUserSpaceToParent);
         bbox =
-          clipPathFrame->GetBBoxForClipPathFrame(bbox, matrix).ToThebesRect();
+          clipPathFrame->GetBBoxForClipPathFrame(bbox, matrix, aFlags).ToThebesRect();
       }
 
       if (hasClip) {
@@ -1295,7 +1295,7 @@ nsSVGUtils::CanOptimizeOpacity(nsIFrame *aFrame)
     return false;
   }
 
-  if (nsLayoutUtils::HasAnimationOfProperty(aFrame, eCSSProperty_opacity)) {
+  if (nsLayoutUtils::MayHaveAnimationOfProperty(aFrame, eCSSProperty_opacity)) {
     return false;
   }
 

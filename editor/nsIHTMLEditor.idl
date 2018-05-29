@@ -9,6 +9,7 @@
 interface nsIContent;
 interface nsIArray;
 
+webidl Document;
 webidl Element;
 webidl Node;
 webidl Selection;
@@ -127,7 +128,7 @@ interface nsIHTMLEditor : nsISupports
    *
    * @param aNode      the node to test
    */
-  boolean nodeIsBlock(in nsIDOMNode node);
+  boolean nodeIsBlock(in Node node);
 
   /**
    * Insert some HTML source at the current location
@@ -169,8 +170,8 @@ interface nsIHTMLEditor : nsISupports
                              in AString aContextStr,
                              in AString aInfoStr,
                              in AString aFlavor,
-                             in nsIDOMDocument aSourceDoc,
-                             in nsIDOMNode aDestinationNode,
+                             in Document aSourceDoc,
+                             in Node aDestinationNode,
                              in long aDestinationOffset,
                              in boolean aDeleteSelection);
 

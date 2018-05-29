@@ -197,7 +197,7 @@ NS_IMPL_CI_INTERFACE_GETTER(nsThread, nsIThread, nsIThreadInternal,
 
 //-----------------------------------------------------------------------------
 
-class nsThreadStartupEvent : public Runnable
+class nsThreadStartupEvent final : public Runnable
 {
 public:
   nsThreadStartupEvent()
@@ -217,11 +217,9 @@ public:
     }
   }
 
-  // This method needs to be public to support older compilers (xlC_r on AIX).
-  // It should be called directly as this class type is reference counted.
-  virtual ~nsThreadStartupEvent() {}
-
 private:
+  ~nsThreadStartupEvent() = default;
+
   NS_IMETHOD Run() override
   {
     ReentrantMonitorAutoEnter mon(mMon);
@@ -1271,11 +1269,9 @@ nsThread::DoMainThreadSpecificProcessing(bool aReallyWait)
         if (mpPending == MemPressure_Stopping) {
           os->NotifyObservers(nullptr, "memory-pressure-stop", nullptr);
         } else {
-          // Use no-forward to prevent the notifications from being transferred to
-          // the children of this process.
           os->NotifyObservers(nullptr, "memory-pressure",
-                              mpPending == MemPressure_New ? u"low-memory-no-forward" :
-                              u"low-memory-ongoing-no-forward");
+                              mpPending == MemPressure_New ? u"low-memory" :
+                              u"low-memory-ongoing");
         }
       } else {
         NS_WARNING("Can't get observer service!");

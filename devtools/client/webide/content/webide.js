@@ -20,9 +20,11 @@ const {GetAvailableAddons} = require("devtools/client/webide/modules/addons");
 const {getJSON} = require("devtools/client/shared/getjson");
 const Telemetry = require("devtools/client/shared/telemetry");
 const {RuntimeScanners} = require("devtools/client/webide/modules/runtimes");
-const {showDoorhanger} = require("devtools/client/shared/doorhanger");
 
-const Strings = Services.strings.createBundle("chrome://devtools/locale/webide.properties");
+const Strings =
+  Services.strings.createBundle("chrome://devtools/locale/webide.properties");
+
+const TELEMETRY_WEBIDE_IMPORT_PROJECT_COUNT = "DEVTOOLS_WEBIDE_IMPORT_PROJECT_COUNT";
 
 const HELP_URL = "https://developer.mozilla.org/docs/Tools/WebIDE/Troubleshooting";
 
@@ -103,7 +105,6 @@ var UI = {
     AppManager.destroy();
     this.updateConnectionTelemetry();
     this._telemetry.toolClosed("webide");
-    this._telemetry.destroy();
   },
 
   onfocus: function() {
@@ -117,11 +118,6 @@ var UI = {
         AppManager.selectedProject.type != "tab") {
       AppManager.validateAndUpdateProject(AppManager.selectedProject);
     }
-
-    // Hook to display promotional Developer Edition doorhanger. Only displayed once.
-    // Hooked into the `onfocus` event because sometimes does not work
-    // when run at the end of `init`. ¯\(°_o)/¯
-    showDoorhanger({ window, type: "deveditionpromo", anchor: document.querySelector("#deck") });
   },
 
   appManagerUpdate: function(what, details) {
@@ -539,7 +535,7 @@ var UI = {
   logActionState: function(action, state) {
     let histogramId = "DEVTOOLS_WEBIDE_CONNECTION_" +
                       action.toUpperCase() + "_USED";
-    this._telemetry.log(histogramId, state);
+    this._telemetry.getHistogramById(histogramId).add(state);
   },
 
   /** ******** PROJECTS **********/
@@ -607,7 +603,7 @@ var UI = {
     // Select project
     AppManager.selectedProject = project;
 
-    this._telemetry.actionOccurred("webideImportProject");
+    this._telemetry.getHistogramById(TELEMETRY_WEBIDE_IMPORT_PROJECT_COUNT).add(true);
   },
 
   // Remember the last selected project on the runtime

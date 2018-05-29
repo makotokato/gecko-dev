@@ -54,9 +54,6 @@ function RuleEditor(ruleView, rule) {
   this.ruleView = ruleView;
   this.doc = this.ruleView.styleDocument;
   this.toolbox = this.ruleView.inspector.toolbox;
-  // We stash this locally so that we can refer to it from |destroy|
-  // without accidentally reinstantiating the service during shutdown.
-  this.sourceMapURLService = this.toolbox.sourceMapURLService;
   this.rule = rule;
 
   this.isEditable = !rule.isSystem;
@@ -64,7 +61,6 @@ function RuleEditor(ruleView, rule) {
   // being edited
   this.isEditing = false;
 
-  this._onFontSwatchClick = this._onFontSwatchClick.bind(this);
   this._onNewProperty = this._onNewProperty.bind(this);
   this._newPropertyDestroy = this._newPropertyDestroy.bind(this);
   this._onSelectorDone = this._onSelectorDone.bind(this);
@@ -73,12 +69,10 @@ function RuleEditor(ruleView, rule) {
   this._onToolChanged = this._onToolChanged.bind(this);
   this._updateLocation = this._updateLocation.bind(this);
   this._onSourceClick = this._onSourceClick.bind(this);
-  this._onRuleUnselected = this._onRuleUnselected.bind(this);
 
   this.rule.domRule.on("location-changed", this._locationChanged);
   this.toolbox.on("tool-registered", this._onToolChanged);
   this.toolbox.on("tool-unregistered", this._onToolChanged);
-  this.ruleView.on("ruleview-rule-unselected", this._onRuleUnselected);
 
   this._create();
 }
@@ -88,11 +82,6 @@ RuleEditor.prototype = {
     this.rule.domRule.off("location-changed");
     this.toolbox.off("tool-registered", this._onToolChanged);
     this.toolbox.off("tool-unregistered", this._onToolChanged);
-    this.ruleView.off("ruleview-rule-unselected", this._onRuleUnselected);
-
-    if (this.fontSwatch) {
-      this.fontSwatch.removeEventListener("click", this._onFontSwatchClick);
-    }
 
     let url = null;
     if (this.rule.sheet) {
@@ -103,9 +92,21 @@ RuleEditor.prototype = {
       // rule and if it isn't an inline rule.
       let sourceLine = this.rule.ruleLine;
       let sourceColumn = this.rule.ruleColumn;
-      this.sourceMapURLService.unsubscribe(url, sourceLine, sourceColumn,
-                                           this._updateLocation);
+
+      if (this._sourceMapURLService) {
+        this._sourceMapURLService.unsubscribe(url, sourceLine, sourceColumn,
+          this._updateLocation);
+      }
     }
+  },
+
+  get sourceMapURLService() {
+    if (!this._sourceMapURLService) {
+      // sourceMapURLService is a lazy getter in the toolbox.
+      this._sourceMapURLService = this.toolbox.sourceMapURLService;
+    }
+
+    return this._sourceMapURLService;
   },
 
   get isSelectorEditable() {
@@ -182,10 +183,11 @@ RuleEditor.prototype = {
           selector = this.ruleView.inspector.selectionCssSelector;
         }
 
+        let isHighlighted = this.ruleView._highlighters &&
+          this.ruleView.highlighters.selectorHighlighterShown === selector;
         let selectorHighlighter = createChild(header, "span", {
           class: "ruleview-selectorhighlighter" +
-                 (this.ruleView.highlighters.selectorHighlighterShown === selector ?
-                  " highlighted" : ""),
+                 (isHighlighted ? " highlighted" : ""),
           title: l10n("rule.selectorHighlighter.tooltip")
         });
         selectorHighlighter.addEventListener("click", () => {
@@ -194,7 +196,9 @@ RuleEditor.prototype = {
 
         this.uniqueSelector = selector;
         this.emit("selector-icon-created");
-      }.bind(this))();
+      }.bind(this))().catch(error => {
+        console.error("Exception while getting unique selector", error);
+      });
     }
 
     this.openBrace = createChild(header, "span", {
@@ -241,53 +245,6 @@ RuleEditor.prototype = {
       editableItem({ element: this.closeBrace }, () => {
         this.newProperty();
       });
-    }
-
-    // Create the font editor toggle icon visible on hover.
-    if (this.ruleView.showFontEditor) {
-      this.fontSwatch = createChild(this.element, "div", {
-        class: "ruleview-font-editor-toggle"
-      });
-      this.fontSwatch.textContent = "Aa";
-
-      this.fontSwatch.addEventListener("click", this._onFontSwatchClick);
-    }
-  },
-
-  /**
-   * Handler for clicks on font swatch icon.
-   * Toggles the selected state of the the current rule for the font editor.
-   *
-   * @param {MouseEvent} e
-   *        Mouse click event.
-   */
-  _onFontSwatchClick: function(e) {
-    const editorId = "fonteditor";
-    const isActive = e.target.classList.toggle("active");
-
-    if (isActive) {
-      this.ruleView.selectRule(this.rule, editorId);
-    } else {
-      this.ruleView.unselectRule(this.rule, editorId);
-    }
-  },
-
-  /**
-   * Called when a rule was released from being selected for an editor.
-   * A rule may be released by: toggling a swatch icon, an action from an editor
-   * (ex: close), selecting a different node in the markup view, etc.
-   *
-   * @param {Object} eventData
-   *        Data payload for the event. Contains:
-   *        - {String} editorId - id of the editor for which the rule was released
-   *        - {Rule} rule - reference to rule that was released
-   */
-  _onRuleUnselected: function(eventData) {
-    const { rule, editorId } = eventData;
-
-    // If no longer selected for the font editor, toggle the swatch icon.
-    if (editorId === "fonteditor" && rule == this.rule) {
-      this.fontSwatch.classList.remove("active");
     }
   },
 

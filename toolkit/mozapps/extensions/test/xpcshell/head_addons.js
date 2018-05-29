@@ -13,14 +13,12 @@ Cu.importGlobalProperties(["TextEncoder"]);
 
 const PREF_EM_CHECK_UPDATE_SECURITY   = "extensions.checkUpdateSecurity";
 const PREF_EM_STRICT_COMPATIBILITY    = "extensions.strictCompatibility";
-const PREF_EM_MIN_COMPAT_APP_VERSION      = "extensions.minCompatibleAppVersion";
-const PREF_EM_MIN_COMPAT_PLATFORM_VERSION = "extensions.minCompatiblePlatformVersion";
 const PREF_GETADDONS_BYIDS               = "extensions.getAddons.get.url";
 const PREF_COMPAT_OVERRIDES              = "extensions.getAddons.compatOverides.url";
 const PREF_XPI_SIGNATURES_REQUIRED    = "xpinstall.signatures.required";
 const PREF_SYSTEM_ADDON_SET           = "extensions.systemAddonSet";
 const PREF_SYSTEM_ADDON_UPDATE_URL    = "extensions.systemAddon.update.url";
-const PREF_APP_UPDATE_ENABLED         = "app.update.enabled";
+const PREF_SYSTEM_ADDON_UPDATE_ENABLED = "extensions.systemAddon.update.enabled";
 const PREF_DISABLE_SECURITY = ("security.turn_off_all_security_so_that_" +
                                "viruses_can_take_over_this_computer");
 
@@ -159,7 +157,6 @@ var { AddonManager, AddonManagerInternal, AddonManagerPrivate } = AMscope;
 
 const promiseAddonByID = AddonManager.getAddonByID;
 const promiseAddonsByIDs = AddonManager.getAddonsByIDs;
-const promiseAddonsWithOperationsByTypes = AddonManager.getAddonsWithOperationsByTypes;
 
 var gPort = null;
 var gUrlToFileMap = {};
@@ -246,7 +243,8 @@ this.BootstrapMonitor = {
     Assert.notEqual(cached, undefined);
     Assert.equal(current.data.version, cached.data.version);
     Assert.equal(current.data.installPath, cached.data.installPath);
-    Assert.equal(current.data.resourceURI, cached.data.resourceURI);
+    Assert.ok(Services.io.newURI(current.data.resourceURI).equals(Services.io.newURI(cached.data.resourceURI)),
+              `Resource URIs match: "${current.data.resourceURI}" == "${cached.data.resourceURI}"`);
   },
 
   checkAddonStarted(id, version = undefined) {
@@ -359,6 +357,11 @@ function isNightlyChannel() {
   return channel != "aurora" && channel != "beta" && channel != "release" && channel != "esr";
 }
 
+
+async function restartWithLocales(locales) {
+  Services.locale.setRequestedLocales(locales);
+  await promiseRestartManager();
+}
 
 /**
  * Returns a map of Addon objects for installed add-ons with the given
@@ -670,12 +673,8 @@ function isThemeInAddonsList(aDir, aId) {
   return AddonTestUtils.addonsList.hasTheme(aDir, aId);
 }
 
-function isExtensionInAddonsList(aDir, aId) {
-  return AddonTestUtils.addonsList.hasExtension(aDir, aId);
-}
-
 function isExtensionInBootstrappedList(aDir, aId) {
-  return AddonTestUtils.addonsList.hasBootstrapped(aDir, aId);
+  return AddonTestUtils.addonsList.hasExtension(aDir, aId);
 }
 
 function check_startup_changes(aType, aIds) {
@@ -1074,7 +1073,7 @@ function check_test_completed(aArgs) {
 function ensure_test_completed() {
   for (let i in gExpectedEvents) {
     if (gExpectedEvents[i].length > 0)
-      do_throw(`Didn't see all the expected events for ${i}: Still expecting ${gExpectedEvents[i].map(([k]) => k)}`);
+      do_throw(`Didn't see all the expected events for ${i}: Still expecting ${gExpectedEvents[i]}`);
   }
   gExpectedEvents = {};
   if (gExpectedInstalls)
@@ -1114,25 +1113,15 @@ const EXTENSIONS_DB = "extensions.json";
 var gExtensionsJSON = gProfD.clone();
 gExtensionsJSON.append(EXTENSIONS_DB);
 
-function promiseInstallWebExtension(aData) {
+async function promiseInstallWebExtension(aData) {
   let addonFile = createTempWebExtensionFile(aData);
 
-  let promise = promiseWebExtensionStartup();
-  return promiseInstallAllFiles([addonFile]).then(installs => {
-    Services.obs.notifyObservers(addonFile, "flush-cache-entry");
-    // Since themes are disabled by default, it won't start up.
-    if (aData.manifest.theme)
-      return installs[0].addon;
-    return promise.then(() => installs[0].addon);
-  });
+  let {addon} = await promiseInstallFile(addonFile);
+  return addon;
 }
 
 // By default use strict compatibility
 Services.prefs.setBoolPref("extensions.strictCompatibility", true);
-
-// By default, set min compatible versions to 0
-Services.prefs.setCharPref(PREF_EM_MIN_COMPAT_APP_VERSION, "0");
-Services.prefs.setCharPref(PREF_EM_MIN_COMPAT_PLATFORM_VERSION, "0");
 
 // Ensure signature checks are enabled by default
 Services.prefs.setBoolPref(PREF_XPI_SIGNATURES_REQUIRED, true);
@@ -1281,8 +1270,6 @@ function buildSystemAddonUpdates(addons, root) {
     xml += `  <addons>\n`;
     for (let addon of addons) {
       xml += `    <addon id="${addon.id}" URL="${root + addon.path}" version="${addon.version}"`;
-      if (addon.size)
-        xml += ` size="${addon.size}"`;
       if (addon.hashFunction)
         xml += ` hashFunction="${addon.hashFunction}"`;
       if (addon.hashValue)
@@ -1631,4 +1618,12 @@ function mockPluginHost(plugins) {
   };
 
   MockRegistrar.register("@mozilla.org/plugin/host;1", PluginHost);
+}
+
+async function setInitialState(addon, initialState) {
+  if (initialState.userDisabled) {
+    await addon.disable();
+  } else if (initialState.userDisabled === false) {
+    await addon.enable();
+  }
 }

@@ -158,7 +158,8 @@ JSObject::setSingleton(JSContext* cx, js::HandleObject obj)
 {
     MOZ_ASSERT(!IsInsideNursery(obj));
 
-    js::ObjectGroup* group = js::ObjectGroup::lazySingletonGroup(cx, obj->getClass(),
+    js::ObjectGroupRealm& realm = js::ObjectGroupRealm::get(obj->group_);
+    js::ObjectGroup* group = js::ObjectGroup::lazySingletonGroup(cx, realm, obj->getClass(),
                                                                  obj->taggedProto());
     if (!group)
         return false;
@@ -367,19 +368,19 @@ template <typename T>
 static MOZ_ALWAYS_INLINE MOZ_MUST_USE T*
 SetNewObjectMetadata(JSContext* cx, T* obj)
 {
-    MOZ_ASSERT(!cx->compartment()->hasObjectPendingMetadata());
+    MOZ_ASSERT(!cx->realm()->hasObjectPendingMetadata());
 
     // The metadata builder is invoked for each object created on the active
     // thread, except when analysis/compilation is active, to avoid recursion.
     if (!cx->helperThread()) {
-        if (MOZ_UNLIKELY((size_t)cx->compartment()->hasAllocationMetadataBuilder()) &&
+        if (MOZ_UNLIKELY(cx->realm()->hasAllocationMetadataBuilder()) &&
             !cx->zone()->suppressAllocationMetadataBuilder)
         {
             // Don't collect metadata on objects that represent metadata.
             AutoSuppressAllocationMetadataBuilder suppressMetadata(cx);
 
             Rooted<T*> rooted(cx, obj);
-            cx->compartment()->setNewObjectMetadata(cx, rooted);
+            cx->realm()->setNewObjectMetadata(cx, rooted);
             return rooted;
         }
     }
@@ -394,17 +395,17 @@ JSObject::global() const
 {
     /*
      * The global is read-barriered so that it is kept live by access through
-     * the JSCompartment. When accessed through a JSObject, however, the global
-     * will be already be kept live by the black JSObject's parent pointer, so
-     * does not need to be read-barriered.
+     * the Realm. When accessed through a JSObject, however, the global will be
+     * already kept live by the black JSObject's group pointer, so does not
+     * need to be read-barriered.
      */
-    return *compartment()->unsafeUnbarrieredMaybeGlobal();
+    return *realm()->unsafeUnbarrieredMaybeGlobal();
 }
 
 inline js::GlobalObject*
 JSObject::globalForTracing(JSTracer*) const
 {
-    return compartment()->unsafeUnbarrieredMaybeGlobal();
+    return realm()->unsafeUnbarrieredMaybeGlobal();
 }
 
 inline bool

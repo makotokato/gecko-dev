@@ -564,6 +564,20 @@ WebRenderBridgeParent::UpdateAPZScrollData(const wr::Epoch& aEpoch,
 }
 
 void
+WebRenderBridgeParent::UpdateAPZScrollOffsets(ScrollUpdatesMap&& aUpdates,
+                                              uint32_t aPaintSequenceNumber)
+{
+  CompositorBridgeParent* cbp = GetRootCompositorBridgeParent();
+  if (!cbp) {
+    return;
+  }
+  LayersId rootLayersId = cbp->RootLayerTreeId();
+  if (RefPtr<APZUpdater> apz = cbp->GetAPZUpdater()) {
+    apz->UpdateScrollOffsets(rootLayersId, GetLayersId(), Move(aUpdates), aPaintSequenceNumber);
+  }
+}
+
+void
 WebRenderBridgeParent::SetAPZSampleTime()
 {
   CompositorBridgeParent* cbp = GetRootCompositorBridgeParent();
@@ -686,6 +700,8 @@ WebRenderBridgeParent::RecvSetDisplayList(const gfx::IntSize& aSize,
 
 mozilla::ipc::IPCResult
 WebRenderBridgeParent::RecvEmptyTransaction(const FocusTarget& aFocusTarget,
+                                            const ScrollUpdatesMap& aUpdates,
+                                            const uint32_t& aPaintSequenceNumber,
                                             InfallibleTArray<WebRenderParentCommand>&& aCommands,
                                             InfallibleTArray<OpDestroy>&& aToDestroy,
                                             const uint64_t& aFwdTransactionId,
@@ -708,35 +724,47 @@ WebRenderBridgeParent::RecvEmptyTransaction(const FocusTarget& aFocusTarget,
   // to early-return without doing so.
   AutoWebRenderBridgeParentAsyncMessageSender autoAsyncMessageSender(this, &aToDestroy);
 
+  bool scheduleComposite = false;
+
+  UpdateAPZFocusState(aFocusTarget);
+  if (!aUpdates.empty()) {
+    // aUpdates is moved into this function but that is not reflected by the
+    // function signature due to the way the IPDL generator works. We remove the
+    // const so that we can move this structure all the way to the desired
+    // destination.
+    UpdateAPZScrollOffsets(Move(const_cast<ScrollUpdatesMap&>(aUpdates)), aPaintSequenceNumber);
+    scheduleComposite = true;
+  }
+
   if (!aCommands.IsEmpty()) {
     mAsyncImageManager->SetCompositionTime(TimeStamp::Now());
     wr::TransactionBuilder txn;
-    ProcessWebRenderParentCommands(aCommands, txn);
-    mApi->SendTransaction(txn);
-    ScheduleGenerateFrame();
-  }
-
-  UpdateAPZFocusState(aFocusTarget);
-
-  if (!aCommands.IsEmpty()) {
-    wr::TransactionBuilder txn;
     wr::Epoch wrEpoch = GetNextWrEpoch();
     txn.UpdateEpoch(mPipelineId, wrEpoch);
+    ProcessWebRenderParentCommands(aCommands, txn);
     mApi->SendTransaction(txn);
+    scheduleComposite = true;
+  }
 
-    HoldPendingTransactionId(wrEpoch, aTransactionId, aTxnStartTime, aFwdTime);
-  } else {
-    bool sendDidComposite = false;
-    if (mPendingTransactionIds.empty()) {
-      sendDidComposite = true;
-    }
-    HoldPendingTransactionId(WrEpoch(), aTransactionId, aTxnStartTime, aFwdTime);
-    // If WebRenderBridgeParent does not have pending DidComposites,
-    // send DidComposite now.
-    if (sendDidComposite) {
-      TimeStamp now = TimeStamp::Now();
-      mCompositorBridge->DidComposite(GetLayersId(), now, now);
-    }
+  bool sendDidComposite = true;
+  if (scheduleComposite || !mPendingTransactionIds.empty()) {
+    // If we are going to kick off a new composite as a result of this
+    // transaction, or if there are already composite-triggering pending
+    // transactions inflight, then set sendDidComposite to false because we will
+    // send the DidComposite message after the composite occurs.
+    // If there are no pending transactions and we're not going to do a
+    // composite, then we leave sendDidComposite as true so we just send
+    // the DidComposite notification now.
+    sendDidComposite = false;
+  }
+
+  HoldPendingTransactionId(WrEpoch(), aTransactionId, aTxnStartTime, aFwdTime);
+
+  if (scheduleComposite) {
+    ScheduleGenerateFrame();
+  } else if (sendDidComposite) {
+    TimeStamp now = TimeStamp::Now();
+    mCompositorBridge->DidComposite(GetLayersId(), now, now);
   }
 
   return IPC_OK();
@@ -1296,14 +1324,17 @@ WebRenderBridgeParent::CompositeToTarget(gfx::DrawTarget* aTarget, const gfx::In
 
   mAsyncImageManager->SetCompositionTime(TimeStamp::Now());
 
-  // TODO: We can improve upon this by using two transactions: one for everything that
-  // doesn't change the display list (in other words does not cause the scene to be
-  // re-built), and one for the rest. This way, if an async pipeline needs to re-build
-  // its display list, other async pipelines can still be rendered while the scene is
-  // building.
-  wr::TransactionBuilder txn;
-  mAsyncImageManager->ApplyAsyncImages(txn);
-  mApi->SendTransaction(txn);
+  {
+    // TODO: We can improve upon this by using two transactions: one for everything that
+    // doesn't change the display list (in other words does not cause the scene to be
+    // re-built), and one for the rest. This way, if an async pipeline needs to re-build
+    // its display list, other async pipelines can still be rendered while the scene is
+    // building. Those other async pipelines can go in the other transaction that
+    // we create below.
+    wr::TransactionBuilder txn;
+    mAsyncImageManager->ApplyAsyncImages(txn);
+    mApi->SendTransaction(txn);
+  }
 
   if (!mAsyncImageManager->GetCompositeUntilTime().IsNull()) {
     // Trigger another CompositeToTarget() call because there might be another
@@ -1318,6 +1349,11 @@ WebRenderBridgeParent::CompositeToTarget(gfx::DrawTarget* aTarget, const gfx::In
     mPreviousFrameTimeStamp = TimeStamp();
     return;
   }
+
+  // Ensure this GenerateFrame is handled on the render backend thread rather
+  // than going through the scene builder thread. That way we continue generating
+  // frames with the old scene even during slow scene builds.
+  wr::TransactionBuilder txn(/* aUseSceneBuilderThread */ false);
 
   nsTArray<wr::WrOpacityProperty> opacityArray;
   nsTArray<wr::WrTransformProperty> transformArray;

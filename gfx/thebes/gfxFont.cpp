@@ -3364,7 +3364,7 @@ gfxFont::InitFakeSmallCapsRun(DrawTarget     *aDrawTarget,
                               const char16_t *aText,
                               uint32_t        aOffset,
                               uint32_t        aLength,
-                              uint8_t         aMatchType,
+                              gfxTextRange::MatchType aMatchType,
                               gfx::ShapedTextFlags aOrientation,
                               Script          aScript,
                               bool            aSyntheticLower,
@@ -3539,7 +3539,7 @@ gfxFont::InitFakeSmallCapsRun(DrawTarget     *aDrawTarget,
                               const uint8_t  *aText,
                               uint32_t        aOffset,
                               uint32_t        aLength,
-                              uint8_t         aMatchType,
+                              gfxTextRange::MatchType aMatchType,
                               gfx::ShapedTextFlags aOrientation,
                               Script          aScript,
                               bool            aSyntheticLower,
@@ -4211,15 +4211,16 @@ gfxFontStyle::gfxFontStyle(FontSlantStyle aStyle,
 PLDHashNumber
 gfxFontStyle::Hash() const
 {
-    return mozilla::HashGeneric(systemFont, style.ForHash(),
-                                stretch.ForHash(), weight.ForHash(),
-                                size, sizeAdjust,
-                                nsRefPtrHashKey<nsAtom>::HashKey(language));
-    /* XXX
-    return (style + (systemFont << 7) + (weight.ForHash() << 8) +
-            uint32_t(size*1000) + int32_t(sizeAdjust*1000)) ^
-            nsRefPtrHashKey<nsAtom>::HashKey(language);
-    */
+    uint32_t hash =
+        variationSettings.IsEmpty()
+            ? 0
+            : mozilla::HashBytes(variationSettings.Elements(),
+                                 variationSettings.Length() *
+                                     sizeof(gfxFontVariation));
+    return mozilla::AddToHash(hash, systemFont, style.ForHash(),
+                              stretch.ForHash(), weight.ForHash(),
+                              size, int32_t(sizeAdjust * 1000.0f),
+                              nsRefPtrHashKey<nsAtom>::HashKey(language));
 }
 
 void

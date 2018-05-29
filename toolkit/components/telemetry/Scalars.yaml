@@ -6,13 +6,15 @@ a11y:
   instantiators:
     bug_numbers:
       - 1323069
+      - 1462238
     description: >
       The leaf name and version number of the binary for the process responsible
       for remotely instantiating a11y.
-    expires: "61"
+    expires: never
     kind: string
     notification_emails:
-      - dbolter@mozilla.com
+      - accessibility@mozilla.com
+      - jteh@mozilla.com
     record_in_processes:
       - 'main'
     release_channel_collection: opt-out
@@ -378,6 +380,20 @@ browser.session.restore:
     release_channel_collection: opt-out
     record_in_processes:
       - 'main'
+
+extensions.updates:
+  rdf:
+    bug_numbers:
+      - 1460336
+    description: >
+      The number of RDF update requsts for a given extension ID.
+    expires: "66"
+    kind: uint
+    keyed: true
+    notification_emails:
+      - addons-dev-internal@mozilla.com
+    record_in_processes:
+      - main
 
 # This section is for probes used to measure use of the Webextensions storage.sync API.
 storage.sync.api.usage:
@@ -1222,6 +1238,20 @@ telemetry:
     record_in_processes:
       - 'all'
 
+  profile_directory_scans:
+    bug_numbers:
+      - 1458574
+    description: >
+      The number of times a profile directory scan was initiated in ProfileAge.jsm
+    expires: "65"
+    kind: uint
+    notification_emails:
+      - jrediger@mozilla.com
+      - telemetry-client-dev@mozilla.com
+    release_channel_collection: opt-out
+    record_in_processes:
+      - 'all'
+
 telemetry.discarded:
   accumulations:
     bug_numbers:
@@ -1315,24 +1345,6 @@ gfx.omtp:
     notification_emails:
       - gfx-telemetry-alerts@mozilla.com
       - rhunt@mozilla.com
-    record_in_processes:
-      - 'content'
-
-gfx:
-  small_paint_phase_weight:
-    bug_numbers:
-      - 1430897
-    description: >
-      Time that is spent in each phase of painting, as a percentage of
-      paint time. See also CONTENT_LARGE_PAINT_PHASE_WEIGHT in Histograms.json.
-      Keys are r (rasterization), dl (display list construction), and flb
-      (FrameLayerBuilder).
-    keyed: true
-    kind: uint
-    expires: "66"
-    notification_emails:
-      - gfx-telemetry-alerts@mozilla.com
-      - mwoodrow@mozilla.com
     record_in_processes:
       - 'content'
 

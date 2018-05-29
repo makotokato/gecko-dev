@@ -61,6 +61,7 @@ pub use self::list::Quotes;
 pub use self::list::ListStyleType;
 pub use self::outline::OutlineStyle;
 pub use self::rect::LengthOrNumberRect;
+pub use self::resolution::Resolution;
 pub use self::percentage::Percentage;
 pub use self::position::{GridAutoFlow, GridTemplateAreas, Position};
 pub use self::position::{PositionComponent, ZIndex};
@@ -74,7 +75,7 @@ pub use self::text::{TextAlignKeyword, TextDecorationLine, TextOverflow, WordSpa
 pub use self::time::Time;
 pub use self::transform::{Rotate, Scale, TimingFunction, Transform};
 pub use self::transform::{TransformOrigin, TransformStyle, Translate};
-pub use self::ui::{CaretColor, Cursor, MozForceBrokenImageIcon};
+pub use self::ui::{ColorOrAuto, Cursor, MozForceBrokenImageIcon};
 #[cfg(feature = "gecko")]
 pub use self::ui::CursorImage;
 pub use super::generics::grid::GridTemplateComponent as GenericGridTemplateComponent;
@@ -105,6 +106,7 @@ pub mod outline;
 pub mod percentage;
 pub mod position;
 pub mod rect;
+pub mod resolution;
 pub mod source_size_list;
 pub mod svg;
 pub mod table;

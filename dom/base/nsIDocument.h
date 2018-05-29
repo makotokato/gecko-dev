@@ -16,7 +16,6 @@
 #include "nsIApplicationCache.h"
 #include "nsIApplicationCacheContainer.h"
 #include "nsIContentViewer.h"
-#include "nsIDocumentObserver.h"         // for typedef (nsUpdateType)
 #include "nsIInterfaceRequestor.h"
 #include "nsILoadContext.h"
 #include "nsILoadGroup.h"                // for member (in nsCOMPtr)
@@ -93,7 +92,6 @@ class nsIDocShell;
 class nsIDocShellTreeItem;
 class nsIDocumentEncoder;
 class nsIDocumentObserver;
-class nsIDOMDocument;
 class nsIHTMLCollection;
 class nsILayoutHistoryState;
 class nsILoadContext;
@@ -118,6 +116,7 @@ class nsWindowSizes;
 class nsDOMCaretPosition;
 class nsViewportInfo;
 class nsIGlobalObject;
+class nsIXULWindow;
 
 namespace mozilla {
 class AbstractThread;
@@ -799,53 +798,6 @@ public:
   {
     mCharacterSetSource = aCharsetSource;
   }
-
-  /**
-   * This gets fired when the element that an id refers to changes.
-   * This fires at difficult times. It is generally not safe to do anything
-   * which could modify the DOM in any way. Use
-   * nsContentUtils::AddScriptRunner.
-   * @return true to keep the callback in the callback set, false
-   * to remove it.
-   */
-  typedef bool (* IDTargetObserver)(Element* aOldElement,
-                                    Element* aNewelement, void* aData);
-
-  /**
-   * Add an IDTargetObserver for a specific ID. The IDTargetObserver
-   * will be fired whenever the content associated with the ID changes
-   * in the future. If aForImage is true, mozSetImageElement can override
-   * what content is associated with the ID. In that case the IDTargetObserver
-   * will be notified at those times when the result of LookupImageElement
-   * changes.
-   * At most one (aObserver, aData, aForImage) triple can be
-   * registered for each ID.
-   * @return the content currently associated with the ID.
-   */
-  Element* AddIDTargetObserver(nsAtom* aID, IDTargetObserver aObserver,
-                               void* aData, bool aForImage);
-  /**
-   * Remove the (aObserver, aData, aForImage) triple for a specific ID, if
-   * registered.
-   */
-  void RemoveIDTargetObserver(nsAtom* aID, IDTargetObserver aObserver,
-                              void* aData, bool aForImage);
-
-  /**
-   * Check that aId is not empty and log a message to the console
-   * service if it is.
-   * @returns true if aId looks correct, false otherwise.
-   */
-  inline bool CheckGetElementByIdArg(const nsAString& aId)
-  {
-    if (aId.IsEmpty()) {
-      ReportEmptyGetElementByIdArg();
-      return false;
-    }
-    return true;
-  }
-
-  void ReportEmptyGetElementByIdArg();
 
   /**
    * Get the Content-Type of this document.
@@ -1908,8 +1860,8 @@ public:
   // BeginUpdate must be called before any batch of modifications of the
   // content model or of style data, EndUpdate must be called afterward.
   // To make this easy and painless, use the mozAutoDocUpdate helper class.
-  void BeginUpdate(nsUpdateType aUpdateType);
-  virtual void EndUpdate(nsUpdateType aUpdateType) = 0;
+  void BeginUpdate();
+  virtual void EndUpdate() = 0;
 
   virtual void BeginLoad() = 0;
   virtual void EndLoad() = 0;
@@ -3138,6 +3090,10 @@ public:
 
   nsIDocument* GetTopLevelContentDocument();
 
+  // Returns the associated XUL window if this is a top-level chrome document,
+  // null otherwise.
+  already_AddRefed<nsIXULWindow> GetXULWindowIfToplevelChrome() const;
+
   already_AddRefed<Element>
   CreateElement(const nsAString& aTagName,
                 const mozilla::dom::ElementCreationOptionsOrString& aOptions,
@@ -3430,11 +3386,6 @@ public:
 
   void PropagateUseCounters(nsIDocument* aParentDocument);
 
-  void SetDocumentIncCounter(mozilla::IncCounter aIncCounter, uint32_t inc = 1)
-  {
-    mIncCounters[aIncCounter] += inc;
-  }
-
   void SetUserHasInteracted(bool aUserHasInteracted);
   bool UserHasInteracted()
   {
@@ -3583,6 +3534,8 @@ public:
    * Returns null if there is no such element.
    */
   nsIContent* GetContentInThisDocument(nsIFrame* aFrame) const;
+
+  void ReportShadowDOMUsage();
 
 protected:
   already_AddRefed<nsIPrincipal> MaybeDowngradePrincipal(nsIPrincipal* aPrincipal);
@@ -4100,6 +4053,8 @@ protected:
   // that we only report them once for the document.
   bool mReportedUseCounters: 1;
 
+  bool mHasReportedShadowDOMUsage: 1;
+
 #ifdef DEBUG
 public:
   bool mWillReparent: 1;
@@ -4285,9 +4240,6 @@ protected:
   // Flags for whether we've notified our top-level "page" of a use counter
   // for this child document.
   std::bitset<mozilla::eUseCounter_Count> mNotifiedPageForUseCounter;
-
-  // Count the number of times something is seen in a document.
-  mozilla::Array<uint16_t, mozilla::eIncCounter_Count> mIncCounters;
 
   // Whether the user has interacted with the document or not:
   bool mUserHasInteracted;
@@ -4577,7 +4529,7 @@ NS_NewVideoDocument(nsIDocument** aInstancePtrResult);
 // -- this method will not attempt to get a principal based on aDocumentURI.
 // Also, both aDocumentURI and aBaseURI must not be null.
 nsresult
-NS_NewDOMDocument(nsIDOMDocument** aInstancePtrResult,
+NS_NewDOMDocument(nsIDocument** aInstancePtrResult,
                   const nsAString& aNamespaceURI,
                   const nsAString& aQualifiedName,
                   mozilla::dom::DocumentType* aDoctype,
@@ -4591,7 +4543,7 @@ NS_NewDOMDocument(nsIDOMDocument** aInstancePtrResult,
 // This is used only for xbl documents created from the startup cache.
 // Non-cached documents are created in the same manner as xml documents.
 nsresult
-NS_NewXBLDocument(nsIDOMDocument** aInstancePtrResult,
+NS_NewXBLDocument(nsIDocument** aInstancePtrResult,
                   nsIURI* aDocumentURI,
                   nsIURI* aBaseURI,
                   nsIPrincipal* aPrincipal);

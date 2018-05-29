@@ -54,7 +54,7 @@ SetProcessMitigationPolicy(PROCESS_MITIGATION_POLICY aMitigationPolicy,
 static void
 SetMitigationPolicies(mozilla::ProcThreadAttributes& aAttrs, const bool aIsSafeMode)
 {
-  if (mozilla::IsWin10November2015UpdateOrLater()) {
+  if (mozilla::IsWin10AnniversaryUpdateOrLater()) {
     aAttrs.AddMitigationPolicy(PROCESS_CREATION_MITIGATION_POLICY_IMAGE_LOAD_PREFER_SYSTEM32_ALWAYS_ON);
   }
 }
@@ -80,6 +80,32 @@ ShowError(DWORD aError = ::GetLastError())
   ::LocalFree(rawMsgBuf);
 }
 
+static bool
+SetArgv0ToFullBinaryPath(wchar_t* aArgv[])
+{
+  DWORD bufLen = MAX_PATH;
+  mozilla::UniquePtr<wchar_t[]> buf;
+
+  while (true) {
+    buf = mozilla::MakeUnique<wchar_t[]>(bufLen);
+    DWORD retLen = ::GetModuleFileNameW(nullptr, buf.get(), bufLen);
+    if (!retLen) {
+      return false;
+    }
+
+    if (retLen == bufLen && ::GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+      bufLen *= 2;
+      continue;
+    }
+
+    break;
+  }
+
+  // We intentionally leak buf into argv[0]
+  aArgv[0] = buf.release();
+  return true;
+}
+
 namespace mozilla {
 
 // Eventually we want to be able to set a build config flag such that, when set,
@@ -95,11 +121,11 @@ RunAsLauncherProcess(int& argc, wchar_t** argv)
 int
 LauncherMain(int argc, wchar_t* argv[])
 {
-  if (IsWin10November2015UpdateOrLater()) {
+  // Make sure that the launcher process itself has image load policies set
+  if (IsWin10AnniversaryUpdateOrLater()) {
     const DynamicallyLinkedFunctionPtr<decltype(&SetProcessMitigationPolicy)>
       pSetProcessMitigationPolicy(L"kernel32.dll", "SetProcessMitigationPolicy");
     if (pSetProcessMitigationPolicy) {
-      // Make sure that the launcher process itself has image load policies set
       PROCESS_MITIGATION_IMAGE_LOAD_POLICY imgLoadPol = {};
       imgLoadPol.PreferSystem32Images = 1;
 
@@ -110,6 +136,12 @@ LauncherMain(int argc, wchar_t* argv[])
     }
   }
 
+  if (!SetArgv0ToFullBinaryPath(argv)) {
+    ShowError();
+    return 1;
+  }
+
+  // If we're elevated, we should relaunch ourselves as a normal user
   Maybe<bool> isElevated = IsElevated();
   if (!isElevated) {
     return 1;
@@ -119,6 +151,7 @@ LauncherMain(int argc, wchar_t* argv[])
     return !LaunchUnelevated(argc, argv);
   }
 
+  // Now proceed with setting up the parameters for process creation
   UniquePtr<wchar_t[]> cmdLine(MakeCommandLine(argc, argv));
   if (!cmdLine) {
     return 1;
@@ -156,14 +189,16 @@ LauncherMain(int argc, wchar_t* argv[])
   if (attrsOk.value()) {
     creationFlags |= EXTENDED_STARTUPINFO_PRESENT;
 
-    siex.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
-    siex.StartupInfo.hStdInput = stdHandles[0];
-    siex.StartupInfo.hStdOutput = stdHandles[1];
-    siex.StartupInfo.hStdError = stdHandles[2];
+    if (attrs.HasInheritableHandles()) {
+      siex.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+      siex.StartupInfo.hStdInput = stdHandles[0];
+      siex.StartupInfo.hStdOutput = stdHandles[1];
+      siex.StartupInfo.hStdError = stdHandles[2];
 
-    // Since attrsOk == true, we have successfully set the handle inheritance
-    // whitelist policy, so only the handles added to attrs will be inherited.
-    inheritHandles = TRUE;
+      // Since attrsOk == true, we have successfully set the handle inheritance
+      // whitelist policy, so only the handles added to attrs will be inherited.
+      inheritHandles = TRUE;
+    }
   }
 
   PROCESS_INFORMATION pi = {};
@@ -182,6 +217,11 @@ LauncherMain(int argc, wchar_t* argv[])
     ::TerminateProcess(process.get(), 1);
     return 1;
   }
+
+  // Keep the current process around until the callback process has created
+  // its message queue, to avoid the launched process's windows being forced
+  // into the background.
+  ::WaitForInputIdle(process.get(), kWaitForInputIdleTimeoutMS);
 
   return 0;
 }

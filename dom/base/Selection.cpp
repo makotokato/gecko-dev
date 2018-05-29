@@ -50,7 +50,6 @@
 #include "nsCaret.h"
 
 #include "nsITimer.h"
-#include "nsIDOMDocument.h"
 #include "nsIDocument.h"
 #include "nsINamed.h"
 
@@ -393,7 +392,7 @@ void printRange(nsRange *aDomRange)
 {
   if (!aDomRange)
   {
-    printf("NULL nsIDOMRange\n");
+    printf("NULL Range\n");
   }
   nsINode* startNode = aDomRange->GetStartContainer();
   nsINode* endNode = aDomRange->GetEndContainer();
@@ -454,14 +453,11 @@ Selection::ToStringWithFormat(const nsAString& aFormatType, uint32_t aFlags,
 
   nsIDocument *doc = shell->GetDocument();
 
-  nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(doc);
-  NS_ASSERTION(domDoc, "Need a document");
-
   // Flags should always include OutputSelectionOnly if we're coming from here:
   aFlags |= nsIDocumentEncoder::OutputSelectionOnly;
   nsAutoString readstring;
   readstring.Assign(aFormatType);
-  rv = encoder->Init(domDoc, readstring, aFlags);
+  rv = encoder->Init(doc, readstring, aFlags);
   if (NS_FAILED(rv)) {
     aRv.Throw(rv);
     return;
@@ -1930,7 +1926,7 @@ Selection::SetAncestorLimiter(nsIContent* aLimiter)
 }
 
 RangeData*
-Selection::FindRangeData(nsIDOMRange* aRange)
+Selection::FindRangeData(nsRange* aRange)
 {
   NS_ENSURE_TRUE(aRange, nullptr);
   for (uint32_t i = 0; i < mRanges.Length(); i++) {

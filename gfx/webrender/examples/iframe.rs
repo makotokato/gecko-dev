@@ -23,7 +23,7 @@ impl Example for App {
         &mut self,
         api: &RenderApi,
         builder: &mut DisplayListBuilder,
-        _resources: &mut ResourceUpdates,
+        _txn: &mut Transaction,
         _framebuffer_size: DeviceUintSize,
         pipeline_id: PipelineId,
         document_id: DocumentId,
@@ -39,7 +39,6 @@ impl Example for App {
         sub_builder.push_stacking_context(
             &info,
             None,
-            ScrollPolicy::Scrollable,
             None,
             TransformStyle::Flat,
             None,
@@ -66,8 +65,7 @@ impl Example for App {
         builder.push_stacking_context(
             &info,
             None,
-            ScrollPolicy::Scrollable,
-            Some(PropertyBinding::Binding(PropertyBindingKey::new(42))),
+            Some(PropertyBinding::Binding(PropertyBindingKey::new(42), LayoutTransform::identity())),
             TransformStyle::Flat,
             None,
             MixBlendMode::Normal,
@@ -76,7 +74,7 @@ impl Example for App {
         );
         // red rect under the iframe: if this is visible, things have gone wrong
         builder.push_rect(&info, ColorF::new(1.0, 0.0, 0.0, 1.0));
-        builder.push_iframe(&info, sub_pipeline_id);
+        builder.push_iframe(&info, sub_pipeline_id, false);
         builder.pop_stacking_context();
     }
 }

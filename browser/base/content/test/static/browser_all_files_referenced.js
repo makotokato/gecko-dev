@@ -13,8 +13,9 @@ var isDevtools = SimpleTest.harnessParameters.subsuite == "devtools";
 var gExceptionPaths = [
   "chrome://browser/content/defaultthemes/",
   "chrome://browser/locale/searchplugins/",
-  "resource://app/defaults/blocklists/",
-  "resource://app/defaults/pinning/",
+  "resource://app/defaults/settings/blocklists/",
+  "resource://app/defaults/settings/main/",
+  "resource://app/defaults/settings/pinning/",
   "resource://app/defaults/preferences/",
   "resource://gre/modules/commonjs/",
   "resource://gre/defaults/pref/",
@@ -152,9 +153,11 @@ var whitelist = [
   {file: "resource://gre/modules/PerformanceWatcher.jsm"},
   // Bug 1378173 (warning: still used by devtools)
   {file: "resource://gre/modules/Promise.jsm"},
-
   // Still used by WebIDE, which is going away but not entirely gone.
   {file: "resource://gre/modules/ZipUtils.jsm"},
+  // Bug 1463225 (on Mac this is only used by a test)
+  {file: "chrome://global/content/bindings/toolbar.xml",
+   platforms: ["macosx"]},
 ];
 
 whitelist = new Set(whitelist.filter(item =>

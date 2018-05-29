@@ -38,7 +38,7 @@ let gSiteDataSettings = {
       let label = document.createElement("label");
       label.setAttribute("crop", "end");
       if (l10n) {
-        if (l10n.raw) {
+        if (l10n.hasOwnProperty("raw")) {
           box.setAttribute("tooltiptext", l10n.raw);
           label.setAttribute("value", l10n.raw);
         } else {
@@ -180,6 +180,7 @@ let gSiteDataSettings = {
     }
 
     let keyword = this._searchBox.value.toLowerCase().trim();
+    let fragment = document.createDocumentFragment();
     for (let site of sites) {
       let host = site.host;
       if (keyword && !host.includes(keyword)) {
@@ -191,8 +192,9 @@ let gSiteDataSettings = {
       }
 
       let item = this._createSiteListItem(site);
-      this._list.appendChild(item);
+      fragment.appendChild(item);
     }
+    this._list.appendChild(fragment);
     this._updateButtonsState();
   },
 

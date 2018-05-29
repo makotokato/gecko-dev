@@ -88,6 +88,24 @@ VARCACHE_PREF(
 )
 
 //---------------------------------------------------------------------------
+// DOM prefs
+//---------------------------------------------------------------------------
+
+VARCACHE_PREF(
+  "dom.webcomponents.shadowdom.report_usage",
+   dom_webcomponents_shadowdom_report_usage,
+  bool, false
+)
+
+// Whether we disable triggering mutation events for changes to style
+// attribute via CSSOM.
+VARCACHE_PREF(
+  "dom.mutation-events.cssom.disabled",
+   dom_mutation_events_cssom_disabled,
+  bool, true
+)
+
+//---------------------------------------------------------------------------
 // Full-screen prefs
 //---------------------------------------------------------------------------
 

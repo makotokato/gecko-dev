@@ -8,9 +8,7 @@ var _react = require("devtools/client/shared/vendor/react");
 
 var _react2 = _interopRequireDefault(_react);
 
-var _Close = require("./Button/Close");
-
-var _Close2 = _interopRequireDefault(_Close);
+var _Button = require("./Button/index");
 
 var _Svg = require("devtools/client/debugger/new/dist/vendors").vendored["Svg"];
 
@@ -113,6 +111,20 @@ class SearchInput extends _react.Component {
     return [arrowBtn(handleNext, "arrow-down", (0, _classnames2.default)("nav-btn", "next"), L10N.getFormatStr("editor.searchResults.nextResult")), arrowBtn(handlePrev, "arrow-up", (0, _classnames2.default)("nav-btn", "prev"), L10N.getFormatStr("editor.searchResults.prevResult"))];
   }
 
+  renderSummaryMsg() {
+    const {
+      summaryMsg
+    } = this.props;
+
+    if (!summaryMsg) {
+      return null;
+    }
+
+    return _react2.default.createElement("div", {
+      className: "summary"
+    }, summaryMsg);
+  }
+
   renderNav() {
     const {
       count,
@@ -141,7 +153,7 @@ class SearchInput extends _react.Component {
       selectedItemId,
       showErrorEmoji,
       size,
-      summaryMsg
+      showClose
     } = this.props;
     const inputProps = {
       className: (0, _classnames2.default)({
@@ -170,9 +182,7 @@ class SearchInput extends _react.Component {
       "aria-haspopup": "listbox",
       "aria-owns": "result-list",
       "aria-expanded": expanded
-    }, this.renderSvg(), _react2.default.createElement("input", inputProps), summaryMsg && _react2.default.createElement("div", {
-      className: "summary"
-    }, summaryMsg), this.renderNav(), _react2.default.createElement(_Close2.default, {
+    }, this.renderSvg(), _react2.default.createElement("input", inputProps), this.renderSummaryMsg(), this.renderNav(), showClose && _react2.default.createElement(_Button.CloseButton, {
       handleClick: handleClose,
       buttonClass: size
     })));
@@ -184,6 +194,7 @@ SearchInput.defaultProps = {
   expanded: false,
   hasPrefix: false,
   selectedItemId: "",
-  size: ""
+  size: "",
+  showClose: true
 };
 exports.default = SearchInput;

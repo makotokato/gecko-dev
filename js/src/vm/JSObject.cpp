@@ -25,6 +25,9 @@
 #include "jsutil.h"
 
 #include "builtin/Array.h"
+#ifdef ENABLE_BIGINT
+#include "builtin/BigInt.h"
+#endif
 #include "builtin/Eval.h"
 #include "builtin/Object.h"
 #include "builtin/String.h"
@@ -474,7 +477,7 @@ js::SetIntegrityLevel(JSContext* cx, HandleObject obj, IntegrityLevel level)
     assertSameCompartment(cx, obj);
 
     // Steps 3-5. (Steps 1-2 are redundant assertions.)
-    if (!PreventExtensions(cx, obj, level))
+    if (!PreventExtensions(cx, obj))
         return false;
 
     // Steps 6-9, loosely interpreted.
@@ -522,8 +525,7 @@ js::SetIntegrityLevel(JSContext* cx, HandleObject obj, IntegrityLevel level)
         // Ordinarily ArraySetLength handles this, but we're going behind its back
         // right now, so we must do this manually.
         if (level == IntegrityLevel::Frozen && obj->is<ArrayObject>()) {
-            if (!obj->as<ArrayObject>().maybeCopyElementsForWrite(cx))
-                return false;
+            MOZ_ASSERT(!nobj->denseElementsAreCopyOnWrite());
             obj->as<ArrayObject>().setNonWritableLength(cx);
         }
     } else {
@@ -569,11 +571,9 @@ js::SetIntegrityLevel(JSContext* cx, HandleObject obj, IntegrityLevel level)
         }
     }
 
-    // Finally, freeze the dense elements.
-    if (level == IntegrityLevel::Frozen && obj->isNative()) {
-        if (!ObjectElements::FreezeElements(cx, obj.as<NativeObject>()))
-            return false;
-    }
+    // Finally, freeze or seal the dense elements.
+    if (obj->isNative())
+        ObjectElements::FreezeOrSeal(cx, &obj->as<NativeObject>(), level);
 
     return true;
 }
@@ -632,10 +632,26 @@ js::TestIntegrityLevel(JSContext* cx, HandleObject obj, IntegrityLevel level, bo
             return true;
         }
 
-        // Unless the frozen flag is set, dense elements are configurable.
-        if (nobj->getDenseInitializedLength() > 0 && !nobj->denseElementsAreFrozen()) {
-            *result = false;
-            return true;
+        bool hasDenseElements = false;
+        for (size_t i = 0; i < nobj->getDenseInitializedLength(); i++) {
+            if (nobj->containsDenseElement(i)) {
+                hasDenseElements = true;
+                break;
+            }
+        }
+
+        if (hasDenseElements) {
+            // Unless the sealed flag is set, dense elements are configurable.
+            if (!nobj->denseElementsAreSealed()) {
+                *result = false;
+                return true;
+            }
+
+            // Unless the frozen flag is set, dense elements are writable.
+            if (level == IntegrityLevel::Frozen && !nobj->denseElementsAreFrozen()) {
+                *result = false;
+                return true;
+            }
         }
 
         // Steps 7-9.
@@ -1139,7 +1155,7 @@ JS_CopyPropertyFrom(JSContext* cx, HandleId id, HandleObject target,
         desc.attributesRef() &= ~JSPROP_PERMANENT;
     }
 
-    JSAutoCompartment ac(cx, target);
+    JSAutoRealm ar(cx, target);
     cx->markId(id);
     RootedId wrappedId(cx, id);
     if (!cx->compartment()->wrap(cx, &desc))
@@ -1151,7 +1167,7 @@ JS_CopyPropertyFrom(JSContext* cx, HandleId id, HandleObject target,
 JS_FRIEND_API(bool)
 JS_CopyPropertiesFrom(JSContext* cx, HandleObject target, HandleObject obj)
 {
-    JSAutoCompartment ac(cx, obj);
+    JSAutoRealm ar(cx, obj);
 
     AutoIdVector props(cx);
     if (!GetPropertyKeys(cx, obj, JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS, &props))
@@ -1313,7 +1329,7 @@ js::DeepCloneObjectLiteral(JSContext* cx, HandleObject obj, NewObjectKind newKin
 {
     /* NB: Keep this in sync with XDRObjectLiteral. */
     MOZ_ASSERT_IF(obj->isSingleton(),
-                  cx->compartment()->behaviors().getSingletonsAsTemplates());
+                  cx->realm()->behaviors().getSingletonsAsTemplates());
     MOZ_ASSERT(obj->is<PlainObject>() || obj->is<UnboxedPlainObject>() ||
                obj->is<ArrayObject>());
     MOZ_ASSERT(newKind != SingletonObject);
@@ -2092,7 +2108,7 @@ SetClassAndProto(JSContext* cx, HandleObject obj,
         // group so we can keep track of the interpreted function for Ion
         // inlining.
         MOZ_ASSERT(obj->is<JSFunction>());
-        newGroup = ObjectGroupCompartment::makeGroup(cx, &JSFunction::class_, proto);
+        newGroup = ObjectGroupRealm::makeGroup(cx, &JSFunction::class_, proto);
         if (!newGroup)
             return false;
         newGroup->setInterpretedFunction(oldGroup->maybeInterpretedFunction());
@@ -2128,7 +2144,8 @@ JSObject::changeToSingleton(JSContext* cx, HandleObject obj)
 
     MarkObjectGroupUnknownProperties(cx, obj->group());
 
-    ObjectGroup* group = ObjectGroup::lazySingletonGroup(cx, obj->getClass(),
+    ObjectGroupRealm& realm = ObjectGroupRealm::get(obj->group());
+    ObjectGroup* group = ObjectGroup::lazySingletonGroup(cx, realm, obj->getClass(),
                                                          obj->taggedProto());
     if (!group)
         return false;
@@ -2164,7 +2181,7 @@ js::GetObjectFromIncumbentGlobal(JSContext* cx, MutableHandleObject obj)
     }
 
     {
-        AutoCompartment ac(cx, globalObj);
+        AutoRealm ar(cx, globalObj);
         Handle<GlobalObject*> global = globalObj.as<GlobalObject>();
         obj.set(GlobalObject::getOrCreateObjectPrototype(cx, global));
         if (!obj)
@@ -2743,7 +2760,7 @@ js::SetPrototype(JSContext* cx, HandleObject obj, HandleObject proto)
 }
 
 bool
-js::PreventExtensions(JSContext* cx, HandleObject obj, ObjectOpResult& result, IntegrityLevel level)
+js::PreventExtensions(JSContext* cx, HandleObject obj, ObjectOpResult& result)
 {
     if (obj->is<ProxyObject>())
         return js::Proxy::preventExtensions(cx, obj, result);
@@ -2754,16 +2771,14 @@ js::PreventExtensions(JSContext* cx, HandleObject obj, ObjectOpResult& result, I
     if (!MaybeConvertUnboxedObjectToNative(cx, obj))
         return false;
 
-    // Force lazy properties to be resolved.
-    if (obj->isNative() && !ResolveLazyProperties(cx, obj.as<NativeObject>()))
-        return false;
+    if (obj->isNative()) {
+        // Force lazy properties to be resolved.
+        if (!ResolveLazyProperties(cx, obj.as<NativeObject>()))
+            return false;
 
-    // Sparsify dense elements, to make sure no element can be added without a
-    // call to isExtensible, at the cost of performance. If the object is being
-    // frozen, the caller is responsible for freezing the elements (and all
-    // other properties).
-    if (obj->isNative() && level != IntegrityLevel::Frozen) {
-        if (!NativeObject::sparsifyDenseElements(cx, obj.as<NativeObject>()))
+        // Prepare the elements. We have to do this before we mark the object
+        // non-extensible; that's fine because these changes are not observable.
+        if (!ObjectElements::PreventExtensions(cx, &obj->as<NativeObject>()))
             return false;
     }
 
@@ -2774,10 +2789,10 @@ js::PreventExtensions(JSContext* cx, HandleObject obj, ObjectOpResult& result, I
 }
 
 bool
-js::PreventExtensions(JSContext* cx, HandleObject obj, IntegrityLevel level)
+js::PreventExtensions(JSContext* cx, HandleObject obj)
 {
     ObjectOpResult result;
-    return PreventExtensions(cx, obj, result, level) && result.checkStrict(cx, obj);
+    return PreventExtensions(cx, obj, result) && result.checkStrict(cx, obj);
 }
 
 bool
@@ -3240,9 +3255,19 @@ js::PrimitiveToObject(JSContext* cx, const Value& v)
         return NumberObject::create(cx, v.toNumber());
     if (v.isBoolean())
         return BooleanObject::create(cx, v.toBoolean());
+#ifdef ENABLE_BIGINT
+    if (v.isSymbol()) {
+        RootedSymbol symbol(cx, v.toSymbol());
+        return SymbolObject::create(cx, symbol);
+    }
+    MOZ_ASSERT(v.isBigInt());
+    RootedBigInt bigInt(cx, v.toBigInt());
+    return BigIntObject::create(cx, bigInt);
+#else
     MOZ_ASSERT(v.isSymbol());
     RootedSymbol symbol(cx, v.toSymbol());
     return SymbolObject::create(cx, symbol);
+#endif
 }
 
 /*
@@ -3412,7 +3437,7 @@ dumpValue(const Value& v, js::GenericPrinter& out)
         }
         if (fun->hasScript()) {
             JSScript* script = fun->nonLazyScript();
-            out.printf(" (%s:%zu)",
+            out.printf(" (%s:%u)",
                     script->filename() ? script->filename() : "", script->lineno());
         }
         out.printf(" at %p>", (void*) fun);
@@ -3692,7 +3717,7 @@ js::DumpInterpreterFrame(JSContext* cx, js::GenericPrinter& out, InterpreterFram
         }
         out.putChar('\n');
 
-        out.printf("file %s line %zu\n",
+        out.printf("file %s line %u\n",
                 i.script()->filename(), i.script()->lineno());
 
         if (jsbytecode* pc = i.pc()) {
@@ -4155,7 +4180,7 @@ JSObject::debugCheckNewObject(ObjectGroup* group, Shape* shape, js::gc::AllocKin
                                         clasp->isProxy());
     MOZ_ASSERT_IF(group->hasUnanalyzedPreliminaryObjects(), heap == gc::TenuredHeap);
 
-    MOZ_ASSERT(!group->compartment()->hasObjectPendingMetadata());
+    MOZ_ASSERT(!group->realm()->hasObjectPendingMetadata());
 
     // Non-native classes manage their own data and slots, so numFixedSlots and
     // slotSpan are always 0. Note that proxy classes can have reserved slots

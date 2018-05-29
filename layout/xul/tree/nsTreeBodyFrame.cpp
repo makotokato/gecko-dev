@@ -2032,17 +2032,15 @@ nsTreeBodyFrame::PrefillPropertyArray(int32_t aRowIndex, nsTreeColumn* aCol)
     }
 
     // Read special properties from attributes on the column content node
-    if (aCol->mContent->IsElement() &&
-        aCol->mContent->AsElement()->AttrValueIs(kNameSpaceID_None,
-                                                 nsGkAtoms::insertbefore,
-                                                 nsGkAtoms::_true,
-                                                 eCaseMatters))
+    if (aCol->mContent->AttrValueIs(kNameSpaceID_None,
+                                    nsGkAtoms::insertbefore,
+                                    nsGkAtoms::_true,
+                                    eCaseMatters))
       mScratchArray.AppendElement(nsGkAtoms::insertbefore);
-    if (aCol->mContent->IsElement() &&
-        aCol->mContent->AsElement()->AttrValueIs(kNameSpaceID_None,
-                                                 nsGkAtoms::insertafter,
-                                                 nsGkAtoms::_true,
-                                                 eCaseMatters))
+    if (aCol->mContent->AttrValueIs(kNameSpaceID_None,
+                                    nsGkAtoms::insertafter,
+                                    nsGkAtoms::_true,
+                                    eCaseMatters))
       mScratchArray.AppendElement(nsGkAtoms::insertafter);
   }
 }
@@ -2811,7 +2809,7 @@ public:
                                                       mDisableSubpixelAA);
 
     ImgDrawResult result = static_cast<nsTreeBodyFrame*>(mFrame)
-      ->PaintTreeBody(*aCtx, mVisibleRect, ToReferenceFrame(), aBuilder);
+      ->PaintTreeBody(*aCtx, GetPaintRect(), ToReferenceFrame(), aBuilder);
 
     nsDisplayItemGenericImageGeometry::UpdateDrawResult(this, result);
   }

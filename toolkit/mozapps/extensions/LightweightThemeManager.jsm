@@ -475,12 +475,6 @@ AddonWrapper.prototype = {
     return AddonManager.OP_NEEDS_RESTART_NONE;
   },
 
-  get size() {
-    // The size changes depending on whether the theme is in use or not, this is
-    // probably not worth exposing.
-    return null;
-  },
-
   get permissions() {
     let permissions = 0;
 
@@ -515,6 +509,13 @@ AddonWrapper.prototype = {
       LightweightThemeManager.currentTheme = themeFor(this);
 
     return val;
+  },
+
+  async enable() {
+    this.userDisabled = false;
+  },
+  async disable() {
+    this.userDisabled = true;
   },
 
   // Lightweight themes are never disabled by the application

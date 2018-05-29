@@ -121,31 +121,55 @@ global.replaceUrlInTab = (gBrowser, tab, url) => {
   return loaded;
 };
 
-// Manages tab-specific context data, and dispatching tab select events
-// across all windows.
+/**
+ * Manages tab-specific and window-specific context data, and dispatches
+ * tab select events across all windows.
+ */
 global.TabContext = class extends EventEmitter {
-  constructor(getDefaults, extension) {
+  /**
+   * @param {Function} getDefaultPrototype
+   *        Provides the prototype of the context value for a tab or window when there is none.
+   *        Called with a XULElement or ChromeWindow argument.
+   *        Should return an object or null.
+   */
+  constructor(getDefaultPrototype) {
     super();
 
-    this.extension = extension;
-    this.getDefaults = getDefaults;
+    this.getDefaultPrototype = getDefaultPrototype;
 
     this.tabData = new WeakMap();
 
     windowTracker.addListener("progress", this);
     windowTracker.addListener("TabSelect", this);
+
+    this.tabDetached = this.tabDetached.bind(this);
+    tabTracker.on("tab-detached", this.tabDetached);
   }
 
-  get(nativeTab) {
-    if (!this.tabData.has(nativeTab)) {
-      this.tabData.set(nativeTab, this.getDefaults(nativeTab));
+  /**
+   * Returns the context data associated with `keyObject`.
+   *
+   * @param {XULElement|ChromeWindow} keyObject
+   *        Browser tab or browser chrome window.
+   * @returns {Object}
+   */
+  get(keyObject) {
+    if (!this.tabData.has(keyObject)) {
+      let data = Object.create(this.getDefaultPrototype(keyObject));
+      this.tabData.set(keyObject, data);
     }
 
-    return this.tabData.get(nativeTab);
+    return this.tabData.get(keyObject);
   }
 
-  clear(nativeTab) {
-    this.tabData.delete(nativeTab);
+  /**
+   * Clears the context data associated with `keyObject`.
+   *
+   * @param {XULElement|ChromeWindow} keyObject
+   *        Browser tab or browser chrome window.
+   */
+  clear(keyObject) {
+    this.tabData.delete(keyObject);
   }
 
   handleEvent(event) {
@@ -164,9 +188,24 @@ global.TabContext = class extends EventEmitter {
     this.emit("location-change", tab, fromBrowse);
   }
 
+  tabDetached(eventType, {nativeTab, adoptedBy}) {
+    if (!this.tabData.has(nativeTab)) {
+      return;
+    }
+    // Create a new object (possibly with different inheritance) when a tab is moved
+    // into a new window. But then reassign own properties from the old object.
+    let newData = this.get(adoptedBy);
+    let oldData = this.tabData.get(nativeTab);
+    Object.assign(newData, oldData);
+  }
+
+  /**
+   * Makes the TabContext instance stop emitting events.
+   */
   shutdown() {
     windowTracker.removeListener("progress", this);
     windowTracker.removeListener("TabSelect", this);
+    tabTracker.off("tab-detached", this.tabDetached);
   }
 };
 
@@ -400,17 +439,14 @@ class TabTracker extends TabTrackerBase {
    * @private
    */
   _handleWindowOpen(window) {
-    if (window.arguments && window.arguments[0] instanceof window.XULElement) {
-      // If the first window argument is a XUL element, it means the
-      // window is about to adopt a tab from another window to replace its
-      // initial tab.
-      //
+    const tabToAdopt = window.gBrowserInit.getTabToAdopt();
+    if (tabToAdopt) {
       // Note that this event handler depends on running before the
       // delayed startup code in browser.js, which is currently triggered
       // by the first MozAfterPaint event. That code handles finally
       // adopting the tab, and clears it from the arguments list in the
       // process, so if we run later than it, we're too late.
-      let nativeTab = window.arguments[0];
+      let nativeTab = tabToAdopt;
       let adoptedBy = window.gBrowser.tabs[0];
 
       this.adoptedTabs.set(nativeTab, adoptedBy);
@@ -706,7 +742,11 @@ class Tab extends TabBase {
       lastAccessed: tabData.state ? tabData.state.lastAccessed : tabData.lastAccessed,
     };
 
-    if (extension.tabManager.hasTabPermission(tabData)) {
+    // tabData is a representation of a tab, as stored in the session data,
+    // and given that is not a real nativeTab, we only need to check if the extension
+    // has the "tabs" permission (because tabData represents a closed tab, and so we
+    // already know that it can't be the activeTab).
+    if (extension.hasPermission("tabs")) {
       let entries = tabData.state ? tabData.state.entries : tabData.entries;
       let lastTabIndex = tabData.state ? tabData.state.index : tabData.index;
       // We need to take lastTabIndex - 1 because the index in the tab data is
@@ -854,6 +894,13 @@ class Window extends WindowBase {
   }
 
   * getTabs() {
+    // A new window is being opened and it is adopting an existing tab, we return
+    // an empty iterator here because there should be no other tabs to return during
+    // that duration (See Bug 1458918 for a rationale).
+    if (this.window.gBrowserInit.isAdoptingTab()) {
+      return;
+    }
+
     let {tabManager} = this.extension;
 
     for (let nativeTab of this.window.gBrowser.tabs) {
@@ -863,6 +910,13 @@ class Window extends WindowBase {
 
   get activeTab() {
     let {tabManager} = this.extension;
+
+    // A new window is being opened and it is adopting a tab, and we do not create
+    // a TabWrapper for the tab being adopted because it will go away once the tab
+    // adoption has been completed (See Bug 1458918 for rationale).
+    if (this.window.gBrowserInit.isAdoptingTab()) {
+      return null;
+    }
 
     return tabManager.getWrapper(this.window.gBrowser.selectedTab);
   }

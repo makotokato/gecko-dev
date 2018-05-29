@@ -115,7 +115,7 @@ ThreadSafeGetDefaultFontHelper(const nsPresContext* aPresContext,
   }
   {
     AutoWriteLock guard(*sServoFFILock);
-  retval = aPresContext->GetDefaultFont(aGenericId, aLanguage, nullptr);
+    retval = aPresContext->GetDefaultFont(aGenericId, aLanguage, nullptr);
   }
   return retval;
 }
@@ -350,18 +350,15 @@ Gecko_CalcStyleDifference(ComputedStyleBorrowed aOldStyle,
   MOZ_ASSERT(aNewStyle);
 
   uint32_t equalStructs;
-  nsChangeHint result = const_cast<mozilla::ComputedStyle*>(aOldStyle)->
-    CalcStyleDifference(
-      const_cast<mozilla::ComputedStyle*>(aNewStyle),
-      &equalStructs);
+  nsChangeHint result = const_cast<ComputedStyle*>(aOldStyle)->
+    CalcStyleDifference(const_cast<ComputedStyle*>(aNewStyle), &equalStructs);
 
-  *aAnyStyleStructChanged = equalStructs != NS_STYLE_INHERIT_MASK;
+  *aAnyStyleStructChanged =
+    equalStructs != StyleStructConstants::kAllStructsMask;
 
-  const uint32_t kInheritStructsMask =
-    NS_STYLE_INHERIT_MASK & ~NS_STYLE_RESET_STRUCT_MASK;
-
+  const auto kInheritedStructsMask = StyleStructConstants::kInheritedStructsMask;
   *aOnlyResetStructsChanged =
-    (equalStructs & kInheritStructsMask) == kInheritStructsMask;
+    (equalStructs & kInheritedStructsMask) == kInheritedStructsMask;
 
   return result;
 }
@@ -1668,11 +1665,11 @@ Gecko_CreateGradient(uint8_t aShape,
   return result;
 }
 
-const mozilla::css::URLValueData*
-Gecko_GetURLValue(const nsStyleImage* aImage)
+const nsStyleImageRequest*
+Gecko_GetImageRequest(const nsStyleImage* aImage)
 {
-  MOZ_ASSERT(aImage && aImage->GetType() == eStyleImageType_Image);
-  return aImage->GetURLValue();
+  MOZ_ASSERT(aImage);
+  return aImage->ImageRequest();
 }
 
 nsAtom*
@@ -2132,6 +2129,25 @@ Gecko_URLValue_SizeOfIncludingThis(URLValue* aURL)
 {
   MOZ_ASSERT(NS_IsMainThread());
   return aURL->SizeOfIncludingThis(GeckoURLValueMallocSizeOf);
+}
+
+void
+Gecko_GetComputedURLSpec(const URLValueData* aURL, nsCString* aOut)
+{
+  MOZ_ASSERT(aURL);
+  MOZ_ASSERT(aOut);
+  if (aURL->IsLocalRef()) {
+    aOut->Assign(aURL->GetString());
+    return;
+  }
+  if (nsIURI* uri = aURL->GetURI()) {
+    nsresult rv = uri->GetSpec(*aOut);
+    if (NS_SUCCEEDED(rv)) {
+      return;
+    }
+  }
+
+  aOut->AssignLiteral("about:invalid");
 }
 
 NS_IMPL_THREADSAFE_FFI_REFCOUNTING(css::URLValue, CSSURLValue);
@@ -2873,12 +2889,21 @@ Gecko_ContentList_AppendAll(
 }
 
 const nsTArray<Element*>*
-Gecko_GetElementsWithId(const nsIDocument* aDocument, nsAtom* aId)
+Gecko_Document_GetElementsWithId(const nsIDocument* aDoc, nsAtom* aId)
 {
-  MOZ_ASSERT(aDocument);
+  MOZ_ASSERT(aDoc);
   MOZ_ASSERT(aId);
 
-  return aDocument->GetAllElementsForId(nsDependentAtomString(aId));
+  return aDoc->GetAllElementsForId(nsDependentAtomString(aId));
+}
+
+const nsTArray<Element*>*
+Gecko_ShadowRoot_GetElementsWithId(const ShadowRoot* aShadowRoot, nsAtom* aId)
+{
+  MOZ_ASSERT(aShadowRoot);
+  MOZ_ASSERT(aId);
+
+  return aShadowRoot->GetAllElementsForId(nsDependentAtomString(aId));
 }
 
 bool

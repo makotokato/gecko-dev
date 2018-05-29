@@ -9,10 +9,6 @@ ChromeUtils.import("resource://testing-common/httpd.js");
 var testserver = AddonTestUtils.createHttpServer({hosts: ["example.com"]});
 var gInstallDate;
 
-// This verifies that add-ons can be installed from XPI files
-// install.rdf size, icon.png, icon64.png size
-const ADDON1_SIZE = 612;
-
 const ADDONS = {
   test_install1: {
     "install.rdf": {
@@ -168,13 +164,11 @@ add_task(async function test_1() {
   let {addon} = install;
   checkAddon("addon1@tests.mozilla.org", addon, {
     install,
-    size: ADDON1_SIZE,
     iconURL: `jar:${uri.spec}!/icon.png`,
     icon64URL: `jar:${uri.spec}!/icon64.png`,
     sourceURI: uri,
   });
   notEqual(addon.syncGUID, null);
-  ok(addon.hasResource("install.rdf"));
   equal(addon.getResourceURI("install.rdf").spec, `jar:${uri.spec}!/install.rdf`);
 
   let activeInstalls = await AddonManager.getAllInstalls();
@@ -207,9 +201,6 @@ add_task(async function test_1() {
 
   addon = await AddonManager.getAddonByID("addon1@tests.mozilla.org");
   ok(addon);
-
-  let pendingAddons = await AddonManager.getAddonsWithOperationsByTypes(null);
-  equal(pendingAddons.length, 0);
 
   uri = NetUtil.newURI(addon.iconURL);
   if (uri instanceof Ci.nsIJARURI) {
@@ -244,7 +235,6 @@ add_task(async function test_1() {
     version: "1.0",
     name: "Test 1",
     foreignInstall: false,
-    size: ADDON1_SIZE,
     iconURL: uri2 + "icon.png",
     icon64URL: uri2 + "icon64.png",
     sourceURI: Services.io.newFileURI(XPIS.test_install1),
@@ -265,9 +255,6 @@ add_task(async function test_1() {
   if (Math.abs(difference) > MAX_TIME_DIFFERENCE)
     do_throw("Add-on update time was out by " + difference + "ms");
 
-  ok(a1.hasResource("install.rdf"));
-  ok(!a1.hasResource("foo.bar"));
-
   equal(a1.getResourceURI("install.rdf").spec, uri2 + "install.rdf");
 
   // Ensure that extension bundle (or icon if unpacked) has updated
@@ -278,7 +265,7 @@ add_task(async function test_1() {
   difference = testFile.lastModifiedTime - Date.now();
   ok(Math.abs(difference) < MAX_TIME_DIFFERENCE);
 
-  a1.uninstall();
+  await a1.uninstall();
   let { id, version } = a1;
   await promiseRestartManager();
   do_check_not_in_crash_annotation(id, version);
@@ -459,7 +446,7 @@ add_task(async function test_4() {
   // Update date should be later (or the same if this test is too fast)
   ok(a2.installDate <= a2.updateDate);
 
-  a2.uninstall();
+  await a2.uninstall();
 });
 
 // Tests that an install that requires a compatibility update works
@@ -540,7 +527,7 @@ add_task(async function test_6() {
   ok(isExtensionInBootstrappedList(profileDir, a3.id));
 
   ok(XPIS.test_install3.exists());
-  a3.uninstall();
+  await a3.uninstall();
 });
 
 add_task(async function test_8() {
@@ -584,7 +571,7 @@ add_task(async function test_8() {
   ok(isExtensionInBootstrappedList(profileDir, a3.id));
 
   ok(XPIS.test_install3.exists());
-  a3.uninstall();
+  await a3.uninstall();
 });
 
 // Test that after cancelling a download it is removed from the active installs
@@ -727,7 +714,7 @@ add_task(async function test_16() {
     aInstall.addListener({
       onInstallStarted() {
         ok(!aInstall.addon.userDisabled);
-        aInstall.addon.userDisabled = true;
+        aInstall.addon.disable();
       },
 
       onInstallEnded() {
@@ -769,7 +756,7 @@ add_task(async function test_16() {
     isActive: false,
   });
 
-  a2_2.uninstall();
+  await a2_2.uninstall();
 });
 
 // Verify that changing the userDisabled value before onInstallEnded works
@@ -804,7 +791,7 @@ add_task(async function test_17() {
     aInstall_2.addListener({
       onInstallStarted() {
         ok(!aInstall_2.addon.userDisabled);
-        aInstall_2.addon.userDisabled = true;
+        aInstall_2.addon.disable();
       },
 
       onInstallEnded() {
@@ -821,7 +808,7 @@ add_task(async function test_17() {
     isActive: false,
   });
 
-  a2_2.uninstall();
+  await a2_2.uninstall();
 });
 
 // Verify that changing the userDisabled value before onInstallEnded works
@@ -834,7 +821,7 @@ add_task(async function test_18() {
     aInstall.addListener({
       onInstallStarted() {
         ok(!aInstall.addon.userDisabled);
-        aInstall.addon.userDisabled = true;
+        aInstall.addon.disable();
       },
 
       onInstallEnded() {
@@ -858,7 +845,7 @@ add_task(async function test_18() {
     aInstall_2.addListener({
       onInstallStarted() {
         ok(aInstall_2.addon.userDisabled);
-        aInstall_2.addon.userDisabled = false;
+        aInstall_2.addon.enable();
       },
 
       onInstallEnded() {
@@ -876,7 +863,7 @@ add_task(async function test_18() {
     userDisabled: false,
   });
 
-  a2_2.uninstall();
+  await a2_2.uninstall();
 });
 
 
@@ -911,7 +898,7 @@ add_task(async function test_18_1() {
   let a2 = await AddonManager.getAddonByID("addon2@tests.mozilla.org");
   notEqual(a2.fullDescription, "Repository description");
 
-  a2.uninstall();
+  await a2.uninstall();
 });
 
 // Checks that metadata is downloaded for new installs and is visible before and
@@ -939,7 +926,7 @@ add_task(async function test_19() {
   let a2 = await AddonManager.getAddonByID("addon2@tests.mozilla.org");
   equal(a2.fullDescription, "Repository description");
 
-  a2.uninstall();
+  await a2.uninstall();
 });
 
 // Do the same again to make sure it works when the data is already in the cache
@@ -965,7 +952,7 @@ add_task(async function test_20() {
   let a2 = await AddonManager.getAddonByID("addon2@tests.mozilla.org");
   equal(a2.fullDescription, "Repository description");
 
-  a2.uninstall();
+  await a2.uninstall();
 });
 
 // Tests that an install can be restarted after being cancelled
@@ -1017,7 +1004,7 @@ add_task(async function test_22() {
   ensure_test_completed();
 
   AddonManager.removeAddonListener(AddonListener);
-  install.addon.uninstall();
+  await install.addon.uninstall();
 });
 
 // Tests that an install can be restarted after being cancelled when a hash
@@ -1072,7 +1059,7 @@ add_task(async function test_23() {
   ensure_test_completed();
 
   AddonManager.removeAddonListener(AddonListener);
-  install.addon.uninstall();
+  await install.addon.uninstall();
 });
 
 // Tests that an install with a bad hash can be restarted after it fails, though
@@ -1227,7 +1214,7 @@ add_task(async function test_27() {
   ensure_test_completed();
 
   AddonManager.removeAddonListener(AddonListener);
-  install.addon.uninstall();
+  await install.addon.uninstall();
 });
 
 // Tests that an install with a matching compatibility override has appDisabled

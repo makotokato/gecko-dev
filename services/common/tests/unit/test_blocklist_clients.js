@@ -1,5 +1,6 @@
 const { Constructor: CC } = Components;
 
+ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.import("resource://testing-common/httpd.js");
 const { FileUtils } = ChromeUtils.import("resource://gre/modules/FileUtils.jsm", {});
@@ -9,6 +10,8 @@ const BlocklistClients = ChromeUtils.import("resource://services-common/blocklis
 
 const BinaryInputStream = CC("@mozilla.org/binaryinputstream;1",
   "nsIBinaryInputStream", "setInputStream");
+
+const IS_ANDROID = AppConstants.platform == "android";
 
 
 let gBlocklistClients;
@@ -99,7 +102,14 @@ function run_test() {
 }
 
 add_task(async function test_initial_dump_is_loaded_as_synced_when_collection_is_empty() {
+  const november2016 = 1480000000000;
+
   for (let {client} of gBlocklistClients) {
+    if (IS_ANDROID && client.collectionName != BlocklistClients.AddonBlocklistClient.collectionName) {
+      // On Android we don't ship the dumps of plugins and gfx.
+      continue;
+    }
+
     // Test an empty db populates, but don't reach server (specified timestamp <= dump).
     await client.maybeSync(1, Date.now());
 
@@ -107,6 +117,28 @@ add_task(async function test_initial_dump_is_loaded_as_synced_when_collection_is
     const collection = await client.openCollection();
     const { data: list } = await collection.list();
     equal(list[0]._status, "synced");
+
+    // Verify that the internal timestamp was updated.
+    const timestamp = await collection.db.getLastModified();
+    ok(timestamp > november2016, `Loaded dump of ${client.collectionName} has timestamp ${timestamp}`);
+  }
+});
+add_task(clear_state);
+
+add_task(async function test_initial_dump_is_loaded_when_using_get_on_empty_collection() {
+  for (let {client} of gBlocklistClients) {
+    if (IS_ANDROID && client.collectionName != BlocklistClients.AddonBlocklistClient.collectionName) {
+      // On Android we don't ship the dumps of plugins and gfx.
+      continue;
+    }
+    // Internal database is empty.
+    const collection = await client.openCollection();
+    const { data: list } = await collection.list();
+    equal(list.length, 0);
+
+    // Calling .get() will load the dump.
+    const afterLoaded = await client.get();
+    ok(afterLoaded.length > 0, `Loaded dump of ${client.collectionName} has ${afterLoaded.length} records`);
   }
 });
 add_task(clear_state);
@@ -195,7 +227,7 @@ add_task(async function test_sync_event_data_is_filtered_for_target() {
     let called = false;
     client.on("sync", e => called = true);
     await client.maybeSync(timestamp3 + 1, fakeServerTime - 10);
-    equal(called, false, `no sync event for ${client.collectionName}`);
+    equal(called, false, `shouldn't have sync event for ${client.collectionName}`);
 
     // In ?_since=5000 entries, only one entry matches.
     let syncEventData;
@@ -209,6 +241,51 @@ add_task(async function test_sync_event_data_is_filtered_for_target() {
     const collection = await client.openCollection();
     const { data: internalData } = await collection.list();
     ok(internalData.length > current.length, `event current data for ${client.collectionName}`);
+  }
+});
+add_task(clear_state);
+
+add_task(async function test_entries_are_filtered_when_jexl_filters_is_present() {
+  const records = [{
+      willMatch: true,
+    }, {
+      willMatch: true,
+      filters: null
+    }, {
+      willMatch: true,
+      filters: "1 == 1"
+    }, {
+      willMatch: false,
+      filters: "1 == 2"
+    }, {
+      willMatch: true,
+      filters: "1 == 1",
+      versionRange: [{
+        targetApplication: [{
+          guid: "some-guid"
+        }],
+      }]
+    }, {
+      willMatch: false,  // jexl prevails over versionRange.
+      filters: "1 == 2",
+      versionRange: [{
+        targetApplication: [{
+          guid: "xpcshell@tests.mozilla.org",
+          minVersion: "0",
+          maxVersion: "*",
+        }],
+      }]
+    }
+  ];
+  for (let {client} of gBlocklistClients) {
+    const collection = await client.openCollection();
+    for (const record of records) {
+      await collection.create(record);
+    }
+    await collection.db.saveLastModified(42); // Prevent from loading JSON dump.
+    const list = await client.get();
+    equal(list.length, 4);
+    ok(list.every(e => e.willMatch));
   }
 });
 add_task(clear_state);
@@ -463,7 +540,7 @@ function getSampleResponse(req, port) {
         "versionRange": [{
           "targetApplication": [{
             "guid": "xpcshell@tests.mozilla.org",
-            "minVersion": "99999"
+            "maxVersion": "20"
           }],
         }],
         "id": "86771771-e803-4006-95e9-c9275d58b3d1"

@@ -117,6 +117,7 @@ public:
     const EGLConfig mConfig;
 protected:
     EGLSurface mSurface;
+    const EGLSurface mFallbackSurface;
 public:
     const EGLContext mContext;
 protected:
@@ -133,6 +134,10 @@ protected:
     static EGLSurface CreatePBufferSurfaceTryingPowerOfTwo(EGLConfig config,
                                                            EGLenum bindToTextureFormat,
                                                            gfx::IntSize& pbsize);
+#if defined(MOZ_WAYLAND)
+    static EGLSurface CreateWaylandBufferSurface(EGLConfig config,
+                                                 gfx::IntSize& pbsize);
+#endif
 #if defined(MOZ_WIDGET_ANDROID)
 public:
     EGLSurface CreateCompatibleSurface(void* aWindow);

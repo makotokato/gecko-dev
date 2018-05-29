@@ -38,8 +38,6 @@
 #include "nsGkAtoms.h"
 #include "nsIClipboard.h"
 #include "nsIContent.h"
-#include "nsIDOMDocument.h"
-#include "nsIDOMNode.h"
 #include "nsIDocument.h"
 #include "nsIFile.h"
 #include "nsIInputStream.h"
@@ -177,15 +175,13 @@ HTMLEditor::InsertHTMLWithContext(const nsAString& aInputString,
                                   const nsAString& aContextStr,
                                   const nsAString& aInfoStr,
                                   const nsAString& aFlavor,
-                                  nsIDOMDocument* aSourceDoc,
-                                  nsIDOMNode* aDestNode,
+                                  nsIDocument* aSourceDoc,
+                                  nsINode* aDestNode,
                                   int32_t aDestOffset,
                                   bool aDeleteSelection)
 {
-  nsCOMPtr<nsIDocument> sourceDoc = do_QueryInterface(aSourceDoc);
-  nsCOMPtr<nsINode> destNode = do_QueryInterface(aDestNode);
   return DoInsertHTMLWithContext(aInputString, aContextStr, aInfoStr,
-                                 aFlavor, sourceDoc, destNode, aDestOffset,
+                                 aFlavor, aSourceDoc, aDestNode, aDestOffset,
                                  aDeleteSelection,
                                  /* trusted input */ true,
                                  /* clear style */ false);
@@ -745,7 +741,7 @@ HTMLEditor::StripFormattingNodes(nsIContent& aNode,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::PrepareTransferable(nsITransferable** aTransferable)
 {
   return NS_OK;
@@ -1047,7 +1043,7 @@ HTMLEditor::InsertObject(const nsACString& aType,
     nsCOMPtr<nsINode> node = do_QueryInterface(aDestinationNode);
     MOZ_ASSERT(node);
 
-    nsCOMPtr<nsIDOMBlob> domBlob = Blob::Create(node->GetOwnerGlobal(), blob);
+    RefPtr<Blob> domBlob = Blob::Create(node->GetOwnerGlobal(), blob);
     NS_ENSURE_TRUE(domBlob, NS_ERROR_FAILURE);
 
     return utils->SlurpBlob(domBlob, node->OwnerDoc()->GetWindow(), br);
@@ -1431,7 +1427,7 @@ HTMLEditor::Paste(int32_t aSelectionType)
                                 bHavePrivateHTMLFlavor, true);
 }
 
-NS_IMETHODIMP
+nsresult
 HTMLEditor::PasteTransferable(nsITransferable* aTransferable)
 {
   // Use an invalid value for the clipboard type as data comes from aTransferable
@@ -1527,29 +1523,24 @@ HTMLEditor::CanPaste(int32_t aSelectionType,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-HTMLEditor::CanPasteTransferable(nsITransferable* aTransferable,
-                                 bool* aCanPaste)
+bool
+HTMLEditor::CanPasteTransferable(nsITransferable* aTransferable)
 {
-  NS_ENSURE_ARG_POINTER(aCanPaste);
-
   // can't paste if readonly
   if (!IsModifiable()) {
-    *aCanPaste = false;
-    return NS_OK;
+    return false;
   }
 
   // If |aTransferable| is null, assume that a paste will succeed.
   if (!aTransferable) {
-    *aCanPaste = true;
-    return NS_OK;
+    return true;
   }
 
   // Peek in |aTransferable| to see if it contains a supported MIME type.
 
   // Use the flavors depending on the current editor mask
   const char ** flavors;
-  unsigned length;
+  size_t length;
   if (IsPlaintextEditor()) {
     flavors = textEditorFlavors;
     length = ArrayLength(textEditorFlavors);
@@ -1558,20 +1549,18 @@ HTMLEditor::CanPasteTransferable(nsITransferable* aTransferable,
     length = ArrayLength(textHtmlEditorFlavors);
   }
 
-  for (unsigned int i = 0; i < length; i++, flavors++) {
+  for (size_t i = 0; i < length; i++, flavors++) {
     nsCOMPtr<nsISupports> data;
     uint32_t dataLen;
     nsresult rv = aTransferable->GetTransferData(*flavors,
                                                  getter_AddRefs(data),
                                                  &dataLen);
     if (NS_SUCCEEDED(rv) && data) {
-      *aCanPaste = true;
-      return NS_OK;
+      return true;
     }
   }
 
-  *aCanPaste = false;
-  return NS_OK;
+  return false;
 }
 
 /**
@@ -1750,7 +1739,7 @@ HTMLEditor::InsertTextWithQuotations(const nsAString& aStringToInsert)
     // If no newline found, lineStart is now strEnd and we can finish up,
     // inserting from curHunk to lineStart then returning.
     const nsAString &curHunk = Substring(hunkStart, lineStart);
-    nsCOMPtr<nsIDOMNode> dummyNode;
+    nsCOMPtr<nsINode> dummyNode;
     if (curHunkIsQuoted) {
       rv = InsertAsPlaintextQuotation(curHunk, false,
                                       getter_AddRefs(dummyNode));
@@ -1773,7 +1762,7 @@ HTMLEditor::InsertTextWithQuotations(const nsAString& aStringToInsert)
 
 NS_IMETHODIMP
 HTMLEditor::InsertAsQuotation(const nsAString& aQuotedText,
-                              nsIDOMNode** aNodeInserted)
+                              nsINode** aNodeInserted)
 {
   if (IsPlaintextEditor()) {
     return InsertAsPlaintextQuotation(aQuotedText, true, aNodeInserted);
@@ -1791,7 +1780,7 @@ HTMLEditor::InsertAsQuotation(const nsAString& aQuotedText,
 nsresult
 HTMLEditor::InsertAsPlaintextQuotation(const nsAString& aQuotedText,
                                        bool aAddCites,
-                                       nsIDOMNode** aNodeInserted)
+                                       nsINode** aNodeInserted)
 {
   // get selection
   RefPtr<Selection> selection = GetSelection();
@@ -1856,7 +1845,7 @@ HTMLEditor::InsertAsPlaintextQuotation(const nsAString& aQuotedText,
   // don't need to know the inserted node.
 
   if (aNodeInserted && NS_SUCCEEDED(rv)) {
-    *aNodeInserted = GetAsDOMNode(newNode);
+    *aNodeInserted = newNode;
     NS_IF_ADDREF(*aNodeInserted);
   }
 
@@ -1886,7 +1875,7 @@ NS_IMETHODIMP
 HTMLEditor::InsertAsCitedQuotation(const nsAString& aQuotedText,
                                    const nsAString& aCitation,
                                    bool aInsertHTML,
-                                   nsIDOMNode** aNodeInserted)
+                                   nsINode** aNodeInserted)
 {
   // Don't let anyone insert html into a "plaintext" editor:
   if (IsPlaintextEditor()) {
@@ -1936,7 +1925,7 @@ HTMLEditor::InsertAsCitedQuotation(const nsAString& aQuotedText,
   }
 
   if (aNodeInserted && NS_SUCCEEDED(rv)) {
-    *aNodeInserted = GetAsDOMNode(newNode);
+    *aNodeInserted = newNode;
     NS_IF_ADDREF(*aNodeInserted);
   }
 

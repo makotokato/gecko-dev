@@ -27,22 +27,20 @@ sys.path.insert(1, os.path.dirname(sys.path[0]))
 from mozharness.base.errors import MakefileErrorList
 from mozharness.base.log import OutputParser
 from mozharness.base.transfer import TransferMixin
-from mozharness.mozilla.buildbot import BuildbotMixin
-from mozharness.mozilla.purge import PurgeMixin
+from mozharness.mozilla.automation import AutomationMixin
 from mozharness.mozilla.release import ReleaseMixin
 from mozharness.mozilla.tooltool import TooltoolMixin
 from mozharness.base.vcs.vcsbase import MercurialScript
 from mozharness.mozilla.l10n.locales import LocalesMixin
-from mozharness.mozilla.mock import MockMixin
 from mozharness.mozilla.secrets import SecretsMixin
 from mozharness.mozilla.updates.balrog import BalrogMixin
 from mozharness.base.python import VirtualenvMixin
 
 
 # MobileSingleLocale {{{1
-class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
-                         TransferMixin, TooltoolMixin, BuildbotMixin,
-                         PurgeMixin, MercurialScript, BalrogMixin,
+class MobileSingleLocale(LocalesMixin, ReleaseMixin,
+                         TransferMixin, TooltoolMixin, AutomationMixin,
+                         MercurialScript, BalrogMixin,
                          VirtualenvMixin, SecretsMixin):
     config_options = [[
         ['--locale', ],
@@ -103,17 +101,11 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
          "help": "Specify the total number of chunks of locales"
          }
     ], [
-        ["--disable-mock"],
-        {"dest": "disable_mock",
-         "action": "store_true",
-         "help": "do not run under mock despite what gecko-config says",
-         }
-    ], [
         ['--revision', ],
         {"action": "store",
          "dest": "revision",
          "type": "string",
-         "help": "Override the gecko revision to use (otherwise use buildbot supplied"
+         "help": "Override the gecko revision to use (otherwise use automation supplied"
                  " value, or en-US revision) "}
     ], [
         ['--scm-level'],
@@ -235,11 +227,11 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
             return self.make_ident_output
         env = self.query_repack_env()
         dirs = self.query_abs_dirs()
-        output = self.get_output_from_command_m(["make", "ident"],
-                                                cwd=dirs['abs_locales_dir'],
-                                                env=env,
-                                                silent=True,
-                                                halt_on_failure=True)
+        output = self.get_output_from_command(["make", "ident"],
+                                              cwd=dirs['abs_locales_dir'],
+                                              env=env,
+                                              silent=True,
+                                              halt_on_failure=True)
         parser = OutputParser(config=self.config, log_obj=self.log_obj,
                               error_list=MakefileErrorList)
         parser.add_lines(output)
@@ -264,8 +256,6 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
         """ Get the gecko revision in this order of precedence
               * cached value
               * command line arg --revision   (development, taskcluster)
-              * buildbot properties           (try with buildbot forced build)
-              * buildbot change               (try with buildbot scheduler)
               * from the en-US build          (m-c & m-a)
 
         This will fail the last case if the build hasn't been pulled yet.
@@ -273,19 +263,10 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
         if self.revision:
             return self.revision
 
-        self.read_buildbot_config()
         config = self.config
         revision = None
         if config.get("revision"):
             revision = config["revision"]
-        elif 'revision' in self.buildbot_properties:
-            revision = self.buildbot_properties['revision']
-        elif (self.buildbot_config and
-                self.buildbot_config.get('sourcestamp', {}).get('revision')):
-            revision = self.buildbot_config['sourcestamp']['revision']
-        elif self.buildbot_config and self.buildbot_config.get('revision'):
-            revision = self.buildbot_config['revision']
-
         if not revision:
             self.fatal("Can't determine revision!")
         self.revision = str(revision)
@@ -298,7 +279,7 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
         if make_args is None:
             make_args = []
         # TODO error checking
-        output = self.get_output_from_command_m(
+        output = self.get_output_from_command(
             [make, "echo-variable-%s" % variable] + make_args,
             cwd=dirs['abs_locales_dir'], silent=True,
             env=env
@@ -357,12 +338,12 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
     def add_failure(self, locale, message, **kwargs):
         self.locales_property[locale] = "Failed"
         prop_key = "%s_failure" % locale
-        prop_value = self.query_buildbot_property(prop_key)
+        prop_value = self.query_property(prop_key)
         if prop_value:
             prop_value = "%s  %s" % (prop_value, message)
         else:
             prop_value = message
-        self.set_buildbot_property(prop_key, prop_value, write_to_file=True)
+        self.set_property(prop_key, prop_value, write_to_file=True)
         MercurialScript.add_failure(self, locale, message=message, **kwargs)
 
     def summary(self):
@@ -371,18 +352,10 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
         locales = self.query_locales()
         for locale in locales:
             self.locales_property.setdefault(locale, "Success")
-        self.set_buildbot_property("locales", json.dumps(self.locales_property),
-                                   write_to_file=True)
+        self.set_property("locales", json.dumps(self.locales_property),
+                          write_to_file=True)
 
     # Actions {{{2
-    def clobber(self):
-        self.read_buildbot_config()
-        dirs = self.query_abs_dirs()
-        c = self.config
-        objdir = os.path.join(dirs['abs_work_dir'], c['mozilla_dir'],
-                              c['objdir'])
-        super(MobileSingleLocale, self).clobber(always_clobber_dirs=[objdir])
-
     def pull(self):
         c = self.config
         dirs = self.query_abs_dirs()
@@ -390,7 +363,7 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
         replace_dict = {}
         if c.get("user_repo_override"):
             replace_dict['user_repo_override'] = c['user_repo_override']
-        # this is OK so early because we get it from buildbot, or
+        # this is OK so early because we get it from automation, or
         # the command line for local dev
         replace_dict['revision'] = self.query_revision()
 
@@ -422,10 +395,10 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
 
         mach = os.path.join(dirs['abs_mozilla_dir'], 'mach')
 
-        if self.run_command_m([sys.executable, mach, 'configure'],
-                              cwd=dirs['abs_mozilla_dir'],
-                              env=env,
-                              error_list=MakefileErrorList):
+        if self.run_command([sys.executable, mach, 'configure'],
+                            cwd=dirs['abs_mozilla_dir'],
+                            env=env,
+                            error_list=MakefileErrorList):
             self.fatal("Configure failed!")
 
         # Invoke the build system to get nsinstall and buildid.h.
@@ -439,11 +412,11 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
             env = dict(env)
             env['MOZ_BUILD_DATE'] = str(buildid)
 
-        self.run_command_m([sys.executable, mach, 'build'] + targets,
-                           cwd=dirs['abs_mozilla_dir'],
-                           env=env,
-                           error_list=MakefileErrorList,
-                           halt_on_failure=True)
+        self.run_command([sys.executable, mach, 'build'] + targets,
+                         cwd=dirs['abs_mozilla_dir'],
+                         env=env,
+                         error_list=MakefileErrorList,
+                         halt_on_failure=True)
 
     def setup(self):
         c = self.config
@@ -454,7 +427,7 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
         # TODO stop using cat
         cat = self.query_exe("cat")
         make = self.query_exe("make")
-        self.run_command_m([cat, mozconfig_path])
+        self.run_command([cat, mozconfig_path])
         env = self.query_repack_env()
         if self.config.get("tooltool_config"):
             self.tooltool_fetch(
@@ -462,16 +435,16 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
                 output_dir=self.config['tooltool_config']['output_dir'] % self.query_abs_dirs(),
             )
         self._setup_configure()
-        self.run_command_m([make, "wget-en-US"],
-                           cwd=dirs['abs_locales_dir'],
-                           env=env,
-                           error_list=MakefileErrorList,
-                           halt_on_failure=True)
-        self.run_command_m([make, "unpack"],
-                           cwd=dirs['abs_locales_dir'],
-                           env=env,
-                           error_list=MakefileErrorList,
-                           halt_on_failure=True)
+        self.run_command([make, "wget-en-US"],
+                         cwd=dirs['abs_locales_dir'],
+                         env=env,
+                         error_list=MakefileErrorList,
+                         halt_on_failure=True)
+        self.run_command([make, "unpack"],
+                         cwd=dirs['abs_locales_dir'],
+                         env=env,
+                         error_list=MakefileErrorList,
+                         halt_on_failure=True)
 
     def repack(self):
         # TODO per-locale logs and reporting.
@@ -482,11 +455,11 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
         success_count = total_count = 0
         for locale in locales:
             total_count += 1
-            if self.run_command_m([make, "installers-%s" % locale],
-                                  cwd=dirs['abs_locales_dir'],
-                                  env=repack_env,
-                                  error_list=MakefileErrorList,
-                                  halt_on_failure=False):
+            if self.run_command([make, "installers-%s" % locale],
+                                cwd=dirs['abs_locales_dir'],
+                                env=repack_env,
+                                error_list=MakefileErrorList,
+                                halt_on_failure=False):
                 self.add_failure(locale, message="%s failed in make installers-%s!" %
                                  (locale, locale))
                 continue
@@ -506,16 +479,12 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
             total_count += 1
             signed_path = os.path.join(base_package_dir,
                                        base_package_name % {'locale': locale})
-            # We need to wrap what this function does with mock, since
-            # MobileSigningMixin doesn't know about mock
-            self.enable_mock()
             status = self.verify_android_signature(
                 signed_path,
                 script=c['signature_verification_script'],
                 env=repack_env,
                 key_alias=c['key_alias'],
             )
-            self.disable_mock()
             if status:
                 self.add_failure(locale, message="Errors verifying %s binary!" % locale)
                 # No need to rm because upload is per-locale
@@ -537,7 +506,7 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
                 self.warning("Skipping previously failed locale %s." % locale)
                 continue
             total_count += 1
-            output = self.get_output_from_command_m(
+            output = self.get_output_from_command(
                 # Ugly hack to avoid |make upload| stderr from showing up
                 # as get_output_from_command errors
                 "%s upload AB_CD=%s 2>&1" % (make, locale),
@@ -588,7 +557,7 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
             'dest': dirs['abs_tools_dir'],
         }]
         rev = self.vcs_checkout(**repos[0])
-        self.set_buildbot_property("tools_revision", rev, write_to_file=True)
+        self.set_property("tools_revision", rev, write_to_file=True)
 
     def query_apkfile_path(self, locale):
 
@@ -636,32 +605,31 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
             apkfile = self.query_apkfile_path(locale)
             if self.config.get('taskcluster_nightly'):
                 # Taskcluster needs stage_platform
-                self.set_buildbot_property("stage_platform",
-                                           self.config.get("stage_platform"))
-                self.set_buildbot_property("branch", self.config.get("branch"))
+                self.set_property("stage_platform", self.config.get("stage_platform"))
+                self.set_property("branch", self.config.get("branch"))
             else:
                 apk_url = self.query_upload_url(locale)
-                self.set_buildbot_property("completeMarUrl", apk_url)
+                self.set_property("completeMarUrl", apk_url)
 
                 # The Balrog submitter translates this platform into a build target
                 # via https://github.com/mozilla/build-tools/blob/master/lib/python/release/platforms.py#L23  # noqa
-                self.set_buildbot_property(
+                self.set_property(
                     "platform",
-                    self.buildbot_config["properties"]["platform"])
+                    self.config["properties"]["platform"])
                 # TODO: Is there a better way to get this?
 
             # Set other necessary properties for Balrog submission. None need to
-            # be passed back to buildbot, so we won't write them to the properties
+            # be passed back to automation, so we won't write them to the properties
             # files.
-            self.set_buildbot_property("locale", locale)
+            self.set_property("locale", locale)
 
-            self.set_buildbot_property("appVersion", self.query_version())
+            self.set_property("appVersion", self.query_version())
 
-            self.set_buildbot_property("appName", "Fennec")
-            self.set_buildbot_property("completeMarSize", self.query_filesize(apkfile))
-            self.set_buildbot_property("completeMarHash", self.query_sha512sum(apkfile))
-            self.set_buildbot_property("isOSUpdate", False)
-            self.set_buildbot_property("buildid", self.query_buildid())
+            self.set_property("appName", "Fennec")
+            self.set_property("completeMarSize", self.query_filesize(apkfile))
+            self.set_property("completeMarHash", self.query_sha512sum(apkfile))
+            self.set_property("isOSUpdate", False)
+            self.set_property("buildid", self.query_buildid())
 
             props_path = os.path.join(env["UPLOAD_PATH"], locale,
                                       'balrog_props.json')

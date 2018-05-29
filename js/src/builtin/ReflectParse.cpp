@@ -7,6 +7,7 @@
 /* JS reflection package. */
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/Move.h"
 
 #include <stdlib.h>
@@ -31,12 +32,6 @@ using namespace js::frontend;
 using JS::AutoValueArray;
 using mozilla::DebugOnly;
 using mozilla::Forward;
-
-enum class ParseTarget
-{
-    Script,
-    Module
-};
 
 enum ASTType {
     AST_ERROR = -1,
@@ -2927,21 +2922,30 @@ ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst)
         return classDefinition(pn, true, dst);
 
       case ParseNodeKind::NewTarget:
+      case ParseNodeKind::ImportMeta:
       {
         MOZ_ASSERT(pn->pn_left->isKind(ParseNodeKind::PosHolder));
         MOZ_ASSERT(pn->pn_pos.encloses(pn->pn_left->pn_pos));
         MOZ_ASSERT(pn->pn_right->isKind(ParseNodeKind::PosHolder));
         MOZ_ASSERT(pn->pn_pos.encloses(pn->pn_right->pn_pos));
 
-        RootedValue newIdent(cx);
-        RootedValue targetIdent(cx);
+        RootedValue firstIdent(cx);
+        RootedValue secondIdent(cx);
 
-        RootedAtom newStr(cx, cx->names().new_);
-        RootedAtom targetStr(cx, cx->names().target);
+        RootedAtom firstStr(cx);
+        RootedAtom secondStr(cx);
 
-        return identifier(newStr, &pn->pn_left->pn_pos, &newIdent) &&
-               identifier(targetStr, &pn->pn_right->pn_pos, &targetIdent) &&
-               builder.metaProperty(newIdent, targetIdent, &pn->pn_pos, dst);
+        if (pn->getKind() == ParseNodeKind::NewTarget) {
+            firstStr = cx->names().new_;
+            secondStr = cx->names().target;
+        } else {
+            firstStr = cx->names().import;
+            secondStr = cx->names().meta;
+        }
+
+        return identifier(firstStr, &pn->pn_left->pn_pos, &firstIdent) &&
+               identifier(secondStr, &pn->pn_right->pn_pos, &secondIdent) &&
+               builder.metaProperty(firstIdent, secondIdent, &pn->pn_pos, dst);
       }
 
       case ParseNodeKind::SetThis:
@@ -3353,7 +3357,7 @@ reflect_parse(JSContext* cx, uint32_t argc, Value* vp)
     uint32_t lineno = 1;
     bool loc = true;
     RootedObject builder(cx);
-    ParseTarget target = ParseTarget::Script;
+    ParseGoal target = ParseGoal::Script;
 
     RootedValue arg(cx, args.get(1));
 
@@ -3441,9 +3445,9 @@ reflect_parse(JSContext* cx, uint32_t argc, Value* vp)
             return false;
 
         if (isScript) {
-            target = ParseTarget::Script;
+            target = ParseGoal::Script;
         } else if (isModule) {
-            target = ParseTarget::Module;
+            target = ParseGoal::Module;
         } else {
             JS_ReportErrorASCII(cx, "Bad target value, expected 'script' or 'module'");
             return false;
@@ -3466,22 +3470,28 @@ reflect_parse(JSContext* cx, uint32_t argc, Value* vp)
     CompileOptions options(cx);
     options.setFileAndLine(filename, lineno);
     options.setCanLazilyParse(false);
-    options.allowHTMLComments = target == ParseTarget::Script;
+    options.allowHTMLComments = target == ParseGoal::Script;
     mozilla::Range<const char16_t> chars = linearChars.twoByteRange();
     UsedNameTracker usedNames(cx);
     if (!usedNames.init())
         return false;
+
+    RootedScriptSourceObject sourceObject(cx, frontend::CreateScriptSourceObject(cx, options,
+                                                                                 mozilla::Nothing()));
+    if (!sourceObject)
+        return false;
+
     Parser<FullParseHandler, char16_t> parser(cx, cx->tempLifoAlloc(), options,
                                               chars.begin().get(), chars.length(),
                                               /* foldConstants = */ false, usedNames, nullptr,
-                                              nullptr);
+                                              nullptr, sourceObject, target);
     if (!parser.checkOptions())
         return false;
 
     serialize.setParser(&parser);
 
     ParseNode* pn;
-    if (target == ParseTarget::Script) {
+    if (target == ParseGoal::Script) {
         pn = parser.parse();
         if (!pn)
             return false;

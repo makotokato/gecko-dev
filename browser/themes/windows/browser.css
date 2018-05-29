@@ -636,28 +636,7 @@ html|*.urlbar-input:-moz-lwtheme::placeholder,
 
 /* bookmarking panel */
 
-#editBookmarkPanelStarIcon {
-  list-style-image: url("chrome://browser/skin/bookmark.svg");
-  -moz-context-properties: fill;
-  fill: var(--toolbarbutton-icon-fill-attention);
-  width: 40px;
-  height: 40px;
-  margin: 4px;
-}
-
-#editBookmarkPanelTitle {
-  font-size: 130%;
-}
-
-#editBookmarkPanelHeader,
-#editBookmarkPanelContent {
-  margin-bottom: .5em;
-}
-
-/* Implements editBookmarkPanel resizing on folderTree un-collapse. */
-#editBMPanel_folderTree {
-  min-width: 27em;
-}
+%include ../shared/places/editBookmarkPanel.inc.css
 
 /* ::::: content area ::::: */
 
@@ -955,17 +934,6 @@ notification[value="translation"] {
 %include ../shared/fullscreen/warning.inc.css
 %include ../shared/ctrlTab.inc.css
 %include ../shared/plugin-doorhanger.inc.css
-
-/* Error counter */
-
-#developer-toolbar-toolbox-button[error-count]:before {
-  color: #FDF3DE;
-  min-width: 16px;
-  text-shadow: none;
-  background-image: linear-gradient(#B4211B, #8A1915);
-  border-radius: 1px;
-  margin-inline-end: 5px;
-}
 
 /* Customization mode */
 

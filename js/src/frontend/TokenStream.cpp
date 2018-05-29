@@ -487,13 +487,6 @@ TokenStreamAnyChars::undoInternalUpdateLineInfoForEOL()
     lineno--;
 }
 
-template<typename CharT, class AnyCharsAccess>
-MOZ_MUST_USE MOZ_ALWAYS_INLINE bool
-TokenStreamSpecific<CharT, AnyCharsAccess>::updateLineInfoForEOL()
-{
-    return anyCharsAccess().internalUpdateLineInfoForEOL(sourceUnits.offset());
-}
-
 MOZ_ALWAYS_INLINE void
 TokenStreamAnyChars::updateFlagsForEOL()
 {
@@ -501,9 +494,9 @@ TokenStreamAnyChars::updateFlagsForEOL()
 }
 
 // This gets the next char, normalizing all EOL sequences to '\n' as it goes.
-template<typename CharT, class AnyCharsAccess>
+template<class AnyCharsAccess>
 bool
-TokenStreamSpecific<CharT, AnyCharsAccess>::getChar(int32_t* cp)
+TokenStreamChars<char16_t, AnyCharsAccess>::getChar(int32_t* cp)
 {
     TokenStreamAnyChars& anyChars = anyCharsAccess();
 
@@ -759,7 +752,7 @@ TokenStreamAnyChars::fillExcludingContext(ErrorMetadata* err, uint32_t offset)
     if (!filename_ && !cx->helperThread()) {
         NonBuiltinFrameIter iter(cx,
                                  FrameIter::FOLLOW_DEBUGGER_EVAL_PREV_LINK,
-                                 cx->compartment()->principals());
+                                 cx->realm()->principals());
         if (!iter.done() && iter.filename()) {
             err->filename = iter.filename();
             err->lineNumber = iter.computeLine(&err->columnNumber);

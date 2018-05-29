@@ -329,7 +329,7 @@ js::Nursery::allocateObject(JSContext* cx, size_t size, size_t nDynamicSlots, co
     if (nDynamicSlots)
         static_cast<NativeObject*>(obj)->initSlots(slots);
 
-    TraceNurseryAlloc(obj, size);
+    gcTracer.traceNurseryAlloc(obj, size);
     return obj;
 }
 
@@ -346,7 +346,7 @@ js::Nursery::allocateString(Zone* zone, size_t size, AllocKind kind)
     header->zone = zone;
 
     auto cell = reinterpret_cast<Cell*>(&header->cell);
-    TraceNurseryAlloc(cell, kind);
+    gcTracer.traceNurseryAlloc(cell, kind);
     return cell;
 }
 
@@ -722,7 +722,7 @@ js::Nursery::collect(JS::gcreason::Reason reason)
 #endif
 
     rt->gc.stats().beginNurseryCollection(reason);
-    TraceMinorGCStart();
+    gcTracer.traceMinorGCStart();
 
     maybeClearProfileDurations();
     startProfile(ProfileKey::Total);
@@ -762,7 +762,7 @@ js::Nursery::collect(JS::gcreason::Reason reason)
         for (auto& entry : tenureCounts.entries) {
             if (entry.count >= 3000) {
                 ObjectGroup* group = entry.group;
-                AutoCompartment ac(cx, group);
+                AutoRealm ar(cx, group);
                 AutoSweepObjectGroup sweep(group);
                 if (group->canPreTenure(sweep)) {
                     group->setShouldPreTenure(sweep, cx);
@@ -782,10 +782,10 @@ js::Nursery::collect(JS::gcreason::Reason reason)
             zone->setPreservingCode(false);
             zone->discardJitCode(rt->defaultFreeOp());
             zone->setPreservingCode(preserving);
-            for (CompartmentsInZoneIter c(zone); !c.done(); c.next()) {
-                if (jit::JitCompartment* jitComp = c->jitCompartment()) {
-                    jitComp->discardStubs();
-                    jitComp->stringsCanBeInNursery = false;
+            for (RealmsInZoneIter r(zone); !r.done(); r.next()) {
+                if (jit::JitRealm* jitRealm = r->jitRealm()) {
+                    jitRealm->discardStubs();
+                    jitRealm->stringsCanBeInNursery = false;
                 }
             }
             zone->allocNurseryStrings = false;
@@ -818,7 +818,7 @@ js::Nursery::collect(JS::gcreason::Reason reason)
     rt->addTelemetry(JS_TELEMETRY_GC_PRETENURE_COUNT, pretenureCount);
 
     rt->gc.stats().endNurseryCollection(reason);
-    TraceMinorGCEnd();
+    gcTracer.traceMinorGCEnd();
     timeInChunkAlloc_ = mozilla::TimeDuration();
 
     if (enableProfiling_ && totalTime >= profileThreshold_) {
@@ -1033,6 +1033,7 @@ js::Nursery::sweep(JSTracer* trc)
         c->sweepAfterMinorGC(trc);
 
     sweepDictionaryModeObjects();
+    sweepMapAndSetObjects();
 }
 
 void
@@ -1246,6 +1247,19 @@ js::Nursery::sweepDictionaryModeObjects()
     dictionaryModeObjects_.clear();
 }
 
+void
+js::Nursery::sweepMapAndSetObjects()
+{
+    auto fop = runtime_->defaultFreeOp();
+
+    for (auto mapobj : mapsWithNurseryMemory_)
+        MapObject::sweepAfterMinorGC(fop, mapobj);
+    mapsWithNurseryMemory_.clearAndFree();
+
+    for (auto setobj : setsWithNurseryMemory_)
+        SetObject::sweepAfterMinorGC(fop, setobj);
+    setsWithNurseryMemory_.clearAndFree();
+}
 
 JS_PUBLIC_API(void)
 JS::EnableNurseryStrings(JSContext* cx)

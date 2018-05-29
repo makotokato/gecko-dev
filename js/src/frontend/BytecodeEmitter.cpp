@@ -109,7 +109,7 @@ class BytecodeEmitter::NestableControl : public Nestable<BytecodeEmitter::Nestab
     NestableControl(BytecodeEmitter* bce, StatementKind kind)
       : Nestable<NestableControl>(&bce->innermostNestableControl),
         kind_(kind),
-        emitterScope_(bce->innermostEmitterScope)
+        emitterScope_(bce->innermostEmitterScopeNoCheck())
     { }
 
   public:
@@ -337,7 +337,7 @@ class TryFinallyControl : public BytecodeEmitter::NestableControl
 static inline void
 MarkAllBindingsClosedOver(LexicalScope::Data& data)
 {
-    BindingName* names = data.names;
+    TrailingNamesArray& names = data.trailingNames;
     for (uint32_t i = 0; i < data.length; i++)
         names[i] = BindingName(names[i].name(), true);
 }
@@ -448,7 +448,7 @@ class BytecodeEmitter::EmitterScope : public Nestable<BytecodeEmitter::EmitterSc
         // enclosing BCE.
         if ((*bce)->parent) {
             *bce = (*bce)->parent;
-            return (*bce)->innermostEmitterScope;
+            return (*bce)->innermostEmitterScopeNoCheck();
         }
 
         return nullptr;
@@ -482,7 +482,7 @@ class BytecodeEmitter::EmitterScope : public Nestable<BytecodeEmitter::EmitterSc
 
   public:
     explicit EmitterScope(BytecodeEmitter* bce)
-      : Nestable<EmitterScope>(&bce->innermostEmitterScope),
+      : Nestable<EmitterScope>(&bce->innermostEmitterScope_),
         nameCache_(bce->cx->frontendCollectionPool()),
         hasEnvironment_(false),
         environmentChainLength_(0),
@@ -888,7 +888,7 @@ BytecodeEmitter::EmitterScope::enterLexical(BytecodeEmitter* bce, ScopeKind kind
                                             Handle<LexicalScope::Data*> bindings)
 {
     MOZ_ASSERT(kind != ScopeKind::NamedLambda && kind != ScopeKind::StrictNamedLambda);
-    MOZ_ASSERT(this == bce->innermostEmitterScope);
+    MOZ_ASSERT(this == bce->innermostEmitterScopeNoCheck());
 
     if (!ensureCache(bce))
         return false;
@@ -957,7 +957,7 @@ BytecodeEmitter::EmitterScope::enterLexical(BytecodeEmitter* bce, ScopeKind kind
 bool
 BytecodeEmitter::EmitterScope::enterNamedLambda(BytecodeEmitter* bce, FunctionBox* funbox)
 {
-    MOZ_ASSERT(this == bce->innermostEmitterScope);
+    MOZ_ASSERT(this == bce->innermostEmitterScopeNoCheck());
     MOZ_ASSERT(funbox->namedLambdaBindings());
 
     if (!ensureCache(bce))
@@ -994,7 +994,7 @@ BytecodeEmitter::EmitterScope::enterNamedLambda(BytecodeEmitter* bce, FunctionBo
 bool
 BytecodeEmitter::EmitterScope::enterParameterExpressionVar(BytecodeEmitter* bce)
 {
-    MOZ_ASSERT(this == bce->innermostEmitterScope);
+    MOZ_ASSERT(this == bce->innermostEmitterScopeNoCheck());
 
     if (!ensureCache(bce))
         return false;
@@ -1027,7 +1027,7 @@ BytecodeEmitter::EmitterScope::enterParameterExpressionVar(BytecodeEmitter* bce)
 bool
 BytecodeEmitter::EmitterScope::enterFunction(BytecodeEmitter* bce, FunctionBox* funbox)
 {
-    MOZ_ASSERT(this == bce->innermostEmitterScope);
+    MOZ_ASSERT(this == bce->innermostEmitterScopeNoCheck());
 
     // If there are parameter expressions, there is an extra var scope.
     if (!funbox->hasExtraBodyVarScope())
@@ -1118,7 +1118,7 @@ BytecodeEmitter::EmitterScope::enterFunctionExtraBodyVar(BytecodeEmitter* bce, F
     MOZ_ASSERT(funbox->hasParameterExprs);
     MOZ_ASSERT(funbox->extraVarScopeBindings() ||
                funbox->needsExtraBodyVarEnvironmentRegardlessOfBindings());
-    MOZ_ASSERT(this == bce->innermostEmitterScope);
+    MOZ_ASSERT(this == bce->innermostEmitterScopeNoCheck());
 
     // The extra var scope is never popped once it's entered. It replaces the
     // function scope as the var emitter scope.
@@ -1204,7 +1204,7 @@ class DynamicBindingIter : public BindingIter
 bool
 BytecodeEmitter::EmitterScope::enterGlobal(BytecodeEmitter* bce, GlobalSharedContext* globalsc)
 {
-    MOZ_ASSERT(this == bce->innermostEmitterScope);
+    MOZ_ASSERT(this == bce->innermostEmitterScopeNoCheck());
 
     bce->setVarEmitterScope(this);
 
@@ -1264,7 +1264,7 @@ BytecodeEmitter::EmitterScope::enterGlobal(BytecodeEmitter* bce, GlobalSharedCon
 bool
 BytecodeEmitter::EmitterScope::enterEval(BytecodeEmitter* bce, EvalSharedContext* evalsc)
 {
-    MOZ_ASSERT(this == bce->innermostEmitterScope);
+    MOZ_ASSERT(this == bce->innermostEmitterScopeNoCheck());
 
     bce->setVarEmitterScope(this);
 
@@ -1319,7 +1319,7 @@ BytecodeEmitter::EmitterScope::enterEval(BytecodeEmitter* bce, EvalSharedContext
 bool
 BytecodeEmitter::EmitterScope::enterModule(BytecodeEmitter* bce, ModuleSharedContext* modulesc)
 {
-    MOZ_ASSERT(this == bce->innermostEmitterScope);
+    MOZ_ASSERT(this == bce->innermostEmitterScopeNoCheck());
 
     bce->setVarEmitterScope(this);
 
@@ -1376,7 +1376,7 @@ BytecodeEmitter::EmitterScope::enterModule(BytecodeEmitter* bce, ModuleSharedCon
 bool
 BytecodeEmitter::EmitterScope::enterWith(BytecodeEmitter* bce)
 {
-    MOZ_ASSERT(this == bce->innermostEmitterScope);
+    MOZ_ASSERT(this == bce->innermostEmitterScopeNoCheck());
 
     if (!ensureCache(bce))
         return false;
@@ -1404,7 +1404,7 @@ BytecodeEmitter::EmitterScope::leave(BytecodeEmitter* bce, bool nonLocal)
 {
     // If we aren't leaving the scope due to a non-local jump (e.g., break),
     // we must be the innermost scope.
-    MOZ_ASSERT_IF(!nonLocal, this == bce->innermostEmitterScope);
+    MOZ_ASSERT_IF(!nonLocal, this == bce->innermostEmitterScopeNoCheck());
 
     ScopeKind kind = scope(bce)->kind();
     switch (kind) {
@@ -1962,9 +1962,6 @@ class MOZ_STACK_CLASS IfThenElseEmitter
     JumpList jumpAroundThen_;
     JumpList jumpsAroundElse_;
 
-    // The source note index for SRC_IF, SRC_IF_ELSE, or SRC_COND.
-    unsigned noteIndex_;
-
     // The stack depth before emitting the then block.
     // Used for restoring stack depth before emitting the else block.
     // Also used for assertion to make sure then and else blocks pushed the
@@ -2014,7 +2011,6 @@ class MOZ_STACK_CLASS IfThenElseEmitter
   public:
     explicit IfThenElseEmitter(BytecodeEmitter* bce)
       : bce_(bce),
-        noteIndex_(-1),
         thenDepth_(0),
 #ifdef DEBUG
         pushed_(0),
@@ -2037,7 +2033,7 @@ class MOZ_STACK_CLASS IfThenElseEmitter
 
         // Emit an annotated branch-if-false around the then part.
         SrcNoteType type = nextState == If ? SRC_IF : nextState == IfElse ? SRC_IF_ELSE : SRC_COND;
-        if (!bce_->newSrcNote(type, &noteIndex_))
+        if (!bce_->newSrcNote(type))
             return false;
         if (!bce_->emitJump(JSOP_IFEQ, &jumpAroundThen_))
             return false;
@@ -2093,17 +2089,6 @@ class MOZ_STACK_CLASS IfThenElseEmitter
         if (!bce_->emitJumpTargetAndPatch(jumpAroundThen_))
             return false;
 
-        // Annotate SRC_IF_ELSE or SRC_COND with the offset from branch to
-        // jump, for IonMonkey's benefit.  We can't just "back up" from the pc
-        // of the else clause, because we don't know whether an extended
-        // jump was required to leap from the end of the then clause over
-        // the else clause.
-        if (!bce_->setSrcNoteOffset(noteIndex_, 0,
-                                    jumpsAroundElse_.offset - jumpAroundThen_.offset))
-        {
-            return false;
-        }
-
         // Restore stack depth of the then part.
         bce_->stackDepth = thenDepth_;
         state_ = Else;
@@ -2148,6 +2133,8 @@ class MOZ_STACK_CLASS IfThenElseEmitter
 
 class ForOfLoopControl : public LoopControl
 {
+    using EmitterScope = BytecodeEmitter::EmitterScope;
+
     // The stack depth of the iterator.
     int32_t iterDepth_;
 
@@ -2240,8 +2227,8 @@ class ForOfLoopControl : public LoopControl
         MOZ_ASSERT(slotFromTop == unsigned(bce->stackDepth - iterDepth_));
         if (!bce->emitDupAt(slotFromTop))         // ITER ... EXCEPTION ITER
             return false;
-        if (!emitIteratorClose(bce, CompletionKind::Throw)) // ITER ... EXCEPTION
-            return false;
+        if (!emitIteratorCloseInInnermostScope(bce, CompletionKind::Throw))
+            return false;                         // ITER ... EXCEPTION
 
         if (!ifIteratorIsNotClosed.emitEnd())     // ITER ... EXCEPTION
             return false;
@@ -2264,8 +2251,8 @@ class ForOfLoopControl : public LoopControl
                 return false;
             if (!bce->emitDupAt(slotFromTop + 1)) // ITER ... FTYPE FVALUE ITER
                 return false;
-            if (!emitIteratorClose(bce, CompletionKind::Normal)) // ITER ... FTYPE FVALUE
-                return false;
+            if (!emitIteratorCloseInInnermostScope(bce, CompletionKind::Normal))
+                return false;                     // ITER ... FTYPE FVALUE
             if (!ifGeneratorClosing.emitEnd())    // ITER ... FTYPE FVALUE
                 return false;
         }
@@ -2279,16 +2266,27 @@ class ForOfLoopControl : public LoopControl
         return true;
     }
 
-    bool emitIteratorClose(BytecodeEmitter* bce,
-                           CompletionKind completionKind = CompletionKind::Normal) {
+    bool emitIteratorCloseInInnermostScope(BytecodeEmitter* bce,
+                                           CompletionKind completionKind = CompletionKind::Normal) {
+        return emitIteratorCloseInScope(bce,  *bce->innermostEmitterScope(), completionKind);
+    }
+
+    bool emitIteratorCloseInScope(BytecodeEmitter* bce,
+                                  EmitterScope& currentScope,
+                                  CompletionKind completionKind = CompletionKind::Normal) {
         ptrdiff_t start = bce->offset();
-        if (!bce->emitIteratorClose(iterKind_, completionKind, allowSelfHosted_))
+        if (!bce->emitIteratorCloseInScope(currentScope, iterKind_, completionKind,
+                                           allowSelfHosted_))
+        {
             return false;
+        }
         ptrdiff_t end = bce->offset();
         return bce->tryNoteList.append(JSTRY_FOR_OF_ITERCLOSE, 0, start, end);
     }
 
-    bool emitPrepareForNonLocalJump(BytecodeEmitter* bce, bool isTarget) {
+    bool emitPrepareForNonLocalJumpFromScope(BytecodeEmitter* bce,
+                                             EmitterScope& currentScope,
+                                             bool isTarget) {
         // Pop unnecessary value from the stack.  Effectively this means
         // leaving try-catch block.  However, the performing IteratorClose can
         // reach the depth for try-catch, and effectively re-enter the
@@ -2309,7 +2307,7 @@ class ForOfLoopControl : public LoopControl
         if (!bce->emit1(JSOP_SWAP))                       // UNDEF ITER
             return false;
 
-        if (!emitIteratorClose(bce))                      // UNDEF
+        if (!emitIteratorCloseInScope(bce, currentScope, CompletionKind::Normal)) // UNDEF
             return false;
 
         if (isTarget) {
@@ -2351,8 +2349,11 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
     bodyScopeIndex(UINT32_MAX),
     varEmitterScope(nullptr),
     innermostNestableControl(nullptr),
-    innermostEmitterScope(nullptr),
+    innermostEmitterScope_(nullptr),
     innermostTDZCheckCache(nullptr),
+#ifdef DEBUG
+    unstableEmitterScope(false),
+#endif
     constList(cx),
     scopeList(cx),
     tryNoteList(cx),
@@ -2425,13 +2426,13 @@ BytecodeEmitter::findInnermostNestableControl(Predicate predicate) const
 NameLocation
 BytecodeEmitter::lookupName(JSAtom* name)
 {
-    return innermostEmitterScope->lookup(this, name);
+    return innermostEmitterScope()->lookup(this, name);
 }
 
 Maybe<NameLocation>
 BytecodeEmitter::locationOfNameBoundInScope(JSAtom* name, EmitterScope* target)
 {
-    return innermostEmitterScope->locationBoundInScope(name, target);
+    return innermostEmitterScope()->locationBoundInScope(name, target);
 }
 
 Maybe<NameLocation>
@@ -2906,7 +2907,7 @@ class NonLocalExitControl
       : bce_(bce),
         savedScopeNoteIndex_(bce->scopeNoteList.length()),
         savedDepth_(bce->stackDepth),
-        openScopeNoteIndex_(bce->innermostEmitterScope->noteIndex()),
+        openScopeNoteIndex_(bce->innermostEmitterScope()->noteIndex()),
         kind_(kind)
     { }
 
@@ -2952,8 +2953,10 @@ NonLocalExitControl::prepareForNonLocalJump(BytecodeEmitter::NestableControl* ta
     using NestableControl = BytecodeEmitter::NestableControl;
     using EmitterScope = BytecodeEmitter::EmitterScope;
 
-    EmitterScope* es = bce_->innermostEmitterScope;
+    EmitterScope* es = bce_->innermostEmitterScope();
     int npops = 0;
+
+    AutoCheckUnstableEmitterScope cues(bce_);
 
     // For 'continue', 'break', and 'return' statements, emit IteratorClose
     // bytecode inline. 'continue' statements do not call IteratorClose for
@@ -3005,8 +3008,11 @@ NonLocalExitControl::prepareForNonLocalJump(BytecodeEmitter::NestableControl* ta
                     return false;
 
                 ForOfLoopControl& loopinfo = control->as<ForOfLoopControl>();
-                if (!loopinfo.emitPrepareForNonLocalJump(bce_, /* isTarget = */ false)) // ...
+                if (!loopinfo.emitPrepareForNonLocalJumpFromScope(bce_, *es,
+                                                                  /* isTarget = */ false))
+                {                                         // ...
                     return false;
+                }
             } else {
                 // The iterator next method, the iterator, and the current
                 // value are on the stack.
@@ -3035,8 +3041,11 @@ NonLocalExitControl::prepareForNonLocalJump(BytecodeEmitter::NestableControl* ta
 
     if (target && emitIteratorCloseAtTarget && target->is<ForOfLoopControl>()) {
         ForOfLoopControl& loopinfo = target->as<ForOfLoopControl>();
-        if (!loopinfo.emitPrepareForNonLocalJump(bce_, /* isTarget = */ true)) // ... UNDEF UNDEF UNDEF
+        if (!loopinfo.emitPrepareForNonLocalJumpFromScope(bce_, *es,
+                                                          /* isTarget = */ true))
+        {                                                 // ... UNDEF UNDEF UNDEF
             return false;
+        }
     }
 
     EmitterScope* targetEmitterScope = target ? target->emitterScope() : bce_->varEmitterScope;
@@ -3071,7 +3080,7 @@ BytecodeEmitter::emitGoto(NestableControl* target, JumpList* jumplist, SrcNoteTy
 Scope*
 BytecodeEmitter::innermostScope() const
 {
-    return innermostEmitterScope->scope(this);
+    return innermostEmitterScope()->scope(this);
 }
 
 bool
@@ -3294,6 +3303,7 @@ BytecodeEmitter::checkSideEffects(ParseNode* pn, bool* answer)
 
       // Trivial binary nodes with more token pos holders.
       case ParseNodeKind::NewTarget:
+      case ParseNodeKind::ImportMeta:
         MOZ_ASSERT(pn->isArity(PN_BINARY));
         MOZ_ASSERT(pn->pn_left->isKind(ParseNodeKind::PosHolder));
         MOZ_ASSERT(pn->pn_right->isKind(ParseNodeKind::PosHolder));
@@ -3720,7 +3730,7 @@ BytecodeEmitter::needsImplicitThis()
         return true;
 
     // Otherwise see if the current point is under a 'with'.
-    for (EmitterScope* es = innermostEmitterScope; es; es = es->enclosingInFrame()) {
+    for (EmitterScope* es = innermostEmitterScope(); es; es = es->enclosingInFrame()) {
         if (es->scope(this)->kind() == ScopeKind::With)
             return true;
     }
@@ -4691,8 +4701,10 @@ BytecodeEmitter::emitSwitch(ParseNode* pn)
                 i += JS_BIT(16);
             if (i >= intmapBitLength) {
                 size_t newLength = NumWordsForBitArrayOfLength(i + 1);
-                if (!intmap.resize(newLength))
+                if (!intmap.resize(newLength)) {
+                    ReportOutOfMemory(cx);
                     return false;
+                }
                 intmapBitLength = newLength * BitArrayElementBits;
             }
             if (IsBitArrayElementSet(intmap.begin(), intmap.length(), i)) {
@@ -4821,8 +4833,10 @@ BytecodeEmitter::emitSwitch(ParseNode* pn)
         pc += JUMP_OFFSET_LEN;
 
         if (tableLength != 0) {
-            if (!table.growBy(tableLength))
+            if (!table.growBy(tableLength)) {
+                ReportOutOfMemory(cx);
                 return false;
+            }
 
             for (CaseClause* caseNode = firstCase; caseNode; caseNode = caseNode->next()) {
                 if (ParseNode* caseValue = caseNode->caseExpression()) {
@@ -5320,7 +5334,7 @@ BytecodeEmitter::emitSetOrInitializeDestructuring(ParseNode* target, Destructuri
                 // destructuring declaration needs to initialize the name in
                 // the function scope. The innermost scope is the var scope,
                 // and its enclosing scope is the function scope.
-                EmitterScope* funScope = innermostEmitterScope->enclosingInFrame();
+                EmitterScope* funScope = innermostEmitterScope()->enclosingInFrame();
                 NameLocation paramLoc = *locationOfNameBoundInScope(name, funScope);
                 if (!emitSetOrInitializeNameAtLocation(name, paramLoc, emitSwapScopeAndRhs, true))
                     return false;
@@ -5396,7 +5410,7 @@ BytecodeEmitter::emitIteratorNext(ParseNode* pn, IteratorKind iterKind /* = Iter
         return false;
 
     if (iterKind == IteratorKind::Async) {
-        if (!emitAwait())                                 // ... RESULT
+        if (!emitAwaitInInnermostScope())                 // ... RESULT
             return false;
     }
 
@@ -5438,9 +5452,10 @@ BytecodeEmitter::emitPushNotUndefinedOrNull()
 }
 
 bool
-BytecodeEmitter::emitIteratorClose(IteratorKind iterKind /* = IteratorKind::Sync */,
-                                   CompletionKind completionKind /* = CompletionKind::Normal */,
-                                   bool allowSelfHosted /* = false */)
+BytecodeEmitter::emitIteratorCloseInScope(EmitterScope& currentScope,
+                                          IteratorKind iterKind /* = IteratorKind::Sync */,
+                                          CompletionKind completionKind /* = CompletionKind::Normal */,
+                                          bool allowSelfHosted /* = false */)
 {
     MOZ_ASSERT(allowSelfHosted || emitterMode != BytecodeEmitter::SelfHosting,
                ".close() on iterators is prohibited in self-hosted code because it "
@@ -5529,7 +5544,7 @@ BytecodeEmitter::emitIteratorClose(IteratorKind iterKind /* = IteratorKind::Sync
             if (!emit1(JSOP_SWAP))                        // ... ... RVAL RESULT
                 return false;
         }
-        if (!emitAwait())                                 // ... ... RVAL? RESULT
+        if (!emitAwaitInScope(currentScope))              // ... ... RVAL? RESULT
             return false;
     }
 
@@ -5795,7 +5810,7 @@ BytecodeEmitter::emitDestructuringOpsArray(ParseNode* pattern, DestructuringFlav
         if (!emit1(JSOP_POP))                                     // ... OBJ ITER
             return false;
 
-        return emitIteratorClose();                               // ... OBJ
+        return emitIteratorCloseInInnermostScope();               // ... OBJ
     }
 
     // Push an initial FALSE value for DONE.
@@ -6000,7 +6015,7 @@ BytecodeEmitter::emitDestructuringOpsArray(ParseNode* pattern, DestructuringFlav
         return false;
     if (!emit1(JSOP_POP))                                         // ... OBJ ITER
         return false;
-    if (!emitIteratorClose())                                     // ... OBJ
+    if (!emitIteratorCloseInInnermostScope())                     // ... OBJ
         return false;
     if (!ifDone.emitEnd())
         return false;
@@ -7394,7 +7409,7 @@ BytecodeEmitter::emitForOf(ParseNode* forOfLoop, EmitterScope* headLexicalEmitte
         DebugOnly<ParseNode*> forOfTarget = forOfHead->pn_kid1;
         MOZ_ASSERT(forOfTarget->isKind(ParseNodeKind::Let) ||
                    forOfTarget->isKind(ParseNodeKind::Const));
-        MOZ_ASSERT(headLexicalEmitterScope == innermostEmitterScope);
+        MOZ_ASSERT(headLexicalEmitterScope == innermostEmitterScope());
         MOZ_ASSERT(headLexicalEmitterScope->scope(this)->kind() == ScopeKind::Lexical);
 
         if (headLexicalEmitterScope->hasEnvironment()) {
@@ -7591,7 +7606,7 @@ BytecodeEmitter::emitForIn(ParseNode* forInLoop, EmitterScope* headLexicalEmitte
         // bindings inducing an environment, recreate the current environment.
         MOZ_ASSERT(forInTarget->isKind(ParseNodeKind::Let) ||
                    forInTarget->isKind(ParseNodeKind::Const));
-        MOZ_ASSERT(headLexicalEmitterScope == innermostEmitterScope);
+        MOZ_ASSERT(headLexicalEmitterScope == innermostEmitterScope());
         MOZ_ASSERT(headLexicalEmitterScope->scope(this)->kind() == ScopeKind::Lexical);
 
         if (headLexicalEmitterScope->hasEnvironment()) {
@@ -7727,7 +7742,7 @@ BytecodeEmitter::emitCStyleFor(ParseNode* pn, EmitterScope* headLexicalEmitterSc
             // exists for the head, it must be the innermost one. If that scope
             // has closed-over bindings inducing an environment, recreate the
             // current environment.
-            MOZ_ASSERT(headLexicalEmitterScope == innermostEmitterScope);
+            MOZ_ASSERT(headLexicalEmitterScope == innermostEmitterScope());
             MOZ_ASSERT(headLexicalEmitterScope->scope(this)->kind() == ScopeKind::Lexical);
 
             if (headLexicalEmitterScope->hasEnvironment()) {
@@ -7775,7 +7790,7 @@ BytecodeEmitter::emitCStyleFor(ParseNode* pn, EmitterScope* headLexicalEmitterSc
 
     // ES 13.7.4.8 step 3.e. The per-iteration freshening.
     if (forLoopRequiresFreshening) {
-        MOZ_ASSERT(headLexicalEmitterScope == innermostEmitterScope);
+        MOZ_ASSERT(headLexicalEmitterScope == innermostEmitterScope());
         MOZ_ASSERT(headLexicalEmitterScope->scope(this)->kind() == ScopeKind::Lexical);
 
         if (headLexicalEmitterScope->hasEnvironment()) {
@@ -7943,8 +7958,7 @@ BytecodeEmitter::emitFunction(ParseNode* pn, bool needsProto)
             // fact. If we attempt to compile the outer script again, the
             // static scope chain will be newly allocated and will mismatch
             // the previously compiled LazyScript's.
-            ScriptSourceObject* source = &script->sourceObject()->as<ScriptSourceObject>();
-            fun->lazyScript()->setEnclosingScopeAndSource(innermostScope(), source);
+            fun->lazyScript()->setEnclosingScope(innermostScope());
             if (emittingRunOnceLambda)
                 fun->lazyScript()->setTreatAsRunOnce();
         } else {
@@ -8398,7 +8412,7 @@ BytecodeEmitter::emitReturn(ParseNode* pn)
         bool isAsyncGenerator = sc->asFunctionBox()->isAsync() &&
                                 sc->asFunctionBox()->isGenerator();
         if (isAsyncGenerator) {
-            if (!emitAwait())
+            if (!emitAwaitInInnermostScope())
                 return false;
         }
     } else {
@@ -8474,9 +8488,9 @@ BytecodeEmitter::emitReturn(ParseNode* pn)
 }
 
 bool
-BytecodeEmitter::emitGetDotGenerator()
+BytecodeEmitter::emitGetDotGeneratorInScope(EmitterScope& currentScope)
 {
-    NameLocation loc = *locationOfNameBoundInFunctionScope(cx->names().dotGenerator);
+    NameLocation loc = *locationOfNameBoundInFunctionScope(cx->names().dotGenerator, &currentScope);
     return emitGetNameAtLocation(cx->names().dotGenerator, loc);
 }
 
@@ -8517,7 +8531,7 @@ BytecodeEmitter::emitYield(ParseNode* pn)
     // 11.4.3.7 AsyncGeneratorYield step 5.
     bool isAsyncGenerator = sc->asFunctionBox()->isAsync();
     if (isAsyncGenerator) {
-        if (!emitAwait())                                 // RESULT
+        if (!emitAwaitInInnermostScope())                 // RESULT
             return false;
     }
 
@@ -8526,7 +8540,7 @@ BytecodeEmitter::emitYield(ParseNode* pn)
             return false;
     }
 
-    if (!emitGetDotGenerator())
+    if (!emitGetDotGeneratorInInnermostScope())
         return false;
 
     if (!emitYieldOp(JSOP_YIELD))
@@ -8536,24 +8550,24 @@ BytecodeEmitter::emitYield(ParseNode* pn)
 }
 
 bool
-BytecodeEmitter::emitAwait()
-{
-    if (!emitGetDotGenerator())
-        return false;
-    if (!emitYieldOp(JSOP_AWAIT))
-        return false;
-    return true;
-}
-
-bool
-BytecodeEmitter::emitAwait(ParseNode* pn)
+BytecodeEmitter::emitAwaitInInnermostScope(ParseNode* pn)
 {
     MOZ_ASSERT(sc->isFunctionBox());
     MOZ_ASSERT(pn->isKind(ParseNodeKind::Await));
 
     if (!emitTree(pn->pn_kid))
         return false;
-    return emitAwait();
+    return emitAwaitInInnermostScope();
+}
+
+bool
+BytecodeEmitter::emitAwaitInScope(EmitterScope& currentScope)
+{
+    if (!emitGetDotGeneratorInScope(currentScope))
+        return false;
+    if (!emitYieldOp(JSOP_AWAIT))
+        return false;
+    return true;
 }
 
 bool
@@ -8595,12 +8609,12 @@ BytecodeEmitter::emitYieldStar(ParseNode* iter)
 
     // 11.4.3.7 AsyncGeneratorYield step 5.
     if (isAsyncGenerator) {
-        if (!emitAwait())                                 // NEXT ITER RESULT
+        if (!emitAwaitInInnermostScope())                 // NEXT ITER RESULT
             return false;
     }
 
     // Load the generator object.
-    if (!emitGetDotGenerator())                           // NEXT ITER RESULT GENOBJ
+    if (!emitGetDotGeneratorInInnermostScope())           // NEXT ITER RESULT GENOBJ
         return false;
 
     // Yield RESULT as-is, without re-boxing.
@@ -8637,7 +8651,7 @@ BytecodeEmitter::emitYieldStar(ParseNode* iter)
     // If the iterator does not have a "throw" method, it calls IteratorClose
     // and then throws a TypeError.
     IteratorKind iterKind = isAsyncGenerator ? IteratorKind::Async : IteratorKind::Sync;
-    if (!emitIteratorClose(iterKind))                    // NEXT ITER RESULT EXCEPTION
+    if (!emitIteratorCloseInInnermostScope(iterKind))     // NEXT ITER RESULT EXCEPTION
         return false;
     if (!emitUint16Operand(JSOP_THROWMSG, JSMSG_ITERATOR_NO_THROW)) // throw
         return false;
@@ -8655,7 +8669,7 @@ BytecodeEmitter::emitYieldStar(ParseNode* iter)
     checkTypeSet(JSOP_CALL);
 
     if (isAsyncGenerator) {
-        if (!emitAwait())                                 // NEXT ITER OLDRESULT RESULT
+        if (!emitAwaitInInnermostScope())                 // NEXT ITER OLDRESULT RESULT
             return false;
     }
 
@@ -8722,7 +8736,7 @@ BytecodeEmitter::emitYieldStar(ParseNode* iter)
     checkTypeSet(JSOP_CALL);
 
     if (iterKind == IteratorKind::Async) {
-        if (!emitAwait())                                 // ... FTYPE FVALUE RESULT
+        if (!emitAwaitInInnermostScope())                 // ... FTYPE FVALUE RESULT
             return false;
     }
 
@@ -8796,7 +8810,7 @@ BytecodeEmitter::emitYieldStar(ParseNode* iter)
     checkTypeSet(JSOP_CALL);
 
     if (isAsyncGenerator) {
-        if (!emitAwait())                                        // NEXT ITER RESULT RESULT
+        if (!emitAwaitInInnermostScope())                        // NEXT ITER RESULT RESULT
             return false;
     }
 
@@ -9261,7 +9275,8 @@ BytecodeEmitter::isRestParameter(ParseNode* pn)
         if (bindings->nonPositionalFormalStart > 0) {
             // |paramName| can be nullptr when the rest destructuring syntax is
             // used: `function f(...[]) {}`.
-            JSAtom* paramName = bindings->names[bindings->nonPositionalFormalStart - 1].name();
+            JSAtom* paramName =
+                bindings->trailingNames[bindings->nonPositionalFormalStart - 1].name();
             return paramName && name == paramName;
         }
     }
@@ -10282,7 +10297,7 @@ BytecodeEmitter::emitFunctionFormalParameters(ParseNode* pn)
 {
     ParseNode* funBody = pn->last();
     FunctionBox* funbox = sc->asFunctionBox();
-    EmitterScope* funScope = innermostEmitterScope;
+    EmitterScope* funScope = innermostEmitterScope();
 
     bool hasParameterExprs = funbox->hasParameterExprs;
     bool hasRest = funbox->hasRest();
@@ -10481,7 +10496,7 @@ BytecodeEmitter::emitFunctionBody(ParseNode* funBody)
         if (!emit1(JSOP_SETRVAL))
             return false;
 
-        if (!emitGetDotGenerator())
+        if (!emitGetDotGeneratorInInnermostScope())
             return false;
 
         // No need to check for finally blocks, etc as in EmitReturn.
@@ -10862,7 +10877,7 @@ BytecodeEmitter::emitTree(ParseNode* pn, ValueUsage valueUsage /* = ValueUsage::
         break;
 
       case ParseNodeKind::Await:
-        if (!emitAwait(pn))
+        if (!emitAwaitInInnermostScope(pn))
             return false;
         break;
 
@@ -11129,6 +11144,11 @@ BytecodeEmitter::emitTree(ParseNode* pn, ValueUsage valueUsage /* = ValueUsage::
 
       case ParseNodeKind::NewTarget:
         if (!emit1(JSOP_NEWTARGET))
+            return false;
+        break;
+
+      case ParseNodeKind::ImportMeta:
+        if (!emit1(JSOP_IMPORTMETA))
             return false;
         break;
 

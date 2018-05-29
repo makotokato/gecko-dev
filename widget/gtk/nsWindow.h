@@ -66,6 +66,21 @@ extern mozilla::LazyLogModule gWidgetDrawLog;
 
 #endif /* MOZ_LOGGING */
 
+#ifdef MOZ_WAYLAND
+class nsWaylandDragContext;
+
+gboolean
+WindowDragMotionHandler(GtkWidget *aWidget, GdkDragContext *aDragContext,
+                        nsWaylandDragContext *aWaylandDragContext,
+                        gint aX, gint aY, guint aTime);
+gboolean
+WindowDragDropHandler(GtkWidget *aWidget, GdkDragContext *aDragContext,
+                      nsWaylandDragContext *aWaylandDragContext, gint aX, gint aY,
+                      guint aTime);
+void
+WindowDragLeaveHandler(GtkWidget *aWidget);
+#endif
+
 class gfxPattern;
 
 namespace mozilla {
@@ -480,6 +495,18 @@ private:
     bool               IsComposited() const;
 
     void               UpdateClientOffsetForCSDWindow();
+
+#ifdef MOZ_X11
+    typedef enum { GTK_WIDGET_COMPOSIDED_DEFAULT = 0,
+                   GTK_WIDGET_COMPOSIDED_DISABLED = 1,
+                   GTK_WIDGET_COMPOSIDED_ENABLED = 2
+    } WindowComposeRequest;
+
+    void                SetCompositorHint(WindowComposeRequest aState);
+#endif
+    nsCString           mGtkWindowTypeName;
+    nsCString           mGtkWindowRoleName;
+    void                RefreshWindowClass();
 
     GtkWidget          *mShell;
     MozContainer       *mContainer;

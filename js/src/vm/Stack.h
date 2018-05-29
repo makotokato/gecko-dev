@@ -231,6 +231,7 @@ class AbstractFramePtr
     inline Value calleev() const;
     inline Value& thisArgument() const;
 
+    inline bool isConstructing() const;
     inline Value newTarget() const;
 
     inline bool debuggerNeedsCheckPrimitiveReturn() const;
@@ -906,8 +907,7 @@ class InterpreterStack
     void popInlineFrame(InterpreterRegs& regs);
 
     bool resumeGeneratorCallFrame(JSContext* cx, InterpreterRegs& regs,
-                                  HandleFunction callee, HandleValue newTarget,
-                                  HandleObject envChain);
+                                  HandleFunction callee, HandleObject envChain);
 
     inline void purge(JSRuntime* rt);
 
@@ -1552,8 +1552,7 @@ class InterpreterActivation : public Activation
                                 MaybeConstruct constructing);
     inline void popInlineFrame(InterpreterFrame* frame);
 
-    inline bool resumeGeneratorFrame(HandleFunction callee, HandleValue newTarget,
-                                     HandleObject envChain);
+    inline bool resumeGeneratorFrame(HandleFunction callee, HandleObject envChain);
 
     InterpreterFrame* current() const {
         return regs_.fp();
@@ -1694,6 +1693,9 @@ class JitActivation : public Activation
 
     bool hasExitFP() const {
         return !!packedExitFP_;
+    }
+    uint8_t* jsOrWasmExitFP() const {
+        return (uint8_t*)(uintptr_t(packedExitFP_) & ~ExitFpWasmBit);
     }
     static size_t offsetOfPackedExitFP() {
         return offsetof(JitActivation, packedExitFP_);
@@ -2043,6 +2045,7 @@ class FrameIter
 
     FrameIter& operator++();
 
+    JS::Realm* realm() const;
     JSCompartment* compartment() const;
     Activation* activation() const { return data_.activations_.activation(); }
 

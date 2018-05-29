@@ -6,7 +6,6 @@
 
 #include "nsHostObjectProtocolHandler.h"
 
-#include "DOMMediaStream.h"
 #include "mozilla/dom/ChromeUtils.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/ContentParent.h"
@@ -42,20 +41,12 @@ struct DataInfo
 {
   enum ObjectType {
     eBlobImpl,
-    eMediaStream,
     eMediaSource
   };
 
   DataInfo(BlobImpl* aBlobImpl, nsIPrincipal* aPrincipal)
     : mObjectType(eBlobImpl)
     , mBlobImpl(aBlobImpl)
-    , mPrincipal(aPrincipal)
-    , mRevoked(false)
-  {}
-
-  DataInfo(DOMMediaStream* aMediaStream, nsIPrincipal* aPrincipal)
-    : mObjectType(eMediaStream)
-    , mMediaStream(aMediaStream)
     , mPrincipal(aPrincipal)
     , mRevoked(false)
   {}
@@ -70,7 +61,6 @@ struct DataInfo
   ObjectType mObjectType;
 
   RefPtr<BlobImpl> mBlobImpl;
-  RefPtr<DOMMediaStream> mMediaStream;
   RefPtr<MediaSource> mMediaSource;
 
   nsCOMPtr<nsIPrincipal> mPrincipal;
@@ -308,10 +298,9 @@ class BlobURLsReporter final : public nsIMemoryReporter
         continue;
       }
 
-      // Just report the path for the DOMMediaStream or MediaSource.
+      // Just report the path for the MediaSource.
       nsAutoCString path;
-      path = iter.UserData()->mObjectType == DataInfo::eMediaSource
-               ? "media-source-urls/" : "dom-media-stream-urls/";
+      path = "media-source-urls/";
       BuildPath(path, key, info, aAnonymize);
 
       NS_NAMED_LITERAL_CSTRING(desc,
@@ -430,12 +419,12 @@ class BlobURLsReporter final : public nsIMemoryReporter
 
 NS_IMPL_ISUPPORTS(BlobURLsReporter, nsIMemoryReporter)
 
-class ReleasingTimerHolder final : public nsITimerCallback
-                                 , public nsINamed
+class ReleasingTimerHolder final : public Runnable
+                                 , public nsITimerCallback
                                  , public nsIAsyncShutdownBlocker
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_ISUPPORTS_INHERITED
 
   static void
   Create(const nsACString& aURI, bool aBroadcastToOtherProcesses)
@@ -449,20 +438,38 @@ public:
       holder->CancelTimerAndRevokeURI();
     });
 
-    nsresult rv = NS_NewTimerWithCallback(getter_AddRefs(holder->mTimer),
-                                          holder, RELEASING_TIMER,
+    nsresult rv =
+      SystemGroup::EventTargetFor(TaskCategory::Other)->Dispatch(holder.forget());
+    NS_ENSURE_SUCCESS_VOID(rv);
+ 
+    raii.release();
+  }
+
+  // Runnable interface
+
+  NS_IMETHOD
+  Run() override
+  {
+    RefPtr<ReleasingTimerHolder> self = this;
+    auto raii = mozilla::MakeScopeExit([self] {
+      self->CancelTimerAndRevokeURI();
+    });
+
+    nsresult rv = NS_NewTimerWithCallback(getter_AddRefs(mTimer),
+                                          this, RELEASING_TIMER,
                                           nsITimer::TYPE_ONE_SHOT,
                                           SystemGroup::EventTargetFor(TaskCategory::Other));
-    NS_ENSURE_SUCCESS_VOID(rv);
+    NS_ENSURE_SUCCESS(rv, NS_OK);
 
     nsCOMPtr<nsIAsyncShutdownClient> phase = GetShutdownPhase();
-    NS_ENSURE_TRUE_VOID(!!phase);
+    NS_ENSURE_TRUE(!!phase, NS_OK);
 
-    rv = phase->AddBlocker(holder, NS_LITERAL_STRING(__FILE__), __LINE__,
+    rv = phase->AddBlocker(this, NS_LITERAL_STRING(__FILE__), __LINE__,
                            NS_LITERAL_STRING("ReleasingTimerHolder shutdown"));
-    NS_ENSURE_SUCCESS_VOID(rv);
+    NS_ENSURE_SUCCESS(rv, NS_OK);
 
     raii.release();
+    return NS_OK;
   }
 
   // nsITimerCallback interface
@@ -474,14 +481,9 @@ public:
     return NS_OK;
   }
 
-  // nsINamed interface
-
-  NS_IMETHOD
-  GetName(nsACString& aName) override
-  {
-    aName.AssignLiteral("ReleasingTimerHolder");
-    return NS_OK;
-  }
+#ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
+  using nsINamed::GetName;
+#endif
 
   // nsIAsyncShutdownBlocker interface
 
@@ -508,7 +510,8 @@ public:
 
 private:
   ReleasingTimerHolder(const nsACString& aURI, bool aBroadcastToOtherProcesses)
-    : mURI(aURI)
+    : Runnable("ReleasingTimerHolder")
+    , mURI(aURI)
     , mBroadcastToOtherProcesses(aBroadcastToOtherProcesses)
   {}
 
@@ -574,8 +577,8 @@ private:
   nsCOMPtr<nsITimer> mTimer;
 };
 
-NS_IMPL_ISUPPORTS(ReleasingTimerHolder, nsITimerCallback, nsINamed,
-                  nsIAsyncShutdownBlocker)
+NS_IMPL_ISUPPORTS_INHERITED(ReleasingTimerHolder, Runnable, nsITimerCallback,
+                            nsIAsyncShutdownBlocker)
 
 } // namespace mozilla
 
@@ -626,22 +629,6 @@ nsHostObjectProtocolHandler::AddDataEntry(BlobImpl* aBlobImpl,
   NS_ENSURE_SUCCESS(rv, rv);
 
   BroadcastBlobURLRegistration(aUri, aBlobImpl, aPrincipal);
-  return NS_OK;
-}
-
-/* static */ nsresult
-nsHostObjectProtocolHandler::AddDataEntry(DOMMediaStream* aMediaStream,
-                                          nsIPrincipal* aPrincipal,
-                                          nsACString& aUri)
-{
-  Init();
-
-  nsresult rv = GenerateURIStringForBlobURL(aPrincipal, aUri);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = AddDataEntryInternal(aUri, aMediaStream, aPrincipal);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   return NS_OK;
 }
 
@@ -824,9 +811,6 @@ nsHostObjectProtocolHandler::Traverse(const nsACString& aUri,
 
   NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCallback, "HostObjectProtocolHandler DataInfo.mMediaSource");
   aCallback.NoteXPCOMChild(res->mMediaSource);
-
-  NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCallback, "HostObjectProtocolHandler DataInfo.mMediaStream");
-  aCallback.NoteXPCOMChild(res->mMediaStream);
 }
 
 // -----------------------------------------------------------------------
@@ -1074,19 +1058,6 @@ NS_GetStreamForBlobURI(nsIURI* aURI, nsIInputStream** aStream)
   return NS_OK;
 }
 
-nsresult
-NS_GetStreamForMediaStreamURI(nsIURI* aURI, DOMMediaStream** aStream)
-{
-  DataInfo* info = GetDataInfoFromURI(aURI);
-  if (!info || info->mObjectType != DataInfo::eMediaStream) {
-    return NS_ERROR_DOM_BAD_URI;
-  }
-
-  RefPtr<DOMMediaStream> mediaStream = info->mMediaStream;
-  mediaStream.forget(aStream);
-  return NS_OK;
-}
-
 NS_IMETHODIMP
 nsFontTableProtocolHandler::NewURI(const nsACString& aSpec,
                                    const char *aCharset,
@@ -1185,11 +1156,6 @@ bool IsType(nsIURI* aUri, DataInfo::ObjectType aType)
 bool IsBlobURI(nsIURI* aUri)
 {
   return IsType(aUri, DataInfo::eBlobImpl);
-}
-
-bool IsMediaStreamURI(nsIURI* aUri)
-{
-  return IsType(aUri, DataInfo::eMediaStream);
 }
 
 bool IsMediaSourceURI(nsIURI* aUri)

@@ -899,7 +899,7 @@ mozInlineSpellChecker::SpellCheckAfterEditorChange(
 //    Supply a nullptr range and this will check the entire editor.
 
 nsresult
-mozInlineSpellChecker::SpellCheckRange(nsIDOMRange* aRange)
+mozInlineSpellChecker::SpellCheckRange(nsRange* aRange)
 {
   if (!mSpellCheck) {
     NS_WARNING_ASSERTION(
@@ -909,8 +909,7 @@ mozInlineSpellChecker::SpellCheckRange(nsIDOMRange* aRange)
   }
 
   auto status = MakeUnique<mozInlineSpellStatus>(this);
-  nsRange* range = static_cast<nsRange*>(aRange);
-  nsresult rv = status->InitForRange(range);
+  nsresult rv = status->InitForRange(aRange);
   NS_ENSURE_SUCCESS(rv, rv);
   return ScheduleSpellCheck(Move(status));
 }
@@ -918,8 +917,8 @@ mozInlineSpellChecker::SpellCheckRange(nsIDOMRange* aRange)
 // mozInlineSpellChecker::GetMisspelledWord
 
 NS_IMETHODIMP
-mozInlineSpellChecker::GetMisspelledWord(nsIDOMNode *aNode, int32_t aOffset,
-                                         nsIDOMRange **newword)
+mozInlineSpellChecker::GetMisspelledWord(nsINode *aNode, int32_t aOffset,
+                                         nsRange** newword)
 {
   if (NS_WARN_IF(!aNode)) {
     return NS_ERROR_INVALID_ARG;
@@ -934,14 +933,14 @@ mozInlineSpellChecker::GetMisspelledWord(nsIDOMNode *aNode, int32_t aOffset,
 // mozInlineSpellChecker::ReplaceWord
 
 NS_IMETHODIMP
-mozInlineSpellChecker::ReplaceWord(nsIDOMNode *aNode, int32_t aOffset,
+mozInlineSpellChecker::ReplaceWord(nsINode *aNode, int32_t aOffset,
                                    const nsAString &newword)
 {
   if (NS_WARN_IF(!mTextEditor) || NS_WARN_IF(newword.IsEmpty())) {
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsIDOMRange> range;
+  RefPtr<nsRange> range;
   nsresult res = GetMisspelledWord(aNode, aOffset, getter_AddRefs(range));
   NS_ENSURE_SUCCESS(res, res);
 
@@ -950,7 +949,7 @@ mozInlineSpellChecker::ReplaceWord(nsIDOMNode *aNode, int32_t aOffset,
     // This range was retrieved from the spellchecker selection. As
     // ranges cannot be shared between selections, we must clone it
     // before adding it to the editor's selection.
-    RefPtr<nsRange> editorRange = static_cast<nsRange*>(range.get())->CloneRange();
+    RefPtr<nsRange> editorRange = range->CloneRange();
 
     AutoPlaceholderBatch phb(mTextEditor, nullptr);
 
@@ -1617,16 +1616,15 @@ mozInlineSpellChecker::ResumeCheck(UniquePtr<mozInlineSpellStatus>&& aStatus)
 
 nsresult
 mozInlineSpellChecker::IsPointInSelection(Selection& aSelection,
-                                          nsIDOMNode *aNode,
+                                          nsINode *aNode,
                                           int32_t aOffset,
-                                          nsIDOMRange **aRange)
+                                          nsRange** aRange)
 {
   *aRange = nullptr;
 
   nsTArray<nsRange*> ranges;
-  nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
-  nsresult rv = aSelection.GetRangesForIntervalArray(node, aOffset,
-                                                     node, aOffset,
+  nsresult rv = aSelection.GetRangesForIntervalArray(aNode, aOffset,
+                                                     aNode, aOffset,
                                                      true, &ranges);
   NS_ENSURE_SUCCESS(rv, rv);
 
