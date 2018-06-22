@@ -105,7 +105,7 @@
 #endif  /* ARMv7 */
 
 #if (defined(__ARM_ARCH) && (__ARM_ARCH == 8)) || \
-    defined(__aarch64__) || defined(__ARM64_ARCH_8__)
+    defined(__aarch64__) || defined(__ARM64_ARCH_8__) || defined(_M_ARM64)
 #define BROTLI_TARGET_ARMV8
 #endif  /* ARMv8 */
 
