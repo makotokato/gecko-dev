@@ -2,17 +2,22 @@
 ; License, v. 2.0. If a copy of the MPL was not distributed with this
 ; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+    OPT 2 ; disable listing
+
+#include "ksarm64.h"
+
+    OPT 1 ; enable listing
+
     IMPORT |invoke_copy_to_stack|
     EXPORT |_NS_InvokeByIndex|
 
-    AREA |.text|, CODE, ARM64
+    TEXTAREA
 
+    NESTED_ENTRY _NS_InvokeByIndex
 
-|_NS_InvokeByIndex| PROC
     ; set up frame
-    stp         x29, x30, [sp,#-32]!
-    mov         x29, sp
-    stp         x19, x20, [sp,#16]
+    PROLOG_SAVE_REG_PAIR fp, lr, #-32!
+    PROLOG_SAVE_REG_PAIR x19, x20, #16
 
     ; save methodIndex across function calls
     mov         w20, w1
@@ -39,13 +44,13 @@
     ldp         x6, x7, [sp, #48]
     ldp         x4, x5, [sp, #32]
     ldp         x2, x3, [sp, #16]
-    ldp         x0, x1, [sp],#64
+    ldp         x0, x1, [sp], #64
 
     ; load arguments passed in v0-v7
     ldp         d6, d7, [sp, #48]
     ldp         d4, d5, [sp, #32]
     ldp         d2, d3, [sp, #16]
-    ldp         d0, d1, [sp],#64
+    ldp         d0, d1, [sp], #64
 
     ; call the method
     ldr         x16, [x0]
@@ -54,10 +59,11 @@
     blr         x16
 
     add         sp, sp, w19, uxth #3
-    ldp         x19, x20, [sp,#16]
-    ldp         x29, x30, [sp],#32
-    ret
 
-    ENDP
+    EPILOG_RESTORE_REG_PAIR x19, x20, #16
+    EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+    EPILOG_RETURN
+
+    NESTED_END _NS_InvokeByIndex
 
     END

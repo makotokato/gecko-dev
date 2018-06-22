@@ -2,50 +2,51 @@
 ; License, v. 2.0. If a copy of the MPL was not distributed with this
 ; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+    OPT 2 ; disable listing
+
+#include "ksarm64.h"
+
+    OPT 1 ; re-enalbe listing
+
     IMPORT |PrepareAndDispatch|
     EXPORT |SharedStub|
 
-    AREA |.text|, CODE, ARM64
+    TEXTAREA
 
-    ;NGPREGS EQU 8
-    ;NFPREGS EQU 8
+    NESTED_ENTRY SharedStub
 
-|SharedStub| PROC
-    stp         x29, x30, [sp,#-16]!
-    mov         x29, sp
+    PROLOG_SAVE_REG_PAIR fp, lr, #-144!
 
-    sub         sp, sp, #8 * (8 + 8) ; #(8*(NGPREGS + NFPREGS)
-    stp         x0, x1, [sp, #64+(0*8)]
-    stp         x2, x3, [sp, #64+(2*8)]
-    stp         x4, x5, [sp, #64+(4*8)]
-    stp         x6, x7, [sp, #64+(6*8)]
-    stp         d0, d1, [sp, #(0*8)]
-    stp         d2, d3, [sp, #(2*8)]
-    stp         d4, d5, [sp, #(4*8)]
-    stp         d6, d7, [sp, #(6*8)]
+    PROLOG_SAVE_REG_PAIR x0, x1, #80
+    PROLOG_SAVE_REG_PAIR x2, x3, #96
+    PROLOG_SAVE_REG_PAIR x4, x5, #112
+    PROLOG_SAVE_REG_PAIR x6, x7, #128
+    PROLOG_SAVE_REG_PAIR d0, d1, #16
+    PROLOG_SAVE_REG_PAIR d2, d3, #32
+    PROLOG_SAVE_REG_PAIR d4, d5, #48
+    PROLOG_SAVE_REG_PAIR d6, d7, #64
 
     ; methodIndex passed from stub
     mov         w1, w17
 
-    add         x2, sp, #(16 + (8 * (8 + 8))) ;#(16 + (8 * (NGPREGS + NFPREGS))
-    add         x3, sp, #(8*8) ; 8*NFPREGS
-    add         x4, sp, #0
+    add         x2, sp, #144 ; stack
+    add         x3, sp, #80 ; global register
+    add         x4, sp, #16 ; float register
 
     bl          PrepareAndDispatch
 
-    add         sp, sp, #(8 * (8 + 8)) ;#(8 * (NGPREGS + NFPREGS))
-    ldp         x29, x30, [sp],#16
-    ret
-
-    ENDP
+    EPILOG_RESTORE_REG_PAIR fp, lr, #144!
+    EPILOG_RETURN
+    NESTED_END
 
     MACRO
     STUBENTRY $functionname,$paramcount
     EXPORT |$functionname|
-|$functionname| PROC
+
+    NESTED_ENTRY $functioname
     mov         w17, $paramcount
     b           SharedStub
-    ENDP
+    NESTED_END
     MEND
 
     STUBENTRY ?Stub3@nsXPTCStubBase@@UEAA?AW4nsresult@@XZ, 3
