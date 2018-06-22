@@ -547,9 +547,7 @@ namespace module_getter {
 
     js::SetFunctionNativeReserved(getter, SLOT_URI, uri);
 
-    return JS_DefinePropertyById(aCx, aTarget, id,
-                                 JS_DATA_TO_FUNC_PTR(JSNative, getter.get()),
-                                 JS_DATA_TO_FUNC_PTR(JSNative, setter.get()),
+    return JS_DefinePropertyById(aCx, aTarget, id, getter, setter,
                                  JSPROP_GETTER | JSPROP_SETTER | JSPROP_ENUMERATE);
   }
 } // namespace module_getter
@@ -693,7 +691,7 @@ ChromeUtils::GetCallerLocation(const GlobalObject& aGlobal, nsIPrincipal* aPrinc
   JS::StackCapture captureMode(JS::FirstSubsumedFrame(cx, principals));
 
   JS::RootedObject frame(cx);
-  if (!JS::CaptureCurrentStack(cx, &frame, mozilla::Move(captureMode))) {
+  if (!JS::CaptureCurrentStack(cx, &frame, std::move(captureMode))) {
     JS_ClearPendingException(cx);
     aRetval.set(nullptr);
     return;

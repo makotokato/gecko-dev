@@ -68,7 +68,7 @@ struct ModuleEnvironment
     MemoryUsage               memoryUsage;
     uint32_t                  minMemoryLength;
     Maybe<uint32_t>           maxMemoryLength;
-    SigWithIdVector           sigs;
+    TypeDefVector             types;
     SigWithIdPtrVector        funcSigs;
     Uint32Vector              funcImportGlobalDataOffsets;
     GlobalDescVector          globals;
@@ -105,8 +105,8 @@ struct ModuleEnvironment
     size_t numTables() const {
         return tables.length();
     }
-    size_t numSigs() const {
-        return sigs.length();
+    size_t numTypes() const {
+        return types.length();
     }
     size_t numFuncs() const {
         return funcSigs.length();
@@ -133,7 +133,7 @@ struct ModuleEnvironment
         return funcIndex < funcImportGlobalDataOffsets.length();
     }
     uint32_t funcIndexToSigIndex(uint32_t funcIndex) const {
-        return funcSigs[funcIndex] - sigs.begin();
+        return TypeDef::fromSigWithIdPtr(funcSigs[funcIndex]) - types.begin();
     }
 };
 
@@ -269,8 +269,8 @@ class Encoder
     }
     MOZ_MUST_USE bool writeValType(ValType type) {
         static_assert(size_t(TypeCode::Limit) <= UINT8_MAX, "fits");
-        MOZ_ASSERT(size_t(type) < size_t(TypeCode::Limit));
-        return writeFixedU8(uint8_t(type));
+        MOZ_ASSERT(size_t(type.bitsUnsafe()) < size_t(TypeCode::Limit));
+        return writeFixedU8(uint8_t(type.bitsUnsafe()));
     }
     MOZ_MUST_USE bool writeBlockType(ExprType type) {
         static_assert(size_t(TypeCode::Limit) <= UINT8_MAX, "fits");
@@ -672,7 +672,7 @@ class Decoder
         return i64;
     }
     ValType uncheckedReadValType() {
-        return (ValType)uncheckedReadFixedU8();
+        return ValType::fromTypeCode(uncheckedReadFixedU8());
     }
     Op uncheckedReadOp() {
         static_assert(size_t(Op::Limit) == 256, "fits");

@@ -63,8 +63,8 @@ StaticRefPtr<ServiceWorkerRegistrar> gServiceWorkerRegistrar;
 nsresult
 GetOrigin(const nsACString& aURL, nsACString& aOrigin)
 {
-  RefPtr<MozURL> url;
-  nsresult rv = MozURL::Init(getter_AddRefs(url), aURL);
+  RefPtr<net::MozURL> url;
+  nsresult rv = net::MozURL::Init(getter_AddRefs(url), aURL);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -832,7 +832,7 @@ public:
                                          uint32_t aGeneration)
     : Runnable("dom::ServiceWorkerRegistrarSaveDataRunnable")
     , mEventTarget(GetCurrentThreadEventTarget())
-    , mData(Move(aData))
+    , mData(std::move(aData))
     , mGeneration(aGeneration)
   {
     AssertIsOnBackgroundThread();
@@ -888,7 +888,7 @@ ServiceWorkerRegistrar::MaybeScheduleSaveData()
   }
 
   RefPtr<Runnable> runnable =
-    new ServiceWorkerRegistrarSaveDataRunnable(Move(data), generation);
+    new ServiceWorkerRegistrarSaveDataRunnable(std::move(data), generation);
   nsresult rv = target->Dispatch(runnable.forget(), NS_DISPATCH_NORMAL);
   NS_ENSURE_SUCCESS_VOID(rv);
 
@@ -1281,7 +1281,7 @@ ServiceWorkerRegistrar::GetShutdownPhase() const
   nsCOMPtr<nsIAsyncShutdownClient> client;
   rv = svc->GetProfileBeforeChange(getter_AddRefs(client));
   RELEASE_ASSERT_SUCCEEDED(rv, "profileBeforeChange shutdown blocker");
-  return Move(client);
+  return client;
 }
 
 #undef RELEASE_ASSERT_SUCCEEDED

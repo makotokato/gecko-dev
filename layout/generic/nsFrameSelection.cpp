@@ -22,7 +22,6 @@
 #include "nsContentCID.h"
 #include "nsDeviceContext.h"
 #include "nsIContent.h"
-#include "nsIDOMNode.h"
 #include "nsRange.h"
 #include "nsITableCellLayout.h"
 #include "nsTArray.h"
@@ -1465,7 +1464,7 @@ nsFrameSelection::LookUpSelection(nsIContent *aContent,
   for (size_t j = 0; j < ArrayLength(mDomSelections); j++) {
     if (mDomSelections[j]) {
       details = mDomSelections[j]->LookUpSelection(aContent, aContentOffset,
-                                                   aContentLength, Move(details),
+                                                   aContentLength, std::move(details),
                                                    kPresentSelectionTypes[j],
                                                    aSlowCheck);
     }

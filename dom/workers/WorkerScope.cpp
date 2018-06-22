@@ -191,7 +191,7 @@ bool
 WorkerGlobalScope::IsSecureContext() const
 {
   bool globalSecure =
-    JS_GetIsSecureContext(js::GetObjectCompartment(GetWrapperPreserveColor()));
+    JS::GetIsSecureContext(js::GetNonCCWObjectRealm(GetWrapperPreserveColor()));
   MOZ_ASSERT(globalSecure == mWorkerPrivate->IsSecureContext());
   return globalSecure;
 }
@@ -521,7 +521,7 @@ nsresult
 WorkerGlobalScope::Dispatch(TaskCategory aCategory,
                             already_AddRefed<nsIRunnable>&& aRunnable)
 {
-  return EventTargetFor(aCategory)->Dispatch(Move(aRunnable),
+  return EventTargetFor(aCategory)->Dispatch(std::move(aRunnable),
                                              NS_DISPATCH_NORMAL);
 }
 
@@ -548,7 +548,7 @@ WorkerGlobalScope::GetClientState() const
 {
   Maybe<ClientState> state;
   state.emplace(mWorkerPrivate->GetClientState());
-  return Move(state);
+  return state;
 }
 
 Maybe<ServiceWorkerDescriptor>
@@ -1134,7 +1134,7 @@ nsresult
 WorkerDebuggerGlobalScope::Dispatch(TaskCategory aCategory,
                                     already_AddRefed<nsIRunnable>&& aRunnable)
 {
-  return EventTargetFor(aCategory)->Dispatch(Move(aRunnable),
+  return EventTargetFor(aCategory)->Dispatch(std::move(aRunnable),
                                              NS_DISPATCH_NORMAL);
 }
 

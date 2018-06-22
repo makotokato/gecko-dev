@@ -30,9 +30,6 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-
-static char *RCSSTRING __UNUSED__="$Id: stun_codec.c,v 1.2 2008/04/28 18:21:30 ekr Exp $";
-
 #include <errno.h>
 #include <csi_platform.h>
 
@@ -1414,9 +1411,6 @@ nr_stun_decode_message(nr_stun_message *msg, int (*get_password)(void *arg, nr_s
     nr_stun_message_attribute *attr;
     nr_stun_attr_info *attr_info;
     Data *password;
-
-    if (!msg)
-        ABORT(R_BAD_ARGS);
 
     r_log(NR_LOG_STUN, LOG_DEBUG, "Parsing STUN message of %d bytes", msg->length);
 

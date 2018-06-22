@@ -1340,7 +1340,7 @@ TraceJitActivations(JSContext* cx, JSTracer* trc)
 void
 UpdateJitActivationsForMinorGC(JSRuntime* rt)
 {
-    MOZ_ASSERT(JS::CurrentThreadIsHeapMinorCollecting());
+    MOZ_ASSERT(JS::RuntimeHeapIsMinorCollecting());
     JSContext* cx = rt->mainContextFromOwnThread();
     for (JitActivationIterator activations(cx); !activations.done(); ++activations) {
         for (OnlyJSJitFrameIter iter(activations); !iter.done(); ++iter) {
@@ -1450,7 +1450,7 @@ RInstructionResults::RInstructionResults(JitFrameLayout* fp)
 }
 
 RInstructionResults::RInstructionResults(RInstructionResults&& src)
-  : results_(mozilla::Move(src.results_)),
+  : results_(std::move(src.results_)),
     fp_(src.fp_),
     initialized_(src.initialized_)
 {
@@ -1462,7 +1462,7 @@ RInstructionResults::operator=(RInstructionResults&& rhs)
 {
     MOZ_ASSERT(&rhs != this, "self-moves are prohibited");
     this->~RInstructionResults();
-    new(this) RInstructionResults(mozilla::Move(rhs));
+    new(this) RInstructionResults(std::move(rhs));
     return *this;
 }
 
@@ -1494,13 +1494,11 @@ RInstructionResults::isInitialized() const
     return initialized_;
 }
 
-#ifdef DEBUG
 size_t
 RInstructionResults::length() const
 {
     return results_->length();
 }
-#endif
 
 JitFrameLayout*
 RInstructionResults::frame() const
@@ -1543,6 +1541,7 @@ SnapshotIterator::SnapshotIterator()
   : snapshot_(nullptr, 0, 0, 0),
     recover_(snapshot_, nullptr, 0),
     fp_(nullptr),
+    machine_(nullptr),
     ionScript_(nullptr),
     instructionResults_(nullptr)
 {
@@ -1933,7 +1932,7 @@ SnapshotIterator::initInstructionResults(MaybeReadFallback& fallback)
         // cause a GC, we can ensure that the results are properly traced by the
         // activation.
         RInstructionResults tmp(fallback.frame->jsFrame());
-        if (!fallback.activation->registerIonFrameRecovery(mozilla::Move(tmp)))
+        if (!fallback.activation->registerIonFrameRecovery(std::move(tmp)))
             return false;
 
         results = fallback.activation->maybeIonFrameRecovery(fp);
@@ -1953,7 +1952,7 @@ SnapshotIterator::initInstructionResults(MaybeReadFallback& fallback)
     }
 
     MOZ_ASSERT(results->isInitialized());
-    MOZ_ASSERT(results->length() == recover_.numInstructions() - 1);
+    MOZ_RELEASE_ASSERT(results->length() == recover_.numInstructions() - 1);
     instructionResults_ = results;
     return true;
 }
@@ -2056,7 +2055,9 @@ SnapshotIterator::maybeReadAllocByIndex(size_t index)
 InlineFrameIterator::InlineFrameIterator(JSContext* cx, const JSJitFrameIter* iter)
   : calleeTemplate_(cx),
     calleeRVA_(),
-    script_(cx)
+    script_(cx),
+    pc_(nullptr),
+    numActualArgs_(0)
 {
     resetOn(iter);
 }
@@ -2067,7 +2068,9 @@ InlineFrameIterator::InlineFrameIterator(JSContext* cx, const InlineFrameIterato
     frameCount_(iter ? iter->frameCount_ : UINT32_MAX),
     calleeTemplate_(cx),
     calleeRVA_(),
-    script_(cx)
+    script_(cx),
+    pc_(nullptr),
+    numActualArgs_(0)
 {
     if (frame_) {
         machine_ = iter->machine_;

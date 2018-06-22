@@ -23,7 +23,7 @@ class nsITransferable;
 
 namespace mozilla {
 class AutoEditInitRulesTrigger;
-enum class EditAction : int32_t;
+enum class EditSubAction : int32_t;
 
 namespace dom {
 class DragEvent;
@@ -105,8 +105,6 @@ public:
 
   virtual dom::EventTarget* GetDOMEventTarget() override;
 
-  virtual already_AddRefed<nsIContent> GetInputEventTargetContent() override;
-
   /**
    * InsertTextAsAction() inserts aStringToInsert at selection.
    * Although this method is implementation of nsIPlaintextEditor.insertText(),
@@ -172,6 +170,12 @@ public:
    */
   void OnCompositionEnd(WidgetCompositionEvent& aCompositionEndEvent);
 
+  /**
+   * OnDrop() is called from EditorEventListener::Drop that is handler of drop
+   * event.
+   */
+  nsresult OnDrop(dom::DragEvent* aDropEvent);
+
 protected: // May be called by friends.
   /****************************************************************************
    * Some classes like TextEditRules, HTMLEditRules, WSRunObject which are
@@ -193,8 +197,6 @@ protected: // May be called by friends.
                                             bool aSuppressTransaction) override;
   using EditorBase::RemoveAttributeOrEquivalent;
   using EditorBase::SetAttributeOrEquivalent;
-
-  virtual nsresult InsertFromDrop(dom::DragEvent* aDropEvent) override;
 
   /**
    * DeleteSelectionWithTransaction() removes selected content or content
@@ -243,18 +245,11 @@ protected: // May be called by friends.
                                     int32_t& aCaretStyle);
 
 protected: // Called by helper classes.
-  /**
-   * All editor operations which alter the doc should be prefaced
-   * with a call to StartOperation, naming the action and direction.
-   */
-  virtual nsresult StartOperation(EditAction opID,
-                                  nsIEditor::EDirection aDirection) override;
 
-  /**
-   * All editor operations which alter the doc should be followed
-   * with a call to EndOperation.
-   */
-  virtual nsresult EndOperation() override;
+  virtual void
+  OnStartToHandleTopLevelEditSubAction(
+    EditSubAction aEditSubAction, nsIEditor::EDirection aDirection) override;
+  virtual void OnEndHandlingTopLevelEditSubAction() override;
 
   void BeginEditorInit();
   nsresult EndEditorInit();
@@ -366,6 +361,8 @@ protected: // Shouldn't be used by friend classes
    *                    for committing the composition, returns false.
    */
   bool EnsureComposition(WidgetCompositionEvent& aCompositionEvent);
+
+  virtual already_AddRefed<nsIContent> GetInputEventTargetContent() override;
 
 protected:
   nsCOMPtr<nsIDocumentEncoder> mCachedDocumentEncoder;

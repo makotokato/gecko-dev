@@ -22,7 +22,7 @@ class XMLStylesheetProcessingInstruction final
 public:
   XMLStylesheetProcessingInstruction(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
                                      const nsAString& aData)
-    : ProcessingInstruction(Move(aNodeInfo), aData)
+    : ProcessingInstruction(std::move(aNodeInfo), aData)
   {
   }
 
@@ -43,7 +43,7 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(XMLStylesheetProcessingInstruction,
                                            ProcessingInstruction)
 
-  // nsIDOMNode
+  // nsINode
   virtual void SetNodeValueInternal(const nsAString& aNodeValue,
                                     mozilla::ErrorResult& aError) override;
 

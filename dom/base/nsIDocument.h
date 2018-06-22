@@ -137,7 +137,6 @@ class Rule;
 } // namespace css
 
 namespace dom {
-class AboutCapabilities;
 class Animation;
 class AnonymousContent;
 class Attr;
@@ -549,9 +548,6 @@ public:
 
   nsresult InsertChildBefore(nsIContent* aKid, nsIContent* aBeforeThis,
                              bool aNotify) override;
-  nsresult InsertChildAt_Deprecated(nsIContent* aKid, uint32_t aIndex,
-                                    bool aNotify) override;
-  void RemoveChildAt_Deprecated(uint32_t aIndex, bool aNotify) final;
   void RemoveChildNode(nsIContent* aKid, bool aNotify) final;
   nsresult Clone(mozilla::dom::NodeInfo* aNodeInfo,
                  nsINode **aResult,
@@ -1201,6 +1197,17 @@ public:
   nsViewportInfo GetViewportInfo(const mozilla::ScreenIntSize& aDisplaySize);
 
   /**
+   * It updates the viewport overflow type with the given two widths
+   * and the viewport setting of the document.
+   * This should only be called when there is out-of-reach overflow
+   * happens on the viewport, i.e. the viewport should be using
+   * `overflow: hidden`. And it should only be called on a top level
+   * content document.
+   */
+  void UpdateViewportOverflowType(nscoord aScrolledWidth,
+                                  nscoord aScrollportWidth);
+
+  /**
    * True iff this doc will ignore manual character encoding overrides.
    */
   virtual bool WillIgnoreCharsetOverride() {
@@ -1402,7 +1409,7 @@ public:
     {
       MOZ_ASSERT(NS_IsMainThread());
       SelectorCacheKey* key = new SelectorCacheKey(aSelector);
-      mTable.Put(key->mKey, Move(aSelectorList));
+      mTable.Put(key->mKey, std::move(aSelectorList));
       AddObject(key);
     }
 
@@ -3142,9 +3149,6 @@ public:
   void GetLastModified(nsAString& aLastModified) const;
   void GetReadyState(nsAString& aReadyState) const;
 
-  already_AddRefed<mozilla::dom::AboutCapabilities> GetAboutCapabilities(
-    ErrorResult& aRv);
-
   void GetTitle(nsAString& aTitle);
   void SetTitle(const nsAString& aTitle, mozilla::ErrorResult& rv);
   void GetDir(nsAString& aDirection) const;
@@ -3817,8 +3821,6 @@ protected:
 
   RefPtr<mozilla::dom::Promise> mReadyForIdle;
 
-  RefPtr<mozilla::dom::AboutCapabilities> mAboutCapabilities;
-
   // True if BIDI is enabled.
   bool mBidiEnabled : 1;
   // True if a MathML element has ever been owned by this document.
@@ -4277,13 +4279,37 @@ protected:
   // Our update nesting level
   uint32_t mUpdateNestLevel;
 
-  enum ViewportType {
+  enum ViewportType : uint8_t {
     DisplayWidthHeight,
     Specified,
     Unknown
   };
 
   ViewportType mViewportType;
+
+  // Enum for how content in this document overflows viewport causing
+  // out-of-reach issue. Currently it only takes horizontal overflow
+  // into consideration. This enum and the corresponding field is only
+  // set and read on a top level content document.
+  enum class ViewportOverflowType : uint8_t {
+    // Viewport doesn't have out-of-reach overflow content, either
+    // because the content doesn't overflow, or the viewport doesn't
+    // have "overflow: hidden".
+    NoOverflow,
+
+    // All following items indicates that the content overflows the
+    // scroll port which causing out-of-reach content.
+
+    // Meta viewport is disabled or the document is in desktop mode.
+    Desktop,
+    // The content does not overflow the minimum-scale size. When there
+    // is no minimum scale specified, the default value used by Blink,
+    // 0.25, is used for this matter.
+    ButNotMinScaleSize,
+    // The content overflows the minimum-scale size.
+    MinScaleSize,
+  };
+  ViewportOverflowType mViewportOverflowType;
 
   PLDHashTable* mSubDocuments;
 
@@ -4565,13 +4591,29 @@ nsINode::OwnerDocAsNode() const
   return OwnerDoc();
 }
 
+// ShouldUseXBLScope is defined here as a template so that we can get the faster
+// version of IsInAnonymousSubtree if we're statically known to be an
+// nsIContent.  we could try defining ShouldUseXBLScope separately on nsINode
+// and nsIContent, but then we couldn't put its nsINode implementation here
+// (because this header does not include nsIContent) and we can't put it in
+// nsIContent.h, because the definition of nsIContent::IsInAnonymousSubtree is
+// in nsIContentInlines.h.  And then we get include hell from people trying to
+// call nsINode::GetParentObject but not including nsIContentInlines.h and with
+// no really good way to include it.
+template<typename T>
+inline bool ShouldUseXBLScope(const T* aNode)
+{
+  return aNode->IsInAnonymousSubtree() &&
+         !aNode->IsAnonymousContentInSVGUseSubtree();
+}
+
 inline mozilla::dom::ParentObject
 nsINode::GetParentObject() const
 {
   mozilla::dom::ParentObject p(OwnerDoc());
     // Note that mUseXBLScope is a no-op for chrome, and other places where we
     // don't use XBL scopes.
-  p.mUseXBLScope = IsInAnonymousSubtree() && !IsAnonymousContentInSVGUseSubtree();
+  p.mUseXBLScope = ShouldUseXBLScope(this);
   return p;
 }
 

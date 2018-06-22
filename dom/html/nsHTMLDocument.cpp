@@ -22,7 +22,6 @@
 #include "nsGkAtoms.h"
 #include "nsIPresShell.h"
 #include "nsPresContext.h"
-#include "nsIDOMNode.h" // for Find
 #include "nsPIDOMWindow.h"
 #include "nsDOMString.h"
 #include "nsIStreamListener.h"
@@ -891,7 +890,7 @@ nsHTMLDocument::GetDomain(nsAString& aDomain)
   nsCOMPtr<nsIURI> uri = GetDomainURI();
 
   if (!uri) {
-    SetDOMStringToNull(aDomain);
+    aDomain.Truncate();
     return;
   }
 
@@ -901,8 +900,8 @@ nsHTMLDocument::GetDomain(nsAString& aDomain)
     CopyUTF8toUTF16(hostName, aDomain);
   } else {
     // If we can't get the host from the URI (e.g. about:, javascript:,
-    // etc), just return an null string.
-    SetDOMStringToNull(aDomain);
+    // etc), just return an empty string.
+    aDomain.Truncate();
   }
 }
 
@@ -1020,7 +1019,7 @@ nsHTMLDocument::SetDomain(const nsAString& aDomain, ErrorResult& rv)
   }
 
   if (aDomain.IsEmpty()) {
-    rv.Throw(NS_ERROR_DOM_BAD_DOCUMENT_DOMAIN);
+    rv.Throw(NS_ERROR_DOM_SECURITY_ERR);
     return;
   }
 
@@ -1037,7 +1036,7 @@ nsHTMLDocument::SetDomain(const nsAString& aDomain, ErrorResult& rv)
   nsCOMPtr<nsIURI> newURI = RegistrableDomainSuffixOfInternal(aDomain, uri);
   if (!newURI) {
     // Error: illegal domain
-    rv.Throw(NS_ERROR_DOM_BAD_DOCUMENT_DOMAIN);
+    rv.Throw(NS_ERROR_DOM_SECURITY_ERR);
     return;
   }
 
@@ -1069,6 +1068,24 @@ nsHTMLDocument::CreateDummyChannelForCookies(nsIURI* aCodebaseURI)
     return nullptr;
   }
   pbChannel->SetPrivate(loadContext->UsePrivateBrowsing());
+
+  nsCOMPtr<nsIHttpChannel> docHTTPChannel =
+    do_QueryInterface(GetChannel());
+  if (docHTTPChannel) {
+    bool isTracking = docHTTPChannel->GetIsTrackingResource();
+    if (isTracking) {
+      // If our document channel is from a tracking resource, we must
+      // override our channel's tracking status.
+      nsCOMPtr<nsIHttpChannel> httpChannel =
+        do_QueryInterface(channel);
+      MOZ_ASSERT(httpChannel, "How come we're coming from an HTTP doc but "
+                              "we don't have an HTTP channel here?");
+      if (httpChannel) {
+        httpChannel->OverrideTrackingResource(isTracking);
+      }
+    }
+  }
+
   return channel.forget();
 }
 
@@ -1086,6 +1103,11 @@ nsHTMLDocument::GetCookie(nsAString& aCookie, ErrorResult& rv)
   // is prohibited.
   if (mSandboxFlags & SANDBOXED_ORIGIN) {
     rv.Throw(NS_ERROR_DOM_SECURITY_ERR);
+    return;
+  }
+
+  if (nsContentUtils::StorageDisabledByAntiTracking(GetInnerWindow(), nullptr,
+                                                    nullptr)) {
     return;
   }
 
@@ -1179,7 +1201,7 @@ nsHTMLDocument::Open(JSContext* /* unused */,
                      bool aReplace,
                      ErrorResult& rv)
 {
-  MOZ_ASSERT(nsContentUtils::CanCallerAccess(static_cast<nsIDOMNode*>(this)),
+  MOZ_ASSERT(nsContentUtils::CanCallerAccess(this),
              "XOW should have caught this!");
 
   nsCOMPtr<nsPIDOMWindowInner> window = GetInnerWindow();
@@ -1209,7 +1231,7 @@ nsHTMLDocument::Open(JSContext* cx,
   // Implements the "When called with two arguments (or fewer)" steps here:
   // https://html.spec.whatwg.org/multipage/webappapis.html#opening-the-input-stream
 
-  MOZ_ASSERT(nsContentUtils::CanCallerAccess(static_cast<nsIDOMNode*>(this)),
+  MOZ_ASSERT(nsContentUtils::CanCallerAccess(this),
              "XOW should have caught this!");
   if (!IsHTMLDocument() || mDisableDocWrite) {
     // No calling document.open() on XHTML
@@ -1356,13 +1378,46 @@ nsHTMLDocument::Open(JSContext* cx,
 
   // The open occurred after the document finished loading.
   // So we reset the document and then reinitialize it.
+  nsCOMPtr<nsIDocShell> curDocShell = GetDocShell();
+  nsCOMPtr<nsIDocShellTreeItem> parent;
+  if (curDocShell) {
+    curDocShell->GetSameTypeParent(getter_AddRefs(parent));
+  }
+  
+  // We are using the same technique as in nsDocShell to figure
+  // out the content policy type. If there is no same type parent,
+  // we know we are loading a new top level document.
+  nsContentPolicyType policyType;
+  if (!parent) {
+    policyType = nsIContentPolicy::TYPE_DOCUMENT;
+  } else {
+    Element* requestingElement = nullptr;
+    nsPIDOMWindowInner* window = GetInnerWindow();
+    if (window) {
+      nsPIDOMWindowOuter* outer =
+        nsPIDOMWindowOuter::GetFromCurrentInner(window);
+      if (outer) {
+        nsGlobalWindowOuter* win = nsGlobalWindowOuter::Cast(outer);
+        requestingElement = win->AsOuter()->GetFrameElementInternal();
+      }
+    }
+    if (requestingElement) {
+      policyType = requestingElement->IsHTMLElement(nsGkAtoms::iframe) ?
+        nsIContentPolicy::TYPE_INTERNAL_IFRAME : nsIContentPolicy::TYPE_INTERNAL_FRAME;
+    } else {
+      // If we have lost our frame element by now, just assume we're
+      // an iframe since that's more common.
+      policyType = nsIContentPolicy::TYPE_INTERNAL_IFRAME;
+    }
+  }
+
   nsCOMPtr<nsIChannel> channel;
   nsCOMPtr<nsILoadGroup> group = do_QueryReferent(mDocumentLoadGroup);
   aError = NS_NewChannel(getter_AddRefs(channel),
                          uri,
                          callerDoc,
                          nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL,
-                         nsIContentPolicy::TYPE_OTHER,
+                         policyType,
                          nullptr, // PerformanceStorage
                          group);
 
@@ -1538,10 +1593,10 @@ nsHTMLDocument::Open(JSContext* cx,
   SetReadyStateInternal(nsIDocument::READYSTATE_LOADING);
 
   // After changing everything around, make sure that the principal on the
-  // document's compartment exactly matches NodePrincipal().
+  // document's realm exactly matches NodePrincipal().
   DebugOnly<JSObject*> wrapper = GetWrapperPreserveColor();
   MOZ_ASSERT_IF(wrapper,
-                JS_GetCompartmentPrincipals(js::GetObjectCompartment(wrapper)) ==
+                JS::GetRealmPrincipals(js::GetNonCCWObjectRealm(wrapper)) ==
                 nsJSPrincipals::get(NodePrincipal()));
 
   return kungFuDeathGrip.forget();

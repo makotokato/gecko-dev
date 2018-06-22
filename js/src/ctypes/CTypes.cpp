@@ -97,10 +97,8 @@ GetDeflatedUTF8StringLength(JSContext* maybecx, const CharT* chars,
         js::gc::AutoSuppressGC suppress(maybecx);
         char buffer[10];
         SprintfLiteral(buffer, "0x%x", c);
-        JS_ReportErrorFlagsAndNumberASCII(maybecx, JSREPORT_ERROR,
-                                          GetErrorMessage,
-                                          nullptr, JSMSG_BAD_SURROGATE_CHAR,
-                                          buffer);
+        JS_ReportErrorNumberASCII(maybecx, GetErrorMessage, nullptr, JSMSG_BAD_SURROGATE_CHAR,
+                                  buffer);
     }
     return (size_t) -1;
 }
@@ -5758,7 +5756,7 @@ ArrayType::BuildFFIType(JSContext* cx, JSObject* obj)
     ffiType->elements[i] = ffiBaseType;
   ffiType->elements[length] = nullptr;
 
-  return Move(ffiType);
+  return ffiType;
 }
 
 bool
@@ -6165,8 +6163,7 @@ StructType::DefineInternal(JSContext* cx, JSObject* typeObj_, JSObject* fieldsOb
 
       if (!JS_DefineUCProperty(cx, prototype,
              nameChars.twoByteChars(), name->length(),
-             JS_DATA_TO_FUNC_PTR(JSNative, getterObj.get()),
-             JS_DATA_TO_FUNC_PTR(JSNative, setterObj.get()),
+             getterObj, setterObj,
              JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_GETTER | JSPROP_SETTER))
       {
         return false;
@@ -6223,7 +6220,7 @@ StructType::DefineInternal(JSContext* cx, JSObject* typeObj_, JSObject* fieldsOb
   }
 
   // Move the field hash to the heap and store it in the typeObj.
-  FieldInfoHash *heapHash = cx->new_<FieldInfoHash>(mozilla::Move(fields.get()));
+  FieldInfoHash *heapHash = cx->new_<FieldInfoHash>(std::move(fields.get()));
   if (!heapHash) {
     JS_ReportOutOfMemory(cx);
     return false;
@@ -6306,7 +6303,7 @@ StructType::BuildFFIType(JSContext* cx, JSObject* obj)
   ffiType->alignment = structAlign;
 #endif
 
-  return Move(ffiType);
+  return ffiType;
 }
 
 bool

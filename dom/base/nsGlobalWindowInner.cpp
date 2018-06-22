@@ -941,6 +941,10 @@ nsGlobalWindowInner::nsGlobalWindowInner(nsGlobalWindowOuter *aOuterWindow)
                         false);
 
         os->AddObserver(mObserver, MEMORY_PRESSURE_OBSERVER_TOPIC, false);
+
+        if (aOuterWindow->IsTopLevelWindow()) {
+          os->AddObserver(mObserver, "clear-site-data-reload-needed", false);
+        }
       }
 
       Preferences::AddStrongObserver(mObserver, "intl.accept_languages");
@@ -1182,7 +1186,6 @@ nsGlobalWindowInner::FreeInnerObjects()
   }
 
   mHistory = nullptr;
-  mCustomElements = nullptr;
 
   if (mNavigator) {
     mNavigator->OnNavigation();
@@ -1269,6 +1272,11 @@ nsGlobalWindowInner::FreeInnerObjects()
     if (os) {
       os->RemoveObserver(mObserver, NS_IOSERVICE_OFFLINE_STATUS_TOPIC);
       os->RemoveObserver(mObserver, MEMORY_PRESSURE_OBSERVER_TOPIC);
+
+      if (GetOuterWindowInternal() &&
+          GetOuterWindowInternal()->IsTopLevelWindow()) {
+        os->RemoveObserver(mObserver, "clear-site-data-reload-needed");
+      }
     }
 
     RefPtr<StorageNotifierService> sns = StorageNotifierService::GetOrCreate();
@@ -1764,7 +1772,7 @@ nsGlobalWindowInner::EnsureClientSource()
     UniquePtr<ClientSource> reservedClient = loadInfo->TakeReservedClientSource();
     if (reservedClient) {
       mClientSource.reset();
-      mClientSource = Move(reservedClient);
+      mClientSource = std::move(reservedClient);
       newClientSource = true;
     }
   }
@@ -1776,7 +1784,7 @@ nsGlobalWindowInner::EnsureClientSource()
   // and it created an initial Client as a placeholder for the document.
   // In this case we want to inherit this placeholder Client here.
   if (!mClientSource) {
-    mClientSource = Move(initialClientSource);
+    mClientSource = std::move(initialClientSource);
     if (mClientSource) {
       newClientSource = true;
     }
@@ -2320,25 +2328,25 @@ nsPIDOMWindowInner::SyncStateFromParentWindow()
 Maybe<ClientInfo>
 nsPIDOMWindowInner::GetClientInfo() const
 {
-  return Move(nsGlobalWindowInner::Cast(this)->GetClientInfo());
+  return nsGlobalWindowInner::Cast(this)->GetClientInfo();
 }
 
 Maybe<ClientState>
 nsPIDOMWindowInner::GetClientState() const
 {
-  return Move(nsGlobalWindowInner::Cast(this)->GetClientState());
+  return nsGlobalWindowInner::Cast(this)->GetClientState();
 }
 
 Maybe<ServiceWorkerDescriptor>
 nsPIDOMWindowInner::GetController() const
 {
-  return Move(nsGlobalWindowInner::Cast(this)->GetController());
+  return nsGlobalWindowInner::Cast(this)->GetController();
 }
 
 RefPtr<mozilla::dom::ServiceWorker>
 nsPIDOMWindowInner::GetOrCreateServiceWorker(const mozilla::dom::ServiceWorkerDescriptor& aDescriptor)
 {
-  return Move(nsGlobalWindowInner::Cast(this)->GetOrCreateServiceWorker(aDescriptor));
+  return nsGlobalWindowInner::Cast(this)->GetOrCreateServiceWorker(aDescriptor);
 }
 
 void
@@ -3632,10 +3640,10 @@ nsGlobalWindowInner::GetChildWindow(const nsAString& aName)
 }
 
 void
-nsGlobalWindowInner::RefreshCompartmentPrincipal()
+nsGlobalWindowInner::RefreshRealmPrincipal()
 {
-  JS_SetCompartmentPrincipals(js::GetObjectCompartment(GetWrapperPreserveColor()),
-                              nsJSPrincipals::get(mDoc->NodePrincipal()));
+  JS::SetRealmPrincipals(js::GetNonCCWObjectRealm(GetWrapperPreserveColor()),
+                         nsJSPrincipals::get(mDoc->NodePrincipal()));
 }
 
 already_AddRefed<nsIWidget>
@@ -5498,7 +5506,7 @@ nsGlobalWindowInner::ShowSlowScriptDialog(const nsString& aAddonId)
 
     // GetStringFromName can return NS_OK and still give nullptr string
     failed = failed || NS_FAILED(rv) || result.IsEmpty();
-    return Move(result);
+    return result;
   };
 
   bool isAddonScript = !aAddonId.IsEmpty();
@@ -5816,6 +5824,13 @@ nsGlobalWindowInner::Observe(nsISupports* aSubject, const char* aTopic,
     if (mPerformance) {
       mPerformance->MemoryPressure();
     }
+    return NS_OK;
+  }
+
+  if (!nsCRT::strcmp(aTopic, "clear-site-data-reload-needed")) {
+    // The reload is propagated from the top-level window only.
+    NS_ConvertUTF16toUTF8 otherOrigin(aData);
+    PropagateClearSiteDataReload(otherOrigin);
     return NS_OK;
   }
 
@@ -6329,7 +6344,7 @@ nsGlobalWindowInner::GetClientInfo() const
   if (mClientSource) {
     clientInfo.emplace(mClientSource->Info());
   }
-  return Move(clientInfo);
+  return clientInfo;
 }
 
 Maybe<ClientState>
@@ -6344,7 +6359,7 @@ nsGlobalWindowInner::GetClientState() const
       clientState.emplace(state);
     }
   }
-  return Move(clientState);
+  return clientState;
 }
 
 Maybe<ServiceWorkerDescriptor>
@@ -6355,7 +6370,7 @@ nsGlobalWindowInner::GetController() const
   if (mClientSource) {
     controller = mClientSource->GetController();
   }
-  return Move(controller);
+  return controller;
 }
 
 RefPtr<ServiceWorker>
@@ -7376,7 +7391,7 @@ nsGlobalWindowInner::PromiseDocumentFlushed(PromiseDocumentFlushedCallback& aCal
     mObservingDidRefresh = true;
   }
 
-  mDocumentFlushedResolvers.AppendElement(Move(flushResolver));
+  mDocumentFlushedResolvers.AppendElement(std::move(flushResolver));
   return resultPromise.forget();
 }
 
@@ -7617,7 +7632,8 @@ nsGlobalWindowInner::GetConsole(JSContext* aCx, ErrorResult& aRv)
 bool
 nsGlobalWindowInner::IsSecureContext() const
 {
-  return JS_GetIsSecureContext(js::GetObjectCompartment(GetWrapperPreserveColor()));
+  JS::Realm* realm = js::GetNonCCWObjectRealm(GetWrapperPreserveColor());
+  return JS::GetIsSecureContext(realm);
 }
 
 already_AddRefed<External>
@@ -7930,9 +7946,9 @@ nsGlobalWindowInner::Dispatch(TaskCategory aCategory,
 {
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
   if (GetDocGroup()) {
-    return GetDocGroup()->Dispatch(aCategory, Move(aRunnable));
+    return GetDocGroup()->Dispatch(aCategory, std::move(aRunnable));
   }
-  return DispatcherTrait::Dispatch(aCategory, Move(aRunnable));
+  return DispatcherTrait::Dispatch(aCategory, std::move(aRunnable));
 }
 
 nsISerialEventTarget*
@@ -8051,6 +8067,39 @@ nsPIDOMWindowInner::MaybeCreateDoc()
     nsCOMPtr<nsIDocument> document = docShell->GetDocument();
     Unused << document;
   }
+}
+
+void
+nsGlobalWindowInner::PropagateClearSiteDataReload(const nsACString& aOrigin)
+{
+  nsIPrincipal* principal = GetPrincipal();
+  if (!principal) {
+    return;
+  }
+
+  nsAutoCString origin;
+  nsresult rv = principal->GetOrigin(origin);
+  NS_ENSURE_SUCCESS_VOID(rv);
+
+  // If the URL of this window matches, let's refresh this window only.
+  // We don't need to traverse the DOM tree.
+  if (origin.Equals(aOrigin)) {
+    nsCOMPtr<nsIDocShell> docShell = GetDocShell();
+    nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(docShell));
+    if (NS_WARN_IF(!webNav)) {
+      return;
+    }
+
+    // We don't need any special reload flags, because this notification is
+    // dispatched by Clear-Site-Data header, which should have already cleaned
+    // up all the needed data.
+    rv = webNav->Reload(nsIWebNavigation::LOAD_FLAGS_NONE);
+    NS_ENSURE_SUCCESS_VOID(rv);
+
+    return;
+  }
+
+  CallOnChildren(&nsGlobalWindowInner::PropagateClearSiteDataReload, aOrigin);
 }
 
 mozilla::dom::DocGroup*

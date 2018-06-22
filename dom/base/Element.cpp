@@ -59,7 +59,7 @@
 #include "mozilla/AnimationComparator.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/ContentEvents.h"
-#include "mozilla/DeclarationBlockInlines.h"
+#include "mozilla/DeclarationBlock.h"
 #include "mozilla/EffectSet.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventListenerManager.h"
@@ -182,8 +182,8 @@ Check##type##Size<sizeof(type), opt_size + EXTRA_DOM_ELEMENT_BYTES> g##type##CES
 
 // Note that mozjemalloc uses a 16 byte quantum, so 128 is a bin/bucket size.
 ASSERT_ELEMENT_SIZE(Element, 120);
-ASSERT_ELEMENT_SIZE(HTMLDivElement, 128);
-ASSERT_ELEMENT_SIZE(HTMLSpanElement, 128);
+ASSERT_ELEMENT_SIZE(HTMLDivElement, 120);
+ASSERT_ELEMENT_SIZE(HTMLSpanElement, 120);
 
 #undef ASSERT_ELEMENT_SIZE
 #undef EXTRA_DOM_ELEMENT_BYTES
@@ -1757,29 +1757,14 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     }
   }
 
-  // Pseudo-elements implemented by JS must have the NODE_IS_NATIVE_ANONYMOUS
-  // flag set on them. For C++-created pseudo-elements, this is done in
-  // nsCSSFrameConstructor::GetAnonymousContent, but any JS that creates
-  // pseudo-elements would run after that. So we set that flag here,
-  // when the element implementing the pseudo is inserted into the document.
-  // We maintain the invariant that any NAC-implemented pseudo-element's
-  // anonymous ancestors are also flagged as NAC, which the style system relies on.
-  if (aDocument) {
+  // FIXME(emilio): Why is this needed? The element shouldn't even be styled in
+  // the first place, we should style it properly eventually.
+  //
+  // Also, if this _is_ needed, then it's wrong and should use GetComposedDoc()
+  // to account for Shadow DOM.
+  if (aDocument && MayHaveAnimations()) {
     CSSPseudoElementType pseudoType = GetPseudoElementType();
-    if (pseudoType != CSSPseudoElementType::NotPseudo &&
-        nsCSSPseudoElements::PseudoElementIsJSCreatedNAC(pseudoType)) {
-      SetFlags(NODE_IS_NATIVE_ANONYMOUS);
-      nsIContent* parent = aParent;
-      while (parent && !parent->IsRootOfNativeAnonymousSubtree()) {
-        MOZ_ASSERT(parent->IsInNativeAnonymousSubtree());
-        parent->SetFlags(NODE_IS_NATIVE_ANONYMOUS);
-        parent = parent->GetParent();
-      }
-      MOZ_ASSERT(parent);
-    }
-
-    if (MayHaveAnimations() &&
-        (pseudoType == CSSPseudoElementType::NotPseudo ||
+    if ((pseudoType == CSSPseudoElementType::NotPseudo ||
          pseudoType == CSSPseudoElementType::before ||
          pseudoType == CSSPseudoElementType::after) &&
         EffectSet::GetEffectSet(this, pseudoType)) {
@@ -2009,16 +1994,12 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
   }
 
   if (aDeep) {
-    // Do the kids. Don't call GetChildCount() here since that'll force
-    // XUL to generate template children, which there is no need for since
-    // all we're going to do is unbind them anyway.
-    uint32_t i, n = mAttrsAndChildren.ChildCount();
-
-    for (i = 0; i < n; ++i) {
+    for (nsIContent* child = GetFirstChild(); child;
+         child = child->GetNextSibling()) {
       // Note that we pass false for aNullParent here, since we don't want
       // the kids to forget us.  We _do_ want them to forget their binding
       // parent, though, since this only walks non-anonymous kids.
-      mAttrsAndChildren.ChildAt(i)->UnbindFromTree(true, false);
+      child->UnbindFromTree(true, false);
     }
   }
 
@@ -3532,7 +3513,7 @@ Element::RequestFullscreen(CallerType aCallerType, ErrorResult& aError)
   auto request = MakeUnique<FullscreenRequest>(this);
   request->mIsCallerChrome = (aCallerType == CallerType::System);
 
-  OwnerDoc()->AsyncRequestFullScreen(Move(request));
+  OwnerDoc()->AsyncRequestFullScreen(std::move(request));
 }
 
 void
@@ -3795,12 +3776,6 @@ void
 Element::SetInnerHTML(const nsAString& aInnerHTML, nsIPrincipal* aSubjectPrincipal, ErrorResult& aError)
 {
   SetInnerHTMLInternal(aInnerHTML, aError);
-}
-
-void
-Element::UnsafeSetInnerHTML(const nsAString& aInnerHTML, ErrorResult& aError)
-{
-  SetInnerHTMLInternal(aInnerHTML, aError, true);
 }
 
 void

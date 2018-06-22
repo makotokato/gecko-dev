@@ -217,28 +217,6 @@ HTMLSelectElement::InsertChildBefore(nsIContent* aKid,
   return rv;
 }
 
-nsresult
-HTMLSelectElement::InsertChildAt_Deprecated(nsIContent* aKid,
-                                            uint32_t aIndex,
-                                            bool aNotify)
-{
-  SafeOptionListMutation safeMutation(this, this, aKid, aIndex, aNotify);
-  nsresult rv =
-    nsGenericHTMLFormElementWithState::InsertChildAt_Deprecated(aKid, aIndex,
-                                                                aNotify);
-  if (NS_FAILED(rv)) {
-    safeMutation.MutationFailed();
-  }
-  return rv;
-}
-
-void
-HTMLSelectElement::RemoveChildAt_Deprecated(uint32_t aIndex, bool aNotify)
-{
-  SafeOptionListMutation safeMutation(this, this, nullptr, aIndex, aNotify);
-  nsGenericHTMLFormElementWithState::RemoveChildAt_Deprecated(aIndex, aNotify);
-}
-
 void
 HTMLSelectElement::RemoveChildNode(nsIContent* aKid, bool aNotify)
 {
@@ -1437,12 +1415,12 @@ HTMLSelectElement::SaveState()
       if (value.IsEmpty()) {
         state.indices().AppendElement(optIndex);
       } else {
-        state.values().AppendElement(Move(value));
+        state.values().AppendElement(std::move(value));
       }
     }
   }
 
-  presState->contentData() = Move(state);
+  presState->contentData() = std::move(state);
 
   if (mDisabledChanged) {
     // We do not want to save the real disabled state but the disabled

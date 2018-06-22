@@ -114,7 +114,7 @@ LinkData::setTier2(UniqueLinkDataTier tier) const
 {
     MOZ_RELEASE_ASSERT(tier->tier == Tier::Ion && tier1_->tier == Tier::Baseline);
     MOZ_RELEASE_ASSERT(!tier2_.get());
-    tier2_ = Move(tier);
+    tier2_ = std::move(tier);
 }
 
 const LinkDataTier&
@@ -217,7 +217,7 @@ Module::startTier2(const CompileArgs& args)
 
     tiering_.lock()->active = true;
 
-    StartOffThreadWasmTier2Generator(Move(task));
+    StartOffThreadWasmTier2Generator(std::move(task));
 }
 
 void
@@ -250,11 +250,11 @@ Module::finishTier2(UniqueLinkDataTier linkData2, UniqueCodeTier tier2Arg, Modul
     // Install the data in the data structures. They will not be visible
     // until commitTier2().
 
-    if (!code().setTier2(Move(tier2Arg), *bytecode_, *linkData2))
+    if (!code().setTier2(std::move(tier2Arg), *bytecode_, *linkData2))
         return false;
-    linkData().setTier2(Move(linkData2));
+    linkData().setTier2(std::move(linkData2));
     for (uint32_t i = 0; i < elemSegments_.length(); i++)
-        elemSegments_[i].setTier2(Move(env2->elemSegments[i].elemCodeRangeIndices(Tier::Ion)));
+        elemSegments_[i].setTier2(std::move(env2->elemSegments[i].elemCodeRangeIndices(Tier::Ion)));
 
     // Before we can make tier-2 live, we need to compile tier2 versions of any
     // extant tier1 lazy stubs (otherwise, tiering would break the assumption
@@ -398,6 +398,7 @@ Module::compiledSerializedSize() const
            SerializedVectorSize(exports_) +
            SerializedPodVectorSize(dataSegments_) +
            SerializedVectorSize(elemSegments_) +
+           SerializedVectorSize(structTypes_) +
            code_->serializedSize();
 }
 
@@ -423,6 +424,7 @@ Module::compiledSerialize(uint8_t* compiledBegin, size_t compiledSize) const
     cursor = SerializeVector(cursor, exports_);
     cursor = SerializePodVector(cursor, dataSegments_);
     cursor = SerializeVector(cursor, elemSegments_);
+    cursor = SerializeVector(cursor, structTypes_);
     cursor = code_->serialize(cursor, linkData_);
     MOZ_RELEASE_ASSERT(cursor == compiledBegin + compiledSize);
 }
@@ -486,6 +488,11 @@ Module::deserialize(const uint8_t* bytecodeBegin, size_t bytecodeSize,
     if (!cursor)
         return nullptr;
 
+    StructTypeVector structTypes;
+    cursor = DeserializeVector(cursor, &structTypes);
+    if (!cursor)
+        return nullptr;
+
     SharedCode code;
     cursor = Code::deserialize(cursor, *bytecode, linkData, *metadata, &code);
     if (!cursor)
@@ -494,14 +501,15 @@ Module::deserialize(const uint8_t* bytecodeBegin, size_t bytecodeSize,
     MOZ_RELEASE_ASSERT(cursor == compiledBegin + compiledSize);
     MOZ_RELEASE_ASSERT(!!maybeMetadata == code->metadata().isAsmJS());
 
-    return js_new<Module>(Move(assumptions),
+    return js_new<Module>(std::move(assumptions),
                           *code,
                           nullptr,            // Serialized code is never debuggable
-                          Move(linkData),
-                          Move(imports),
-                          Move(exports),
-                          Move(dataSegments),
-                          Move(elemSegments),
+                          std::move(linkData),
+                          std::move(imports),
+                          std::move(exports),
+                          std::move(dataSegments),
+                          std::move(elemSegments),
+                          std::move(structTypes),
                           *bytecode);
 }
 
@@ -551,7 +559,7 @@ wasm::CompiledModuleAssumptionsMatch(PRFileDesc* compiled, JS::BuildIdCharVector
     if (!mapping)
         return false;
 
-    Assumptions assumptions(Move(buildId));
+    Assumptions assumptions(std::move(buildId));
     return Module::assumptionsMatch(assumptions, mapping.get(), info.size);
 }
 
@@ -586,10 +594,10 @@ wasm::DeserializeModule(PRFileDesc* bytecodeFile, PRFileDesc* maybeCompiledFile,
     memcpy(bytecode->bytes.begin(), bytecodeMapping.get(), bytecodeInfo.size);
 
     ScriptedCaller scriptedCaller;
-    scriptedCaller.filename = Move(filename);
+    scriptedCaller.filename = std::move(filename);
     scriptedCaller.line = line;
 
-    MutableCompileArgs args = js_new<CompileArgs>(Assumptions(Move(buildId)), Move(scriptedCaller));
+    MutableCompileArgs args = js_new<CompileArgs>(Assumptions(std::move(buildId)), std::move(scriptedCaller));
     if (!args)
         return nullptr;
 
@@ -627,6 +635,7 @@ Module::addSizeOfMisc(MallocSizeOf mallocSizeOf,
              SizeOfVectorExcludingThis(exports_, mallocSizeOf) +
              dataSegments_.sizeOfExcludingThis(mallocSizeOf) +
              SizeOfVectorExcludingThis(elemSegments_, mallocSizeOf) +
+             SizeOfVectorExcludingThis(structTypes_, mallocSizeOf) +
              bytecode_->sizeOfIncludingThisIfNotSeen(mallocSizeOf, seenBytes);
     if (unlinkedCodeForDebugging_)
         *data += unlinkedCodeForDebugging_->sizeOfExcludingThis(mallocSizeOf);
@@ -1241,7 +1250,7 @@ Module::instantiate(JSContext* cx,
             if (!metadataTier || !metadataTier->clone(metadata(tier)))
                 return false;
 
-            auto codeTier = js::MakeUnique<CodeTier>(Move(metadataTier), Move(segment));
+            auto codeTier = js::MakeUnique<CodeTier>(std::move(metadataTier), std::move(segment));
             if (!codeTier)
                 return false;
 
@@ -1249,7 +1258,7 @@ Module::instantiate(JSContext* cx,
             if (!jumpTables.init(CompileMode::Once, codeTier->segment(), metadata(tier).codeRanges))
                 return false;
 
-            MutableCode debugCode = js_new<Code>(Move(codeTier), metadata(), Move(jumpTables));
+            MutableCode debugCode = js_new<Code>(std::move(codeTier), metadata(), std::move(jumpTables));
             if (!debugCode || !debugCode->initialize(*bytecode_, linkData(tier))) {
                 ReportOutOfMemory(cx);
                 return false;
@@ -1269,7 +1278,7 @@ Module::instantiate(JSContext* cx,
 
     const ShareableBytes* maybeBytecode = nullptr;
     if (cx->realm()->isDebuggee() || metadata().debugEnabled ||
-        !metadata().funcNames.empty())
+        !metadata().funcNames.empty() || !!metadata().moduleName)
     {
         maybeBytecode = bytecode_.get();
     }
@@ -1285,10 +1294,10 @@ Module::instantiate(JSContext* cx,
 
     instance.set(WasmInstanceObject::create(cx,
                                             code,
-                                            Move(debug),
-                                            Move(tlsData),
+                                            std::move(debug),
+                                            std::move(tlsData),
                                             memory,
-                                            Move(tables),
+                                            std::move(tables),
                                             funcImports,
                                             metadata().globals,
                                             globalImportValues,

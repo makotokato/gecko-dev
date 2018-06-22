@@ -201,6 +201,7 @@ nsNSSComponent::nsNSSComponent()
   , mLoadableRootsLoadedResult(NS_ERROR_FAILURE)
   , mMutex("nsNSSComponent.mMutex")
   , mNSSInitialized(false)
+  , mMitmDetecionEnabled(false)
 {
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("nsNSSComponent::ctor\n"));
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
@@ -223,70 +224,6 @@ nsNSSComponent::~nsNSSComponent()
   --mInstanceCount;
 
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("nsNSSComponent::dtor finished\n"));
-}
-
-NS_IMETHODIMP
-nsNSSComponent::PIPBundleFormatStringFromName(const char* name,
-                                              const char16_t** params,
-                                              uint32_t numParams,
-                                              nsAString& outString)
-{
-  MutexAutoLock lock(mMutex);
-  nsresult rv = NS_ERROR_FAILURE;
-
-  if (mPIPNSSBundle && name) {
-    nsAutoString result;
-    rv = mPIPNSSBundle->FormatStringFromName(name, params, numParams, result);
-    if (NS_SUCCEEDED(rv)) {
-      outString = result;
-    }
-  }
-  return rv;
-}
-
-NS_IMETHODIMP
-nsNSSComponent::GetPIPNSSBundleString(const char* name, nsAString& outString)
-{
-  MutexAutoLock lock(mMutex);
-  return GetPIPNSSBundleStringLocked(name, outString, lock);
-}
-
-nsresult
-nsNSSComponent::GetPIPNSSBundleStringLocked(
-  const char* name, nsAString& outString, const MutexAutoLock& /*proofOfLock*/)
-{
-  nsresult rv = NS_ERROR_FAILURE;
-
-  outString.SetLength(0);
-  if (mPIPNSSBundle && name) {
-    nsAutoString result;
-    rv = mPIPNSSBundle->GetStringFromName(name, result);
-    if (NS_SUCCEEDED(rv)) {
-      outString = result;
-      rv = NS_OK;
-    }
-  }
-
-  return rv;
-}
-
-NS_IMETHODIMP
-nsNSSComponent::GetNSSBundleString(const char* name, nsAString& outString)
-{
-  MutexAutoLock lock(mMutex);
-  nsresult rv = NS_ERROR_FAILURE;
-
-  outString.SetLength(0);
-  if (mNSSErrorsBundle && name) {
-    nsAutoString result;
-    rv = mNSSErrorsBundle->GetStringFromName(name, result);
-    if (NS_SUCCEEDED(rv)) {
-      outString = result;
-      rv = NS_OK;
-    }
-  }
-
-  return rv;
 }
 
 #ifdef XP_WIN
@@ -571,7 +508,7 @@ nsNSSComponent::MaybeImportFamilySafetyRoot(PCCERT_CONTEXT certificate,
   if (kMicrosoftFamilySafetyCN.Equals(subjectName.get())) {
     wasFamilySafetyRoot = true;
     MOZ_ASSERT(!mFamilySafetyRoot);
-    mFamilySafetyRoot = Move(nssCertificate);
+    mFamilySafetyRoot = std::move(nssCertificate);
     MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("added Family Safety root"));
   }
   return NS_OK;
@@ -814,7 +751,7 @@ nsNSSComponent::GetEnterpriseRoots(nsIX509CertList** enterpriseRoots)
     return NS_ERROR_FAILURE;
   }
   nsCOMPtr<nsIX509CertList> enterpriseRootsCertList(
-    new nsNSSCertList(Move(enterpriseRootsCopy)));
+    new nsNSSCertList(std::move(enterpriseRootsCopy)));
   if (!enterpriseRootsCertList) {
     return NS_ERROR_FAILURE;
   }
@@ -977,11 +914,9 @@ nsNSSComponent::TrustLoaded3rdPartyRoots()
 class LoadLoadableRootsTask final : public Runnable
 {
 public:
-  explicit LoadLoadableRootsTask(nsNSSComponent* nssComponent,
-                                 nsCString&& rootModuleName)
+  explicit LoadLoadableRootsTask(nsNSSComponent* nssComponent)
     : Runnable("LoadLoadableRootsTask")
     , mNSSComponent(nssComponent)
-    , mRootModuleName(Move(rootModuleName))
   {
     MOZ_ASSERT(nssComponent);
   }
@@ -995,7 +930,6 @@ private:
   nsresult LoadLoadableRoots();
   RefPtr<nsNSSComponent> mNSSComponent;
   nsCOMPtr<nsIThread> mThread;
-  nsCString mRootModuleName;
 };
 
 nsresult
@@ -1019,6 +953,23 @@ LoadLoadableRootsTask::Dispatch()
 NS_IMETHODIMP
 LoadLoadableRootsTask::Run()
 {
+  // First we Run() on the "LoadRoots" thread, do our work, and then we Run()
+  // again on the main thread so we can shut down the thread (since we don't
+  // need it any more). We can't shut down the thread while we're *on* the
+  // thread, which is why we do the dispatch to the main thread. CryptoTask.cpp
+  // (which informs this code) says that we can't null out mThread. This appears
+  // to be because its refcount could be decreased while this dispatch is being
+  // processed, so it might get prematurely destroyed. I'm not sure this makes
+  // sense but it'll get cleaned up in our destructor anyway, so it's fine to
+  // not null it out here (as long as we don't run twice on the main thread,
+  // which shouldn't be possible).
+  if (NS_IsMainThread()) {
+    if (mThread) {
+      mThread->Shutdown();
+    }
+    return NS_OK;
+  }
+
   nsresult rv = LoadLoadableRoots();
   if (NS_FAILED(rv)) {
     MOZ_LOG(gPIPNSSLog, LogLevel::Error, ("LoadLoadableRoots failed"));
@@ -1046,7 +997,9 @@ LoadLoadableRootsTask::Run()
       return rv;
     }
   }
-  return NS_OK;
+
+  // Go back to the main thread to clean up this worker thread.
+  return NS_DispatchToMainThread(this);
 }
 
 nsresult
@@ -1139,7 +1092,7 @@ nsNSSComponent::CheckForSmartCardChanges()
     while (list) {
       if (SECMOD_HasRemovableSlots(list->module)) {
         UniqueSECMODModule module(SECMOD_ReferenceModule(list->module));
-        if (!modulesWithRemovableSlots.append(Move(module))) {
+        if (!modulesWithRemovableSlots.append(std::move(module))) {
           return NS_ERROR_OUT_OF_MEMORY;
         }
       }
@@ -1250,7 +1203,7 @@ LoadLoadableRootsTask::LoadLoadableRoots()
   nsAutoCString nss3Dir;
   nsresult rv = GetNSS3Directory(nss3Dir);
   if (NS_SUCCEEDED(rv)) {
-    if (!possibleCKBILocations.append(Move(nss3Dir))) {
+    if (!possibleCKBILocations.append(std::move(nss3Dir))) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
   } else {
@@ -1262,7 +1215,7 @@ LoadLoadableRootsTask::LoadLoadableRoots()
   nsAutoCString currentProcessDir;
   rv = GetDirectoryPath(NS_XPCOM_CURRENT_PROCESS_DIR, currentProcessDir);
   if (NS_SUCCEEDED(rv)) {
-    if (!possibleCKBILocations.append(Move(currentProcessDir))) {
+    if (!possibleCKBILocations.append(std::move(currentProcessDir))) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
   } else {
@@ -1272,7 +1225,7 @@ LoadLoadableRootsTask::LoadLoadableRoots()
   nsAutoCString greDir;
   rv = GetDirectoryPath(NS_GRE_DIR, greDir);
   if (NS_SUCCEEDED(rv)) {
-    if (!possibleCKBILocations.append(Move(greDir))) {
+    if (!possibleCKBILocations.append(std::move(greDir))) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
   } else {
@@ -1281,12 +1234,12 @@ LoadLoadableRootsTask::LoadLoadableRoots()
   // As a last resort, this will cause the library loading code to use the OS'
   // default library search path.
   nsAutoCString emptyString;
-  if (!possibleCKBILocations.append(Move(emptyString))) {
+  if (!possibleCKBILocations.append(std::move(emptyString))) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
   for (const auto& possibleCKBILocation : possibleCKBILocations) {
-    if (mozilla::psm::LoadLoadableRoots(possibleCKBILocation, mRootModuleName)) {
+    if (mozilla::psm::LoadLoadableRoots(possibleCKBILocation)) {
       MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("loaded CKBI from %s",
                                             possibleCKBILocation.get()));
       return NS_OK;
@@ -1294,91 +1247,6 @@ LoadLoadableRootsTask::LoadLoadableRoots()
   }
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("could not load loadable roots"));
   return NS_ERROR_FAILURE;
-}
-
-void
-nsNSSComponent::UnloadLoadableRoots(const MutexAutoLock& proofOfLock)
-{
-  nsresult rv;
-  nsAutoString modName;
-  rv = GetPIPNSSBundleStringLocked("RootCertModuleName", modName, proofOfLock);
-  if (NS_FAILED(rv)) {
-    return;
-  }
-
-  NS_ConvertUTF16toUTF8 modNameUTF8(modName);
-  ::mozilla::psm::UnloadLoadableRoots(modNameUTF8.get());
-}
-
-nsresult
-nsNSSComponent::ConfigureInternalPKCS11Token()
-{
-  nsAutoString manufacturerID;
-  nsAutoString libraryDescription;
-  nsAutoString tokenDescription;
-  nsAutoString privateTokenDescription;
-  nsAutoString slotDescription;
-  nsAutoString privateSlotDescription;
-  nsAutoString fips140SlotDescription;
-  nsAutoString fips140TokenDescription;
-
-  nsresult rv;
-  rv = GetPIPNSSBundleString("ManufacturerID", manufacturerID);
-  if (NS_FAILED(rv)) return rv;
-
-  rv = GetPIPNSSBundleString("LibraryDescription", libraryDescription);
-  if (NS_FAILED(rv)) return rv;
-
-  rv = GetPIPNSSBundleString("TokenDescription", tokenDescription);
-  if (NS_FAILED(rv)) return rv;
-
-  rv = GetPIPNSSBundleString("PrivateTokenDescription", privateTokenDescription);
-  if (NS_FAILED(rv)) return rv;
-
-  rv = GetPIPNSSBundleString("SlotDescription", slotDescription);
-  if (NS_FAILED(rv)) return rv;
-
-  rv = GetPIPNSSBundleString("PrivateSlotDescription", privateSlotDescription);
-  if (NS_FAILED(rv)) return rv;
-
-  rv = GetPIPNSSBundleString("Fips140SlotDescription", fips140SlotDescription);
-  if (NS_FAILED(rv)) return rv;
-
-  rv = GetPIPNSSBundleString("Fips140TokenDescription", fips140TokenDescription);
-  if (NS_FAILED(rv)) return rv;
-
-  PK11_ConfigurePKCS11(NS_ConvertUTF16toUTF8(manufacturerID).get(),
-                       NS_ConvertUTF16toUTF8(libraryDescription).get(),
-                       NS_ConvertUTF16toUTF8(tokenDescription).get(),
-                       NS_ConvertUTF16toUTF8(privateTokenDescription).get(),
-                       NS_ConvertUTF16toUTF8(slotDescription).get(),
-                       NS_ConvertUTF16toUTF8(privateSlotDescription).get(),
-                       NS_ConvertUTF16toUTF8(fips140SlotDescription).get(),
-                       NS_ConvertUTF16toUTF8(fips140TokenDescription).get(),
-                       0, 0);
-  return NS_OK;
-}
-
-nsresult
-nsNSSComponent::InitializePIPNSSBundle()
-{
-  MutexAutoLock lock(mMutex);
-  nsresult rv;
-  nsCOMPtr<nsIStringBundleService> bundleService(do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv));
-  if (NS_FAILED(rv) || !bundleService)
-    return NS_ERROR_FAILURE;
-
-  bundleService->CreateBundle("chrome://pipnss/locale/pipnss.properties",
-                              getter_AddRefs(mPIPNSSBundle));
-  if (!mPIPNSSBundle)
-    rv = NS_ERROR_FAILURE;
-
-  bundleService->CreateBundle("chrome://pipnss/locale/nsserrors.properties",
-                              getter_AddRefs(mNSSErrorsBundle));
-  if (!mNSSErrorsBundle)
-    rv = NS_ERROR_FAILURE;
-
-  return rv;
 }
 
 // Table of pref names and SSL cipher ID
@@ -2037,14 +1905,6 @@ nsNSSComponent::InitializeNSS()
 
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("NSS Initialization beginning\n"));
 
-  // The call to ConfigureInternalPKCS11Token needs to be done before NSS is initialized,
-  // but affects only static data.
-  // If we could assume i18n will not change between profiles, one call per application
-  // run were sufficient. As I can't predict what happens in the future, let's repeat
-  // this call for every re-init of NSS.
-
-  ConfigureInternalPKCS11Token();
-
   nsAutoCString profileStr;
   nsresult rv = GetNSSProfilePath(profileStr);
   if (NS_FAILED(rv)) {
@@ -2206,23 +2066,8 @@ nsNSSComponent::InitializeNSS()
     // SSL_ConfigServerSessionIDCache.
     setValidationOptions(true, lock);
 
-    nsAutoString rootModuleName;
-    rv = GetPIPNSSBundleStringLocked("RootCertModuleName", rootModuleName,
-                                     lock);
-    if (NS_FAILED(rv)) {
-      // When running Cpp unit tests on Android, this will fail because string
-      // bundles aren't available (see bug 1311077, bug 1228175 comment 12, and
-      // bug 929655). Because the module name is really only for display
-      // purposes, we can just hard-code the value here. Furthermore, if we want
-      // to be able to stop using string bundles in PSM in this way, we'll have
-      // to hard-code the string and only use the localized version when
-      // displaying it to the user, so this is a step in that direction anyway.
-      rootModuleName.AssignLiteral("Builtin Roots Module");
-    }
-    NS_ConvertUTF16toUTF8 rootModuleNameUTF8(rootModuleName);
-
     RefPtr<LoadLoadableRootsTask> loadLoadableRootsTask(
-      new LoadLoadableRootsTask(this, Move(rootModuleNameUTF8)));
+      new LoadLoadableRootsTask(this));
     rv = loadLoadableRootsTask->Dispatch();
     if (NS_FAILED(rv)) {
       return rv;
@@ -2258,7 +2103,7 @@ nsNSSComponent::ShutdownNSS()
     Unused << SSL_ShutdownServerSessionIDCache();
   }
 
-  UnloadLoadableRoots(lock);
+  ::mozilla::psm::UnloadLoadableRoots();
 
 #ifdef XP_WIN
   mFamilySafetyRoot = nullptr;
@@ -2294,13 +2139,7 @@ nsNSSComponent::Init()
 
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("Beginning NSS initialization\n"));
 
-  nsresult rv = InitializePIPNSSBundle();
-  if (NS_FAILED(rv)) {
-    MOZ_LOG(gPIPNSSLog, LogLevel::Error, ("Unable to create pipnss bundle.\n"));
-    return rv;
-  }
-
-  rv = InitializeNSS();
+  nsresult rv = InitializeNSS();
   if (NS_FAILED(rv)) {
     MOZ_LOG(gPIPNSSLog, LogLevel::Error,
             ("nsNSSComponent::InitializeNSS() failed\n"));
@@ -2649,8 +2488,8 @@ setPassword(PK11SlotInfo* slot, nsIInterfaceRequestor* ctx)
     }
 
     bool canceled;
-    NS_ConvertUTF8toUTF16 tokenName(PK11_GetTokenName(slot));
-    rv = dialogs->SetPassword(ctx, tokenName, &canceled);
+    nsCOMPtr<nsIPK11Token> token = new nsPK11Token(slot);
+    rv = dialogs->SetPassword(ctx, token, &canceled);
     if (NS_FAILED(rv)) {
       return rv;
     }

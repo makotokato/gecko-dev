@@ -206,7 +206,7 @@ class FunctionCompiler
 
         for (size_t i = args.length(); i < locals_.length(); i++) {
             MInstruction* ins = nullptr;
-            switch (locals_[i]) {
+            switch (locals_[i].code()) {
               case ValType::I32:
                 ins = MConstant::New(alloc(), Int32Value(0), MIRType::Int32);
                 break;
@@ -1212,7 +1212,7 @@ class FunctionCompiler
             return true;
         }
 
-        const SigWithId& sig = env_.sigs[sigIndex];
+        const SigWithId& sig = env_.types[sigIndex].funcType();
 
         CalleeDesc callee;
         if (env_.isAsmJS()) {
@@ -2235,7 +2235,7 @@ EmitCallIndirect(FunctionCompiler& f, bool oldStyle)
     if (f.inDeadCode())
         return true;
 
-    const Sig& sig = f.env().sigs[sigIndex];
+    const Sig& sig = f.env().types[sigIndex].funcType();
 
     CallCompileState call(f, lineOrBytecode);
     if (!EmitCallArgs(f, sig, args, &call))
@@ -2305,7 +2305,7 @@ EmitGetGlobal(FunctionCompiler& f)
     MIRType mirType = ToMIRType(value.type());
 
     MDefinition* result;
-    switch (value.type()) {
+    switch (value.type().code()) {
       case ValType::I32:
         result = f.constant(Int32Value(value.i32()), mirType);
         break;
@@ -2442,7 +2442,6 @@ EmitTruncate(FunctionCompiler& f, ValType operandType, ValType resultType,
     return true;
 }
 
-#ifdef ENABLE_WASM_SIGNEXTEND_OPS
 static bool
 EmitSignExtend(FunctionCompiler& f, uint32_t srcSize, uint32_t targetSize)
 {
@@ -2454,7 +2453,6 @@ EmitSignExtend(FunctionCompiler& f, uint32_t srcSize, uint32_t targetSize)
     f.iter().setResult(f.signExtend(input, srcSize, targetSize));
     return true;
 }
-#endif
 
 static bool
 EmitExtendI32(FunctionCompiler& f, bool isUnsigned)
@@ -2971,7 +2969,7 @@ EmitSimdShift(FunctionCompiler& f, ValType operandType, MSimdShift::Operation op
 static ValType
 SimdToLaneType(ValType type)
 {
-    switch (type) {
+    switch (type.code()) {
       case ValType::I8x16:
       case ValType::I16x8:
       case ValType::I32x4:  return ValType::I32;
@@ -3077,7 +3075,7 @@ EmitSimdShuffle(FunctionCompiler& f, ValType simdType)
 static inline Scalar::Type
 SimdExprTypeToViewType(ValType type, unsigned* defaultNumElems)
 {
-    switch (type) {
+    switch (type.code()) {
         case ValType::I8x16: *defaultNumElems = 16; return Scalar::Int8x16;
         case ValType::I16x8: *defaultNumElems = 8; return Scalar::Int16x8;
         case ValType::I32x4: *defaultNumElems = 4; return Scalar::Int32x4;
@@ -3220,7 +3218,7 @@ EmitSimdBooleanChainedCtor(FunctionCompiler& f, ValType valType, MIRType type,
 static bool
 EmitSimdCtor(FunctionCompiler& f, ValType type)
 {
-    switch (type) {
+    switch (type.code()) {
       case ValType::I8x16:
         return EmitSimdChainedCtor(f, type, MIRType::Int8x16, SimdConstant::SplatX16(0));
       case ValType::I16x8:
@@ -4064,7 +4062,6 @@ EmitBodyExprs(FunctionCompiler& f)
             return f.iter().unrecognizedOpcode(&op);
 
           // Sign extensions
-#ifdef ENABLE_WASM_SIGNEXTEND_OPS
           case uint16_t(Op::I32Extend8S):
             CHECK(EmitSignExtend(f, 1, 4));
           case uint16_t(Op::I32Extend16S):
@@ -4075,7 +4072,6 @@ EmitBodyExprs(FunctionCompiler& f)
             CHECK(EmitSignExtend(f, 2, 8));
           case uint16_t(Op::I64Extend32S):
             CHECK(EmitSignExtend(f, 4, 8));
-#endif
 
           // Miscellaneous operations
           case uint16_t(Op::MiscPrefix): {

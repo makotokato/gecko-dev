@@ -32,10 +32,6 @@ bool JSAPITest::init()
 
 void JSAPITest::uninit()
 {
-    if (oldCompartment) {
-        JS::LeaveRealm(cx, JS::GetRealmForCompartment(oldCompartment));
-        oldCompartment = nullptr;
-    }
     if (global) {
         JS::LeaveRealm(cx, nullptr);
         global = nullptr;
@@ -96,7 +92,7 @@ JSObject* JSAPITest::createGlobal(JSPrincipals* principals)
 
     // Populate the global object with the standard globals like Object and
     // Array.
-    if (!JS_InitStandardClasses(cx, newGlobal))
+    if (!JS::InitRealmStandardClasses(cx))
         return nullptr;
 
     global = newGlobal;

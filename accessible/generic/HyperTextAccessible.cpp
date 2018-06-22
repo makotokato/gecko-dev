@@ -334,11 +334,10 @@ HyperTextAccessible::TransformOffset(Accessible* aDescendant,
  */
 static nsIContent* GetElementAsContentOf(nsINode* aNode)
 {
-  if (aNode->IsElement()) {
-    return aNode->AsContent();
+  if (Element* element = Element::FromNode(aNode)) {
+    return element;
   }
-  nsIContent* parent = aNode->GetParent();
-  return parent && parent->IsElement() ? parent : nullptr;
+  return aNode->GetParentElement();
 }
 
 bool
@@ -1242,6 +1241,12 @@ HyperTextAccessible::TextBounds(int32_t aStartOffset, int32_t aEndOffset,
     return nsIntRect();
   }
 
+  if (CharacterCount() == 0) {
+    nsPresContext* presContext = mDoc->PresContext();
+    // Empty content, use our own bound to at least get x,y coordinates
+    return GetFrame()->GetScreenRectInAppUnits().
+      ToNearestPixels(presContext->AppUnitsPerDevPixel());
+  }
 
   int32_t childIdx = GetChildIndexAtOffset(startOffset);
   if (childIdx == -1)
@@ -1808,7 +1813,7 @@ HyperTextAccessible::SelectionRanges(nsTArray<a11y::TextRange>* aRanges) const
 
     TextRange tr(IsTextField() ? const_cast<HyperTextAccessible*>(this) : mDoc,
                     startContainer, startOffset, endContainer, endOffset);
-    *(aRanges->AppendElement()) = Move(tr);
+    *(aRanges->AppendElement()) = std::move(tr);
   }
 }
 

@@ -772,12 +772,17 @@ ShapeGuardProtoChain(CacheIRWriter& writer, JSObject* obj, ObjOperandId objId)
         bool guardProto = obj->hasUncacheableProto();
 
         obj = obj->staticPrototype();
-        if (!obj)
+        if (!obj && !guardProto)
             return;
 
         objId = writer.loadProto(objId);
+
         if (guardProto)
             writer.guardSpecificObject(objId, obj);
+
+        if (!obj)
+            return;
+
         writer.guardShape(objId, obj->as<NativeObject>().shape());
     }
 }
@@ -1106,7 +1111,7 @@ GetPropIRGenerator::tryAttachCrossCompartmentWrapper(HandleObject obj, ObjOperan
     // Take the unwrapped object's global, and wrap in a
     // this-compartment wrapper. This is what will be stored in the IC
     // keep the compartment alive.
-    RootedObject wrappedTargetGlobal(cx_, &unwrapped->global());
+    RootedObject wrappedTargetGlobal(cx_, &unwrapped->deprecatedGlobal());
     if (!cx_->compartment()->wrap(cx_, &wrappedTargetGlobal))
         return false;
 
@@ -1114,7 +1119,7 @@ GetPropIRGenerator::tryAttachCrossCompartmentWrapper(HandleObject obj, ObjOperan
     RootedShape shape(cx_);
     RootedNativeObject holder(cx_);
 
-    // Enter compartment of target since some checks have side-effects
+    // Enter realm of target since some checks have side-effects
     // such as de-lazifying type info.
     {
         AutoRealm ar(cx_, unwrapped);
@@ -1123,7 +1128,7 @@ GetPropIRGenerator::tryAttachCrossCompartmentWrapper(HandleObject obj, ObjOperan
         // so we optimize for that case as well.
         isWindowProxy = IsWindowProxy(unwrapped);
         if (isWindowProxy) {
-            MOZ_ASSERT(ToWindowIfWindowProxy(unwrapped) == unwrapped->realm()->maybeGlobal());
+            MOZ_ASSERT(ToWindowIfWindowProxy(unwrapped) == &unwrapped->nonCCWGlobal());
             unwrapped = cx_->global();
             MOZ_ASSERT(unwrapped);
         }
@@ -1636,8 +1641,8 @@ GetPropIRGenerator::tryAttachTypedObject(HandleObject obj, ObjOperandId objId, H
         Scalar::Type type = ScalarTypeFromSimpleTypeDescrKey(typeDescr);
         monitorLoad = type == Scalar::Uint32;
     } else {
-        ReferenceTypeDescr::Type type = ReferenceTypeFromSimpleTypeDescrKey(typeDescr);
-        monitorLoad = type != ReferenceTypeDescr::TYPE_STRING;
+        ReferenceType type = ReferenceTypeFromSimpleTypeDescrKey(typeDescr);
+        monitorLoad = type != ReferenceType::TYPE_STRING;
     }
 
     if (monitorLoad)
@@ -3332,14 +3337,14 @@ SetPropIRGenerator::tryAttachTypedObjectProperty(HandleObject obj, ObjOperandId 
 
     // For reference types, guard on the RHS type first, so that
     // StoreTypedObjectReferenceProperty is infallible.
-    ReferenceTypeDescr::Type type = fieldDescr->as<ReferenceTypeDescr>().type();
+    ReferenceType type = fieldDescr->as<ReferenceTypeDescr>().type();
     switch (type) {
-      case ReferenceTypeDescr::TYPE_ANY:
+      case ReferenceType::TYPE_ANY:
         break;
-      case ReferenceTypeDescr::TYPE_OBJECT:
+      case ReferenceType::TYPE_OBJECT:
         writer.guardIsObjectOrNull(rhsId);
         break;
-      case ReferenceTypeDescr::TYPE_STRING:
+      case ReferenceType::TYPE_STRING:
         writer.guardType(rhsId, JSVAL_TYPE_STRING);
         break;
     }

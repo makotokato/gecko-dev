@@ -83,7 +83,7 @@ struct VisitData {
   , referrerVisitId(0)
   , titleChanged(false)
   , shouldUpdateFrecency(true)
-  , redirect(false)
+  , useFrecencyRedirectBonus(false)
   {
     guid.SetIsVoid(true);
     title.SetIsVoid(true);
@@ -105,7 +105,7 @@ struct VisitData {
   , referrerVisitId(0)
   , titleChanged(false)
   , shouldUpdateFrecency(true)
-  , redirect(false)
+  , useFrecencyRedirectBonus(false)
   {
     MOZ_ASSERT(aURI);
     if (aURI) {
@@ -164,8 +164,9 @@ struct VisitData {
   // Indicates whether frecency should be updated for this visit.
   bool shouldUpdateFrecency;
 
-  // Whether this is a redirect source.
-  bool redirect;
+  // Whether to override the visit type bonus with a redirect bonus when
+  // calculating frecency on the most recent visit.
+  bool useFrecencyRedirectBonus;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -693,7 +694,7 @@ public:
       AutoTArray<URIParams, 1> uris;
       URIParams uri;
       SerializeURI(mURI, uri);
-      uris.AppendElement(Move(uri));
+      uris.AppendElement(std::move(uri));
       history->NotifyVisitedParent(uris);
     }
 
@@ -851,7 +852,7 @@ public:
 
         URIParams serializedUri;
         SerializeURI(uris[i], serializedUri);
-        serializableUris.AppendElement(Move(serializedUri));
+        serializableUris.AppendElement(std::move(serializedUri));
       }
       mHistory->NotifyVisitedParent(serializableUris);
     } else {
@@ -861,7 +862,7 @@ public:
 
       URIParams serializedUri;
       SerializeURI(uris[0], serializedUri);
-      serializableUris.AppendElement(Move(serializedUri));
+      serializableUris.AppendElement(std::move(serializedUri));
       mHistory->NotifyVisitedParent(serializableUris);
     }
 
@@ -1489,8 +1490,7 @@ private:
 
       rv = stmt->BindInt64ByName(NS_LITERAL_CSTRING("page_id"), aPlace.placeId);
       NS_ENSURE_SUCCESS(rv, rv);
-
-      rv = stmt->BindInt32ByName(NS_LITERAL_CSTRING("redirect"), aPlace.redirect);
+      rv = stmt->BindInt32ByName(NS_LITERAL_CSTRING("redirect"), aPlace.useFrecencyRedirectBonus);
       NS_ENSURE_SUCCESS(rv, rv);
 
       rv = stmt->Execute();
@@ -2840,8 +2840,13 @@ History::VisitURI(nsIURI* aURI,
   }
 
   place.SetTransitionType(transitionType);
-  place.redirect = aFlags & IHistory::REDIRECT_SOURCE;
-  place.hidden = GetHiddenState(place.redirect, place.transitionType);
+  bool isRedirect = aFlags & IHistory::REDIRECT_SOURCE;
+  if (isRedirect) {
+    place.useFrecencyRedirectBonus =
+      (aFlags & IHistory::REDIRECT_SOURCE_PERMANENT) ||
+      transitionType != nsINavHistoryService::TRANSITION_TYPED;
+  }
+  place.hidden = GetHiddenState(isRedirect, place.transitionType);
 
   // Error pages should never be autocompleted.
   if (aFlags & IHistory::UNRECOVERABLE_ERROR) {

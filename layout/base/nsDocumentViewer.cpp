@@ -792,7 +792,7 @@ nsDocumentViewer::InitPresentationStuff(bool aDoInitialReflow)
 
   // Now make the shell for the document
   mPresShell = mDocument->CreateShell(mPresContext, mViewManager,
-                                      mozilla::Move(styleSet));
+                                      std::move(styleSet));
   if (!mPresShell) {
     return NS_ERROR_FAILURE;
   }
@@ -1904,7 +1904,7 @@ nsDocumentViewer::Destroy()
 
 #ifdef NS_PRINTING
   if (mPrintJob) {
-    RefPtr<nsPrintJob> printJob = mozilla::Move(mPrintJob);
+    RefPtr<nsPrintJob> printJob = std::move(mPrintJob);
 #ifdef NS_PRINT_PREVIEW
     bool doingPrintPreview;
     printJob->GetDoingPrintPreview(&doingPrintPreview);
@@ -2885,7 +2885,7 @@ NS_IMETHODIMP nsDocumentViewer::GetCanGetContents(bool *aCanGetContents)
   return NS_OK;
 }
 
-NS_IMETHODIMP nsDocumentViewer::SetCommandNode(nsIDOMNode* aNode)
+NS_IMETHODIMP nsDocumentViewer::SetCommandNode(nsINode* aNode)
 {
   nsIDocument* document = GetDocument();
   NS_ENSURE_STATE(document);
@@ -2896,12 +2896,11 @@ NS_IMETHODIMP nsDocumentViewer::SetCommandNode(nsIDOMNode* aNode)
   nsCOMPtr<nsPIWindowRoot> root = window->GetTopWindowRoot();
   NS_ENSURE_STATE(root);
 
-  nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
-  root->SetPopupNode(node);
+  root->SetPopupNode(aNode);
   return NS_OK;
 }
 
-NS_IMETHODIMP nsDocumentViewer::ScrollToNode(nsIDOMNode* aNode)
+NS_IMETHODIMP nsDocumentViewer::ScrollToNode(nsINode* aNode)
 {
   NS_ENSURE_ARG(aNode);
   NS_ENSURE_TRUE(mDocument, NS_ERROR_NOT_AVAILABLE);

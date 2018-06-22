@@ -9,7 +9,6 @@
     from itertools import groupby
 %>
 
-use cssparser::Parser;
 #[cfg(feature = "gecko")] use gecko_bindings::bindings::RawServoAnimationValueMap;
 #[cfg(feature = "gecko")] use gecko_bindings::structs::RawGeckoGfxMatrix4x4;
 #[cfg(feature = "gecko")] use gecko_bindings::structs::nsCSSPropertyID;
@@ -26,13 +25,13 @@ use servo_arc::Arc;
 use smallvec::SmallVec;
 use std::{cmp, ptr};
 use std::mem::{self, ManuallyDrop};
-#[cfg(feature = "gecko")] use hash::FnvHashMap;
-use style_traits::{KeywordsCollectFn, ParseError, SpecifiedValueInfo};
+use hash::FnvHashMap;
 use super::ComputedValues;
-use values::{CSSFloat, CustomIdent};
+use values::CSSFloat;
 use values::animated::{Animate, Procedure, ToAnimatedValue, ToAnimatedZero};
 use values::animated::color::RGBA as AnimatedRGBA;
 use values::animated::effects::Filter as AnimatedFilter;
+#[cfg(feature = "gecko")] use values::computed::TransitionProperty;
 use values::computed::{Angle, CalcLengthOrPercentage};
 use values::computed::{ClipRect, Context};
 use values::computed::{Length, LengthOrPercentage, LengthOrPercentageOrAuto};
@@ -70,78 +69,6 @@ pub fn nscsspropertyid_is_animatable(property: nsCSSPropertyID) -> bool {
     }
 }
 
-/// A given transition property, that is either `All`, a transitionable longhand property,
-/// a shorthand with at least one transitionable longhand component, or an unsupported property.
-// NB: This needs to be here because it needs all the longhands generated
-// beforehand.
-#[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToComputedValue, ToCss)]
-pub enum TransitionProperty {
-    /// A shorthand.
-    Shorthand(ShorthandId),
-    /// A longhand transitionable property.
-    Longhand(LonghandId),
-    /// Unrecognized property which could be any non-transitionable, custom property, or
-    /// unknown property.
-    Unsupported(CustomIdent),
-}
-
-impl TransitionProperty {
-    /// Returns `all`.
-    #[inline]
-    pub fn all() -> Self {
-        TransitionProperty::Shorthand(ShorthandId::All)
-    }
-
-    /// Parse a transition-property value.
-    pub fn parse<'i, 't>(input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i>> {
-        // FIXME(https://github.com/rust-lang/rust/issues/33156): remove this
-        // enum and use PropertyId when stable Rust allows destructors in
-        // statics.
-        //
-        // FIXME: This should handle aliases too.
-        pub enum StaticId {
-            Longhand(LonghandId),
-            Shorthand(ShorthandId),
-        }
-        ascii_case_insensitive_phf_map! {
-            static_id -> StaticId = {
-                % for prop in data.shorthands:
-                "${prop.name}" => StaticId::Shorthand(ShorthandId::${prop.camel_case}),
-                % endfor
-                % for prop in data.longhands:
-                "${prop.name}" => StaticId::Longhand(LonghandId::${prop.camel_case}),
-                % endfor
-            }
-        }
-
-        let location = input.current_source_location();
-        let ident = input.expect_ident()?;
-
-        Ok(match static_id(&ident) {
-            Some(&StaticId::Longhand(id)) => TransitionProperty::Longhand(id),
-            Some(&StaticId::Shorthand(id)) => TransitionProperty::Shorthand(id),
-            None => {
-                TransitionProperty::Unsupported(
-                    CustomIdent::from_ident(location, ident, &["none"])?,
-                )
-            },
-        })
-    }
-
-    /// Convert TransitionProperty to nsCSSPropertyID.
-    #[cfg(feature = "gecko")]
-    pub fn to_nscsspropertyid(&self) -> Result<nsCSSPropertyID, ()> {
-        Ok(match *self {
-            TransitionProperty::Shorthand(ShorthandId::All) => {
-                nsCSSPropertyID::eCSSPropertyExtra_all_properties
-            }
-            TransitionProperty::Shorthand(ref id) => id.to_nscsspropertyid(),
-            TransitionProperty::Longhand(ref id) => id.to_nscsspropertyid(),
-            TransitionProperty::Unsupported(..) => return Err(()),
-        })
-    }
-}
-
 /// Convert nsCSSPropertyID to TransitionProperty
 #[cfg(feature = "gecko")]
 #[allow(non_upper_case_globals)]
@@ -165,15 +92,6 @@ impl From<nsCSSPropertyID> for TransitionProperty {
                 panic!("non-convertible nsCSSPropertyID")
             }
         }
-    }
-}
-
-impl SpecifiedValueInfo for TransitionProperty {
-    fn collect_completion_keywords(f: KeywordsCollectFn) {
-        // `transition-property` can actually accept all properties and
-        // arbitrary identifiers, but `all` is a special one we'd like
-        // to list.
-        f(&["all"]);
     }
 }
 
@@ -311,8 +229,8 @@ impl AnimatedProperty {
 /// A collection of AnimationValue that were composed on an element.
 /// This HashMap stores the values that are the last AnimationValue to be
 /// composed for each TransitionProperty.
-#[cfg(feature = "gecko")]
 pub type AnimationValueMap = FnvHashMap<LonghandId, AnimationValue>;
+
 #[cfg(feature = "gecko")]
 unsafe impl HasFFI for AnimationValueMap {
     type FFIType = RawServoAnimationValueMap;
@@ -1821,7 +1739,9 @@ impl Animate for Quaternion {
 
         let (this_weight, other_weight) = procedure.weights();
         debug_assert!(
-            (this_weight + other_weight - 1.0f64).abs() <= f64::EPSILON ||
+            // Doule EPSILON since both this_weight and other_weght have calculation errors
+            // which are approximately equal to EPSILON.
+            (this_weight + other_weight - 1.0f64).abs() <= f64::EPSILON * 2.0 ||
             other_weight == 1.0f64 || other_weight == 0.0f64,
             "animate should only be used for interpolating or accumulating transforms"
         );
@@ -2501,82 +2421,83 @@ impl Animate for ComputedScale {
 /// <https://drafts.csswg.org/css-transforms/#interpolation-of-transforms>
 impl Animate for ComputedTransform {
     #[inline]
-    fn animate(
-        &self,
-        other_: &Self,
-        procedure: Procedure,
-    ) -> Result<Self, ()> {
-
-        let animate_equal_lists = |this: &[ComputedTransformOperation],
-                                   other: &[ComputedTransformOperation]|
-                                   -> Result<ComputedTransform, ()> {
-            Ok(Transform(this.iter().zip(other)
-                             .map(|(this, other)| this.animate(other, procedure))
-                             .collect::<Result<Vec<_>, _>>()?))
-            // If we can't animate for a pair of matched transform lists
-            // this means we have at least one undecomposable matrix,
-            // so we should bubble out Err here, and let the caller do
-            // the fallback procedure.
-        };
-        if self.0.is_empty() && other_.0.is_empty() {
-            return Ok(Transform(vec![]));
-        }
-
-
-        let this = &self.0;
-        let other = &other_.0;
+    fn animate(&self, other: &Self, procedure: Procedure) -> Result<Self, ()> {
+        use std::borrow::Cow;
 
         if procedure == Procedure::Add {
-            let result = this.iter().chain(other).cloned().collect::<Vec<_>>();
+            let result = self.0.iter().chain(&other.0).cloned().collect::<Vec<_>>();
             return Ok(Transform(result));
         }
 
+        // https://drafts.csswg.org/css-transforms-1/#transform-transform-neutral-extend-animation
+        fn match_operations_if_possible<'a>(
+            this: &mut Cow<'a, Vec<ComputedTransformOperation>>,
+            other: &mut Cow<'a, Vec<ComputedTransformOperation>>,
+        ) -> bool {
+            if !this.iter().zip(other.iter()).all(|(this, other)| is_matched_operation(this, other)) {
+                return false;
+            }
 
-        // For matched transform lists.
-        {
             if this.len() == other.len() {
-                let is_matched_transforms = this.iter().zip(other).all(|(this, other)| {
-                    is_matched_operation(this, other)
-                });
-
-                if is_matched_transforms {
-                    return animate_equal_lists(this, other);
-                }
+                return true;
             }
+
+            let (shorter, longer) =
+                if this.len() < other.len() {
+                    (this.to_mut(), other)
+                } else {
+                    (other.to_mut(), this)
+                };
+
+            shorter.reserve(longer.len());
+            for op in longer.iter().skip(shorter.len()) {
+                shorter.push(op.to_animated_zero().unwrap());
+            }
+
+            // The resulting operations won't be matched regardless if the
+            // extended component is already InterpolateMatrix /
+            // AccumulateMatrix.
+            //
+            // Otherwise they should be matching operations all the time.
+            let already_mismatched = matches!(
+                longer[0],
+                TransformOperation::InterpolateMatrix { .. } |
+                TransformOperation::AccumulateMatrix { .. }
+            );
+
+            debug_assert_eq!(
+                !already_mismatched,
+                longer.iter().zip(shorter.iter()).all(|(this, other)| is_matched_operation(this, other)),
+                "ToAnimatedZero should generate matched operations"
+            );
+
+            !already_mismatched
         }
 
-        // For mismatched transform lists.
-        let mut owned_this = this.clone();
-        let mut owned_other = other.clone();
+        let mut this = Cow::Borrowed(&self.0);
+        let mut other = Cow::Borrowed(&other.0);
 
-        if this.is_empty() {
-            let this = other_.to_animated_zero()?.0;
-            if this.iter().zip(other).all(|(this, other)| is_matched_operation(this, other)) {
-                return animate_equal_lists(&this, other)
-            }
-            owned_this = this;
-        }
-        if other.is_empty() {
-            let other = self.to_animated_zero()?.0;
-            if this.iter().zip(&other).all(|(this, other)| is_matched_operation(this, other)) {
-                return animate_equal_lists(this, &other)
-            }
-            owned_other = other;
+        if match_operations_if_possible(&mut this, &mut other) {
+            return Ok(Transform(
+                this.iter().zip(other.iter())
+                    .map(|(this, other)| this.animate(other, procedure))
+                    .collect::<Result<Vec<_>, _>>()?
+            ));
         }
 
         match procedure {
             Procedure::Add => Err(()),
             Procedure::Interpolate { progress } => {
                 Ok(Transform(vec![TransformOperation::InterpolateMatrix {
-                    from_list: Transform(owned_this),
-                    to_list: Transform(owned_other),
+                    from_list: Transform(this.into_owned()),
+                    to_list: Transform(other.into_owned()),
                     progress: Percentage(progress as f32),
                 }]))
             },
             Procedure::Accumulate { count } => {
                 Ok(Transform(vec![TransformOperation::AccumulateMatrix {
-                    from_list: Transform(owned_this),
-                    to_list: Transform(owned_other),
+                    from_list: Transform(this.into_owned()),
+                    to_list: Transform(other.into_owned()),
                     count: cmp::min(count, i32::max_value() as u64) as i32,
                 }]))
             },

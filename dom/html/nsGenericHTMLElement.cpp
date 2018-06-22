@@ -5,7 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/ArrayUtils.h"
-#include "mozilla/DeclarationBlockInlines.h"
+#include "mozilla/DeclarationBlock.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventListenerManager.h"
 #include "mozilla/EventStateManager.h"
@@ -103,13 +103,6 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
-
-NS_IMPL_ADDREF_INHERITED(nsGenericHTMLElement, nsGenericHTMLElementBase)
-NS_IMPL_RELEASE_INHERITED(nsGenericHTMLElement, nsGenericHTMLElementBase)
-
-NS_INTERFACE_MAP_BEGIN(nsGenericHTMLElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMNode)
-NS_INTERFACE_MAP_END_INHERITING(nsGenericHTMLElementBase)
 
 nsresult
 nsGenericHTMLElement::CopyInnerTo(Element* aDst, bool aPreallocateChildren)
@@ -480,14 +473,13 @@ nsGenericHTMLElement::UnbindFromTree(bool aDeep, bool aNullParent)
     }
   }
 
-  // We need to consider a labels element is removed from tree,
-  // it needs to update labels list and its root as well.
+  nsStyledElement::UnbindFromTree(aDeep, aNullParent);
+
+  // Invalidate .labels list. It will be repopulated when used the next time.
   nsExtendedDOMSlots* slots = GetExistingExtendedDOMSlots();
   if (slots && slots->mLabelsList) {
     slots->mLabelsList->MaybeResetRoot(SubtreeRoot());
   }
-
-  nsStyledElement::UnbindFromTree(aDeep, aNullParent);
 }
 
 HTMLFormElement*
@@ -2772,7 +2764,7 @@ nsGenericHTMLFormElementWithState::GetPrimaryPresState()
   if (!result) {
     UniquePtr<PresState> newState = NewPresState();
     result = newState.get();
-    history->AddState(mStateKey, Move(newState));
+    history->AddState(mStateKey, std::move(newState));
   }
 
   return result;

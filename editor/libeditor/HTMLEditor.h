@@ -45,7 +45,7 @@ namespace mozilla {
 class AutoSelectionSetterAfterTableEdit;
 class EmptyEditableFunctor;
 class ResizerSelectionListener;
-enum class EditAction : int32_t;
+enum class EditSubAction : int32_t;
 struct PropItem;
 template<class T> class OwningNonNull;
 namespace dom {
@@ -143,8 +143,6 @@ public:
 
   NS_IMETHOD DeleteNode(nsINode* aNode) override;
 
-  NS_IMETHOD SelectAll() override;
-
   NS_IMETHOD DebugUnitTests(int32_t* outNumTests,
                             int32_t* outNumTestsFailed) override;
 
@@ -157,7 +155,6 @@ public:
   virtual already_AddRefed<nsIContent> FindSelectionRoot(
                                          nsINode *aNode) override;
   virtual bool IsAcceptableInputEvent(WidgetGUIEvent* aGUIEvent) override;
-  virtual already_AddRefed<nsIContent> GetInputEventTargetContent() override;
   virtual nsresult GetPreferredIMEState(widget::IMEState* aState) override;
 
   /**
@@ -286,6 +283,12 @@ public:
 
   already_AddRefed<Element>
   GetElementOrParentByTagName(const nsAString& aTagName, nsINode* aNode);
+
+  /**
+    * Get an active editor's editing host in DOM window.  If this editor isn't
+    * active in the DOM window, this returns NULL.
+    */
+  Element* GetActiveEditingHost();
 
 protected: // May be called by friends.
   /****************************************************************************
@@ -434,10 +437,10 @@ protected: // May be called by friends.
   nsresult RelativeChangeElementZIndex(Element& aElement, int32_t aChange,
                                        int32_t* aReturn);
 
+  virtual bool IsModifiableNode(nsINode* aNode) override;
+
   virtual bool IsBlockNode(nsINode *aNode) override;
   using EditorBase::IsBlockNode;
-
-  virtual bool IsModifiableNode(nsINode* aNode) override;
 
   /**
    * returns true if aParentTag can contain a child of type aChildTag.
@@ -736,23 +739,17 @@ protected: // May be called by friends.
   nsresult SetPositionToStatic(Element& aElement);
 
 protected: // Called by helper classes.
-  /**
-   * All editor operations which alter the doc should be prefaced
-   * with a call to StartOperation, naming the action and direction.
-   */
-  virtual nsresult StartOperation(EditAction opID,
-                                  nsIEditor::EDirection aDirection) override;
-
-  /**
-   * All editor operations which alter the doc should be followed
-   * with a call to EndOperation.
-   */
-  virtual nsresult EndOperation() override;
+  virtual void
+  OnStartToHandleTopLevelEditSubAction(
+    EditSubAction aEditSubAction, nsIEditor::EDirection aDirection) override;
+  virtual void OnEndHandlingTopLevelEditSubAction() override;
 
   virtual nsresult EndUpdateViewBatch() override;
 
 protected: // Shouldn't be used by friend classes
   virtual ~HTMLEditor();
+
+  virtual nsresult SelectAllInternal() override;
 
   /**
    * InsertNodeIntoProperAncestorWithTransaction() attempts to insert aNode
@@ -915,6 +912,8 @@ protected: // Shouldn't be used by friend classes
    *            Otherwise, returns null.
    */
   already_AddRefed<nsINode> GetFocusedNode();
+
+  virtual already_AddRefed<nsIContent> GetInputEventTargetContent() override;
 
   /**
    * Return TRUE if aElement is a table-related elemet and caret was set.

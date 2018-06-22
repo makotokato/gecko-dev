@@ -12,6 +12,9 @@
 #include "certt.h"
 #include "nsString.h"
 
+extern const char* kRootModuleName;
+extern const size_t kRootModuleNameLen;
+
 uint32_t
 getCertType(CERTCertificate* cert);
 
@@ -25,6 +28,8 @@ LossyUTF8ToUTF16(const char* str, uint32_t len, /*out*/ nsAString& result);
 // Must be used on the main thread only.
 nsresult
 GetPIPNSSBundleString(const char* stringName, nsAString& result);
+nsresult
+GetPIPNSSBundleString(const char* stringName, nsACString& result);
 nsresult
 PIPBundleFormatStringFromName(const char* stringName, const char16_t** params,
                               uint32_t numParams, nsAString& result);

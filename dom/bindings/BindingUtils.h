@@ -14,7 +14,6 @@
 #include "mozilla/Alignment.h"
 #include "mozilla/Array.h"
 #include "mozilla/Assertions.h"
-#include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/DeferredFinalize.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/CallbackObject.h"
@@ -977,6 +976,15 @@ MaybeWrapValue(JSContext* cx, JS::MutableHandle<JS::Value> rval)
     if (rval.isObject()) {
       return MaybeWrapObjectValue(cx, rval);
     }
+#ifdef ENABLE_BIGINT
+    // This could be optimized by checking the zone first, similar to
+    // the way strings are handled. At present, this is used primarily
+    // for structured cloning, so avoiding the overhead of JS_WrapValue
+    // calls is less important than for other types.
+    if (rval.isBigInt()) {
+      return JS_WrapValue(cx, rval);
+    }
+#endif
     MOZ_ASSERT(rval.isSymbol());
     JS_MarkCrossZoneId(cx, SYMBOL_TO_JSID(rval.toSymbol()));
   }
@@ -1158,7 +1166,8 @@ GetOrCreateDOMReflectorNoWrap(JSContext* cx, T* value,
 
 // Create a JSObject wrapping "value", for cases when "value" is a
 // non-wrapper-cached object using WebIDL bindings.  "value" must implement a
-// WrapObject() method taking a JSContext and a scope.
+// WrapObject() method taking a JSContext and a prototype (possibly null) and
+// returning the resulting object via a MutableHandle<JSObject*> outparam.
 template <class T>
 inline bool
 WrapNewBindingNonWrapperCachedObject(JSContext* cx,
@@ -1203,9 +1212,11 @@ WrapNewBindingNonWrapperCachedObject(JSContext* cx,
 }
 
 // Create a JSObject wrapping "value", for cases when "value" is a
-// non-wrapper-cached owned object using WebIDL bindings.  "value" must implement a
-// WrapObject() method taking a JSContext, a scope, and a boolean outparam that
-// is true if the JSObject took ownership
+// non-wrapper-cached owned object using WebIDL bindings.  "value" must
+// implement a WrapObject() method taking a taking a JSContext and a prototype
+// (possibly null) and returning two pieces of information: the resulting object
+// via a MutableHandle<JSObject*> outparam and a boolean return value that is
+// true if the JSObject took ownership
 template <class T>
 inline bool
 WrapNewBindingNonWrapperCachedObject(JSContext* cx,
@@ -3060,8 +3071,7 @@ CreateGlobal(JSContext* aCx, T* aNative, nsWrapperCache* aCache,
     }
   }
 
-  if (aInitStandardClasses &&
-      !JS_InitStandardClasses(aCx, aGlobal)) {
+  if (aInitStandardClasses && !JS::InitRealmStandardClasses(aCx)) {
     NS_WARNING("Failed to init standard classes");
     return false;
   }
@@ -3110,7 +3120,7 @@ class PinnedStringId
     /* This is safe because we have pinned the string. */
     return JS::Handle<jsid>::fromMarkedLocation(&id);
   }
-};
+} JS_HAZ_ROOTED;
 
 namespace binding_detail {
 /**
@@ -3263,7 +3273,7 @@ template<class T, class S>
 inline RefPtr<T>
 StrongOrRawPtr(already_AddRefed<S>&& aPtr)
 {
-  return Move(aPtr);
+  return std::move(aPtr);
 }
 
 template<class T,

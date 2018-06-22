@@ -107,7 +107,6 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
     allowRelazificationForTesting(false),
     destroyCompartmentCallback(nullptr),
     sizeOfIncludingThisCompartmentCallback(nullptr),
-    compartmentNameCallback(nullptr),
     destroyRealmCallback(nullptr),
     realmNameCallback(nullptr),
     externalStringSizeofCallback(nullptr),
@@ -133,7 +132,8 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
     activeThreadHasScriptDataAccess(false),
 #endif
     numActiveHelperThreadZones(0),
-    numCompartments(0),
+    heapState_(JS::HeapState::Idle),
+    numRealms(0),
     localeCallbacks(nullptr),
     defaultLocale(nullptr),
     profilingScripts(false),
@@ -157,7 +157,6 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
     allowContentJS_(true),
     atoms_(nullptr),
     atomsAddedWhileSweeping_(nullptr),
-    atomsRealm_(nullptr),
     staticStrings(nullptr),
     commonNames(nullptr),
     permanentAtoms(nullptr),
@@ -167,6 +166,10 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
     jitSupportsSimd(false),
     offthreadIonCompilationEnabled_(true),
     parallelParsingEnabled_(true),
+#ifdef DEBUG
+    offThreadParsesRunning_(0),
+    offThreadParsingBlocked_(false),
+#endif
     autoWritableJitCodeActive_(false),
     oomCallback(nullptr),
     debuggerMallocSizeOf(ReturnZeroSize),
@@ -215,24 +218,11 @@ JSRuntime::init(JSContext* cx, uint32_t maxbytes, uint32_t maxNurseryBytes)
     if (!gc.init(maxbytes, maxNurseryBytes))
         return false;
 
-    ScopedJSDeletePtr<Zone> atomsZone(js_new<Zone>(this));
+    UniquePtr<Zone> atomsZone = MakeUnique<Zone>(this);
     if (!atomsZone || !atomsZone->init(true))
         return false;
 
-    JS::RealmOptions options;
-    ScopedJSDeletePtr<Realm> atomsRealm(js_new<Realm>(atomsZone.get(), options));
-    if (!atomsRealm || !atomsRealm->init(nullptr))
-        return false;
-
-    gc.atomsZone = atomsZone.get();
-    if (!atomsZone->compartments().append(atomsRealm->compartment()))
-        return false;
-
-    atomsRealm->setIsSystem(true);
-    atomsRealm->setIsAtomsRealm();
-
-    atomsZone.forget();
-    this->atomsRealm_ = atomsRealm.forget();
+    gc.atomsZone = atomsZone.release();
 
     if (!symbolRegistry_.ref().init())
         return false;
@@ -270,7 +260,7 @@ JSRuntime::init(JSContext* cx, uint32_t maxbytes, uint32_t maxNurseryBytes)
 void
 JSRuntime::destroyRuntime()
 {
-    MOZ_ASSERT(!JS::CurrentThreadIsHeapBusy());
+    MOZ_ASSERT(!JS::RuntimeHeapIsBusy());
     MOZ_ASSERT(childRuntimeCount == 0);
     MOZ_ASSERT(initialized_);
 
@@ -329,7 +319,6 @@ JSRuntime::destroyRuntime()
 #endif
 
     gc.finish();
-    atomsRealm_ = nullptr;
 
     js_delete(defaultFreeOp_.ref());
 
@@ -433,7 +422,7 @@ static bool
 HandleInterrupt(JSContext* cx, bool invokeCallback)
 {
     MOZ_ASSERT(cx->requestDepth >= 1);
-    MOZ_ASSERT(!cx->realm()->isAtomsRealm());
+    MOZ_ASSERT(!cx->zone()->isAtomsZone());
 
     cx->runtime()->gc.gcIfRequested();
 
@@ -542,9 +531,14 @@ JSRuntime::setDefaultLocale(const char* locale)
 {
     if (!locale)
         return false;
+
+    char* newLocale = DuplicateString(mainContextFromOwnThread(), locale).release();
+    if (!newLocale)
+        return false;
+
     resetDefaultLocale();
-    defaultLocale = JS_strdup(mainContextFromOwnThread(), locale);
-    return defaultLocale != nullptr;
+    defaultLocale = newLocale;
+    return true;
 }
 
 void
@@ -566,7 +560,7 @@ JSRuntime::getDefaultLocale()
     if (!locale || !strcmp(locale, "C"))
         locale = "und";
 
-    char* lang = JS_strdup(mainContextFromOwnThread(), locale);
+    char* lang = DuplicateString(mainContextFromOwnThread(), locale).release();
     if (!lang)
         return nullptr;
 
@@ -712,6 +706,20 @@ JSRuntime::forkRandomKeyGenerator()
     return mozilla::non_crypto::XorShift128PlusRNG(rng.next(), rng.next());
 }
 
+js::HashNumber
+JSRuntime::randomHashCode()
+{
+    MOZ_ASSERT(CurrentThreadCanAccessRuntime(this));
+
+    if (randomHashCodeGenerator_.isNothing()) {
+        mozilla::Array<uint64_t, 2> seed;
+        GenerateXorShift128PlusSeed(seed);
+        randomHashCodeGenerator_.emplace(seed[0], seed[1]);
+    }
+
+    return HashNumber(randomHashCodeGenerator_->next());
+}
+
 void
 JSRuntime::updateMallocCounter(size_t nbytes)
 {
@@ -723,7 +731,7 @@ JSRuntime::onOutOfMemory(AllocFunction allocFunc, size_t nbytes, void* reallocPt
 {
     MOZ_ASSERT_IF(allocFunc != AllocFunction::Realloc, !reallocPtr);
 
-    if (JS::CurrentThreadIsHeapBusy())
+    if (JS::RuntimeHeapIsBusy())
         return nullptr;
 
     if (!oom::IsSimulatedOOMAllocation()) {
@@ -766,7 +774,7 @@ JSRuntime::onOutOfMemoryCanGC(AllocFunction allocFunc, size_t bytes, void* reall
 bool
 JSRuntime::activeGCInAtomsZone()
 {
-    Zone* zone = atomsRealm_->zone();
+    Zone* zone = unsafeAtomsZone();
     return (zone->needsIncrementalBarrier() && !gc.isVerifyPreBarriersEnabled()) ||
            zone->wasGCStarted();
 }
@@ -774,7 +782,7 @@ JSRuntime::activeGCInAtomsZone()
 bool
 JSRuntime::createAtomsAddedWhileSweepingTable()
 {
-    MOZ_ASSERT(JS::CurrentThreadIsHeapCollecting());
+    MOZ_ASSERT(JS::RuntimeHeapIsCollecting());
     MOZ_ASSERT(!atomsAddedWhileSweeping_);
 
     atomsAddedWhileSweeping_ = js_new<AtomSet>();
@@ -792,7 +800,7 @@ JSRuntime::createAtomsAddedWhileSweepingTable()
 void
 JSRuntime::destroyAtomsAddedWhileSweepingTable()
 {
-    MOZ_ASSERT(JS::CurrentThreadIsHeapCollecting());
+    MOZ_ASSERT(JS::RuntimeHeapIsCollecting());
     MOZ_ASSERT(atomsAddedWhileSweeping_);
 
     js_delete(atomsAddedWhileSweeping_.ref());
@@ -804,6 +812,7 @@ JSRuntime::setUsedByHelperThread(Zone* zone)
 {
     MOZ_ASSERT(!zone->usedByHelperThread());
     MOZ_ASSERT(!zone->wasGCStarted());
+    MOZ_ASSERT(!isOffThreadParsingBlocked());
     zone->setUsedByHelperThread();
     numActiveHelperThreadZones++;
 }

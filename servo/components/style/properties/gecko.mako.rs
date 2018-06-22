@@ -28,7 +28,6 @@ use gecko_bindings::bindings::Gecko_CopyListStyleImageFrom;
 use gecko_bindings::bindings::Gecko_EnsureImageLayersLength;
 use gecko_bindings::bindings::Gecko_SetCursorArrayLength;
 use gecko_bindings::bindings::Gecko_SetCursorImageValue;
-use gecko_bindings::bindings::Gecko_StyleTransition_SetUnsupportedProperty;
 use gecko_bindings::bindings::Gecko_NewCSSShadowArray;
 use gecko_bindings::bindings::Gecko_nsStyleFont_SetLang;
 use gecko_bindings::bindings::Gecko_nsStyleFont_CopyLangFrom;
@@ -49,7 +48,6 @@ use gecko::values::GeckoStyleCoordConvertible;
 use gecko::values::round_border_to_device_pixels;
 use logical_geometry::WritingMode;
 use media_queries::Device;
-use properties::animated_properties::TransitionProperty;
 use properties::computed_value_flags::*;
 use properties::{longhands, Importance, LonghandId};
 use properties::{PropertyDeclaration, PropertyDeclarationBlock, PropertyDeclarationId};
@@ -60,7 +58,7 @@ use std::marker::PhantomData;
 use std::mem::{forget, uninitialized, transmute, zeroed};
 use std::{cmp, ops, ptr};
 use values::{self, CustomIdent, Either, KeyframesName, None_};
-use values::computed::{NonNegativeLength, ToComputedValue, Percentage};
+use values::computed::{NonNegativeLength, ToComputedValue, Percentage, TransitionProperty};
 use values::computed::font::FontSize;
 use values::computed::effects::{BoxShadow, Filter, SimpleShadow};
 use values::computed::outline::OutlineStyle;
@@ -390,17 +388,9 @@ impl ${style_struct.gecko_struct_name} {
 
 <%!
 def get_gecko_property(ffi_name, self_param = "self"):
-    if "mBorderColor" in ffi_name:
-        return ffi_name.replace("mBorderColor",
-                                "unsafe { *%s.gecko.__bindgen_anon_1.mBorderColor.as_ref() }"
-                                % self_param)
     return "%s.gecko.%s" % (self_param, ffi_name)
 
 def set_gecko_property(ffi_name, expr):
-    if "mBorderColor" in ffi_name:
-        ffi_name = ffi_name.replace("mBorderColor",
-                                    "*self.gecko.__bindgen_anon_1.mBorderColor.as_mut()")
-        return "unsafe { %s = %s };" % (ffi_name, expr)
     return "self.gecko.%s = %s;" % (ffi_name, expr)
 %>
 
@@ -1596,7 +1586,7 @@ fn static_assert() {
         self.gecko.mComputedBorder.${side.ident} = self.gecko.mBorder.${side.ident};
     }
 
-    <% impl_color("border_%s_color" % side.ident, "(mBorderColor)[%s]" % side.index) %>
+    <% impl_color("border_%s_color" % side.ident, "mBorder%sColor" % side.name) %>
 
     <% impl_non_negative_length("border_%s_width" % side.ident,
                                 "mComputedBorder.%s" % side.ident,
@@ -3267,6 +3257,8 @@ fn static_assert() {
               I::IntoIter: ExactSizeIterator
     {
         use gecko_bindings::structs::nsCSSPropertyID::eCSSPropertyExtra_no_properties;
+        use gecko_bindings::structs::nsCSSPropertyID::eCSSPropertyExtra_variable;
+        use gecko_bindings::structs::nsCSSPropertyID::eCSSProperty_UNKNOWN;
 
         let v = v.into_iter();
 
@@ -3274,10 +3266,17 @@ fn static_assert() {
             self.gecko.mTransitions.ensure_len(v.len());
             self.gecko.mTransitionPropertyCount = v.len() as u32;
             for (servo, gecko) in v.zip(self.gecko.mTransitions.iter_mut()) {
+                unsafe { gecko.mUnknownProperty.clear() };
+
                 match servo {
-                    TransitionProperty::Unsupported(ref ident) => unsafe {
-                        Gecko_StyleTransition_SetUnsupportedProperty(gecko, ident.0.as_ptr())
+                    TransitionProperty::Unsupported(ident) => {
+                        gecko.mProperty = eCSSProperty_UNKNOWN;
+                        gecko.mUnknownProperty.mRawPtr = ident.0.into_addrefed();
                     },
+                    TransitionProperty::Custom(name) => {
+                        gecko.mProperty = eCSSPropertyExtra_variable;
+                        gecko.mUnknownProperty.mRawPtr = name.into_addrefed();
+                    }
                     _ => gecko.mProperty = servo.to_nscsspropertyid().unwrap(),
                 }
             }
@@ -3307,15 +3306,24 @@ fn static_assert() {
         use gecko_bindings::structs::nsCSSPropertyID::eCSSProperty_UNKNOWN;
 
         let property = self.gecko.mTransitions[index].mProperty;
-        if property == eCSSProperty_UNKNOWN || property == eCSSPropertyExtra_variable {
+        if property == eCSSProperty_UNKNOWN {
             let atom = self.gecko.mTransitions[index].mUnknownProperty.mRawPtr;
             debug_assert!(!atom.is_null());
             TransitionProperty::Unsupported(CustomIdent(unsafe{
                 Atom::from_raw(atom)
             }))
+        } else if property == eCSSPropertyExtra_variable {
+            let atom = self.gecko.mTransitions[index].mUnknownProperty.mRawPtr;
+            debug_assert!(!atom.is_null());
+            TransitionProperty::Custom(unsafe{
+                Atom::from_raw(atom)
+            })
         } else if property == eCSSPropertyExtra_no_properties {
-            // Actually, we don't expect TransitionProperty::Unsupported also represents "none",
-            // but if the caller wants to convert it, it is fine. Please use it carefully.
+            // Actually, we don't expect TransitionProperty::Unsupported also
+            // represents "none", but if the caller wants to convert it, it is
+            // fine. Please use it carefully.
+            //
+            // FIXME(emilio): This is a hack, is this reachable?
             TransitionProperty::Unsupported(CustomIdent(atom!("none")))
         } else {
             property.into()
@@ -3336,11 +3344,12 @@ fn static_assert() {
 
         for (index, transition) in self.gecko.mTransitions.iter_mut().enumerate().take(count as usize) {
             transition.mProperty = other.gecko.mTransitions[index].mProperty;
+            unsafe { transition.mUnknownProperty.clear() };
             if transition.mProperty == eCSSProperty_UNKNOWN ||
                transition.mProperty == eCSSPropertyExtra_variable {
                 let atom = other.gecko.mTransitions[index].mUnknownProperty.mRawPtr;
                 debug_assert!(!atom.is_null());
-                unsafe { Gecko_StyleTransition_SetUnsupportedProperty(transition, atom) };
+                transition.mUnknownProperty.mRawPtr = unsafe { Atom::from_raw(atom) }.into_addrefed();
             }
         }
     }
@@ -3515,77 +3524,27 @@ fn static_assert() {
 
     pub fn set_will_change(&mut self, v: longhands::will_change::computed_value::T) {
         use gecko_bindings::bindings::{Gecko_AppendWillChange, Gecko_ClearWillChange};
-        use gecko_bindings::structs::NS_STYLE_WILL_CHANGE_OPACITY;
-        use gecko_bindings::structs::NS_STYLE_WILL_CHANGE_SCROLL;
-        use gecko_bindings::structs::NS_STYLE_WILL_CHANGE_TRANSFORM;
-        use properties::PropertyId;
         use properties::longhands::will_change::computed_value::T;
 
-        fn will_change_bitfield_from_prop_flags(prop: LonghandId) -> u8 {
-            use properties::PropertyFlags;
-            use gecko_bindings::structs::NS_STYLE_WILL_CHANGE_ABSPOS_CB;
-            use gecko_bindings::structs::NS_STYLE_WILL_CHANGE_FIXPOS_CB;
-            use gecko_bindings::structs::NS_STYLE_WILL_CHANGE_STACKING_CONTEXT;
-            let servo_flags = prop.flags();
-            let mut bitfield = 0;
-
-            if servo_flags.contains(PropertyFlags::CREATES_STACKING_CONTEXT) {
-                bitfield |= NS_STYLE_WILL_CHANGE_STACKING_CONTEXT;
-            }
-            if servo_flags.contains(PropertyFlags::FIXPOS_CB) {
-                bitfield |= NS_STYLE_WILL_CHANGE_FIXPOS_CB;
-            }
-            if servo_flags.contains(PropertyFlags::ABSPOS_CB) {
-                bitfield |= NS_STYLE_WILL_CHANGE_ABSPOS_CB;
-            }
-
-            bitfield as u8
-        }
-
-        self.gecko.mWillChangeBitField = 0;
-
         match v {
-            T::AnimateableFeatures(features) => {
+            T::AnimateableFeatures { features, bits } => {
                 unsafe {
                     Gecko_ClearWillChange(&mut self.gecko, features.len());
                 }
 
                 for feature in features.iter() {
-                    if feature.0 == atom!("scroll-position") {
-                        self.gecko.mWillChangeBitField |= NS_STYLE_WILL_CHANGE_SCROLL as u8;
-                    } else if feature.0 == atom!("opacity") {
-                        self.gecko.mWillChangeBitField |= NS_STYLE_WILL_CHANGE_OPACITY as u8;
-                    } else if feature.0 == atom!("transform") {
-                        self.gecko.mWillChangeBitField |= NS_STYLE_WILL_CHANGE_TRANSFORM as u8;
-                    }
-
                     unsafe {
-                        Gecko_AppendWillChange(&mut self.gecko, feature.0.as_ptr());
-                    }
-
-                    if let Ok(prop_id) = PropertyId::parse(&feature.0.to_string()) {
-                        match prop_id.as_shorthand() {
-                            Ok(shorthand) => {
-                                for longhand in shorthand.longhands() {
-                                    self.gecko.mWillChangeBitField |=
-                                        will_change_bitfield_from_prop_flags(longhand);
-                                }
-                            },
-                            Err(longhand_or_custom) => {
-                                if let PropertyDeclarationId::Longhand(longhand)
-                                    = longhand_or_custom {
-                                    self.gecko.mWillChangeBitField |=
-                                        will_change_bitfield_from_prop_flags(longhand);
-                                }
-                            },
-                        }
+                        Gecko_AppendWillChange(&mut self.gecko, feature.0.as_ptr())
                     }
                 }
+
+                self.gecko.mWillChangeBitField = bits.bits();
             },
             T::Auto => {
                 unsafe {
                     Gecko_ClearWillChange(&mut self.gecko, 0);
                 }
+                self.gecko.mWillChangeBitField = 0;
             },
         };
     }
@@ -3607,6 +3566,7 @@ fn static_assert() {
         use properties::longhands::will_change::computed_value::T;
         use gecko_bindings::structs::nsAtom;
         use values::CustomIdent;
+        use values::specified::box_::WillChangeBits;
 
         if self.gecko.mWillChange.len() == 0 {
             return T::Auto
@@ -3618,7 +3578,10 @@ fn static_assert() {
             }
         }).collect();
 
-        T::AnimateableFeatures(custom_idents.into_boxed_slice())
+        T::AnimateableFeatures {
+            features: custom_idents.into_boxed_slice(),
+            bits: WillChangeBits::from_bits_truncate(self.gecko.mWillChangeBitField),
+        }
     }
 
     <% impl_shape_source("shape_outside", "mShapeOutside") %>
@@ -3626,10 +3589,13 @@ fn static_assert() {
     pub fn set_contain(&mut self, v: longhands::contain::computed_value::T) {
         use gecko_bindings::structs::NS_STYLE_CONTAIN_NONE;
         use gecko_bindings::structs::NS_STYLE_CONTAIN_STRICT;
+        use gecko_bindings::structs::NS_STYLE_CONTAIN_CONTENT;
+        use gecko_bindings::structs::NS_STYLE_CONTAIN_SIZE;
         use gecko_bindings::structs::NS_STYLE_CONTAIN_LAYOUT;
         use gecko_bindings::structs::NS_STYLE_CONTAIN_STYLE;
         use gecko_bindings::structs::NS_STYLE_CONTAIN_PAINT;
         use gecko_bindings::structs::NS_STYLE_CONTAIN_ALL_BITS;
+        use gecko_bindings::structs::NS_STYLE_CONTAIN_CONTENT_BITS;
         use properties::longhands::contain::SpecifiedValue;
 
         if v.is_empty() {
@@ -3639,6 +3605,10 @@ fn static_assert() {
 
         if v.contains(SpecifiedValue::STRICT) {
             self.gecko.mContain = (NS_STYLE_CONTAIN_STRICT | NS_STYLE_CONTAIN_ALL_BITS) as u8;
+            return;
+        }
+        if v.contains(SpecifiedValue::CONTENT) {
+            self.gecko.mContain = (NS_STYLE_CONTAIN_CONTENT | NS_STYLE_CONTAIN_CONTENT_BITS) as u8;
             return;
         }
 
@@ -3652,35 +3622,56 @@ fn static_assert() {
         if v.contains(SpecifiedValue::PAINT) {
             bitfield |= NS_STYLE_CONTAIN_PAINT;
         }
+        if v.contains(SpecifiedValue::SIZE) {
+            bitfield |= NS_STYLE_CONTAIN_SIZE;
+        }
 
         self.gecko.mContain = bitfield as u8;
     }
 
     pub fn clone_contain(&self) -> longhands::contain::computed_value::T {
         use gecko_bindings::structs::NS_STYLE_CONTAIN_STRICT;
+        use gecko_bindings::structs::NS_STYLE_CONTAIN_CONTENT;
+        use gecko_bindings::structs::NS_STYLE_CONTAIN_SIZE;
         use gecko_bindings::structs::NS_STYLE_CONTAIN_LAYOUT;
         use gecko_bindings::structs::NS_STYLE_CONTAIN_STYLE;
         use gecko_bindings::structs::NS_STYLE_CONTAIN_PAINT;
         use gecko_bindings::structs::NS_STYLE_CONTAIN_ALL_BITS;
+        use gecko_bindings::structs::NS_STYLE_CONTAIN_CONTENT_BITS;
         use properties::longhands::contain::{self, SpecifiedValue};
 
         let mut servo_flags = contain::computed_value::T::empty();
         let gecko_flags = self.gecko.mContain;
 
-        if gecko_flags & (NS_STYLE_CONTAIN_STRICT as u8) != 0 &&
-           gecko_flags & (NS_STYLE_CONTAIN_ALL_BITS as u8) != 0 {
+        if gecko_flags & (NS_STYLE_CONTAIN_STRICT as u8) != 0 {
+            debug_assert_eq!(
+                gecko_flags & (NS_STYLE_CONTAIN_ALL_BITS as u8),
+                NS_STYLE_CONTAIN_ALL_BITS as u8,
+                "When strict is specified, ALL_BITS should be specified as well"
+            );
             servo_flags.insert(SpecifiedValue::STRICT | SpecifiedValue::STRICT_BITS);
             return servo_flags;
         }
-
+        if gecko_flags & (NS_STYLE_CONTAIN_CONTENT as u8) != 0 {
+            debug_assert_eq!(
+                gecko_flags & (NS_STYLE_CONTAIN_CONTENT_BITS as u8),
+                NS_STYLE_CONTAIN_CONTENT_BITS as u8,
+                "When content is specified, CONTENT_BITS should be specified as well"
+            );
+            servo_flags.insert(SpecifiedValue::CONTENT | SpecifiedValue::CONTENT_BITS);
+            return servo_flags;
+        }
         if gecko_flags & (NS_STYLE_CONTAIN_LAYOUT as u8) != 0 {
             servo_flags.insert(SpecifiedValue::LAYOUT);
         }
-        if gecko_flags & (NS_STYLE_CONTAIN_STYLE as u8) != 0{
+        if gecko_flags & (NS_STYLE_CONTAIN_STYLE as u8) != 0 {
             servo_flags.insert(SpecifiedValue::STYLE);
         }
         if gecko_flags & (NS_STYLE_CONTAIN_PAINT as u8) != 0 {
             servo_flags.insert(SpecifiedValue::PAINT);
+        }
+        if gecko_flags & (NS_STYLE_CONTAIN_SIZE as u8) != 0 {
+            servo_flags.insert(SpecifiedValue::SIZE);
         }
 
         return servo_flags;

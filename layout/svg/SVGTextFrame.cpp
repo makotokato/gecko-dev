@@ -1560,7 +1560,7 @@ public:
    * Constructs a TextFrameIterator for the specified SVGTextFrame
    * with an optional frame subtree to restrict iterated text frames to.
    */
-  explicit TextFrameIterator(SVGTextFrame* aRoot, nsIFrame* aSubtree = nullptr)
+  explicit TextFrameIterator(SVGTextFrame* aRoot, const nsIFrame* aSubtree = nullptr)
     : mRootFrame(aRoot),
       mSubtree(aSubtree),
       mCurrentFrame(aRoot),
@@ -1699,7 +1699,7 @@ private:
   /**
    * The frame for the subtree we are also interested in tracking.
    */
-  nsIFrame* mSubtree;
+  const nsIFrame* mSubtree;
 
   /**
    * The current value of the iterator.
@@ -1873,7 +1873,7 @@ public:
    */
   explicit TextRenderedRunIterator(SVGTextFrame* aSVGTextFrame,
                                    RenderedRunFilter aFilter = eAllFrames,
-                                   nsIFrame* aSubtree = nullptr)
+                                   const nsIFrame* aSubtree = nullptr)
     : mFrameIterator(FrameIfAnonymousChildReflowed(aSVGTextFrame), aSubtree),
       mFilter(aFilter),
       mTextElementCharIndex(0),
@@ -2439,10 +2439,12 @@ CharIterator::CharIterator(SVGTextFrame* aSVGTextFrame,
     mFrameForTrimCheck(nullptr),
     mTrimmedOffset(0),
     mTrimmedLength(0),
+    mTextRun(nullptr),
     mTextElementCharIndex(0),
     mGlyphStartTextElementCharIndex(0),
-    mLengthAdjustScaleFactor(aSVGTextFrame->mLengthAdjustScaleFactor)
-  , mPostReflow(aPostReflow)
+    mGlyphUndisplayedCharacters(0),
+    mLengthAdjustScaleFactor(aSVGTextFrame->mLengthAdjustScaleFactor),
+    mPostReflow(aPostReflow)
 {
   if (!AtEnd()) {
     mSkipCharsIterator = TextFrame()->EnsureTextRun(nsTextFrame::eInflated);
@@ -2772,7 +2774,8 @@ public:
       mContext(aContext),
       mFrame(aFrame),
       mCanvasTM(aCanvasTM),
-      mImgParams(aImgParams)
+      mImgParams(aImgParams),
+      mColor(0)
   {
   }
 
@@ -5742,7 +5745,7 @@ SVGTextFrame::TransformFramePointToTextChild(const Point& aPoint,
  */
 gfxRect
 SVGTextFrame::TransformFrameRectFromTextChild(const nsRect& aRect,
-                                              nsIFrame* aChildFrame)
+                                              const nsIFrame* aChildFrame)
 {
   NS_ASSERTION(aChildFrame &&
                nsLayoutUtils::GetClosestFrameOfType

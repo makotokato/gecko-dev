@@ -24,9 +24,9 @@
 #include "js/Wrapper.h"
 #include "proxy/DeadObjectProxy.h"
 #include "vm/ArgumentsObject.h"
-#include "vm/JSCompartment.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
+#include "vm/Realm.h"
 #include "vm/Time.h"
 #include "vm/WrapperObject.h"
 
@@ -38,7 +38,6 @@
 
 using namespace js;
 
-using mozilla::Move;
 using mozilla::PodArrayZero;
 
 JS::RootingContext::RootingContext()
@@ -57,13 +56,13 @@ JS::RootingContext::RootingContext()
 JS_FRIEND_API(void)
 js::SetSourceHook(JSContext* cx, mozilla::UniquePtr<SourceHook> hook)
 {
-    cx->runtime()->sourceHook.ref() = Move(hook);
+    cx->runtime()->sourceHook.ref() = std::move(hook);
 }
 
 JS_FRIEND_API(mozilla::UniquePtr<SourceHook>)
 js::ForgetSourceHook(JSContext* cx)
 {
-    return Move(cx->runtime()->sourceHook.ref());
+    return std::move(cx->runtime()->sourceHook.ref());
 }
 
 JS_FRIEND_API(void)
@@ -150,23 +149,31 @@ JS_NewObjectWithoutMetadata(JSContext* cx, const JSClass* clasp, JS::Handle<JSOb
 }
 
 JS_FRIEND_API(bool)
-JS_GetIsSecureContext(JSCompartment* compartment)
+JS::GetIsSecureContext(JS::Realm* realm)
 {
-    return JS::GetRealmForCompartment(compartment)->creationOptions().secureContext();
+    return realm->creationOptions().secureContext();
 }
 
 JS_FRIEND_API(JSPrincipals*)
-JS_GetCompartmentPrincipals(JSCompartment* compartment)
+JS_GetCompartmentPrincipals(JS::Compartment* compartment)
 {
-    Realm* realm = JS::GetRealmForCompartment(compartment);
+    // Note: for now we assume a single realm per compartment. This API will go
+    // away after we remove the remaining callers. See bug 1465700.
+    MOZ_RELEASE_ASSERT(compartment->realms().length() == 1);
+
+    return compartment->realms()[0]->principals();
+}
+
+JS_FRIEND_API(JSPrincipals*)
+JS::GetRealmPrincipals(JS::Realm* realm)
+{
     return realm->principals();
 }
 
 JS_FRIEND_API(void)
-JS_SetCompartmentPrincipals(JSCompartment* compartment, JSPrincipals* principals)
+JS::SetRealmPrincipals(JS::Realm* realm, JSPrincipals* principals)
 {
     // Short circuit if there's no change.
-    Realm* realm = JS::GetRealmForCompartment(compartment);
     if (principals == realm->principals())
         return;
 
@@ -202,10 +209,10 @@ JS_GetScriptPrincipals(JSScript* script)
     return script->principals();
 }
 
-JS_FRIEND_API(JSCompartment*)
-js::GetScriptCompartment(JSScript* script)
+JS_FRIEND_API(JS::Realm*)
+js::GetScriptRealm(JSScript* script)
 {
-    return script->compartment();
+    return script->realm();
 }
 
 JS_FRIEND_API(bool)
@@ -246,7 +253,7 @@ DefineHelpProperty(JSContext* cx, HandleObject obj, const char* prop, const char
 JS_FRIEND_API(bool)
 JS_DefineFunctionsWithHelp(JSContext* cx, HandleObject obj, const JSFunctionSpecWithHelp* fs)
 {
-    MOZ_ASSERT(!cx->realm()->isAtomsRealm());
+    MOZ_ASSERT(!cx->zone()->isAtomsZone());
 
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj);
@@ -334,27 +341,33 @@ js::ObjectClassName(JSContext* cx, HandleObject obj)
 }
 
 JS_FRIEND_API(JS::Zone*)
-js::GetCompartmentZone(JSCompartment* comp)
+js::GetRealmZone(JS::Realm* realm)
 {
-    return comp->zone();
+    return realm->zone();
 }
 
 JS_FRIEND_API(bool)
-js::IsSystemCompartment(JSCompartment* comp)
+js::IsSystemCompartment(JS::Compartment* comp)
 {
-    return JS::GetRealmForCompartment(comp)->isSystem();
+    // Note: for now we assume a single realm per compartment. This API will
+    // hopefully go away once Gecko supports same-compartment realms. Another
+    // option is to return comp->zone()->isSystem here, but we'd have to make
+    // sure that's equivalent.
+    MOZ_RELEASE_ASSERT(comp->realms().length() == 1);
+
+    return comp->realms()[0]->isSystem();
+}
+
+JS_FRIEND_API(bool)
+js::IsSystemRealm(JS::Realm* realm)
+{
+    return realm->isSystem();
 }
 
 JS_FRIEND_API(bool)
 js::IsSystemZone(Zone* zone)
 {
     return zone->isSystem;
-}
-
-JS_FRIEND_API(bool)
-js::IsAtomsRealm(JS::Realm* realm)
-{
-    return realm->isAtomsRealm();
 }
 
 JS_FRIEND_API(bool)
@@ -372,7 +385,7 @@ js::IsFunctionObject(JSObject* obj)
 JS_FRIEND_API(JSObject*)
 js::GetGlobalForObjectCrossCompartment(JSObject* obj)
 {
-    return &obj->global();
+    return &obj->deprecatedGlobal();
 }
 
 JS_FRIEND_API(JSObject*)
@@ -405,8 +418,10 @@ js::AssertSameCompartment(JSObject* objA, JSObject* objB)
 JS_FRIEND_API(void)
 js::NotifyAnimationActivity(JSObject* obj)
 {
+    MOZ_ASSERT(obj->is<GlobalObject>());
+
     int64_t timeNow = PRMJ_Now();
-    obj->realm()->lastAnimationTime = timeNow;
+    obj->as<GlobalObject>().realm()->lastAnimationTime = timeNow;
     obj->runtimeFromMainThread()->lastAnimationTime = timeNow;
 }
 
@@ -433,7 +448,7 @@ js::DefineFunctionWithReserved(JSContext* cx, JSObject* objArg, const char* name
                                unsigned nargs, unsigned attrs)
 {
     RootedObject obj(cx, objArg);
-    MOZ_ASSERT(!cx->realm()->isAtomsRealm());
+    MOZ_ASSERT(!cx->zone()->isAtomsZone());
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj);
     JSAtom* atom = Atomize(cx, name, strlen(name));
@@ -447,7 +462,7 @@ JS_FRIEND_API(JSFunction*)
 js::NewFunctionWithReserved(JSContext* cx, JSNative native, unsigned nargs, unsigned flags,
                             const char* name)
 {
-    MOZ_ASSERT(!cx->realm()->isAtomsRealm());
+    MOZ_ASSERT(!cx->zone()->isAtomsZone());
 
     CHECK_REQUEST(cx);
 
@@ -468,7 +483,7 @@ js::NewFunctionByIdWithReserved(JSContext* cx, JSNative native, unsigned nargs, 
                                 jsid id)
 {
     MOZ_ASSERT(JSID_IS_STRING(id));
-    MOZ_ASSERT(!cx->realm()->isAtomsRealm());
+    MOZ_ASSERT(!cx->zone()->isAtomsZone());
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, id);
 
@@ -520,11 +535,9 @@ js::GetStaticPrototype(JSObject* obj)
 }
 
 JS_FRIEND_API(bool)
-js::GetOriginalEval(JSContext* cx, HandleObject scope, MutableHandleObject eval)
+js::GetRealmOriginalEval(JSContext* cx, MutableHandleObject eval)
 {
-    assertSameCompartment(cx, scope);
-    Rooted<GlobalObject*> global(cx, &scope->global());
-    return GlobalObject::getOrCreateEval(cx, global, eval);
+    return GlobalObject::getOrCreateEval(cx, cx->global(), eval);
 }
 
 JS_FRIEND_API(void)
@@ -616,7 +629,7 @@ JS_FRIEND_API(void)
 js::VisitGrayWrapperTargets(Zone* zone, GCThingCallback callback, void* closure)
 {
     for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next()) {
-        for (JSCompartment::WrapperEnum e(comp); !e.empty(); e.popFront())
+        for (Compartment::WrapperEnum e(comp); !e.empty(); e.popFront())
             e.front().mutableKey().applyToWrapped(VisitGrayCallbackFunctor(callback, closure));
     }
 }
@@ -840,7 +853,7 @@ sprintf_append(JSContext* cx, JS::UniqueChars&& buf, const char* fmt, ...)
     va_list ap;
 
     va_start(ap, fmt);
-    JS::UniqueChars result = JS_vsprintf_append(Move(buf), fmt, ap);
+    JS::UniqueChars result = JS_vsprintf_append(std::move(buf), fmt, ap);
     va_end(ap);
 
     if (!result) {
@@ -880,17 +893,17 @@ FormatFrame(JSContext* cx, const FrameIter& iter, JS::UniqueChars&& inBuf, int n
     }
 
     // print the frame number and function name
-    JS::UniqueChars buf(Move(inBuf));
+    JS::UniqueChars buf(std::move(inBuf));
     if (funname) {
         JSAutoByteString funbytes;
         char* str = funbytes.encodeLatin1(cx, funname);
         if (!str)
             return nullptr;
-        buf = sprintf_append(cx, Move(buf), "%d %s(", num, str);
+        buf = sprintf_append(cx, std::move(buf), "%d %s(", num, str);
     } else if (fun) {
-        buf = sprintf_append(cx, Move(buf), "%d anonymous(", num);
+        buf = sprintf_append(cx, std::move(buf), "%d anonymous(", num);
     } else {
-        buf = sprintf_append(cx, Move(buf), "%d <TOP LEVEL>", num);
+        buf = sprintf_append(cx, std::move(buf), "%d <TOP LEVEL>", num);
     }
     if (!buf)
         return nullptr;
@@ -939,7 +952,7 @@ FormatFrame(JSContext* cx, const FrameIter& iter, JS::UniqueChars&& inBuf, int n
             }
 
             if (value) {
-                buf = sprintf_append(cx, Move(buf), "%s%s%s%s%s%s",
+                buf = sprintf_append(cx, std::move(buf), "%s%s%s%s%s%s",
                                      !first ? ", " : "",
                                      name ? name :"",
                                      name ? " = " : "",
@@ -951,7 +964,7 @@ FormatFrame(JSContext* cx, const FrameIter& iter, JS::UniqueChars&& inBuf, int n
 
                 first = false;
             } else {
-                buf = sprintf_append(cx, Move(buf),
+                buf = sprintf_append(cx, std::move(buf),
                                      "    <Failed to get argument while inspecting stack frame>\n");
                 if (!buf)
                     return nullptr;
@@ -961,7 +974,7 @@ FormatFrame(JSContext* cx, const FrameIter& iter, JS::UniqueChars&& inBuf, int n
     }
 
     // print filename and line number
-    buf = sprintf_append(cx, Move(buf), "%s [\"%s\":%d]\n",
+    buf = sprintf_append(cx, std::move(buf), "%s [\"%s\":%d]\n",
                          fun ? ")" : "",
                          filename ? filename : "<unknown>",
                          lineno);
@@ -986,9 +999,9 @@ FormatFrame(JSContext* cx, const FrameIter& iter, JS::UniqueChars&& inBuf, int n
                 const char* str = thisValBytes.encodeLatin1(cx, thisValStr);
                 if (!str)
                     return nullptr;
-                buf = sprintf_append(cx, Move(buf), "    this = %s\n", str);
+                buf = sprintf_append(cx, std::move(buf), "    this = %s\n", str);
             } else {
-                buf = sprintf_append(cx, Move(buf), "    <failed to get 'this' value>\n");
+                buf = sprintf_append(cx, std::move(buf), "    <failed to get 'this' value>\n");
             }
             if (!buf)
                 return nullptr;
@@ -1015,7 +1028,7 @@ FormatFrame(JSContext* cx, const FrameIter& iter, JS::UniqueChars&& inBuf, int n
                 if (cx->isThrowingOutOfMemory())
                     return nullptr;
                 cx->clearPendingException();
-                buf = sprintf_append(cx, Move(buf),
+                buf = sprintf_append(cx, std::move(buf),
                                      "    <Failed to fetch property while inspecting stack frame>\n");
                 if (!buf)
                     return nullptr;
@@ -1039,13 +1052,13 @@ FormatFrame(JSContext* cx, const FrameIter& iter, JS::UniqueChars&& inBuf, int n
             }
 
             if (name && value) {
-                buf = sprintf_append(cx, Move(buf), "    this.%s = %s%s%s\n",
+                buf = sprintf_append(cx, std::move(buf), "    this.%s = %s%s%s\n",
                                      name,
                                      v.isString() ? "\"" : "",
                                      value,
                                      v.isString() ? "\"" : "");
             } else {
-                buf = sprintf_append(cx, Move(buf),
+                buf = sprintf_append(cx, std::move(buf),
                                      "    <Failed to format values while inspecting stack frame>\n");
             }
             if (!buf)
@@ -1067,13 +1080,13 @@ FormatWasmFrame(JSContext* cx, const FrameIter& iter, JS::UniqueChars&& inBuf, i
             return nullptr;
     }
 
-    JS::UniqueChars buf = sprintf_append(cx, Move(inBuf), "%d %s()",
+    JS::UniqueChars buf = sprintf_append(cx, std::move(inBuf), "%d %s()",
                                          num,
                                          nameStr ? nameStr.get() : "<wasm-function>");
     if (!buf)
         return nullptr;
 
-    buf = sprintf_append(cx, Move(buf), " [\"%s\":wasm-function[%d]:0x%x]\n",
+    buf = sprintf_append(cx, std::move(buf), " [\"%s\":wasm-function[%d]:0x%x]\n",
                          iter.filename() ? iter.filename() : "<unknown>",
                          iter.wasmFuncIndex(),
                          iter.wasmBytecodeOffset());
@@ -1090,19 +1103,19 @@ JS::FormatStackDump(JSContext* cx, JS::UniqueChars&& inBuf, bool showArgs, bool 
 {
     int num = 0;
 
-    JS::UniqueChars buf(Move(inBuf));
+    JS::UniqueChars buf(std::move(inBuf));
     for (AllFramesIter i(cx); !i.done(); ++i) {
         if (i.hasScript())
-            buf = FormatFrame(cx, i, Move(buf), num, showArgs, showLocals, showThisProps);
+            buf = FormatFrame(cx, i, std::move(buf), num, showArgs, showLocals, showThisProps);
         else
-            buf = FormatWasmFrame(cx, i, Move(buf), num);
+            buf = FormatWasmFrame(cx, i, std::move(buf), num);
         if (!buf)
             return nullptr;
         num++;
     }
 
     if (!num)
-        buf = JS_sprintf_append(Move(buf), "JavaScript stack is empty\n");
+        buf = JS_sprintf_append(std::move(buf), "JavaScript stack is empty\n");
 
     return buf;
 }
@@ -1184,16 +1197,17 @@ DumpHeapVisitZone(JSRuntime* rt, void* data, Zone* zone)
 }
 
 static void
-DumpHeapVisitCompartment(JSContext* cx, void* data, JSCompartment* comp)
+DumpHeapVisitRealm(JSContext* cx, void* data, Handle<Realm*> realm)
 {
     char name[1024];
-    if (cx->runtime()->compartmentNameCallback)
-        (*cx->runtime()->compartmentNameCallback)(cx, comp, name, sizeof(name));
+    if (auto nameCallback = cx->runtime()->realmNameCallback)
+        nameCallback(cx, realm, name, sizeof(name));
     else
         strcpy(name, "<unknown>");
 
     DumpHeapTracer* dtrc = static_cast<DumpHeapTracer*>(data);
-    fprintf(dtrc->output, "# compartment %s [in zone %p]\n", name, (void*)comp->zone());
+    fprintf(dtrc->output, "# realm %s [in compartment %p, zone %p]\n", name,
+            (void*)realm->compartment(), (void*)realm->zone());
 }
 
 static void
@@ -1238,9 +1252,9 @@ js::DumpHeap(JSContext* cx, FILE* fp, js::DumpHeapNurseryBehaviour nurseryBehavi
     fprintf(dtrc.output, "# Roots.\n");
     {
         JSRuntime* rt = cx->runtime();
-        js::gc::AutoPrepareForTracing prep(cx);
+        js::gc::AutoTraceSession session(rt);
         gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::TRACE_HEAP);
-        rt->gc.traceRuntime(&dtrc, prep.session());
+        rt->gc.traceRuntime(&dtrc, session);
     }
 
     fprintf(dtrc.output, "# Weak maps.\n");
@@ -1250,10 +1264,10 @@ js::DumpHeap(JSContext* cx, FILE* fp, js::DumpHeapNurseryBehaviour nurseryBehavi
 
     dtrc.prefix = "> ";
     IterateHeapUnbarriered(cx, &dtrc,
-                                                   DumpHeapVisitZone,
-                                                   DumpHeapVisitCompartment,
-                                                   DumpHeapVisitArena,
-                                                   DumpHeapVisitCell);
+                           DumpHeapVisitZone,
+                           DumpHeapVisitRealm,
+                           DumpHeapVisitArena,
+                           DumpHeapVisitCell);
 
     fflush(dtrc.output);
 }
@@ -1271,12 +1285,15 @@ JS::NotifyGCRootsRemoved(JSContext* cx)
     cx->runtime()->gc.notifyRootsRemoved();
 }
 
-JS_FRIEND_API(JSCompartment*)
-js::GetAnyCompartmentInZone(JS::Zone* zone)
+JS_FRIEND_API(JS::Realm*)
+js::GetAnyRealmInZone(JS::Zone* zone)
 {
-    CompartmentsInZoneIter comp(zone);
-    MOZ_ASSERT(!comp.done());
-    return comp.get();
+    if (zone->isAtomsZone())
+        return nullptr;
+
+    RealmsInZoneIter realm(zone);
+    MOZ_ASSERT(!realm.done());
+    return realm.get();
 }
 
 void
@@ -1318,14 +1335,6 @@ js::GetTestingFunctions(JSContext* cx)
 
     return obj;
 }
-
-#ifdef DEBUG
-JS_FRIEND_API(unsigned)
-js::GetEnterRealmDepth(JSContext* cx)
-{
-  return cx->getEnterRealmDepth();
-}
-#endif
 
 JS_FRIEND_API(void)
 js::SetDOMCallbacks(JSContext* cx, const DOMCallbacks* callbacks)
@@ -1496,7 +1505,7 @@ JS_FRIEND_API(JSObject*)
 js::ToWindowIfWindowProxy(JSObject* obj)
 {
     if (IsWindowProxy(obj))
-        return &obj->global();
+        return &obj->nonCCWGlobal();
     return obj;
 }
 
@@ -1542,9 +1551,10 @@ js::EnableAccessValidation(JSContext* cx, bool enabled)
 }
 
 JS_FRIEND_API(void)
-js::SetCompartmentValidAccessPtr(JSContext* cx, JS::HandleObject global, bool* accessp)
+js::SetRealmValidAccessPtr(JSContext* cx, JS::HandleObject global, bool* accessp)
 {
-    global->realm()->setValidAccessPtr(accessp);
+    MOZ_ASSERT(global->is<GlobalObject>());
+    global->as<GlobalObject>().realm()->setValidAccessPtr(accessp);
 }
 
 JS_FRIEND_API(bool)

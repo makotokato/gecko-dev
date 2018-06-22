@@ -9,6 +9,7 @@
 #include "vm/Iteration.h"
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/Likely.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
@@ -36,6 +37,7 @@
 #include "vm/Shape.h"
 #include "vm/TypedArrayObject.h"
 
+#include "vm/Compartment-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
 #include "vm/ReceiverGuard-inl.h"
@@ -69,9 +71,14 @@ NativeIterator::trace(JSTracer* trc)
                       guard.trace(trc);
                   });
 
-    std::for_each(propertiesBegin(), propertiesEnd(),
+    GCPtrFlatString* begin = MOZ_LIKELY(isInitialized()) ? propertiesBegin() : propertyCursor_;
+    std::for_each(begin, propertiesEnd(),
                   [trc](GCPtrFlatString& prop) {
-                      TraceNullableEdge(trc, &prop, "prop");
+                      // Properties begin life non-null and never *become*
+                      // null.  (Deletion-suppression will shift trailing
+                      // properties over a deleted property in the properties
+                      // array, but it doesn't null them out.)
+                      TraceEdge(trc, &prop, "prop");
                   });
 }
 
@@ -621,7 +628,7 @@ CreatePropertyIterator(JSContext* cx, Handle<JSObject*> objBeingIterated,
 /**
  * Initialize a sentinel NativeIterator whose purpose is only to act as the
  * start/end of the circular linked list of NativeIterators in
- * JSCompartment::enumerators.
+ * ObjectRealm::enumerators.
  */
 NativeIterator::NativeIterator()
 {
@@ -630,7 +637,7 @@ NativeIterator::NativeIterator()
     JS_POISON(static_cast<void*>(this), 0xCC, sizeof(*this), MemCheckKind::MakeUndefined);
 
     // These are the only two fields in sentinel NativeIterators that are
-    // examined, in JSCompartment::sweepNativeIterators.  Everything else is
+    // examined, in ObjectRealm::sweepNativeIterators.  Everything else is
     // only examined *if* it's a NativeIterator being traced by a
     // PropertyIteratorObject that owns it, and nothing owns this iterator.
     prev_ = next_ = this;
@@ -734,6 +741,8 @@ NativeIterator::NativeIterator(JSContext* cx, Handle<PropertyIteratorObject*> pr
     }
 
     MOZ_ASSERT(static_cast<void*>(guardsEnd_) == propertyCursor_);
+    markInitialized();
+
     MOZ_ASSERT(!*hadError);
 }
 
@@ -1299,9 +1308,7 @@ SuppressDeletedProperty(JSContext* cx, NativeIterator* ni, HandleObject obj,
                 ni->trimLastProperty();
             }
 
-            // Modified NativeIterators omit properties that possibly shouldn't
-            // be omitted, so they can't be reused.
-            ni->markNotReusable();
+            ni->markHasUnvisitedPropertyDeletion();
             return true;
         }
 

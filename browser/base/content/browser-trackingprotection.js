@@ -15,11 +15,28 @@ var TrackingProtection = {
   activeTooltipText: null,
   disabledTooltipText: null,
 
+  get _baseURIForChannelClassifier() {
+    // Convert document URI into the format used by
+    // nsChannelClassifier::ShouldEnableTrackingProtection.
+    // Any scheme turned into https is correct.
+    return Services.io.newURI("https://" + gBrowser.selectedBrowser.currentURI.hostPort);
+  },
+
   init() {
     let $ = selector => document.querySelector(selector);
     this.container = $("#tracking-protection-container");
     this.content = $("#tracking-protection-content");
     this.icon = $("#tracking-protection-icon");
+    this.broadcaster = $("#trackingProtectionBroadcaster");
+
+    this.enableTooltip =
+      gNavigatorBundle.getString("trackingProtection.toggle.enable.tooltip");
+    this.disableTooltip =
+      gNavigatorBundle.getString("trackingProtection.toggle.disable.tooltip");
+    this.enableTooltipPB =
+      gNavigatorBundle.getString("trackingProtection.toggle.enable.pbmode.tooltip");
+    this.disableTooltipPB =
+      gNavigatorBundle.getString("trackingProtection.toggle.disable.pbmode.tooltip");
 
     this.updateEnabled();
     Services.prefs.addObserver(this.PREF_ENABLED_GLOBALLY, this);
@@ -49,12 +66,42 @@ var TrackingProtection = {
             PrivateBrowsingUtils.isWindowPrivate(window));
   },
 
+  onGlobalToggleCommand() {
+    if (PrivateBrowsingUtils.isWindowPrivate(window)) {
+      Services.prefs.setBoolPref(this.PREF_ENABLED_IN_PRIVATE_WINDOWS, !this.enabledInPrivateWindows);
+    } else {
+      Services.prefs.setBoolPref(this.PREF_ENABLED_GLOBALLY, !this.enabledGlobally);
+    }
+  },
+
+  hideIdentityPopupAndReload() {
+    document.getElementById("identity-popup").hidePopup();
+    BrowserReload();
+  },
+
+  openPreferences(origin) {
+    openPreferences("privacy-trackingprotection", { origin });
+  },
+
   updateEnabled() {
     this.enabledGlobally =
       Services.prefs.getBoolPref(this.PREF_ENABLED_GLOBALLY);
     this.enabledInPrivateWindows =
       Services.prefs.getBoolPref(this.PREF_ENABLED_IN_PRIVATE_WINDOWS);
-    this.container.hidden = !this.enabled;
+
+    this.content.setAttribute("enabled", this.enabled);
+
+    if (PrivateBrowsingUtils.isWindowPrivate(window)) {
+      this.broadcaster.setAttribute("enabled", this.enabledInPrivateWindows);
+      this.broadcaster.setAttribute("aria-pressed", this.enabledInPrivateWindows);
+      this.broadcaster.setAttribute("tooltiptext", this.enabledInPrivateWindows ?
+        this.disableTooltipPB : this.enableTooltipPB);
+    } else {
+      this.broadcaster.setAttribute("enabled", this.enabledGlobally);
+      this.broadcaster.setAttribute("aria-pressed", this.enabledGlobally);
+      this.broadcaster.setAttribute("tooltiptext", this.enabledGlobally ?
+        this.disableTooltip : this.enableTooltip);
+    }
   },
 
   enabledHistogramAdd(value) {
@@ -86,10 +133,6 @@ var TrackingProtection = {
   },
 
   onSecurityChange(state, isSimulated) {
-    if (!this.enabled) {
-      return;
-    }
-
     // Only animate the shield if the event was not fired directly from
     // the tabbrowser (due to a browser change).
     if (isSimulated) {
@@ -101,10 +144,11 @@ var TrackingProtection = {
     let isBlocking = state & Ci.nsIWebProgressListener.STATE_BLOCKED_TRACKING_CONTENT;
     let isAllowing = state & Ci.nsIWebProgressListener.STATE_LOADED_TRACKING_CONTENT;
 
-    if (isBlocking) {
+    if (isBlocking && this.enabled) {
       this.icon.setAttribute("tooltiptext", this.activeTooltipText);
       this.icon.setAttribute("state", "blocked-tracking-content");
       this.content.setAttribute("state", "blocked-tracking-content");
+      this.content.removeAttribute("hasException");
 
       // Open the tracking protection introduction panel, if applicable.
       if (this.enabledGlobally) {
@@ -118,15 +162,39 @@ var TrackingProtection = {
 
       this.shieldHistogramAdd(2);
     } else if (isAllowing) {
-      this.icon.setAttribute("tooltiptext", this.disabledTooltipText);
-      this.icon.setAttribute("state", "loaded-tracking-content");
-      this.content.setAttribute("state", "loaded-tracking-content");
+      // Check whether the user has added an exception for this site.
+      let hasException = false;
+      if (PrivateBrowsingUtils.isBrowserPrivate(gBrowser.selectedBrowser)) {
+        hasException = PrivateBrowsingUtils.existsInTrackingAllowlist(this._baseURIForChannelClassifier);
+      } else {
+        hasException = Services.perms.testExactPermission(this._baseURIForChannelClassifier,
+          "trackingprotection") == Services.perms.ALLOW_ACTION;
+      }
 
-      this.shieldHistogramAdd(1);
+      if (hasException) {
+        this.content.setAttribute("hasException", "true");
+      } else {
+        this.content.removeAttribute("hasException");
+      }
+
+      // Only show the shield when TP is enabled for now.
+      if (this.enabled) {
+        this.icon.setAttribute("tooltiptext", this.disabledTooltipText);
+        this.icon.setAttribute("state", "loaded-tracking-content");
+        this.shieldHistogramAdd(1);
+      } else {
+        this.icon.removeAttribute("tooltiptext");
+        this.icon.removeAttribute("state");
+        this.shieldHistogramAdd(0);
+      }
+
+      // Warn in the control center even with TP disabled.
+      this.content.setAttribute("state", "loaded-tracking-content");
     } else {
       this.icon.removeAttribute("tooltiptext");
       this.icon.removeAttribute("state");
       this.content.removeAttribute("state");
+      this.content.removeAttribute("hasException");
 
       // We didn't show the shield
       this.shieldHistogramAdd(0);
@@ -137,51 +205,48 @@ var TrackingProtection = {
   },
 
   disableForCurrentPage() {
-    // Convert document URI into the format used by
-    // nsChannelClassifier::ShouldEnableTrackingProtection.
-    // Any scheme turned into https is correct.
-    let normalizedUrl = Services.io.newURI(
-      "https://" + gBrowser.selectedBrowser.currentURI.hostPort);
+    let baseURI = this._baseURIForChannelClassifier;
 
     // Add the current host in the 'trackingprotection' consumer of
     // the permission manager using a normalized URI. This effectively
     // places this host on the tracking protection allowlist.
     if (PrivateBrowsingUtils.isBrowserPrivate(gBrowser.selectedBrowser)) {
-      PrivateBrowsingUtils.addToTrackingAllowlist(normalizedUrl);
+      PrivateBrowsingUtils.addToTrackingAllowlist(baseURI);
     } else {
-      Services.perms.add(normalizedUrl,
+      Services.perms.add(baseURI,
         "trackingprotection", Services.perms.ALLOW_ACTION);
     }
 
     // Telemetry for disable protection.
     this.eventsHistogramAdd(1);
 
-    // Hide the control center.
-    document.getElementById("identity-popup").hidePopup();
-
-    BrowserReload();
+    this.hideIdentityPopupAndReload();
   },
 
   enableForCurrentPage() {
+    // If users are not clicking this link to unblock a specific exception,
+    // open the privacy settings to allow users to turn TP on globally. We might
+    // change this button to allow globally toggling the pref in the future.
+    if (!this.enabled) {
+      this.openPreferences("identityPopup-TP-action");
+      return;
+    }
+
     // Remove the current host from the 'trackingprotection' consumer
     // of the permission manager. This effectively removes this host
     // from the tracking protection allowlist.
-    let normalizedUrl = Services.io.newURI(
-      "https://" + gBrowser.selectedBrowser.currentURI.hostPort);
+    let baseURI = this._baseURIForChannelClassifier;
 
     if (PrivateBrowsingUtils.isBrowserPrivate(gBrowser.selectedBrowser)) {
-      PrivateBrowsingUtils.removeFromTrackingAllowlist(normalizedUrl);
+      PrivateBrowsingUtils.removeFromTrackingAllowlist(baseURI);
     } else {
-      Services.perms.remove(normalizedUrl, "trackingprotection");
+      Services.perms.remove(baseURI, "trackingprotection");
     }
 
     // Telemetry for enable protection.
     this.eventsHistogramAdd(2);
 
-    // Hide the control center.
-    document.getElementById("identity-popup").hidePopup();
-
-    BrowserReload();
+    this.hideIdentityPopupAndReload();
   },
 
   dontShowIntroPanelAgain() {

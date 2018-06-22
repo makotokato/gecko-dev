@@ -13,12 +13,13 @@
 #include "jit/JSJitFrameIter.h"
 #include "jit/Linker.h"
 #include "jit/SharedICHelpers.h"
+#include "jit/VMFunctions.h"
 #include "proxy/DeadObjectProxy.h"
 #include "proxy/Proxy.h"
 
 #include "jit/JSJitFrameIter-inl.h"
 #include "jit/MacroAssembler-inl.h"
-#include "vm/JSCompartment-inl.h"
+#include "vm/Realm-inl.h"
 #include "vm/TypeInference-inl.h"
 
 using namespace js;
@@ -680,7 +681,7 @@ IonCacheIRCompiler::emitGuardCompartment()
 {
     Register obj = allocator.useRegister(masm, reader.objOperandId());
     JSObject* globalWrapper = objectStubField(reader.stubOffset());
-    JSCompartment* compartment = compartmentStubField(reader.stubOffset());
+    JS::Compartment* compartment = compartmentStubField(reader.stubOffset());
     AutoScratchRegister scratch(allocator, masm);
 
     FailurePath* failure;
@@ -917,51 +918,6 @@ IonCacheIRCompiler::emitLoadDynamicSlotResult()
     AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
     masm.loadPtr(Address(obj, NativeObject::offsetOfSlots()), scratch);
     masm.loadTypedOrValue(Address(scratch, offset), output);
-    return true;
-}
-
-bool
-IonCacheIRCompiler::emitMegamorphicStoreSlot()
-{
-    Register obj = allocator.useRegister(masm, reader.objOperandId());
-    PropertyName* name = stringStubField(reader.stubOffset())->asAtom().asPropertyName();
-    ValueOperand val = allocator.useValueRegister(masm, reader.valOperandId());
-    bool needsTypeBarrier = reader.readBool();
-
-    AutoScratchRegister scratch1(allocator, masm);
-    AutoScratchRegister scratch2(allocator, masm);
-
-    FailurePath* failure;
-    if (!addFailurePath(&failure))
-        return false;
-
-    masm.Push(val);
-    masm.moveStackPtrTo(val.scratchReg());
-
-    LiveRegisterSet volatileRegs(GeneralRegisterSet::Volatile(), liveVolatileFloatRegs());
-    volatileRegs.takeUnchecked(scratch1);
-    volatileRegs.takeUnchecked(scratch2);
-    volatileRegs.takeUnchecked(val);
-    masm.PushRegsInMask(volatileRegs);
-
-    masm.setupUnalignedABICall(scratch1);
-    masm.loadJSContext(scratch1);
-    masm.passABIArg(scratch1);
-    masm.passABIArg(obj);
-    masm.movePtr(ImmGCPtr(name), scratch2);
-    masm.passABIArg(scratch2);
-    masm.passABIArg(val.scratchReg());
-    if (needsTypeBarrier)
-        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, (SetNativeDataProperty<true>)));
-    else
-        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, (SetNativeDataProperty<false>)));
-    masm.mov(ReturnReg, scratch1);
-    masm.PopRegsInMask(volatileRegs);
-
-    masm.loadValue(Address(masm.getStackPointer(), 0), val);
-    masm.adjustStack(sizeof(Value));
-
-    masm.branchIfFalseBool(scratch1, failure->label());
     return true;
 }
 
@@ -1360,6 +1316,47 @@ IonCacheIRCompiler::emitCallStringSplitResult()
     return true;
 }
 
+bool
+IonCacheIRCompiler::emitCompareStringResult()
+{
+    AutoOutputRegister output(*this);
+
+    Register left = allocator.useRegister(masm, reader.stringOperandId());
+    Register right = allocator.useRegister(masm, reader.stringOperandId());
+    JSOp op = reader.jsop();
+
+    AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
+
+    FailurePath* failure;
+    if (!addFailurePath(&failure))
+        return false;
+
+    allocator.discardStack(masm);
+
+    Label slow, done;
+    masm.compareStrings(op, left, right, scratch, &slow);
+
+    masm.jump(&done);
+    masm.bind(&slow);
+
+    prepareVMCall(masm);
+    masm.Push(right);
+    masm.Push(left);
+
+    if (!callVM(masm, (op == JSOP_EQ || op == JSOP_STRICTEQ) ?
+                            StringsEqualInfo :
+                            StringsNotEqualInfo))
+    {
+        return false;
+    }
+
+    masm.storeCallBoolResult(scratch);
+    masm.bind(&done);
+
+    masm.tagValue(JSVAL_TYPE_BOOLEAN, scratch, output.valueReg());
+    return true;
+}
+
 static bool
 GroupHasPropertyTypes(ObjectGroup* group, jsid* id, Value* v)
 {
@@ -1698,7 +1695,7 @@ IonCacheIRCompiler::emitStoreTypedObjectReferenceProperty()
     Register obj = allocator.useRegister(masm, reader.objOperandId());
     int32_t offset = int32StubField(reader.stubOffset());
     TypedThingLayout layout = reader.typedThingLayout();
-    ReferenceTypeDescr::Type type = reader.referenceTypeDescrType();
+    ReferenceType type = reader.referenceTypeDescrType();
 
     ValueOperand val = allocator.useValueRegister(masm, reader.valOperandId());
 
@@ -1707,7 +1704,7 @@ IonCacheIRCompiler::emitStoreTypedObjectReferenceProperty()
 
     // We don't need to check property types if the property is always a
     // string.
-    if (type != ReferenceTypeDescr::TYPE_STRING) {
+    if (type != ReferenceType::TYPE_STRING) {
         FailurePath* failure;
         if (!addFailurePath(&failure))
             return false;
@@ -1721,7 +1718,7 @@ IonCacheIRCompiler::emitStoreTypedObjectReferenceProperty()
 
     emitStoreTypedObjectReferenceProp(val, type, dest, scratch2);
 
-    if (needsPostBarrier() && type != ReferenceTypeDescr::TYPE_STRING)
+    if (needsPostBarrier() && type != ReferenceType::TYPE_STRING)
         emitPostBarrierSlot(obj, val, scratch1);
     return true;
 }
@@ -2308,10 +2305,8 @@ IonCacheIRCompiler::emitGuardAndGetIterator()
     masm.movePtr(ImmGCPtr(iterobj), output);
     masm.loadObjPrivate(output, JSObject::ITER_CLASS_NFIXED_SLOTS, niScratch);
 
-    // Ensure the |active| and |unreusable| bits are not set.
-    masm.branchTest32(Assembler::NonZero,
-                      Address(niScratch, NativeIterator::offsetOfFlags()),
-                      Imm32(NativeIterator::Flags::All), failure->label());
+    // Ensure the iterator is reusable: see NativeIterator::isReusable.
+    masm.branchIfNativeIteratorNotReusable(niScratch, failure->label());
 
     // Pre-write barrier for store to 'objectBeingIterated_'.
     Address iterObjAddr(niScratch, NativeIterator::offsetOfObjectBeingIterated());

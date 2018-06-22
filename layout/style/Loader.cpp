@@ -25,7 +25,6 @@
 #include "nsString.h"
 #include "nsIContent.h"
 #include "nsIDocument.h"
-#include "nsIDOMNode.h"
 #include "nsIURI.h"
 #include "nsNetUtil.h"
 #include "nsIProtocolHandler.h"
@@ -979,9 +978,12 @@ Loader::CreateSheet(nsIURI* aURI,
       // Make sure it hasn't been forced to have a unique inner;
       // that is an indication that its rules have been exposed to
       // CSSOM and so we can't use it.
-      if (sheet->HasForcedUniqueInner()) {
+      //
+      // Similarly, if the sheet doesn't have the right parsing mode just bail.
+      if (sheet->HasForcedUniqueInner() ||
+          sheet->ParsingMode() != aParsingMode) {
         LOG(("  Not cloning completed sheet %p because it has a "
-             "forced unique inner",
+             "forced unique inner or the wrong parsing mode",
              sheet.get()));
         sheet = nullptr;
         fromCompleteSheets = false;
@@ -1043,7 +1045,7 @@ Loader::CreateSheet(nsIURI* aURI,
 
       RefPtr<StyleSheet> clonedSheet =
         sheet->Clone(nullptr, nullptr, nullptr, nullptr);
-      *aSheet = Move(clonedSheet);
+      *aSheet = std::move(clonedSheet);
       if (*aSheet && fromCompleteSheets &&
           !sheet->GetOwnerNode() &&
           !sheet->GetParentSheet()) {
@@ -1667,7 +1669,7 @@ Loader::DoParseSheetServo(const nsACString& aBytes,
   RefPtr<SheetLoadData> loadData = aLoadData;
   nsCOMPtr<nsISerialEventTarget> target = DispatchTarget();
   sheet->ParseSheet(this, aBytes, aLoadData)->Then(target, __func__,
-    [loadData = Move(loadData)](bool aDummy) {
+    [loadData = std::move(loadData)](bool aDummy) {
       MOZ_ASSERT(NS_IsMainThread());
       loadData->mIsBeingParsed = false;
       loadData->mLoader->UnblockOnload(/* aFireSync = */ false);

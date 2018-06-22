@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "925379349ecc7ddfa287a6618896f4d97bf387a3bb6c5ef182bd04714dbd640c"
+            "sha256": "695978bb529a1cffb6f329519ce6fe68adbee73d9f05595dbefb2b9d0ebe4177"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -16,12 +16,27 @@
         ]
     },
     "default": {
+        "attrs": {
+            "hashes": [
+                "sha256:4b90b09eeeb9b88c35bc642cbac057e45a5fd85367b985bd2809c62b7b939265",
+                "sha256:e0d0eb91441a3b53dab4d9b743eafc1ac44476296a2053b6ca3af0b139faf87b"
+            ],
+            "index": "pypi",
+            "version": "==18.1.0"
+        },
         "certifi": {
             "hashes": [
                 "sha256:13e698f54293db9f89122b0581843a782ad0934a4fe0172d2a980ba77fc61bb7",
                 "sha256:9fa520c1bacfb634fa7af20a76bcbd3d5fb390481724c597da32c719a7dca4b0"
             ],
             "version": "==2018.4.16"
+        },
+        "jsmin": {
+            "hashes": [
+                "sha256:5d07bf0251a4128e5e8e8eef603849b6b5741c337bff087731a248f9cc774f56"
+            ],
+            "index": "pypi",
+            "version": "==2.1.0"
         },
         "pipenv": {
             "hashes": [
@@ -30,6 +45,28 @@
             ],
             "index": "pypi",
             "version": "==2018.5.18"
+        },
+        "py": {
+            "hashes": [
+                "sha256:29c9fab495d7528e80ba1e343b958684f4ace687327e6f789a94bf3d1915f881",
+                "sha256:983f77f3331356039fdd792e9220b7b8ee1aa6bd2b25f567a963ff1de5a64f6a"
+            ],
+            "version": "==1.5.3"
+        },
+        "pytest": {
+            "hashes": [
+                "sha256:241d7e7798d79192a123ceaf64c602b4d233eacf6d6e42ae27caa97f498b7dc6",
+                "sha256:6d5bd4f7113b444c55a3bbb5c738a3dd80d43563d063fc42dcb0aaefbdd78b81"
+            ],
+            "index": "pypi",
+            "version": "==3.2.5"
+        },
+        "python-hglib": {
+            "hashes": [
+                "sha256:693d6ed92a6566e78802c7a03c256cda33d08c63ad3f00fcfa11379b184b9462"
+            ],
+            "index": "pypi",
+            "version": "==2.4"
         },
         "six": {
             "hashes": [

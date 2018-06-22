@@ -9,6 +9,7 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/FilePreferences.h"
 #include "mozilla/ChaosMode.h"
 #include "mozilla/CmdLineAndEnvUtils.h"
 #include "mozilla/IOInterposer.h"
@@ -711,6 +712,19 @@ nsXULAppInfo::GetUAName(nsACString& aResult)
     return NS_OK;
   }
   aResult.Assign(gAppData->UAName);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXULAppInfo::GetSourceURL(nsACString& aResult)
+{
+  if (XRE_IsContentProcess()) {
+    ContentChild* cc = ContentChild::GetSingleton();
+    aResult = cc->GetAppInfo().sourceURL;
+    return NS_OK;
+  }
+  aResult.Assign(gAppData->sourceURL);
 
   return NS_OK;
 }
@@ -1705,21 +1719,15 @@ static RemoteResult
 StartRemoteClient(const char* aDesktopStartupID,
                   nsCString& program,
                   const char* profile,
-                  const char* username,
-                  bool aIsX11Display)
+                  const char* username)
 {
   nsAutoPtr<nsRemoteClient> client;
 
-  if (aIsX11Display) {
-    client = new XRemoteClient();
-  } else {
 #if defined(MOZ_ENABLE_DBUS) && defined(MOZ_WAYLAND)
-    client = new DBusRemoteClient();
+  client = new DBusRemoteClient();
 #else
-    MOZ_ASSERT(false, "Missing remote implementation!");
-    return REMOTE_NOT_FOUND;
+  client = new XRemoteClient();
 #endif
-  }
 
   nsresult rv = client->Init();
   if (NS_FAILED(rv))
@@ -2175,6 +2183,14 @@ ShowProfileManager(nsIToolkitProfileService* aProfileSvc,
   aProfileSvc->GetStartOffline(&offline);
   if (offline) {
     SaveToEnv("XRE_START_OFFLINE=1");
+  }
+  if (gRestartedByOS) {
+    // Re-add this argument when actually starting the application.
+    char** newArgv = (char**) realloc(gRestartArgv, sizeof(char*) * (gRestartArgc + 2));
+    NS_ENSURE_TRUE(newArgv, NS_ERROR_OUT_OF_MEMORY);
+    gRestartArgv = newArgv;
+    gRestartArgv[gRestartArgc++] = const_cast<char*>("-os-restarted");
+    gRestartArgv[gRestartArgc] = nullptr;
   }
 
   return LaunchChild(aNative);
@@ -3758,11 +3774,11 @@ static void SetShutdownChecks() {
   // too.
 
 #ifdef DEBUG
-#if defined(MOZ_CODE_COVERAGE) && defined(XP_WIN)
+#if defined(MOZ_CODE_COVERAGE)
   gShutdownChecks = SCM_NOTHING;
 #else
   gShutdownChecks = SCM_CRASH;
-#endif // MOZ_CODE_COVERAGE && XP_WIN
+#endif // MOZ_CODE_COVERAGE
 #else
   const char* releaseChannel = NS_STRINGIFY(MOZ_UPDATE_CHANNEL);
   if (strcmp(releaseChannel, "nightly") == 0 ||
@@ -3796,7 +3812,7 @@ namespace startup {
     nsCOMPtr<nsIFile> crashFile;
     MOZ_TRY(aProfLD->Clone(getter_AddRefs(crashFile)));
     MOZ_TRY(crashFile->Append(FILE_STARTUP_INCOMPLETE));
-    return Move(crashFile);
+    return std::move(crashFile);
   }
 }
 }
@@ -4075,8 +4091,7 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
     const char* desktopStartupIDPtr =
       mDesktopStartupID.IsEmpty() ? nullptr : mDesktopStartupID.get();
 
-    rr = StartRemoteClient(desktopStartupIDPtr, program, profile, username,
-                           GDK_IS_X11_DISPLAY(mGdkDisplay));
+    rr = StartRemoteClient(desktopStartupIDPtr, program, profile, username);
     if (rr == REMOTE_FOUND) {
       *aExitFlag = true;
       return 0;
@@ -4557,6 +4572,10 @@ XREMain::XRE_mainRun()
   NS_ENSURE_TRUE(appStartup, NS_ERROR_FAILURE);
 
   mDirProvider.DoStartup();
+
+  // As FilePreferences need the profile directory, we must initialize right here.
+  mozilla::FilePreferences::InitDirectoriesWhitelist();
+  mozilla::FilePreferences::InitPrefs();
 
   OverrideDefaultLocaleIfNeeded();
 

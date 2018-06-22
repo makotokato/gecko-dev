@@ -94,7 +94,8 @@ nsContentSecurityManager::AllowTopLevelNavigationToDataURI(nsIChannel* aChannel)
     dataSpec.Truncate(50);
     dataSpec.AppendLiteral("...");
   }
-  nsCOMPtr<nsITabChild> tabChild = do_QueryInterface(loadInfo->ContextForTopLevelLoad());
+  nsCOMPtr<nsISupports> context = loadInfo->ContextForTopLevelLoad();
+  nsCOMPtr<nsITabChild> tabChild = do_QueryInterface(context);
   nsCOMPtr<nsIDocument> doc;
   if (tabChild) {
     doc = static_cast<mozilla::dom::TabChild*>(tabChild.get())->GetDocument();
@@ -179,6 +180,13 @@ nsContentSecurityManager::CheckFTPSubresourceLoad(nsIChannel* aChannel)
     return NS_OK;
   }
 
+  // Allow the system principal to load everything. This is meant to
+  // temporarily fix downloads and pdf.js.
+  nsIPrincipal* triggeringPrincipal = loadInfo->TriggeringPrincipal();
+  if (nsContentUtils::IsSystemPrincipal(triggeringPrincipal)) {
+    return NS_OK;
+  }
+
   nsCOMPtr<nsIURI> uri;
   nsresult rv = NS_GetFinalChannelURI(aChannel, getter_AddRefs(uri));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -192,7 +200,6 @@ nsContentSecurityManager::CheckFTPSubresourceLoad(nsIChannel* aChannel)
   }
 
   // Allow loading FTP subresources in FTP documents, like XML.
-  nsIPrincipal* triggeringPrincipal = loadInfo->TriggeringPrincipal();
   nsCOMPtr<nsIURI> triggeringURI;
   triggeringPrincipal->GetURI(getter_AddRefs(triggeringURI));
   if (triggeringURI && nsContentUtils::SchemeIs(triggeringURI, "ftp")) {
@@ -889,12 +896,16 @@ nsContentSecurityManager::IsOriginPotentiallyTrustworthy(nsIPrincipal* aPrincipa
   // which is technically a substituting protocol handler that is not limited to
   // local resource mapping, but in practice is never mapped remotely as this
   // would violate assumptions a lot of code makes.
-  if (scheme.EqualsLiteral("https") ||
-      scheme.EqualsLiteral("file") ||
-      scheme.EqualsLiteral("resource") ||
-      scheme.EqualsLiteral("app") ||
-      scheme.EqualsLiteral("moz-extension") ||
-      scheme.EqualsLiteral("wss")) {
+  // We use nsIProtocolHandler flags to determine which protocols we consider a priori
+  // authenticated.
+  bool aPrioriAuthenticated = false;
+  if (NS_FAILED(NS_URIChainHasFlags(uri,
+                                    nsIProtocolHandler::URI_IS_POTENTIALLY_TRUSTWORTHY,
+                                    &aPrioriAuthenticated))) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  if (aPrioriAuthenticated) {
     *aIsTrustWorthy = true;
     return NS_OK;
   }

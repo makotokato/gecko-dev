@@ -124,6 +124,10 @@ try {
   }
 } catch (e) { }
 
+if (runningInParent) {
+  _Services.prefs.setBoolPref("dom.push.connection.enabled", false);
+}
+
 // Configure a console listener so messages sent to it are logged as part
 // of the test.
 try {
@@ -1005,7 +1009,7 @@ function do_load_manifest(path) {
  * @param aPath File path to the document.
  * @param aType Content type to use in DOMParser.
  *
- * @return nsIDOMDocument from the file.
+ * @return Document from the file.
  */
 function do_parse_document(aPath, aType) {
   switch (aType) {
@@ -1245,9 +1249,9 @@ function do_await_remote_message(name, optionalCallback) {
       receiveMessage(message) {
         if (message.name == name) {
           mm.removeMessageListener(name, listener);
-          resolve();
+          resolve(message.data);
           if (optionalCallback) {
-            optionalCallback();
+            optionalCallback(message.data);
           } else {
             do_test_finished();
           }
@@ -1270,7 +1274,7 @@ function do_await_remote_message(name, optionalCallback) {
  * Asynchronously send a message to all remote processes. Pairs with do_await_remote_message
  * or equivalent ProcessMessageManager listeners.
  */
-function do_send_remote_message(name) {
+function do_send_remote_message(name, data) {
   var mm;
   var sender;
   if (runningInParent) {
@@ -1280,7 +1284,7 @@ function do_send_remote_message(name) {
     mm = Cc["@mozilla.org/childprocessmessagemanager;1"].getService();
     sender = "sendAsyncMessage";
   }
-  mm[sender](name);
+  mm[sender](name, data);
 }
 
 /**

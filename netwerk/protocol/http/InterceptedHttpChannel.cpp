@@ -185,7 +185,7 @@ InterceptedHttpChannel::FollowSyntheticRedirect()
 
   // make sure non-ASCII characters in the location header are escaped.
   nsAutoCString locationBuf;
-  if (NS_EscapeURL(location.get(), -1, esc_OnlyNonASCII, locationBuf)) {
+  if (NS_EscapeURL(location.get(), -1, esc_OnlyNonASCII | esc_Spaces, locationBuf)) {
     location = locationBuf;
   }
 
@@ -271,6 +271,17 @@ InterceptedHttpChannel::RedirectForResponseURL(nsIURI* aResponseURI,
     CloneLoadInfoForRedirect(aResponseURI, flags);
   newChannel->SetLoadInfo(redirectLoadInfo);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  // Normally we don't propagate the LoadInfo's service worker tainting
+  // synthesis flag on redirect.  A real redirect normally will want to allow
+  // normal tainting to proceed from its starting taint.  For this particular
+  // redirect, though, we are performing a redirect to communicate the URL of
+  // the service worker synthetic response itself.  This redirect still represents
+  // the synthetic response, so we must preserve the flag.
+  if (redirectLoadInfo && mLoadInfo &&
+      mLoadInfo->GetServiceWorkerTaintingSynthesized()) {
+    redirectLoadInfo->SynthesizeServiceWorkerTainting(mLoadInfo->GetTainting());
+  }
 
   rv = SetupReplacementChannel(aResponseURI, newChannel, true, flags);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -594,13 +605,6 @@ InterceptedHttpChannel::SetupFallbackChannel(const char*  aFallbackKey)
   // AppCache should not be used with service worker intercepted channels.
   // This should never be called.
   return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-InterceptedHttpChannel::GetResponseSynthesized(bool* aResponseSynthesized)
-{
-  *aResponseSynthesized = mResponseHead || mBodyReader;
-  return NS_OK;
 }
 
 NS_IMETHODIMP

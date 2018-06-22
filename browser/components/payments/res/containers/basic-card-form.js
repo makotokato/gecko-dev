@@ -20,7 +20,7 @@ export default class BasicCardForm extends PaymentStateSubscriberMixin(HTMLEleme
   constructor() {
     super();
 
-    this.pageTitle = document.createElement("h1");
+    this.pageTitle = document.createElement("h2");
     this.genericErrorText = document.createElement("div");
 
     this.cancelButton = document.createElement("button");
@@ -41,7 +41,7 @@ export default class BasicCardForm extends PaymentStateSubscriberMixin(HTMLEleme
     this.backButton.addEventListener("click", this);
 
     this.saveButton = document.createElement("button");
-    this.saveButton.className = "save-button";
+    this.saveButton.className = "save-button primary";
     this.saveButton.addEventListener("click", this);
 
     this.persistCheckbox = new LabelledCheckbox();
@@ -118,8 +118,9 @@ export default class BasicCardForm extends PaymentStateSubscriberMixin(HTMLEleme
     this.addressAddLink.textContent = this.dataset.addressAddLinkLabel;
     this.addressEditLink.textContent = this.dataset.addressEditLinkLabel;
 
-    // The back button is temporarily hidden(See Bug 1462461).
-    this.backButton.hidden = !!page.onboardingWizard;
+    // The next line needs an onboarding check since we don't set previousId
+    // when navigating to add/edit directly from the summary page.
+    this.backButton.hidden = !page.previousId && page.onboardingWizard;
     this.cancelButton.hidden = !page.onboardingWizard;
 
     let record = {};
@@ -143,6 +144,7 @@ export default class BasicCardForm extends PaymentStateSubscriberMixin(HTMLEleme
     } else {
       this.pageTitle.textContent = this.dataset.addBasicCardTitle;
       // Use a currently selected shipping address as the default billing address
+      record.billingAddressGUID = basicCardPage.billingAddressGUID;
       if (!record.billingAddressGUID && selectedShippingAddress) {
         record.billingAddressGUID = selectedShippingAddress;
       }
@@ -155,10 +157,11 @@ export default class BasicCardForm extends PaymentStateSubscriberMixin(HTMLEleme
 
     this.form.querySelector(".billingAddressRow").hidden = false;
 
+    let billingAddressSelect = this.form.querySelector("#billingAddressGUID");
     if (basicCardPage.billingAddressGUID) {
-      let addressGuid = basicCardPage.billingAddressGUID;
-      let billingAddressSelect = this.form.querySelector("#billingAddressGUID");
-      billingAddressSelect.value = addressGuid;
+      billingAddressSelect.value = basicCardPage.billingAddressGUID;
+    } else if (!editing) {
+      billingAddressSelect.value = Object.keys(addresses)[0];
     }
   }
 
@@ -208,11 +211,39 @@ export default class BasicCardForm extends PaymentStateSubscriberMixin(HTMLEleme
         break;
       }
       case this.backButton: {
-        this.requestStore.setState({
+        let {
+          page,
+          request,
+          "address-page": addressPage,
+          "basic-card-page": basicCardPage,
+          selectedShippingAddress,
+        } = this.requestStore.getState();
+
+        let nextState = {
           page: {
-            id: "payment-summary",
+            id: page.previousId || "payment-summary",
+            onboardingWizard: page.onboardingWizard,
           },
-        });
+        };
+
+        let addressPageState;
+        if (page.onboardingWizard) {
+          if (request.paymentOptions.requestShipping) {
+            addressPageState = Object.assign({}, addressPage, {guid: selectedShippingAddress});
+          } else {
+            addressPageState =
+              Object.assign({}, addressPage, {guid: basicCardPage.billingAddressGUID});
+          }
+
+          let basicCardPageState = Object.assign({}, basicCardPage, {preserveFieldValues: true});
+
+          Object.assign(nextState, {
+            "address-page": addressPageState,
+            "basic-card-page": basicCardPageState,
+          });
+        }
+
+        this.requestStore.setState(nextState);
         break;
       }
       case this.saveButton: {

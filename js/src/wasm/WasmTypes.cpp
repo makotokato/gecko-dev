@@ -24,6 +24,7 @@
 #include "wasm/WasmSerialize.h"
 
 #include "vm/JSObject-inl.h"
+#include "vm/NativeObject-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -46,15 +47,23 @@ using mozilla::MakeEnumeratedRange;
 #  endif
 #endif
 
-// Another sanity check.
+// More sanity checks.
 
 static_assert(MaxMemoryInitialPages <= ArrayBufferObject::MaxBufferByteLength / PageSize,
               "Memory sizing constraint");
 
+// All plausible targets must be able to do at least IEEE754 double
+// loads/stores, hence the lower limit of 8.  Some Intel processors support
+// AVX-512 loads/stores, hence the upper limit of 64.
+static_assert(MaxMemoryAccessSize >= 8,  "MaxMemoryAccessSize too low");
+static_assert(MaxMemoryAccessSize <= 64, "MaxMemoryAccessSize too high");
+static_assert((MaxMemoryAccessSize & (MaxMemoryAccessSize-1)) == 0,
+              "MaxMemoryAccessSize is not a power of two");
+
 void
 Val::writePayload(uint8_t* dst) const
 {
-    switch (type_) {
+    switch (type_.code()) {
       case ValType::I32:
       case ValType::F32:
         memcpy(dst, &u.i32_, sizeof(u.i32_));
@@ -181,7 +190,7 @@ static const unsigned sMaxTypes = (sTotalBits - sTagBits - sReturnBit - sLengthB
 static bool
 IsImmediateType(ValType vt)
 {
-    switch (vt) {
+    switch (vt.code()) {
       case ValType::I32:
       case ValType::I64:
       case ValType::F32:
@@ -204,7 +213,7 @@ static unsigned
 EncodeImmediateType(ValType vt)
 {
     static_assert(4 < (1 << sTypeBits), "fits");
-    switch (vt) {
+    switch (vt.code()) {
       case ValType::I32:
         return 0;
       case ValType::I64:
@@ -319,6 +328,36 @@ SigWithId::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const
 }
 
 size_t
+StructType::serializedSize() const
+{
+    return SerializedPodVectorSize(fields_) +
+           SerializedPodVectorSize(fieldOffsets_);
+}
+
+uint8_t*
+StructType::serialize(uint8_t* cursor) const
+{
+    cursor = SerializePodVector(cursor, fields_);
+    cursor = SerializePodVector(cursor, fieldOffsets_);
+    return cursor;
+}
+
+const uint8_t*
+StructType::deserialize(const uint8_t* cursor)
+{
+    (cursor = DeserializePodVector(cursor, &fields_));
+    (cursor = DeserializePodVector(cursor, &fieldOffsets_));
+    return cursor;
+}
+
+size_t
+StructType::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const
+{
+    return fields_.sizeOfExcludingThis(mallocSizeOf) +
+           fieldOffsets_.sizeOfExcludingThis(mallocSizeOf);
+}
+
+size_t
 Import::serializedSize() const
 {
     return module.serializedSize() +
@@ -352,14 +391,14 @@ Import::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const
 }
 
 Export::Export(UniqueChars fieldName, uint32_t index, DefinitionKind kind)
-  : fieldName_(Move(fieldName))
+  : fieldName_(std::move(fieldName))
 {
     pod.kind_ = kind;
     pod.index_ = index;
 }
 
 Export::Export(UniqueChars fieldName, DefinitionKind kind)
-  : fieldName_(Move(fieldName))
+  : fieldName_(std::move(fieldName))
 {
     pod.kind_ = kind;
     pod.index_ = 0;
@@ -446,7 +485,7 @@ ElemSegment::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const
 
 Assumptions::Assumptions(JS::BuildIdCharVector&& buildId)
   : cpuId(GetCPUID()),
-    buildId(Move(buildId))
+    buildId(std::move(buildId))
 {}
 
 Assumptions::Assumptions()

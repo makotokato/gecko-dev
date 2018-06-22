@@ -58,6 +58,7 @@ opt-only-tests:
     - mochitest-valgrind
 
 talos:
+    - talos-bcv
     - talos-chrome
     - talos-damp
     - talos-dromaeojs
@@ -77,6 +78,12 @@ talos:
     - talos-motionmark
     - talos-h1
     - talos-h2
+
+raptor:
+    - raptor-firefox-tp6
+    - raptor-firefox-speedometer
+    - raptor-chrome-tp6
+    - raptor-chrome-speedometer
 
 awsy:
     - awsy
@@ -103,6 +110,7 @@ linux-qr-tests:
     - xpcshell
 
 linux-talos-profiling:
+    - talos-bcv-profiling
     - talos-chrome-profiling
     - talos-damp-profiling
     - talos-dromaeojs-profiling
@@ -171,6 +179,7 @@ windows-tests:
     - xpcshell
 
 windows-talos:
+    - talos-bcv
     - talos-chrome
     - talos-damp
     - talos-dromaeojs
@@ -190,6 +199,7 @@ windows-talos:
     - talos-h1
 
 windows-talos-profiling:
+    - talos-bcv-profiling
     - talos-chrome-profiling
     - talos-damp-profiling
     - talos-dromaeojs-profiling
@@ -235,6 +245,7 @@ macosx64-tests:
     - xpcshell
 
 macosx64-talos:
+    - talos-bcv
     - talos-chrome
     - talos-damp
     - talos-dromaeojs
@@ -254,6 +265,7 @@ macosx64-talos:
     # - talos-h1 # too long to unpack profile- Bug 1442893
 
 macosx64-talos-profiling:
+    - talos-bcv-profiling
     - talos-chrome-profiling
     - talos-damp-profiling
     - talos-dromaeojs-profiling
@@ -272,10 +284,8 @@ macosx64-talos-profiling:
     # - talos-tps-profiling # Bug 1453007 times out
 
 macosx64-qr-tests:
+    - crashtest
     - reftest
-
-macosx64-raptor:
-    - raptor-firefox-tp6
 
 linux32-tests:
     - cppunit
@@ -345,11 +355,13 @@ android-x86-kvm-tests:
     - geckoview-junit
     - jsreftest
     - mochitest
-    - mochitest-chrome
+    # - mochitest-chrome
     - mochitest-clipboard
     - mochitest-gpu
     - mochitest-media
+    # - mochitest-webgl
     - reftest
+    - test-verify
 
 devtools-tests:
     - mochitest-devtools-chrome

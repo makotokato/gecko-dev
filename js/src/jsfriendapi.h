@@ -184,21 +184,15 @@ typedef void
 extern JS_FRIEND_API(void)
 JS_SetSetUseCounterCallback(JSContext* cx, JSSetUseCounterCallback callback);
 
-extern JS_FRIEND_API(bool)
-JS_GetIsSecureContext(JSCompartment* compartment);
-
 extern JS_FRIEND_API(JSPrincipals*)
-JS_GetCompartmentPrincipals(JSCompartment* compartment);
-
-extern JS_FRIEND_API(void)
-JS_SetCompartmentPrincipals(JSCompartment* compartment, JSPrincipals* principals);
+JS_GetCompartmentPrincipals(JS::Compartment* compartment);
 
 extern JS_FRIEND_API(JSPrincipals*)
 JS_GetScriptPrincipals(JSScript* script);
 
 namespace js {
-extern JS_FRIEND_API(JSCompartment*)
-GetScriptCompartment(JSScript* script);
+extern JS_FRIEND_API(JS::Realm*)
+GetScriptRealm(JSScript* script);
 } /* namespace js */
 
 extern JS_FRIEND_API(bool)
@@ -324,6 +318,15 @@ ForceLexicalInitialization(JSContext *cx, HandleObject obj);
  */
 extern JS_FRIEND_API(int)
 IsGCPoisoning();
+
+extern JS_FRIEND_API(JSPrincipals*)
+GetRealmPrincipals(JS::Realm* realm);
+
+extern JS_FRIEND_API(void)
+SetRealmPrincipals(JS::Realm* realm, JSPrincipals* principals);
+
+extern JS_FRIEND_API(bool)
+GetIsSecureContext(JS::Realm* realm);
 
 } // namespace JS
 
@@ -455,7 +458,7 @@ extern JS_FRIEND_API(void)
 RunJobs(JSContext* cx);
 
 extern JS_FRIEND_API(JS::Zone*)
-GetCompartmentZone(JSCompartment* comp);
+GetRealmZone(JS::Realm* realm);
 
 typedef bool
 (* PreserveWrapperCallback)(JSContext* cx, JSObject* obj);
@@ -478,13 +481,13 @@ JS_FRIEND_API(bool) obj_defineSetter(JSContext* cx, unsigned argc, JS::Value* vp
 #endif
 
 extern JS_FRIEND_API(bool)
-IsSystemCompartment(JSCompartment* comp);
+IsSystemRealm(JS::Realm* realm);
+
+extern JS_FRIEND_API(bool)
+IsSystemCompartment(JS::Compartment* comp);
 
 extern JS_FRIEND_API(bool)
 IsSystemZone(JS::Zone* zone);
-
-extern JS_FRIEND_API(bool)
-IsAtomsRealm(JS::Realm* realm);
 
 extern JS_FRIEND_API(bool)
 IsAtomsZone(JS::Zone* zone);
@@ -553,8 +556,9 @@ extern JS_FRIEND_API(size_t)
 SizeOfDataIfCDataObject(mozilla::MallocSizeOf mallocSizeOf, JSObject* obj);
 #endif
 
-extern JS_FRIEND_API(JSCompartment*)
-GetAnyCompartmentInZone(JS::Zone* zone);
+// Note: this returns nullptr iff |zone| is the atoms zone.
+extern JS_FRIEND_API(JS::Realm*)
+GetAnyRealmInZone(JS::Zone* zone);
 
 /*
  * Shadow declarations of JS internal structures, for access by inline access
@@ -566,8 +570,8 @@ namespace shadow {
 
 struct ObjectGroup {
     const Class* clasp;
-    JSObject*   proto;
-    JSCompartment* compartment;
+    JSObject* proto;
+    JS::Realm* realm;
 };
 
 struct BaseShape {
@@ -670,10 +674,23 @@ InheritanceProtoKeyForStandardClass(JSProtoKey key)
 JS_FRIEND_API(bool)
 IsFunctionObject(JSObject* obj);
 
-static MOZ_ALWAYS_INLINE JSCompartment*
+JS_FRIEND_API(bool)
+IsCrossCompartmentWrapper(const JSObject* obj);
+
+static MOZ_ALWAYS_INLINE JS::Compartment*
 GetObjectCompartment(JSObject* obj)
 {
-    return reinterpret_cast<shadow::Object*>(obj)->group->compartment;
+    JS::Realm* realm = reinterpret_cast<shadow::Object*>(obj)->group->realm;
+    return JS::GetCompartmentForRealm(realm);
+}
+
+// CrossCompartmentWrappers are shared by all realms within the compartment, so
+// getting a wrapper's realm usually doesn't make sense.
+static MOZ_ALWAYS_INLINE JS::Realm*
+GetNonCCWObjectRealm(JSObject* obj)
+{
+    MOZ_ASSERT(!js::IsCrossCompartmentWrapper(obj));
+    return reinterpret_cast<shadow::Object*>(obj)->group->realm;
 }
 
 JS_FRIEND_API(JSObject*)
@@ -726,8 +743,7 @@ extern JS_FRIEND_API(JSObject*)
 GetStaticPrototype(JSObject* obj);
 
 JS_FRIEND_API(bool)
-GetOriginalEval(JSContext* cx, JS::HandleObject scope,
-                JS::MutableHandleObject eval);
+GetRealmOriginalEval(JSContext* cx, JS::MutableHandleObject eval);
 
 inline void*
 GetObjectPrivate(JSObject* obj)
@@ -1200,11 +1216,6 @@ CastToJSFreeOp(FreeOp* fop)
 extern JS_FRIEND_API(JSFlatString*)
 GetErrorTypeName(JSContext* cx, int16_t exnType);
 
-#ifdef JS_DEBUG
-extern JS_FRIEND_API(unsigned)
-GetEnterRealmDepth(JSContext* cx);
-#endif
-
 extern JS_FRIEND_API(RegExpShared*)
 RegExpToSharedNonInline(JSContext* cx, JS::HandleObject regexp);
 
@@ -1224,35 +1235,35 @@ typedef enum NukeReferencesFromTarget {
  * do any rooting or holding of their members.
  */
 struct CompartmentFilter {
-    virtual bool match(JSCompartment* c) const = 0;
+    virtual bool match(JS::Compartment* c) const = 0;
 };
 
 struct AllCompartments : public CompartmentFilter {
-    virtual bool match(JSCompartment* c) const override { return true; }
+    virtual bool match(JS::Compartment* c) const override { return true; }
 };
 
 struct ContentCompartmentsOnly : public CompartmentFilter {
-    virtual bool match(JSCompartment* c) const override {
+    virtual bool match(JS::Compartment* c) const override {
         return !IsSystemCompartment(c);
     }
 };
 
 struct ChromeCompartmentsOnly : public CompartmentFilter {
-    virtual bool match(JSCompartment* c) const override {
+    virtual bool match(JS::Compartment* c) const override {
         return IsSystemCompartment(c);
     }
 };
 
 struct SingleCompartment : public CompartmentFilter {
-    JSCompartment* ours;
-    explicit SingleCompartment(JSCompartment* c) : ours(c) {}
-    virtual bool match(JSCompartment* c) const override { return c == ours; }
+    JS::Compartment* ours;
+    explicit SingleCompartment(JS::Compartment* c) : ours(c) {}
+    virtual bool match(JS::Compartment* c) const override { return c == ours; }
 };
 
 struct CompartmentsWithPrincipals : public CompartmentFilter {
     JSPrincipals* principals;
     explicit CompartmentsWithPrincipals(JSPrincipals* p) : principals(p) {}
-    virtual bool match(JSCompartment* c) const override {
+    virtual bool match(JS::Compartment* c) const override {
         return JS_GetCompartmentPrincipals(c) == principals;
     }
 };
@@ -1260,7 +1271,7 @@ struct CompartmentsWithPrincipals : public CompartmentFilter {
 extern JS_FRIEND_API(bool)
 NukeCrossCompartmentWrappers(JSContext* cx,
                              const CompartmentFilter& sourceFilter,
-                             JSCompartment* target,
+                             JS::Compartment* target,
                              NukeReferencesToWindow nukeReferencesToWindow,
                              NukeReferencesFromTarget nukeReferencesFromTarget);
 
@@ -2671,8 +2682,8 @@ bool IdMatchesAtom(jsid id, JSString* atom);
 static MOZ_ALWAYS_INLINE jsid
 NON_INTEGER_ATOM_TO_JSID(JSAtom* atom)
 {
-    MOZ_ASSERT(((size_t)atom & 0x7) == 0);
-    jsid id = JSID_FROM_BITS((size_t)atom);
+    MOZ_ASSERT(((size_t)atom & JSID_TYPE_MASK) == 0);
+    jsid id = JSID_FROM_BITS((size_t)atom | JSID_TYPE_STRING);
     MOZ_ASSERT(js::detail::IdMatchesAtom(id, atom));
     return id;
 }
@@ -2680,8 +2691,8 @@ NON_INTEGER_ATOM_TO_JSID(JSAtom* atom)
 static MOZ_ALWAYS_INLINE jsid
 NON_INTEGER_ATOM_TO_JSID(JSString* atom)
 {
-    MOZ_ASSERT(((size_t)atom & 0x7) == 0);
-    jsid id = JSID_FROM_BITS((size_t)atom);
+    MOZ_ASSERT(((size_t)atom & JSID_TYPE_MASK) == 0);
+    jsid id = JSID_FROM_BITS((size_t)atom | JSID_TYPE_STRING);
     MOZ_ASSERT(js::detail::IdMatchesAtom(id, atom));
     return id;
 }
@@ -2696,7 +2707,7 @@ JSID_IS_ATOM(jsid id)
 static MOZ_ALWAYS_INLINE bool
 JSID_IS_ATOM(jsid id, JSAtom* atom)
 {
-    return id == JSID_FROM_BITS((size_t)atom);
+    return id == NON_INTEGER_ATOM_TO_JSID(atom);
 }
 
 static MOZ_ALWAYS_INLINE JSAtom*
@@ -3093,9 +3104,9 @@ class MOZ_STACK_CLASS JS_FRIEND_API(AutoAssertNoContentJS)
 };
 
 // Turn on assertions so that we assert that
-//     !comp->validAccessPtr || *comp->validAccessPtr
-// is true for every |comp| that we run JS code in. The compartment's validAccessPtr
-// is set via SetCompartmentValidAccessPtr.
+//     !realm->validAccessPtr || *realm->validAccessPtr
+// is true for every |realm| that we run JS code in. The realm's validAccessPtr
+// is set via SetRealmValidAccessPtr.
 extern JS_FRIEND_API(void)
 EnableAccessValidation(JSContext* cx, bool enabled);
 
@@ -3104,7 +3115,7 @@ EnableAccessValidation(JSContext* cx, bool enabled);
 // threads that are allowed to run code on |global|, so all changes to *accessp
 // should be made from whichever thread owns |global| at a given time.
 extern JS_FRIEND_API(void)
-SetCompartmentValidAccessPtr(JSContext* cx, JS::HandleObject global, bool* accessp);
+SetRealmValidAccessPtr(JSContext* cx, JS::HandleObject global, bool* accessp);
 
 // Returns true if the system zone is available (i.e., if no cooperative contexts
 // are using it now).

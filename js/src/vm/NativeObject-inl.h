@@ -669,6 +669,12 @@ NativeObject::allocKindForTenure() const
     return GetBackgroundAllocKind(kind);
 }
 
+inline js::GlobalObject&
+NativeObject::global() const
+{
+    return nonCCWGlobal();
+}
+
 inline js::gc::AllocKind
 PlainObject::allocKindForTenure() const
 {
@@ -961,8 +967,9 @@ ThrowIfNotConstructing(JSContext *cx, const CallArgs &args, const char *builtinN
 {
     if (args.isConstructing())
         return true;
-    return JS_ReportErrorFlagsAndNumberASCII(cx, JSREPORT_ERROR, GetErrorMessage, nullptr,
-                                             JSMSG_BUILTIN_CTOR_NO_NEW, builtinName);
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_BUILTIN_CTOR_NO_NEW,
+                              builtinName);
+    return false;
 }
 
 inline bool

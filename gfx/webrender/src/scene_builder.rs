@@ -57,6 +57,7 @@ pub struct SceneRequest {
     pub font_instances: FontInstanceMap,
     pub output_pipelines: FastHashSet<PipelineId>,
     pub removed_pipelines: Vec<PipelineId>,
+    pub scene_id: u64,
 }
 
 pub struct BuiltScene {
@@ -162,6 +163,7 @@ impl SceneBuilder {
                     _ => (None, None, None),
                 };
 
+                let has_resources_updates = !resource_updates.is_empty();
                 self.tx.send(SceneBuilderResult::Transaction {
                     document_id,
                     built_scene,
@@ -184,6 +186,10 @@ impl SceneBuilder {
                         },
                         _ => (),
                     };
+                } else if has_resources_updates {
+                    if let &Some(ref hooks) = &self.hooks {
+                        hooks.post_resource_update();
+                    }
                 }
             }
             SceneBuilderRequest::Stop => {

@@ -9,13 +9,14 @@ enabled_tests = set(["testharness", "reftest", "wdspec"])
 
 
 class Result(object):
-    def __init__(self, status, message, expected=None, extra=None):
+    def __init__(self, status, message, expected=None, extra=None, stack=None):
         if status not in self.statuses:
             raise ValueError("Unrecognised status %s" % status)
         self.status = status
         self.message = message
         self.expected = expected
         self.extra = extra if extra is not None else {}
+        self.stack = stack
 
     def __repr__(self):
         return "<%s.%s %s>" % (self.__module__, self.__class__.__name__, self.status)
@@ -86,12 +87,6 @@ class RunInfo(dict):
         elif "debug" not in self:
             # Default to release
             self["debug"] = False
-        if product == "firefox" and "stylo" not in self:
-            self["stylo"] = False
-        if "STYLO_FORCE_ENABLED" in os.environ:
-            self["stylo"] = True
-        if "STYLO_FORCE_DISABLED" in os.environ:
-            self["stylo"] = False
         if browser_version:
             self["browser_version"] = browser_version
         if extras is not None:

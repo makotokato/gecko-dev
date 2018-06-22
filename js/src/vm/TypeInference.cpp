@@ -47,7 +47,6 @@ using namespace js::gc;
 
 using mozilla::DebugOnly;
 using mozilla::Maybe;
-using mozilla::Move;
 using mozilla::PodArrayZero;
 using mozilla::PodCopy;
 using mozilla::PodZero;
@@ -521,7 +520,7 @@ TypeSet::addTypesToConstraint(JSContext* cx, TypeConstraint* constraint)
 
 #ifdef DEBUG
 static inline bool
-CompartmentsMatch(JSCompartment* a, JSCompartment* b)
+CompartmentsMatch(Compartment* a, Compartment* b)
 {
     return !a || !b || a == b;
 }
@@ -561,7 +560,7 @@ TypeSet::clearObjects()
     objectSet = nullptr;
 }
 
-JSCompartment*
+Compartment*
 TypeSet::maybeCompartment()
 {
     if (unknownObject())
@@ -573,7 +572,7 @@ TypeSet::maybeCompartment()
         if (!key)
             continue;
 
-        JSCompartment* comp = key->maybeCompartment();
+        Compartment* comp = key->maybeCompartment();
         if (comp)
             return comp;
     }
@@ -1248,7 +1247,7 @@ class TypeCompilerConstraint : public TypeConstraint
         return true;
     }
 
-    JSCompartment* maybeCompartment() override {
+    Compartment* maybeCompartment() override {
         return data.maybeCompartment();
     }
 };
@@ -1455,7 +1454,7 @@ class TypeConstraintFreezeStack : public TypeConstraint
         return true;
     }
 
-    JSCompartment* maybeCompartment() override {
+    Compartment* maybeCompartment() override {
         return script_->compartment();
     }
 };
@@ -1642,7 +1641,7 @@ class ConstraintDataFreeze
 
     bool shouldSweep() { return false; }
 
-    JSCompartment* maybeCompartment() { return nullptr; }
+    Compartment* maybeCompartment() { return nullptr; }
 };
 
 } /* anonymous namespace */
@@ -1848,7 +1847,7 @@ class ConstraintDataFreezeObjectFlags
 
     bool shouldSweep() { return false; }
 
-    JSCompartment* maybeCompartment() { return nullptr; }
+    Compartment* maybeCompartment() { return nullptr; }
 };
 
 } /* anonymous namespace */
@@ -1965,7 +1964,7 @@ class ConstraintDataFreezeObjectForTypedArrayData
         return IsAboutToBeFinalizedUnbarriered(&obj);
     }
 
-    JSCompartment* maybeCompartment() {
+    Compartment* maybeCompartment() {
         return obj->compartment();
     }
 };
@@ -1994,7 +1993,7 @@ class ConstraintDataFreezeObjectForUnboxedConvertedToNative
 
     bool shouldSweep() { return false; }
 
-    JSCompartment* maybeCompartment() { return nullptr; }
+    Compartment* maybeCompartment() { return nullptr; }
 };
 
 } /* anonymous namespace */
@@ -2083,7 +2082,7 @@ class ConstraintDataFreezePropertyState
 
     bool shouldSweep() { return false; }
 
-    JSCompartment* maybeCompartment() { return nullptr; }
+    Compartment* maybeCompartment() { return nullptr; }
 };
 
 } /* anonymous namespace */
@@ -2139,7 +2138,7 @@ class ConstraintDataConstantProperty
 
     bool shouldSweep() { return false; }
 
-    JSCompartment* maybeCompartment() { return nullptr; }
+    Compartment* maybeCompartment() { return nullptr; }
 };
 
 } /* anonymous namespace */
@@ -2201,7 +2200,7 @@ class ConstraintDataInert
 
     bool shouldSweep() { return false; }
 
-    JSCompartment* maybeCompartment() { return nullptr; }
+    Compartment* maybeCompartment() { return nullptr; }
 };
 
 bool
@@ -2563,7 +2562,7 @@ TypeZone::processPendingRecompiles(FreeOp* fop, RecompileInfoVector& recompiles)
     // Steal the list of scripts to recompile, to make sure we don't try to
     // recursively recompile them. Note: the move constructor will not reset the
     // length if the Vector is using inline storage, so we also use clear().
-    RecompileInfoVector pending(Move(recompiles));
+    RecompileInfoVector pending(std::move(recompiles));
     recompiles.clear();
 
     jit::Invalidate(*this, fop, pending);
@@ -2623,7 +2622,7 @@ js::ReportMagicWordFailure(uintptr_t actual, uintptr_t expected, uintptr_t flags
 #endif
 
 void
-js::PrintTypes(JSContext* cx, JSCompartment* comp, bool force)
+js::PrintTypes(JSContext* cx, Compartment* comp, bool force)
 {
 #ifdef DEBUG
     gc::AutoSuppressGC suppressGC(cx);
@@ -3211,7 +3210,7 @@ class TypeConstraintClearDefiniteGetterSetter : public TypeConstraint
         return true;
     }
 
-    JSCompartment* maybeCompartment() override {
+    Compartment* maybeCompartment() override {
         return group->compartment();
     }
 };
@@ -3271,7 +3270,7 @@ class TypeConstraintClearDefiniteSingle : public TypeConstraint
         return true;
     }
 
-    JSCompartment* maybeCompartment() override {
+    Compartment* maybeCompartment() override {
         return group->compartment();
     }
 };
@@ -3558,7 +3557,7 @@ PreliminaryObjectArray::sweep()
             // the realm's global is dead, we don't do anything as the group's
             // Class is not going to change in that case.
             JSObject* obj = *ptr;
-            GlobalObject* global = obj->realm()->unsafeUnbarrieredMaybeGlobal();
+            GlobalObject* global = obj->as<NativeObject>().realm()->unsafeUnbarrieredMaybeGlobal();
             if (global && !obj->isSingleton()) {
                 JSObject* objectProto = global->maybeGetPrototype(JSProto_Object);
                 obj->setGroup(objectProto->groupRaw());
@@ -4146,7 +4145,7 @@ TypeNewScript::trace(JSTracer* trc)
 /* static */ void
 TypeNewScript::writeBarrierPre(TypeNewScript* newScript)
 {
-    if (JS::CurrentThreadIsHeapCollecting())
+    if (JS::RuntimeHeapIsCollecting())
         return;
 
     JS::Zone* zone = newScript->function()->zoneFromAnyThread();
@@ -4186,7 +4185,7 @@ ConstraintTypeSet::trace(Zone* zone, JSTracer* trc)
     checkMagic();
 
     // ConstraintTypeSets only hold strong references during minor collections.
-    MOZ_ASSERT(JS::CurrentThreadIsHeapMinorCollecting());
+    MOZ_ASSERT(JS::RuntimeHeapIsMinorCollecting());
 
     unsigned objectCount = baseObjectCount();
     if (objectCount >= 2) {
@@ -4242,7 +4241,7 @@ ConstraintTypeSet::trace(Zone* zone, JSTracer* trc)
                 CheckGCThingAfterMovingGC(key->groupNoBarrier());
             else
                 CheckGCThingAfterMovingGC(key->singletonNoBarrier());
-            JSCompartment* compartment = key->maybeCompartment();
+            Compartment* compartment = key->maybeCompartment();
             MOZ_ASSERT_IF(compartment, compartment->zone() == zone);
         }
     } else if (objectCount == 1) {
@@ -4251,7 +4250,7 @@ ConstraintTypeSet::trace(Zone* zone, JSTracer* trc)
             CheckGCThingAfterMovingGC(key->groupNoBarrier());
         else
             CheckGCThingAfterMovingGC(key->singletonNoBarrier());
-        JSCompartment* compartment = key->maybeCompartment();
+        Compartment* compartment = key->maybeCompartment();
         MOZ_ASSERT_IF(compartment, compartment->zone() == zone);
     }
 #endif
@@ -4264,7 +4263,7 @@ AssertGCStateForSweep(Zone* zone)
 
     // IsAboutToBeFinalized doesn't work right on tenured objects when called
     // during a minor collection.
-    MOZ_ASSERT(!JS::CurrentThreadIsHeapMinorCollecting());
+    MOZ_ASSERT(!JS::RuntimeHeapIsMinorCollecting());
 }
 
 void
@@ -4596,7 +4595,10 @@ Zone::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
                              size_t* cachedCFG,
                              size_t* uniqueIdMap,
                              size_t* shapeTables,
-                             size_t* atomsMarkBitmaps)
+                             size_t* atomsMarkBitmaps,
+                             size_t* compartmentObjects,
+                             size_t* crossCompartmentWrappersTables,
+                             size_t* compartmentsPrivateData)
 {
     *typePool += types.typeLifoAlloc().sizeOfExcludingThis(mallocSizeOf);
     *regexpZone += regExps.sizeOfExcludingThis(mallocSizeOf);
@@ -4606,6 +4608,13 @@ Zone::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
     *shapeTables += baseShapes().sizeOfExcludingThis(mallocSizeOf)
                   + initialShapes().sizeOfExcludingThis(mallocSizeOf);
     *atomsMarkBitmaps += markedAtoms().sizeOfExcludingThis(mallocSizeOf);
+
+    for (CompartmentsInZoneIter comp(this); !comp.done(); comp.next()) {
+        comp->addSizeOfIncludingThis(mallocSizeOf,
+                                     compartmentObjects,
+                                     crossCompartmentWrappersTables,
+                                     compartmentsPrivateData);
+    }
 }
 
 TypeZone::TypeZone(Zone* zone)

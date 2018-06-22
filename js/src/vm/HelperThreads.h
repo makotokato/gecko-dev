@@ -104,6 +104,9 @@ class GlobalHelperThreadState
     using HelperThreadVector = Vector<HelperThread, 0, SystemAllocPolicy>;
     UniquePtr<HelperThreadVector> threads;
 
+    WriteOnceData<JS::RegisterThreadCallback> registerThread;
+    WriteOnceData<JS::UnregisterThreadCallback> unregisterThread;
+
   private:
     // The lists below are all protected by |lock|.
 
@@ -195,7 +198,7 @@ class GlobalHelperThreadState
     {
         // Self-moving is undefined behavior.
         if (*index != vector.length() - 1)
-            vector[*index] = mozilla::Move(vector.back());
+            vector[*index] = std::move(vector.back());
         (*index)--;
         vector.popBack();
     }
@@ -304,10 +307,11 @@ class GlobalHelperThreadState
     bool finishParseTask(JSContext* cx, ParseTaskKind kind, JS::OffThreadToken* token, MutableHandle<ScriptVector> scripts);
 
     void cancelParseTask(JSRuntime* rt, ParseTaskKind kind, JS::OffThreadToken* token);
+    void destroyParseTask(JSRuntime* rt, ParseTask* parseTask);
 
     void mergeParseTaskRealm(JSContext* cx, ParseTask* parseTask, JS::Realm* dest);
 
-    void trace(JSTracer* trc, js::gc::AutoTraceSession& session);
+    void trace(JSTracer* trc);
 
     JSScript* finishScriptParseTask(JSContext* cx, JS::OffThreadToken* token);
     JSScript* finishScriptDecodeTask(JSContext* cx, JS::OffThreadToken* token);
@@ -374,6 +378,12 @@ struct HelperThread
      */
     bool terminate;
 
+    /*
+     * Indicate that this thread has been registered and needs to be
+     * unregistered at shutdown.
+     */
+    bool registered;
+
     /* The current task being executed by this thread, if any. */
     mozilla::Maybe<HelperTaskUnion> currentTask;
 
@@ -419,6 +429,9 @@ struct HelperThread
 
     static void ThreadMain(void* arg);
     void threadLoop();
+
+    void ensureRegisteredWithProfiler();
+    void unregisterWithProfilerIfNeeded();
 
   private:
     struct TaskSpec

@@ -16,7 +16,7 @@ add_task(async function test_add_link() {
     let {win, frame} =
       await setupPaymentDialog(browser, {
         methodData: [PTU.MethodData.basicCard],
-        details: PTU.Details.twoShippingOptions,
+        details: Object.assign({}, PTU.Details.twoShippingOptions, PTU.Details.total2USD),
         options: PTU.Options.requestShippingOption,
         merchantTaskFn: PTU.ContentTasks.createAndShowRequest,
       }
@@ -44,7 +44,7 @@ add_task(async function test_add_link() {
         return state.page.id == "address-page" && !state["address-page"].guid;
       }, "Check add page state");
 
-      let title = content.document.querySelector("address-form h1");
+      let title = content.document.querySelector("address-form h2");
       is(title.textContent, "Add Shipping Address", "Page title should be set");
 
       let persistCheckbox = content.document.querySelector("address-form labelled-checkbox");
@@ -96,7 +96,7 @@ add_task(async function test_edit_link() {
     let {win, frame} =
       await setupPaymentDialog(browser, {
         methodData: [PTU.MethodData.basicCard],
-        details: PTU.Details.twoShippingOptions,
+        details: Object.assign({}, PTU.Details.twoShippingOptions, PTU.Details.total2USD),
         options: PTU.Options.requestShippingOption,
         merchantTaskFn: PTU.ContentTasks.createAndShowRequest,
       }
@@ -135,7 +135,7 @@ add_task(async function test_edit_link() {
         return state.page.id == "address-page" && !!state["address-page"].guid;
       }, "Check edit page state");
 
-      let title = content.document.querySelector("address-form h1");
+      let title = content.document.querySelector("address-form h2");
       is(title.textContent, "Edit Shipping Address", "Page title should be set");
 
       let persistCheckbox = content.document.querySelector("address-form labelled-checkbox");
@@ -220,7 +220,7 @@ add_task(async function test_add_payer_contact_name_email_link() {
         return state.page.id == "address-page" && !state["address-page"].guid;
       }, "Check add page state");
 
-      let title = content.document.querySelector("address-form h1");
+      let title = content.document.querySelector("address-form h2");
       is(title.textContent, "Add Payer Contact", "Page title should be set");
 
       let persistCheckbox = content.document.querySelector("address-form labelled-checkbox");
@@ -307,7 +307,7 @@ add_task(async function test_edit_payer_contact_name_email_phone_link() {
         return state.page.id == "address-page" && !!state["address-page"].guid;
       }, "Check edit page state");
 
-      let title = content.document.querySelector("address-form h1");
+      let title = content.document.querySelector("address-form h2");
       is(title.textContent, "Edit Payer Contact", "Page title should be set");
 
       let persistCheckbox = content.document.querySelector("address-form labelled-checkbox");
@@ -375,7 +375,7 @@ add_task(async function test_private_persist_addresses() {
       // setupPaymentDialog from a private window.
       await setupPaymentDialog(browser, {
         methodData: [PTU.MethodData.basicCard],
-        details: PTU.Details.twoShippingOptions,
+        details: Object.assign({}, PTU.Details.twoShippingOptions, PTU.Details.total2USD),
         options: PTU.Options.requestShippingOption,
         merchantTaskFn: PTU.ContentTasks.createAndShowRequest,
       }

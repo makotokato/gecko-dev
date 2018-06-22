@@ -331,6 +331,8 @@ MatchPattern::Init(JSContext* aCx, const nsAString& aPattern, bool aIgnorePath,
     // about: URIs don't have hosts, so just treat the host as a wildcard and
     // match on the path.
     mMatchSubdomain = true;
+    // And so, ignorePath doesn't make sense for about: matchers.
+    aIgnorePath = false;
   } else {
     if (!StringHead(tail, 2).EqualsLiteral("//")) {
       aRv.Throw(NS_ERROR_INVALID_ARG);
@@ -545,12 +547,12 @@ MatchPatternSet::Constructor(dom::GlobalObject& aGlobal,
       if (!pattern) {
         return nullptr;
       }
-      patterns.AppendElement(Move(pattern));
+      patterns.AppendElement(std::move(pattern));
     }
   }
 
   RefPtr<MatchPatternSet> patternSet = new MatchPatternSet(aGlobal.GetAsSupports(),
-                                                           Move(patterns));
+                                                           std::move(patterns));
   return patternSet.forget();
 }
 

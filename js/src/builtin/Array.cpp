@@ -1027,7 +1027,7 @@ AddLengthProperty(JSContext* cx, HandleArrayObject obj)
 
     return NativeObject::addAccessorProperty(cx, obj, lengthId,
                                              array_length_getter, array_length_setter,
-                                             JSPROP_PERMANENT | JSPROP_SHADOWABLE);
+                                             JSPROP_PERMANENT);
 }
 
 static bool
@@ -3553,10 +3553,9 @@ static const JSFunctionSpec array_methods[] = {
     /* ES7 additions */
     JS_SELF_HOSTED_FN("includes",    "ArrayIncludes",    2,0),
 
-#ifdef NIGHTLY_BUILD
+    /* Future additions */
     JS_SELF_HOSTED_FN("flatMap",     "ArrayFlatMap",     1,0),
-    JS_SELF_HOSTED_FN("flatten",     "ArrayFlatten",     0,0),
-#endif
+    JS_SELF_HOSTED_FN("flat",        "ArrayFlat",        0,0),
 
     JS_FS_END
 };

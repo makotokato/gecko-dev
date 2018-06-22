@@ -1045,11 +1045,12 @@ html .toggle-button.end.vertical svg {
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 .search-shadow {
-  margin: 1px;
+  border: 1px solid transparent;
 }
 
 .search-shadow.focused {
-  box-shadow: var(--theme-focus-box-shadow-textbox);
+  border: 1px solid var(--blue-50);
+  transition: border-color 0.2s ease-in-out;
 }
 
 .search-field {
@@ -1108,7 +1109,10 @@ html .toggle-button.end.vertical svg {
 
 .search-field i.magnifying-glass,
 .search-field i.sad-face {
-  padding: 6px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  padding-inline-end: 10px;
+  padding-inline-start: 5px;
   width: 24px;
 }
 
@@ -1116,6 +1120,11 @@ html .toggle-button.end.vertical svg {
 .search-field.big i.sad-face {
   position: absolute;
   width: 40px;
+}
+
+.search-field.big i.sad-face {
+  padding-top: 4px;
+  padding-inline-start: 4px;
 }
 
 .search-field .magnifying-glass path,
@@ -1134,16 +1143,11 @@ html .toggle-button.end.vertical svg {
 .search-field .summary {
   line-height: 27px;
   text-align: center;
-  padding-right: 10px;
+  padding-inline-end: 10px;
   color: var(--theme-body-color-inactive);
   align-self: center;
   padding-top: 1px;
   white-space: nowrap;
-}
-
-.search-field.big .summary {
-  padding: 5px 0 5px 0;
-  line-height: 2rem;
 }
 
 .search-field .search-nav-buttons {
@@ -1261,7 +1265,7 @@ html .toggle-button.end.vertical svg {
 }
 
 .project-text-search .search-field .close-btn.big {
-  margin-top: 6px;
+  margin-top: 2px;
 }
 
 .project-text-search .managed-tree {
@@ -1756,6 +1760,37 @@ menuseparator {
 .function-signature .comma {
   color: var(--object-color);
 }
+.source-icon {
+  position: relative;
+  background-color: var(--theme-comment);
+  mask-size: 100%;
+  display: inline-block;
+  margin-inline-end: 5px;
+}
+
+.source-icon,
+.source-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.source-icon.prettyPrint {
+  mask: url("chrome://devtools/skin/images/debugger/prettyPrint.svg") no-repeat;
+  mask-size: 100%;
+  background: var(--theme-highlight-blue);
+  fill: var(--theme-textbox-box-shadow);
+}
+
+.source-icon.blackBox {
+  mask: url("chrome://devtools/skin/images/debugger/blackBox.svg") no-repeat;
+  mask-size: 100%;
+  background: var(--theme-highlight-blue);
+}
+
+.source-icon.react {
+  mask-size: 100%;
+  background: var(--theme-highlight-bluegrey);
+}
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
@@ -2114,6 +2149,10 @@ menuseparator {
   padding: 0 2px;
 }
 
+.objectBox-node.clickable {
+  cursor: pointer;
+}
+
 /******************************************************************************/
 
 .objectBox-event,
@@ -2220,6 +2259,7 @@ button.open-inspector {
   height: 16px;
   margin-left: 0.25em;
   vertical-align: middle;
+  cursor: pointer;
 }
 
 .objectBox-node:hover .open-inspector,
@@ -2622,7 +2662,7 @@ button.jump-definition {
 }
 
 .theme-dark .editor-wrapper {
-  --debug-expression-background: #54617e;
+  --debug-expression-background: rgba(202, 227, 255, 0.3);
   --debug-line-border: #7786a2;
 }
 
@@ -2671,7 +2711,7 @@ html[dir="rtl"] .editor-mount {
 :not(.empty-line):not(.new-breakpoint) > .CodeMirror-gutter-wrapper:hover {
   width: 60px;
   height: 13px;
-  left: -55px !important;
+  margin-left: -25px;
   background-color: var(--gutter-hover-background-color) !important;
   mask: url("chrome://devtools/skin/images/debugger/breakpoint.svg") no-repeat;
   mask-size: 100%;
@@ -2894,37 +2934,6 @@ debug-expression-error {
   border-radius: 2px;
   margin: 0 -1px -1px -1px;
 }
-.source-icon {
-  position: relative;
-  background-color: var(--theme-comment);
-  mask-size: 100%;
-  display: inline-block;
-  margin-inline-end: 5px;
-}
-
-.source-icon,
-.source-icon svg {
-  width: 15px;
-  height: 15px;
-}
-
-.source-icon.prettyPrint {
-  mask: url("chrome://devtools/skin/images/debugger/prettyPrint.svg") no-repeat;
-  mask-size: 100%;
-  background: var(--theme-highlight-blue);
-  fill: var(--theme-textbox-box-shadow);
-}
-
-.source-icon.blackBox {
-  mask: url("chrome://devtools/skin/images/debugger/blackBox.svg") no-repeat;
-  mask-size: 100%;
-  background: var(--theme-highlight-blue);
-}
-
-.source-icon.react {
-  mask-size: 100%;
-  background: var(--theme-highlight-bluegrey);
-}
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
@@ -3058,7 +3067,6 @@ html .breakpoints-list .breakpoint.paused {
   color: var(--theme-comment);
   min-width: 16px;
   text-align: right;
-  margin-top: -1px;
 }
 
 html[dir="rtl"] .breakpoints-list .breakpoint .breakpoint-line {
@@ -3077,11 +3085,11 @@ html[dir="rtl"] .breakpoints-list .breakpoint .breakpoint-line {
   max-width: calc(100% - var(--breakpoint-expression-right-clear-space));
   display: inline-block;
   padding-inline-end: 8px;
-  cursor: default;
+  cursor: pointer;
   flex-grow: 1;
   text-overflow: ellipsis;
   overflow: hidden;
-  padding-top: 3px;
+  padding-top: 2px;
   font-size: 11px;
 }
 
@@ -3261,7 +3269,7 @@ html[dir="rtl"] .breakpoints-list .breakpoint .breakpoint-line {
 .expression-container__close-btn {
   position: absolute;
   offset-inline-end: 0px;
-  top: 0px;
+  top: 1px;
 }
 
 .expression-content {
@@ -3853,8 +3861,6 @@ html[dir="rtl"] .object-node {
   flex-direction: column;
   flex: 1;
   white-space: nowrap;
-  -moz-user-select: none;
-  user-select: none;
   --breakpoint-expression-right-clear-space: 36px;
   --breakpoint-expression-height: 2.4em;
 }
@@ -4049,6 +4055,7 @@ html .welcomebox .toggle-button-end.collapsed {
   position: relative;
   transition: all 0.15s ease;
   min-width: 40px;
+  max-width: 100%;
   overflow: hidden;
   padding: 5px;
   margin-inline-start: 3px;

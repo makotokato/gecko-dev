@@ -370,7 +370,7 @@ class Telemetry {
 
     const props = PENDING_EVENT_PROPERTIES.get(sig);
     if (props) {
-      for (let [name, val] of Object.entries(props)) {
+      for (const [name, val] of Object.entries(props)) {
         this.addEventProperty(category, method, object, value, name, val);
       }
       PENDING_EVENT_PROPERTIES.delete(sig);
@@ -405,7 +405,7 @@ class Telemetry {
     // If the pending event has not been created add the property to the pending
     // list.
     if (!PENDING_EVENTS.has(sig)) {
-      let props = PENDING_EVENT_PROPERTIES.get(sig);
+      const props = PENDING_EVENT_PROPERTIES.get(sig);
 
       if (props) {
         props[pendingPropName] = pendingPropValue;
@@ -456,7 +456,7 @@ class Telemetry {
    *        event as properties.
    */
   addEventProperties(category, method, object, value, pendingObject) {
-    for (let [key, val] of Object.entries(pendingObject)) {
+    for (const [key, val] of Object.entries(pendingObject)) {
       this.addEventProperty(category, method, object, value, key, val);
     }
   }
@@ -500,31 +500,33 @@ class Telemetry {
    * @param {String} object
    *        The telemetry event object name (the name of the object the event
    *        occurred on) e.g. "tools" or "setting"
-   * @param {String|null} value
-   *        The telemetry event value (a user defined value, providing context
-   *        for the event) e.g. "console"
-   * @param {Object} extra
-   *        The telemetry event extra object containing the properties that will
-   *        be sent with the event e.g.
+   * @param {String|null} [value]
+   *        Optional telemetry event value (a user defined value, providing
+   *        context for the event) e.g. "console"
+   * @param {Object} [extra]
+   *        Optional telemetry event extra object containing the properties that
+   *        will be sent with the event e.g.
    *        {
    *          host: "bottom",
    *          width: "1024"
    *        }
    */
-  recordEvent(category, method, object, value, extra) {
+  recordEvent(category, method, object, value = null, extra = null) {
     // Only string values are allowed so cast all values to strings.
-    for (let [name, val] of Object.entries(extra)) {
-      val = val + "";
-      extra[name] = val;
+    if (extra) {
+      for (let [name, val] of Object.entries(extra)) {
+        val = val + "";
+        extra[name] = val;
 
-      if (val.length > 80) {
-        const sig = `${category},${method},${object},${value}`;
+        if (val.length > 80) {
+          const sig = `${category},${method},${object},${value}`;
 
-        throw new Error(`The property "${name}" was added to a telemetry ` +
-                        `event with the signature ${sig} but it's value ` +
-                        `"${val}" is longer than the maximum allowed length ` +
-                        `of 80 characters\n` +
-                        `CALLER: ${getCaller()}`);
+          throw new Error(`The property "${name}" was added to a telemetry ` +
+                          `event with the signature ${sig} but it's value ` +
+                          `"${val}" is longer than the maximum allowed length ` +
+                          `of 80 characters\n` +
+                          `CALLER: ${getCaller()}`);
+        }
       }
     }
     Services.telemetry.recordEvent(category, method, object, value, extra);

@@ -161,7 +161,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleFont
 struct nsStyleGradientStop
 {
   nsStyleCoord mLocation; // percent, coord, calc, none
-  nscolor mColor;
+  mozilla::StyleComplexColor mColor;
   bool mIsInterpolationHint;
 
   // Use ==/!= on nsStyleGradient instead of on the gradient stop.
@@ -872,7 +872,15 @@ struct nsCSSShadowItem
   bool mHasColor; // Whether mColor should be used
   bool mInset;
 
-  nsCSSShadowItem() : mHasColor(false) {
+  nsCSSShadowItem()
+    : mXOffset(0)
+    , mYOffset(0)
+    , mRadius(0)
+    , mSpread(0)
+    , mColor(NS_RGB(0, 0, 0))
+    , mHasColor(false)
+    , mInset(false)
+  {
     MOZ_COUNT_CTOR(nsCSSShadowItem);
   }
   ~nsCSSShadowItem() {
@@ -1092,15 +1100,34 @@ protected:
 public:
   // [reset] the colors to use for a simple border.
   // not used for -moz-border-colors
-  union {
-    struct {
-      mozilla::StyleComplexColor mBorderTopColor;
-      mozilla::StyleComplexColor mBorderRightColor;
-      mozilla::StyleComplexColor mBorderBottomColor;
-      mozilla::StyleComplexColor mBorderLeftColor;
-    };
-    mozilla::StyleComplexColor mBorderColor[4];
-  };
+  mozilla::StyleComplexColor mBorderTopColor;
+  mozilla::StyleComplexColor mBorderRightColor;
+  mozilla::StyleComplexColor mBorderBottomColor;
+  mozilla::StyleComplexColor mBorderLeftColor;
+
+  mozilla::StyleComplexColor&
+  BorderColorFor(mozilla::Side aSide) {
+    switch (aSide) {
+    case mozilla::eSideTop:    return mBorderTopColor;
+    case mozilla::eSideRight:  return mBorderRightColor;
+    case mozilla::eSideBottom: return mBorderBottomColor;
+    case mozilla::eSideLeft:   return mBorderLeftColor;
+    }
+    MOZ_ASSERT_UNREACHABLE("Unknown side");
+    return mBorderTopColor;
+  }
+
+  const mozilla::StyleComplexColor&
+  BorderColorFor(mozilla::Side aSide) const {
+    switch (aSide) {
+    case mozilla::eSideTop:    return mBorderTopColor;
+    case mozilla::eSideRight:  return mBorderRightColor;
+    case mozilla::eSideBottom: return mBorderBottomColor;
+    case mozilla::eSideLeft:   return mBorderLeftColor;
+    }
+    MOZ_ASSERT_UNREACHABLE("Unknown side");
+    return mBorderTopColor;
+  }
 
   static mozilla::StyleComplexColor nsStyleBorder::*
   BorderColorFieldFor(mozilla::Side aSide) {
@@ -1145,20 +1172,6 @@ private:
 
   nsStyleBorder& operator=(const nsStyleBorder& aOther) = delete;
 };
-
-#define ASSERT_BORDER_COLOR_FIELD(side_)                          \
-  static_assert(offsetof(nsStyleBorder, mBorder##side_##Color) == \
-                  offsetof(nsStyleBorder, mBorderColor) +         \
-                    size_t(mozilla::eSide##side_) *               \
-                    sizeof(mozilla::StyleComplexColor),           \
-                "mBorder" #side_ "Color must be at same offset "  \
-                "as mBorderColor[mozilla::eSide" #side_ "]")
-ASSERT_BORDER_COLOR_FIELD(Top);
-ASSERT_BORDER_COLOR_FIELD(Right);
-ASSERT_BORDER_COLOR_FIELD(Bottom);
-ASSERT_BORDER_COLOR_FIELD(Left);
-#undef ASSERT_BORDER_COLOR_FIELD
-
 
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleOutline
 {
@@ -1913,22 +1926,6 @@ struct StyleTransition
     { mTimingFunction = aTimingFunction; }
   void SetDelay(float aDelay) { mDelay = aDelay; }
   void SetDuration(float aDuration) { mDuration = aDuration; }
-  void SetProperty(nsCSSPropertyID aProperty)
-    {
-      NS_ASSERTION(aProperty != eCSSProperty_UNKNOWN &&
-                   aProperty != eCSSPropertyExtra_variable,
-                   "invalid property");
-      mProperty = aProperty;
-    }
-  void SetUnknownProperty(nsCSSPropertyID aProperty,
-                          const nsAString& aPropertyString);
-  void SetUnknownProperty(nsCSSPropertyID aProperty,
-                          nsAtom* aPropertyString);
-  void CopyPropertyFrom(const StyleTransition& aOther)
-    {
-      mProperty = aOther.mProperty;
-      mUnknownProperty = aOther.mUnknownProperty;
-    }
 
   nsTimingFunction& TimingFunctionSlot() { return mTimingFunction; }
 
@@ -2387,7 +2384,11 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay
   bool IsInnerTableStyle() const {
     return mozilla::StyleDisplay::TableCaption == mDisplay ||
            mozilla::StyleDisplay::TableCell == mDisplay ||
-           mozilla::StyleDisplay::TableRow == mDisplay ||
+           IsInternalTableStyleExceptCell();
+  }
+
+  bool IsInternalTableStyleExceptCell() const {
+    return mozilla::StyleDisplay::TableRow == mDisplay ||
            mozilla::StyleDisplay::TableRowGroup == mDisplay ||
            mozilla::StyleDisplay::TableHeaderGroup == mDisplay ||
            mozilla::StyleDisplay::TableFooterGroup == mDisplay ||
@@ -2415,7 +2416,11 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay
 
   static bool IsRubyDisplayType(mozilla::StyleDisplay aDisplay) {
     return mozilla::StyleDisplay::Ruby == aDisplay ||
-           mozilla::StyleDisplay::RubyBase == aDisplay ||
+           IsInternalRubyDisplayType(aDisplay);
+  }
+
+  static bool IsInternalRubyDisplayType(mozilla::StyleDisplay aDisplay) {
+    return mozilla::StyleDisplay::RubyBase == aDisplay ||
            mozilla::StyleDisplay::RubyBaseContainer == aDisplay ||
            mozilla::StyleDisplay::RubyText == aDisplay ||
            mozilla::StyleDisplay::RubyTextContainer == aDisplay;
@@ -2423,6 +2428,10 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay
 
   bool IsRubyDisplayType() const {
     return IsRubyDisplayType(mDisplay);
+  }
+
+  bool IsInternalRubyDisplayType() const {
+    return IsInternalRubyDisplayType(mDisplay);
   }
 
   bool IsOutOfFlowStyle() const {
@@ -2437,7 +2446,9 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay
   }
 
   bool IsContainPaint() const {
-    return NS_STYLE_CONTAIN_PAINT & mContain;
+    return (NS_STYLE_CONTAIN_PAINT & mContain) &&
+           !IsInternalRubyDisplayType() &&
+           !IsInternalTableStyleExceptCell();
   }
 
   /* Returns whether the element has the -moz-transform property
@@ -2877,7 +2888,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleUserInterface
 
   bool HasCustomScrollbars() const
   {
-    return !mScrollbarFaceColor.mIsAuto || !mScrollbarTrackColor.mIsAuto;
+    return !mScrollbarFaceColor.IsAuto() || !mScrollbarTrackColor.IsAuto();
   }
 };
 
@@ -3233,9 +3244,9 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleSVGReset
 
   nsStyleImageLayers    mMask;
   mozilla::StyleShapeSource mClipPath;// [reset]
-  nscolor          mStopColor;        // [reset]
-  nscolor          mFloodColor;       // [reset]
-  nscolor          mLightingColor;    // [reset]
+  mozilla::StyleComplexColor mStopColor;     // [reset]
+  mozilla::StyleComplexColor mFloodColor;    // [reset]
+  mozilla::StyleComplexColor mLightingColor; // [reset]
 
   float            mStopOpacity;      // [reset]
   float            mFloodOpacity;     // [reset]

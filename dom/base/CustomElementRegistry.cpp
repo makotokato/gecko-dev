@@ -31,13 +31,19 @@ public:
     mIsUpgradeReaction = true;
   }
 
+  virtual void Traverse(nsCycleCollectionTraversalCallback& aCb) const override
+  {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCb, "mDefinition");
+    aCb.NoteNativeChild(mDefinition,
+      NS_CYCLE_COLLECTION_PARTICIPANT(CustomElementDefinition));
+  }
 private:
   virtual void Invoke(Element* aElement, ErrorResult& aRv) override
   {
     CustomElementRegistry::Upgrade(aElement, mDefinition, aRv);
   }
 
-  CustomElementDefinition* mDefinition;
+  RefPtr<CustomElementDefinition> mDefinition;
 };
 
 //-----------------------------------------------------
@@ -47,7 +53,7 @@ class CustomElementCallbackReaction final : public CustomElementReaction
 {
   public:
     explicit CustomElementCallbackReaction(UniquePtr<CustomElementCallback> aCustomElementCallback)
-      : mCustomElementCallback(Move(aCustomElementCallback))
+      : mCustomElementCallback(std::move(aCustomElementCallback))
     {
     }
 
@@ -312,10 +318,26 @@ CustomElementRegistry::RunCustomElementCreationCallback::Run()
   MOZ_ASSERT(NS_SUCCEEDED(er.StealNSResult()),
     "chrome JavaScript error in the callback.");
 
-  MOZ_ASSERT(mRegistry->mCustomDefinitions.GetWeak(mAtom),
-    "Callback should define the definition of type.");
+  CustomElementDefinition* definition =
+    mRegistry->mCustomDefinitions.GetWeak(mAtom);
+  MOZ_ASSERT(definition, "Callback should define the definition of type.");
   MOZ_ASSERT(!mRegistry->mElementCreationCallbacks.GetWeak(mAtom),
     "Callback should be removed.");
+
+  nsAutoPtr<nsTHashtable<nsRefPtrHashKey<nsIWeakReference>>> elements;
+  mRegistry->mElementCreationCallbacksUpgradeCandidatesMap.Remove(mAtom, &elements);
+  MOZ_ASSERT(elements, "There should be a list");
+
+  for (auto iter = elements->Iter(); !iter.Done(); iter.Next()) {
+    nsCOMPtr<Element> elem = do_QueryReferent(iter.Get()->GetKey());
+    if (!elem) {
+      continue;
+    }
+
+    CustomElementRegistry::Upgrade(elem, definition, er);
+    MOZ_ASSERT(NS_SUCCEEDED(er.StealNSResult()),
+      "chrome JavaScript error in custom element construction.");
+  }
 
   return NS_OK;
 }
@@ -330,10 +352,12 @@ CustomElementRegistry::LookupCustomElementDefinition(nsAtom* aNameAtom,
     RefPtr<CustomElementCreationCallback> callback;
     mElementCreationCallbacks.Get(aTypeAtom, getter_AddRefs(callback));
     if (callback) {
+      mElementCreationCallbacks.Remove(aTypeAtom);
+      mElementCreationCallbacksUpgradeCandidatesMap.LookupOrAdd(aTypeAtom);
       RefPtr<Runnable> runnable =
         new RunCustomElementCreationCallback(this, aTypeAtom, callback);
       nsContentUtils::AddScriptRunner(runnable);
-      mElementCreationCallbacks.Remove(aTypeAtom);
+      data = mCustomDefinitions.GetWeak(aTypeAtom);
     }
   }
 
@@ -469,7 +493,7 @@ CustomElementRegistry::CreateCustomElementCallback(
   if (aAdoptedCallbackArgs) {
     callback->SetAdoptedCallbackArgs(*aAdoptedCallbackArgs);
   }
-  return Move(callback);
+  return callback;
 }
 
 /* static */ void
@@ -515,7 +539,7 @@ CustomElementRegistry::EnqueueLifecycleCallback(nsIDocument::ElementCallbackType
 
   CustomElementReactionsStack* reactionsStack =
     docGroup->CustomElementReactionsStack();
-  reactionsStack->EnqueueCallbackReaction(aCustomElement, Move(callback));
+  reactionsStack->EnqueueCallbackReaction(aCustomElement, std::move(callback));
 }
 
 namespace {
@@ -557,7 +581,7 @@ CandidateFinder::OrderedCandidates()
   if (mCandidates.Count() == 1) {
     // Fast path for one candidate.
     for (auto iter = mCandidates.Iter(); !iter.Done(); iter.Next()) {
-      nsTArray<nsCOMPtr<Element>> rval({ Move(iter.Data()) });
+      nsTArray<nsCOMPtr<Element>> rval({ std::move(iter.Data()) });
       iter.Remove();
       return rval;
     }
@@ -578,7 +602,7 @@ CandidateFinder::Traverse(Element* aRoot, nsTArray<nsCOMPtr<Element>>& aOrderedE
 {
   nsCOMPtr<Element> elem;
   if (mCandidates.Remove(aRoot, getter_AddRefs(elem))) {
-    aOrderedElements.AppendElement(Move(elem));
+    aOrderedElements.AppendElement(std::move(elem));
     if (mCandidates.Count() == 0) {
       return false;
     }
@@ -905,8 +929,8 @@ CustomElementRegistry::Define(JSContext* aCx,
     new CustomElementDefinition(nameAtom,
                                 localNameAtom,
                                 &aFunctionConstructor,
-                                Move(observedAttributes),
-                                Move(callbacksHolder));
+                                std::move(observedAttributes),
+                                std::move(callbacksHolder));
 
   CustomElementDefinition* def = definition.get();
   mCustomDefinitions.Put(nameAtom, definition.forget());
@@ -955,6 +979,45 @@ CustomElementRegistry::SetElementCreationCallback(const nsAString& aName,
   RefPtr<CustomElementCreationCallback> callback = &aCallback;
   mElementCreationCallbacks.Put(nameAtom, callback.forget());
   return;
+}
+
+static void
+TryUpgrade(nsINode& aNode)
+{
+  Element* element = aNode.IsElement() ? aNode.AsElement() : nullptr;
+  if (element) {
+    CustomElementData* ceData = element->GetCustomElementData();
+    if (ceData) {
+      NodeInfo* nodeInfo = element->NodeInfo();
+      nsAtom* typeAtom = ceData->GetCustomElementType();
+      CustomElementDefinition* definition =
+        nsContentUtils::LookupCustomElementDefinition(nodeInfo->GetDocument(),
+                                                      nodeInfo->NameAtom(),
+                                                      nodeInfo->NamespaceID(),
+                                                      typeAtom);
+      if (definition) {
+        nsContentUtils::EnqueueUpgradeReaction(element, definition);
+      }
+    }
+
+    if (ShadowRoot* root = element->GetShadowRoot()) {
+      for (Element* child = root->GetFirstElementChild(); child;
+           child = child->GetNextElementSibling()) {
+        TryUpgrade(*child);
+      }
+    }
+  }
+
+  for (Element* child = aNode.GetFirstElementChild(); child;
+       child = child->GetNextElementSibling()) {
+    TryUpgrade(*child);
+  }
+}
+
+void
+CustomElementRegistry::Upgrade(nsINode& aRoot)
+{
+  TryUpgrade(aRoot);
 }
 
 void
@@ -1158,7 +1221,7 @@ void
 CustomElementReactionsStack::EnqueueCallbackReaction(Element* aElement,
                                                      UniquePtr<CustomElementCallback> aCustomElementCallback)
 {
-  Enqueue(aElement, new CustomElementCallbackReaction(Move(aCustomElementCallback)));
+  Enqueue(aElement, new CustomElementCallbackReaction(std::move(aCustomElementCallback)));
 }
 
 void
@@ -1244,7 +1307,7 @@ CustomElementReactionsStack::InvokeReactions(ElementQueue* aElementQueue,
     for (uint32_t j = 0; j < reactions.Length(); ++j) {
       // Transfer the ownership of the entry due to reentrant invocation of
       // this function.
-      auto reaction(Move(reactions.ElementAt(j)));
+      auto reaction(std::move(reactions.ElementAt(j)));
       if (reaction) {
         if (!aGlobal && reaction->IsUpgradeReaction()) {
           // This is for the special case when custom element is included
@@ -1327,8 +1390,8 @@ CustomElementDefinition::CustomElementDefinition(nsAtom* aType,
   : mType(aType),
     mLocalName(aLocalName),
     mConstructor(new CustomElementConstructor(aConstructor)),
-    mObservedAttributes(Move(aObservedAttributes)),
-    mCallbacks(Move(aCallbacks))
+    mObservedAttributes(std::move(aObservedAttributes)),
+    mCallbacks(std::move(aCallbacks))
 {
 }
 

@@ -20,11 +20,6 @@ from mozharness.base.script import (
 from mozharness.mozilla.testing.per_test_base import SingleTestMixin
 
 
-_here = os.path.abspath(os.path.dirname(__file__))
-_tooltool_path = os.path.normpath(os.path.join(_here, '..', '..', '..',
-                                               'external_tools',
-                                               'tooltool.py'))
-
 code_coverage_config_options = [
     [["--code-coverage"],
      {"action": "store_true",
@@ -69,8 +64,7 @@ class CodeCoverageMixin(SingleTestMixin):
     @property
     def code_coverage_enabled(self):
         try:
-            if self.config.get('code_coverage'):
-                return True
+            return bool(self.config.get('code_coverage'))
         except (AttributeError, KeyError, TypeError):
             return False
 
@@ -84,17 +78,14 @@ class CodeCoverageMixin(SingleTestMixin):
     @property
     def ccov_upload_disabled(self):
         try:
-            if self.config.get('disable_ccov_upload'):
-                return True
-            return False
+            return bool(self.config.get('disable_ccov_upload'))
         except (AttributeError, KeyError, TypeError):
             return False
 
     @property
     def jsd_code_coverage_enabled(self):
         try:
-            if self.config.get('jsd_code_coverage'):
-                return True
+            return bool(self.config.get('jsd_code_coverage'))
         except (AttributeError, KeyError, TypeError):
             return False
 
@@ -103,7 +94,7 @@ class CodeCoverageMixin(SingleTestMixin):
         if not self.code_coverage_enabled:
             return
 
-        if mozinfo.os == 'linux':
+        if mozinfo.os == 'linux' or mozinfo.os == 'mac':
             self.prefix = '/builds/worker/workspace/build/src/'
             strip_count = self.prefix.count('/')
         elif mozinfo.os == 'win':
@@ -111,6 +102,8 @@ class CodeCoverageMixin(SingleTestMixin):
             # Add 1 as on Windows the path where the compiler tries to write the
             # gcda files has an additional 'obj-firefox' component.
             strip_count = self.prefix.count('/') + 1
+        else:
+            raise Exception('Unexpected OS: {}'.format(mozinfo.os))
 
         os.environ['GCOV_PREFIX_STRIP'] = str(strip_count)
 
@@ -126,17 +119,23 @@ class CodeCoverageMixin(SingleTestMixin):
 
         if mozinfo.os == 'linux':
             platform = 'linux64'
-            tar_file = 'grcov-linux-standalone-x86_64.tar.bz2'
+            tar_file = 'grcov-linux-x86_64.tar.bz2'
         elif mozinfo.os == 'win':
             platform = 'win32'
             tar_file = 'grcov-win-i686.tar.bz2'
+        elif mozinfo.os == 'mac':
+            platform = 'macosx64'
+            tar_file = 'grcov-osx-x86_64.tar.bz2'
 
-        manifest = os.path.join(dirs.get('abs_test_install_dir', os.path.join(dirs['abs_work_dir'], 'tests')), \
-            'config/tooltool-manifests/%s/ccov.manifest' % platform)
+        manifest = os.path.join(dirs.get('abs_test_install_dir',
+                                         os.path.join(dirs['abs_work_dir'], 'tests')),
+                                'config/tooltool-manifests/%s/ccov.manifest' % platform)
 
-        cmd = [sys.executable, _tooltool_path, '--url', 'https://tooltool.mozilla-releng.net/', 'fetch', \
-            '-m', manifest, '-o', '-c', '/builds/worker/tooltool-cache']
-        self.run_command(cmd, cwd=self.grcov_dir)
+        self.tooltool_fetch(
+            manifest=manifest,
+            output_dir=self.grcov_dir,
+            cache=self.config.get('tooltool_cache')
+        )
 
         with tarfile.open(os.path.join(self.grcov_dir, tar_file)) as tar:
             tar.extractall(self.grcov_dir)
@@ -171,7 +170,7 @@ class CodeCoverageMixin(SingleTestMixin):
                 'suite': 'plain'
             },
             '.js': {
-                'test': 'testing/mochitest/baselinecoverage/browser_chrome/browser_baselinecoverage.js',
+                'test': 'testing/mochitest/baselinecoverage/browser_chrome/browser_baselinecoverage.js',  # NOQA: E501
                 'suite': 'browser-chrome'
             },
             '.xul': {
@@ -180,7 +179,7 @@ class CodeCoverageMixin(SingleTestMixin):
             }
         }
 
-        wpt_baseline_test = 'tests/web-platform/mozilla/tests/baselinecoverage/wpt_baselinecoverage.html'
+        wpt_baseline_test = 'tests/web-platform/mozilla/tests/baselinecoverage/wpt_baselinecoverage.html'  # NOQA: E501
         if self.config.get('per_test_category') == "web-platform":
             if 'testharness' not in self.suites:
                 self.suites['testharness'] = []
@@ -240,7 +239,12 @@ class CodeCoverageMixin(SingleTestMixin):
 
         self.gcov_dir, self.jsvm_dir = self.set_coverage_env(os.environ)
 
-    def parse_coverage_artifacts(self, gcov_dir, jsvm_dir, merge=False, output_format='lcov', filter_covered=False):
+    def parse_coverage_artifacts(self,
+                                 gcov_dir,
+                                 jsvm_dir,
+                                 merge=False,
+                                 output_format='lcov',
+                                 filter_covered=False):
         jsvm_output_file = 'jsvm_lcov_output.info'
         grcov_output_file = 'grcov_lcov_output.info'
 
@@ -279,7 +283,7 @@ class CodeCoverageMixin(SingleTestMixin):
         if merge:
             grcov_command += [jsvm_output_file]
 
-        if mozinfo.os == 'win':
+        if mozinfo.os == 'win' or mozinfo.os == 'mac':
             grcov_command += ['--llvm']
 
         if filter_covered:
@@ -391,8 +395,10 @@ class CodeCoverageMixin(SingleTestMixin):
                             with open(grcov_file, 'r') as f:
                                 report = json.load(f)
 
-                            # Remove uncovered files, as they are unneeded for per-test coverage purposes.
-                            report['source_files'] = [sf for sf in report['source_files'] if self.is_covered(sf)]
+                            # Remove uncovered files, as they are unneeded for per-test
+                            # coverage purposes.
+                            report['source_files'] = [
+                                sf for sf in report['source_files'] if self.is_covered(sf)]
 
                             # Get baseline coverage
                             baseline_coverage = {}
@@ -427,7 +433,8 @@ class CodeCoverageMixin(SingleTestMixin):
         del os.environ['JS_CODE_COVERAGE_OUTPUT_DIR']
 
         if not self.ccov_upload_disabled:
-            grcov_output_file, jsvm_output_file = self.parse_coverage_artifacts(self.gcov_dir, self.jsvm_dir)
+            grcov_output_file, jsvm_output_file = self.parse_coverage_artifacts(self.gcov_dir,
+                                                                                self.jsvm_dir)
 
             # Zip the grcov output and upload it.
             grcov_zip_path = os.path.join(dirs['abs_blob_upload_dir'], 'code-coverage-grcov.zip')
@@ -472,11 +479,11 @@ def rm_baseline_cov(baseline_coverage, test_coverage):
         # Bug 1460064 was filed for this.
 
         # Get line numbers and the differences
-        file_coverage = {i for i, cov in enumerate(test_files[test_file]['coverage']) \
-                                 if cov is not None and cov > 0}
+        file_coverage = {i for i, cov in enumerate(test_files[test_file]['coverage'])
+                         if cov is not None and cov > 0}
 
-        baseline = {i for i, cov in enumerate(baseline_files[test_file]['coverage']) \
-                            if cov is not None and cov > 0}
+        baseline = {i for i, cov in enumerate(baseline_files[test_file]['coverage'])
+                    if cov is not None and cov > 0}
 
         unique_coverage = file_coverage - baseline
 

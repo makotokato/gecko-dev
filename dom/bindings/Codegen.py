@@ -1579,7 +1579,7 @@ class CGAbstractMethod(CGThing):
     def _auto_profiler_label(self):
         profiler_label_and_jscontext = self.profiler_label_and_jscontext()
         if profiler_label_and_jscontext:
-            return 'AUTO_PROFILER_LABEL_FAST("%s", OTHER, %s);' % profiler_label_and_jscontext
+            return 'AUTO_PROFILER_LABEL_FAST("%s", DOM, %s);' % profiler_label_and_jscontext
         return None
 
     def declare(self):
@@ -2869,10 +2869,10 @@ class CGCollectJSONAttributesMethod(CGAbstractMethod):
     Generate the CollectJSONAttributes method for an interface descriptor
     """
     def __init__(self, descriptor, toJSONMethod):
-        args = [Argument('JSContext*', 'aCx'),
+        args = [Argument('JSContext*', 'cx'),
                 Argument('JS::Handle<JSObject*>', 'obj'),
                 Argument('%s*' % descriptor.nativeType, 'self'),
-                Argument('JS::Rooted<JSObject*>&', 'aResult')]
+                Argument('JS::Rooted<JSObject*>&', 'result')]
         CGAbstractMethod.__init__(self, descriptor, 'CollectJSONAttributes',
                                   'bool', args, canRunScript=True)
         self.toJSONMethod = toJSONMethod
@@ -2882,15 +2882,16 @@ class CGCollectJSONAttributesMethod(CGAbstractMethod):
         interface = self.descriptor.interface
         toJSONCondition = PropertyDefiner.getControllingCondition(self.toJSONMethod,
                                                                   self.descriptor)
+        needUnwrappedObj = False
         for m in interface.members:
             if m.isAttr() and not m.isStatic() and m.type.isJSONType():
                 getAndDefine = fill(
                     """
-                    JS::Rooted<JS::Value> temp(aCx);
-                    if (!get_${name}(aCx, obj, self, JSJitGetterCallArgs(&temp))) {
+                    JS::Rooted<JS::Value> temp(cx);
+                    if (!get_${name}(cx, obj, self, JSJitGetterCallArgs(&temp))) {
                       return false;
                     }
-                    if (!JS_DefineProperty(aCx, aResult, "${name}", temp, JSPROP_ENUMERATE)) {
+                    if (!JS_DefineProperty(cx, result, "${name}", temp, JSPROP_ENUMERATE)) {
                       return false;
                     }
                     """,
@@ -2901,12 +2902,13 @@ class CGCollectJSONAttributesMethod(CGAbstractMethod):
                 # possibly be disabled, but other things might be.
                 condition = PropertyDefiner.getControllingCondition(m, self.descriptor)
                 if condition.hasDisablers() and condition != toJSONCondition:
+                    needUnwrappedObj = True;
                     ret += fill(
                         """
                         // This is unfortunately a linear scan through sAttributes, but we
                         // only do it for things which _might_ be disabled, which should
                         // help keep the performance problems down.
-                        if (IsGetterEnabled(aCx, obj, (JSJitGetterOp)get_${name}, sAttributes)) {
+                        if (IsGetterEnabled(cx, unwrappedObj, (JSJitGetterOp)get_${name}, sAttributes)) {
                           $*{getAndDefine}
                         }
                         """,
@@ -2921,6 +2923,21 @@ class CGCollectJSONAttributesMethod(CGAbstractMethod):
                         """,
                         getAndDefine=getAndDefine)
         ret += 'return true;\n'
+
+        if needUnwrappedObj:
+            ret= fill(
+                """
+                JS::Rooted<JSObject*> unwrappedObj(cx, js::CheckedUnwrap(obj));
+                if (!unwrappedObj) {
+                  // How did that happen?  We managed to get called with that
+                  // object as "this"!  Just give up on sanity.
+                  return false;
+                }
+
+                $*{ret}
+                """,
+                ret=ret);
+
         return ret
 
 
@@ -3739,6 +3756,8 @@ class CGWrapWithCacheMethod(CGAbstractMethod):
 
         return fill(
             """
+            static_assert(!IsBaseOf<NonRefcountedDOMObject, ${nativeType}>::value,
+                          "Shouldn't have wrappercached things that are not refcounted.");
             $*{assertInheritance}
             MOZ_ASSERT_IF(aGivenProto, js::IsObjectInContextCompartment(aGivenProto, aCx));
             MOZ_ASSERT(!aCache->GetWrapper(),
@@ -3790,6 +3809,7 @@ class CGWrapWithCacheMethod(CGAbstractMethod):
 
             return true;
             """,
+            nativeType=self.descriptor.nativeType,
             assertInheritance=AssertInheritanceChain(self.descriptor),
             declareProto=DeclareProto(),
             createObject=CreateBindingJSObject(self.descriptor, self.properties),
@@ -7236,9 +7256,9 @@ class CGCallGenerator(CGThing):
 
             getPrincipal = fill(
                 """
-                JSCompartment* compartment = js::GetContextCompartment(cx);
-                MOZ_ASSERT(compartment);
-                JSPrincipals* principals = JS_GetCompartmentPrincipals(compartment);
+                JS::Realm* realm = js::GetContextRealm(cx);
+                MOZ_ASSERT(realm);
+                JSPrincipals* principals = JS::GetRealmPrincipals(realm);
                 nsIPrincipal* principal = nsJSPrincipals::get(principals);
                 ${checkPrincipal}
                 """,
@@ -7563,7 +7583,7 @@ class CGPerSignatureCall(CGThing):
             if not idlNode.isStatic():
                 needsUnwrap = True
                 needsUnwrappedVar = True
-                argsPost.append("js::GetObjectCompartment(unwrappedObj ? *unwrappedObj : obj)")
+                argsPost.append("(unwrappedObj ? js::GetNonCCWObjectRealm(*unwrappedObj) : js::GetContextRealm(cx))")
         elif needScopeObject(returnType, arguments, self.extendedAttributes,
                              descriptor.wrapperCache, True,
                              idlNode.getExtendedAttribute("StoreInSlot")):
@@ -15009,7 +15029,7 @@ class CGJSImplMember(CGNativeMember):
 
     def getArgs(self, returnType, argList):
         args = CGNativeMember.getArgs(self, returnType, argList)
-        args.append(Argument("JSCompartment*", "aCompartment", "nullptr"))
+        args.append(Argument("JS::Realm*", "aRealm", "nullptr"))
         return args
 
 
@@ -15033,7 +15053,7 @@ class CGJSImplMethod(CGJSImplMember):
 
     def getArgs(self, returnType, argList):
         if self.isConstructor:
-            # Skip the JSCompartment bits for constructors; it's handled
+            # Skip the JS::Compartment bits for constructors; it's handled
             # manually in getImpl.  But we do need our aGivenProto argument.  We
             # allow it to be omitted if the default proto is desired.
             return (CGNativeMember.getArgs(self, returnType, argList) +
@@ -15058,7 +15078,7 @@ class CGJSImplMethod(CGJSImplMember):
             assert args[-1].argType == 'JS::Handle<JSObject*>'
             assert args[-1].name == 'aGivenProto'
             constructorArgs = [arg.name for arg in args[2:-1]]
-            constructorArgs.append("js::GetObjectCompartment(scopeObj)")
+            constructorArgs.append("js::GetNonCCWObjectRealm(scopeObj)")
             initCall = fill(
                 """
                 // Wrap the object before calling __Init so that __DOM_IMPL__ is available.
@@ -15506,9 +15526,9 @@ class CGCallback(CGClass):
                              "nullptr"))
 
         # Make copies of the arg list for the two "without rv" overloads.  Note
-        # that those don't need aExceptionHandling or aCompartment arguments
-        # because those would make not sense anyway: the only sane thing to do
-        # with exceptions in the "without rv" cases is to report them.
+        # that those don't need aExceptionHandling or aRealm arguments because
+        # those would make not sense anyway: the only sane thing to do with
+        # exceptions in the "without rv" cases is to report them.
         argsWithoutRv = list(args)
         argsWithoutRv.pop(rvIndex)
         argsWithoutThisAndRv = list(argsWithoutRv)
@@ -15519,10 +15539,10 @@ class CGCallback(CGClass):
                              "eReportExceptions"))
         # And the argument for communicating when exceptions should really be
         # rethrown.  In particular, even when aExceptionHandling is
-        # eRethrowExceptions they won't get rethrown if aCompartment is provided
+        # eRethrowExceptions they won't get rethrown if aRealm is provided
         # and its principal doesn't subsume either the callback or the
         # exception.
-        args.append(Argument("JSCompartment*", "aCompartment", "nullptr"))
+        args.append(Argument("JS::Realm*", "aRealm", "nullptr"))
         # And now insert our template argument.
         argsWithoutThis = list(args)
         args.insert(0, Argument("const T&",  "thisVal"))
@@ -15533,8 +15553,8 @@ class CGCallback(CGClass):
         # If we just leave things like that, and have no actual arguments in the
         # IDL, we will end up trying to call the templated "without rv" overload
         # with "rv" as the thisVal.  That's no good.  So explicitly append the
-        # aExceptionHandling and aCompartment values we need to end up matching
-        # the signature of our non-templated "with rv" overload.
+        # aExceptionHandling and aRealm values we need to end up matching the
+        # signature of our non-templated "with rv" overload.
         argnamesWithoutThisAndRv.extend(["eReportExceptions", "nullptr"])
 
         argnamesWithoutRv = [arg.name for arg in argsWithoutRv]
@@ -15550,7 +15570,7 @@ class CGCallback(CGClass):
             if (!aExecutionReason) {
               aExecutionReason = "${executionReason}";
             }
-            CallSetup s(this, aRv, aExecutionReason, aExceptionHandling, aCompartment);
+            CallSetup s(this, aRv, aExecutionReason, aExceptionHandling, aRealm);
             if (!s.GetContext()) {
               MOZ_ASSERT(aRv.Failed());
               return${errorReturn};
@@ -15961,7 +15981,7 @@ class CallbackMember(CGNativeMember):
                                      "nullptr"))
                 args.append(Argument("ExceptionHandling", "aExceptionHandling",
                                      "eReportExceptions"))
-            args.append(Argument("JSCompartment*", "aCompartment", "nullptr"))
+            args.append(Argument("JS::Realm*", "aRealm", "nullptr"))
             return args
         # We want to allow the caller to pass in a "this" value, as
         # well as a JSContext.
@@ -15975,11 +15995,11 @@ class CallbackMember(CGNativeMember):
         callSetup = "CallSetup s(this, aRv"
         if self.rethrowContentException:
             # getArgs doesn't add the aExceptionHandling argument but does add
-            # aCompartment for us.
-            callSetup += ', "%s", eRethrowContentExceptions, aCompartment, /* aIsJSImplementedWebIDL = */ ' % self.getPrettyName()
+            # aRealm for us.
+            callSetup += ', "%s", eRethrowContentExceptions, aRealm, /* aIsJSImplementedWebIDL = */ ' % self.getPrettyName()
             callSetup += toStringBool(isJSImplementedDescriptor(self.descriptorProvider))
         else:
-            callSetup += ', "%s", aExceptionHandling, aCompartment' % self.getPrettyName()
+            callSetup += ', "%s", aExceptionHandling, aRealm' % self.getPrettyName()
         callSetup += ");\n"
         return fill(
             """

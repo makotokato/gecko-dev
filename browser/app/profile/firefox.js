@@ -250,9 +250,8 @@ pref("browser.startup.homepage",            "chrome://branding/locale/browsercon
 pref("browser.startup.firstrunSkipsHomepage", true);
 
 // Show an about:blank window as early as possible for quick startup feedback.
-// Held to nightly and early beta on Linux due to bug 1450626.
 // Disabled on Mac because the bouncing dock icon already provides feedback.
-#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK) && defined(EARLY_BETA_OR_EARLIER)
+#if !defined(XP_MACOSX) && defined(NIGHTLY_BUILD)
 pref("browser.startup.blankWindow", true);
 #else
 pref("browser.startup.blankWindow", false);
@@ -984,6 +983,9 @@ pref("app.productInfo.baseURL", "https://www.mozilla.org/firefox/features/");
 // Name of alternate about: page for certificate errors (when undefined, defaults to about:neterror)
 pref("security.alternate_certificate_error_page", "certerror");
 
+// Indicates if new certificate error page (enabled) or not
+pref("browser.security.newcerterrorpage.enabled", false);
+
 // Whether to start the private browsing mode at application startup
 pref("browser.privatebrowsing.autostart", false);
 
@@ -1489,18 +1491,18 @@ pref("privacy.trackingprotection.ui.enabled", true);
 pref("privacy.trackingprotection.introCount", 0);
 pref("privacy.trackingprotection.introURL", "https://www.mozilla.org/%LOCALE%/firefox/%VERSION%/tracking-protection/start/");
 
+// Always enable newtab segregation using containers
+pref("privacy.usercontext.about_newtab_segregation.enabled", true);
 // Enable Contextual Identity Containers
 #ifdef NIGHTLY_BUILD
 pref("privacy.userContext.enabled", true);
 pref("privacy.userContext.ui.enabled", true);
-pref("privacy.usercontext.about_newtab_segregation.enabled", true);
 
 // 0 disables long press, 1 when clicked, the menu is shown, 2 the menu is shown after X milliseconds.
 pref("privacy.userContext.longPressBehavior", 2);
 #else
 pref("privacy.userContext.enabled", false);
 pref("privacy.userContext.ui.enabled", false);
-pref("privacy.usercontext.about_newtab_segregation.enabled", false);
 
 // 0 disables long press, 1 when clicked, the menu is shown, 2 the menu is shown after X milliseconds.
 pref("privacy.userContext.longPressBehavior", 0);
@@ -1528,11 +1530,7 @@ pref("browser.tabs.remote.warmup.enabled", false);
 
 // Caches tab layers to improve perceived performance
 // of tab switches.
-#if defined(NIGHTLY_BUILD)
-pref("browser.tabs.remote.tabCacheSize", 5);
-#else
 pref("browser.tabs.remote.tabCacheSize", 0);
-#endif
 
 pref("browser.tabs.remote.warmup.maxTabs", 3);
 pref("browser.tabs.remote.warmup.unloadDelayMs", 2000);
@@ -1728,3 +1726,7 @@ pref("app.shield.optoutstudies.enabled", true);
 #else
 pref("app.shield.optoutstudies.enabled", false);
 #endif
+
+// Savant Shield study preferences
+pref("shield.savant.enabled", false);
+pref("shield.savant.loglevel", "warn");

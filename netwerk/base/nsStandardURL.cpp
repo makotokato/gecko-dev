@@ -27,7 +27,6 @@
 #include "nsReadableUtils.h"
 #include "mozilla/net/MozURL_ffi.h"
 
-
 //
 // setenv MOZ_LOG nsStandardURL:5
 //
@@ -2274,7 +2273,7 @@ nsStandardURL::StartClone()
     return clone;
 }
 
-NS_IMETHODIMP
+nsresult
 nsStandardURL::Clone(nsIURI **result)
 {
     return CloneInternal(eHonorRef, EmptyCString(), result);
@@ -3493,8 +3492,10 @@ FromIPCSegment(const nsACString& aSpec, const ipc::StandardURLSegment& aSegment,
         return false;
     }
 
+    CheckedInt<uint32_t> segmentLen = aSegment.position();
+    segmentLen += aSegment.length();
     // Make sure the segment does not extend beyond the spec.
-    if (NS_WARN_IF(aSegment.position() + aSegment.length() > aSpec.Length())) {
+    if (NS_WARN_IF(!segmentLen.isValid() || segmentLen.value() > aSpec.Length())) {
         return false;
     }
 
@@ -3685,5 +3686,5 @@ nsStandardURL::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const {
 nsresult
 Test_NormalizeIPv4(const nsACString& host, nsCString& result)
 {
-    return nsStandardURL::NormalizeIPv4(host, result);
+    return mozilla::net::nsStandardURL::NormalizeIPv4(host, result);
 }

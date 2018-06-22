@@ -7,7 +7,6 @@
 #include "mozilla/DebugOnly.h"
 
 #include "nsIOService.h"
-#include "nsIDOMNode.h"
 #include "nsIProtocolHandler.h"
 #include "nsIFileProtocolHandler.h"
 #include "nscore.h"
@@ -49,6 +48,7 @@
 #include "mozilla/net/DNS.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/net/NeckoChild.h"
+#include "mozilla/net/NeckoParent.h"
 #include "mozilla/dom/ClientInfo.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ServiceWorkerDescriptor.h"
@@ -104,7 +104,7 @@ int16_t gBadPortList[] = {
   17,   // qotd
   19,   // chargen
   20,   // ftp-data
-  21,   // ftp-cntl
+  21,   // ftp
   22,   // ssh
   23,   // telnet
   25,   // smtp
@@ -127,39 +127,42 @@ int16_t gBadPortList[] = {
   115,  // sftp
   117,  // uucp-path
   119,  // nntp
-  123,  // NTP
+  123,  // ntp
   135,  // loc-srv / epmap
   139,  // netbios
   143,  // imap2
-  179,  // BGP
+  179,  // bgp
   389,  // ldap
-  465,  // smtp+ssl
+  427,  // afp (alternate)
+  465,  // smtp (alternate)
   512,  // print / exec
   513,  // login
   514,  // shell
   515,  // printer
   526,  // tempo
   530,  // courier
-  531,  // Chat
+  531,  // chat
   532,  // netnews
   540,  // uucp
+  548,  // afp
   556,  // remotefs
   563,  // nntp+ssl
-  587,  //
-  601,  //
+  587,  // smtp (outgoing)
+  601,  // syslog-conn
   636,  // ldap+ssl
   993,  // imap+ssl
   995,  // pop3+ssl
   2049, // nfs
-  3659,    // apple-sasl / PasswordServer
+  3659, // apple-sasl
   4045, // lockd
   6000, // x11
-  6665,    // Alternate IRC [Apple addition]
-  6666,    // Alternate IRC [Apple addition]
-  6667,    // Standard IRC [Apple addition]
-  6668,    // Alternate IRC [Apple addition]
-  6669,    // Alternate IRC [Apple addition]
-  0,    // This MUST be zero so that we can populating the array
+  6665, // irc (alternate)
+  6666, // irc (alternate)
+  6667, // irc (default)
+  6668, // irc (alternate)
+  6669, // irc (alternate)
+  6697, // irc+tls
+  0,    // Sentinel value: This MUST be zero
 };
 
 static const char kProfileChangeNetTeardownTopic[] = "profile-change-net-teardown";
@@ -717,7 +720,7 @@ nsIOService::NewFileURI(nsIFile *file, nsIURI **result)
 
 NS_IMETHODIMP
 nsIOService::NewChannelFromURI2(nsIURI* aURI,
-                                nsIDOMNode* aLoadingNode,
+                                nsINode* aLoadingNode,
                                 nsIPrincipal* aLoadingPrincipal,
                                 nsIPrincipal* aTriggeringPrincipal,
                                 uint32_t aSecurityFlags,
@@ -736,7 +739,7 @@ nsIOService::NewChannelFromURI2(nsIURI* aURI,
 }
 nsresult
 nsIOService::NewChannelFromURIWithClientAndController(nsIURI* aURI,
-                                                      nsIDOMNode* aLoadingNode,
+                                                      nsINode* aLoadingNode,
                                                       nsIPrincipal* aLoadingPrincipal,
                                                       nsIPrincipal* aTriggeringPrincipal,
                                                       const Maybe<ClientInfo>& aLoadingClientInfo,
@@ -775,7 +778,7 @@ nsresult
 nsIOService::NewChannelFromURIWithProxyFlagsInternal(nsIURI* aURI,
                                                      nsIURI* aProxyURI,
                                                      uint32_t aProxyFlags,
-                                                     nsIDOMNode* aLoadingNode,
+                                                     nsINode* aLoadingNode,
                                                      nsIPrincipal* aLoadingPrincipal,
                                                      nsIPrincipal* aTriggeringPrincipal,
                                                      const Maybe<ClientInfo>& aLoadingClientInfo,
@@ -799,10 +802,9 @@ nsIOService::NewChannelFromURIWithProxyFlagsInternal(nsIURI* aURI,
     // types do.
     if (aLoadingNode || aLoadingPrincipal ||
         aContentPolicyType == nsIContentPolicy::TYPE_DOCUMENT) {
-      nsCOMPtr<nsINode> loadingNode(do_QueryInterface(aLoadingNode));
       loadInfo = new LoadInfo(aLoadingPrincipal,
                               aTriggeringPrincipal,
-                              loadingNode,
+                              aLoadingNode,
                               aSecurityFlags,
                               aContentPolicyType,
                               aLoadingClientInfo,
@@ -934,7 +936,7 @@ NS_IMETHODIMP
 nsIOService::NewChannelFromURIWithProxyFlags2(nsIURI* aURI,
                                               nsIURI* aProxyURI,
                                               uint32_t aProxyFlags,
-                                              nsIDOMNode* aLoadingNode,
+                                              nsINode* aLoadingNode,
                                               nsIPrincipal* aLoadingPrincipal,
                                               nsIPrincipal* aTriggeringPrincipal,
                                               uint32_t aSecurityFlags,
@@ -958,7 +960,7 @@ NS_IMETHODIMP
 nsIOService::NewChannel2(const nsACString& aSpec,
                          const char* aCharset,
                          nsIURI* aBaseURI,
-                         nsIDOMNode* aLoadingNode,
+                         nsINode* aLoadingNode,
                          nsIPrincipal* aLoadingPrincipal,
                          nsIPrincipal* aTriggeringPrincipal,
                          uint32_t aSecurityFlags,
@@ -1556,12 +1558,30 @@ nsIOService::GetManageOfflineStatus(bool* aManage)
 nsresult
 nsIOService::OnNetworkLinkEvent(const char *data)
 {
-    LOG(("nsIOService::OnNetworkLinkEvent data:%s\n", data));
-    if (!mNetworkLinkService)
-        return NS_ERROR_FAILURE;
+    if (IsNeckoChild()) {
+        // There is nothing IO service could do on the child process
+        // with this at the moment.  Feel free to add functionality
+        // here at will, though.
+        return NS_OK;
+    }
 
-    if (mShutdown)
+    if (mShutdown) {
         return NS_ERROR_NOT_AVAILABLE;
+    }
+
+    nsCString dataAsString(data);
+    for (auto* cp : mozilla::dom::ContentParent::AllProcesses(mozilla::dom::ContentParent::eLive)) {
+        PNeckoParent* neckoParent = SingleManagedOrNull(cp->ManagedPNeckoParent());
+        if (!neckoParent) {
+            continue;
+        }
+        Unused << neckoParent->SendNetworkChangeNotification(dataAsString);
+    }
+
+    LOG(("nsIOService::OnNetworkLinkEvent data:%s\n", data));
+    if (!mNetworkLinkService) {
+        return NS_ERROR_FAILURE;
+    }
 
     if (!mManageLinkStatus) {
         LOG(("nsIOService::OnNetworkLinkEvent mManageLinkStatus=false\n"));
@@ -1575,7 +1595,8 @@ nsIOService::OnNetworkLinkEvent(const char *data)
         // but the status of the captive portal may have changed.
         RecheckCaptivePortal();
         return NS_OK;
-    } else if (!strcmp(data, NS_NETWORK_LINK_DATA_DOWN)) {
+    }
+    if (!strcmp(data, NS_NETWORK_LINK_DATA_DOWN)) {
         isUp = false;
     } else if (!strcmp(data, NS_NETWORK_LINK_DATA_UP)) {
         isUp = true;

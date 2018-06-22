@@ -80,8 +80,8 @@ typedef void (*IterateCellCallback)(JSRuntime* rt, void* data, void* thing,
                                     JS::TraceKind traceKind, size_t thingSize);
 
 /*
- * This function calls |zoneCallback| on every zone, |compartmentCallback| on
- * every compartment, |arenaCallback| on every in-use arena, and |cellCallback|
+ * This function calls |zoneCallback| on every zone, |realmCallback| on
+ * every realm, |arenaCallback| on every in-use arena, and |cellCallback|
  * on every in-use cell in the GC heap.
  *
  * Note that no read barrier is triggered on the cells passed to cellCallback,
@@ -90,18 +90,17 @@ typedef void (*IterateCellCallback)(JSRuntime* rt, void* data, void* thing,
 extern void
 IterateHeapUnbarriered(JSContext* cx, void* data,
                        IterateZoneCallback zoneCallback,
-                       JSIterateCompartmentCallback compartmentCallback,
+                       JS::IterateRealmCallback realmCallback,
                        IterateArenaCallback arenaCallback,
                        IterateCellCallback cellCallback);
 
 /*
- * This function is like IterateZonesCompartmentsArenasCells, but does it for a
- * single zone.
+ * This function is like IterateHeapUnbarriered, but does it for a single zone.
  */
 extern void
 IterateHeapUnbarrieredForZone(JSContext* cx, JS::Zone* zone, void* data,
                               IterateZoneCallback zoneCallback,
-                              JSIterateCompartmentCallback compartmentCallback,
+                              JS::IterateRealmCallback realmCallback,
                               IterateArenaCallback arenaCallback,
                               IterateCellCallback cellCallback);
 
@@ -115,12 +114,11 @@ typedef void (*IterateScriptCallback)(JSRuntime* rt, void* data, JSScript* scrip
                                       const JS::AutoRequireNoGC& nogc);
 
 /*
- * Invoke scriptCallback on every in-use script for
- * the given compartment or for all compartments if it is null.
+ * Invoke scriptCallback on every in-use script for the given realm or for all
+ * realms if it is null.
  */
 extern void
-IterateScripts(JSContext* cx, JSCompartment* compartment,
-               void* data, IterateScriptCallback scriptCallback);
+IterateScripts(JSContext* cx, JS::Realm* realm, void* data, IterateScriptCallback scriptCallback);
 
 JS::Realm*
 NewRealm(JSContext* cx, JSPrincipals* principals, const JS::RealmOptions& options);

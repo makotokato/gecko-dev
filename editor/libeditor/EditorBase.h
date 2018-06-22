@@ -22,6 +22,7 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsGkAtoms.h"
 #include "nsIDocument.h"                // for nsIDocument
+#include "nsIContentInlines.h"          // for nsINode::IsEditable()
 #include "nsIEditor.h"                  // for nsIEditor, etc.
 #include "nsIObserver.h"                // for NS_DECL_NSIOBSERVER, etc.
 #include "nsIPlaintextEditor.h"         // for nsIPlaintextEditor, etc.
@@ -51,8 +52,8 @@ class nsRange;
 
 namespace mozilla {
 class AddStyleSheetTransaction;
-class AutoRules;
 class AutoSelectionRestorer;
+class AutoTopLevelEditSubActionNotifier;
 class AutoTransactionsConserveSelection;
 class AutoUpdateViewBatch;
 class ChangeAttributeTransaction;
@@ -82,7 +83,7 @@ class TextInputListener;
 class TextServicesDocument;
 class TypeInState;
 class WSRunObject;
-enum class EditAction : int32_t;
+enum class EditSubAction : int32_t;
 
 namespace dom {
 class DataTransfer;
@@ -312,14 +313,6 @@ public:
 
   RangeUpdater& RangeUpdaterRef() { return mRangeUpdater; }
 
-  enum NotificationForEditorObservers
-  {
-    eNotifyEditorObserversOfEnd,
-    eNotifyEditorObserversOfBefore,
-    eNotifyEditorObserversOfCancel
-  };
-  void NotifyEditorObservers(NotificationForEditorObservers aNotification);
-
   /**
    * Set or unset TextInputListener.  If setting non-nullptr when the editor
    * already has a TextInputListener, this will crash in debug build.
@@ -331,8 +324,6 @@ public:
    * already has an IMEContentObserver, this will crash in debug build.
    */
   void SetIMEContentObserver(IMEContentObserver* aIMEContentObserver);
-
-  virtual bool IsModifiableNode(nsINode* aNode);
 
   /**
    * Returns current composition.
@@ -358,7 +349,21 @@ public:
    */
   nsresult CommitComposition();
 
-  void SwitchTextDirectionTo(uint32_t aDirection);
+  /**
+   * ToggleTextDirection() toggles text-direction of the root element.
+   */
+  nsresult ToggleTextDirection();
+
+  /**
+   * SwitchTextDirectionTo() sets the text-direction of the root element to
+   * LTR or RTL.
+   */
+  enum class TextDirection
+  {
+    eLTR,
+    eRTL,
+  };
+  void SwitchTextDirectionTo(TextDirection aTextDirection);
 
   /**
    * Finalizes selection and caret for the editor.
@@ -586,10 +591,10 @@ public:
   }
 
   /**
-   * IsInEditAction() return true while the instance is handling an edit action.
-   * Otherwise, false.
+   * IsInEditSubAction() return true while the instance is handling an edit
+   * sub-action.  Otherwise, false.
    */
-  bool IsInEditAction() const { return mIsInEditAction; }
+  bool IsInEditSubAction() const { return mIsInEditSubAction; }
 
   /**
    * SuppressDispatchingInputEvent() suppresses or unsuppresses dispatching
@@ -619,11 +624,6 @@ public:
     // (IsMailEditor()), but false for webpages.
     return !IsInteractionAllowed() || IsMailEditor();
   }
-
-  /**
-   * Get the input event target. This might return null.
-   */
-  virtual already_AddRefed<nsIContent> GetInputEventTargetContent() = 0;
 
   /**
    * Get the focused content, if we're focused.  Returns null otherwise.
@@ -659,8 +659,6 @@ public:
    * added here.
    */
   void OnFocus(dom::EventTarget* aFocusEventTarget);
-
-  virtual nsresult InsertFromDrop(dom::DragEvent* aDropEvent) = 0;
 
   /** Resyncs spellchecking state (enabled/disabled).  This should be called
     * when anything that affects spellchecking state changes, such as the
@@ -1498,6 +1496,8 @@ protected: // May be called by friends.
     return aNode->NodeType() == nsINode::TEXT_NODE;
   }
 
+  virtual bool IsModifiableNode(nsINode* aNode);
+
   /**
    * GetNodeAtRangeOffsetPoint() returns the node at this position in a range,
    * assuming that the container is the node itself if it's a text node, or
@@ -1533,7 +1533,7 @@ protected: // May be called by friends.
 
   bool GetShouldTxnSetSelection();
 
-  nsresult HandleInlineSpellCheck(EditAction action,
+  nsresult HandleInlineSpellCheck(EditSubAction aEditSubAction,
                                   Selection& aSelection,
                                   nsINode* previousSelectedNode,
                                   uint32_t previousSelectedOffset,
@@ -1585,18 +1585,25 @@ protected: // May be called by friends.
   void HideCaret(bool aHide);
 
 protected: // Called by helper classes.
-  /**
-   * All editor operations which alter the doc should be prefaced
-   * with a call to StartOperation, naming the action and direction.
-   */
-  virtual nsresult StartOperation(EditAction opID,
-                                  nsIEditor::EDirection aDirection);
 
   /**
-   * All editor operations which alter the doc should be followed
-   * with a call to EndOperation.
+   * OnStartToHandleTopLevelEditSubAction() is called when
+   * mTopLevelEditSubAction is EditSubAction::eNone and somebody starts to
+   * handle aEditSubAction.
+   *
+   * @param aEditSubAction      Top level edit sub action which will be
+   *                            handled soon.
+   * @param aDirection          Direction of aEditSubAction.
    */
-  virtual nsresult EndOperation();
+  virtual void
+  OnStartToHandleTopLevelEditSubAction(EditSubAction aEditSubAction,
+                                       nsIEditor::EDirection aDirection);
+
+  /**
+   * OnEndHandlingTopLevelEditSubAction() is called after
+   * mTopLevelEditSubAction is handled.
+   */
+  virtual void OnEndHandlingTopLevelEditSubAction();
 
   /**
    * Routines for managing the preservation of selection across
@@ -1628,6 +1635,13 @@ protected: // Shouldn't be used by friend classes
    * for someone to derive from the EditorBase later? I don't believe so.
    */
   virtual ~EditorBase();
+
+  /**
+   * SelectAllInternal() should be used instead of SelectAll() in editor
+   * because SelectAll() creates AutoEditActionSetter but we should avoid
+   * to create it as far as possible.
+   */
+  virtual nsresult SelectAllInternal();
 
   nsresult DetermineCurrentDirection();
   void FireInputEvent();
@@ -1748,6 +1762,11 @@ protected: // Shouldn't be used by friend classes
   virtual void RemoveEventListeners();
 
   /**
+   * Get the input event target. This might return null.
+   */
+  virtual already_AddRefed<nsIContent> GetInputEventTargetContent() = 0;
+
+  /**
    * Return true if spellchecking should be enabled for this editor.
    */
   bool GetDesiredSpellCheckState();
@@ -1815,10 +1834,25 @@ protected: // Shouldn't be used by friend classes
                                           int32_t aDestOffset,
                                           bool aDoDeleteSelection) = 0;
 
+  enum NotificationForEditorObservers
+  {
+    eNotifyEditorObserversOfEnd,
+    eNotifyEditorObserversOfBefore,
+    eNotifyEditorObserversOfCancel
+  };
+  void NotifyEditorObservers(NotificationForEditorObservers aNotification);
+
 private:
   nsCOMPtr<nsISelectionController> mSelectionController;
   nsCOMPtr<nsIDocument> mDocument;
 
+
+  /**
+   * SetTextDirectionTo() sets text-direction of the root element.
+   * Should use SwitchTextDirectionTo() or ToggleTextDirection() instead.
+   * This is a helper class of them.
+   */
+  nsresult SetTextDirectionTo(TextDirection aTextDirection);
 protected:
   enum Tristate
   {
@@ -1883,10 +1917,10 @@ protected:
 
   // Nesting count for batching.
   int32_t mPlaceholderBatch;
-  // The current editor action.
-  EditAction mAction;
+  // The top level edit sub-action.
+  EditSubAction mTopLevelEditSubAction;
 
-  // The current direction of editor action.
+  // The top level edit sub-action's direction.
   EDirection mDirection;
   // -1 = not initialized
   int8_t mDocDirtyState;
@@ -1900,8 +1934,8 @@ protected:
   // Whether PostCreate has been called.
   bool mDidPostCreate;
   bool mDispatchInputEvent;
-  // True while the instance is handling an edit action.
-  bool mIsInEditAction;
+  // True while the instance is handling an edit sub-action.
+  bool mIsInEditSubAction;
   // Whether caret is hidden forcibly.
   bool mHidingCaret;
   // Whether spellchecker dictionary is initialized after focused.
@@ -1910,13 +1944,14 @@ protected:
   bool mIsHTMLEditorClass;
 
   friend class AutoPlaceholderBatch;
-  friend class AutoRules;
   friend class AutoSelectionRestorer;
+  friend class AutoTopLevelEditSubActionNotifier;
   friend class AutoTransactionsConserveSelection;
   friend class AutoUpdateViewBatch;
   friend class CompositionTransaction;
   friend class CreateElementTransaction;
   friend class CSSEditUtils;
+  friend class DeleteNodeTransaction;
   friend class DeleteTextTransaction;
   friend class HTMLEditRules;
   friend class HTMLEditUtils;

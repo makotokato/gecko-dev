@@ -48,7 +48,7 @@ namespace dom {
 
 ProcessingInstruction::ProcessingInstruction(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
                                              const nsAString& aData)
-  : CharacterData(Move(aNodeInfo))
+  : CharacterData(std::move(aNodeInfo))
 {
   MOZ_ASSERT(mNodeInfo->NodeType() == nsINode::PROCESSING_INSTRUCTION_NODE,
              "Bad NodeType in aNodeInfo");
@@ -64,7 +64,7 @@ ProcessingInstruction::~ProcessingInstruction()
 
 // If you add nsIStyleSheetLinkingElement here, make sure we actually
 // implement the nsStyleLinkElement methods.
-NS_IMPL_ISUPPORTS_INHERITED(ProcessingInstruction, CharacterData, nsIDOMNode)
+NS_IMPL_ISUPPORTS_INHERITED0(ProcessingInstruction, CharacterData)
 
 JSObject*
 ProcessingInstruction::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aGivenProto)

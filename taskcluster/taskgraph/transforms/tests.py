@@ -408,7 +408,7 @@ def set_defaults(config, tests):
             test.setdefault('e10s', True)
 
         # software-gl-layers is only meaningful on linux unittests, where it defaults to True
-        if test['test-platform'].startswith('linux') and test['suite'] != 'talos':
+        if test['test-platform'].startswith('linux') and test['suite'] not in ['talos', 'raptor']:
             test.setdefault('allow-software-gl-layers', True)
         else:
             test['allow-software-gl-layers'] = False
@@ -431,13 +431,9 @@ def set_defaults(config, tests):
         test.setdefault('max-run-time', 3600)
         test.setdefault('reboot', False)
         test.setdefault('virtualization', 'virtual')
-        test.setdefault('run-on-projects', 'built-projects')
-        test.setdefault('chunks', 1)
-        test.setdefault('instance-size', 'default')
         test.setdefault('loopback-audio', False)
         test.setdefault('loopback-video', False)
         test.setdefault('docker-image', {'in-tree': 'desktop1604-test'})
-        test.setdefault('max-run-time', 3600)
         test.setdefault('checkout', False)
 
         test['mozharness'].setdefault('extra-options', [])
@@ -599,6 +595,7 @@ def set_tier(config, tests):
                                          'windows10-64-pgo/opt',
                                          'windows10-64-devedition/opt',
                                          'windows10-64-nightly/opt',
+                                         'windows10-64-asan/opt',
                                          'macosx64/opt',
                                          'macosx64/debug',
                                          'macosx64-nightly/opt',
@@ -702,16 +699,15 @@ def handle_suite_category(config, tests):
 
 @transforms.add
 def enable_code_coverage(config, tests):
-    """Enable code coverage for the linux64-ccov/.* & linux64-jsdcov/.* & win64-ccov/.*
-    build-platforms"""
+    """Enable code coverage for the ccov and jsdcov build-platforms"""
     for test in tests:
-        if 'ccov' in test['build-platform'] and not test['test-name'].startswith('test-verify'):
+        if 'ccov' in test['build-platform']:
             test['mozharness'].setdefault('extra-options', []).append('--code-coverage')
             test['instance-size'] = 'xlarge'
-            # Ensure we don't run on inbound/autoland/beta, but if the test is try only, ignore it
-            if 'mozilla-central' in test['run-on-projects'] or \
-                    test['run-on-projects'] == 'built-projects':
-                test['run-on-projects'] = ['mozilla-central', 'try']
+            # Ensure we always run on the projects defined by the build, unless the test
+            # is try only or shouldn't run at all.
+            if test['run-on-projects'] not in [[], ['try']]:
+                test['run-on-projects'] = 'built-projects'
 
             # Ensure we don't optimize test suites out.
             # We always want to run all test suites for coverage purposes.
@@ -736,10 +732,10 @@ def enable_code_coverage(config, tests):
                 if 'linux' in test['build-platform']:
                     test['docker-image'] = {"in-tree": "desktop1604-test"}
         elif test['build-platform'] == 'linux64-jsdcov/opt':
-            # Ensure we don't run on inbound/autoland/beta, but if the test is try only, ignore it
-            if 'mozilla-central' in test['run-on-projects'] or \
-                    test['run-on-projects'] == 'built-projects':
-                test['run-on-projects'] = ['mozilla-central', 'try']
+            # Ensure we always run on the projects defined by the build, unless the test
+            # is try only or shouldn't run at all.
+            if test['run-on-projects'] not in [[], ['try']]:
+                test['run-on-projects'] = 'built-projects'
             test['mozharness'].setdefault('extra-options', []).append('--jsd-code-coverage')
         yield test
 

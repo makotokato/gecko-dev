@@ -123,7 +123,7 @@ Instance::callImport(JSContext* cx, uint32_t funcImportIndex, unsigned argc, con
 
     MOZ_ASSERT(fi.sig().args().length() == argc);
     for (size_t i = 0; i < argc; i++) {
-        switch (fi.sig().args()[i]) {
+        switch (fi.sig().args()[i].code()) {
           case ValType::I32:
             args[i].set(Int32Value(*(int32_t*)&argv[i]));
             break;
@@ -201,7 +201,7 @@ Instance::callImport(JSContext* cx, uint32_t funcImportIndex, unsigned argc, con
     size_t numKnownArgs = Min(importArgs.length(), importFun->nargs());
     for (uint32_t i = 0; i < numKnownArgs; i++) {
         TypeSet::Type type = TypeSet::UnknownType();
-        switch (importArgs[i]) {
+        switch (importArgs[i].code()) {
           case ValType::I32:    type = TypeSet::Int32Type(); break;
           case ValType::F32:    type = TypeSet::DoubleType(); break;
           case ValType::F64:    type = TypeSet::DoubleType(); break;
@@ -487,10 +487,10 @@ Instance::Instance(JSContext* cx,
   : realm_(cx->realm()),
     object_(object),
     code_(code),
-    debug_(Move(debug)),
-    tlsData_(Move(tlsDataIn)),
+    debug_(std::move(debug)),
+    tlsData_(std::move(tlsDataIn)),
     memory_(memory),
-    tables_(Move(tables)),
+    tables_(std::move(tables)),
     enterFrameTrapsEnabled_(false)
 {
 #ifdef DEBUG
@@ -771,7 +771,7 @@ Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args)
     RootedValue v(cx);
     for (unsigned i = 0; i < func.sig().args().length(); ++i) {
         v = i < args.length() ? args[i] : UndefinedValue();
-        switch (func.sig().arg(i)) {
+        switch (func.sig().arg(i).code()) {
           case ValType::I32:
             if (!ToInt32(cx, v, (int32_t*)&exportArgs[i]))
                 return false;

@@ -233,7 +233,7 @@ GetNameOperation(JSContext* cx, InterpreterFrame* fp, jsbytecode* pc, MutableHan
      * before the global object.
      */
     if (IsGlobalOp(JSOp(*pc)) && !fp->script()->hasNonSyntacticScope())
-        envChain = &envChain->global().lexicalEnvironment();
+        envChain = &cx->global()->lexicalEnvironment();
 
     /* Kludge to allow (typeof foo == "undefined") tests. */
     JSOp op2 = JSOp(pc[JSOP_GETNAME_LENGTH]);
@@ -994,7 +994,7 @@ js::CheckClassHeritageOperation(JSContext* cx, HandleValue heritage)
         return false;
     }
 
-    ReportValueError2(cx, JSMSG_BAD_HERITAGE, -1, heritage, nullptr, "not an object or null");
+    ReportValueError(cx, JSMSG_BAD_HERITAGE, -1, heritage, nullptr, "not an object or null");
     return false;
 }
 
@@ -3029,7 +3029,7 @@ CASE(JSOP_STRICTEVAL)
                   "eval and stricteval must be the same size");
 
     CallArgs args = CallArgsFromSp(GET_ARGC(REGS.pc), REGS.sp);
-    if (REGS.fp()->environmentChain()->global().valueIsEval(args.calleev())) {
+    if (cx->global()->valueIsEval(args.calleev())) {
         if (!DirectEval(cx, args.get(0), args.rval()))
             goto error;
     } else {
@@ -3270,7 +3270,7 @@ END_CASE(JSOP_GETIMPORT)
 CASE(JSOP_GETINTRINSIC)
 {
     ReservedRooted<Value> rval(&rootValue0);
-    if (!GetIntrinsicOperation(cx, REGS.pc, &rval))
+    if (!GetIntrinsicOperation(cx, script, REGS.pc, &rval))
         goto error;
 
     PUSH_COPY(rval);
@@ -4520,7 +4520,10 @@ js::DefFunOperation(JSContext* cx, HandleScript script, HandleObject envChain,
         if (!DefineDataProperty(cx, parent, name, rval, attrs))
             return false;
 
-        return parent->is<GlobalObject>() ? parent->realm()->addToVarNames(cx, name) : true;
+        if (parent->is<GlobalObject>())
+            return parent->as<GlobalObject>().realm()->addToVarNames(cx, name);
+
+        return true;
     }
 
     /*
@@ -4546,7 +4549,7 @@ js::DefFunOperation(JSContext* cx, HandleScript script, HandleObject envChain,
 
         // Careful: the presence of a shape, even one appearing to derive from
         // a variable declaration, doesn't mean it's in [[VarNames]].
-        if (!parent->realm()->addToVarNames(cx, name))
+        if (!parent->as<GlobalObject>().realm()->addToVarNames(cx, name))
             return false;
     }
 
@@ -4770,7 +4773,7 @@ js::DeleteNameOperation(JSContext* cx, HandlePropertyName name, HandleObject sco
     if (status) {
         // Deleting a name from the global object removes it from [[VarNames]].
         if (pobj == scope && scope->is<GlobalObject>())
-            scope->realm()->removeFromVarNames(name);
+            scope->as<GlobalObject>().realm()->removeFromVarNames(name);
     }
 
     return true;
@@ -4831,8 +4834,6 @@ js::InitGetterSetterOperation(JSContext* cx, jsbytecode* pc, HandleObject obj, H
                               HandleObject val)
 {
     MOZ_ASSERT(val->isCallable());
-    GetterOp getter;
-    SetterOp setter;
 
     JSOp op = JSOp(*pc);
 
@@ -4843,18 +4844,14 @@ js::InitGetterSetterOperation(JSContext* cx, jsbytecode* pc, HandleObject obj, H
     if (op == JSOP_INITPROP_GETTER || op == JSOP_INITELEM_GETTER ||
         op == JSOP_INITHIDDENPROP_GETTER || op == JSOP_INITHIDDENELEM_GETTER)
     {
-        getter = CastAsGetterOp(val);
-        setter = nullptr;
         attrs |= JSPROP_GETTER;
-    } else {
-        MOZ_ASSERT(op == JSOP_INITPROP_SETTER || op == JSOP_INITELEM_SETTER ||
-                   op == JSOP_INITHIDDENPROP_SETTER || op == JSOP_INITHIDDENELEM_SETTER);
-        getter = nullptr;
-        setter = CastAsSetterOp(val);
-        attrs |= JSPROP_SETTER;
+        return DefineAccessorProperty(cx, obj, id, val, nullptr, attrs);
     }
 
-    return DefineAccessorProperty(cx, obj, id, getter, setter, attrs);
+    MOZ_ASSERT(op == JSOP_INITPROP_SETTER || op == JSOP_INITELEM_SETTER ||
+               op == JSOP_INITHIDDENPROP_SETTER || op == JSOP_INITHIDDENELEM_SETTER);
+    attrs |= JSPROP_SETTER;
+    return DefineAccessorProperty(cx, obj, id, nullptr, val, attrs);
 }
 
 bool

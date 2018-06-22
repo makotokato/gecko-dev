@@ -62,14 +62,14 @@ enum class StackType
 static inline StackType
 ToStackType(ValType type)
 {
-    return StackType(type);
+    return StackType(type.bitsUnsafe());
 }
 
 static inline ValType
 NonAnyToValType(StackType type)
 {
     MOZ_ASSERT(type != StackType::Any);
-    return ValType(type);
+    return ValType::fromTypeCode(uint32_t(type));
 }
 
 static inline bool
@@ -1677,7 +1677,7 @@ OpIter<Policy>::readRefNull()
 {
     MOZ_ASSERT(Classify(op_) == OpKind::RefNull);
     uint8_t valType;
-    if (!d_.readValType(&valType) || ValType(valType) != ValType::AnyRef)
+    if (!d_.readValType(&valType) || valType != uint8_t(ValType::AnyRef))
         return fail("unknown nullref type");
     return push(StackType::AnyRef);
 }
@@ -1732,7 +1732,7 @@ OpIter<Policy>::readCallIndirect(uint32_t* sigIndex, Value* callee, ValueVector*
     if (!readVarU32(sigIndex))
         return fail("unable to read call_indirect signature index");
 
-    if (*sigIndex >= env_.numSigs())
+    if (*sigIndex >= env_.numTypes())
         return fail("signature index out of range");
 
     uint8_t flags;
@@ -1745,7 +1745,10 @@ OpIter<Policy>::readCallIndirect(uint32_t* sigIndex, Value* callee, ValueVector*
     if (!popWithType(ValType::I32, callee))
         return false;
 
-    const Sig& sig = env_.sigs[*sigIndex];
+    if (!env_.types[*sigIndex].isFuncType())
+        return fail("expected signature type");
+
+    const Sig& sig = env_.types[*sigIndex].funcType();
 
     if (!popCallArgs(sig.args(), argValues))
         return false;
@@ -1789,10 +1792,13 @@ OpIter<Policy>::readOldCallIndirect(uint32_t* sigIndex, Value* callee, ValueVect
     if (!readVarU32(sigIndex))
         return fail("unable to read call_indirect signature index");
 
-    if (*sigIndex >= env_.numSigs())
+    if (*sigIndex >= env_.numTypes())
         return fail("signature index out of range");
 
-    const Sig& sig = env_.sigs[*sigIndex];
+    if (!env_.types[*sigIndex].isFuncType())
+        return fail("expected signature type");
+
+    const Sig& sig = env_.types[*sigIndex].funcType();
 
     if (!popCallArgs(sig.args(), argValues))
         return false;
@@ -2243,6 +2249,9 @@ OpIter<Policy>::readMemCopy(Value* dest, Value* src, Value* len)
 {
     MOZ_ASSERT(Classify(op_) == OpKind::MemCopy);
 
+    if (!env_.usesMemory())
+        return fail("can't touch memory without memory");
+
     if (!popWithType(ValType::I32, len))
         return false;
 
@@ -2260,6 +2269,9 @@ inline bool
 OpIter<Policy>::readMemFill(Value* start, Value* val, Value* len)
 {
     MOZ_ASSERT(Classify(op_) == OpKind::MemFill);
+
+    if (!env_.usesMemory())
+        return fail("can't touch memory without memory");
 
     if (!popWithType(ValType::I32, len))
         return false;

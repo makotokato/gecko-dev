@@ -2281,8 +2281,8 @@ ReparentWrapper(JSContext* aCx, JS::Handle<JSObject*> aObjArg, ErrorResult& aErr
 
   JSAutoRealm oldAr(aCx, oldParent);
 
-  JSCompartment* oldCompartment = js::GetObjectCompartment(oldParent);
-  JSCompartment* newCompartment = js::GetObjectCompartment(newParent);
+  JS::Compartment* oldCompartment = js::GetObjectCompartment(oldParent);
+  JS::Compartment* newCompartment = js::GetObjectCompartment(newParent);
   if (oldCompartment == newCompartment) {
     MOZ_ASSERT(oldParent == newParent);
     return;
@@ -2462,9 +2462,9 @@ GlobalObject::GetSubjectPrincipal() const
     return nullptr;
   }
 
-  JSCompartment* compartment = js::GetContextCompartment(mCx);
-  MOZ_ASSERT(compartment);
-  JSPrincipals* principals = JS_GetCompartmentPrincipals(compartment);
+  JS::Realm* realm = js::GetContextRealm(mCx);
+  MOZ_ASSERT(realm);
+  JSPrincipals* principals = JS::GetRealmPrincipals(realm);
   return nsJSPrincipals::get(principals);
 }
 
@@ -4010,23 +4010,19 @@ class DeprecationWarningRunnable final : public WorkerProxyToMainThreadRunnable
   nsIDocument::DeprecatedOperations mOperation;
 
 public:
-  DeprecationWarningRunnable(WorkerPrivate* aWorkerPrivate,
-                             nsIDocument::DeprecatedOperations aOperation)
-    : WorkerProxyToMainThreadRunnable(aWorkerPrivate)
-    , mOperation(aOperation)
-  {
-    MOZ_ASSERT(aWorkerPrivate);
-    aWorkerPrivate->AssertIsOnWorkerThread();
-  }
+  explicit DeprecationWarningRunnable(nsIDocument::DeprecatedOperations aOperation)
+    : mOperation(aOperation)
+  {}
 
 private:
   void
-  RunOnMainThread() override
+  RunOnMainThread(WorkerPrivate* aWorkerPrivate) override
   {
     MOZ_ASSERT(NS_IsMainThread());
+    MOZ_ASSERT(aWorkerPrivate);
 
     // Walk up to our containing page
-    WorkerPrivate* wp = mWorkerPrivate;
+    WorkerPrivate* wp = aWorkerPrivate;
     while (wp->GetParent()) {
       wp = wp->GetParent();
     }
@@ -4038,7 +4034,7 @@ private:
   }
 
   void
-  RunBackOnWorkerThreadForCleanup() override
+  RunBackOnWorkerThreadForCleanup(WorkerPrivate* aWorkerPrivate) override
   {}
 };
 
@@ -4076,8 +4072,8 @@ DeprecationWarning(const GlobalObject& aGlobal,
   }
 
   RefPtr<DeprecationWarningRunnable> runnable =
-    new DeprecationWarningRunnable(workerPrivate, aOperation);
-  runnable->Dispatch();
+    new DeprecationWarningRunnable(aOperation);
+  runnable->Dispatch(workerPrivate);
 }
 
 namespace binding_detail {

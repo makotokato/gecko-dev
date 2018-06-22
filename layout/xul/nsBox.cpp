@@ -14,7 +14,6 @@
 #include "nsContainerFrame.h"
 #include "nsNameSpaceManager.h"
 #include "nsGkAtoms.h"
-#include "nsIDOMNode.h"
 #include "nsITheme.h"
 #include "nsIServiceManager.h"
 #include "nsBoxLayout.h"
@@ -175,9 +174,9 @@ nsBox::GetXULBorder(nsMargin& aMargin)
     // Go to the theme for the border.
     nsPresContext *context = PresContext();
     if (gTheme->ThemeSupportsWidget(context, this, disp->mAppearance)) {
-      LayoutDeviceIntMargin margin;
-      gTheme->GetWidgetBorder(context->DeviceContext(), this,
-                              disp->mAppearance, &margin);
+      LayoutDeviceIntMargin margin =
+        gTheme->GetWidgetBorder(context->DeviceContext(), this,
+                                disp->mAppearance);
       aMargin = LayoutDevicePixel::ToAppUnits(margin,
                                               context->AppUnitsPerDevPixel());
       return NS_OK;

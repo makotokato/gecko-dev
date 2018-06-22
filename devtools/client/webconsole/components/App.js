@@ -43,6 +43,7 @@ class App extends Component {
       onFirstMeaningfulPaint: PropTypes.func.isRequired,
       serviceContainer: PropTypes.object.isRequired,
       closeSplitConsole: PropTypes.func.isRequired,
+      jstermCodeMirror: PropTypes.bool,
     };
   }
 
@@ -101,7 +102,7 @@ class App extends Component {
     // Remove notification automatically when the user
     // types "allow pasting".
     function pasteKeyUpHandler() {
-      let value = inputField.value || inputField.textContent;
+      const value = inputField.value || inputField.textContent;
       if (value.includes(SELF_XSS_OK)) {
         dispatch(actions.removeNotification("selfxss-notification"));
         inputField.removeEventListener("keyup", pasteKeyUpHandler);
@@ -122,7 +123,13 @@ class App extends Component {
       onFirstMeaningfulPaint,
       serviceContainer,
       closeSplitConsole,
+      jstermCodeMirror,
     } = this.props;
+
+    const classNames = ["webconsole-output-wrapper"];
+    if (jstermCodeMirror) {
+      classNames.push("jsterm-cm");
+    }
 
     // Render the entire Console panel. The panel consists
     // from the following parts:
@@ -133,7 +140,7 @@ class App extends Component {
     // * JSTerm - Input command line.
     return (
       div({
-        className: "webconsole-output-wrapper",
+        className: classNames.join(" "),
         ref: node => {
           this.node = node;
         }},
@@ -158,6 +165,7 @@ class App extends Component {
         JSTerm({
           hud,
           onPaste: this.onPaste,
+          codeMirrorEnabled: jstermCodeMirror,
         }),
       )
     );

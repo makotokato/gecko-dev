@@ -25,8 +25,8 @@
 #include "vm/SymbolType.h"
 
 #include "gc/GC-inl.h"
-#include "vm/JSCompartment-inl.h"
 #include "vm/ObjectGroup-inl.h"
+#include "vm/Realm-inl.h"
 #include "vm/TypeInference-inl.h"
 
 using namespace js;
@@ -163,11 +163,11 @@ struct TraceIncomingFunctor {
 JS_PUBLIC_API(void)
 JS::TraceIncomingCCWs(JSTracer* trc, const JS::CompartmentSet& compartments)
 {
-    for (js::CompartmentsIter comp(trc->runtime(), SkipAtoms); !comp.done(); comp.next()) {
+    for (js::CompartmentsIter comp(trc->runtime()); !comp.done(); comp.next()) {
         if (compartments.has(comp))
             continue;
 
-        for (JSCompartment::WrapperEnum e(comp); !e.empty(); e.popFront()) {
+        for (Compartment::WrapperEnum e(comp); !e.empty(); e.popFront()) {
             mozilla::DebugOnly<const CrossCompartmentKey> prior = e.front().key();
             e.front().mutableKey().applyToWrapped(TraceIncomingFunctor(trc, compartments));
             MOZ_ASSERT(e.front().key() == prior);

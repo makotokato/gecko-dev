@@ -234,6 +234,8 @@ EventStateManager::EventStateManager()
   , mCurrentTarget(nullptr)
     // init d&d gesture state machine variables
   , mGestureDownPoint(0,0)
+  , mGestureModifiers(0)
+  , mGestureDownButtons(0)
   , mPresContext(nullptr)
   , mLClickCount(0)
   , mMClickCount(0)
@@ -2106,8 +2108,7 @@ EventStateManager::DoDefaultDragStart(nsPresContext* aPresContext,
   int32_t imageX, imageY;
   Element* dragImage = aDataTransfer->GetDragImage(&imageX, &imageY);
 
-  nsCOMPtr<nsIArray> transArray =
-    aDataTransfer->GetTransferables(dragTarget->AsDOMNode());
+  nsCOMPtr<nsIArray> transArray = aDataTransfer->GetTransferables(dragTarget);
   if (!transArray)
     return false;
 
@@ -2157,11 +2158,10 @@ EventStateManager::DoDefaultDragStart(nsPresContext* aPresContext,
     }
 #endif
 
-    dragService->InvokeDragSessionWithImage(dragTarget->AsDOMNode(),
+    dragService->InvokeDragSessionWithImage(dragTarget,
                                             aPrincipalURISpec, transArray,
                                             region, action,
-                                            dragImage ? dragImage->AsDOMNode() :
-                                                        nullptr,
+                                            dragImage,
                                             imageX, imageY, event,
                                             dataTransfer);
   }
@@ -4184,7 +4184,7 @@ CreateMouseOrPointerWidgetEvent(WidgetMouseEvent* aMouseEvent,
 {
   WidgetPointerEvent* sourcePointer = aMouseEvent->AsPointerEvent();
   if (sourcePointer) {
-    AUTO_PROFILER_LABEL("CreateMouseOrPointerWidgetEvent", EVENTS);
+    AUTO_PROFILER_LABEL("CreateMouseOrPointerWidgetEvent", OTHER);
 
     nsAutoPtr<WidgetPointerEvent> newPointerEvent;
     newPointerEvent =

@@ -51,19 +51,6 @@ Object.keys(_ui).forEach(function (key) {
     }
   });
 });
-
-var _createEditor = require("./create-editor");
-
-Object.keys(_createEditor).forEach(function (key) {
-  if (key === "default" || key === "__esModule") return;
-  Object.defineProperty(exports, key, {
-    enumerable: true,
-    get: function () {
-      return _createEditor[key];
-    }
-  });
-});
-exports.setEditor = setEditor;
 exports.getEditor = getEditor;
 exports.removeEditor = removeEditor;
 exports.shouldShowPrettyPrint = shouldShowPrettyPrint;
@@ -83,6 +70,8 @@ exports.clearLineClass = clearLineClass;
 exports.getTextForLine = getTextForLine;
 exports.getCursorLine = getCursorLine;
 
+var _createEditor = require("./create-editor");
+
 var _source = require("../source");
 
 var _wasm = require("../wasm");
@@ -95,11 +84,12 @@ function _defineProperty(obj, key, value) { if (key in obj) { Object.definePrope
 
 let editor;
 
-function setEditor(_editor) {
-  editor = _editor;
-}
-
 function getEditor() {
+  if (editor) {
+    return editor;
+  }
+
+  editor = (0, _createEditor.createEditor)();
   return editor;
 }
 

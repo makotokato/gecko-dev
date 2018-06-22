@@ -86,6 +86,7 @@ nsGIFDecoder2::nsGIFDecoder2(RasterImage* aImage)
   , mOldColor(0)
   , mCurrentFrameIndex(-1)
   , mColorTablePos(0)
+  , mColorMask('\0')
   , mGIFOpen(false)
   , mSawTransparency(false)
 {
@@ -182,6 +183,14 @@ nsGIFDecoder2::BeginImageFrame(const IntRect& aFrameRect,
   // Make sure there's no animation if we're downscaling.
   MOZ_ASSERT_IF(Size() != OutputSize(), !GetImageMetadata().HasAnimation());
 
+  AnimationParams animParams {
+    aFrameRect,
+    FrameTimeout::FromRawMilliseconds(mGIFStruct.delay_time),
+    uint32_t(mGIFStruct.images_decoded),
+    BlendMethod::OVER,
+    DisposalMethod(mGIFStruct.disposal_method)
+  };
+
   SurfacePipeFlags pipeFlags = aIsInterlaced
                              ? SurfacePipeFlags::DEINTERLACE
                              : SurfacePipeFlags();
@@ -196,9 +205,9 @@ nsGIFDecoder2::BeginImageFrame(const IntRect& aFrameRect,
 
     // The first frame is always decoded into an RGB surface.
     pipe =
-      SurfacePipeFactory::CreateSurfacePipe(this, mGIFStruct.images_decoded,
-                                            Size(), OutputSize(),
-                                            aFrameRect, format, pipeFlags);
+      SurfacePipeFactory::CreateSurfacePipe(this, Size(), OutputSize(),
+                                            aFrameRect, format,
+                                            Some(animParams), pipeFlags);
   } else {
     // This is an animation frame (and not the first). To minimize the memory
     // usage of animations, the image data is stored in paletted form.
@@ -210,10 +219,10 @@ nsGIFDecoder2::BeginImageFrame(const IntRect& aFrameRect,
     // historically.
     MOZ_ASSERT(Size() == OutputSize());
     pipe =
-      SurfacePipeFactory::CreatePalettedSurfacePipe(this, mGIFStruct.images_decoded,
-                                                    Size(), aFrameRect,
+      SurfacePipeFactory::CreatePalettedSurfacePipe(this, Size(), aFrameRect,
                                                     SurfaceFormat::B8G8R8A8,
-                                                    aDepth, pipeFlags);
+                                                    aDepth, Some(animParams),
+                                                    pipeFlags);
   }
 
   mCurrentFrameIndex = mGIFStruct.images_decoded;
@@ -223,7 +232,7 @@ nsGIFDecoder2::BeginImageFrame(const IntRect& aFrameRect,
     return NS_ERROR_FAILURE;
   }
 
-  mPipe = Move(*pipe);
+  mPipe = std::move(*pipe);
   return NS_OK;
 }
 
@@ -254,9 +263,7 @@ nsGIFDecoder2::EndImageFrame()
   mGIFStruct.images_decoded++;
 
   // Tell the superclass we finished a frame
-  PostFrameStop(opacity,
-                DisposalMethod(mGIFStruct.disposal_method),
-                FrameTimeout::FromRawMilliseconds(mGIFStruct.delay_time));
+  PostFrameStop(opacity);
 
   // Reset the transparent pixel
   if (mOldColor) {

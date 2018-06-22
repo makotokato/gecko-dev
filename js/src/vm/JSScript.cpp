@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <new>
 #include <string.h>
+#include <utility>
 
 #include "jsapi.h"
 #include "jstypes.h"
@@ -56,6 +57,7 @@
 #include "vtune/VTuneWrapper.h"
 
 #include "gc/Marking-inl.h"
+#include "vm/Compartment-inl.h"
 #include "vm/EnvironmentObject-inl.h"
 #include "vm/JSFunction-inl.h"
 #include "vm/JSObject-inl.h"
@@ -1059,18 +1061,18 @@ JSScript::initScriptCounts(JSContext* cx)
             return false;
         }
 
-        realm()->scriptCountsMap = Move(map);
+        realm()->scriptCountsMap = std::move(map);
     }
 
     // Allocate the ScriptCounts.
-    UniqueScriptCounts sc = cx->make_unique<ScriptCounts>(Move(base));
+    UniqueScriptCounts sc = cx->make_unique<ScriptCounts>(std::move(base));
     if (!sc) {
         ReportOutOfMemory(cx);
         return false;
     }
 
     // Register the current ScriptCounts in the realm's map.
-    if (!realm()->scriptCountsMap->putNew(this, Move(sc))) {
+    if (!realm()->scriptCountsMap->putNew(this, std::move(sc))) {
         ReportOutOfMemory(cx);
         return false;
     }
@@ -1289,7 +1291,7 @@ void
 JSScript::releaseScriptCounts(ScriptCounts* counts)
 {
     ScriptCountsMap::Ptr p = GetScriptCountsMapEntry(this);
-    *counts = Move(*p->value().get());
+    *counts = std::move(*p->value().get());
     realm()->scriptCountsMap->remove(p);
     bitFields_.hasScriptCounts_ = false;
 }
@@ -1473,7 +1475,7 @@ void
 UncompressedSourceCache::AutoHoldEntry::holdChars(UniqueTwoByteChars chars)
 {
     MOZ_ASSERT(!cache_ && !sourceChunk_.valid() && !charsToFree_);
-    charsToFree_ = Move(chars);
+    charsToFree_ = std::move(chars);
 }
 
 void
@@ -1484,7 +1486,7 @@ UncompressedSourceCache::AutoHoldEntry::deferDelete(UniqueTwoByteChars chars)
     MOZ_ASSERT(cache_ && sourceChunk_.valid() && !charsToFree_);
     cache_ = nullptr;
     sourceChunk_ = ScriptSourceChunk();
-    charsToFree_ = Move(chars);
+    charsToFree_ = std::move(chars);
 }
 
 UncompressedSourceCache::AutoHoldEntry::~AutoHoldEntry()
@@ -1534,10 +1536,10 @@ UncompressedSourceCache::put(const ScriptSourceChunk& ssc, UniqueTwoByteChars st
         if (!map || !map->init())
             return false;
 
-        map_ = Move(map);
+        map_ = std::move(map);
     }
 
-    if (!map_->put(ssc, Move(str)))
+    if (!map_->put(ssc, std::move(str)))
         return false;
 
     holdEntry(holder, ssc);
@@ -1552,7 +1554,7 @@ UncompressedSourceCache::purge()
 
     for (Map::Range r = map_->all(); !r.empty(); r.popFront()) {
         if (holder_ && r.front().key() == holder_->sourceChunk()) {
-            holder_->deferDelete(Move(r.front().value()));
+            holder_->deferDelete(std::move(r.front().value()));
             holder_ = nullptr;
         }
     }
@@ -1605,7 +1607,7 @@ ScriptSource::chunkChars(JSContext* cx, UncompressedSourceCache::AutoHoldEntry& 
     decompressed[lengthWithNull - 1] = '\0';
 
     const char16_t* ret = decompressed.get();
-    if (!cx->caches().uncompressedSourceCache.put(ssc, Move(decompressed), holder)) {
+    if (!cx->caches().uncompressedSourceCache.put(ssc, std::move(decompressed), holder)) {
         JS_ReportOutOfMemory(cx);
         return nullptr;
     }
@@ -1646,7 +1648,7 @@ ScriptSource::movePendingCompressedSource()
                   data.as<Uncompressed>().string.length() ==
                   pendingCompressed_->uncompressedLength);
 
-    data = SourceType(Compressed(mozilla::Move(pendingCompressed_->raw),
+    data = SourceType(Compressed(std::move(pendingCompressed_->raw),
                                  pendingCompressed_->uncompressedLength));
     pendingCompressed_ = mozilla::Nothing();
 }
@@ -1728,7 +1730,7 @@ ScriptSource::chars(JSContext* cx, UncompressedSourceCache::AutoHoldEntry& holde
 
     // Transfer ownership to |holder|.
     const char16_t* ret = decompressed.get();
-    holder.holdChars(Move(decompressed));
+    holder.holdChars(std::move(decompressed));
     return ret;
 }
 
@@ -1784,12 +1786,12 @@ MOZ_MUST_USE bool
 ScriptSource::setSource(JSContext* cx, UniqueTwoByteChars&& source, size_t length)
 {
     auto& cache = cx->zone()->runtimeFromAnyThread()->sharedImmutableStrings();
-    auto deduped = cache.getOrCreate(mozilla::Move(source), length);
+    auto deduped = cache.getOrCreate(std::move(source), length);
     if (!deduped) {
         ReportOutOfMemory(cx);
         return false;
     }
-    setSource(mozilla::Move(*deduped));
+    setSource(std::move(*deduped));
     return true;
 }
 
@@ -1797,7 +1799,7 @@ void
 ScriptSource::setSource(SharedImmutableTwoByteString&& string)
 {
     MOZ_ASSERT(data.is<Missing>());
-    data = SourceType(Uncompressed(mozilla::Move(string)));
+    data = SourceType(Uncompressed(std::move(string)));
 }
 
 bool
@@ -1841,7 +1843,7 @@ ScriptSource::tryCompressOffThread(JSContext* cx)
         ReportOutOfMemory(cx);
         return false;
     }
-    return EnqueueOffThreadCompression(cx, Move(task));
+    return EnqueueOffThreadCompression(cx, std::move(task));
 }
 
 MOZ_MUST_USE bool
@@ -1850,12 +1852,12 @@ ScriptSource::setCompressedSource(JSContext* cx, UniqueChars&& raw, size_t rawLe
 {
     MOZ_ASSERT(raw);
     auto& cache = cx->zone()->runtimeFromAnyThread()->sharedImmutableStrings();
-    auto deduped = cache.getOrCreate(mozilla::Move(raw), rawLength);
+    auto deduped = cache.getOrCreate(std::move(raw), rawLength);
     if (!deduped) {
         ReportOutOfMemory(cx);
         return false;
     }
-    setCompressedSource(mozilla::Move(*deduped), sourceLength);
+    setCompressedSource(std::move(*deduped), sourceLength);
     return true;
 }
 
@@ -1866,9 +1868,9 @@ ScriptSource::setCompressedSource(SharedImmutableString&& raw, size_t uncompress
     MOZ_ASSERT_IF(data.is<Uncompressed>(),
                   data.as<Uncompressed>().string.length() == uncompressedLength);
     if (pinnedCharsStack_)
-        pendingCompressed_ = mozilla::Some(Compressed(mozilla::Move(raw), uncompressedLength));
+        pendingCompressed_ = mozilla::Some(Compressed(std::move(raw), uncompressedLength));
     else
-        data = SourceType(Compressed(mozilla::Move(raw), uncompressedLength));
+        data = SourceType(Compressed(std::move(raw), uncompressedLength));
 }
 
 bool
@@ -1887,7 +1889,7 @@ ScriptSource::setSourceCopy(JSContext* cx, SourceBufferHolder& srcBuf)
         ReportOutOfMemory(cx);
         return false;
     }
-    setSource(mozilla::Move(*deduped));
+    setSource(std::move(*deduped));
 
     return true;
 }
@@ -1973,7 +1975,7 @@ SourceCompressionTask::work()
         return;
 
     auto& strings = runtime_->sharedImmutableStrings();
-    resultString_ = strings.getOrCreate(mozilla::Move(compressed), totalBytes);
+    resultString_ = strings.getOrCreate(std::move(compressed), totalBytes);
 }
 
 void
@@ -1981,7 +1983,7 @@ SourceCompressionTask::complete()
 {
     if (!shouldCancel() && resultString_) {
         ScriptSource* source = sourceHolder_.get();
-        source->setCompressedSource(mozilla::Move(*resultString_), source->length());
+        source->setCompressedSource(std::move(*resultString_), source->length());
     }
 }
 
@@ -2135,11 +2137,11 @@ ScriptSource::performXDR(XDRState<mode>* xdr)
             MOZ_TRY(xdr->codeBytes(bytes.get(), byteLen));
 
             if (compressedLength) {
-                if (!setCompressedSource(xdr->cx(), mozilla::Move(bytes), byteLen, len))
+                if (!setCompressedSource(xdr->cx(), std::move(bytes), byteLen, len))
                     return xdr->fail(JS::TranscodeResult_Throw);
             } else {
                 UniqueTwoByteChars source(reinterpret_cast<char16_t*>(bytes.release()));
-                if (!setSource(xdr->cx(), mozilla::Move(source), len))
+                if (!setSource(xdr->cx(), std::move(source), len))
                     return xdr->fail(JS::TranscodeResult_Throw);
             }
         } else {
@@ -2698,17 +2700,17 @@ JSScript::initScriptName(JSContext* cx)
             return false;
         }
 
-        realm()->scriptNameMap = Move(map);
+        realm()->scriptNameMap = std::move(map);
     }
 
-    UniqueChars name(js_strdup(filename()));
+    UniqueChars name = DuplicateString(filename());
     if (!name) {
         ReportOutOfMemory(cx);
         return false;
     }
 
     // Register the script name in the realm's map.
-    if (!realm()->scriptNameMap->putNew(this, Move(name))) {
+    if (!realm()->scriptNameMap->putNew(this, std::move(name))) {
         ReportOutOfMemory(cx);
         return false;
     }
@@ -3317,32 +3319,36 @@ js::GetScriptLineExtent(JSScript* script)
 }
 
 void
-js::DescribeScriptedCallerForCompilation(JSContext* cx, MutableHandleScript maybeScript,
-                                         const char** file, unsigned* linenop,
-                                         uint32_t* pcOffset, bool* mutedErrors,
-                                         LineOption opt)
+js::DescribeScriptedCallerForDirectEval(JSContext* cx, HandleScript script, jsbytecode* pc,
+                                        const char** file, unsigned* linenop, uint32_t* pcOffset,
+                                        bool* mutedErrors)
 {
-    if (opt == CALLED_FROM_JSOP_EVAL) {
-        jsbytecode* pc = nullptr;
-        maybeScript.set(cx->currentScript(&pc));
-        static_assert(JSOP_SPREADEVAL_LENGTH == JSOP_STRICTSPREADEVAL_LENGTH,
-                    "next op after a spread must be at consistent offset");
-        static_assert(JSOP_EVAL_LENGTH == JSOP_STRICTEVAL_LENGTH,
-                    "next op after a direct eval must be at consistent offset");
-        MOZ_ASSERT(JSOp(*pc) == JSOP_EVAL || JSOp(*pc) == JSOP_STRICTEVAL ||
-                   JSOp(*pc) == JSOP_SPREADEVAL || JSOp(*pc) == JSOP_STRICTSPREADEVAL);
+    MOZ_ASSERT(script->containsPC(pc));
 
-        bool isSpread = JSOp(*pc) == JSOP_SPREADEVAL || JSOp(*pc) == JSOP_STRICTSPREADEVAL;
-        jsbytecode* nextpc = pc + (isSpread ? JSOP_SPREADEVAL_LENGTH : JSOP_EVAL_LENGTH);
-        MOZ_ASSERT(*nextpc == JSOP_LINENO);
+    static_assert(JSOP_SPREADEVAL_LENGTH == JSOP_STRICTSPREADEVAL_LENGTH,
+                  "next op after a spread must be at consistent offset");
+    static_assert(JSOP_EVAL_LENGTH == JSOP_STRICTEVAL_LENGTH,
+                  "next op after a direct eval must be at consistent offset");
 
-        *file = maybeScript->filename();
-        *linenop = GET_UINT32(nextpc);
-        *pcOffset = pc - maybeScript->code();
-        *mutedErrors = maybeScript->mutedErrors();
-        return;
-    }
+    MOZ_ASSERT(JSOp(*pc) == JSOP_EVAL || JSOp(*pc) == JSOP_STRICTEVAL ||
+               JSOp(*pc) == JSOP_SPREADEVAL || JSOp(*pc) == JSOP_STRICTSPREADEVAL);
 
+    bool isSpread = (JSOp(*pc) == JSOP_SPREADEVAL ||
+                     JSOp(*pc) == JSOP_STRICTSPREADEVAL);
+    jsbytecode* nextpc = pc + (isSpread ? JSOP_SPREADEVAL_LENGTH : JSOP_EVAL_LENGTH);
+    MOZ_ASSERT(*nextpc == JSOP_LINENO);
+
+    *file = script->filename();
+    *linenop = GET_UINT32(nextpc);
+    *pcOffset = script->pcToOffset(pc);
+    *mutedErrors = script->mutedErrors();
+}
+
+void
+js::DescribeScriptedCallerForCompilation(JSContext* cx, MutableHandleScript maybeScript,
+                                         const char** file, unsigned* linenop, uint32_t* pcOffset,
+                                         bool* mutedErrors)
+{
     NonBuiltinFrameIter iter(cx, cx->realm()->principals());
 
     if (iter.done()) {
@@ -3757,10 +3763,10 @@ JSScript::ensureHasDebugScript(JSContext* cx)
         if (!map || !map->init())
             return false;
 
-        realm()->debugScriptMap = Move(map);
+        realm()->debugScriptMap = std::move(map);
     }
 
-    if (!realm()->debugScriptMap->putNew(this, Move(debug)))
+    if (!realm()->debugScriptMap->putNew(this, std::move(debug)))
         return false;
 
     bitFields_.hasDebugScript_ = true; // safe to set this;  we can't fail after this point

@@ -27,6 +27,7 @@ job-defaults:
       sparse-profile: mozharness
    extra:
       app-name: browser
+      branch-prefix: mozilla
       archive-prefix:
          by-project:
             birch: "http://ftp.stage.mozaws.net/pub"
@@ -57,30 +58,31 @@ job-defaults:
             maple: beta
             mozilla-beta: beta
             mozilla-release: nonbeta
+            mozilla-esr60: esr
             default: null
       last-watershed:
          by-project:
             birch:
-               by-build-platform:
-                  linux*: "57.0"
-                  linux64*: "57.0"
-                  macosx64*: "57.0"
-                  win32*: "56.0"
-                  win64*: "56.0"
+               by-platform:
+                  linux-.*: "57.0"
+                  linux64-.*: "57.0"
+                  macosx64-.*: "57.0"
+                  win32-.*: "56.0"
+                  win64-.*: "56.0"
                   default: null
             jamun: "56.0b3"
             maple: "56.0b3"
             mozilla-beta: "56.0b3"
             mozilla-release:
-               by-build-platform:
-                  linux*: "57.0"
-                  linux64*: "57.0"
-                  macosx64*: "57.0"
-                  win32*: "56.0"
-                  win64*: "56.0"
+               by-platform:
+                  linux-.*: "57.0"
+                  linux64-.*: "57.0"
+                  macosx64-.*: "57.0"
+                  win32-.*: "56.0"
+                  win64-.*: "56.0"
                   default: null
             mozilla-esr52:
-               by-build-platform:
+               by-platform:
                   macosx64: "45.9.0esr"
                   win32: "45.3.0esr"
                   win64: "45.3.0esr"
@@ -111,6 +113,7 @@ jobs:
                mozilla-beta: "beta-localtest"
                mozilla-release: "release-localtest"
                mozilla-esr52: "esr-localtest"
+               mozilla-esr60: "esr-localtest"
                default: "default"
          mar-channel-id-override:
             by-project:
@@ -139,6 +142,7 @@ jobs:
                mozilla-beta: "beta-localtest"
                mozilla-release: "release-localtest"
                mozilla-esr52: "esr-localtest"
+               mozilla-esr60: "esr-localtest"
                default: "default"
          mar-channel-id-override:
             by-project:
@@ -167,6 +171,7 @@ jobs:
                mozilla-beta: "beta-localtest"
                mozilla-release: "release-localtest"
                mozilla-esr52: "esr-localtest"
+               mozilla-esr60: "esr-localtest"
                default: "default"
          mar-channel-id-override:
             by-project:
@@ -195,6 +200,7 @@ jobs:
                mozilla-beta: "beta-localtest"
                mozilla-release: "release-localtest"
                mozilla-esr52: "esr-localtest"
+               mozilla-esr60: "esr-localtest"
                default: "default"
          mar-channel-id-override:
             by-project:
@@ -223,6 +229,7 @@ jobs:
                mozilla-beta: "beta-localtest"
                mozilla-release: "release-localtest"
                mozilla-esr52: "esr-localtest"
+               mozilla-esr60: "esr-localtest"
                default: "default"
          mar-channel-id-override:
             by-project:

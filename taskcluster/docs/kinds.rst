@@ -414,6 +414,10 @@ release-eme-free-repack-beetmover
 ------------------------------
 Moves the eme-free repacks to S3 buckets.
 
+release-eme-free-repack-beetmover-checksums
+-------------------------------------------
+Moves the beetmover checksum for eme-free repacks to S3 buckets.
+
 repackage
 ---------
 Repackage tasks take a signed output and package them up into something suitable
@@ -460,6 +464,13 @@ Dummy tasks to consolidate beetmover-checksums dependencies to avoid taskcluster
 post-langpack-dummy
 ------------------------------
 Dummy tasks to consolidate language pack beetmover dependencies to avoid taskcluster limits on number of dependencies per task.
+
+fetch
+-----
+
+Tasks that obtain something from a remote service and re-expose it as a
+task artifact. These tasks are used to effectively cache and re-host
+remote content so it is reliably and deterministically available.
 
 packages
 --------

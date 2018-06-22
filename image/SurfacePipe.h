@@ -35,6 +35,8 @@
 #include "mozilla/Variant.h"
 #include "mozilla/gfx/2D.h"
 
+#include "AnimationParams.h"
+
 namespace mozilla {
 namespace image {
 
@@ -170,7 +172,7 @@ public:
   WriteState WritePixels(Func aFunc)
   {
     Maybe<WriteState> result;
-    while (!(result = DoWritePixelsToRow<PixelType>(Forward<Func>(aFunc)))) { }
+    while (!(result = DoWritePixelsToRow<PixelType>(std::forward<Func>(aFunc)))) { }
 
     return *result;
   }
@@ -207,7 +209,7 @@ public:
   WriteState WritePixelBlocks(Func aFunc)
   {
     Maybe<WriteState> result;
-    while (!(result = DoWritePixelBlockToRow<PixelType>(Forward<Func>(aFunc)))) { }
+    while (!(result = DoWritePixelBlockToRow<PixelType>(std::forward<Func>(aFunc)))) { }
 
     return *result;
   }
@@ -244,7 +246,7 @@ public:
   template <typename PixelType, typename Func>
   WriteState WritePixelsToRow(Func aFunc)
   {
-    return DoWritePixelsToRow<PixelType>(Forward<Func>(aFunc))
+    return DoWritePixelsToRow<PixelType>(std::forward<Func>(aFunc))
            .valueOr(WriteState::NEED_MORE_DATA);
   }
 
@@ -607,7 +609,7 @@ public:
   { }
 
   SurfacePipe(SurfacePipe&& aOther)
-    : mHead(Move(aOther.mHead))
+    : mHead(std::move(aOther.mHead))
   { }
 
   ~SurfacePipe()
@@ -616,7 +618,7 @@ public:
   SurfacePipe& operator=(SurfacePipe&& aOther)
   {
     MOZ_ASSERT(this != &aOther);
-    mHead = Move(aOther.mHead);
+    mHead = std::move(aOther.mHead);
     return *this;
   }
 
@@ -637,7 +639,7 @@ public:
   WriteState WritePixels(Func aFunc)
   {
     MOZ_ASSERT(mHead, "Use before configured!");
-    return mHead->WritePixels<PixelType>(Forward<Func>(aFunc));
+    return mHead->WritePixels<PixelType>(std::forward<Func>(aFunc));
   }
 
   /**
@@ -651,7 +653,7 @@ public:
   WriteState WritePixelBlocks(Func aFunc)
   {
     MOZ_ASSERT(mHead, "Use before configured!");
-    return mHead->WritePixelBlocks<PixelType>(Forward<Func>(aFunc));
+    return mHead->WritePixelBlocks<PixelType>(std::forward<Func>(aFunc));
   }
 
   /**
@@ -665,7 +667,7 @@ public:
   WriteState WritePixelsToRow(Func aFunc)
   {
     MOZ_ASSERT(mHead, "Use before configured!");
-    return mHead->WritePixelsToRow<PixelType>(Forward<Func>(aFunc));
+    return mHead->WritePixelsToRow<PixelType>(std::forward<Func>(aFunc));
   }
 
   /**
@@ -730,7 +732,7 @@ private:
   friend class TestSurfacePipeFactory;
 
   explicit SurfacePipe(UniquePtr<SurfaceFilter>&& aHead)
-    : mHead(Move(aHead))
+    : mHead(std::move(aHead))
   { }
 
   SurfacePipe(const SurfacePipe&) = delete;
@@ -775,10 +777,10 @@ struct SurfaceConfig
 {
   using Filter = SurfaceSink;
   Decoder* mDecoder;           /// Which Decoder to use to allocate the surface.
-  uint32_t mFrameNum;          /// Which frame of animation this surface is for.
   gfx::IntSize mOutputSize;    /// The size of the surface.
   gfx::SurfaceFormat mFormat;  /// The surface format (BGRA or BGRX).
   bool mFlipVertically;        /// If true, write the rows from bottom to top.
+  Maybe<AnimationParams> mAnimParams; /// Given for animated images.
 };
 
 /**
@@ -803,12 +805,12 @@ struct PalettedSurfaceConfig
 {
   using Filter = PalettedSurfaceSink;
   Decoder* mDecoder;           /// Which Decoder to use to allocate the surface.
-  uint32_t mFrameNum;          /// Which frame of animation this surface is for.
   gfx::IntSize mOutputSize;    /// The logical size of the surface.
   gfx::IntRect mFrameRect;     /// The surface subrect which contains data.
   gfx::SurfaceFormat mFormat;  /// The surface format (BGRA or BGRX).
   uint8_t mPaletteDepth;       /// The palette depth of this surface.
   bool mFlipVertically;        /// If true, write the rows from bottom to top.
+  Maybe<AnimationParams> mAnimParams; /// Given for animated images.
 };
 
 /**

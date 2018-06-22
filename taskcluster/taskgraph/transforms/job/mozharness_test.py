@@ -19,43 +19,6 @@ from taskgraph.transforms.job.common import (
 )
 import os
 
-BUILDER_NAME_PREFIX = {
-    'linux64-pgo': 'Ubuntu VM 12.04 x64',
-    'linux64': 'Ubuntu VM 12.04 x64',
-    'linux64-nightly': 'Ubuntu VM 12.04 x64',
-    'linux64-asan': 'Ubuntu ASAN VM 12.04 x64',
-    'linux64-ccov': 'Ubuntu Code Coverage VM 12.04 x64',
-    'linux64-jsdcov': 'Ubuntu Code Coverage VM 12.04 x64',
-    'linux64-qr': 'Ubuntu VM 12.04 x64',
-    'linux64-stylo-disabled': 'Ubuntu VM 12.04 x64',
-    'linux64-stylo-sequential': 'Ubuntu VM 12.04 x64',
-    'linux64-devedition': 'Ubuntu VM 12.04 x64',
-    'linux64-devedition-nightly': 'Ubuntu VM 12.04 x64',
-    'macosx64': 'Rev7 MacOSX Yosemite 10.10.5',
-    'macosx64-devedition': 'Rev7 MacOSX Yosemite 10.10.5 DevEdition',
-    'android-4.3-arm7-api-16': 'Android 4.3 armv7 api-16+',
-    'android-4.2-x86': 'Android 4.2 x86 Emulator',
-    'android-4.3-arm7-api-16-gradle': 'Android 4.3 armv7 api-16+',
-    'windows10-64': 'Windows 10 64-bit',
-    'windows10-64-nightly': 'Windows 10 64-bit',
-    'windows10-64-devedition': 'Windows 10 64-bit DevEdition',
-    'windows10-64-pgo': 'Windows 10 64-bit',
-    'windows10-64-asan': 'Windows 10 64-bit',
-    'windows10-64-stylo-disabled': 'Windows 10 64-bit',
-    'windows10-64-ccov': 'Windows 10 64-bit Code Coverage',
-    'windows10-64-qr': 'Windows 10 64-bit',
-    'windows7-32': 'Windows 7 32-bit',
-    ('windows7-32', 'virtual-with-gpu'): 'Windows 7 VM-GFX 32-bit',
-    'windows7-32-nightly': 'Windows 7 32-bit',
-    'windows7-32-devedition': 'Windows 7 32-bit DevEdition',
-    'windows7-32-pgo': 'Windows 7 32-bit',
-    'windows7-32-stylo-disabled': 'Windows 7 32-bit',
-    'windows8-64': 'Windows 8 64-bit',
-    'windows8-64-nightly': 'Windows 8 64-bit',
-    'windows8-64-devedition': 'Windows 8 64-bit DevEdition',
-    'windows8-64-pgo': 'Windows 8 64-bit',
-}
-
 VARIANTS = [
     'nightly',
     'devedition',
@@ -82,6 +45,8 @@ test_description_schema = {str(k): v for k, v in test_description_schema.schema.
 mozharness_test_run_schema = Schema({
     Required('using'): 'mozharness-test',
     Required('test'): test_description_schema,
+    # Base work directory used to set up the task.
+    Required('workdir'): basestring,
 })
 
 
@@ -93,6 +58,7 @@ def test_packages_url(taskdesc):
 @run_job_using('docker-engine', 'mozharness-test', schema=mozharness_test_run_schema)
 @run_job_using('docker-worker', 'mozharness-test', schema=mozharness_test_run_schema)
 def mozharness_test_on_docker(config, job, taskdesc):
+    run = job['run']
     test = taskdesc['run']['test']
     mozharness = test['mozharness']
     worker = taskdesc['worker']
@@ -107,9 +73,9 @@ def mozharness_test_on_docker(config, job, taskdesc):
 
     artifacts = [
         # (artifact name prefix, in-image path)
-        ("public/logs/", "/builds/worker/workspace/build/upload/logs/"),
-        ("public/test", "/builds/worker/artifacts/"),
-        ("public/test_info/", "/builds/worker/workspace/build/blobber_upload_dir/"),
+        ("public/logs/", "{workdir}/workspace/build/upload/logs/".format(**run)),
+        ("public/test", "{workdir}/artifacts/".format(**run)),
+        ("public/test_info/", "{workdir}/workspace/build/blobber_upload_dir/".format(**run)),
     ]
 
     installer_url = get_artifact_url('<build>', mozharness['build-artifact-name'])
@@ -118,7 +84,7 @@ def mozharness_test_on_docker(config, job, taskdesc):
 
     worker['artifacts'] = [{
         'name': prefix,
-        'path': os.path.join('/builds/worker/workspace', path),
+        'path': os.path.join('{workdir}/workspace'.format(**run), path),
         'type': 'directory',
     } for (prefix, path) in artifacts]
 
@@ -126,7 +92,7 @@ def mozharness_test_on_docker(config, job, taskdesc):
         'type': 'persistent',
         'name': 'level-{}-{}-test-workspace'.format(
             config.params['level'], config.params['project']),
-        'mount-point': "/builds/worker/workspace",
+        'mount-point': "{workdir}/workspace".format(**run),
     }]
 
     env = worker['env'] = {
@@ -161,7 +127,7 @@ def mozharness_test_on_docker(config, job, taskdesc):
 
     # assemble the command line
     command = [
-        '/builds/worker/bin/run-task',
+        '{workdir}/bin/run-task'.format(**run),
     ]
 
     # Support vcs checkouts regardless of whether the task runs from
@@ -171,14 +137,14 @@ def mozharness_test_on_docker(config, job, taskdesc):
     # If we have a source checkout, run mozharness from it instead of
     # downloading a zip file with the same content.
     if test['checkout']:
-        command.extend(['--vcs-checkout', '/builds/worker/checkouts/gecko'])
-        env['MOZHARNESS_PATH'] = '/builds/worker/checkouts/gecko/testing/mozharness'
+        command.extend(['--vcs-checkout', '{workdir}/checkouts/gecko'.format(**run)])
+        env['MOZHARNESS_PATH'] = '{workdir}/checkouts/gecko/testing/mozharness'.format(**run)
     else:
         env['MOZHARNESS_URL'] = {'task-reference': mozharness_url}
 
     command.extend([
         '--',
-        '/builds/worker/bin/test-linux.sh',
+        '{workdir}/bin/test-linux.sh'.format(**run),
     ])
 
     command.extend([

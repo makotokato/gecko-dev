@@ -13,12 +13,14 @@ use webrender::{ExternalImage, ExternalImageHandler, ExternalImageSource};
 use webrender::DebugFlags;
 use webrender::{ApiRecordingReceiver, BinaryRecorder};
 use webrender::{AsyncPropertySampler, PipelineInfo, SceneBuilderHooks};
-use webrender::{ProgramCache, UploadMethod, VertexUsageHint};
+use webrender::{UploadMethod, VertexUsageHint};
 use thread_profiler::register_thread_with_profiler;
 use moz2d_renderer::Moz2dImageRenderer;
+use program_cache::{WrProgramCache, remove_disk_cache};
 use app_units::Au;
 use rayon;
 use euclid::SideOffsets2D;
+use nsstring::nsAString;
 
 #[cfg(target_os = "windows")]
 use dwrote::{FontDescriptor, FontWeight, FontStretch, FontStyle};
@@ -729,6 +731,10 @@ impl SceneBuilderHooks for APZCallbacks {
         unsafe { wr_schedule_render(self.window_id) }
     }
 
+    fn post_resource_update(&self) {
+        unsafe { wr_schedule_render(self.window_id) }
+    }
+
     fn poke(&self) {
         unsafe { apz_run_updater(self.window_id) }
     }
@@ -823,23 +829,40 @@ pub unsafe extern "C" fn wr_thread_pool_delete(thread_pool: *mut WrThreadPool) {
     Box::from_raw(thread_pool);
 }
 
-pub struct WrProgramCache(Rc<ProgramCache>);
-
 #[no_mangle]
-pub unsafe extern "C" fn wr_program_cache_new() -> *mut WrProgramCache {
-    let program_cache = ProgramCache::new();
-    Box::into_raw(Box::new(WrProgramCache(program_cache)))
+pub unsafe extern "C" fn wr_program_cache_new(prof_path: &nsAString, thread_pool: *mut WrThreadPool) -> *mut WrProgramCache {
+    let workers = &(*thread_pool).0;
+    let program_cache = WrProgramCache::new(prof_path, workers);
+    Box::into_raw(Box::new(program_cache))
 }
 
 /// cbindgen:postfix=WR_DESTRUCTOR_SAFE_FUNC
 #[no_mangle]
 pub unsafe extern "C" fn wr_program_cache_delete(program_cache: *mut WrProgramCache) {
-    Rc::from_raw(program_cache);
+    Box::from_raw(program_cache);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn wr_try_load_shader_from_disk(program_cache: *mut WrProgramCache) {
+    if !program_cache.is_null() {
+        (*program_cache).try_load_from_disk();
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn remove_program_binary_disk_cache(prof_path: &nsAString) -> bool {
+    match remove_disk_cache(prof_path) {
+        Ok(_) => true,
+        Err(_) => {
+            error!("Failed to remove program binary disk cache");
+            false
+        }
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn wr_renderer_update_program_cache(renderer: &mut Renderer, program_cache: &mut WrProgramCache) {
-    let program_cache = Rc::clone(&program_cache.0);
+    let program_cache = Rc::clone(&program_cache.rc_get());
     renderer.update_program_cache(program_cache);
 }
 
@@ -908,6 +931,7 @@ pub extern "C" fn wr_window_new(window_id: WrWindowId,
         upload_method,
         scene_builder_hooks: Some(Box::new(APZCallbacks::new(window_id))),
         sampler: Some(Box::new(SamplerCallback::new(window_id))),
+        max_texture_size: Some(8192), // Moz2D doesn't like textures bigger than this
         ..Default::default()
     };
 
@@ -1638,32 +1662,47 @@ pub extern "C" fn wr_dp_push_stacking_context(state: &mut WrState,
     };
 
     let mut prim_info = LayoutPrimitiveInfo::new(bounds);
+
+    *out_is_reference_frame = transform_binding.is_some() || perspective.is_some();
+    if *out_is_reference_frame {
+        let ref_frame_id = state.frame_builder
+            .dl_builder
+            .push_reference_frame(&prim_info, transform_binding, perspective);
+        match ref_frame_id {
+            ClipId::Clip(id, pipeline_id) => {
+                assert!(pipeline_id == state.pipeline_id);
+                *out_reference_frame_id = id;
+            },
+            _ => panic!("Pushing a reference frame must produce a ClipId::Clip"),
+        }
+
+        prim_info.rect.origin = LayoutPoint::zero();
+        prim_info.clip_rect.origin = LayoutPoint::zero();
+        state.frame_builder.dl_builder.push_clip_id(ref_frame_id);
+    }
+
     prim_info.is_backface_visible = is_backface_visible;
     prim_info.tag = state.current_tag;
 
-    let ref_frame_id = state.frame_builder
+    state.frame_builder
          .dl_builder
          .push_stacking_context(&prim_info,
                                 clip_node_id,
-                                transform_binding,
                                 transform_style,
-                                perspective,
                                 mix_blend_mode,
                                 filters,
                                 glyph_raster_space);
-    if let Some(ClipId::Clip(id, pipeline_id)) = ref_frame_id {
-        assert!(pipeline_id == state.pipeline_id);
-        *out_is_reference_frame = true;
-        *out_reference_frame_id = id;
-    } else {
-        *out_is_reference_frame = false;
-    }
 }
 
 #[no_mangle]
-pub extern "C" fn wr_dp_pop_stacking_context(state: &mut WrState) {
+pub extern "C" fn wr_dp_pop_stacking_context(state: &mut WrState,
+                                             is_reference_frame: bool) {
     debug_assert!(unsafe { !is_in_render_thread() });
     state.frame_builder.dl_builder.pop_stacking_context();
+    if is_reference_frame {
+        state.frame_builder.dl_builder.pop_clip_id();
+        state.frame_builder.dl_builder.pop_reference_frame();
+    }
 }
 
 #[no_mangle]

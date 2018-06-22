@@ -59,7 +59,6 @@
 #include "nsContainerFrame.h"
 #include "mozilla/dom/Selection.h"
 #include "nsGkAtoms.h"
-#include "nsIDOMNode.h"
 #include "nsRange.h"
 #include "nsWindowSizes.h"
 #include "nsCOMPtr.h"
@@ -140,7 +139,7 @@
 #include "nsIBoxObject.h"
 #include "nsITreeBoxObject.h"
 #include "nsMenuPopupFrame.h"
-#include "nsITreeColumns.h"
+#include "nsTreeColumns.h"
 #include "nsIDOMXULMultSelectCntrlEl.h"
 #include "nsIDOMXULSelectCntrlItemEl.h"
 #include "nsIDOMXULMenuListElement.h"
@@ -943,7 +942,7 @@ PresShell::Init(nsIDocument* aDocument,
   // Now we can initialize the style set. Make sure to set the member before
   // calling Init, since various subroutines need to find the style set off
   // the PresContext during initialization.
-  mStyleSet = Move(aStyleSet);
+  mStyleSet = std::move(aStyleSet);
   mStyleSet->Init(aPresContext);
 
   // Notify our prescontext that it now has a compatibility mode.  Note that
@@ -2453,7 +2452,7 @@ DoCheckVisibility(nsPresContext* aPresContext,
 }
 
 NS_IMETHODIMP
-PresShell::CheckVisibility(nsIDOMNode *node, int16_t startOffset, int16_t EndOffset, bool *_retval)
+PresShell::CheckVisibility(nsINode *node, int16_t startOffset, int16_t EndOffset, bool *_retval)
 {
   if (!node || startOffset>EndOffset || !_retval || startOffset<0 || EndOffset<0)
     return NS_ERROR_INVALID_ARG;
@@ -4189,7 +4188,7 @@ PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush)
     "Display"
   };
   AUTO_PROFILER_LABEL_DYNAMIC_CSTR("PresShell::DoFlushPendingNotifications",
-                                   GRAPHICS, flushTypeNames[flushType]);
+                                   LAYOUT, flushTypeNames[flushType]);
 #endif
 
 
@@ -4280,7 +4279,7 @@ PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush)
       if (!mIsDestroying) {
         nsAutoScriptBlocker scriptBlocker;
 #ifdef MOZ_GECKO_PROFILER
-        AutoProfilerStyleMarker tracingStyleFlush(Move(mStyleCause));
+        AutoProfilerStyleMarker tracingStyleFlush(std::move(mStyleCause));
 #endif
 
         mPresContext->RestyleManager()->ProcessPendingRestyles();
@@ -4304,7 +4303,7 @@ PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush)
     if (!mIsDestroying) {
       nsAutoScriptBlocker scriptBlocker;
 #ifdef MOZ_GECKO_PROFILER
-      AutoProfilerStyleMarker tracingStyleFlush(Move(mStyleCause));
+      AutoProfilerStyleMarker tracingStyleFlush(std::move(mStyleCause));
 #endif
 
       mPresContext->RestyleManager()->ProcessPendingRestyles();
@@ -4327,7 +4326,7 @@ PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush)
         !mIsDestroying) {
 #ifdef MOZ_GECKO_PROFILER
       AutoProfilerTracing tracingLayoutFlush("Paint", "Reflow",
-                                              Move(mReflowCause));
+                                              std::move(mReflowCause));
       mReflowCause = nullptr;
 #endif
       didLayoutFlush = true;
@@ -5103,7 +5102,7 @@ PresShell::PaintRangePaintInfo(const nsTArray<UniquePtr<RangePaintInfo>>& aItems
 }
 
 already_AddRefed<SourceSurface>
-PresShell::RenderNode(nsIDOMNode* aNode,
+PresShell::RenderNode(nsINode* aNode,
                       nsIntRegion* aRegion,
                       const LayoutDeviceIntPoint aPoint,
                       LayoutDeviceIntRect* aScreenRect,
@@ -5115,19 +5114,18 @@ PresShell::RenderNode(nsIDOMNode* aNode,
   nsTArray<UniquePtr<RangePaintInfo>> rangeItems;
 
   // nothing to draw if the node isn't in a document
-  nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
-  if (!node->IsInUncomposedDoc())
+  if (!aNode->IsInUncomposedDoc())
     return nullptr;
 
-  RefPtr<nsRange> range = new nsRange(node);
+  RefPtr<nsRange> range = new nsRange(aNode);
   IgnoredErrorResult rv;
-  range->SelectNode(*node, rv);
+  range->SelectNode(*aNode, rv);
   if (rv.Failed()) {
     return nullptr;
   }
 
   UniquePtr<RangePaintInfo> info = CreateRangePaintInfo(range, area, false);
-  if (info && !rangeItems.AppendElement(Move(info))) {
+  if (info && !rangeItems.AppendElement(std::move(info))) {
     return nullptr;
   }
 
@@ -5173,7 +5171,7 @@ PresShell::RenderSelection(Selection* aSelection,
     RefPtr<nsRange> range = aSelection->GetRangeAt(r);
 
     UniquePtr<RangePaintInfo> info = CreateRangePaintInfo(range, area, true);
-    if (info && !rangeItems.AppendElement(Move(info))) {
+    if (info && !rangeItems.AppendElement(std::move(info))) {
       return nullptr;
     }
   }
@@ -5517,7 +5515,7 @@ void PresShell::SynthesizeMouseMove(bool aFromScroll)
       return;
     }
 
-    mSynthMouseMoveEvent = Move(ev);
+    mSynthMouseMoveEvent = std::move(ev);
   }
 }
 
@@ -6070,7 +6068,7 @@ PresShell::ScheduleApproximateFrameVisibilityUpdateNow()
     mDocument->Dispatch(TaskCategory::Other, do_AddRef(event));
 
   if (NS_SUCCEEDED(rv)) {
-    mUpdateApproximateFrameVisibilityEvent = Move(event);
+    mUpdateApproximateFrameVisibilityEvent = std::move(event);
   }
 }
 
@@ -6255,7 +6253,7 @@ PresShell::Paint(nsView*         aViewToPaint,
       // calling ComputeDifferences in that case because it assumes non-null
       // and crashes.
       if (computeInvalidRect && layerManager->GetRoot()) {
-        props = Move(LayerProperties::CloneFrom(layerManager->GetRoot()));
+        props = LayerProperties::CloneFrom(layerManager->GetRoot());
       }
 
       MaybeSetupTransactionIdAllocator(layerManager, presContext);
@@ -8366,19 +8364,15 @@ PresShell::GetCurrentItemAndPositionForElement(Element* aFocusedElement,
                           (currentIndex - firstVisibleRow + 1) * rowHeight);
           istree = true;
 
-          nsCOMPtr<nsITreeColumns> cols;
+          RefPtr<nsTreeColumns> cols;
           treeBox->GetColumns(getter_AddRefs(cols));
           if (cols) {
-            nsCOMPtr<nsITreeColumn> col;
-            cols->GetFirstColumn(getter_AddRefs(col));
+            nsTreeColumn* col = cols->GetFirstColumn();
             if (col) {
-              RefPtr<Element> colElement;
-              col->GetElement(getter_AddRefs(colElement));
-              if (colElement) {
-                nsIFrame* frame = colElement->GetPrimaryFrame();
-                if (frame) {
-                  extraTreeY += frame->GetSize().height;
-                }
+              RefPtr<Element> colElement = col->Element();
+              nsIFrame* frame = colElement->GetPrimaryFrame();
+              if (frame) {
+                extraTreeY += frame->GetSize().height;
               }
             }
           }
@@ -8851,7 +8845,7 @@ PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
 #ifdef MOZ_GECKO_PROFILER
   nsIURI* uri = mDocument->GetDocumentURI();
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING(
-    "PresShell::DoReflow", GRAPHICS,
+    "PresShell::DoReflow", LAYOUT,
     uri ? uri->GetSpecOrDefault() : NS_LITERAL_CSTRING("N/A"));
 #endif
 
@@ -9757,7 +9751,7 @@ PresShell::VerifyIncrementalReflow()
   // exact same style information that this document has.
   UniquePtr<ServoStyleSet> newSet = CloneStyleSet(StyleSet());
 
-  nsCOMPtr<nsIPresShell> sh = mDocument->CreateShell(cx, vm, Move(newSet));
+  nsCOMPtr<nsIPresShell> sh = mDocument->CreateShell(cx, vm, std::move(newSet));
   NS_ENSURE_TRUE(sh, false);
   // Note that after we create the shell, we must make sure to destroy it
   sh->SetVerifyReflowEnable(false); // turn off verify reflow while we're reflowing the test frame tree

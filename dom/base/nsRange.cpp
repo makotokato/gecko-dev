@@ -13,7 +13,6 @@
 
 #include "nsString.h"
 #include "nsReadableUtils.h"
-#include "nsIDOMNode.h"
 #include "nsIContent.h"
 #include "nsIDocument.h"
 #include "nsError.h"
@@ -3158,7 +3157,7 @@ nsRange::GetClientRectsAndTexts(
 
 nsresult
 nsRange::GetUsedFontFaces(nsTArray<nsAutoPtr<InspectorFontFace>>& aResult,
-                          uint32_t aMaxRanges)
+                          uint32_t aMaxRanges, bool aSkipCollapsedWhitespace)
 {
   NS_ENSURE_TRUE(mStart.Container(), NS_ERROR_UNEXPECTED);
 
@@ -3202,23 +3201,26 @@ nsRange::GetUsedFontFaces(nsTArray<nsAutoPtr<InspectorFontFace>>& aResult,
          int32_t offset = startContainer == endContainer ?
            mEnd.Offset() : content->GetText()->GetLength();
          nsLayoutUtils::GetFontFacesForText(frame, mStart.Offset(), offset,
-                                            true, fontFaces, aMaxRanges);
+                                            true, fontFaces, aMaxRanges,
+                                            aSkipCollapsedWhitespace);
          continue;
        }
        if (node == endContainer) {
          nsLayoutUtils::GetFontFacesForText(frame, 0, mEnd.Offset(),
-                                            true, fontFaces, aMaxRanges);
+                                            true, fontFaces, aMaxRanges,
+                                            aSkipCollapsedWhitespace);
          continue;
        }
     }
 
-    nsLayoutUtils::GetFontFacesForFrames(frame, fontFaces, aMaxRanges);
+    nsLayoutUtils::GetFontFacesForFrames(frame, fontFaces, aMaxRanges,
+                                         aSkipCollapsedWhitespace);
   }
 
   // Take ownership of the InspectorFontFaces in the table and move them into
   // the aResult outparam.
   for (auto iter = fontFaces.Iter(); !iter.Done(); iter.Next()) {
-    aResult.AppendElement(Move(iter.Data()));
+    aResult.AppendElement(std::move(iter.Data()));
   }
 
   return NS_OK;

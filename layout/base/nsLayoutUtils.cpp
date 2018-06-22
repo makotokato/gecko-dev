@@ -69,6 +69,7 @@
 #include <algorithm>
 #include <limits>
 #include "mozilla/dom/AnonymousContent.h"
+#include "mozilla/dom/HTMLBodyElement.h"
 #include "mozilla/dom/HTMLMediaElementBinding.h"
 #include "mozilla/dom/HTMLVideoElement.h"
 #include "mozilla/dom/HTMLImageElement.h"
@@ -189,7 +190,6 @@ typedef nsStyleTransformMatrix::TransformReferenceBox TransformReferenceBox;
 /* static */ bool nsLayoutUtils::sInvalidationDebuggingIsEnabled;
 /* static */ bool nsLayoutUtils::sInterruptibleReflowEnabled;
 /* static */ bool nsLayoutUtils::sSVGTransformBoxEnabled;
-/* static */ bool nsLayoutUtils::sTextCombineUprightDigitsEnabled;
 /* static */ uint32_t nsLayoutUtils::sIdlePeriodDeadlineLimit;
 /* static */ uint32_t nsLayoutUtils::sQuiescentFramesBeforeIdlePeriod;
 
@@ -259,9 +259,8 @@ MayHaveAnimationOfProperty(EffectSet* effects, nsCSSPropertyID aProperty)
   return true;
 }
 
-bool
-nsLayoutUtils::MayHaveAnimationOfProperty(const nsIFrame* aFrame,
-                                          nsCSSPropertyID aProperty)
+static bool
+MayHaveAnimationOfProperty(const nsIFrame* aFrame, nsCSSPropertyID aProperty)
 {
   switch (aProperty) {
     case eCSSProperty_transform:
@@ -278,7 +277,7 @@ bool
 nsLayoutUtils::HasAnimationOfProperty(EffectSet* aEffectSet,
                                       nsCSSPropertyID aProperty)
 {
-  if (!aEffectSet || !::MayHaveAnimationOfProperty(aEffectSet, aProperty)) {
+  if (!aEffectSet || !MayHaveAnimationOfProperty(aEffectSet, aProperty)) {
     return false;
   }
 
@@ -314,7 +313,7 @@ nsLayoutUtils::HasEffectiveAnimation(const nsIFrame* aFrame,
                                      nsCSSPropertyID aProperty)
 {
   EffectSet* effects = EffectSet::GetEffectSet(aFrame);
-  if (!effects || !::MayHaveAnimationOfProperty(effects, aProperty)) {
+  if (!effects || !MayHaveAnimationOfProperty(effects, aProperty)) {
     return false;
   }
 
@@ -326,17 +325,6 @@ nsLayoutUtils::HasEffectiveAnimation(const nsIFrame* aFrame,
              aEffect.HasEffectiveAnimationOfProperty(aProperty);
     }
   );
-}
-
-bool
-nsLayoutUtils::MayHaveEffectiveAnimation(const nsIFrame* aFrame,
-                                         nsCSSPropertyID aProperty)
-{
-  EffectSet* effects = EffectSet::GetEffectSet(aFrame);
-  if (!effects || !::MayHaveAnimationOfProperty(effects, aProperty)) {
-    return false;
-  }
-  return true;
 }
 
 static float
@@ -2537,7 +2525,7 @@ nsLayoutUtils::PostTranslate(Matrix4x4& aTransform, const nsPoint& aOrigin, floa
 // We want to this return true for the scroll frame, but not the
 // scrolled frame (which has the same content).
 bool
-nsLayoutUtils::FrameHasDisplayPort(nsIFrame* aFrame, nsIFrame* aScrolledFrame)
+nsLayoutUtils::FrameHasDisplayPort(nsIFrame* aFrame, const nsIFrame* aScrolledFrame)
 {
   if (!aFrame->GetContent() || !HasDisplayPort(aFrame->GetContent())) {
     return false;
@@ -2553,7 +2541,7 @@ nsLayoutUtils::FrameHasDisplayPort(nsIFrame* aFrame, nsIFrame* aScrolledFrame)
 }
 
 Matrix4x4Flagged
-nsLayoutUtils::GetTransformToAncestor(nsIFrame *aFrame,
+nsLayoutUtils::GetTransformToAncestor(const nsIFrame *aFrame,
                                       const nsIFrame *aAncestor,
                                       uint32_t aFlags,
                                       nsIFrame** aOutAncestor)
@@ -2876,7 +2864,7 @@ TransformGfxPointFromAncestor(nsIFrame *aFrame,
 }
 
 static Rect
-TransformGfxRectToAncestor(nsIFrame *aFrame,
+TransformGfxRectToAncestor(const nsIFrame *aFrame,
                            const Rect &aRect,
                            const nsIFrame *aAncestor,
                            bool* aPreservesAxisAlignedRectangles = nullptr,
@@ -2916,7 +2904,7 @@ TransformGfxRectToAncestor(nsIFrame *aFrame,
 }
 
 static SVGTextFrame*
-GetContainingSVGTextFrame(nsIFrame* aFrame)
+GetContainingSVGTextFrame(const nsIFrame* aFrame)
 {
   if (!nsSVGUtils::IsInSVGTextSubtree(aFrame)) {
     return nullptr;
@@ -2953,7 +2941,7 @@ nsLayoutUtils::TransformAncestorPointToFrame(nsIFrame* aFrame,
 }
 
 nsRect
-nsLayoutUtils::TransformFrameRectToAncestor(nsIFrame* aFrame,
+nsLayoutUtils::TransformFrameRectToAncestor(const nsIFrame* aFrame,
                                             const nsRect& aRect,
                                             const nsIFrame* aAncestor,
                                             bool* aPreservesAxisAlignedRectangles /* = nullptr */,
@@ -3112,7 +3100,7 @@ struct AutoNestedPaintCount {
 nsIFrame*
 nsLayoutUtils::GetFrameForPoint(nsIFrame* aFrame, nsPoint aPt, uint32_t aFlags)
 {
-  AUTO_PROFILER_LABEL("nsLayoutUtils::GetFrameForPoint", GRAPHICS);
+  AUTO_PROFILER_LABEL("nsLayoutUtils::GetFrameForPoint", LAYOUT);
 
   nsresult rv;
   AutoTArray<nsIFrame*,8> outFrames;
@@ -3126,7 +3114,7 @@ nsLayoutUtils::GetFramesForArea(nsIFrame* aFrame, const nsRect& aRect,
                                 nsTArray<nsIFrame*> &aOutFrames,
                                 uint32_t aFlags)
 {
-  AUTO_PROFILER_LABEL("nsLayoutUtils::GetFramesForArea", GRAPHICS);
+  AUTO_PROFILER_LABEL("nsLayoutUtils::GetFramesForArea", LAYOUT);
 
   nsDisplayListBuilder builder(aFrame,
                                nsDisplayListBuilderMode::EVENT_DELIVERY,
@@ -3600,6 +3588,10 @@ nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext, nsIFrame* aFrame,
       !(aFlags & PaintFrameFlags::PAINT_DOCUMENT_RELATIVE) &&
       rootPresContext->NeedToComputePluginGeometryUpdates()) {
     builder.SetWillComputePluginGeometry(true);
+
+    // Disable partial updates for this paint as the list we're about to
+    // build has plugin-specific differences that won't trigger invalidations.
+    builder.SetDisablePartialUpdates(true);
   }
 
   nsRect canvasArea(nsPoint(0, 0), aFrame->GetSize());
@@ -3679,7 +3671,7 @@ nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext, nsIFrame* aFrame,
       builder.SetVisibleRect(visibleRect);
       builder.SetIsBuilding(true);
       builder.SetAncestorHasApzAwareEventHandler(
-          nsDisplayListBuilder::LayerEventRegionsEnabled() &&
+          gfxPlatform::AsyncPanZoomEnabled() &&
           nsLayoutUtils::HasDocumentLevelListenersForApzAwareEvents(presShell));
 
       DisplayListChecker beforeMergeChecker;
@@ -3835,7 +3827,8 @@ nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext, nsIFrame* aFrame,
   if (aFlags & PaintFrameFlags::PAINT_COMPRESSED) {
     flags |= nsDisplayList::PAINT_COMPRESSED;
   }
-  if (updateState == PartialUpdateResult::NoChange) {
+  if (updateState == PartialUpdateResult::NoChange &&
+      !aRenderingContext) {
     flags |= nsDisplayList::PAINT_IDENTICAL_DISPLAY_LIST;
   }
 
@@ -3950,6 +3943,10 @@ nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext, nsIFrame* aFrame,
     if (layerManager) {
       layerManager->ScheduleComposite();
     }
+
+    // Disable partial updates for the following paint as well, as we now have
+    // a plugin-specific display list.
+    builder.SetDisablePartialUpdates(true);
   }
 
   builder.Check();
@@ -5089,6 +5086,21 @@ FormControlShrinksForPercentISize(nsIFrame* aFrame)
   return true;
 }
 
+// https://drafts.csswg.org/css-sizing-3/#percentage-sizing
+// Return true if the above spec's rule for replaced boxes applies.
+// XXX bug 1463700 will make this match the spec...
+static bool
+IsReplacedBoxResolvedAgainstZero(nsIFrame* aFrame,
+                                 const nsStyleCoord& aStyleSize,
+                                 const nsStyleCoord& aStyleMaxSize)
+{
+  const bool sizeHasPercent = aStyleSize.HasPercent();
+  return ((sizeHasPercent || aStyleMaxSize.HasPercent()) &&
+          aFrame->IsFrameOfType(nsIFrame::eReplacedSizing)) ||
+         (sizeHasPercent &&
+          FormControlShrinksForPercentISize(aFrame));
+}
+
 /**
  * Add aOffsets which describes what to add on outside of the content box
  * aContentSize (controlled by 'box-sizing') and apply min/max properties.
@@ -5150,16 +5162,8 @@ AddIntrinsicSizeOffset(gfxContext* aRenderingContext,
 
   nscoord size;
   if (aType == nsLayoutUtils::MIN_ISIZE &&
-      (((aStyleSize.HasPercent() || aStyleMaxSize.HasPercent()) &&
-        aFrame->IsFrameOfType(nsIFrame::eReplacedSizing)) ||
-       (aStyleSize.HasPercent() &&
-        FormControlShrinksForPercentISize(aFrame)))) {
-    // A percentage width or max-width on replaced elements means they
-    // can shrink to 0.
-    // This is also true for percentage widths (but not max-widths) on
-    // text inputs.
-    // Note that if this is max-width, this overrides the fixed-width
-    // rule in the next condition.
+      ::IsReplacedBoxResolvedAgainstZero(aFrame, aStyleSize, aStyleMaxSize)) {
+    // XXX bug 1463700: this doesn't handle calc() according to spec
     result = 0; // let |min| handle padding/border/margin
   } else if (GetAbsoluteCoord(aStyleSize, size) ||
              GetIntrinsicCoord(aStyleSize, aRenderingContext, aFrame,
@@ -5522,6 +5526,12 @@ nsLayoutUtils::MinSizeContributionForAxis(PhysicalAxis       aAxis,
       if (GetAbsoluteCoord(*style, minSize)) {
         // We have a definite width/height.  This is the "specified size" in:
         // https://drafts.csswg.org/css-grid/#min-size-auto
+        fixedMinSize = &minSize;
+      } else if (::IsReplacedBoxResolvedAgainstZero(aFrame, *style,
+                     eAxisHorizontal ? stylePos->mMaxWidth
+                                     : stylePos->mMaxHeight)) {
+        // XXX bug 1463700: this doesn't handle calc() according to spec
+        minSize = 0;
         fixedMinSize = &minSize;
       }
       // fall through - the caller will have to deal with "transferred size"
@@ -7269,13 +7279,13 @@ nsLayoutUtils::GetFrameTransparency(nsIFrame* aBackgroundFrame,
   return eTransparencyOpaque;
 }
 
-static bool IsPopupFrame(nsIFrame* aFrame)
+static bool IsPopupFrame(const nsIFrame* aFrame)
 {
   // aFrame is a popup it's the list control frame dropdown for a combobox.
   LayoutFrameType frameType = aFrame->Type();
   if (!nsLayoutUtils::IsContentSelectEnabled() &&
       frameType == LayoutFrameType::ListControl) {
-    nsListControlFrame* lcf = static_cast<nsListControlFrame*>(aFrame);
+    const nsListControlFrame* lcf = static_cast<const nsListControlFrame*>(aFrame);
     return lcf->IsInDropDownMode();
   }
 
@@ -7284,7 +7294,7 @@ static bool IsPopupFrame(nsIFrame* aFrame)
 }
 
 /* static */ bool
-nsLayoutUtils::IsPopup(nsIFrame* aFrame)
+nsLayoutUtils::IsPopup(const nsIFrame* aFrame)
 {
   // Optimization: the frame can't possibly be a popup if it has no view.
   if (!aFrame->HasView()) {
@@ -7852,14 +7862,16 @@ nsLayoutUtils::AssertTreeOnlyEmptyNextInFlows(nsIFrame *aSubtreeRoot)
 static void
 GetFontFacesForFramesInner(nsIFrame* aFrame,
                            nsLayoutUtils::UsedFontFaceTable& aFontFaces,
-                           uint32_t aMaxRanges)
+                           uint32_t aMaxRanges,
+                           bool aSkipCollapsedWhitespace)
 {
   MOZ_ASSERT(aFrame, "NULL frame pointer");
 
   if (aFrame->IsTextFrame()) {
     if (!aFrame->GetPrevContinuation()) {
       nsLayoutUtils::GetFontFacesForText(aFrame, 0, INT32_MAX, true,
-                                         aFontFaces, aMaxRanges);
+                                         aFontFaces, aMaxRanges,
+                                         aSkipCollapsedWhitespace);
     }
     return;
   }
@@ -7871,7 +7883,8 @@ GetFontFacesForFramesInner(nsIFrame* aFrame,
     for (nsFrameList::Enumerator e(children); !e.AtEnd(); e.Next()) {
       nsIFrame* child = e.get();
       child = nsPlaceholderFrame::GetRealFrameFor(child);
-      GetFontFacesForFramesInner(child, aFontFaces, aMaxRanges);
+      GetFontFacesForFramesInner(child, aFontFaces, aMaxRanges,
+                                 aSkipCollapsedWhitespace);
     }
   }
 }
@@ -7879,12 +7892,14 @@ GetFontFacesForFramesInner(nsIFrame* aFrame,
 /* static */ nsresult
 nsLayoutUtils::GetFontFacesForFrames(nsIFrame* aFrame,
                                      UsedFontFaceTable& aFontFaces,
-                                     uint32_t aMaxRanges)
+                                     uint32_t aMaxRanges,
+                                     bool aSkipCollapsedWhitespace)
 {
   MOZ_ASSERT(aFrame, "NULL frame pointer");
 
   while (aFrame) {
-    GetFontFacesForFramesInner(aFrame, aFontFaces, aMaxRanges);
+    GetFontFacesForFramesInner(aFrame, aFontFaces, aMaxRanges,
+                               aSkipCollapsedWhitespace);
     aFrame = GetNextContinuationOrIBSplitSibling(aFrame);
   }
 
@@ -7955,7 +7970,8 @@ nsLayoutUtils::GetFontFacesForText(nsIFrame* aFrame,
                                    int32_t aEndOffset,
                                    bool aFollowContinuations,
                                    UsedFontFaceTable& aFontFaces,
-                                   uint32_t aMaxRanges)
+                                   uint32_t aMaxRanges,
+                                   bool aSkipCollapsedWhitespace)
 {
   MOZ_ASSERT(aFrame, "NULL frame pointer");
 
@@ -7995,9 +8011,13 @@ nsLayoutUtils::GetFontFacesForText(nsIFrame* aFrame,
       }
     }
 
-    gfxTextRun::Range range(iter.ConvertOriginalToSkipped(fstart),
-                            iter.ConvertOriginalToSkipped(fend));
-    AddFontsFromTextRun(textRun, curr, iter, range, aFontFaces, aMaxRanges);
+    if (!aSkipCollapsedWhitespace ||
+        (curr->HasAnyNoncollapsedCharacters() &&
+         curr->HasNonSuppressedText())) {
+      gfxTextRun::Range range(iter.ConvertOriginalToSkipped(fstart),
+                              iter.ConvertOriginalToSkipped(fend));
+      AddFontsFromTextRun(textRun, curr, iter, range, aFontFaces, aMaxRanges);
+    }
 
     curr = next;
   } while (aFollowContinuations && curr);
@@ -8072,8 +8092,6 @@ nsLayoutUtils::Initialize()
                                "layout.interruptible-reflow.enabled");
   Preferences::AddBoolVarCache(&sSVGTransformBoxEnabled,
                                "svg.transform-box.enabled");
-  Preferences::AddBoolVarCache(&sTextCombineUprightDigitsEnabled,
-                               "layout.css.text-combine-upright-digits.enabled");
   Preferences::AddUintVarCache(&sIdlePeriodDeadlineLimit,
                                "layout.idle_period.time_limit",
                                DEFAULT_IDLE_PERIOD_TIME_LIMIT);

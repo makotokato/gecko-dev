@@ -23,8 +23,8 @@
 
 #include "jit/JitOptions.h"
 #include "js/Printf.h"
-#include "vm/JSCompartment.h"
 #include "vm/JSContext.h"
+#include "vm/Realm.h"
 #include "wasm/WasmOpIter.h"
 
 using namespace js;
@@ -62,7 +62,7 @@ Decoder::warnf(const char* msg, ...)
     if (!str)
         return;
 
-    Unused << warnings_->append(Move(str));
+    Unused << warnings_->append(std::move(str));
 }
 
 bool
@@ -73,7 +73,7 @@ Decoder::fail(size_t errorOffset, const char* msg)
     if (!strWithOffset)
         return false;
 
-    *error_ = Move(strWithOffset);
+    *error_ = std::move(strWithOffset);
     return false;
 }
 
@@ -344,7 +344,7 @@ wasm::EncodeLocalEntries(Encoder& e, const ValTypeVector& locals)
         return false;
 
     uint32_t numLocalEntries = 0;
-    ValType prev = ValType(TypeCode::Limit);
+    ValType prev;
     for (ValType t : locals) {
         if (t != prev) {
             numLocalEntries++;
@@ -389,12 +389,12 @@ DecodeValType(Decoder& d, ModuleKind kind, HasGcTypes gcTypesEnabled, ValType* t
       case uint8_t(ValType::F32):
       case uint8_t(ValType::F64):
       case uint8_t(ValType::I64):
-        *type = ValType(unchecked);
+        *type = ValType::fromTypeCode(unchecked);
         return true;
       case uint8_t(ValType::AnyRef):
         if (gcTypesEnabled == HasGcTypes::False)
             break;
-        *type = ValType(unchecked);
+        *type = ValType::fromTypeCode(unchecked);
         return true;
       case uint8_t(ValType::I8x16):
       case uint8_t(ValType::I16x8):
@@ -405,7 +405,7 @@ DecodeValType(Decoder& d, ModuleKind kind, HasGcTypes gcTypesEnabled, ValType* t
       case uint8_t(ValType::B32x4):
         if (kind != ModuleKind::AsmJS)
             return d.fail("bad type");
-        *type = ValType(unchecked);
+        *type = ValType::fromTypeCode(unchecked);
         return true;
       default:
         break;
@@ -691,7 +691,6 @@ DecodeFunctionBodyExprs(const ModuleEnvironment& env, const Sig& sig, const ValT
             CHECK(iter.readConversion(ValType::I64, ValType::F64, &nothing));
           case uint16_t(Op::F64PromoteF32):
             CHECK(iter.readConversion(ValType::F32, ValType::F64, &nothing));
-#ifdef ENABLE_WASM_SIGNEXTEND_OPS
           case uint16_t(Op::I32Extend8S):
           case uint16_t(Op::I32Extend16S):
             CHECK(iter.readConversion(ValType::I32, ValType::I32, &nothing));
@@ -699,7 +698,6 @@ DecodeFunctionBodyExprs(const ModuleEnvironment& env, const Sig& sig, const ValT
           case uint16_t(Op::I64Extend16S):
           case uint16_t(Op::I64Extend32S):
             CHECK(iter.readConversion(ValType::I64, ValType::I64, &nothing));
-#endif
           case uint16_t(Op::I32Load8S):
           case uint16_t(Op::I32Load8U): {
             LinearMemoryAddress<Nothing> addr;
@@ -1066,6 +1064,78 @@ DecodePreamble(Decoder& d)
 }
 
 static bool
+DecodeFuncType(Decoder& d, ModuleEnvironment* env, uint32_t typeIndex)
+{
+    uint32_t numArgs;
+    if (!d.readVarU32(&numArgs))
+        return d.fail("bad number of function args");
+
+    if (numArgs > MaxParams)
+        return d.fail("too many arguments in signature");
+
+    ValTypeVector args;
+    if (!args.resize(numArgs))
+        return false;
+
+    for (uint32_t i = 0; i < numArgs; i++) {
+        if (!DecodeValType(d, ModuleKind::Wasm, env->gcTypesEnabled, &args[i]))
+            return false;
+    }
+
+    uint32_t numRets;
+    if (!d.readVarU32(&numRets))
+        return d.fail("bad number of function returns");
+
+    if (numRets > 1)
+        return d.fail("too many returns in signature");
+
+    ExprType result = ExprType::Void;
+
+    if (numRets == 1) {
+        ValType type;
+        if (!DecodeValType(d, ModuleKind::Wasm, env->gcTypesEnabled, &type))
+            return false;
+
+        result = ToExprType(type);
+    }
+
+    env->types[typeIndex] = TypeDef(Sig(std::move(args), result));
+    return true;
+}
+
+static bool
+DecodeStructType(Decoder& d, ModuleEnvironment* env, uint32_t typeIndex)
+{
+    if (env->gcTypesEnabled == HasGcTypes::False)
+        return d.fail("Structure types not enabled");
+
+    uint32_t numFields;
+    if (!d.readVarU32(&numFields))
+        return d.fail("Bad number of fields");
+
+    if (numFields > MaxStructFields)
+        return d.fail("too many fields in structure");
+
+    ValTypeVector fields;
+    if (!fields.resize(numFields))
+        return false;
+
+    Uint32Vector fieldOffsets;
+    if (!fieldOffsets.resize(numFields))
+        return false;
+
+    // TODO (subsequent patch): lay out the fields.
+
+    for (uint32_t i = 0; i < numFields; i++) {
+        if (!DecodeValType(d, ModuleKind::Wasm, env->gcTypesEnabled, &fields[i]))
+            return false;
+    }
+
+    env->types[typeIndex] = TypeDef(StructType(std::move(fields), std::move(fieldOffsets)));
+    return true;
+}
+
+static bool
 DecodeTypeSection(Decoder& d, ModuleEnvironment* env)
 {
     MaybeSectionRange range;
@@ -1074,55 +1144,33 @@ DecodeTypeSection(Decoder& d, ModuleEnvironment* env)
     if (!range)
         return true;
 
-    uint32_t numSigs;
-    if (!d.readVarU32(&numSigs))
-        return d.fail("expected number of signatures");
+    uint32_t numTypes;
+    if (!d.readVarU32(&numTypes))
+        return d.fail("expected number of types");
 
-    if (numSigs > MaxTypes)
-        return d.fail("too many signatures");
+    if (numTypes > MaxTypes)
+        return d.fail("too many types");
 
-    if (!env->sigs.resize(numSigs))
+    if (!env->types.resize(numTypes))
         return false;
 
-    for (uint32_t sigIndex = 0; sigIndex < numSigs; sigIndex++) {
+    for (uint32_t typeIndex = 0; typeIndex < numTypes; typeIndex++) {
         uint8_t form;
-        if (!d.readFixedU8(&form) || form != uint8_t(TypeCode::Func))
-            return d.fail("expected function form");
+        if (!d.readFixedU8(&form))
+            return d.fail("expected type form");
 
-        uint32_t numArgs;
-        if (!d.readVarU32(&numArgs))
-            return d.fail("bad number of function args");
-
-        if (numArgs > MaxParams)
-            return d.fail("too many arguments in signature");
-
-        ValTypeVector args;
-        if (!args.resize(numArgs))
-            return false;
-
-        for (uint32_t i = 0; i < numArgs; i++) {
-            if (!DecodeValType(d, ModuleKind::Wasm, env->gcTypesEnabled, &args[i]))
+        switch (form) {
+          case uint8_t(TypeCode::Func):
+            if (!DecodeFuncType(d, env, typeIndex))
                 return false;
-        }
-
-        uint32_t numRets;
-        if (!d.readVarU32(&numRets))
-            return d.fail("bad number of function returns");
-
-        if (numRets > 1)
-            return d.fail("too many returns in signature");
-
-        ExprType result = ExprType::Void;
-
-        if (numRets == 1) {
-            ValType type;
-            if (!DecodeValType(d, ModuleKind::Wasm, env->gcTypesEnabled, &type))
+            break;
+          case uint8_t(TypeCode::Struct):
+            if (!DecodeStructType(d, env, typeIndex))
                 return false;
-
-            result = ToExprType(type);
+            break;
+          default:
+            return d.fail("expected type form");
         }
-
-        env->sigs[sigIndex] = Sig(Move(args), result);
     }
 
     return d.finishSection(*range, "type");
@@ -1156,13 +1204,16 @@ DecodeName(Decoder& d)
 }
 
 static bool
-DecodeSignatureIndex(Decoder& d, const SigWithIdVector& sigs, uint32_t* sigIndex)
+DecodeSignatureIndex(Decoder& d, const TypeDefVector& types, uint32_t* sigIndex)
 {
     if (!d.readVarU32(sigIndex))
         return d.fail("expected signature index");
 
-    if (*sigIndex >= sigs.length())
+    if (*sigIndex >= types.length())
         return d.fail("signature index out of range");
+
+    if (!types[*sigIndex].isFuncType())
+        return d.fail("signature index references non-signature");
 
     return true;
 }
@@ -1228,7 +1279,12 @@ DecodeTableLimits(Decoder& d, TableDescVector* tables)
     if (!DecodeLimits(d, &limits))
         return false;
 
-    if (limits.initial > MaxTableInitialLength)
+    // If there's a maximum, check it is in range.  The check to exclude
+    // initial > maximum is carried out by the DecodeLimits call above, so
+    // we don't repeat it here.
+    if (limits.initial > MaxTableInitialLength ||
+        ((limits.maximum.isSome() &&
+          limits.maximum.value() > MaxTableMaximumLength)))
         return d.fail("too many table elements");
 
     if (tables->length())
@@ -1240,7 +1296,7 @@ DecodeTableLimits(Decoder& d, TableDescVector* tables)
 static bool
 GlobalIsJSCompatible(Decoder& d, ValType type, bool isMutable)
 {
-    switch (type) {
+    switch (type.code()) {
       case ValType::I32:
       case ValType::F32:
       case ValType::F64:
@@ -1332,9 +1388,9 @@ DecodeImport(Decoder& d, ModuleEnvironment* env)
     switch (importKind) {
       case DefinitionKind::Function: {
         uint32_t sigIndex;
-        if (!DecodeSignatureIndex(d, env->sigs, &sigIndex))
+        if (!DecodeSignatureIndex(d, env->types, &sigIndex))
             return false;
-        if (!env->funcSigs.append(&env->sigs[sigIndex]))
+        if (!env->funcSigs.append(&env->types[sigIndex].funcType()))
             return false;
         if (env->funcSigs.length() > MaxFuncs)
             return d.fail("too many functions");
@@ -1368,7 +1424,7 @@ DecodeImport(Decoder& d, ModuleEnvironment* env)
         return d.fail("unsupported import kind");
     }
 
-    return env->imports.emplaceBack(Move(moduleName), Move(funcName), importKind);
+    return env->imports.emplaceBack(std::move(moduleName), std::move(funcName), importKind);
 }
 
 static bool
@@ -1425,9 +1481,9 @@ DecodeFunctionSection(Decoder& d, ModuleEnvironment* env)
 
     for (uint32_t i = 0; i < numDefs; i++) {
         uint32_t sigIndex;
-        if (!DecodeSignatureIndex(d, env->sigs, &sigIndex))
+        if (!DecodeSignatureIndex(d, env->types, &sigIndex))
             return false;
-        env->funcSigs.infallibleAppend(&env->sigs[sigIndex]);
+        env->funcSigs.infallibleAppend(&env->types[sigIndex].funcType());
     }
 
     return d.finishSection(*range, "function");
@@ -1601,7 +1657,7 @@ DecodeExportName(Decoder& d, CStringSet* dupSet)
     if (!dupSet->add(p, exportName.get()))
         return nullptr;
 
-    return Move(exportName);
+    return exportName;
 }
 
 static bool
@@ -1624,7 +1680,7 @@ DecodeExport(Decoder& d, ModuleEnvironment* env, CStringSet* dupSet)
         if (funcIndex >= env->numFuncs())
             return d.fail("exported function index out of bounds");
 
-        return env->exports.emplaceBack(Move(fieldName), funcIndex, DefinitionKind::Function);
+        return env->exports.emplaceBack(std::move(fieldName), funcIndex, DefinitionKind::Function);
       }
       case DefinitionKind::Table: {
         uint32_t tableIndex;
@@ -1637,7 +1693,7 @@ DecodeExport(Decoder& d, ModuleEnvironment* env, CStringSet* dupSet)
         MOZ_ASSERT(env->tables.length() == 1);
         env->tables[0].external = true;
 
-        return env->exports.emplaceBack(Move(fieldName), DefinitionKind::Table);
+        return env->exports.emplaceBack(std::move(fieldName), DefinitionKind::Table);
       }
       case DefinitionKind::Memory: {
         uint32_t memoryIndex;
@@ -1647,7 +1703,7 @@ DecodeExport(Decoder& d, ModuleEnvironment* env, CStringSet* dupSet)
         if (memoryIndex > 0 || !env->usesMemory())
             return d.fail("exported memory index out of bounds");
 
-        return env->exports.emplaceBack(Move(fieldName), DefinitionKind::Memory);
+        return env->exports.emplaceBack(std::move(fieldName), DefinitionKind::Memory);
       }
       case DefinitionKind::Global: {
         uint32_t globalIndex;
@@ -1662,7 +1718,7 @@ DecodeExport(Decoder& d, ModuleEnvironment* env, CStringSet* dupSet)
         if (!GlobalIsJSCompatible(d, global->type(), global->isMutable()))
             return false;
 
-        return env->exports.emplaceBack(Move(fieldName), globalIndex, DefinitionKind::Global);
+        return env->exports.emplaceBack(std::move(fieldName), globalIndex, DefinitionKind::Global);
       }
       default:
         return d.fail("unexpected export kind");
@@ -1774,7 +1830,7 @@ DecodeElemSection(Decoder& d, ModuleEnvironment* env)
                 return d.fail("table element out of range");
         }
 
-        if (!env->elemSegments.emplaceBack(0, offset, Move(elemFuncIndices)))
+        if (!env->elemSegments.emplaceBack(0, offset, std::move(elemFuncIndices)))
             return false;
 
         env->tables[env->elemSegments.back().tableIndex].external = true;
@@ -2020,7 +2076,7 @@ DecodeFunctionNameSubsection(Decoder& d, ModuleEnvironment* env)
 
     // To encourage fully valid function names subsections; only save names if
     // the entire subsection decoded correctly.
-    env->funcNames = Move(funcNames);
+    env->funcNames = std::move(funcNames);
     return true;
 }
 

@@ -18,6 +18,7 @@
 #include "mozilla/ServoStyleRuleMap.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
+#include "mozilla/dom/StyleSheetList.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -234,8 +235,10 @@ ShadowRoot::RemoveSlot(HTMLSlotElement* aSlot)
                         "Slot to deregister wasn't found?");
   if (currentSlots->Length() == 1) {
     MOZ_ASSERT(currentSlots->ElementAt(0) == aSlot);
-    mSlotMap.Remove(name);
 
+    InvalidateStyleAndLayoutOnSubtree(aSlot);
+
+    mSlotMap.Remove(name);
     if (!aSlot->AssignedNodes().IsEmpty()) {
       aSlot->ClearAssignedNodes();
       aSlot->EnqueueSlotChangeEvent();
@@ -253,6 +256,7 @@ ShadowRoot::RemoveSlot(HTMLSlotElement* aSlot)
     return;
   }
 
+  InvalidateStyleAndLayoutOnSubtree(aSlot);
   HTMLSlotElement* replacementSlot = currentSlots->ElementAt(0);
   const nsTArray<RefPtr<nsINode>>& assignedNodes = aSlot->AssignedNodes();
   bool slottedNodesChanged = !assignedNodes.IsEmpty();
@@ -394,10 +398,18 @@ ShadowRoot::InsertSheetIntoAuthorData(size_t aIndex, StyleSheet& aSheet)
 void
 ShadowRoot::StyleSheetApplicableStateChanged(StyleSheet& aSheet, bool aApplicable)
 {
-  MOZ_ASSERT(mStyleSheets.Contains(&aSheet));
+  int32_t index = IndexOfSheet(aSheet);
+  if (index < 0) {
+    // NOTE(emilio): @import sheets are handled in the relevant RuleAdded
+    // notification, which only notifies after the sheet is loaded.
+    //
+    // This setup causes weirdness in other places, we may want to fix this in
+    // bug 1465031.
+    MOZ_DIAGNOSTIC_ASSERT(aSheet.GetParentSheet(),
+                          "It'd better be an @import sheet");
+    return;
+  }
   if (aApplicable) {
-    int32_t index = IndexOfSheet(aSheet);
-    MOZ_RELEASE_ASSERT(index >= 0);
     InsertSheetIntoAuthorData(size_t(index), aSheet);
   } else {
     if (mStyleRuleMap) {

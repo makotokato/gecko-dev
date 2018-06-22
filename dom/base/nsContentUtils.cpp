@@ -37,8 +37,10 @@
 #include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/LoadInfo.h"
+#include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/CustomElementRegistry.h"
+#include "mozilla/dom/MessageBroadcaster.h"
 #include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/dom/DOMException.h"
 #include "mozilla/dom/DOMExceptionBinding.h"
@@ -48,6 +50,7 @@
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/FileSystemSecurity.h"
 #include "mozilla/dom/FileBlobImpl.h"
+#include "mozilla/dom/FontTableURIProtocolHandler.h"
 #include "mozilla/dom/HTMLInputElement.h"
 #include "mozilla/dom/HTMLSlotElement.h"
 #include "mozilla/dom/HTMLTemplateElement.h"
@@ -77,6 +80,8 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/dom/Selection.h"
+#include "mozilla/Services.h"
+#include "mozilla/StaticPrefs.h"
 #include "mozilla/TextEvents.h"
 #include "nsArrayUtils.h"
 #include "nsAString.h"
@@ -110,7 +115,6 @@
 #include "nsGenericHTMLElement.h"
 #include "nsGenericHTMLFrameElement.h"
 #include "nsGkAtoms.h"
-#include "nsHostObjectProtocolHandler.h"
 #include "nsHtml5Module.h"
 #include "nsHtml5StringParser.h"
 #include "nsHTMLDocument.h"
@@ -133,7 +137,6 @@
 #include "nsIDocument.h"
 #include "nsIDocumentEncoder.h"
 #include "nsIDOMChromeWindow.h"
-#include "nsIDOMNode.h"
 #include "nsIDOMWindowUtils.h"
 #include "nsIDragService.h"
 #include "nsIFormControl.h"
@@ -173,7 +176,6 @@
 #include "nsIStreamConverterService.h"
 #include "nsIStringBundle.h"
 #include "nsIURI.h"
-#include "nsIURIWithPrincipal.h"
 #include "nsIURL.h"
 #include "nsIWebNavigation.h"
 #include "nsIWindowMediator.h"
@@ -510,6 +512,41 @@ EventListenerManagerHashClearEntry(PLDHashTable *table, PLDHashEntryHdr *entry)
 
   // Let the EventListenerManagerMapEntry clean itself up...
   lm->~EventListenerManagerMapEntry();
+}
+
+static bool
+IsThirdPartyWindowOrChannel(nsPIDOMWindowInner* aWindow,
+                            nsIChannel* aChannel,
+                            nsIURI* aURI)
+{
+  MOZ_ASSERT(!aWindow || !aChannel,
+             "A window and channel should not both be provided.");
+
+  nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil = services::GetThirdPartyUtil();
+  if (!thirdPartyUtil) {
+    return false;
+  }
+
+  // In the absence of a window or channel, we assume that we are first-party.
+  bool thirdParty = false;
+
+  if (aWindow) {
+    Unused << thirdPartyUtil->IsThirdPartyWindow(aWindow->GetOuterWindow(),
+                                                 aURI,
+                                                 &thirdParty);
+  }
+
+  if (aChannel) {
+    // Note, we must call IsThirdPartyChannel() here and not just try to
+    // use nsILoadInfo.isThirdPartyContext.  That nsILoadInfo property only
+    // indicates if the parent loading window is third party or not.  We
+    // want to check the channel URI against the loading principal as well.
+    Unused << thirdPartyUtil->IsThirdPartyChannel(aChannel,
+                                                  nullptr,
+                                                  &thirdParty);
+  }
+
+  return thirdParty;
 }
 
 class SameOriginCheckerImpl final : public nsIChannelEventSink,
@@ -2071,10 +2108,7 @@ nsContentUtils::Shutdown()
 
 /**
  * Checks whether two nodes come from the same origin. aTrustedNode is
- * considered 'safe' in that a user can operate on it and that it isn't
- * a js-object that implements nsIDOMNode.
- * Never call this function with the first node provided by script, it
- * must always be known to be a 'real' node!
+ * considered 'safe' in that a user can operate on it.
  */
 // static
 nsresult
@@ -2122,15 +2156,6 @@ nsContentUtils::CanCallerAccess(nsIPrincipal* aSubjectPrincipal,
   // The subject doesn't subsume aPrincipal. Allow access only if the subject
   // is chrome.
   return IsCallerChrome();
-}
-
-// static
-bool
-nsContentUtils::CanCallerAccess(nsIDOMNode *aNode)
-{
-  nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
-  NS_ENSURE_TRUE(node, false);
-  return CanCallerAccess(node);
 }
 
 // static
@@ -2380,8 +2405,7 @@ nsContentUtils::IsCallerContentXBL()
   // For remote XUL, we run XBL in the XUL scope. Given that we care about
   // compat and not security for remote XUL, just always claim to be XBL.
   if (!xpc::AllowContentXBLScope(realm)) {
-    DebugOnly<JSCompartment*> c = JS::GetCompartmentForRealm(realm);
-    MOZ_ASSERT(nsContentUtils::AllowXULXBLForPrincipal(xpc::GetCompartmentPrincipal(c)));
+    MOZ_ASSERT(nsContentUtils::AllowXULXBLForPrincipal(xpc::GetRealmPrincipal(realm)));
     return true;
   }
 
@@ -2597,18 +2621,17 @@ nsContentUtils::GetAncestors(nsINode* aNode,
 
 // static
 nsresult
-nsContentUtils::GetAncestorsAndOffsets(nsIDOMNode* aNode,
+nsContentUtils::GetAncestorsAndOffsets(nsINode* aNode,
                                        int32_t aOffset,
                                        nsTArray<nsIContent*>* aAncestorNodes,
                                        nsTArray<int32_t>* aAncestorOffsets)
 {
   NS_ENSURE_ARG_POINTER(aNode);
 
-  nsCOMPtr<nsIContent> content(do_QueryInterface(aNode));
-
-  if (!content) {
+  if (!aNode->IsContent()) {
     return NS_ERROR_FAILURE;
   }
+  nsIContent* content = aNode->AsContent();
 
   if (!aAncestorNodes->IsEmpty()) {
     NS_WARNING("aAncestorNodes is not empty");
@@ -2621,7 +2644,7 @@ nsContentUtils::GetAncestorsAndOffsets(nsIDOMNode* aNode,
   }
 
   // insert the node itself
-  aAncestorNodes->AppendElement(content.get());
+  aAncestorNodes->AppendElement(content);
   aAncestorOffsets->AppendElement(aOffset);
 
   // insert all the ancestors
@@ -2635,25 +2658,6 @@ nsContentUtils::GetAncestorsAndOffsets(nsIDOMNode* aNode,
   }
 
   return NS_OK;
-}
-
-// static
-nsresult
-nsContentUtils::GetCommonAncestor(nsIDOMNode *aNode,
-                                  nsIDOMNode *aOther,
-                                  nsIDOMNode** aCommonAncestor)
-{
-  *aCommonAncestor = nullptr;
-
-  nsCOMPtr<nsINode> node1 = do_QueryInterface(aNode);
-  nsCOMPtr<nsINode> node2 = do_QueryInterface(aOther);
-
-  NS_ENSURE_TRUE(node1 && node2, NS_ERROR_UNEXPECTED);
-
-  nsINode* common = GetCommonAncestor(node1, node2);
-  NS_ENSURE_TRUE(common, NS_ERROR_NOT_AVAILABLE);
-
-  return CallQueryInterface(common, aCommonAncestor);
 }
 
 template <typename Node, typename GetParentFunc>
@@ -2800,18 +2804,6 @@ nsContentUtils::ComparePoints(nsINode* aParent1, int32_t aOffset1,
   // XXX aOffset2 may be -1 as mentioned above.  So, why does this return it's
   //     *after* of the valid DOM point?
   return parent->ComputeIndexOf(child1) < aOffset2 ? -1 : 1;
-}
-
-/* static */
-int32_t
-nsContentUtils::ComparePoints(nsIDOMNode* aParent1, int32_t aOffset1,
-                              nsIDOMNode* aParent2, int32_t aOffset2,
-                              bool* aDisconnected)
-{
-  nsCOMPtr<nsINode> parent1 = do_QueryInterface(aParent1);
-  nsCOMPtr<nsINode> parent2 = do_QueryInterface(aParent2);
-  NS_ENSURE_TRUE(parent1 && parent2, -1);
-  return ComparePoints(parent1, aOffset1, parent2, aOffset2);
 }
 
 /* static */
@@ -3130,12 +3122,12 @@ nsContentUtils::SubjectPrincipal(JSContext* aCx)
   MOZ_ASSERT(NS_IsMainThread());
 
   // As opposed to SubjectPrincipal(), we do in fact assume that
-  // we're in a compartment here; anyone who calls this function
-  // in situations where that's not the case is doing it wrong.
-  JSCompartment* compartment = js::GetContextCompartment(aCx);
-  MOZ_ASSERT(compartment);
+  // we're in a realm here; anyone who calls this function in
+  // situations where that's not the case is doing it wrong.
+  JS::Realm* realm = js::GetContextRealm(aCx);
+  MOZ_ASSERT(realm);
 
-  JSPrincipals* principals = JS_GetCompartmentPrincipals(compartment);
+  JSPrincipals* principals = JS::GetRealmPrincipals(realm);
   return nsJSPrincipals::get(principals);
 }
 
@@ -3150,9 +3142,9 @@ nsContentUtils::SubjectPrincipal()
     MOZ_CRASH("Accessing the Subject Principal without an AutoJSAPI on the stack is forbidden");
   }
 
-  JSCompartment *compartment = js::GetContextCompartment(cx);
+  JS::Realm* realm = js::GetContextRealm(cx);
 
-  // When an AutoJSAPI is instantiated, we are in a null compartment until the
+  // When an AutoJSAPI is instantiated, we are in a null realm until the
   // first JSAutoRealm, which is kind of a purgatory as far as permissions
   // go. It would be nice to just hard-abort if somebody does a security check
   // in this purgatory zone, but that would be too fragile, since it could be
@@ -3170,9 +3162,9 @@ nsContentUtils::SubjectPrincipal()
   //
   // So we use a singleton null principal. To avoid it being accidentally
   // inherited and becoming a "real" subject or object principal, we do a
-  // release-mode assert during compartment creation against using this
-  // principal on an actual global.
-  if (!compartment) {
+  // release-mode assert during realm creation against using this principal on
+  // an actual global.
+  if (!realm) {
     return sNullSubjectPrincipal;
   }
 
@@ -3191,8 +3183,8 @@ nsContentUtils::ObjectPrincipal(JSObject* aObj)
 
   // This is duplicated from nsScriptSecurityManager. We don't call through there
   // because the API unnecessarily requires a JSContext for historical reasons.
-  JSCompartment *compartment = js::GetObjectCompartment(aObj);
-  JSPrincipals *principals = JS_GetCompartmentPrincipals(compartment);
+  JS::Compartment* compartment = js::GetObjectCompartment(aObj);
+  JSPrincipals* principals = JS_GetCompartmentPrincipals(compartment);
   return nsJSPrincipals::get(principals);
 }
 
@@ -3484,9 +3476,7 @@ nsContentUtils::GetContextForContent(const nsIContent* aContent)
 bool
 nsContentUtils::CanLoadImage(nsIURI* aURI, nsINode* aNode,
                              nsIDocument* aLoadingDocument,
-                             nsIPrincipal* aLoadingPrincipal,
-                             int16_t* aImageBlockingStatus,
-                             uint32_t aContentType)
+                             nsIPrincipal* aLoadingPrincipal)
 {
   MOZ_ASSERT(aURI, "Must have a URI");
   MOZ_ASSERT(aLoadingDocument, "Must have a document");
@@ -3518,21 +3508,16 @@ nsContentUtils::CanLoadImage(nsIURI* aURI, nsINode* aNode,
       CheckLoadURIWithPrincipal(aLoadingPrincipal, aURI,
                                 nsIScriptSecurityManager::ALLOW_CHROME);
     if (NS_FAILED(rv)) {
-      if (aImageBlockingStatus) {
-        // Reject the request itself, not all requests to the relevant
-        // server...
-        *aImageBlockingStatus = nsIContentPolicy::REJECT_REQUEST;
-      }
       return false;
     }
   }
 
   nsCOMPtr<nsILoadInfo> secCheckLoadInfo =
-    new LoadInfo(aLoadingPrincipal,
-                 aLoadingPrincipal, // triggering principal
-                 aNode,
-                 nsILoadInfo::SEC_ONLY_FOR_EXPLICIT_CONTENTSEC_CHECK,
-                 aContentType);
+    new mozilla::net::LoadInfo(aLoadingPrincipal,
+                               aLoadingPrincipal, // triggering principal
+                               aNode,
+                               nsILoadInfo::SEC_ONLY_FOR_EXPLICIT_CONTENTSEC_CHECK,
+                               nsIContentPolicy::TYPE_INTERNAL_IMAGE);
 
   int16_t decision = nsIContentPolicy::ACCEPT;
 
@@ -3541,10 +3526,6 @@ nsContentUtils::CanLoadImage(nsIURI* aURI, nsINode* aNode,
                                  &decision,
                                  GetContentPolicy());
 
-  if (aImageBlockingStatus) {
-    *aImageBlockingStatus =
-      NS_FAILED(rv) ? nsIContentPolicy::REJECT_REQUEST : decision;
-  }
   return NS_FAILED(rv) ? false : NS_CP_ACCEPTED(decision);
 }
 
@@ -4800,7 +4781,7 @@ nsContentUtils::MaybeFireNodeRemoved(nsINode* aChild, nsINode* aParent)
   if (HasMutationListeners(aChild,
         NS_EVENT_BITS_MUTATION_NODEREMOVED, aParent)) {
     InternalMutationEvent mutation(true, eLegacyNodeRemoved);
-    mutation.mRelatedNode = do_QueryInterface(aParent);
+    mutation.mRelatedNode = aParent;
 
     mozAutoSubtreeModified subtree(aParent->OwnerDoc(), aParent);
     EventDispatcher::Dispatch(aChild, nullptr, &mutation);
@@ -4951,7 +4932,6 @@ already_AddRefed<DocumentFragment>
 nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
                                          const nsAString& aFragment,
                                          bool aPreventScriptExecution,
-                                         SanitizeFragments aSanitize,
                                          ErrorResult& aRv)
 {
   if (!aContextNode) {
@@ -4987,16 +4967,14 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
                               contextAsContent->GetNameSpaceID(),
                               (document->GetCompatibilityMode() ==
                                eCompatibility_NavQuirks),
-                              aPreventScriptExecution,
-                              aSanitize);
+                              aPreventScriptExecution);
     } else {
       aRv = ParseFragmentHTML(aFragment, frag,
                               nsGkAtoms::body,
                               kNameSpaceID_XHTML,
                               (document->GetCompatibilityMode() ==
                                eCompatibility_NavQuirks),
-                              aPreventScriptExecution,
-                              aSanitize);
+                              aPreventScriptExecution);
     }
 
     return frag.forget();
@@ -5060,8 +5038,7 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
 
   RefPtr<DocumentFragment> frag;
   aRv = ParseFragmentXML(aFragment, document, tagStack,
-                         aPreventScriptExecution, getter_AddRefs(frag),
-                         aSanitize);
+                         aPreventScriptExecution, getter_AddRefs(frag));
   return frag.forget();
 }
 
@@ -5088,8 +5065,7 @@ nsContentUtils::ParseFragmentHTML(const nsAString& aSourceBuffer,
                                   nsAtom* aContextLocalName,
                                   int32_t aContextNamespace,
                                   bool aQuirks,
-                                  bool aPreventScriptExecution,
-                                  SanitizeFragments aSanitize)
+                                  bool aPreventScriptExecution)
 {
   AutoTimelineMarker m(aTargetNode->OwnerDoc()->GetDocShell(), "Parse HTML");
 
@@ -5109,8 +5085,7 @@ nsContentUtils::ParseFragmentHTML(const nsAString& aSourceBuffer,
   // If this is a chrome-privileged document, create a fragment first, and
   // sanitize it before insertion.
   RefPtr<DocumentFragment> fragment;
-  if (aSanitize != NeverSanitize &&
-      IsSystemPrincipal(aTargetNode->NodePrincipal())) {
+  if (IsSystemPrincipal(aTargetNode->NodePrincipal())) {
     fragment = new DocumentFragment(aTargetNode->OwnerDoc()->NodeInfoManager());
     target = fragment;
   }
@@ -5173,8 +5148,7 @@ nsContentUtils::ParseFragmentXML(const nsAString& aSourceBuffer,
                                  nsIDocument* aDocument,
                                  nsTArray<nsString>& aTagStack,
                                  bool aPreventScriptExecution,
-                                 DocumentFragment** aReturn,
-                                 SanitizeFragments aSanitize)
+                                 DocumentFragment** aReturn)
 {
   AutoTimelineMarker m(aDocument->GetDocShell(), "Parse XML");
 
@@ -5217,8 +5191,7 @@ nsContentUtils::ParseFragmentXML(const nsAString& aSourceBuffer,
 
   // If this is a chrome-privileged document, sanitize the fragment before
   // returning.
-  if (aSanitize != NeverSanitize &&
-      IsSystemPrincipal(aDocument->NodePrincipal())) {
+  if (IsSystemPrincipal(aDocument->NodePrincipal())) {
     // Don't fire mutation events for nodes removed by the sanitizer.
     nsAutoScriptBlockerSuppressNodeRemoved scriptBlocker;
 
@@ -5748,7 +5721,7 @@ void
 nsContentUtils::RunInStableState(already_AddRefed<nsIRunnable> aRunnable)
 {
   MOZ_ASSERT(CycleCollectedJSContext::Get(), "Must be on a script thread!");
-  CycleCollectedJSContext::Get()->RunInStableState(Move(aRunnable));
+  CycleCollectedJSContext::Get()->RunInStableState(std::move(aRunnable));
 }
 
 /* static */
@@ -5756,7 +5729,7 @@ void
 nsContentUtils::AddPendingIDBTransaction(already_AddRefed<nsIRunnable> aTransaction)
 {
   MOZ_ASSERT(CycleCollectedJSContext::Get(), "Must be on a script thread!");
-  CycleCollectedJSContext::Get()->AddPendingIDBTransaction(Move(aTransaction));
+  CycleCollectedJSContext::Get()->AddPendingIDBTransaction(std::move(aTransaction));
 }
 
 /* static */
@@ -6349,21 +6322,24 @@ nsContentUtils::GetASCIIOrigin(nsIURI* aURI, nsACString& aOrigin)
 {
   MOZ_ASSERT(aURI, "missing uri");
 
-  // For Blob URI we have to return the origin of page using its principal.
-  nsCOMPtr<nsIURIWithPrincipal> uriWithPrincipal = do_QueryInterface(aURI);
-  if (uriWithPrincipal) {
-    nsCOMPtr<nsIPrincipal> principal;
-    uriWithPrincipal->GetPrincipal(getter_AddRefs(principal));
+  bool isBlobURL = false;
+  nsresult rv = aURI->SchemeIs(BLOBURI_SCHEME, &isBlobURL);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    if (principal) {
-      nsCOMPtr<nsIURI> uri;
-      nsresult rv = principal->GetURI(getter_AddRefs(uri));
-      NS_ENSURE_SUCCESS(rv, rv);
+  // For Blob URI, the path is the URL of the owning page.
+  if (isBlobURL) {
+    nsAutoCString path;
+    rv = aURI->GetPathQueryRef(path);
+    NS_ENSURE_SUCCESS(rv, rv);
 
-      if (uri && uri != aURI) {
-        return GetASCIIOrigin(uri, aOrigin);
-      }
+    nsCOMPtr<nsIURI> uri;
+    nsresult rv = NS_NewURI(getter_AddRefs(uri), path);
+    if (NS_FAILED(rv)) {
+      aOrigin.AssignLiteral("null");
+      return NS_OK;
     }
+
+    return GetASCIIOrigin(uri, aOrigin);
   }
 
   aOrigin.Truncate();
@@ -6372,7 +6348,7 @@ nsContentUtils::GetASCIIOrigin(nsIURI* aURI, nsACString& aOrigin)
   NS_ENSURE_TRUE(uri, NS_ERROR_UNEXPECTED);
 
   nsCString host;
-  nsresult rv = uri->GetAsciiHost(host);
+  rv = uri->GetAsciiHost(host);
 
   if (NS_SUCCEEDED(rv) && !host.IsEmpty()) {
     nsCString scheme;
@@ -7718,7 +7694,7 @@ nsContentUtils::GetHostOrIPv6WithBrackets(nsIURI* aURI, nsAString& aHost)
 }
 
 bool
-nsContentUtils::CallOnAllRemoteChildren(ChromeMessageBroadcaster* aManager,
+nsContentUtils::CallOnAllRemoteChildren(MessageBroadcaster* aManager,
                                         CallOnRemoteChildFunction aCallback,
                                         void* aArg)
 {
@@ -7729,7 +7705,7 @@ nsContentUtils::CallOnAllRemoteChildren(ChromeMessageBroadcaster* aManager,
       continue;
     }
 
-    RefPtr<ChromeMessageBroadcaster> nonLeafMM = ChromeMessageBroadcaster::From(childMM);
+    RefPtr<MessageBroadcaster> nonLeafMM = MessageBroadcaster::From(childMM);
     if (nonLeafMM) {
       if (CallOnAllRemoteChildren(nonLeafMM, aCallback, aArg)) {
         return true;
@@ -7759,7 +7735,7 @@ nsContentUtils::CallOnAllRemoteChildren(nsPIDOMWindowOuter* aWindow,
 {
   nsGlobalWindowOuter* window = nsGlobalWindowOuter::Cast(aWindow);
   if (window->IsChromeWindow()) {
-    RefPtr<ChromeMessageBroadcaster> windowMM = window->GetMessageManager();
+    RefPtr<MessageBroadcaster> windowMM = window->GetMessageManager();
     if (windowMM) {
       CallOnAllRemoteChildren(windowMM, aCallback, aArg);
     }
@@ -8876,6 +8852,36 @@ nsContentUtils::GetCookieBehaviorForPrincipal(nsIPrincipal* aPrincipal,
   }
 }
 
+// static public
+bool
+nsContentUtils::StorageDisabledByAntiTracking(nsPIDOMWindowInner* aWindow,
+                                              nsIChannel* aChannel,
+                                              nsIURI* aURI)
+{
+  if (!StaticPrefs::privacy_trackingprotection_storagerestriction_enabled()) {
+    return false;
+  }
+
+  // Let's check if this is a 3rd party context.
+  if (!IsThirdPartyWindowOrChannel(aWindow, aChannel, aURI)) {
+    return false;
+  }
+
+  nsCOMPtr<nsIChannel> channel;
+
+  // aChannel and aWindow are mutually exclusive.
+  channel = aChannel;
+  if (aWindow) {
+    nsIDocument* document = aWindow->GetExtantDoc();
+    if (document) {
+      channel = document->GetChannel();
+    }
+  }
+
+  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(channel);
+  return httpChannel && httpChannel->GetIsTrackingResource();
+}
+
 // static, private
 nsContentUtils::StorageAccess
 nsContentUtils::InternalStorageAllowedForPrincipal(nsIPrincipal* aPrincipal,
@@ -8890,6 +8896,10 @@ nsContentUtils::InternalStorageAllowedForPrincipal(nsIPrincipal* aPrincipal,
   // We don't allow storage on the null principal, in general. Even if the
   // calling context is chrome.
   if (aPrincipal->GetIsNullPrincipal()) {
+    return StorageAccess::eDeny;
+  }
+
+  if (StorageDisabledByAntiTracking(aWindow, aChannel, aURI)) {
     return StorageAccess::eDeny;
   }
 
@@ -8968,47 +8978,15 @@ nsContentUtils::InternalStorageAllowedForPrincipal(nsIPrincipal* aPrincipal,
     return StorageAccess::eDeny;
   }
 
-  if (behavior == nsICookieService::BEHAVIOR_REJECT_FOREIGN ||
-      behavior == nsICookieService::BEHAVIOR_LIMIT_FOREIGN) {
+  if ((behavior == nsICookieService::BEHAVIOR_REJECT_FOREIGN ||
+       behavior == nsICookieService::BEHAVIOR_LIMIT_FOREIGN) &&
+      IsThirdPartyWindowOrChannel(aWindow, aChannel, aURI)) {
+    // XXX For non-cookie forms of storage, we handle BEHAVIOR_LIMIT_FOREIGN by
+    // simply rejecting the request to use the storage. In the future, if we
+    // change the meaning of BEHAVIOR_LIMIT_FOREIGN to be one which makes sense
+    // for non-cookie storage types, this may change.
 
-    // In the absence of a window or channel, we assume that we are first-party.
-    bool thirdParty = false;
-
-    MOZ_ASSERT(!aWindow || !aChannel,
-               "A window and channel should not both be provided.");
-
-    if (aWindow) {
-      nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil =
-        do_GetService(THIRDPARTYUTIL_CONTRACTID);
-      MOZ_ASSERT(thirdPartyUtil);
-
-      Unused << thirdPartyUtil->IsThirdPartyWindow(aWindow->GetOuterWindow(),
-                                                   aURI,
-                                                   &thirdParty);
-    }
-
-    if (aChannel) {
-      nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil =
-        do_GetService(THIRDPARTYUTIL_CONTRACTID);
-      MOZ_ASSERT(thirdPartyUtil);
-
-      // Note, we must call IsThirdPartyChannel() here and not just try to
-      // use nsILoadInfo.isThirdPartyContext.  That nsILoadInfo property only
-      // indicates if the parent loading window is third party or not.  We
-      // want to check the channel URI against the loading principal as well.
-      Unused << thirdPartyUtil->IsThirdPartyChannel(aChannel,
-                                                    nullptr,
-                                                    &thirdParty);
-    }
-
-    if (thirdParty) {
-      // XXX For non-cookie forms of storage, we handle BEHAVIOR_LIMIT_FOREIGN by
-      // simply rejecting the request to use the storage. In the future, if we
-      // change the meaning of BEHAVIOR_LIMIT_FOREIGN to be one which makes sense
-      // for non-cookie storage types, this may change.
-
-      return StorageAccess::eDeny;
-    }
+    return StorageAccess::eDeny;
   }
 
   return access;
@@ -9921,6 +9899,9 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
   int32_t tag = eHTMLTag_unknown;
   bool isCustomElementName = false;
   if (nodeInfo->NamespaceEquals(kNameSpaceID_XHTML)) {
+    if (aIsAtom && !nsContentUtils::IsNameWithDash(aIsAtom)) {
+      aIsAtom = nullptr;
+    }
     tag = nsHTMLTags::CaseSensitiveAtomTagToId(name);
     isCustomElementName = (tag == eHTMLTag_userdefined &&
                            nsContentUtils::IsCustomElementName(name, kNameSpaceID_XHTML));
@@ -9942,11 +9923,11 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
     }
   }
 
-  RefPtr<nsAtom> tagAtom = nodeInfo->NameAtom();
-  RefPtr<nsAtom> typeAtom;
+  nsAtom* tagAtom = nodeInfo->NameAtom();
+  nsAtom* typeAtom = nullptr;
   bool isCustomElement = isCustomElementName || aIsAtom;
   if (isCustomElement) {
-    typeAtom = isCustomElementName ? tagAtom.get() : aIsAtom;
+    typeAtom = isCustomElementName ? tagAtom : aIsAtom;
   }
 
   MOZ_ASSERT_IF(aDefinition, isCustomElement);
@@ -10069,22 +10050,18 @@ nsContentUtils::NewXULOrHTMLElement(Element** aResult, mozilla::dom::NodeInfo* a
 
   if (customElementEnabled && isCustomElement) {
     (*aResult)->SetCustomElementData(new CustomElementData(typeAtom));
+    nsContentUtils::RegisterCallbackUpgradeElement(*aResult, typeAtom);
   }
 
   return NS_OK;
 }
 
-/* static */ CustomElementDefinition*
-nsContentUtils::LookupCustomElementDefinition(nsIDocument* aDoc,
-                                              nsAtom* aNameAtom,
-                                              uint32_t aNameSpaceID,
-                                              nsAtom* aTypeAtom)
+CustomElementRegistry*
+GetCustomElementRegistry(nsIDocument* aDoc)
 {
   MOZ_ASSERT(aDoc);
 
-  if ((aNameSpaceID != kNameSpaceID_XUL &&
-       aNameSpaceID != kNameSpaceID_XHTML) ||
-      !aDoc->GetDocShell()) {
+  if (!aDoc->GetDocShell()) {
     return nullptr;
   }
 
@@ -10093,7 +10070,21 @@ nsContentUtils::LookupCustomElementDefinition(nsIDocument* aDoc,
     return nullptr;
   }
 
-  CustomElementRegistry* registry = window->CustomElements();
+  return window->CustomElements();
+}
+
+/* static */ CustomElementDefinition*
+nsContentUtils::LookupCustomElementDefinition(nsIDocument* aDoc,
+                                              nsAtom* aNameAtom,
+                                              uint32_t aNameSpaceID,
+                                              nsAtom* aTypeAtom)
+{
+  if (aNameSpaceID != kNameSpaceID_XUL &&
+      aNameSpaceID != kNameSpaceID_XHTML) {
+    return nullptr;
+  }
+
+  RefPtr<CustomElementRegistry> registry(GetCustomElementRegistry(aDoc));
   if (!registry) {
     return nullptr;
   }
@@ -10102,22 +10093,28 @@ nsContentUtils::LookupCustomElementDefinition(nsIDocument* aDoc,
 }
 
 /* static */ void
+nsContentUtils::RegisterCallbackUpgradeElement(Element* aElement,
+                                               nsAtom* aTypeName)
+{
+  MOZ_ASSERT(aElement);
+
+  nsIDocument* doc = aElement->OwnerDoc();
+  CustomElementRegistry* registry = GetCustomElementRegistry(doc);
+  if (registry) {
+    registry->RegisterCallbackUpgradeElement(aElement, aTypeName);
+  }
+}
+
+/* static */ void
 nsContentUtils::RegisterUnresolvedElement(Element* aElement, nsAtom* aTypeName)
 {
   MOZ_ASSERT(aElement);
 
   nsIDocument* doc = aElement->OwnerDoc();
-  nsPIDOMWindowInner* window(doc->GetInnerWindow());
-  if (!window) {
-    return;
+  CustomElementRegistry* registry = GetCustomElementRegistry(doc);
+  if (registry) {
+    registry->RegisterUnresolvedElement(aElement, aTypeName);
   }
-
-  RefPtr<CustomElementRegistry> registry(window->CustomElements());
-  if (!registry) {
-    return;
-  }
-
-  registry->RegisterUnresolvedElement(aElement, aTypeName);
 }
 
 /* static */ void
@@ -10128,17 +10125,10 @@ nsContentUtils::UnregisterUnresolvedElement(Element* aElement)
   nsAtom* typeAtom =
     aElement->GetCustomElementData()->GetCustomElementType();
   nsIDocument* doc = aElement->OwnerDoc();
-  nsPIDOMWindowInner* window(doc->GetInnerWindow());
-  if (!window) {
-    return;
+  CustomElementRegistry* registry = GetCustomElementRegistry(doc);
+  if (registry) {
+    registry->UnregisterUnresolvedElement(aElement, typeAtom);
   }
-
-  CustomElementRegistry* registry = window->CustomElements();
-  if (!registry) {
-    return;
-  }
-
-  registry->UnregisterUnresolvedElement(aElement, typeAtom);
 }
 
 /* static */ void

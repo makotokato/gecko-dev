@@ -355,6 +355,9 @@ function getMode(source, symbols) {
   }, {
     ext: ".rs",
     mode: "text/x-rustsrc"
+  }, {
+    ext: ".hx",
+    mode: "text/x-haxe"
   }]; // check for C and other non JS languages
 
   if (url) {
@@ -426,17 +429,12 @@ function isLoading(source) {
 }
 
 function getTextAtPosition(source, location) {
-  if (!source || !source.text) {
+  if (!source || !source.text || source.isWasm) {
     return "";
   }
 
   const line = location.line;
   const column = location.column || 0;
-
-  if (source.isWasm) {
-    return "";
-  }
-
   const lineText = source.text.split("\n")[line - 1];
 
   if (!lineText) {
@@ -466,5 +464,5 @@ function getSourceClassnames(source, sourceMetaData) {
     return "blackBox";
   }
 
-  return sourceTypes[(0, _sourcesTree.getExtension)(source)] || defaultClassName;
+  return sourceTypes[(0, _sourcesTree.getFileExtension)(source.url)] || defaultClassName;
 }

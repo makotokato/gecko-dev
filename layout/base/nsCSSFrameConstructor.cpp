@@ -234,9 +234,6 @@ static FrameCtorDebugFlags gFlags[] = {
 
 //------------------------------------------------------------------
 
-nsIFrame*
-NS_NewAutoRepeatBoxFrame(nsIPresShell* aPresShell, ComputedStyle* aStyle);
-
 nsContainerFrame*
 NS_NewRootBoxFrame (nsIPresShell* aPresShell, ComputedStyle* aStyle);
 
@@ -3392,8 +3389,6 @@ nsCSSFrameConstructor::ConstructFieldSetFrame(nsFrameConstructorState& aState,
   // Set the outer frame's initial child list
   fieldsetFrame->SetInitialChildList(kPrincipalList, fieldsetKids);
 
-  fieldsetFrame->AddStateBits(NS_FRAME_MAY_HAVE_GENERATED_CONTENT);
-
   // Our new frame returned is the outer frame, which is the fieldset frame.
   return fieldsetFrame;
 }
@@ -4153,14 +4148,6 @@ ConnectAnonymousTreeDescendants(nsIContent* aParent,
   }
 }
 
-static void
-SetNativeAnonymousBitOnDescendants(nsIContent* aRoot)
-{
-  for (nsIContent* curr = aRoot; curr; curr = curr->GetNextNode(aRoot)) {
-    curr->SetFlags(NODE_IS_NATIVE_ANONYMOUS);
-  }
-}
-
 nsresult
 nsCSSFrameConstructor::GetAnonymousContent(nsIContent* aParent,
                                            nsIFrame* aParentFrame,
@@ -4184,28 +4171,12 @@ nsCSSFrameConstructor::GetAnonymousContent(nsIContent* aParent,
 
     ConnectAnonymousTreeDescendants(content, aContent[i].mChildren);
 
-    LayoutFrameType parentFrameType = aParentFrame->Type();
-    if (parentFrameType == LayoutFrameType::SVGUse) {
+    if (aParentFrame->IsSVGUseFrame()) {
       // least-surprise CSS binding until we do the SVG specified
       // cascading rules for <svg:use> - bug 265894
       content->SetFlags(NODE_IS_ANONYMOUS_ROOT);
     } else {
       content->SetIsNativeAnonymousRoot();
-      // Don't mark descendants of the custom content container
-      // as native anonymous.  When canvas custom content is initially
-      // created and appended to the custom content container, in
-      // nsIDocument::InsertAnonymousContent, it is not considered native
-      // anonymous content.  But if we end up reframing the root element,
-      // we will re-create the nsCanvasFrame, and we would end up in here,
-      // marking it as NAC.  Existing uses of canvas custom content would
-      // break if it becomes NAC (since each element starts inheriting
-      // styles from its closest non-NAC ancestor, rather than from its
-      // parent).
-      if (!(parentFrameType == LayoutFrameType::Canvas &&
-            content == static_cast<nsCanvasFrame*>(aParentFrame)
-                         ->GetCustomContentContainer())) {
-        SetNativeAnonymousBitOnDescendants(content);
-      }
     }
 
     bool anonContentIsEditable = content->HasFlag(NODE_IS_EDITABLE);
@@ -4318,7 +4289,6 @@ nsCSSFrameConstructor::FindXULTagData(Element* aElement,
     SCROLLABLE_XUL_CREATE(thumb, NS_NewButtonBoxFrame),
     SCROLLABLE_XUL_CREATE(checkbox, NS_NewButtonBoxFrame),
     SCROLLABLE_XUL_CREATE(radio, NS_NewButtonBoxFrame),
-    SCROLLABLE_XUL_CREATE(autorepeatbutton, NS_NewAutoRepeatBoxFrame),
     SCROLLABLE_XUL_CREATE(titlebar, NS_NewTitleBarFrame),
     SCROLLABLE_XUL_CREATE(resizer, NS_NewResizerFrame),
     SCROLLABLE_XUL_CREATE(toolbarpaletteitem, NS_NewBoxFrame),
@@ -4499,19 +4469,25 @@ nsCSSFrameConstructor::FindXULDisplayData(const nsStyleDisplay* aDisplay,
     return nullptr;
   }
 
-  // If we're emulating -moz-box with flexbox, then treat it as non-XUL and
-  // return null (except for scrollcorners which have to be XUL becuase their
-  // parent reflows them with BoxReflow() which means they have to get
-  // actual-XUL frames).
-  if (StaticPrefs::layout_css_emulate_moz_box_with_flex() &&
-      aElement && !aElement->IsXULElement(nsGkAtoms::scrollcorner) &&
-      (aDisplay->mDisplay == StyleDisplay::MozBox ||
-       aDisplay->mDisplay == StyleDisplay::MozInlineBox)) {
-    return nullptr;
-  }
-
   MOZ_ASSERT(aDisplay->mDisplay <= StyleDisplay::MozPopup,
              "Someone added a new display value?");
+
+  if (aDisplay->mDisplay == StyleDisplay::MozBox ||
+      aDisplay->mDisplay == StyleDisplay::MozInlineBox) {
+    if (!aElement->IsInNativeAnonymousSubtree() &&
+        aElement->OwnerDoc()->IsContentDocument()) {
+      aElement->OwnerDoc()->WarnOnceAbout(nsIDocument::eMozBoxOrInlineBoxDisplay);
+    }
+
+    // If we're emulating -moz-box with flexbox, then treat it as non-XUL and
+    // return null (except for scrollcorners which have to be XUL becuase their
+    // parent reflows them with BoxReflow() which means they have to get
+    // actual-XUL frames).
+    if (StaticPrefs::layout_css_emulate_moz_box_with_flex() &&
+        !aElement->IsXULElement(nsGkAtoms::scrollcorner)) {
+      return nullptr;
+    }
+  }
 
   const FrameConstructionDataByDisplay& data =
     sXULDisplayData[size_t(aDisplay->mDisplay) - size_t(StyleDisplay::MozBox)];
@@ -5733,10 +5709,6 @@ nsCSSFrameConstructor::AddFrameConstructionItemsInternal(nsFrameConstructorState
   }
 
   if (display->mDisplay == StyleDisplay::Contents) {
-    if (aParentFrame) {
-      // FIXME(emilio): Pretty sure aParentFrame can't be null here.
-      aParentFrame->AddStateBits(NS_FRAME_MAY_HAVE_GENERATED_CONTENT);
-    }
     CreateGeneratedContentItem(aState, aParentFrame, aContent->AsElement(),
                                computedStyle, CSSPseudoElementType::before,
                                aItems);
@@ -7712,7 +7684,7 @@ nsCSSFrameConstructor::ContentRangeInserted(nsIContent* aStartChild,
   AutoFrameConstructionItemList items(this);
   ParentType parentType = GetParentType(frameType);
   FlattenedChildIterator iter(insertion.mContainer);
-  bool haveNoXBLChildren = (!iter.XBLInvolved() || !iter.GetNextChild());
+  bool haveNoXBLChildren = !iter.XBLInvolved() || !iter.GetNextChild();
   if (aStartChild->GetPreviousSibling() &&
       parentType == eTypeBlock && haveNoXBLChildren) {
     // If there's a text node in the normal content list just before the
@@ -10290,7 +10262,6 @@ nsCSSFrameConstructor::ProcessChildren(nsFrameConstructorState& aState,
     ComputedStyle* computedStyle;
 
     if (aCanHaveGeneratedContent) {
-      aFrame->AddStateBits(NS_FRAME_MAY_HAVE_GENERATED_CONTENT);
       computedStyle =
         nsFrame::CorrectStyleParentFrame(aFrame, nullptr)->Style();
       // Probe for generated content before
@@ -11356,9 +11327,6 @@ nsCSSFrameConstructor::ConstructInline(nsFrameConstructorState& aState,
   // Initialize the frame
   InitAndRestoreFrame(aState, content, aParentFrame, newFrame);
 
-  // Inline frames can always have generated content
-  newFrame->AddStateBits(NS_FRAME_MAY_HAVE_GENERATED_CONTENT);
-
   nsFrameConstructorSaveState absoluteSaveState;  // definition cannot be inside next block
                                                   // because the object's destructor is significant
                                                   // this is part of the fix for bug 42372
@@ -11461,8 +11429,7 @@ nsCSSFrameConstructor::CreateIBSiblings(nsFrameConstructorState& aState,
     // frame.
     nsInlineFrame* inlineFrame = NS_NewInlineFrame(mPresShell, computedStyle);
     InitAndRestoreFrame(aState, content, parentFrame, inlineFrame, false);
-    inlineFrame->AddStateBits(NS_FRAME_MAY_HAVE_GENERATED_CONTENT |
-                              NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
+    inlineFrame->AddStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
     if (aIsPositioned) {
       inlineFrame->MarkAsAbsoluteContainingBlock();
     }
@@ -12214,7 +12181,7 @@ Iterator::AppendItemsToList(nsCSSFrameConstructor* aFCtor, const Iterator& aEnd,
   }
 
   // Move our entire list of items into the empty target list.
-  aTargetList.mItems = Move(mList.mItems);
+  aTargetList.mItems = std::move(mList.mItems);
 
   // Copy over the various counters
   aTargetList.mInlineCount = mList.mInlineCount;

@@ -77,7 +77,7 @@ public:
         T lambda;
 
     public:
-        explicit LambdaEvent(T&& l) : lambda(mozilla::Move(l)) {}
+        explicit LambdaEvent(T&& l) : lambda(std::move(l)) {}
         void Run() override { return lambda(); }
     };
 
@@ -88,7 +88,7 @@ public:
 
     public:
         explicit ProxyEvent(mozilla::UniquePtr<Event>&& event)
-            : baseEvent(mozilla::Move(event))
+            : baseEvent(std::move(event))
         {}
 
         void PostTo(mozilla::LinkedList<Event>& queue) override
@@ -127,7 +127,7 @@ public:
         if (!sAppShell) {
             return;
         }
-        sAppShell->mEventQueue.Post(mozilla::Move(event));
+        sAppShell->mEventQueue.Post(std::move(event));
     }
 
     // Post a event that will call a lambda
@@ -140,7 +140,7 @@ public:
             return;
         }
         sAppShell->mEventQueue.Post(mozilla::MakeUnique<LambdaEvent<T>>(
-                mozilla::Move(lambda)));
+                std::move(lambda)));
     }
 
     // Post a event and wait for it to finish running on the Gecko thread.
@@ -152,7 +152,7 @@ public:
     typename mozilla::EnableIf<!mozilla::IsBaseOf<Event, T>::value, void>::Type
     SyncRunEvent(T&& lambda)
     {
-        SyncRunEvent(LambdaEvent<T>(mozilla::Forward<T>(lambda)));
+        SyncRunEvent(LambdaEvent<T>(std::forward<T>(lambda)));
     }
 
     static already_AddRefed<nsIURI> ResolveURI(const nsCString& aUriStr);
@@ -244,7 +244,7 @@ protected:
             // Ownership of event object transfers to the return value.
             mozilla::UniquePtr<Event> event(mQueue.popFirst());
             if (!event || !event->mPostTime) {
-                return Move(event);
+                return event;
             }
 
 #ifdef EARLY_BETA_OR_EARLIER
@@ -255,7 +255,7 @@ protected:
             sLatencyCount[latencyType]++;
             sLatencyTime[latencyType] += latency;
 #endif
-            return Move(event);
+            return event;
         }
 
     } mEventQueue;

@@ -76,7 +76,7 @@ ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
   TelemetryTimestamps.add("blankWindowShown");
 })();
 
-Cu.importGlobalProperties(["fetch"]);
+XPCOMUtils.defineLazyGlobalGetters(this, ["fetch"]);
 
 XPCOMUtils.defineLazyServiceGetters(this, {
   WindowsUIUtils: ["@mozilla.org/windows-ui-utils;1", "nsIWindowsUIUtils"],
@@ -89,6 +89,7 @@ XPCOMUtils.defineLazyGetter(this, "WeaveService", () =>
 // lazy module getters
 
 XPCOMUtils.defineLazyModuleGetters(this, {
+  AboutPrivateBrowsingHandler: "resource:///modules/aboutpages/AboutPrivateBrowsingHandler.jsm",
   AddonManager: "resource://gre/modules/AddonManager.jsm",
   AppMenuNotifications: "resource://gre/modules/AppMenuNotifications.jsm",
   AsyncPrefs: "resource://gre/modules/AsyncPrefs.jsm",
@@ -98,13 +99,12 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   BookmarkHTMLUtils: "resource://gre/modules/BookmarkHTMLUtils.jsm",
   BookmarkJSONUtils: "resource://gre/modules/BookmarkJSONUtils.jsm",
   BrowserErrorReporter: "resource:///modules/BrowserErrorReporter.jsm",
-  BrowserUITelemetry: "resource:///modules/BrowserUITelemetry.jsm",
   BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   ContentClick: "resource:///modules/ContentClick.jsm",
   ContextualIdentityService: "resource://gre/modules/ContextualIdentityService.jsm",
   CustomizableUI: "resource:///modules/CustomizableUI.jsm",
-  DateTimePickerHelper: "resource://gre/modules/DateTimePickerHelper.jsm",
+  DateTimePickerParent: "resource://gre/modules/DateTimePickerParent.jsm",
   ExtensionsUI: "resource:///modules/ExtensionsUI.jsm",
   Feeds: "resource:///modules/Feeds.jsm",
   FileSource: "resource://gre/modules/L10nRegistry.jsm",
@@ -135,6 +135,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   RemotePrompt: "resource:///modules/RemotePrompt.jsm",
   SafeBrowsing: "resource://gre/modules/SafeBrowsing.jsm",
   Sanitizer: "resource:///modules/Sanitizer.jsm",
+  SavantShieldStudy: "resource:///modules/SavantShieldStudy.jsm",
   SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
   ShellService: "resource:///modules/ShellService.jsm",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
@@ -226,6 +227,9 @@ const listeners = {
     "RemoteLogins:autoCompleteLogins": ["LoginManagerParent"],
     "RemoteLogins:removeLogin": ["LoginManagerParent"],
     "RemoteLogins:insecureLoginFormPresent": ["LoginManagerParent"],
+    // For Savant Shield study, bug 1465685. Study on desktop only.
+    "LoginStats:LoginFillSuccessful": ["LoginManagerParent"],
+    "LoginStats:LoginEncountered": ["LoginManagerParent"],
     // PLEASE KEEP THIS LIST IN SYNC WITH THE MOBILE LISTENERS IN BrowserCLH.js
     "WCCR:registerProtocolHandler": ["Feeds"],
     "WCCR:registerContentHandler": ["Feeds"],
@@ -759,6 +763,7 @@ BrowserGlue.prototype = {
       popup_text: "rgb(249, 249, 250)",
       popup_border: "#27272b",
       toolbar_field_text: "rgb(249, 249, 250)",
+      toolbar_field_border: "rgba(249, 249, 250, 0.2)",
       author: vendorShortName,
     });
 
@@ -1042,7 +1047,7 @@ BrowserGlue.prototype = {
     this._checkForOldBuildUpdates();
 
     AutoCompletePopup.init();
-    DateTimePickerHelper.init();
+    DateTimePickerParent.init();
     // Check if Sync is configured
     if (Services.prefs.prefHasUserValue("services.sync.username")) {
       WeaveService.init();
@@ -1051,6 +1056,8 @@ BrowserGlue.prototype = {
     PageThumbs.init();
 
     NewTabUtils.init();
+
+    AboutPrivateBrowsingHandler.init();
 
     PageActions.init();
 
@@ -1102,8 +1109,9 @@ BrowserGlue.prototype = {
 
     PageThumbs.uninit();
     NewTabUtils.uninit();
+    AboutPrivateBrowsingHandler.uninit();
     AutoCompletePopup.uninit();
-    DateTimePickerHelper.uninit();
+    DateTimePickerParent.uninit();
 
     // Browser errors are only collected on Nightly
     if (AppConstants.NIGHTLY_BUILD && AppConstants.MOZ_DATA_REPORTING) {
@@ -1111,6 +1119,8 @@ BrowserGlue.prototype = {
     }
 
     Normandy.uninit();
+
+    SavantShieldStudy.uninit();
   },
 
   // All initial windows have opened.
@@ -1126,7 +1136,6 @@ BrowserGlue.prototype = {
     }
 
     BrowserUsageTelemetry.init();
-    BrowserUITelemetry.init();
 
     // Show update notification, if needed.
     if (Services.prefs.prefHasUserValue("app.update.postupdate"))
@@ -1266,6 +1275,10 @@ BrowserGlue.prototype = {
 
     Services.tm.idleDispatchToMainThread(() => {
       Blocklist.loadBlocklistAsync();
+    });
+
+    Services.tm.idleDispatchToMainThread(() => {
+      SavantShieldStudy.init();
     });
   },
 
@@ -2829,6 +2842,9 @@ const ContentPermissionIntegration = {
       }
       case "midi": {
         return new PermissionUI.MIDIPermissionPrompt(request);
+      }
+      case "autoplay-media": {
+        return new PermissionUI.AutoplayPermissionPrompt(request);
       }
     }
     return undefined;

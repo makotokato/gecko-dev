@@ -434,10 +434,10 @@ template <>
 struct FallibleHashMethods<ObjectGroupRealm::NewEntry>
 {
     template <typename Lookup> static bool hasHash(Lookup&& l) {
-        return ObjectGroupRealm::NewEntry::hasHash(mozilla::Forward<Lookup>(l));
+        return ObjectGroupRealm::NewEntry::hasHash(std::forward<Lookup>(l));
     }
     template <typename Lookup> static bool ensureHash(Lookup&& l) {
-        return ObjectGroupRealm::NewEntry::ensureHash(mozilla::Forward<Lookup>(l));
+        return ObjectGroupRealm::NewEntry::ensureHash(std::forward<Lookup>(l));
     }
 };
 } // namespace js
@@ -1365,17 +1365,17 @@ struct ObjectGroupRealm::AllocationSiteKey : public DefaultHasher<AllocationSite
     { }
 
     AllocationSiteKey(AllocationSiteKey&& key)
-      : script(mozilla::Move(key.script)),
+      : script(std::move(key.script)),
         offset(key.offset),
         kind(key.kind),
-        proto(mozilla::Move(key.proto))
+        proto(std::move(key.proto))
     { }
 
     void operator=(AllocationSiteKey&& key) {
-        script = mozilla::Move(key.script);
+        script = std::move(key.script);
         offset = key.offset;
         kind = key.kind;
-        proto = mozilla::Move(key.proto);
+        proto = std::move(key.proto);
     }
 
     static inline uint32_t hash(AllocationSiteKey key) {

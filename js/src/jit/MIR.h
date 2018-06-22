@@ -262,7 +262,7 @@ class MUse : public TempObject, public InlineListNode<MUse>
     // Move constructor for use in vectors. When an MUse is moved, it stays
     // in its containing use list.
     MUse(MUse&& other)
-      : InlineListNode<MUse>(mozilla::Move(other)),
+      : InlineListNode<MUse>(std::move(other)),
         producer_(other.producer_), consumer_(other.consumer_)
     { }
 
@@ -1251,23 +1251,23 @@ class MInstruction
 #define TRIVIAL_NEW_WRAPPERS                                                \
     template <typename... Args>                                             \
     static MThisOpcode* New(TempAllocator& alloc, Args&&... args) {         \
-        return new(alloc) MThisOpcode(mozilla::Forward<Args>(args)...);     \
+        return new(alloc) MThisOpcode(std::forward<Args>(args)...);     \
     }                                                                       \
     template <typename... Args>                                             \
     static MThisOpcode* New(TempAllocator::Fallible alloc, Args&&... args)  \
     {                                                                       \
-        return new(alloc) MThisOpcode(mozilla::Forward<Args>(args)...);     \
+        return new(alloc) MThisOpcode(std::forward<Args>(args)...);     \
     }
 
 #define TRIVIAL_NEW_WRAPPERS_WITH_ALLOC                                     \
     template <typename... Args>                                             \
     static MThisOpcode* New(TempAllocator& alloc, Args&&... args) {         \
-        return new(alloc) MThisOpcode(alloc, mozilla::Forward<Args>(args)...); \
+        return new(alloc) MThisOpcode(alloc, std::forward<Args>(args)...); \
     }                                                                       \
     template <typename... Args>                                             \
     static MThisOpcode* New(TempAllocator::Fallible alloc, Args&&... args)  \
     {                                                                       \
-        return new(alloc) MThisOpcode(alloc, mozilla::Forward<Args>(args)...); \
+        return new(alloc) MThisOpcode(alloc, std::forward<Args>(args)...); \
     }
 
 // These macros are used as a syntactic sugar for writting getOperand

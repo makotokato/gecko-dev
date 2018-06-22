@@ -34,7 +34,6 @@
 #include "nsIStreamListener.h"
 
 #include "nsIFrame.h"
-#include "nsIDOMNode.h"
 
 #include "nsContentUtils.h"
 #include "nsLayoutUtils.h"
@@ -470,7 +469,7 @@ nsImageLoadingContent::AddObserver(imgINotificationObserver* aObserver)
   }
 
   mScriptedObservers.AppendElement(
-    new ScriptedImageObserver(aObserver, Move(currentReq), Move(pendingReq)));
+    new ScriptedImageObserver(aObserver, std::move(currentReq), std::move(pendingReq)));
 }
 
 void
@@ -489,7 +488,7 @@ nsImageLoadingContent::RemoveObserver(imgINotificationObserver* aObserver)
   do {
     --i;
     if (mScriptedObservers[i]->mObserver == aObserver) {
-      observer = Move(mScriptedObservers[i]);
+      observer = std::move(mScriptedObservers[i]);
       mScriptedObservers.RemoveElementAt(i);
       break;
     }
@@ -519,10 +518,10 @@ nsImageLoadingContent::ClearScriptedRequests(int32_t aRequestType, nsresult aRea
     RefPtr<imgRequestProxy> req;
     switch (aRequestType) {
     case CURRENT_REQUEST:
-      req = Move(observers[i]->mCurrentRequest);
+      req = std::move(observers[i]->mCurrentRequest);
       break;
     case PENDING_REQUEST:
-      req = Move(observers[i]->mPendingRequest);
+      req = std::move(observers[i]->mPendingRequest);
       break;
     default:
       NS_ERROR("Unknown request type");
@@ -589,7 +588,7 @@ nsImageLoadingContent::MakePendingScriptedRequestsCurrent()
     if (observer->mCurrentRequest) {
       observer->mCurrentRequest->CancelAndForgetObserver(NS_BINDING_ABORTED);
     }
-    observer->mCurrentRequest = Move(observer->mPendingRequest);
+    observer->mCurrentRequest = std::move(observer->mPendingRequest);
   } while (i > 0);
 }
 

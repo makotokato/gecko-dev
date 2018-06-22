@@ -112,7 +112,7 @@ wasm::HasSupport(JSContext* cx)
 bool
 wasm::ToWebAssemblyValue(JSContext* cx, ValType targetType, HandleValue v, Val* val)
 {
-    switch (targetType) {
+    switch (targetType.code()) {
       case ValType::I32: {
         int32_t i32;
         if (!ToInt32(cx, v, &i32))
@@ -143,7 +143,7 @@ wasm::ToWebAssemblyValue(JSContext* cx, ValType targetType, HandleValue v, Val* 
 Value
 wasm::ToJSValue(const Val& val)
 {
-    switch (val.type()) {
+    switch (val.type().code()) {
       case ValType::I32:
         return Int32Value(val.i32());
       case ValType::F32:
@@ -217,7 +217,7 @@ GetImports(JSContext* cx,
             return false;
 
         switch (import.kind) {
-          case DefinitionKind::Function:
+          case DefinitionKind::Function: {
             if (!IsFunctionObject(v))
                 return ThrowBadImportType(cx, import.field.get(), "Function");
 
@@ -225,22 +225,24 @@ GetImports(JSContext* cx,
                 return false;
 
             break;
-          case DefinitionKind::Table:
+          }
+          case DefinitionKind::Table: {
             if (!v.isObject() || !v.toObject().is<WasmTableObject>())
                 return ThrowBadImportType(cx, import.field.get(), "Table");
 
             MOZ_ASSERT(!tableImport);
             tableImport.set(&v.toObject().as<WasmTableObject>());
             break;
-          case DefinitionKind::Memory:
+          }
+          case DefinitionKind::Memory: {
             if (!v.isObject() || !v.toObject().is<WasmMemoryObject>())
                 return ThrowBadImportType(cx, import.field.get(), "Memory");
 
             MOZ_ASSERT(!memoryImport);
             memoryImport.set(&v.toObject().as<WasmMemoryObject>());
             break;
-
-          case DefinitionKind::Global:
+          }
+          case DefinitionKind::Global: {
             Val val;
             const uint32_t index = globalIndex++;
             const GlobalDesc& global = globals[index];
@@ -284,6 +286,9 @@ GetImports(JSContext* cx,
 
             if (!globalImportValues->append(val))
                 return false;
+
+            break;
+          }
         }
     }
 
@@ -333,7 +338,7 @@ wasm::Eval(JSContext* cx, Handle<TypedArrayObject*> code, HandleObject importObj
         return false;
 
     MutableCompileArgs compileArgs = cx->new_<CompileArgs>();
-    if (!compileArgs || !compileArgs->initFromContext(cx, Move(scriptedCaller)))
+    if (!compileArgs || !compileArgs->initFromContext(cx, std::move(scriptedCaller)))
         return false;
 
     UniqueChars error;
@@ -866,7 +871,7 @@ InitCompileArgs(JSContext* cx, const char* introducer)
     if (!compileArgs)
         return nullptr;
 
-    if (!compileArgs->initFromContext(cx, Move(scriptedCaller)))
+    if (!compileArgs->initFromContext(cx, std::move(scriptedCaller)))
         return nullptr;
 
     return compileArgs;
@@ -1103,10 +1108,10 @@ WasmInstanceObject::create(JSContext* cx,
     auto* instance = cx->new_<Instance>(cx,
                                         obj,
                                         code,
-                                        Move(debug),
-                                        Move(tlsData),
+                                        std::move(debug),
+                                        std::move(tlsData),
                                         memory,
-                                        Move(tables),
+                                        std::move(tables),
                                         funcImports,
                                         globalImportValues,
                                         globalObjs);
@@ -1898,7 +1903,7 @@ WasmTableObject::construct(JSContext* cx, unsigned argc, Value* vp)
     }
 
     Limits limits;
-    if (!GetLimits(cx, obj, MaxTableInitialLength, UINT32_MAX, "Table", &limits,
+    if (!GetLimits(cx, obj, MaxTableInitialLength, MaxTableMaximumLength, "Table", &limits,
                    Shareable::False))
     {
         return false;
@@ -2122,7 +2127,7 @@ WasmGlobalObject::create(JSContext* cx, const Val& val, bool isMutable)
     if (!cell)
         return nullptr;
 
-    switch (val.type()) {
+    switch (val.type().code()) {
       case ValType::I32: cell->i32 = val.i32(); break;
       case ValType::I64: cell->i64 = val.i64(); break;
       case ValType::F32: cell->f32 = val.f32(); break;
@@ -2137,7 +2142,7 @@ WasmGlobalObject::create(JSContext* cx, const Val& val, bool isMutable)
     if (!obj)
         return nullptr;
 
-    obj->initReservedSlot(TYPE_SLOT, Int32Value(int32_t(val.type())));
+    obj->initReservedSlot(TYPE_SLOT, Int32Value(int32_t(val.type().bitsUnsafe())));
     obj->initReservedSlot(MUTABLE_SLOT, JS::BooleanValue(isMutable));
     obj->initReservedSlot(CELL_SLOT, PrivateValue(cell.release()));
 
@@ -2201,7 +2206,7 @@ WasmGlobalObject::construct(JSContext* cx, unsigned argc, Value* vp)
         if (!ToWebAssemblyValue(cx, globalType, valueVal, &globalVal))
             return false;
     } else {
-        switch (globalType) {
+        switch (globalType.code()) {
           case ValType::I32: /* set above */ break;
           case ValType::F32: globalVal = Val(float(0.0));  break;
           case ValType::F64: globalVal = Val(double(0.0)); break;
@@ -2226,7 +2231,7 @@ IsGlobal(HandleValue v)
 /* static */ bool
 WasmGlobalObject::valueGetterImpl(JSContext* cx, const CallArgs& args)
 {
-    switch (args.thisv().toObject().as<WasmGlobalObject>().type()) {
+    switch (args.thisv().toObject().as<WasmGlobalObject>().type().code()) {
       case ValType::I32:
       case ValType::F32:
       case ValType::F64:
@@ -2266,7 +2271,7 @@ WasmGlobalObject::valueSetterImpl(JSContext* cx, const CallArgs& args)
         return false;
 
     Cell* cell = global->cell();
-    switch (global->type()) {
+    switch (global->type().code()) {
       case ValType::I32: cell->i32 = val.i32(); break;
       case ValType::F32: cell->f32 = val.f32(); break;
       case ValType::F64: cell->f64 = val.f64(); break;
@@ -2303,7 +2308,7 @@ const JSFunctionSpec WasmGlobalObject::static_methods[] =
 ValType
 WasmGlobalObject::type() const
 {
-    return static_cast<ValType>(getReservedSlot(TYPE_SLOT).toInt32());
+    return ValType::fromBitsUnsafe(getReservedSlot(TYPE_SLOT).toInt32());
 }
 
 bool
@@ -2317,7 +2322,7 @@ WasmGlobalObject::val() const
 {
     Cell* cell = this->cell();
     Val val;
-    switch (type()) {
+    switch (type().code()) {
       case ValType::I32: val = Val(uint32_t(cell->i32)); break;
       case ValType::I64: val = Val(uint64_t(cell->i64)); break;
       case ValType::F32: val = Val(cell->f32); break;
@@ -2387,7 +2392,7 @@ Reject(JSContext* cx, const CompileArgs& args, Handle<PromiseObject*> promise,
     if (!str)
         return false;
 
-    RootedString message(cx, NewLatin1StringZ(cx, Move(str)));
+    RootedString message(cx, NewLatin1StringZ(cx, std::move(str)));
     if (!message)
         return false;
 
@@ -2534,7 +2539,7 @@ WebAssembly_compile(JSContext* cx, unsigned argc, Value* vp)
     if (!GetBufferSource(cx, callArgs, "WebAssembly.compile", &task->bytecode))
         return RejectWithPendingException(cx, promise, callArgs);
 
-    if (!StartOffThreadPromiseHelperTask(cx, Move(task)))
+    if (!StartOffThreadPromiseHelperTask(cx, std::move(task)))
         return false;
 
     callArgs.rval().setObject(*promise);
@@ -2592,7 +2597,7 @@ WebAssembly_instantiate(JSContext* cx, unsigned argc, Value* vp)
         if (!GetBufferSource(cx, firstArg, JSMSG_WASM_BAD_BUF_MOD_ARG, &task->bytecode))
             return RejectWithPendingException(cx, promise, callArgs);
 
-        if (!StartOffThreadPromiseHelperTask(cx, Move(task)))
+        if (!StartOffThreadPromiseHelperTask(cx, std::move(task)))
             return false;
     }
 
@@ -2806,7 +2811,7 @@ class CompileStreamTask : public PromiseHelperTask, public JS::StreamConsumer
           case JS::StreamConsumer::EndOfFile:
             switch (streamState_.lock().get()) {
               case Env: {
-                SharedBytes bytecode = js_new<ShareableBytes>(Move(envBytes_));
+                SharedBytes bytecode = js_new<ShareableBytes>(std::move(envBytes_));
                 if (!bytecode) {
                     rejectAndDestroyBeforeHelperThreadStarted(JSMSG_OUT_OF_MEMORY);
                     return;

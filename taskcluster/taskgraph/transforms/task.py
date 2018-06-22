@@ -31,6 +31,7 @@ from taskgraph.util.schema import (
 from taskgraph.util.scriptworker import (
     BALROG_ACTIONS,
     get_release_config,
+    add_scope_prefix,
 )
 from voluptuous import Any, Required, Optional, Extra
 from taskgraph import GECKO, MAX_DEPENDENCIES
@@ -547,6 +548,7 @@ task_description_schema = Schema({
         Required('tag'): bool,
         Required('bump'): bool,
         Optional('bump-files'): [basestring],
+        Optional('repo-param-prefix'): basestring,
         Required('force-dry-run', default=True): bool,
         Required('push', default=False): bool
     }),
@@ -589,6 +591,7 @@ V2_NIGHTLY_L10N_TEMPLATES = [
 V2_L10N_TEMPLATES = [
     "index.{trust-domain}.v2.{project}.revision.{branch_rev}.{product}-l10n.{job-name}.{locale}",
     "index.{trust-domain}.v2.{project}.pushdate.{build_date_long}.{product}-l10n.{job-name}.{locale}",  # noqa - too long
+    "index.{trust-domain}.v2.{project}.pushlog-id.{pushlog_id}.{product}-l10n.{job-name}.{locale}",
     "index.{trust-domain}.v2.{project}.latest.{product}-l10n.{job-name}.{locale}",
 ]
 
@@ -597,7 +600,15 @@ TREEHERDER_ROUTE_ROOT = 'tc-treeherder'
 
 
 def get_branch_rev(config):
-    return config.params['{}head_rev'.format(config.graph_config['project-repo-param-prefix'])]
+    return config.params['{}head_rev'.format(
+        config.graph_config['project-repo-param-prefix']
+    )]
+
+
+def get_branch_repo(config):
+    return config.params['{}head_repository'.format(
+        config.graph_config['project-repo-param-prefix'],
+    )]
 
 
 COALESCE_KEY = '{project}.{job-identifier}'
@@ -775,6 +786,17 @@ def build_docker_worker_payload(config, task, task_def):
     if 'max-run-time' in worker:
         payload['maxRunTime'] = worker['max-run-time']
 
+    run_task = payload.get('command', [''])[0].endswith('run-task')
+
+    # run-task exits EXIT_PURGE_CACHES if there is a problem with caches.
+    # Automatically retry the tasks and purge caches if we see this exit
+    # code.
+    # TODO move this closer to code adding run-task once bug 1469697 is
+    # addressed.
+    if run_task:
+        worker.setdefault('retry-exit-status', []).append(72)
+        worker.setdefault('purge-caches-exit-status', []).append(72)
+
     payload['onExitStatus'] = {}
     if 'retry-exit-status' in worker:
         payload['onExitStatus']['retry'] = worker['retry-exit-status']
@@ -790,8 +812,6 @@ def build_docker_worker_payload(config, task, task_def):
                 'expires': task_def['expires'],  # always expire with the task
             }
         payload['artifacts'] = artifacts
-
-    run_task = payload.get('command', [''])[0].endswith('run-task')
 
     if isinstance(worker.get('docker-image'), basestring):
         out_of_tree_image = worker['docker-image']
@@ -1129,10 +1149,10 @@ def build_treescript_payload(config, task, task_def):
         ]
         tag_info = {
             'tags': tag_names,
-            'revision': config.params['head_rev']
+            'revision': config.params['{}head_rev'.format(worker.get('repo-param-prefix', ''))],
         }
         task_def['payload']['tag_info'] = tag_info
-        task_def['scopes'].append('project:releng:treescript:action:tagging')
+        task_def['scopes'].append(add_scope_prefix(config, 'treescript:action:tagging'))
 
     if worker['bump']:
         if not worker['bump-files']:
@@ -1142,10 +1162,10 @@ def build_treescript_payload(config, task, task_def):
         bump_info['next_version'] = release_config['next_version']
         bump_info['files'] = worker['bump-files']
         task_def['payload']['version_bump_info'] = bump_info
-        task_def['scopes'].append('project:releng:treescript:action:version_bump')
+        task_def['scopes'].append(add_scope_prefix(config, 'treescript:action:version_bump'))
 
     if worker['push']:
-        task_def['scopes'].append('project:releng:treescript:action:push')
+        task_def['scopes'].append(add_scope_prefix(config, 'treescript:action:push'))
 
     if worker.get('force-dry-run'):
         task_def['payload']['dry_run'] = True
@@ -1402,6 +1422,8 @@ def add_nightly_l10n_index_routes(config, task, force_locale=None):
     subs['job-name'] = index['job-name']
     subs['build_date_long'] = time.strftime("%Y.%m.%d.%Y%m%d%H%M%S",
                                             time.gmtime(config.params['build_date']))
+    subs['build_date'] = time.strftime("%Y.%m.%d",
+                                       time.gmtime(config.params['build_date']))
     subs['product'] = index['product']
     subs['trust-domain'] = config.graph_config['trust-domain']
     subs['branch_rev'] = get_branch_rev(config)
@@ -1423,8 +1445,6 @@ def add_nightly_l10n_index_routes(config, task, force_locale=None):
         for tpl in V2_NIGHTLY_L10N_TEMPLATES:
             routes.append(tpl.format(locale=locale, **subs))
 
-    # Add locales at old route too
-    task = add_l10n_index_routes(config, task, force_locale=force_locale)
     return task
 
 

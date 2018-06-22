@@ -26,7 +26,7 @@
 #include "prlink.h"
 #include "nsGTKToolkit.h"
 #include "nsIRollupListener.h"
-#include "nsIDOMNode.h"
+#include "nsINode.h"
 
 #include "nsWidgetsCID.h"
 #include "nsDragService.h"
@@ -1518,7 +1518,7 @@ nsWindow::GetClientBounds()
 void
 nsWindow::UpdateClientOffset()
 {
-    AUTO_PROFILER_LABEL("nsWindow::UpdateClientOffset", GRAPHICS);
+    AUTO_PROFILER_LABEL("nsWindow::UpdateClientOffset", OTHER);
 
     if (!mIsTopLevel || !mShell || !mIsX11Display ||
         gtk_window_get_window_type(GTK_WINDOW(mShell)) == GTK_WINDOW_POPUP) {
@@ -2067,6 +2067,12 @@ nsWindow::OnExposeEvent(cairo_t *cr)
     if (!mGdkWindow || mIsFullyObscured || !mHasMappedToplevel)
         return FALSE;
 
+#ifdef MOZ_WAYLAND
+    // Window does not have visible wl_surface yet.
+    if (!mIsX11Display && !GetWaylandSurface())
+        return FALSE;
+#endif
+
     nsIWidgetListener *listener = GetListener();
     if (!listener)
         return FALSE;
@@ -2364,7 +2370,7 @@ nsWindow::OnConfigureEvent(GtkWidget *aWidget, GdkEventConfigure *aEvent)
         //
         // These windows should not be moved by the window manager, and so any
         // change in position is a result of our direction.  mBounds has
-        // already been set in Move() or Resize(), and that is more
+        // already been set in std::move() or Resize(), and that is more
         // up-to-date than the position in the ConfigureNotify event if the
         // event is from an earlier window move.
         //
@@ -2898,7 +2904,7 @@ nsWindow::OnContainerFocusOutEvent(GdkEventFocus *aEvent)
         bool shouldRollup = !dragSession;
         if (!shouldRollup) {
             // we also roll up when a drag is from a different application
-            nsCOMPtr<nsIDOMNode> sourceNode;
+            nsCOMPtr<nsINode> sourceNode;
             dragSession->GetSourceNode(getter_AddRefs(sourceNode));
             shouldRollup = (sourceNode == nullptr);
         }
@@ -3501,11 +3507,41 @@ nsWindow::OnDragDataReceivedEvent(GtkWidget *aWidget,
                            aSelectionData, aInfo, aTime);
 }
 
+nsWindow*
+nsWindow::GetTransientForWindowIfPopup()
+{
+    if (mWindowType != eWindowType_popup) {
+        return nullptr;
+    }
+    GtkWindow* toplevel = gtk_window_get_transient_for(GTK_WINDOW(mShell));
+    if (toplevel) {
+        return get_window_for_gtk_widget(GTK_WIDGET(toplevel));
+    }
+    return nullptr;
+}
+
+bool
+nsWindow::IsHandlingTouchSequence(GdkEventSequence* aSequence)
+{
+    return mHandleTouchEvent && mTouches.Contains(aSequence);
+}
+
 #if GTK_CHECK_VERSION(3,4,0)
 gboolean
 nsWindow::OnTouchEvent(GdkEventTouch* aEvent)
 {
     if (!mHandleTouchEvent) {
+        // If a popup window was spawned (e.g. as the result of a long-press)
+        // and touch events got diverted to that window within a touch sequence,
+        // ensure the touch event gets sent to the original window instead. We
+        // keep the checks here very conservative so that we only redirect
+        // events in this specific scenario.
+        nsWindow* targetWindow = GetTransientForWindowIfPopup();
+        if (targetWindow &&
+            targetWindow->IsHandlingTouchSequence(aEvent->sequence)) {
+            return targetWindow->OnTouchEvent(aEvent);
+        }
+
         return FALSE;
     }
 
@@ -3683,7 +3719,7 @@ nsWindow::Create(nsIWidget* aParent,
         if (Preferences::GetBool("mozilla.widget.use-argb-visuals", false))
             useAlphaVisual = true;
 
-#ifdef GL_PROVIDER_GLX
+#ifdef MOZ_X11
         // Ensure gfxPlatform is initialized, since that is what initializes
         // gfxVars, used below.
         Unused << gfxPlatform::GetPlatform();
@@ -3710,7 +3746,7 @@ nsWindow::Create(nsIWidget* aParent,
                                                                    visualId));
             }
         } else
-#endif // GL_PROVIDER_GLX
+#endif // MOZ_X11
         {
             if (useAlphaVisual) {
                 GdkScreen *screen = gtk_widget_get_screen(mShell);
@@ -4843,12 +4879,16 @@ nsWindow::GrabPointer(guint32 aTime)
     }
 
     gint retval;
+    // Note that we need GDK_TOUCH_MASK below to work around a GDK/X11 bug that
+    // causes touch events that would normally be received by this client on
+    // other windows to be discarded during the grab.
     retval = gdk_pointer_grab(mGdkWindow, TRUE,
                               (GdkEventMask)(GDK_BUTTON_PRESS_MASK |
                                              GDK_BUTTON_RELEASE_MASK |
                                              GDK_ENTER_NOTIFY_MASK |
                                              GDK_LEAVE_NOTIFY_MASK |
-                                             GDK_POINTER_MOTION_MASK),
+                                             GDK_POINTER_MOTION_MASK |
+                                             GDK_TOUCH_MASK),
                               (GdkWindow *)nullptr, nullptr, aTime);
 
     if (retval == GDK_GRAB_NOT_VIEWABLE) {

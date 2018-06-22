@@ -23,6 +23,7 @@
 #include "mozilla/Sprintf.h"
 
 #include "nsCOMPtr.h"
+#include "nsFlexContainerFrame.h"
 #include "nsFrameList.h"
 #include "nsPlaceholderFrame.h"
 #include "nsPluginFrame.h"
@@ -31,6 +32,7 @@
 #include "nsIContentInlines.h"
 #include "nsContentUtils.h"
 #include "nsCSSFrameConstructor.h"
+#include "nsCSSProps.h"
 #include "nsCSSPseudoElements.h"
 #include "nsCSSRendering.h"
 #include "nsAtom.h"
@@ -49,7 +51,6 @@
 #include "LayoutLogging.h"
 #include "mozilla/RestyleManager.h"
 #include "nsInlineFrame.h"
-#include "nsIDOMNode.h"
 #include "nsFrameSelection.h"
 #include "nsGkAtoms.h"
 #include "nsCSSAnonBoxes.h"
@@ -108,6 +109,7 @@
 #include "mozilla/ServoStyleSetInlines.h"
 #include "mozilla/css/ImageLoader.h"
 #include "mozilla/gfx/Tools.h"
+#include "mozilla/layers/WebRenderUserData.h"
 #include "nsPrintfCString.h"
 #include "ActiveLayerTracker.h"
 
@@ -280,6 +282,16 @@ std::ostream& operator<<(std::ostream& aStream,
           << "FirstLetter=" << (aStatus.FirstLetterComplete() ? 'Y' : 'N')
           << "]";
   return aStream;
+}
+
+nsCString
+nsReflowStatus::ToString() const
+{
+  nsCString result;
+  std::stringstream ss;
+  ss << *this;
+  result.Append(ss.str().c_str());
+  return result;
 }
 
 static bool gShowFrameBorders = false;
@@ -624,7 +636,6 @@ nsFrame::Init(nsIContent*       aContent,
     AddStateBits(state & (NS_FRAME_INDEPENDENT_SELECTION |
                           NS_FRAME_PART_OF_IBSPLIT |
                           NS_FRAME_MAY_BE_TRANSFORMED |
-                          NS_FRAME_MAY_HAVE_GENERATED_CONTENT |
                           NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN));
   } else {
     PresContext()->ConstructedFrame();
@@ -1002,6 +1013,10 @@ nsIFrame::MarkNeedsDisplayItemRebuild()
   }
 
   if (Type() == LayoutFrameType::Placeholder) {
+    nsIFrame* oof = static_cast<nsPlaceholderFrame*>(this)->GetOutOfFlowFrame();
+    if (oof) {
+      oof->MarkNeedsDisplayItemRebuild();
+    }
     // Do not mark placeholder frames modified.
     return;
   }
@@ -1368,10 +1383,10 @@ nsIFrame::GetUsedBorder() const
 
   const nsStyleDisplay* disp = StyleDisplay();
   if (mutable_this->IsThemed(disp)) {
-    LayoutDeviceIntMargin widgetBorder;
     nsPresContext* pc = PresContext();
-    pc->GetTheme()->GetWidgetBorder(pc->DeviceContext(), mutable_this,
-                                    disp->mAppearance, &widgetBorder);
+    LayoutDeviceIntMargin widgetBorder =
+      pc->GetTheme()->GetWidgetBorder(pc->DeviceContext(), mutable_this,
+                                      disp->mAppearance);
     border = LayoutDevicePixel::ToAppUnits(widgetBorder,
                                            pc->AppUnitsPerDevPixel());
     return border;
@@ -1818,37 +1833,31 @@ nsIFrame::GetBorderRadii(nscoord aRadii[8]) const
 bool
 nsIFrame::GetMarginBoxBorderRadii(nscoord aRadii[8]) const
 {
-  if (!GetBorderRadii(aRadii)) {
-    return false;
-  }
-  OutsetBorderRadii(aRadii, GetUsedMargin());
-  NS_FOR_CSS_HALF_CORNERS(corner) {
-    if (aRadii[corner]) {
-      return true;
-    }
-  }
-  return false;
+  return GetBoxBorderRadii(aRadii, GetUsedMargin(), true);
 }
 
 bool
 nsIFrame::GetPaddingBoxBorderRadii(nscoord aRadii[8]) const
 {
-  if (!GetBorderRadii(aRadii))
-    return false;
-  InsetBorderRadii(aRadii, GetUsedBorder());
-  NS_FOR_CSS_HALF_CORNERS(corner) {
-    if (aRadii[corner])
-      return true;
-  }
-  return false;
+  return GetBoxBorderRadii(aRadii, GetUsedBorder(), false);
 }
 
 bool
 nsIFrame::GetContentBoxBorderRadii(nscoord aRadii[8]) const
 {
+  return GetBoxBorderRadii(aRadii, GetUsedBorderAndPadding(), false);
+}
+
+bool
+nsIFrame::GetBoxBorderRadii(nscoord aRadii[8], nsMargin aOffset, bool aIsOutset) const
+{
   if (!GetBorderRadii(aRadii))
     return false;
-  InsetBorderRadii(aRadii, GetUsedBorderAndPadding());
+  if (aIsOutset) {
+    OutsetBorderRadii(aRadii, aOffset);
+  } else {
+    InsetBorderRadii(aRadii, aOffset);
+  }
   NS_FOR_CSS_HALF_CORNERS(corner) {
     if (aRadii[corner])
       return true;
@@ -2502,35 +2511,28 @@ ApplyOverflowClipping(nsDisplayListBuilder* aBuilder,
   bool haveRadii = false;
   nscoord radii[8];
   auto* disp = aFrame->StyleDisplay();
-  if (disp->mOverflowClipBoxBlock == NS_STYLE_OVERFLOW_CLIP_BOX_PADDING_BOX &&
-      disp->mOverflowClipBoxInline == NS_STYLE_OVERFLOW_CLIP_BOX_PADDING_BOX) {
-    clipRect = aFrame->GetPaddingRectRelativeToSelf() +
-      aBuilder->ToReferenceFrame(aFrame);
-    haveRadii = aFrame->GetPaddingBoxBorderRadii(radii);
-  } else {
-    // Only deflate the padding if we clip to the content-box in that axis.
-    auto wm = aFrame->GetWritingMode();
-    bool cbH = (wm.IsVertical() ? disp->mOverflowClipBoxBlock
-                                : disp->mOverflowClipBoxInline) ==
-               NS_STYLE_OVERFLOW_CLIP_BOX_CONTENT_BOX;
-    bool cbV = (wm.IsVertical() ? disp->mOverflowClipBoxInline
-                                : disp->mOverflowClipBoxBlock) ==
-               NS_STYLE_OVERFLOW_CLIP_BOX_CONTENT_BOX;
-    nsMargin bp = aFrame->GetUsedPadding();
-    if (!cbH) {
-      bp.left = bp.right = nscoord(0);
-    }
-    if (!cbV) {
-      bp.top = bp.bottom = nscoord(0);
-    }
-
-    bp += aFrame->GetUsedBorder();
-    bp.ApplySkipSides(aFrame->GetSkipSides());
-    nsRect rect(nsPoint(0, 0), aFrame->GetSize());
-    rect.Deflate(bp);
-    clipRect = rect + aBuilder->ToReferenceFrame(aFrame);
-    // XXX border-radius
+  // Only deflate the padding if we clip to the content-box in that axis.
+  auto wm = aFrame->GetWritingMode();
+  bool cbH = (wm.IsVertical() ? disp->mOverflowClipBoxBlock
+                              : disp->mOverflowClipBoxInline) ==
+             NS_STYLE_OVERFLOW_CLIP_BOX_CONTENT_BOX;
+  bool cbV = (wm.IsVertical() ? disp->mOverflowClipBoxInline
+                              : disp->mOverflowClipBoxBlock) ==
+             NS_STYLE_OVERFLOW_CLIP_BOX_CONTENT_BOX;
+  nsMargin bp = aFrame->GetUsedPadding();
+  if (!cbH) {
+    bp.left = bp.right = nscoord(0);
   }
+  if (!cbV) {
+    bp.top = bp.bottom = nscoord(0);
+  }
+
+  bp += aFrame->GetUsedBorder();
+  bp.ApplySkipSides(aFrame->GetSkipSides());
+  nsRect rect(nsPoint(0, 0), aFrame->GetSize());
+  rect.Deflate(bp);
+  clipRect = rect + aBuilder->ToReferenceFrame(aFrame);
+  haveRadii = aFrame->GetBoxBorderRadii(radii, bp, false);
   aClipState.ClipContainingBlockDescendantsExtra(clipRect, haveRadii ? radii : nullptr);
   return true;
 }
@@ -2656,10 +2658,9 @@ static bool
 ItemParticipatesIn3DContext(nsIFrame* aAncestor, nsDisplayItem* aItem)
 {
   nsIFrame* transformFrame;
-  if (aItem->GetType() == DisplayItemType::TYPE_TRANSFORM) {
+  if (aItem->GetType() == DisplayItemType::TYPE_TRANSFORM ||
+      aItem->GetType() == DisplayItemType::TYPE_PERSPECTIVE) {
     transformFrame = aItem->Frame();
-  } else if (aItem->GetType() == DisplayItemType::TYPE_PERSPECTIVE) {
-    transformFrame = static_cast<nsDisplayPerspective*>(aItem)->TransformFrame();
   } else {
     return false;
   }
@@ -2822,16 +2823,11 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
   // we're painting, and we're not animating opacity. Don't do this
   // if we're going to compute plugin geometry, since opacity-0 plugins
   // need to have display items built for them.
-  bool needEventRegions =
-    aBuilder->IsBuildingLayerEventRegions() &&
-    StyleUserInterface()->GetEffectivePointerEvents(this) !=
-      NS_STYLE_POINTER_EVENTS_NONE;
   bool opacityItemForEventsAndPluginsOnly = false;
   if (effects->mOpacity == 0.0 && aBuilder->IsForPainting() &&
       !(disp->mWillChangeBitField & NS_STYLE_WILL_CHANGE_OPACITY) &&
       !nsLayoutUtils::HasAnimationOfProperty(effectSet, eCSSProperty_opacity)) {
-    if (needEventRegions ||
-        aBuilder->WillComputePluginGeometry()) {
+    if (aBuilder->WillComputePluginGeometry()) {
       opacityItemForEventsAndPluginsOnly = true;
     } else {
       return;
@@ -2853,7 +2849,6 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
   const bool extend3DContext = Extend3DContext(disp, effectSet);
   const bool combines3DTransformWithAncestors =
     (extend3DContext || isTransformed) && Combines3DTransformWithAncestors(disp);
-  const bool childrenHavePerspective = ChildrenHavePerspective(disp);
 
   Maybe<nsDisplayListBuilder::AutoPreserves3DContext> autoPreserves3DContext;
   if (extend3DContext && !combines3DTransformWithAncestors) {
@@ -2870,15 +2865,6 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
       dirtyRect = visibleRect;
       aBuilder->SetDisablePartialUpdates(true);
     }
-  }
-
-  // nsDisplayPerspective items use an index to keep their PerFrameKey unique.
-  // We need to make sure we build all of them for them to be consistent, so
-  // rebuild all items if we have perspective. Bug 1431249 should remove
-  // this requirement.
-  if (aBuilder->IsRetainingDisplayList() && childrenHavePerspective) {
-    dirtyRect = visibleRect;
-    aBuilder->SetDisablePartialUpdates(true);
   }
 
   // reset blend mode so we can keep track if this stacking context needs have
@@ -2966,12 +2952,9 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
   // layer (for async animations), see
   // nsSVGIntegrationsUtils::PaintMaskAndClipPath or
   // nsSVGIntegrationsUtils::PaintFilter.
-  // Use MayNeedActiveLayer to decide, since we don't want to condition the wrapping
-  // display item on values that might change silently between paints (opacity activity
-  // can depend on the will-change budget).
   bool useOpacity = HasVisualOpacity(effectSet) &&
                     !nsSVGUtils::CanOptimizeOpacity(this) &&
-                    (!usingSVGEffects || nsDisplayOpacity::MayNeedActiveLayer(this));
+                    (!usingSVGEffects || nsDisplayOpacity::NeedsActiveLayer(aBuilder, this));
   bool useBlendMode = effects->mMixBlendMode != NS_STYLE_BLEND_NORMAL;
   bool useStickyPosition = disp->mPosition == NS_STYLE_POSITION_STICKY &&
     IsScrollFrameActive(aBuilder,
@@ -3051,8 +3034,6 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
     DisplayListClipState::AutoSaveRestore nestedClipState(aBuilder);
     nsDisplayListBuilder::AutoInTransformSetter
       inTransformSetter(aBuilder, inTransform);
-    nsDisplayListBuilder::AutoSaveRestorePerspectiveIndex
-      perspectiveIndex(aBuilder, childrenHavePerspective);
     nsDisplayListBuilder::AutoFilterASRSetter
       filterASRSetter(aBuilder, usingFilter);
 
@@ -3081,13 +3062,6 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
     }
 
     aBuilder->AdjustWindowDraggingRegion(this);
-
-    nsDisplayLayerEventRegions* eventRegions = nullptr;
-    if (aBuilder->IsBuildingLayerEventRegions()) {
-      eventRegions = MakeDisplayItem<nsDisplayLayerEventRegions>(aBuilder, this);
-      eventRegions->AddFrame(aBuilder, this);
-      aBuilder->SetLayerEventRegions(eventRegions);
-    }
 
     aBuilder->BuildCompositorHitTestInfoIfNeeded(this, set.BorderBackground(),
                                                  true);
@@ -3121,18 +3095,6 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
         aBuilder->SetPartialBuildFailed(true);
       } else {
         aBuilder->SetDisablePartialUpdates(true);
-      }
-    }
-
-    if (eventRegions) {
-      // If the event regions item ended up empty, throw it away rather than
-      // adding it to the display list.
-      if (!eventRegions->IsEmpty()) {
-        set.BorderBackground()->AppendToBottom(eventRegions);
-      } else {
-        aBuilder->SetLayerEventRegions(nullptr);
-        eventRegions->Destroy(aBuilder);
-        eventRegions = nullptr;
       }
     }
   }
@@ -3369,9 +3331,7 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
       }
       resultList.AppendToTop(
         MakeDisplayItem<nsDisplayPerspective>(
-          aBuilder, this,
-          GetContainingBlock(0, disp)->GetContent()->GetPrimaryFrame(),
-          &resultList));
+          aBuilder, this, &resultList));
     }
 
     if (aCreatedContainerItem) {
@@ -3401,10 +3361,15 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
     // which has been set as the builder's current ASR, unless this frame is
     // invisible and we hadn't saved display item data for it. In that case,
     // we need to take the containerItemASR since we might have fixed children.
+    // For WebRender, we want to the know what |containerItemASR| is for the
+    // case where the fixed-pos item is not a "real" fixed-pos item (e.g. it's
+    // nested inside a scrolling transform), so we stash that on the display
+    // item as well.
     const ActiveScrolledRoot* fixedASR =
       ActiveScrolledRoot::PickAncestor(containerItemASR, aBuilder->CurrentActiveScrolledRoot());
     resultList.AppendToTop(
-        MakeDisplayItem<nsDisplayFixedPosition>(aBuilder, this, &resultList, fixedASR));
+        MakeDisplayItem<nsDisplayFixedPosition>(aBuilder, this, &resultList,
+          fixedASR, containerItemASR));
     if (aCreatedContainerItem) {
       *aCreatedContainerItem = true;
     }
@@ -3545,8 +3510,7 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
   aBuilder->ClearWillChangeBudget(child);
 
   const bool shortcutPossible = aBuilder->IsPaintingToWindow() &&
-    (aBuilder->IsBuildingLayerEventRegions() ||
-     aBuilder->BuildCompositorHitTestInfo());
+     aBuilder->BuildCompositorHitTestInfo();
 
   const bool doingShortcut = shortcutPossible &&
     (child->GetStateBits() & NS_FRAME_SIMPLE_DISPLAYLIST) &&
@@ -3580,11 +3544,6 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     aBuilder->BuildCompositorHitTestInfoIfNeeded(child,
                                                  aLists.BorderBackground(),
                                                  false);
-
-    nsDisplayLayerEventRegions* eventRegions = aBuilder->GetLayerEventRegions();
-    if (eventRegions) {
-      eventRegions->AddFrame(aBuilder, child);
-    }
 
     child->MarkAbsoluteFramesForDisplayList(aBuilder);
     aBuilder->AdjustWindowDraggingRegion(child);
@@ -3794,30 +3753,6 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     }
 
     child->MarkAbsoluteFramesForDisplayList(aBuilder);
-
-    if (aBuilder->IsBuildingLayerEventRegions()) {
-      // If this frame has a different animated geometry root than its parent,
-      // make sure we accumulate event regions for its layer.
-      if (buildingForChild.IsAnimatedGeometryRoot() || isPositioned) {
-        nsDisplayLayerEventRegions* eventRegions =
-          MakeDisplayItem<nsDisplayLayerEventRegions>(aBuilder, child);
-        eventRegions->AddFrame(aBuilder, child);
-        aBuilder->SetLayerEventRegions(eventRegions);
-
-        if (isPositioned) {
-          // We need this nsDisplayLayerEventRegions to be sorted with the positioned
-          // elements as positioned elements will be sorted on top of normal elements
-          list.AppendToTop(eventRegions);
-        } else {
-          aLists.BorderBackground()->AppendToTop(eventRegions);
-        }
-      } else {
-        nsDisplayLayerEventRegions* eventRegions = aBuilder->GetLayerEventRegions();
-        if (eventRegions) {
-          eventRegions->AddFrame(aBuilder, child);
-        }
-      }
-    }
 
     const bool differentAGR =
       buildingForChild.IsAnimatedGeometryRoot() || isPositioned;
@@ -5488,7 +5423,7 @@ nsIFrame::InlinePrefISizeData::ForceBreak(StyleClear aBreakType)
         }
       }
       newFloats.Reverse();
-      mFloats = Move(newFloats);
+      mFloats = std::move(newFloats);
     }
   }
 
@@ -5552,10 +5487,9 @@ IntrinsicSizeOffsets(nsIFrame* aFrame, nscoord aPercentageBasis, bool aForISize)
   if (aFrame->IsThemed(disp)) {
     nsPresContext* presContext = aFrame->PresContext();
 
-    LayoutDeviceIntMargin border;
-    presContext->GetTheme()->GetWidgetBorder(presContext->DeviceContext(),
-                                             aFrame, disp->mAppearance,
-                                             &border);
+    LayoutDeviceIntMargin border =
+      presContext->GetTheme()->GetWidgetBorder(presContext->DeviceContext(),
+                                               aFrame, disp->mAppearance);
     result.hBorder =
       presContext->DevPixelsToAppUnits(verticalAxis ? border.TopBottom()
                                                     : border.LeftRight());
@@ -6875,7 +6809,7 @@ nsIFrame::GetNearestWidget(nsPoint& aOffset) const
 Matrix4x4Flagged
 nsIFrame::GetTransformMatrix(const nsIFrame* aStopAtAncestor,
                              nsIFrame** aOutAncestor,
-                             uint32_t aFlags)
+                             uint32_t aFlags) const
 {
   MOZ_ASSERT(aOutAncestor, "Need a place to put the ancestor!");
 
@@ -6958,7 +6892,7 @@ nsIFrame::GetTransformMatrix(const nsIFrame* aStopAtAncestor,
     return Matrix4x4();
 
   /* Keep iterating while the frame can't possibly be transformed. */
-  nsIFrame* current = this;
+  const nsIFrame* current = this;
   while (!(*aOutAncestor)->IsTransformed() &&
          !nsLayoutUtils::IsPopup(*aOutAncestor) &&
          *aOutAncestor != aStopAtAncestor &&
@@ -7815,7 +7749,7 @@ nsIFrame::ListGeneric(nsACString& aTo, const char* aPrefix, uint32_t aFlags) con
   if (mContent) {
     aTo += nsPrintfCString(" [content=%p]", static_cast<void*>(mContent));
   }
-  aTo += nsPrintfCString(" [sc=%p", static_cast<void*>(mComputedStyle));
+  aTo += nsPrintfCString(" [cs=%p", static_cast<void*>(mComputedStyle));
   if (mComputedStyle) {
     nsAtom* pseudoTag = mComputedStyle->GetPseudo();
     if (pseudoTag) {
@@ -9814,27 +9748,20 @@ GetCorrectedParent(const nsIFrame* aFrame)
     pseudo = aFrame->PrincipalChildList().FirstChild()->Style()->GetPseudo();
   }
 
-  // Prevent NAC from inheriting NAC. This partially duplicates the logic
-  // implemented in nsCSSFrameConstructor::AddFCItemsForAnonymousContent, and is
-  // necessary so that restyle inherits style in the same way as the initial
-  // styling performed in frame construction.
-  //
-  // It would be nice to put it in CorrectStyleParentFrame and therefore share
-  // it, but that would lose the information of whether the _child_ is NAC,
-  // since CorrectStyleParentFrame only knows about the prospective _parent_.
-  // This duplication and complexity will go away when we fully switch to the
-  // Servo style system, where all this can be handled much more naturally.
-  //
-  // We need to take special care not to disrupt the style inheritance of frames
-  // whose content is NAC but who implement a pseudo (like an anonymous
-  // box, or a non-NAC-backed pseudo like ::first-line) that does not match the
-  // one that the NAC implements, if any.
-  nsIContent* content = aFrame->GetContent();
-  Element* element =
-    content && content->IsElement() ? content->AsElement() : nullptr;
-  if (element && element->IsNativeAnonymous() && !element->IsNativeScrollbarContent() &&
-      element->GetPseudoElementType() == aFrame->Style()->GetPseudoType()) {
-    while (parent->GetContent() && parent->GetContent()->IsNativeAnonymous()) {
+  // Prevent a NAC pseudo-element from inheriting from its NAC parent, and
+  // inherit from the NAC generator element instead.
+  if (pseudo) {
+    MOZ_ASSERT(aFrame->GetContent());
+    Element* element = Element::FromNode(aFrame->GetContent());
+    // Make sure to avoid doing the fixup for non-element-backed pseudos like
+    // ::first-line and such.
+    if (element &&
+        !element->IsRootOfNativeAnonymousSubtree() &&
+        element->GetPseudoElementType() == aFrame->Style()->GetPseudoType()) {
+      while (parent->GetContent() &&
+             !parent->GetContent()->IsRootOfAnonymousSubtree()) {
+        parent = parent->GetInFlowParent();
+      }
       parent = parent->GetInFlowParent();
     }
   }
@@ -11004,6 +10931,7 @@ nsIFrame::IsVisuallyAtomic(EffectSet* aEffectSet,
                            const nsStyleEffects* aStyleEffects) {
   return HasOpacity(aEffectSet) ||
          IsTransformed(aStyleDisplay) ||
+         aStyleDisplay->IsContainPaint() ||
          // strictly speaking, 'perspective' doesn't require visual atomicity,
          // but the spec says it acts like the rest of these
          ChildrenHavePerspective(aStyleDisplay) ||
@@ -11334,10 +11262,31 @@ nsIFrame::GetCompositorHitTestInfo(nsDisplayListBuilder* aBuilder)
     }
   }
 
+  // Inherit the touch-action flags from the parent, if there is one. We do this
+  // because of how the touch-action on a frame combines the touch-action from
+  // ancestor DOM elements. Refer to the documentation in TouchActionHelper.cpp
+  // for details; this code is meant to be equivalent to that code, but woven
+  // into the top-down recursive display list building process.
+  CompositorHitTestInfo inheritedTouchAction = CompositorHitTestInfo::eInvisibleToHitTest;
+  if (nsDisplayCompositorHitTestInfo* parentInfo = aBuilder->GetCompositorHitTestInfo()) {
+    inheritedTouchAction = (parentInfo->HitTestInfo() & CompositorHitTestInfo::eTouchActionMask);
+  }
+
   nsIFrame* touchActionFrame = this;
   if (nsIScrollableFrame* scrollFrame = nsLayoutUtils::GetScrollableFrameFor(this)) {
     touchActionFrame = do_QueryFrame(scrollFrame);
+    // On scrollframes, stop inheriting the pan-x and pan-y flags; instead,
+    // reset them back to zero to allow panning on the scrollframe unless we
+    // encounter an element that disables it that's inside the scrollframe.
+    // This is equivalent to the |considerPanning| variable in
+    // TouchActionHelper.cpp, but for a top-down traversal.
+    CompositorHitTestInfo panMask = CompositorHitTestInfo::eTouchActionPanXDisabled
+                                  | CompositorHitTestInfo::eTouchActionPanYDisabled;
+    inheritedTouchAction &= ~panMask;
   }
+
+  result |= inheritedTouchAction;
+
   const uint32_t touchAction = nsLayoutUtils::GetTouchActionFromFrame(touchActionFrame);
   // The CSS allows the syntax auto | none | [pan-x || pan-y] | manipulation
   // so we can eliminate some combinations of things.
@@ -12687,25 +12636,13 @@ ReflowInput::DisplayInitFrameTypeExit(nsIFrame* aFrame,
     if (aFrame->IsFloating())
       printf(" float");
 
-    // This array must exactly match the StyleDisplay enum.
-    const char *const displayTypes[] = {
-      "none", "block", "inline", "inline-block", "list-item", "table",
-      "inline-table", "table-row-group", "table-column", "table-column",
-      "table-column-group", "table-header-group", "table-footer-group",
-      "table-row", "table-cell", "table-caption", "flex", "inline-flex",
-      "grid", "inline-grid", "ruby", "ruby-base", "ruby-base-container",
-      "ruby-text", "ruby-text-container", "contents", "-webkit-box",
-      "-webkit-inline-box", "box", "inline-box",
-#ifdef MOZ_XUL
-      "grid", "inline-grid", "grid-group", "grid-line", "stack",
-      "inline-stack", "deck", "groupbox", "popup",
-#endif
-    };
-    const uint32_t display = static_cast<uint32_t>(disp->mDisplay);
-    if (display >= ArrayLength(displayTypes))
-      printf(" display=%u", display);
+    const nsCSSKeyword displayVal =
+      nsCSSProps::ValueToKeywordEnum(disp->mDisplay,
+                                     nsCSSProps::kDisplayKTable);
+    if (displayVal == eCSSKeyword_UNKNOWN)
+      printf(" display=%u", static_cast<uint32_t>(disp->mDisplay));
     else
-      printf(" display=%s", displayTypes[display]);
+      printf(" display=%s", nsCSSKeywords::GetStringValue(displayVal).get());
 
     // This array must exactly match the NS_CSS_FRAME_TYPE constants.
     const char *const cssFrameTypes[] = {

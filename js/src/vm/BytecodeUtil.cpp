@@ -36,22 +36,23 @@
 #include "js/CharacterEncoding.h"
 #include "js/Printf.h"
 #include "util/StringBuffer.h"
+#include "util/Text.h"
 #include "vm/CodeCoverage.h"
 #include "vm/EnvironmentObject.h"
 #include "vm/JSAtom.h"
-#include "vm/JSCompartment.h"
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 #include "vm/JSScript.h"
 #include "vm/Opcodes.h"
+#include "vm/Realm.h"
 #include "vm/Shape.h"
 
 #include "gc/PrivateIterators-inl.h"
-#include "vm/JSCompartment-inl.h"
 #include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
+#include "vm/Realm-inl.h"
 
 using namespace js;
 using namespace js::gc;
@@ -1144,17 +1145,17 @@ ToDisassemblySource(JSContext* cx, HandleValue v, JSAutoByteString* bytes)
             ReportOutOfMemory(cx);
             return false;
         }
-        bytes->initBytes(Move(copy));
+        bytes->initBytes(std::move(copy));
         return true;
     }
 
-    if (JS::CurrentThreadIsHeapBusy() || !cx->isAllocAllowed()) {
+    if (JS::RuntimeHeapIsBusy() || !cx->isAllocAllowed()) {
         UniqueChars source = JS_smprintf("<value>");
         if (!source) {
             ReportOutOfMemory(cx);
             return false;
         }
-        bytes->initBytes(Move(source));
+        bytes->initBytes(std::move(source));
         return true;
     }
 
@@ -1194,7 +1195,7 @@ ToDisassemblySource(JSContext* cx, HandleScope scope, JSAutoByteString* bytes)
         if (!AtomToPrintableString(cx, bi.name(), &nameBytes))
             return false;
 
-        source = JS_sprintf_append(Move(source), "%s: ", nameBytes.ptr());
+        source = JS_sprintf_append(std::move(source), "%s: ", nameBytes.ptr());
         if (!source) {
             ReportOutOfMemory(cx);
             return false;
@@ -1203,27 +1204,27 @@ ToDisassemblySource(JSContext* cx, HandleScope scope, JSAutoByteString* bytes)
         BindingLocation loc = bi.location();
         switch (loc.kind()) {
           case BindingLocation::Kind::Global:
-            source = JS_sprintf_append(Move(source), "global");
+            source = JS_sprintf_append(std::move(source), "global");
             break;
 
           case BindingLocation::Kind::Frame:
-            source = JS_sprintf_append(Move(source), "frame slot %u", loc.slot());
+            source = JS_sprintf_append(std::move(source), "frame slot %u", loc.slot());
             break;
 
           case BindingLocation::Kind::Environment:
-            source = JS_sprintf_append(Move(source), "env slot %u", loc.slot());
+            source = JS_sprintf_append(std::move(source), "env slot %u", loc.slot());
             break;
 
           case BindingLocation::Kind::Argument:
-            source = JS_sprintf_append(Move(source), "arg slot %u", loc.slot());
+            source = JS_sprintf_append(std::move(source), "arg slot %u", loc.slot());
             break;
 
           case BindingLocation::Kind::NamedLambdaCallee:
-            source = JS_sprintf_append(Move(source), "named lambda callee");
+            source = JS_sprintf_append(std::move(source), "named lambda callee");
             break;
 
           case BindingLocation::Kind::Import:
-            source = JS_sprintf_append(Move(source), "import");
+            source = JS_sprintf_append(std::move(source), "import");
             break;
         }
 
@@ -1233,7 +1234,7 @@ ToDisassemblySource(JSContext* cx, HandleScope scope, JSAutoByteString* bytes)
         }
 
         if (!bi.isLast()) {
-            source = JS_sprintf_append(Move(source), ", ");
+            source = JS_sprintf_append(std::move(source), ", ");
             if (!source) {
                 ReportOutOfMemory(cx);
                 return false;
@@ -1241,13 +1242,13 @@ ToDisassemblySource(JSContext* cx, HandleScope scope, JSAutoByteString* bytes)
         }
     }
 
-    source = JS_sprintf_append(Move(source), "}");
+    source = JS_sprintf_append(std::move(source), "}");
     if (!source) {
         ReportOutOfMemory(cx);
         return false;
     }
 
-    bytes->initBytes(Move(source));
+    bytes->initBytes(std::move(source));
     return true;
 }
 
@@ -2186,10 +2187,9 @@ DecompileAtPCForStackDump(JSContext* cx, HandleScript script,
     if (!ed.getOutput(&result))
         return false;
 
-    if (!sp->put(result))
-        return false;
-
-    return true;
+    bool ok = sp->put(result);
+    js_free(result);
+    return ok;
 }
 #endif /* DEBUG */
 
@@ -2319,10 +2319,10 @@ js::DecompileValueGenerator(JSContext* cx, int spindex, HandleValue v,
     }
     if (!fallback) {
         if (v.isUndefined())
-            return UniqueChars(JS_strdup(cx, js_undefined_str)); // Prevent users from seeing "(void 0)"
+            return DuplicateString(cx, js_undefined_str); // Prevent users from seeing "(void 0)"
         fallback = ValueToSource(cx, v);
         if (!fallback)
-            return UniqueChars(nullptr);
+            return nullptr;
     }
 
     return UniqueChars(JS_EncodeString(cx, fallback));
@@ -2397,7 +2397,7 @@ DecompileArgumentFromStack(JSContext* cx, int formalIndex, char** res)
     return ed.getOutput(res);
 }
 
-char*
+UniqueChars
 js::DecompileArgument(JSContext* cx, int formalIndex, HandleValue v)
 {
     {
@@ -2406,18 +2406,18 @@ js::DecompileArgument(JSContext* cx, int formalIndex, HandleValue v)
             return nullptr;
         if (result) {
             if (strcmp(result, "(intermediate value)"))
-                return result;
+                return UniqueChars(result);
             js_free(result);
         }
     }
     if (v.isUndefined())
-        return JS_strdup(cx, js_undefined_str); // Prevent users from seeing "(void 0)"
+        return DuplicateString(cx, js_undefined_str); // Prevent users from seeing "(void 0)"
 
     RootedString fallback(cx, ValueToSource(cx, v));
     if (!fallback)
         return nullptr;
 
-    return JS_EncodeString(cx, fallback);
+    return UniqueChars(JS_EncodeString(cx, fallback));
 }
 
 bool
@@ -2896,6 +2896,7 @@ GenerateLcovInfo(JSContext* cx, JS::Realm* realm, GenericPrinter& out)
     {
         js::gc::AutoPrepareForTracing apft(cx);
     }
+
     Rooted<ScriptVector> topScripts(cx, ScriptVector(cx));
     for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {
         for (auto script = zone->cellIter<JSScript>(); !script.done(); script.next()) {

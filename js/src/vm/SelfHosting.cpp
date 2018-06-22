@@ -48,10 +48,10 @@
 #include "vm/GeneratorObject.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
-#include "vm/JSCompartment.h"
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/Printer.h"
+#include "vm/Realm.h"
 #include "vm/RegExpObject.h"
 #include "vm/StringType.h"
 #include "vm/TypedArrayObject.h"
@@ -303,7 +303,7 @@ ThrowErrorWithType(JSContext* cx, JSExnType type, const CallArgs& args)
             UniqueChars bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, val, nullptr);
             if (!bytes)
                 return;
-            errorArgs[i - 1].initBytes(Move(bytes));
+            errorArgs[i - 1].initBytes(std::move(bytes));
         }
         if (!errorArgs[i - 1])
             return;
@@ -524,14 +524,14 @@ intrinsic_DecompileArg(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
     MOZ_ASSERT(args.length() == 2);
 
-    RootedValue value(cx, args[1]);
-    ScopedJSFreePtr<char> str(DecompileArgument(cx, args[0].toInt32(), value));
+    HandleValue value = args[1];
+    UniqueChars str = DecompileArgument(cx, args[0].toInt32(), value);
     if (!str)
         return false;
-    JSAtom* atom = Atomize(cx, str, strlen(str));
-    if (!atom)
+    JSString* result = NewStringCopyZ<CanGC>(cx, str.get());
+    if (!result)
         return false;
-    args.rval().setString(atom);
+    args.rval().setString(result);
     return true;
 }
 
@@ -650,7 +650,7 @@ intrinsic_DefineProperty(JSContext* cx, unsigned argc, Value* vp)
     if (strict && !result.checkStrict(cx, obj, id))
         return false;
 
-    args.rval().setBoolean(bool(result));
+    args.rval().setBoolean(result.reallyOk());
     return true;
 }
 
@@ -2788,7 +2788,7 @@ JSRuntime::createSelfHostingGlobal(JSContext* cx)
     MOZ_ASSERT(!cx->realm());
 
     JS::RealmOptions options;
-    options.creationOptions().setNewZone();
+    options.creationOptions().setNewCompartmentAndZone();
     options.behaviors().setDiscardSource(true);
 
     Realm* realm = NewRealm(cx, nullptr, options);
@@ -2906,8 +2906,8 @@ VerifyGlobalNames(JSContext* cx, Handle<GlobalObject*> shg)
 
     if (nameMissing) {
         RootedValue value(cx, IdToValue(id));
-        return ReportValueErrorFlags(cx, JSREPORT_ERROR, JSMSG_NO_SUCH_SELF_HOSTED_PROP,
-                                     JSDVG_IGNORE_STACK, value, nullptr, nullptr, nullptr);
+        ReportValueError(cx, JSMSG_NO_SUCH_SELF_HOSTED_PROP, JSDVG_IGNORE_STACK, value, nullptr);
+        return false;
     }
 #endif // DEBUG
 

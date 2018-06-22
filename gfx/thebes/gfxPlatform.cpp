@@ -22,6 +22,7 @@
 
 #include "mozilla/Logging.h"
 #include "mozilla/Services.h"
+#include "nsAppDirectoryServiceDefs.h"
 
 #include "gfxCrashReporterUtils.h"
 #include "gfxPlatform.h"
@@ -161,6 +162,7 @@ static Mutex* gGfxPlatformPrefsLock = nullptr;
 static qcms_profile *gCMSOutputProfile = nullptr;
 static qcms_profile *gCMSsRGBProfile = nullptr;
 
+static bool gCMSRGBTransformFailed = false;
 static qcms_transform *gCMSRGBTransform = nullptr;
 static qcms_transform *gCMSInverseRGBTransform = nullptr;
 static qcms_transform *gCMSRGBATransform = nullptr;
@@ -615,6 +617,9 @@ WebRenderDebugPrefChangeCallback(const char* aPrefName, void*)
   GFX_WEBRENDER_DEBUG(".disable-batching",   1 << 5)
   GFX_WEBRENDER_DEBUG(".epochs",             1 << 6)
   GFX_WEBRENDER_DEBUG(".compact-profiler",   1 << 7)
+  GFX_WEBRENDER_DEBUG(".echo-driver-messages", 1 << 8)
+  GFX_WEBRENDER_DEBUG(".new-frame-indicator", 1 << 9)
+  GFX_WEBRENDER_DEBUG(".new-scene-indicator", 1 << 10)
 #undef GFX_WEBRENDER_DEBUG
 
   gfx::gfxVars::SetWebRenderDebugFlags(flags);
@@ -866,6 +871,18 @@ gfxPlatform::Init()
         Preferences::SetBool(FONT_VARIATIONS_PREF, false);
         Preferences::Lock(FONT_VARIATIONS_PREF);
       }
+
+      nsCOMPtr<nsIFile> profDir;
+      rv = NS_GetSpecialDirectory(NS_APP_PROFILE_DIR_STARTUP, getter_AddRefs(profDir));
+      if (NS_FAILED(rv)) {
+        gfxVars::SetProfDirectory(nsString());
+      } else {
+        nsAutoString path;
+        profDir->GetPath(path);
+        gfxVars::SetProfDirectory(nsString(path));
+      }
+
+      gfxUtils::RemoveShaderCacheFromDiskIfNecessary();
     }
 
     if (obs) {
@@ -1045,7 +1062,7 @@ gfxPlatform::InitLayersIPC()
       layers::PaintThread::Start();
     }
   } else if (XRE_IsParentProcess()) {
-    if (gfxVars::UseWebRender()) {
+    if (!gfxConfig::IsEnabled(Feature::GPU_PROCESS) && gfxVars::UseWebRender()) {
       wr::RenderThread::Start();
     }
 
@@ -1821,7 +1838,7 @@ gfxPlatform::GetBackendPrefs() const
   data.mCanvasDefault = BackendType::CAIRO;
   data.mContentDefault = BackendType::CAIRO;
 
-  return mozilla::Move(data);
+  return data;
 }
 
 void
@@ -2072,7 +2089,7 @@ gfxPlatform::GetCMSsRGBProfile()
 qcms_transform *
 gfxPlatform::GetCMSRGBTransform()
 {
-    if (!gCMSRGBTransform) {
+    if (!gCMSRGBTransform && !gCMSRGBTransformFailed) {
         qcms_profile *inProfile, *outProfile;
         outProfile = GetCMSOutputProfile();
         inProfile = GetCMSsRGBProfile();
@@ -2083,6 +2100,9 @@ gfxPlatform::GetCMSRGBTransform()
         gCMSRGBTransform = qcms_transform_create(inProfile, QCMS_DATA_RGB_8,
                                               outProfile, QCMS_DATA_RGB_8,
                                              QCMS_INTENT_PERCEPTUAL);
+        if (!gCMSRGBTransform) {
+            gCMSRGBTransformFailed = true;
+        }
     }
 
     return gCMSRGBTransform;
@@ -2626,7 +2646,10 @@ gfxPlatform::InitWebRenderConfig()
 #endif
 
   if (Preferences::GetBool("gfx.webrender.program-binary", false)) {
-    gfx::gfxVars::SetUseWebRenderProgramBinary(gfxConfig::IsEnabled(Feature::WEBRENDER));
+    gfxVars::SetUseWebRenderProgramBinary(gfxConfig::IsEnabled(Feature::WEBRENDER));
+    if (Preferences::GetBool("gfx.webrender.program-binary-disk", false)) {
+      gfxVars::SetUseWebRenderProgramBinaryDisk(gfxConfig::IsEnabled(Feature::WEBRENDER));
+    }
   }
 
 #ifdef MOZ_WIDGET_ANDROID

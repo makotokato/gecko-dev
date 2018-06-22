@@ -45,7 +45,7 @@ class IonBuilder
 {
 
   public:
-    IonBuilder(JSContext* analysisContext, CompileCompartment* comp,
+    IonBuilder(JSContext* analysisContext, CompileRealm* realm,
                const JitCompileOptions& options, TempAllocator* temp,
                MIRGraph* graph, CompilerConstraintList* constraints,
                BaselineInspector* inspector, CompileInfo* info,
@@ -125,7 +125,6 @@ class IonBuilder
     // Restarts processing of a loop if the type information at its header was
     // incomplete.
     AbortReasonOr<Ok> restartLoop(const CFGBlock* header);
-    bool initLoopEntry();
 
     // Please see the Big Honkin' Comment about how resume points work in
     // IonBuilder.cpp, near the definition for this function.
@@ -289,7 +288,7 @@ class IonBuilder
     AbortReasonOr<Ok> setPropTryReferenceTypedObjectValue(bool* emitted,
                                                           MDefinition* typedObj,
                                                           const LinearSum& byteOffset,
-                                                          ReferenceTypeDescr::Type type,
+                                                          ReferenceType type,
                                                           MDefinition* value,
                                                           PropertyName* name);
     AbortReasonOr<Ok> setPropTryScalarPropOfTypedObject(bool* emitted,
@@ -386,7 +385,7 @@ class IonBuilder
                                                     ScalarTypeDescr::Type type);
     AbortReasonOr<Ok> pushReferenceLoadFromTypedObject(MDefinition* typedObj,
                                                        const LinearSum& byteOffset,
-                                                       ReferenceTypeDescr::Type type,
+                                                       ReferenceType type,
                                                        PropertyName* name);
 
     // jsop_setelem() helpers.
@@ -509,6 +508,7 @@ class IonBuilder
     AbortReasonOr<Ok> jsop_label();
     AbortReasonOr<Ok> jsop_andor(JSOp op);
     AbortReasonOr<Ok> jsop_dup2();
+    AbortReasonOr<Ok> jsop_loopentry();
     AbortReasonOr<Ok> jsop_loophead(jsbytecode* pc);
     AbortReasonOr<Ok> jsop_compare(JSOp op);
     AbortReasonOr<Ok> jsop_compare(JSOp op, MDefinition* left, MDefinition* right);
@@ -968,7 +968,7 @@ class IonBuilder
         return callerBuilder_ != nullptr;
     }
 
-    const JSAtomState& names() { return compartment->runtime()->names(); }
+    const JSAtomState& names() { return realm->runtime()->names(); }
 
     bool hadActionableAbort() const {
         MOZ_ASSERT(!actionableAbortScript_ ||

@@ -944,7 +944,7 @@ function getLinkifiedElements(text, cropLimit, openLink) {
           draggable: false,
           onClick: openLink ? e => {
             e.preventDefault();
-            openLink(token);
+            openLink(token, e);
           } : null
         }, linkText));
       }
@@ -5680,7 +5680,8 @@ function ElementNode(props) {
   if (isInTree) {
     if (onDOMNodeClick) {
       Object.assign(baseConfig, {
-        onClick: _ => onDOMNodeClick(object)
+        onClick: _ => onDOMNodeClick(object),
+        className: `${baseConfig.className} clickable`
       });
     }
 

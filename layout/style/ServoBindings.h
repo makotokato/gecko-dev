@@ -36,7 +36,7 @@ struct nsFont;
 namespace mozilla {
   class FontFamilyList;
   struct FontFamilyName;
-  enum FontFamilyType : uint32_t;
+  enum FontFamilyType : uint8_t;
   class SharedFontList;
   enum class CSSPseudoElementType : uint8_t;
   struct Keyframe;
@@ -144,6 +144,7 @@ RawGeckoNodeBorrowedOrNull Gecko_GetLastChild(RawGeckoNodeBorrowed node);
 RawGeckoNodeBorrowedOrNull Gecko_GetFlattenedTreeParentNode(RawGeckoNodeBorrowed node);
 RawGeckoElementBorrowedOrNull Gecko_GetBeforeOrAfterPseudo(RawGeckoElementBorrowed element, bool is_before);
 nsTArray<nsIContent*>* Gecko_GetAnonymousContentForElement(RawGeckoElementBorrowed element);
+const nsTArray<RefPtr<nsINode>>* Gecko_GetAssignedNodes(RawGeckoElementBorrowed element);
 void Gecko_DestroyAnonymousContentList(nsTArray<nsIContent*>* anon_content);
 
 void Gecko_ComputedStyle_Init(mozilla::ComputedStyle* context,
@@ -686,11 +687,11 @@ void Gecko_AnnotateCrashReport(const char* key_str, const char* value_str);
 #include "mozilla/ServoBindingList.h"
 #undef SERVO_BINDING_FUNC
 
-mozilla::css::ErrorReporter* Gecko_CreateCSSErrorReporter(mozilla::StyleSheet* sheet,
-                                                          mozilla::css::Loader* loader,
-                                                          nsIURI* uri);
-void Gecko_DestroyCSSErrorReporter(mozilla::css::ErrorReporter* reporter);
-void Gecko_ReportUnexpectedCSSError(mozilla::css::ErrorReporter* reporter,
+bool Gecko_ErrorReportingEnabled(const mozilla::StyleSheet* sheet,
+                                 const mozilla::css::Loader* loader);
+void Gecko_ReportUnexpectedCSSError(const mozilla::StyleSheet* sheet,
+                                    const mozilla::css::Loader* loader,
+                                    nsIURI* uri,
                                     const char* message,
                                     const char* param,
                                     uint32_t paramLen,

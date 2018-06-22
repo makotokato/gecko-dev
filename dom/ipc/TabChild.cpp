@@ -645,7 +645,7 @@ TabChild::Init()
           static_cast<TabChild*>(tabChild.get())->ContentReceivedInputBlock(aGuid, aInputBlockId, aPreventDefault);
         }
       });
-  mAPZEventState = new APZEventState(mPuppetWidget, Move(callback));
+  mAPZEventState = new APZEventState(mPuppetWidget, std::move(callback));
 
   mIPCOpen = true;
   return NS_OK;
@@ -1718,19 +1718,14 @@ TabChild::HandleRealMouseButtonEvent(const WidgetMouseEvent& aEvent,
   // actually go through the APZ code and so their mHandledByAPZ flag is false.
   // Since thos events didn't go through APZ, we don't need to send
   // notifications for them.
-  bool pendingLayerization = false;
+  UniquePtr<DisplayportSetListener> postLayerization;
   if (aInputBlockId && aEvent.mFlags.mHandledByAPZ) {
     nsCOMPtr<nsIDocument> document(GetDocument());
-    pendingLayerization =
-      APZCCallbackHelper::SendSetTargetAPZCNotification(mPuppetWidget, document,
-                                                        aEvent, aGuid,
-                                                        aInputBlockId);
+    postLayerization = APZCCallbackHelper::SendSetTargetAPZCNotification(
+        mPuppetWidget, document, aEvent, aGuid, aInputBlockId);
   }
 
-  InputAPZContext context(aGuid, aInputBlockId, nsEventStatus_eIgnore);
-  if (pendingLayerization) {
-    InputAPZContext::SetPendingLayerization();
-  }
+  InputAPZContext context(aGuid, aInputBlockId, nsEventStatus_eIgnore, postLayerization != nullptr);
 
   WidgetMouseEvent localEvent(aEvent);
   localEvent.mWidget = mPuppetWidget;
@@ -1740,6 +1735,15 @@ TabChild::HandleRealMouseButtonEvent(const WidgetMouseEvent& aEvent,
 
   if (aInputBlockId && aEvent.mFlags.mHandledByAPZ) {
     mAPZEventState->ProcessMouseEvent(aEvent, aGuid, aInputBlockId);
+  }
+
+  // Do this after the DispatchWidgetEventViaAPZ call above, so that if the
+  // mouse event triggered a post-refresh AsyncDragMetrics message to be sent
+  // to APZ (from scrollbar dragging in nsSliderFrame), then that will reach
+  // APZ before the SetTargetAPZC message. This ensures the drag input block
+  // gets the drag metrics before handling the input events.
+  if (postLayerization && postLayerization->Register()) {
+    Unused << postLayerization.release();
   }
 }
 
@@ -1821,8 +1825,12 @@ TabChild::DispatchWheelEvent(const WidgetWheelEvent& aEvent,
   WidgetWheelEvent localEvent(aEvent);
   if (aInputBlockId && aEvent.mFlags.mHandledByAPZ) {
     nsCOMPtr<nsIDocument> document(GetDocument());
-    APZCCallbackHelper::SendSetTargetAPZCNotification(
-      mPuppetWidget, document, aEvent, aGuid, aInputBlockId);
+    UniquePtr<DisplayportSetListener> postLayerization =
+        APZCCallbackHelper::SendSetTargetAPZCNotification(
+            mPuppetWidget, document, aEvent, aGuid, aInputBlockId);
+    if (postLayerization && postLayerization->Register()) {
+      Unused << postLayerization.release();
+    }
   }
 
   localEvent.mWidget = mPuppetWidget;
@@ -1897,9 +1905,12 @@ TabChild::RecvRealTouchEvent(const WidgetTouchEvent& aEvent,
         mPuppetWidget, document, localEvent, aInputBlockId,
         mSetAllowedTouchBehaviorCallback);
     }
-    APZCCallbackHelper::SendSetTargetAPZCNotification(mPuppetWidget, document,
-                                                      localEvent, aGuid,
-                                                      aInputBlockId);
+    UniquePtr<DisplayportSetListener> postLayerization =
+        APZCCallbackHelper::SendSetTargetAPZCNotification(
+            mPuppetWidget, document, localEvent, aGuid, aInputBlockId);
+    if (postLayerization && postLayerization->Register()) {
+      Unused << postLayerization.release();
+    }
   }
 
   // Dispatch event to content (potentially a long-running operation)
@@ -2041,7 +2052,7 @@ bool
 TabChild::SkipRepeatedKeyEvent(const WidgetKeyboardEvent& aEvent)
 {
   if (mRepeatedKeyEventTime.IsNull() ||
-      !aEvent.mIsRepeat ||
+      !aEvent.CanSkipInRemoteProcess() ||
       (aEvent.mMessage != eKeyDown && aEvent.mMessage != eKeyPress)) {
     mRepeatedKeyEventTime = TimeStamp();
     mSkipKeyPress = false;
@@ -2304,7 +2315,7 @@ TabChild::RecvAsyncMessage(const nsString& aMessage,
                            const ClonedMessageData& aData)
 {
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING(
-    "TabChild::RecvAsyncMessage", EVENTS, aMessage);
+    "TabChild::RecvAsyncMessage", OTHER, aMessage);
 
   CrossProcessCpowHolder cpows(Manager(), aCpows);
   if (!mTabChildGlobal) {
@@ -3217,6 +3228,9 @@ TabChild::ReinitRendering()
   gfx::VRManagerChild::IdentifyTextureHost(mTextureFactoryIdentifier);
 
   InitAPZState();
+  RefPtr<LayerManager> lm = mPuppetWidget->GetLayerManager();
+  MOZ_ASSERT(lm);
+  lm->SetLayerObserverEpoch(mLayerObserverEpoch);
 
   nsCOMPtr<nsIDocument> doc(GetDocument());
   doc->NotifyLayerManagerRecreated();
@@ -3428,6 +3442,7 @@ TabChild::AllocPPaymentRequestChild()
 bool
 TabChild::DeallocPPaymentRequestChild(PPaymentRequestChild* actor)
 {
+  delete actor;
   return true;
 }
 
@@ -3612,9 +3627,9 @@ TabChildGlobal::Dispatch(TaskCategory aCategory,
                          already_AddRefed<nsIRunnable>&& aRunnable)
 {
   if (mTabChild && mTabChild->TabGroup()) {
-    return mTabChild->TabGroup()->Dispatch(aCategory, Move(aRunnable));
+    return mTabChild->TabGroup()->Dispatch(aCategory, std::move(aRunnable));
   }
-  return DispatcherTrait::Dispatch(aCategory, Move(aRunnable));
+  return DispatcherTrait::Dispatch(aCategory, std::move(aRunnable));
 }
 
 nsISerialEventTarget*

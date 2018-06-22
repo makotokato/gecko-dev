@@ -2038,6 +2038,7 @@ gfxFont::DrawOneGlyph(uint32_t aGlyphID, const gfx::Point& aPt,
         }
 
         if (fontParams.haveColorGlyphs &&
+            !gfxPlatform::GetPlatform()->HasNativeColrFontSupport() &&
             RenderColorGlyph(runParams.dt, runParams.context,
                              fontParams.scaledFont,
                              fontParams.drawOptions,
@@ -2553,7 +2554,7 @@ gfxFont::Measure(const gfxTextRun *aTextRun,
     if (aBoundingBoxType == TIGHT_HINTED_OUTLINE_EXTENTS &&
         mAntialiasOption != kAntialiasNone) {
         if (!mNonAAFont) {
-            mNonAAFont = Move(CopyWithAntialiasOption(kAntialiasNone));
+            mNonAAFont = CopyWithAntialiasOption(kAntialiasNone);
         }
         // if font subclass doesn't implement CopyWithAntialiasOption(),
         // it will return null and we'll proceed to use the existing font
@@ -4074,7 +4075,7 @@ gfxFont::CreateVerticalMetrics()
     metrics->xHeight = metrics->emHeight / 2;
     metrics->capHeight = metrics->maxAscent;
 
-    return Move(metrics);
+    return std::move(metrics);
 }
 
 gfxFloat

@@ -377,7 +377,7 @@ public:
   virtual void MaybeUpdateTouchState() override;
 
   // Inner windows only.
-  void RefreshCompartmentPrincipal();
+  void RefreshRealmPrincipal();
 
   // For accessing protected field mFullScreen
   friend class FullscreenTransitionTask;
@@ -978,6 +978,8 @@ public:
   already_AddRefed<nsWindowRoot> GetWindowRoot(mozilla::ErrorResult& aError);
 
   bool ShouldReportForServiceWorkerScope(const nsAString& aScope);
+
+  void PropagateClearSiteDataReload(const nsACString& aOrigin);
 
   already_AddRefed<mozilla::dom::InstallTriggerImpl> GetInstallTrigger();
 

@@ -29,10 +29,10 @@
 #include "TextEditUtils.h"              // for TextEditUtils
 #include "mozilla/CheckedInt.h"         // for CheckedInt
 #include "mozilla/ComputedStyle.h"      // for ComputedStyle
-#include "mozilla/EditAction.h"         // for EditAction
+#include "mozilla/EditAction.h"         // for EditSubAction
 #include "mozilla/EditorDOMPoint.h"     // for EditorDOMPoint
 #include "mozilla/EditorSpellCheck.h"   // for EditorSpellCheck
-#include "mozilla/EditorUtils.h"        // for AutoRules, etc.
+#include "mozilla/EditorUtils.h"        // for various helper classes.
 #include "mozilla/EditTransactionBase.h" // for EditTransactionBase
 #include "mozilla/FlushType.h"          // for FlushType::Frames
 #include "mozilla/IMEContentObserver.h" // for IMEContentObserver
@@ -71,7 +71,7 @@
 #include "nsGenericHTMLElement.h"       // for nsGenericHTMLElement
 #include "nsGkAtoms.h"                  // for nsGkAtoms, nsGkAtoms::dir
 #include "nsIAbsorbingTransaction.h"    // for nsIAbsorbingTransaction
-#include "nsAtom.h"                    // for nsAtom
+#include "nsAtom.h"                     // for nsAtom
 #include "nsIContent.h"                 // for nsIContent
 #include "nsIDocument.h"                // for nsIDocument
 #include "nsIDOMEventListener.h"        // for nsIDOMEventListener
@@ -160,7 +160,7 @@ EditorBase::EditorBase()
   , mFlags(0)
   , mUpdateCount(0)
   , mPlaceholderBatch(0)
-  , mAction(EditAction::none)
+  , mTopLevelEditSubAction(EditSubAction::eNone)
   , mDirection(eNone)
   , mDocDirtyState(-1)
   , mSpellcheckCheckboxState(eTriUnset)
@@ -168,7 +168,7 @@ EditorBase::EditorBase()
   , mDidPreDestroy(false)
   , mDidPostCreate(false)
   , mDispatchInputEvent(true)
-  , mIsInEditAction(false)
+  , mIsInEditSubAction(false)
   , mHidingCaret(false)
   , mSpellCheckerDictionaryUpdated(true)
   , mIsHTMLEditorClass(false)
@@ -258,7 +258,7 @@ EditorBase::Init(nsIDocument& aDocument,
                  uint32_t aFlags,
                  const nsAString& aValue)
 {
-  MOZ_ASSERT(mAction == EditAction::none,
+  MOZ_ASSERT(mTopLevelEditSubAction == EditSubAction::eNone,
              "Initializing during an edit action is an error");
 
   // First only set flags, but other stuff shouldn't be initialized now.
@@ -742,7 +742,7 @@ EditorBase::DoTransaction(Selection* aSelection, nsITransaction* aTxn)
 {
   if (mPlaceholderBatch && !mPlaceholderTransaction) {
     mPlaceholderTransaction =
-      PlaceholderTransaction::Create(*this, mPlaceholderName, Move(mSelState));
+      PlaceholderTransaction::Create(*this, mPlaceholderName, std::move(mSelState));
     MOZ_ASSERT(mSelState.isNothing());
 
     // We will recurse, but will not hit this case in the nested call
@@ -1019,11 +1019,37 @@ EditorBase::SelectAll()
   if (!IsInitialized()) {
     return NS_ERROR_NOT_INITIALIZED;
   }
-  ForceCompositionEnd();
+
+  nsresult rv = SelectAllInternal();
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+  return NS_OK;
+}
+
+nsresult
+EditorBase::SelectAllInternal()
+{
+  MOZ_ASSERT(IsInitialized());
+
+  CommitComposition();
+  if (NS_WARN_IF(Destroyed())) {
+    return NS_ERROR_EDITOR_DESTROYED;
+  }
+
+  // XXX Do we need to keep handling after committing composition causes moving
+  //     focus to different element?  Although TextEditor has independent
+  //     selection, so, we may not see any odd behavior even in such case.
 
   RefPtr<Selection> selection = GetSelection();
-  NS_ENSURE_TRUE(selection, NS_ERROR_NOT_INITIALIZED);
-  return SelectEntireDocument(selection);
+  if (NS_WARN_IF(!selection)) {
+    return NS_ERROR_FAILURE;
+  }
+  nsresult rv = SelectEntireDocument(selection);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1266,8 +1292,7 @@ EditorBase::MarkNodeDirty(nsINode* aNode)
   if (!OutputsMozDirty()) {
     return NS_OK;
   }
-  if (aNode && aNode->IsElement()) {
-    RefPtr<Element> element = aNode->AsElement();
+  if (RefPtr<Element> element = Element::FromNodeOrNull(aNode)) {
     element->SetAttr(kNameSpaceID_None, nsGkAtoms::mozdirty, EmptyString(),
                      false);
   }
@@ -1356,7 +1381,9 @@ EditorBase::CreateNodeWithTransaction(
   //     we need to redesign mRangeUpdater as avoiding using indices.
   Unused << aPointToInsert.Offset();
 
-  AutoRules beginRulesSniffing(this, EditAction::createNode, nsIEditor::eNext);
+  AutoTopLevelEditSubActionNotifier maybeTopLevelEditSubAction(
+                                      *this, EditSubAction::eCreateNode,
+                                      nsIEditor::eNext);
 
   RefPtr<Element> newElement;
 
@@ -1432,7 +1459,9 @@ EditorBase::InsertNodeWithTransaction(
   }
   MOZ_ASSERT(aPointToInsert.IsSetAndValid());
 
-  AutoRules beginRulesSniffing(this, EditAction::insertNode, nsIEditor::eNext);
+  AutoTopLevelEditSubActionNotifier maybeTopLevelEditSubAction(
+                                      *this, EditSubAction::eInsertNode,
+                                      nsIEditor::eNext);
 
   RefPtr<InsertNodeTransaction> transaction =
     InsertNodeTransaction::Create(*this, aContentToInsert, aPointToInsert);
@@ -1494,7 +1523,9 @@ EditorBase::SplitNodeWithTransaction(
   }
   MOZ_ASSERT(aStartOfRightNode.IsSetAndValid());
 
-  AutoRules beginRulesSniffing(this, EditAction::splitNode, nsIEditor::eNext);
+  AutoTopLevelEditSubActionNotifier maybeTopLevelEditSubAction(
+                                      *this, EditSubAction::eSplitNode,
+                                      nsIEditor::eNext);
 
   // XXX Unfortunately, storing offset of the split point in
   //     SplitNodeTransaction is necessary for now.  We should fix this
@@ -1559,8 +1590,9 @@ EditorBase::JoinNodesWithTransaction(nsINode& aLeftNode,
   nsCOMPtr<nsINode> parent = aLeftNode.GetParentNode();
   MOZ_ASSERT(parent);
 
-  AutoRules beginRulesSniffing(this, EditAction::joinNode,
-                               nsIEditor::ePrevious);
+  AutoTopLevelEditSubActionNotifier maybeTopLevelEditSubAction(
+                                      *this, EditSubAction::eJoinNodes,
+                                      nsIEditor::ePrevious);
 
   // Remember some values; later used for saved selection updating.
   // Find the offset between the nodes to be joined.
@@ -1627,8 +1659,9 @@ EditorBase::DeleteNode(nsINode* aNode)
 nsresult
 EditorBase::DeleteNodeWithTransaction(nsINode& aNode)
 {
-  AutoRules beginRulesSniffing(this, EditAction::createNode,
-                               nsIEditor::ePrevious);
+  AutoTopLevelEditSubActionNotifier maybeTopLevelEditSubAction(
+                                      *this, EditSubAction::eCreateNode,
+                                      nsIEditor::ePrevious);
 
   if (mRules && mRules->AsHTMLEditRules()) {
     Selection* selection = GetSelection();
@@ -2115,7 +2148,7 @@ EditorBase::NotifyEditorObservers(NotificationForEditorObservers aNotification)
 {
   switch (aNotification) {
     case eNotifyEditorObserversOfEnd:
-      mIsInEditAction = false;
+      mIsInEditSubAction = false;
 
       if (mTextInputListener) {
         RefPtr<TextInputListener> listener = mTextInputListener;
@@ -2142,11 +2175,11 @@ EditorBase::NotifyEditorObservers(NotificationForEditorObservers aNotification)
       FireInputEvent();
       break;
     case eNotifyEditorObserversOfBefore:
-      if (NS_WARN_IF(mIsInEditAction)) {
+      if (NS_WARN_IF(mIsInEditSubAction)) {
         break;
       }
 
-      mIsInEditAction = true;
+      mIsInEditSubAction = true;
 
       if (mIMEContentObserver) {
         RefPtr<IMEContentObserver> observer = mIMEContentObserver;
@@ -2154,7 +2187,7 @@ EditorBase::NotifyEditorObservers(NotificationForEditorObservers aNotification)
       }
       break;
     case eNotifyEditorObserversOfCancel:
-      mIsInEditAction = false;
+      mIsInEditSubAction = false;
 
       if (mIMEContentObserver) {
         RefPtr<IMEContentObserver> observer = mIMEContentObserver;
@@ -2410,29 +2443,20 @@ EditorBase::GetRootElement(Element** aRootElement)
   return NS_OK;
 }
 
-/**
- * All editor operations which alter the doc should be prefaced
- * with a call to StartOperation, naming the action and direction.
- */
-nsresult
-EditorBase::StartOperation(EditAction opID,
-                           nsIEditor::EDirection aDirection)
+void
+EditorBase::OnStartToHandleTopLevelEditSubAction(
+              EditSubAction aEditSubAction,
+              nsIEditor::EDirection aDirection)
 {
-  mAction = opID;
+  mTopLevelEditSubAction = aEditSubAction;
   mDirection = aDirection;
-  return NS_OK;
 }
 
-/**
- * All editor operations which alter the doc should be followed
- * with a call to EndOperation.
- */
-nsresult
-EditorBase::EndOperation()
+void
+EditorBase::OnEndHandlingTopLevelEditSubAction()
 {
-  mAction = EditAction::none;
+  mTopLevelEditSubAction = EditSubAction::eNone;
   mDirection = eNone;
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -2914,8 +2938,9 @@ EditorBase::SetTextImpl(Selection& aSelection, const nsAString& aString,
 {
   const uint32_t length = aCharData.Length();
 
-  AutoRules beginRulesSniffing(this, EditAction::setText,
-                               nsIEditor::eNext);
+  AutoTopLevelEditSubActionNotifier maybeTopLevelEditSubAction(
+                                      *this, EditSubAction::eSetText,
+                                      nsIEditor::eNext);
 
   // Let listeners know what's up
   if (!mActionListeners.IsEmpty() && length) {
@@ -2987,8 +3012,9 @@ EditorBase::DeleteTextWithTransaction(CharacterData& aCharData,
     return NS_ERROR_FAILURE;
   }
 
-  AutoRules beginRulesSniffing(this, EditAction::deleteText,
-                               nsIEditor::ePrevious);
+  AutoTopLevelEditSubActionNotifier maybeTopLevelEditSubAction(
+                                      *this, EditSubAction::eDeleteText,
+                                      nsIEditor::ePrevious);
 
   // Let listeners know what's up
   if (!mActionListeners.IsEmpty()) {
@@ -3920,8 +3946,7 @@ EditorBase::IsPreformatted(nsINode* aNode)
   }
   // Look at the node (and its parent if it's not an element), and grab its
   // ComputedStyle.
-  RefPtr<ComputedStyle> elementStyle;
-  Element* element = aNode->IsElement() ? aNode->AsElement() : nullptr;
+  Element* element = Element::FromNode(aNode);
   if (!element) {
     element = aNode->GetParentElement();
     if (!element) {
@@ -3929,7 +3954,7 @@ EditorBase::IsPreformatted(nsINode* aNode)
     }
   }
 
-  elementStyle =
+  RefPtr<ComputedStyle> elementStyle =
     nsComputedDOMStyle::GetComputedStyleNoFlush(element, nullptr);
   if (!elementStyle) {
     // Consider nodes without a ComputedStyle to be NOT preformatted:
@@ -4579,7 +4604,7 @@ EditorBase::HandleKeyPressEvent(WidgetKeyboardEvent* aKeyboardEvent)
 }
 
 nsresult
-EditorBase::HandleInlineSpellCheck(EditAction action,
+EditorBase::HandleInlineSpellCheck(EditSubAction aEditSubAction,
                                    Selection& aSelection,
                                    nsINode* previousSelectedNode,
                                    uint32_t previousSelectedOffset,
@@ -4592,7 +4617,7 @@ EditorBase::HandleInlineSpellCheck(EditAction action,
     return NS_OK;
   }
   return mInlineSpellChecker->SpellCheckAfterEditorChange(
-                                action, aSelection,
+                                aEditSubAction, aSelection,
                                 previousSelectedNode, previousSelectedOffset,
                                 aStartContainer, aStartOffset, aEndContainer,
                                 aEndOffset);
@@ -4820,66 +4845,92 @@ EditorBase::DetermineCurrentDirection()
   return NS_OK;
 }
 
-NS_IMETHODIMP
-EditorBase::SwitchTextDirection()
+nsresult
+EditorBase::ToggleTextDirection()
 {
-  // Get the current root direction from its frame
-  Element* rootElement = GetExposedRoot();
+  // XXX Oddly, Chrome does not dispatch beforeinput event in this case but
+  //     dispatches input event.
 
   nsresult rv = DetermineCurrentDirection();
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
 
-  // Apply the opposite direction
   if (IsRightToLeft()) {
-    NS_ASSERTION(!IsLeftToRight(),
-                 "Unexpected mutually exclusive flag");
-    mFlags &= ~nsIPlaintextEditor::eEditorRightToLeft;
-    mFlags |= nsIPlaintextEditor::eEditorLeftToRight;
-    rv = rootElement->SetAttr(kNameSpaceID_None, nsGkAtoms::dir, NS_LITERAL_STRING("ltr"), true);
+    nsresult rv = SetTextDirectionTo(TextDirection::eLTR);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
   } else if (IsLeftToRight()) {
-    NS_ASSERTION(!IsRightToLeft(),
-                 "Unexpected mutually exclusive flag");
-    mFlags |= nsIPlaintextEditor::eEditorRightToLeft;
-    mFlags &= ~nsIPlaintextEditor::eEditorLeftToRight;
-    rv = rootElement->SetAttr(kNameSpaceID_None, nsGkAtoms::dir, NS_LITERAL_STRING("rtl"), true);
+    nsresult rv = SetTextDirectionTo(TextDirection::eRTL);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
   }
 
-  if (NS_SUCCEEDED(rv)) {
-    FireInputEvent();
-  }
+  // XXX When we don't change the text direction, do we really need to
+  //     dispatch input event?
+  FireInputEvent();
 
-  return rv;
+  return NS_OK;
 }
 
 void
-EditorBase::SwitchTextDirectionTo(uint32_t aDirection)
+EditorBase::SwitchTextDirectionTo(TextDirection aTextDirection)
 {
-  // Get the current root direction from its frame
-  Element* rootElement = GetExposedRoot();
+  // XXX Oddly, Chrome does not dispatch beforeinput event in this case but
+  //     dispatches input event.
 
   nsresult rv = DetermineCurrentDirection();
-  NS_ENSURE_SUCCESS_VOID(rv);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return;
+  }
 
-  // Apply the requested direction
-  if (aDirection == nsIPlaintextEditor::eEditorLeftToRight &&
-      IsRightToLeft()) {
-    NS_ASSERTION(!(mFlags & nsIPlaintextEditor::eEditorLeftToRight),
-                 "Unexpected mutually exclusive flag");
+  if (aTextDirection == TextDirection::eLTR && IsRightToLeft()) {
+    if (NS_WARN_IF(NS_FAILED(SetTextDirectionTo(aTextDirection)))) {
+      return;
+    }
+  } else if (aTextDirection == TextDirection::eRTL && IsLeftToRight()) {
+    if (NS_WARN_IF(NS_FAILED(SetTextDirectionTo(aTextDirection)))) {
+      return;
+    }
+  }
+
+  // XXX When we don't change the text direction, do we really need to
+  //     dispatch input event?
+  FireInputEvent();
+}
+
+nsresult
+EditorBase::SetTextDirectionTo(TextDirection aTextDirection)
+{
+  Element* rootElement = GetExposedRoot();
+
+  if (aTextDirection == TextDirection::eLTR) {
+    NS_ASSERTION(!IsLeftToRight(), "Unexpected mutually exclusive flag");
     mFlags &= ~nsIPlaintextEditor::eEditorRightToLeft;
     mFlags |= nsIPlaintextEditor::eEditorLeftToRight;
-    rv = rootElement->SetAttr(kNameSpaceID_None, nsGkAtoms::dir, NS_LITERAL_STRING("ltr"), true);
-  } else if (aDirection == nsIPlaintextEditor::eEditorRightToLeft &&
-             IsLeftToRight()) {
-    NS_ASSERTION(!(mFlags & nsIPlaintextEditor::eEditorRightToLeft),
-                 "Unexpected mutually exclusive flag");
-    mFlags |= nsIPlaintextEditor::eEditorRightToLeft;
-    mFlags &= ~nsIPlaintextEditor::eEditorLeftToRight;
-    rv = rootElement->SetAttr(kNameSpaceID_None, nsGkAtoms::dir, NS_LITERAL_STRING("rtl"), true);
+    nsresult rv = rootElement->SetAttr(kNameSpaceID_None, nsGkAtoms::dir,
+                                       NS_LITERAL_STRING("ltr"), true);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+    return NS_OK;
   }
 
-  if (NS_SUCCEEDED(rv)) {
-    FireInputEvent();
+  if (aTextDirection == TextDirection::eRTL) {
+    NS_ASSERTION(!IsRightToLeft(), "Unexpected mutually exclusive flag");
+    mFlags |= nsIPlaintextEditor::eEditorRightToLeft;
+    mFlags &= ~nsIPlaintextEditor::eEditorLeftToRight;
+    nsresult rv = rootElement->SetAttr(kNameSpaceID_None, nsGkAtoms::dir,
+                                       NS_LITERAL_STRING("rtl"), true);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+    return NS_OK;
   }
+
+  return NS_OK;
 }
 
 bool

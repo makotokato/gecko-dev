@@ -4,8 +4,13 @@
 "use strict";
 
 ChromeUtils.import("resource://gre/modules/Services.jsm");
-Cu.importGlobalProperties(["fetch"]);
+ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
+XPCOMUtils.defineLazyGlobalGetters(this, ["fetch"]);
 const {ASRouterActions: ra} = ChromeUtils.import("resource://activity-stream/common/Actions.jsm", {});
+const {OnboardingMessageProvider} = ChromeUtils.import("resource://activity-stream/lib/OnboardingMessageProvider.jsm", {});
+
+ChromeUtils.defineModuleGetter(this, "ASRouterTargeting",
+  "resource://activity-stream/lib/ASRouterTargeting.jsm");
 
 const INCOMING_MESSAGE_NAME = "ASRouter:child-to-parent";
 const OUTGOING_MESSAGE_NAME = "ASRouter:parent-to-child";
@@ -14,47 +19,6 @@ const SNIPPETS_ENDPOINT_PREF = "browser.newtabpage.activity-stream.asrouter.snip
 // Note: currently a restart is required when this pref is changed, this will be fixed in Bug 1462114
 const SNIPPETS_ENDPOINT = Services.prefs.getStringPref(SNIPPETS_ENDPOINT_PREF,
   "https://activity-stream-icons.services.mozilla.com/v1/messages.json.br");
-const LOCAL_TEST_MESSAGES = [
-  {
-    id: "ONBOARDING_1",
-    template: "onboarding",
-    bundled: 3,
-    content: {
-      title: "Private Browsing",
-      text: "Browse by yourself. Private Browsing with Tracking Protection blocks online trackers that follow you around the web.",
-      icon: "privatebrowsing",
-      button_label: "Try It Now",
-      button_action: "OPEN_PRIVATE_BROWSER_WINDOW",
-      button_action_params: "about:home"
-    }
-  },
-  {
-    id: "ONBOARDING_2",
-    template: "onboarding",
-    bundled: 3,
-    content: {
-      title: "Screenshots",
-      text: "Take, save and share screenshots - without leaving Firefox. Capture a region or an entire page as you browse. Then save to the web for easy access and sharing.",
-      icon: "screenshots",
-      button_label: "Try It Now",
-      button_action: "OPEN_URL",
-      button_action_params: "https://screenshots.firefox.com/#tour"
-    }
-  },
-  {
-    id: "ONBOARDING_3",
-    template: "onboarding",
-    bundled: 3,
-    content: {
-      title: "Add-ons",
-      text: "Add even more features that make Firefox work harder for you. Compare prices, check the weather or express your personality with a custom theme.",
-      icon: "addons",
-      button_label: "Try It Now",
-      button_action: "OPEN_ABOUT_PAGE",
-      button_action_params: "addons"
-    }
-  }
-];
 
 const MessageLoaderUtils = {
   /**
@@ -79,9 +43,16 @@ const MessageLoaderUtils = {
     let remoteMessages = [];
     if (provider.url) {
       try {
-        remoteMessages = (await (await fetch(provider.url)).json())
-          .messages
-          .map(msg => ({...msg, provider_url: provider.url}));
+        const response = await fetch(provider.url);
+        if (
+          // Empty response
+          response.status !== 204 &&
+          (response.ok || response.status === 302)
+        ) {
+          remoteMessages = (await response.json())
+            .messages
+            .map(msg => ({...msg, provider_url: provider.url}));
+        }
       } catch (e) {
         Cu.reportError(e);
       }
@@ -134,17 +105,6 @@ const MessageLoaderUtils = {
 };
 
 this.MessageLoaderUtils = MessageLoaderUtils;
-
-/**
- * getRandomItemFromArray
- *
- * @param {Array} arr An array of items
- * @returns one of the items in the array
- */
-function getRandomItemFromArray(arr) {
-  const index = Math.floor(Math.random() * arr.length);
-  return arr[index];
-}
 
 /**
  * @class _ASRouter - Keeps track of all messages, UI surfaces, and
@@ -271,29 +231,36 @@ class _ASRouter {
     bundledMessages.push({content: originalMessage.content, id: originalMessage.id});
     for (const msg of this.state.messages) {
       if (msg.bundled && msg.template === originalMessage.template && msg.id !== originalMessage.id && !this.state.blockList.includes(msg.id)) {
-        // only copy the content - that's what the UI cares about
+        // Only copy the content - that's what the UI cares about
         bundledMessages.push({content: msg.content, id: msg.id});
       }
+
+      // Stop once we have enough messages to fill a bundle
       if (bundledMessages.length === originalMessage.bundled) {
         break;
       }
     }
+
+    // If we did not find enough messages to fill the bundle, do not send the bundle down
+    if (bundledMessages.length < originalMessage.bundled) {
+      return null;
+    }
+
     return {bundle: bundledMessages, provider: originalMessage.provider, template: originalMessage.template};
   }
 
-  async sendNextMessage(target) {
-    let message;
-    let bundledMessages;
+  _getUnblockedMessages() {
+    let {state} = this;
+    return state.messages.filter(item => !state.blockList.includes(item.id));
+  }
 
-    await this.setState(state => {
-      message = getRandomItemFromArray(state.messages.filter(item => item.id !== state.lastMessageId && !state.blockList.includes(item.id)));
-      return {lastMessageId: message ? message.id : null};
-    });
+  _sendMessageToTarget(message, target) {
+    let bundledMessages;
     // If this message needs to be bundled with other messages of the same template, find them and bundle them together
     if (message && message.bundled) {
       bundledMessages = this._getBundledMessages(message);
     }
-    if (message && !bundledMessages) {
+    if (message && !message.bundled) {
       // If we only need to send 1 message, send the message
       target.sendAsyncMessage(OUTGOING_MESSAGE_NAME, {type: "SET_MESSAGE", data: message});
     } else if (bundledMessages) {
@@ -304,18 +271,19 @@ class _ASRouter {
     }
   }
 
+  async sendNextMessage(target) {
+    const msgs = this._getUnblockedMessages();
+    let message = await ASRouterTargeting.findMatchingMessage(msgs);
+    await this.setState({lastMessageId: message ? message.id : null});
+
+    this._sendMessageToTarget(message, target);
+  }
+
   async setMessageById(id) {
     await this.setState({lastMessageId: id});
     const newMessage = this.getMessageById(id);
-    if (newMessage) {
-      // If this message needs to be bundled with other messages of the same template, find them and bundle them together
-      if (newMessage.bundled) {
-        let bundledMessages = this._getBundledMessages(newMessage);
-        this.messageChannel.sendAsyncMessage(OUTGOING_MESSAGE_NAME, {type: "SET_BUNDLED_MESSAGES", data: bundledMessages});
-      } else {
-        this.messageChannel.sendAsyncMessage(OUTGOING_MESSAGE_NAME, {type: "SET_MESSAGE", data: newMessage});
-      }
-    }
+
+    this._sendMessageToTarget(newMessage, this.messageChannel);
   }
 
   async blockById(idOrIds) {
@@ -351,7 +319,8 @@ class _ASRouter {
         await this.sendNextMessage(target);
         break;
       case ra.OPEN_PRIVATE_BROWSER_WINDOW:
-        this.openLinkIn(action.data.button_action_params, target, {isPrivate: true, where: "window"});
+        // Forcefully open about:privatebrowsing
+        target.browser.ownerGlobal.OpenBrowserWindow({private: true});
         break;
       case ra.OPEN_URL:
         this.openLinkIn(action.data.button_action_params, target, {isPrivate: false, where: "tabshifted"});
@@ -402,7 +371,7 @@ this._ASRouter = _ASRouter;
  */
 this.ASRouter = new _ASRouter({
   providers: [
-    {id: "onboarding", type: "local", messages: LOCAL_TEST_MESSAGES},
+    {id: "onboarding", type: "local", messages: OnboardingMessageProvider.getMessages()},
     {id: "snippets", type: "remote", url: SNIPPETS_ENDPOINT, updateCycleInMs: ONE_HOUR_IN_MS * 4}
   ]
 });

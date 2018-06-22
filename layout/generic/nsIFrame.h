@@ -356,6 +356,10 @@ public:
   bool FirstLetterComplete() const { return mFirstLetterComplete; }
   void SetFirstLetterComplete() { mFirstLetterComplete = true; }
 
+#ifdef DEBUG
+  nsCString ToString() const;
+#endif
+
 private:
   StyleClear mBreakType;
   InlineBreak mInlineBreak;
@@ -1411,6 +1415,7 @@ public:
   bool GetMarginBoxBorderRadii(nscoord aRadii[8]) const;
   bool GetPaddingBoxBorderRadii(nscoord aRadii[8]) const;
   bool GetContentBoxBorderRadii(nscoord aRadii[8]) const;
+  bool GetBoxBorderRadii(nscoord aRadii[8], nsMargin aOffset, bool aIsOutset) const;
   bool GetShapeBoxBorderRadii(nscoord aRadii[8]) const;
 
   /**
@@ -2827,7 +2832,7 @@ public:
   };
   Matrix4x4Flagged GetTransformMatrix(const nsIFrame* aStopAtAncestor,
                                       nsIFrame **aOutAncestor,
-                                      uint32_t aFlags = 0);
+                                      uint32_t aFlags = 0) const;
 
   /**
    * Bit-flags to pass to IsFrameOfType()

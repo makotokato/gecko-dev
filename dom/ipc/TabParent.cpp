@@ -1672,7 +1672,7 @@ TabParent::RecvSyncMessage(const nsString& aMessage,
                            nsTArray<StructuredCloneData>* aRetVal)
 {
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING(
-    "TabParent::RecvSyncMessage", EVENTS, aMessage);
+    "TabParent::RecvSyncMessage", OTHER, aMessage);
 
   StructuredCloneData data;
   ipc::UnpackClonedMessageDataForParent(aData, data);
@@ -1692,7 +1692,7 @@ TabParent::RecvRpcMessage(const nsString& aMessage,
                           nsTArray<StructuredCloneData>* aRetVal)
 {
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING(
-    "TabParent::RecvRpcMessage", EVENTS, aMessage);
+    "TabParent::RecvRpcMessage", OTHER, aMessage);
 
   StructuredCloneData data;
   ipc::UnpackClonedMessageDataForParent(aData, data);
@@ -1711,7 +1711,7 @@ TabParent::RecvAsyncMessage(const nsString& aMessage,
                             const ClonedMessageData& aData)
 {
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING(
-    "TabParent::RecvAsyncMessage", EVENTS, aMessage);
+    "TabParent::RecvAsyncMessage", OTHER, aMessage);
 
   StructuredCloneData data;
   ipc::UnpackClonedMessageDataForParent(aData, data);
@@ -2452,46 +2452,25 @@ TabParent::RecvDefaultProcOfPluginEvent(const WidgetPluginEvent& aEvent)
 }
 
 mozilla::ipc::IPCResult
-TabParent::RecvGetInputContext(IMEState::Enabled* aIMEEnabled,
-                               IMEState::Open* aIMEOpen)
+TabParent::RecvGetInputContext(widget::IMEState* aState)
 {
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget) {
-    *aIMEEnabled = IMEState::DISABLED;
-    *aIMEOpen = IMEState::OPEN_STATE_NOT_SUPPORTED;
+    *aState = widget::IMEState(IMEState::DISABLED,
+                               IMEState::OPEN_STATE_NOT_SUPPORTED);
     return IPC_OK();
   }
 
-  InputContext context = widget->GetInputContext();
-  *aIMEEnabled = context.mIMEState.mEnabled;
-  *aIMEOpen = context.mIMEState.mOpen;
+  *aState = widget->GetInputContext().mIMEState;
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult
 TabParent::RecvSetInputContext(
-  const IMEState::Enabled& aIMEEnabled,
-  const IMEState::Open& aIMEOpen,
-  const nsString& aType,
-  const nsString& aInputmode,
-  const nsString& aActionHint,
-  const bool& aInPrivateBrowsing,
-  const InputContextAction::Cause& aCause,
-  const InputContextAction::FocusChange& aFocusChange)
+  const InputContext& aContext,
+  const InputContextAction& aAction)
 {
-  InputContext context;
-  context.mIMEState.mEnabled = aIMEEnabled;
-  context.mIMEState.mOpen = aIMEOpen;
-  context.mHTMLInputType.Assign(aType);
-  context.mHTMLInputInputmode.Assign(aInputmode);
-  context.mActionHint.Assign(aActionHint);
-  context.mOrigin = InputContext::ORIGIN_CONTENT;
-  context.mInPrivateBrowsing = aInPrivateBrowsing;
-
-  InputContextAction action(aCause, aFocusChange);
-
-  IMEStateManager::SetInputContextForChildProcess(this, context, action);
-
+  IMEStateManager::SetInputContextForChildProcess(this, aContext, aAction);
   return IPC_OK();
 }
 
@@ -3338,7 +3317,7 @@ TabParent::RecvInvokeDragSession(nsTArray<IPCDataTransfer>&& aTransfers,
 
   EventStateManager* esm = shell->GetPresContext()->EventStateManager();
   for (uint32_t i = 0; i < aTransfers.Length(); ++i) {
-    mInitialDataTransferItems.AppendElement(mozilla::Move(aTransfers[i].items()));
+    mInitialDataTransferItems.AppendElement(std::move(aTransfers[i].items()));
   }
   if (Manager()->IsContentParent()) {
     nsCOMPtr<nsIDragService> dragService =

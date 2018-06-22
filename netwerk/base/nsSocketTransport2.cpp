@@ -20,7 +20,7 @@
 #include "nsCOMPtr.h"
 #include "plstr.h"
 #include "prerr.h"
-#include "NetworkActivityMonitor.h"
+#include "IOActivityMonitor.h"
 #include "NSSErrorsService.h"
 #include "mozilla/dom/ToJSValue.h"
 #include "mozilla/net/NeckoChild.h"
@@ -794,6 +794,10 @@ nsSocketTransport::nsSocketTransport()
     , mFirstRetryError(NS_OK)
     , mDoNotRetryToConnect(false)
 {
+    this->mNetAddr.raw.family = 0;
+    this->mNetAddr.inet = {};
+    this->mSelfAddr.raw.family = 0;
+    this->mSelfAddr.inet = {};
     SOCKET_LOG(("creating nsSocketTransport @%p\n", this));
 
     mTimeouts[TIMEOUT_CONNECT]    = UINT16_MAX; // no timeout
@@ -1382,8 +1386,8 @@ nsSocketTransport::InitiateSocket()
         return rv;
     }
 
-    // Attach network activity monitor
-    NetworkActivityMonitor::AttachIOLayer(fd);
+    // create proxy via IOActivityMonitor
+    IOActivityMonitor::MonitorSocket(fd);
 
     PRStatus status;
 

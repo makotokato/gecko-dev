@@ -61,13 +61,14 @@
 #include "vm/ArrayObject-inl.h"
 #include "vm/BooleanObject-inl.h"
 #include "vm/Caches-inl.h"
+#include "vm/Compartment-inl.h"
 #include "vm/Interpreter-inl.h"
 #include "vm/JSAtom-inl.h"
-#include "vm/JSCompartment-inl.h"
 #include "vm/JSContext-inl.h"
 #include "vm/JSFunction-inl.h"
 #include "vm/NativeObject-inl.h"
 #include "vm/NumberObject-inl.h"
+#include "vm/Realm-inl.h"
 #include "vm/Shape-inl.h"
 #include "vm/StringObject-inl.h"
 #include "vm/TypedArrayObject-inl.h"
@@ -2198,7 +2199,7 @@ js::GetObjectFromIncumbentGlobal(JSContext* cx, MutableHandleObject obj)
 static bool
 IsStandardPrototype(JSObject* obj, JSProtoKey key)
 {
-    Value v = obj->global().getPrototype(key);
+    Value v = obj->nonCCWGlobal().getPrototype(key);
     return v.isObject() && obj == &v.toObject();
 }
 
@@ -2240,7 +2241,7 @@ JS::IdentifyStandardConstructor(JSObject* obj)
     if (!obj->is<JSFunction>() || !(obj->as<JSFunction>().flags() & JSFunction::NATIVE_CTOR))
         return JSProto_Null;
 
-    GlobalObject& global = obj->global();
+    GlobalObject& global = obj->as<JSFunction>().global();
     for (size_t k = 0; k < JSProto_LIMIT; ++k) {
         JSProtoKey key = static_cast<JSProtoKey>(k);
         if (global.getConstructor(key) == ObjectValue(*obj))
@@ -2623,33 +2624,6 @@ js::HasOwnDataPropertyPure(JSContext* cx, JSObject* obj, jsid id, bool* result)
     return true;
 }
 
-/* static */ bool
-JSObject::reportReadOnly(JSContext* cx, jsid id, unsigned report)
-{
-    RootedValue val(cx, IdToValue(id));
-    return ReportValueErrorFlags(cx, report, JSMSG_READ_ONLY,
-                                 JSDVG_IGNORE_STACK, val, nullptr,
-                                 nullptr, nullptr);
-}
-
-/* static */ bool
-JSObject::reportNotConfigurable(JSContext* cx, jsid id, unsigned report)
-{
-    RootedValue val(cx, IdToValue(id));
-    return ReportValueErrorFlags(cx, report, JSMSG_CANT_DELETE,
-                                 JSDVG_IGNORE_STACK, val, nullptr,
-                                 nullptr, nullptr);
-}
-
-/* static */ bool
-JSObject::reportNotExtensible(JSContext* cx, HandleObject obj, unsigned report)
-{
-    RootedValue val(cx, ObjectValue(*obj));
-    return ReportValueErrorFlags(cx, report, JSMSG_OBJECT_NOT_EXTENSIBLE,
-                                 JSDVG_IGNORE_STACK, val, nullptr,
-                                 nullptr, nullptr);
-}
-
 bool
 js::GetPrototypeIfOrdinary(JSContext* cx, HandleObject obj, bool* isOrdinary,
                            MutableHandleObject protop)
@@ -2829,13 +2803,17 @@ js::DefineProperty(JSContext* cx, HandleObject obj, HandleId id, Handle<Property
 
 bool
 js::DefineAccessorProperty(JSContext* cx, HandleObject obj, HandleId id,
-                           JSGetterOp getter, JSSetterOp setter, unsigned attrs,
+                           HandleObject getter, HandleObject setter, unsigned attrs,
                            ObjectOpResult& result)
 {
-    MOZ_ASSERT(!(attrs & JSPROP_PROPOP_ACCESSORS));
-
     Rooted<PropertyDescriptor> desc(cx);
-    desc.initFields(nullptr, UndefinedHandleValue, attrs, getter, setter);
+
+    {
+        GetterOp getterOp = JS_DATA_TO_FUNC_PTR(GetterOp, getter.get());
+        SetterOp setterOp = JS_DATA_TO_FUNC_PTR(SetterOp, setter.get());
+        desc.initFields(nullptr, UndefinedHandleValue, attrs, getterOp, setterOp);
+    }
+
     if (DefinePropertyOp op = obj->getOpsDefineProperty()) {
         MOZ_ASSERT(!cx->helperThread());
         return op(cx, obj, id, desc, result);
@@ -2857,31 +2835,11 @@ js::DefineDataProperty(JSContext* cx, HandleObject obj, HandleId id, HandleValue
 }
 
 bool
-js::DefineAccessorProperty(JSContext* cx, HandleObject obj, PropertyName* name,
-                           JSGetterOp getter, JSSetterOp setter, unsigned attrs,
-                           ObjectOpResult& result)
-{
-    RootedId id(cx, NameToId(name));
-    return DefineAccessorProperty(cx, obj, id, getter, setter, attrs, result);
-}
-
-bool
 js::DefineDataProperty(JSContext* cx, HandleObject obj, PropertyName* name, HandleValue value,
                        unsigned attrs, ObjectOpResult& result)
 {
     RootedId id(cx, NameToId(name));
     return DefineDataProperty(cx, obj, id, value, attrs, result);
-}
-
-bool
-js::DefineAccessorElement(JSContext* cx, HandleObject obj, uint32_t index,
-                          JSGetterOp getter, JSSetterOp setter, unsigned attrs,
-                          ObjectOpResult& result)
-{
-    RootedId id(cx);
-    if (!IndexToId(cx, index, &id))
-        return false;
-    return DefineAccessorProperty(cx, obj, id, getter, setter, attrs, result);
 }
 
 bool
@@ -2896,7 +2854,7 @@ js::DefineDataElement(JSContext* cx, HandleObject obj, uint32_t index, HandleVal
 
 bool
 js::DefineAccessorProperty(JSContext* cx, HandleObject obj, HandleId id,
-                           JSGetterOp getter, JSSetterOp setter, unsigned attrs)
+                           HandleObject getter, HandleObject setter, unsigned attrs)
 {
     ObjectOpResult result;
     if (!DefineAccessorProperty(cx, obj, id, getter, setter, attrs, result))
@@ -2925,29 +2883,11 @@ js::DefineDataProperty(JSContext* cx, HandleObject obj, HandleId id, HandleValue
 }
 
 bool
-js::DefineAccessorProperty(JSContext* cx, HandleObject obj, PropertyName* name,
-                           JSGetterOp getter, JSSetterOp setter, unsigned attrs)
-{
-    RootedId id(cx, NameToId(name));
-    return DefineAccessorProperty(cx, obj, id, getter, setter, attrs);
-}
-
-bool
 js::DefineDataProperty(JSContext* cx, HandleObject obj, PropertyName* name, HandleValue value,
                        unsigned attrs)
 {
     RootedId id(cx, NameToId(name));
     return DefineDataProperty(cx, obj, id, value, attrs);
-}
-
-bool
-js::DefineAccessorElement(JSContext* cx, HandleObject obj, uint32_t index,
-                          JSGetterOp getter, JSSetterOp setter, unsigned attrs)
-{
-    RootedId id(cx);
-    if (!IndexToId(cx, index, &id))
-        return false;
-    return DefineAccessorProperty(cx, obj, id, getter, setter, attrs);
 }
 
 bool
@@ -3018,11 +2958,6 @@ DefineFunctionFromSpec(JSContext* cx, HandleObject obj, const JSFunctionSpec* fs
     if (!PropertySpecNameToId(cx, fs->name, &id))
         return false;
 
-    if (StandardProtoKeyOrNull(obj) == JSProto_Array && id == NameToId(cx->names().values)) {
-        if (!cx->options().arrayProtoValues())
-            return true;
-    }
-
     JSFunction* fun = NewFunctionFromSpec(cx, fs, id);
     if (!fun)
         return false;
@@ -3085,10 +3020,10 @@ ReportCantConvert(JSContext* cx, unsigned errorNumber, HandleObject obj, JSType 
     }
 
     RootedValue val(cx, ObjectValue(*obj));
-    ReportValueError2(cx, errorNumber, JSDVG_SEARCH_STACK, val, str,
-                      hint == JSTYPE_UNDEFINED
-                      ? "primitive type"
-                      : hint == JSTYPE_STRING ? "string" : "number");
+    ReportValueError(cx, errorNumber, JSDVG_SEARCH_STACK, val, str,
+                     hint == JSTYPE_UNDEFINED
+                     ? "primitive type"
+                     : hint == JSTYPE_STRING ? "string" : "number");
     return false;
 }
 
@@ -3272,7 +3207,7 @@ js::PrimitiveToObject(JSContext* cx, const Value& v)
 
 /*
  * Invokes the ES5 ToObject algorithm on vp, returning the result. If vp might
- * already be an object, use ToObject. reportCantConvert controls how null and
+ * already be an object, use ToObject. reportScanStack controls how null and
  * undefined errors are reported.
  *
  * Callers must handle the already-object case.
@@ -3285,7 +3220,7 @@ js::ToObjectSlow(JSContext* cx, JS::HandleValue val, bool reportScanStack)
 
     if (val.isNullOrUndefined()) {
         if (reportScanStack) {
-            ReportIsNullOrUndefined(cx, JSDVG_SEARCH_STACK, val, nullptr);
+            ReportIsNullOrUndefined(cx, JSDVG_SEARCH_STACK, val);
         } else {
             JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_CANT_CONVERT_TO,
                                       val.isNull() ? "null" : "undefined", "object");
@@ -3558,9 +3493,14 @@ void
 JSObject::dump(js::GenericPrinter& out) const
 {
     const JSObject* obj = this;
-    JSObject* globalObj = &global();
     out.printf("object %p\n", obj);
-    out.printf("  global %p [%s]\n", globalObj, globalObj->getClass()->name);
+
+    if (IsCrossCompartmentWrapper(this)) {
+        out.printf("  compartment %p\n", compartment());
+    } else {
+        JSObject* globalObj = &nonCCWGlobal();
+        out.printf("  global %p [%s]\n", globalObj, globalObj->getClass()->name);
+    }
 
     const Class* clasp = obj->getClass();
     out.printf("  class %p %s\n", clasp, clasp->name);
@@ -4137,6 +4077,10 @@ js::Unbox(JSContext* cx, HandleObject obj, MutableHandleValue vp)
         vp.set(obj->as<DateObject>().UTCTime());
     else if (obj->is<SymbolObject>())
         vp.setSymbol(obj->as<SymbolObject>().unbox());
+#ifdef ENABLE_BIGINT
+    else if (obj->is<BigIntObject>())
+        vp.setBigInt(obj->as<BigIntObject>().unbox());
+#endif
     else
         vp.setUndefined();
 

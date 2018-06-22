@@ -51,23 +51,6 @@ SVGDocument::InsertChildBefore(nsIContent* aKid, nsIContent* aBeforeThis,
 }
 
 nsresult
-SVGDocument::InsertChildAt_Deprecated(nsIContent* aKid, uint32_t aIndex,
-                                      bool aNotify)
-{
-  if (aKid->IsElement() && !aKid->IsSVGElement()) {
-    // We can get here when well formed XML with a non-SVG root element is
-    // served with the SVG MIME type, for example. In that case we need to load
-    // the non-SVG UA sheets or else we can get bugs like bug 1016145.  Note
-    // that we have to do this _before_ the
-    // XMLDocument::InsertChildAt_Deprecated call, since that can try to
-    // construct frames, and we need to have the sheets loaded by then.
-    EnsureNonSVGUserAgentStyleSheetsLoaded();
-  }
-
-  return XMLDocument::InsertChildAt_Deprecated(aKid, aIndex, aNotify);
-}
-
-nsresult
 SVGDocument::Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
                    bool aPreallocateChildren) const
 {
@@ -108,11 +91,16 @@ SVGDocument::EnsureNonSVGUserAgentStyleSheetsLoaded()
     // pulls in from the category manager. That keeps memory use of
     // SVG-as-an-image down.
     //
-    // We do this before adding UASheet() etc. below because
-    // EnsureOnDemandBuiltInUASheet prepends, and B2G/Fennec's
-    // content.css must come after UASheet() etc.
+    // We do this before adding the other sheets below because
+    // EnsureOnDemandBuiltInUASheet prepends, and B2G/Fennec's/GeckoView's
+    // content.css must come after those UASheet() etc.
+    //
+    // FIXME(emilio, bug 1468133): We may already have loaded some of the other
+    // on-demand built-in UA sheets, including svg.css, so this looks somewhat
+    // bogus... Also, this should probably just use the stylesheet service which
+    // also has the right sheets cached and parsed here...
     nsCOMPtr<nsICategoryManager> catMan =
-    do_GetService(NS_CATEGORYMANAGER_CONTRACTID);
+      do_GetService(NS_CATEGORYMANAGER_CONTRACTID);
     if (catMan) {
       nsCOMPtr<nsISimpleEnumerator> sheets;
       catMan->EnumerateCategory("agent-style-sheets", getter_AddRefs(sheets));

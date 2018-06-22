@@ -37,10 +37,10 @@
 #include "vm/RegExpStatics.h"
 #include "vm/RegExpStaticsObject.h"
 
-#include "vm/JSCompartment-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
+#include "vm/Realm-inl.h"
 
 using namespace js;
 
@@ -504,7 +504,7 @@ GlobalObject::new_(JSContext* cx, const Class* clasp, JSPrincipals* principals,
                    const JS::RealmOptions& options)
 {
     MOZ_ASSERT(!cx->isExceptionPending());
-    MOZ_ASSERT_IF(cx->realm(), !cx->realm()->isAtomsRealm());
+    MOZ_ASSERT_IF(cx->zone(), !cx->zone()->isAtomsZone());
 
     Realm* realm = NewRealm(cx, principals, options);
     if (!realm)

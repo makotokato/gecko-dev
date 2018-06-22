@@ -396,7 +396,8 @@ LoadInfo::LoadInfo(const LoadInfo& rhs)
   , mForcePreflight(rhs.mForcePreflight)
   , mIsPreflight(rhs.mIsPreflight)
   , mLoadTriggeredFromExternal(rhs.mLoadTriggeredFromExternal)
-  , mServiceWorkerTaintingSynthesized(rhs.mServiceWorkerTaintingSynthesized)
+  // mServiceWorkerTaintingSynthesized must be handled specially during redirect
+  , mServiceWorkerTaintingSynthesized(false)
 {
 }
 
@@ -471,7 +472,7 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
   , mIsThirdPartyContext(aIsThirdPartyContext)
   , mIsDocshellReload(aIsDocshellReload)
   , mOriginAttributes(aOriginAttributes)
-  , mAncestorPrincipals(Move(aAncestorPrincipals))
+  , mAncestorPrincipals(std::move(aAncestorPrincipals))
   , mAncestorOuterWindowIDs(aAncestorOuterWindowIDs)
   , mCorsUnsafeHeaders(aCorsUnsafeHeaders)
   , mForcePreflight(aForcePreflight)
@@ -642,7 +643,7 @@ LoadInfo::LoadingNode()
   return node;
 }
 
-nsISupports*
+already_AddRefed<nsISupports>
 LoadInfo::ContextForTopLevelLoad()
 {
   // Most likely you want to query LoadingNode() instead of
@@ -650,7 +651,7 @@ LoadInfo::ContextForTopLevelLoad()
   MOZ_ASSERT(mInternalContentPolicyType == nsIContentPolicy::TYPE_DOCUMENT,
             "should only query this context for top level document loads");
   nsCOMPtr<nsISupports> context = do_QueryReferent(mContextForTopLevelLoad);
-  return context;
+  return context.forget();
 }
 
 already_AddRefed<nsISupports>
@@ -1298,7 +1299,7 @@ void
 LoadInfo::GiveReservedClientSource(UniquePtr<ClientSource>&& aClientSource)
 {
   MOZ_DIAGNOSTIC_ASSERT(aClientSource);
-  mReservedClientSource = Move(aClientSource);
+  mReservedClientSource = std::move(aClientSource);
   SetReservedClientInfo(mReservedClientSource->Info());
 }
 
@@ -1310,13 +1311,18 @@ LoadInfo::TakeReservedClientSource()
     // then clear that info object when the ClientSource is taken.
     mReservedClientInfo.reset();
   }
-  return Move(mReservedClientSource);
+  return std::move(mReservedClientSource);
 }
 
 void
 LoadInfo::SetReservedClientInfo(const ClientInfo& aClientInfo)
 {
   MOZ_DIAGNOSTIC_ASSERT(mInitialClientInfo.isNothing());
+  // Treat assignments of the same value as a no-op.  The emplace below
+  // will normally assert when overwriting an existing value.
+  if (mReservedClientInfo.isSome() && mReservedClientInfo.ref() == aClientInfo) {
+    return;
+  }
   mReservedClientInfo.emplace(aClientInfo);
 }
 
@@ -1331,6 +1337,11 @@ LoadInfo::SetInitialClientInfo(const ClientInfo& aClientInfo)
 {
   MOZ_DIAGNOSTIC_ASSERT(!mReservedClientSource);
   MOZ_DIAGNOSTIC_ASSERT(mReservedClientInfo.isNothing());
+  // Treat assignments of the same value as a no-op.  The emplace below
+  // will normally assert when overwriting an existing value.
+  if (mInitialClientInfo.isSome() && mInitialClientInfo.ref() == aClientInfo) {
+    return;
+  }
   mInitialClientInfo.emplace(aClientInfo);
 }
 

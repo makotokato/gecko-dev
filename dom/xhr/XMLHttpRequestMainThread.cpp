@@ -13,7 +13,6 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/dom/BlobBinding.h"
-#include "mozilla/dom/BlobSet.h"
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/DOMString.h"
 #include "mozilla/dom/File.h"
@@ -2441,7 +2440,7 @@ XMLHttpRequestMainThread::InitiateFetch(already_AddRefed<nsIInputStream> aUpload
                                         nsACString& aUploadContentType)
 {
   nsresult rv;
-  nsCOMPtr<nsIInputStream> uploadStream = Move(aUploadStream);
+  nsCOMPtr<nsIInputStream> uploadStream = std::move(aUploadStream);
 
   // nsIRequest::LOAD_BACKGROUND prevents throbber from becoming active, which
   // in turn keeps STOP button from becoming active.  If the consumer passed in
@@ -3053,10 +3052,10 @@ XMLHttpRequestMainThread::DispatchToMainThread(already_AddRefed<nsIRunnable> aRu
     nsCOMPtr<nsIEventTarget> target = global->EventTargetFor(TaskCategory::Other);
     MOZ_ASSERT(target);
 
-    return target->Dispatch(Move(aRunnable), NS_DISPATCH_NORMAL);
+    return target->Dispatch(std::move(aRunnable), NS_DISPATCH_NORMAL);
   }
 
-  return NS_DispatchToMainThread(Move(aRunnable));
+  return NS_DispatchToMainThread(std::move(aRunnable));
 }
 
 void

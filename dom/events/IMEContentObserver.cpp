@@ -198,6 +198,7 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(IMEContentObserver)
 IMEContentObserver::IMEContentObserver()
   : mESM(nullptr)
   , mIMENotificationRequests(nullptr)
+  , mPreAttrChangeLength(0)
   , mSuppressNotifications(0)
   , mPreCharacterDataChangeLength(-1)
   , mSendingNotification(NOTIFY_IME_OF_NOTHING)
@@ -1643,7 +1644,7 @@ IMEContentObserver::IsSafeToNotifyIME() const
   }
 
   // If we're in handling an edit action, this method will be called later.
-  if (mEditorBase && mEditorBase->IsInEditAction()) {
+  if (mEditorBase && mEditorBase->IsInEditSubAction()) {
     return false;
   }
 

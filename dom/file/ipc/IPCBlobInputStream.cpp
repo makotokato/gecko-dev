@@ -127,6 +127,7 @@ NS_INTERFACE_MAP_BEGIN(IPCBlobInputStream)
   NS_INTERFACE_MAP_ENTRY(nsIAsyncFileMetadata)
   NS_INTERFACE_MAP_ENTRY(nsIInputStreamLength)
   NS_INTERFACE_MAP_ENTRY(nsIAsyncInputStreamLength)
+  NS_INTERFACE_MAP_ENTRY(nsIIPCBlobInputStream)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIInputStream)
 NS_INTERFACE_MAP_END
 
@@ -467,7 +468,7 @@ IPCBlobInputStream::AsyncWait(nsIInputStreamCallback* aCallback,
 void
 IPCBlobInputStream::StreamReady(already_AddRefed<nsIInputStream> aInputStream)
 {
-  nsCOMPtr<nsIInputStream> inputStream = Move(aInputStream);
+  nsCOMPtr<nsIInputStream> inputStream = std::move(aInputStream);
 
   // If inputStream is null, it means that the serialization went wrong or the
   // stream is not available anymore. We keep the state as pending just to block

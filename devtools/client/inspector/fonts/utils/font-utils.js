@@ -40,4 +40,47 @@ module.exports = {
     const match = value.match(/\D+?$/);
     return match && match.length ? match[0] : null;
   },
+
+  /**
+   * Parse the string value of CSS font-variation-settings into an object with
+   * axis tag names and corresponding values. If the string is a keyword or does not
+   * contain axes, return an empty object.
+   *
+   * @param {String} string
+   *        Value of font-variation-settings property coming from node's computed style.
+   *        Its contents are expected to be stable having been already parsed by the
+   *        browser.
+   * @return {Object}
+   */
+  parseFontVariationAxes(string) {
+    let axes = {};
+    const keywords = ["initial", "normal", "inherit", "unset"];
+
+    if (!string || keywords.includes(string.trim())) {
+      return axes;
+    }
+
+    // Parse font-variation-settings CSS declaration into an object
+    // with axis tags as keys and axis values as values.
+    axes = string
+      .split(",")
+      .reduce((acc, pair) => {
+        // Tags are always in quotes. Split by quote and filter excessive whitespace.
+        pair = pair.split(/["']/).filter(part => part.trim() !== "");
+        // Guard against malformed input that may have slipped through.
+        if (pair.length === 0) {
+          return acc;
+        }
+
+        const tag = pair[0];
+        const value = pair[1].trim();
+        // Axis tags shorter or longer than 4 characters are invalid. Whitespace is valid.
+        if (tag.length === 4) {
+          acc[tag] = value;
+        }
+        return acc;
+      }, {});
+
+    return axes;
+  }
 };

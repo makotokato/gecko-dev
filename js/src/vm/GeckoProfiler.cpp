@@ -152,7 +152,7 @@ GeckoProfilerRuntime::enable(bool enabled)
     // WebAssembly code does not need to be released, but profiling string
     // labels have to be generated so that they are available during async
     // profiling stack iteration.
-    for (RealmsIter r(rt, SkipAtoms); !r.done(); r.next())
+    for (RealmsIter r(rt); !r.done(); r.next())
         r->wasm.ensureProfilingLabels(enabled);
 }
 
@@ -167,7 +167,7 @@ GeckoProfilerRuntime::profileString(JSScript* script, JSFunction* maybeFun)
 
     if (!s) {
         auto str = allocProfileString(script, maybeFun);
-        if (!str || !locked->add(s, script, mozilla::Move(str)))
+        if (!str || !locked->add(s, script, std::move(str)))
             return nullptr;
     }
 

@@ -81,8 +81,6 @@
 #include "nsIDocShellTreeOwner.h"
 #include "nsIDocument.h"
 #include "nsIDocumentLoaderFactory.h"
-#include "nsIDOMDocument.h"
-#include "nsIDOMNode.h"
 #include "nsIDOMStorage.h"
 #include "nsIDOMWindow.h"
 #include "nsIEditingSession.h"
@@ -227,6 +225,7 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
+using namespace mozilla::net;
 
 // Threshold value in ms for META refresh based redirects
 #define REFRESH_REDIRECT_TIMER 15000
@@ -388,6 +387,9 @@ nsDocShell::nsDocShell()
   , mHasLoadedNonBlankURI(false)
   , mBlankTiming(false)
 {
+  mHistoryID.m0 = 0;
+  mHistoryID.m1 = 0;
+  mHistoryID.m2 = 0;
   AssertOriginAttributesMatchPrivateBrowsing();
 
   nsContentUtils::GenerateUUIDInPlace(mHistoryID);
@@ -552,12 +554,6 @@ nsDocShell::GetInterface(const nsIID& aIID, void** aSink)
               aIID.Equals(NS_GET_IID(nsIDOMWindow))) &&
              NS_SUCCEEDED(EnsureScriptEnvironment())) {
     return mScriptGlobal->QueryInterface(aIID, aSink);
-  } else if (aIID.Equals(NS_GET_IID(nsIDOMDocument)) &&
-             NS_SUCCEEDED(EnsureContentViewer())) {
-    nsCOMPtr<nsIDOMDocument> doc =
-      do_QueryInterface(mContentViewer->GetDocument());
-    doc.forget(aSink);
-    return *aSink ? NS_OK : NS_NOINTERFACE;
   } else if (aIID.Equals(NS_GET_IID(nsIDocument)) &&
              NS_SUCCEEDED(EnsureContentViewer())) {
     nsCOMPtr<nsIDocument> doc = mContentViewer->GetDocument();
@@ -691,7 +687,7 @@ nsDocShell::LoadURI(nsIURI* aURI,
   bool inheritPrincipal = false;
   bool principalIsExplicit = false;
   bool sendReferrer = true;
-  uint32_t referrerPolicy = mozilla::net::RP_Unset;
+  uint32_t referrerPolicy = RP_Unset;
   bool isSrcdoc = false;
   nsCOMPtr<nsISHEntry> shEntry;
   nsString target;
@@ -1029,72 +1025,6 @@ nsDocShell::LoadURI(nsIURI* aURI,
                       baseURI,
                       nullptr,  // No nsIDocShell
                       nullptr); // No nsIRequest
-}
-
-NS_IMETHODIMP
-nsDocShell::LoadStream(nsIInputStream* aStream, nsIURI* aURI,
-                       const nsACString& aContentType,
-                       const nsACString& aContentCharset,
-                       nsIDocShellLoadInfo* aLoadInfo)
-{
-  NS_ENSURE_ARG(aStream);
-
-  mAllowKeywordFixup = false;
-
-  // if the caller doesn't pass in a URI we need to create a dummy URI. necko
-  // currently requires a URI in various places during the load. Some consumers
-  // do as well.
-  nsCOMPtr<nsIURI> uri = aURI;
-  if (!uri) {
-    // HACK ALERT
-    nsresult rv = NS_OK;
-    // Make sure that the URI spec "looks" like a protocol and path...
-    // For now, just use a bogus protocol called "internal"
-    rv = NS_MutateURI(NS_SIMPLEURIMUTATOR_CONTRACTID)
-           .SetSpec(NS_LITERAL_CSTRING("internal:load-stream"))
-           .Finalize(uri);
-    if (NS_FAILED(rv)) {
-      return rv;
-    }
-  }
-
-  uint32_t loadType = LOAD_NORMAL;
-  nsCOMPtr<nsIPrincipal> triggeringPrincipal;
-  if (aLoadInfo) {
-    nsDocShellInfoLoadType lt = nsIDocShellLoadInfo::loadNormal;
-    (void)aLoadInfo->GetLoadType(&lt);
-    // Get the appropriate LoadType from nsIDocShellLoadInfo type
-    loadType = ConvertDocShellInfoLoadTypeToLoadType(lt);
-    aLoadInfo->GetTriggeringPrincipal(getter_AddRefs(triggeringPrincipal));
-  }
-
-  NS_ENSURE_SUCCESS(Stop(nsIWebNavigation::STOP_NETWORK), NS_ERROR_FAILURE);
-
-  mLoadType = loadType;
-
-  if (!triggeringPrincipal) {
-    triggeringPrincipal = nsContentUtils::GetSystemPrincipal();
-  }
-
-  // build up a channel for this stream.
-  nsCOMPtr<nsIChannel> channel;
-  nsCOMPtr<nsIInputStream> stream = aStream;
-  nsresult rv = NS_NewInputStreamChannel(getter_AddRefs(channel),
-                                         uri,
-                                         stream.forget(),
-                                         triggeringPrincipal,
-                                         nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
-                                         nsIContentPolicy::TYPE_OTHER,
-                                         aContentType,
-                                         aContentCharset);
-  NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
-
-  nsCOMPtr<nsIURILoader> uriLoader(do_GetService(NS_URI_LOADER_CONTRACTID));
-  NS_ENSURE_TRUE(uriLoader, NS_ERROR_FAILURE);
-
-  NS_ENSURE_SUCCESS(DoChannelLoad(channel, uriLoader, false),
-                    NS_ERROR_FAILURE);
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -2872,7 +2802,7 @@ nsDocShell::GetInitialClientInfo() const
   if (mInitialClientSource) {
     Maybe<ClientInfo> result;
     result.emplace(mInitialClientSource->Info());
-    return Move(result);
+    return result;
   }
 
   nsGlobalWindowInner* innerWindow =
@@ -4231,7 +4161,7 @@ nsDocShell::LoadURI(const char16_t* aURI,
                     nsIPrincipal* aTriggeringPrincipal)
 {
   return LoadURIWithOptions(aURI, aLoadFlags, aReferringURI,
-                            mozilla::net::RP_Unset, aPostStream,
+                            RP_Unset, aPostStream,
                             aHeaderStream, nullptr, aTriggeringPrincipal);
 }
 
@@ -4927,8 +4857,7 @@ nsDocShell::LoadErrorPage(nsIURI* aURI, const char16_t* aURL,
   nsresult rv = NS_NewURI(getter_AddRefs(errorPageURI), errorPageUrl);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  return InternalLoad(errorPageURI, nullptr, Nothing(), false, nullptr,
-                      mozilla::net::RP_Unset,
+  return InternalLoad(errorPageURI, nullptr, Nothing(), false, nullptr, RP_Unset,
                       nsContentUtils::GetSystemPrincipal(), nullptr,
                       INTERNAL_LOAD_FLAGS_NONE, EmptyString(),
                       nullptr, VoidString(), nullptr, nullptr,
@@ -5019,7 +4948,7 @@ nsDocShell::Reload(uint32_t aReloadFlags)
 
     // Reload always rewrites result principal URI.
     Maybe<nsCOMPtr<nsIURI>> emplacedResultPrincipalURI;
-    emplacedResultPrincipalURI.emplace(Move(resultPrincipalURI));
+    emplacedResultPrincipalURI.emplace(std::move(resultPrincipalURI));
     rv = InternalLoad(currentURI,
                       originalURI,
                       emplacedResultPrincipalURI,
@@ -7480,8 +7409,7 @@ nsDocShell::EndPageLoad(nsIWebProgress* aProgress,
     // If we have a host
     nsCOMPtr<nsILoadInfo> loadInfo = aChannel->GetLoadInfo();
     if (loadInfo) {
-      mozilla::net::PredictorLearnRedirect(url, aChannel,
-                                           loadInfo->GetOriginAttributes());
+      PredictorLearnRedirect(url, aChannel, loadInfo->GetOriginAttributes());
     }
   }
 
@@ -10210,10 +10138,10 @@ nsDocShell::InternalLoad(nsIURI* aURI,
   OriginAttributes attrs = GetOriginAttributes();
   attrs.SetFirstPartyDomain(isTopLevelDoc, aURI);
 
-  net::PredictorLearn(aURI, nullptr,
-                      nsINetworkPredictor::LEARN_LOAD_TOPLEVEL, attrs);
-  net::PredictorPredict(aURI, nullptr,
-                        nsINetworkPredictor::PREDICT_LOAD, attrs, nullptr);
+  PredictorLearn(aURI, nullptr,
+                 nsINetworkPredictor::LEARN_LOAD_TOPLEVEL, attrs);
+  PredictorPredict(aURI, nullptr,
+                   nsINetworkPredictor::PREDICT_LOAD, attrs, nullptr);
 
   nsCOMPtr<nsIRequest> req;
   rv = DoURILoad(aURI, aOriginalURI, aResultPrincipalURI, aLoadReplace,
@@ -10650,7 +10578,7 @@ nsDocShell::DoURILoad(nsIURI* aURI,
                                        getter_AddRefs(resultPrincipal));
       NS_ENSURE_SUCCESS(rv, rv);
       if (IsConsideredSameOriginForUIR(aTriggeringPrincipal, resultPrincipal)) {
-        static_cast<mozilla::LoadInfo*>(loadInfo.get())->SetUpgradeInsecureRequests();
+        static_cast<LoadInfo*>(loadInfo.get())->SetUpgradeInsecureRequests();
       }
     }
   }
@@ -11105,7 +11033,7 @@ nsDocShell::DoChannelLoad(nsIChannel* aChannel,
   // create the reserved ClientSource if necessary.
   Maybe<ClientInfo> noReservedClient;
   rv = AddClientChannelHelper(aChannel,
-                              Move(noReservedClient),
+                              std::move(noReservedClient),
                               GetInitialClientInfo(),
                               win->EventTargetFor(TaskCategory::Other));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -11981,7 +11909,7 @@ nsDocShell::AddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel,
   nsCOMPtr<nsIURI> resultPrincipalURI;
   bool loadReplace = false;
   nsCOMPtr<nsIURI> referrerURI;
-  uint32_t referrerPolicy = mozilla::net::RP_Unset;
+  uint32_t referrerPolicy = RP_Unset;
   uint32_t cacheKey = 0;
   nsCOMPtr<nsIPrincipal> triggeringPrincipal = aTriggeringPrincipal;
   nsCOMPtr<nsIPrincipal> principalToInherit = aPrincipalToInherit;
@@ -12278,7 +12206,7 @@ nsDocShell::LoadHistoryEntry(nsISHEntry* aEntry, uint32_t aLoadType)
   // the source browsing context that was used when the history entry was
   // first created. bug 947716 has been created to address this issue.
   Maybe<nsCOMPtr<nsIURI>> emplacedResultPrincipalURI;
-  emplacedResultPrincipalURI.emplace(Move(resultPrincipalURI));
+  emplacedResultPrincipalURI.emplace(std::move(resultPrincipalURI));
   rv = InternalLoad(uri,
                     originalURI,
                     emplacedResultPrincipalURI,
@@ -12617,6 +12545,9 @@ nsDocShell::AddURIVisit(nsIURI* aURI,
 
     if (aResponseStatus >= 300 && aResponseStatus < 400) {
       visitURIFlags |= IHistory::REDIRECT_SOURCE;
+      if (aResponseStatus == 301 || aResponseStatus == 308) {
+        visitURIFlags |= IHistory::REDIRECT_SOURCE_PERMANENT;
+      }
     }
     // Errors 400-501 and 505 are considered unrecoverable, in the sense a
     // simple retry attempt by the user is unlikely to solve them.
@@ -13389,10 +13320,9 @@ nsDocShell::OnLinkClick(nsIContent* aContent,
   nsCOMPtr<nsIWebBrowserChrome3> browserChrome3 = do_GetInterface(mTreeOwner);
   bool noOpenerImplied = false;
   if (browserChrome3) {
-    nsCOMPtr<nsIDOMNode> linkNode = do_QueryInterface(aContent);
     nsAutoString oldTarget(aTargetSpec);
     rv = browserChrome3->OnBeforeLinkTraversal(oldTarget, aURI,
-                                               linkNode, mIsAppTab, target);
+                                               aContent, mIsAppTab, target);
     if (!oldTarget.Equals(target)) {
       noOpenerImplied = true;
     }
@@ -13523,8 +13453,9 @@ nsDocShell::OnLinkClickSync(nsIContent* aContent,
   // if per element referrer is enabled, the element referrer overrules
   // the document wide referrer
   if (IsElementAnchorOrArea(aContent)) {
-    net::ReferrerPolicy refPolEnum = aContent->AsElement()->GetReferrerPolicyAsEnum();
-    if (refPolEnum != net::RP_Unset) {
+    net::ReferrerPolicy refPolEnum =
+      aContent->AsElement()->GetReferrerPolicyAsEnum();
+    if (refPolEnum != RP_Unset) {
       refererPolicy = refPolEnum;
     }
   }
@@ -13545,15 +13476,6 @@ nsDocShell::OnLinkClickSync(nsIContent* aContent,
     CopyUTF8toUTF16(type, typeHint);
   }
 
-  // Clone the URI now, in case a content policy or something messes
-  // with it under InternalLoad; we do _not_ want to change the URI
-  // our caller passed in.
-  nsCOMPtr<nsIURI> clonedURI;
-  aURI->Clone(getter_AddRefs(clonedURI));
-  if (!clonedURI) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
   // if the triggeringPrincipal is not passed explicitly, then we
   // fall back to using doc->NodePrincipal() as the triggeringPrincipal.
   nsCOMPtr<nsIPrincipal> triggeringPrincipal =
@@ -13570,7 +13492,7 @@ nsDocShell::OnLinkClickSync(nsIContent* aContent,
     flags |= INTERNAL_LOAD_FLAGS_IS_USER_TRIGGERED;
   }
 
-  nsresult rv = InternalLoad(clonedURI,                 // New URI
+  nsresult rv = InternalLoad(aURI,                      // New URI
                              nullptr,                   // Original URI
                              Nothing(),                 // Let the protocol handler assign it
                              false,                     // LoadReplace
@@ -13624,10 +13546,10 @@ nsDocShell::OnOverLink(nsIContent* aContent,
 
   NS_ConvertUTF8toUTF16 uStr(spec);
 
-  mozilla::net::PredictorPredict(aURI, mCurrentURI,
-                                 nsINetworkPredictor::PREDICT_LINK,
-                                 aContent->NodePrincipal()->OriginAttributesRef(),
-                                 nullptr);
+  PredictorPredict(aURI, mCurrentURI,
+                   nsINetworkPredictor::PREDICT_LINK,
+                   aContent->NodePrincipal()->OriginAttributesRef(),
+                   nullptr);
 
   if (browserChrome2) {
     rv = browserChrome2->SetStatusWithContext(nsIWebBrowserChrome::STATUS_LINK,
@@ -14073,10 +13995,10 @@ nsDocShell::NotifyJSRunToCompletionStart(const char* aReason,
   if (mJSRunToCompletionDepth == 0) {
     RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
     if (timelines && timelines->HasConsumer(this)) {
-      timelines->AddMarkerForDocShell(this, Move(
+      timelines->AddMarkerForDocShell(this,
         mozilla::MakeUnique<JavascriptTimelineMarker>(
           aReason, aFunctionName, aFilename, aLineNumber, MarkerTracingType::START,
-          aAsyncStack, aAsyncCause)));
+          aAsyncStack, aAsyncCause));
     }
   }
 
@@ -14161,7 +14083,7 @@ nsDocShell::InFrameSwap()
 UniquePtr<ClientSource>
 nsDocShell::TakeInitialClientSource()
 {
-  return Move(mInitialClientSource);
+  return std::move(mInitialClientSource);
 }
 
 NS_IMETHODIMP

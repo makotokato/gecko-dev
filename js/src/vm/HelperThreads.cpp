@@ -26,11 +26,11 @@
 #include "wasm/WasmGenerator.h"
 
 #include "gc/PrivateIterators-inl.h"
-#include "vm/JSCompartment-inl.h"
 #include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
+#include "vm/Realm-inl.h"
 
 using namespace js;
 
@@ -97,6 +97,14 @@ js::SetFakeCPUCount(size_t count)
 
     HelperThreadState().cpuCount = count;
     HelperThreadState().threadCount = ThreadCountForCPUCount(count);
+}
+
+void
+JS::SetProfilingThreadCallbacks(JS::RegisterThreadCallback registerThread,
+                                JS::UnregisterThreadCallback unregisterThread)
+{
+    HelperThreadState().registerThread = registerThread;
+    HelperThreadState().unregisterThread = unregisterThread;
 }
 
 bool
@@ -182,6 +190,10 @@ js::StartOffThreadIonCompile(jit::IonBuilder* builder, const AutoLockHelperThrea
 {
     if (!HelperThreadState().ionWorklist(lock).append(builder))
         return false;
+
+    // The build is moving off-thread. Freeze the LifoAlloc to prevent any
+    // unwanted mutations.
+    builder->alloc().lifoAlloc()->setReadOnly();
 
     HelperThreadState().notifyOne(GlobalHelperThreadState::PRODUCER, lock);
     return true;
@@ -347,7 +359,7 @@ js::HasOffThreadIonCompile(Realm* realm)
 {
     AutoLockHelperThreadState lock;
 
-    if (!HelperThreadState().threads || realm->isAtomsRealm())
+    if (!HelperThreadState().threads)
         return false;
 
     GlobalHelperThreadState::IonBuilderVector& worklist = HelperThreadState().ionWorklist(lock);
@@ -643,8 +655,8 @@ js::CancelOffThreadParses(JSRuntime* rt)
             next = task->getNext();
             if (task->runtimeMatches(rt)) {
                 found = true;
-                AutoUnlockHelperThreadState unlock(lock);
-                HelperThreadState().cancelParseTask(rt, task->kind, task);
+                task->remove();
+                HelperThreadState().destroyParseTask(rt, task);
             }
             task = next;
         }
@@ -741,7 +753,7 @@ CreateGlobalForOffThreadParse(JSContext* cx, const gc::AutoSuppressGC& nogc)
 
     creationOptions.setInvisibleToDebugger(true)
                    .setMergeable(true)
-                   .setNewZone();
+                   .setNewCompartmentAndZone();
 
     // Don't falsely inherit the host's global trace hook.
     creationOptions.setTrace(nullptr);
@@ -753,7 +765,7 @@ CreateGlobalForOffThreadParse(JSContext* cx, const gc::AutoSuppressGC& nogc)
 
     Rooted<GlobalObject*> global(cx, &obj->as<GlobalObject>());
 
-    JS_SetCompartmentPrincipals(global->compartment(), currentRealm->principals());
+    JS::SetRealmPrincipals(global->realm(), currentRealm->principals());
 
     return global;
 }
@@ -995,6 +1007,8 @@ GlobalHelperThreadState::GlobalHelperThreadState()
  : cpuCount(0),
    threadCount(0),
    threads(nullptr),
+   registerThread(nullptr),
+   unregisterThread(nullptr),
    wasmTier2GeneratorsFinished_(0),
    helperLock(mutexid::GlobalHelperThreadState)
 {
@@ -1472,7 +1486,7 @@ GlobalHelperThreadState::scheduleCompressionTasks(const AutoLockHelperThreadStat
         if (pending[i]->shouldStart()) {
             // OOMing during appending results in the task not being scheduled
             // and deleted.
-            Unused << worklist.append(Move(pending[i]));
+            Unused << worklist.append(std::move(pending[i]));
             remove(pending, &i);
         }
     }
@@ -1581,9 +1595,7 @@ js::GCParallelTask::runFromHelperThread(AutoLockHelperThreadState& lock)
     {
         AutoUnlockHelperThreadState parallelSection(lock);
         TimeStamp timeStart = TimeStamp::Now();
-        TlsContext.get()->heapState = JS::HeapState::MajorCollecting;
         runTask();
-        TlsContext.get()->heapState = JS::HeapState::Idle;
         duration_ = TimeSince(timeStart);
     }
 
@@ -1641,7 +1653,6 @@ GlobalHelperThreadState::removeFinishedParseTask(ParseTaskKind kind, JS::OffThre
     }
     MOZ_ASSERT(found);
 #endif
-
 
     task->remove();
     return task;
@@ -1823,8 +1834,15 @@ void
 GlobalHelperThreadState::cancelParseTask(JSRuntime* rt, ParseTaskKind kind,
                                          JS::OffThreadToken* token)
 {
-    ScopedJSDeletePtr<ParseTask> parseTask(removeFinishedParseTask(kind, token));
+    destroyParseTask(rt, removeFinishedParseTask(kind, token));
+}
+
+void
+GlobalHelperThreadState::destroyParseTask(JSRuntime* rt, ParseTask* parseTask)
+{
+    MOZ_ASSERT(!parseTask->isInList());
     LeaveParseTaskZone(rt, parseTask);
+    js_delete(parseTask);
 }
 
 void
@@ -1838,7 +1856,7 @@ GlobalHelperThreadState::mergeParseTaskRealm(JSContext* cx, ParseTask* parseTask
     LeaveParseTaskZone(cx->runtime(), parseTask);
 
     // Move the parsed script and all its contents into the desired realm.
-    gc::MergeRealms(parseTask->parseGlobal->realm(), dest);
+    gc::MergeRealms(parseTask->parseGlobal->as<GlobalObject>().realm(), dest);
 }
 
 void
@@ -1855,6 +1873,32 @@ HelperThread::destroy()
 
         thread->join();
         thread.reset();
+    }
+}
+
+void
+HelperThread::ensureRegisteredWithProfiler()
+{
+    if (registered)
+        return;
+
+    JS::RegisterThreadCallback callback = HelperThreadState().registerThread;
+    if (callback) {
+        callback("JS Helper", reinterpret_cast<void*>(GetNativeStackBase()));
+        registered = true;
+    }
+}
+
+void
+HelperThread::unregisterWithProfilerIfNeeded()
+{
+    if (!registered)
+        return;
+
+    JS::UnregisterThreadCallback callback = HelperThreadState().unregisterThread;
+    if (callback) {
+        callback();
+        registered = false;
     }
 }
 
@@ -1957,6 +2001,10 @@ HelperThread::handleIonWorkload(AutoLockHelperThreadState& locked)
     // remove it from the worklist.
     jit::IonBuilder* builder = HelperThreadState().highestPriorityPendingIonCompile(locked);
 
+    // The build is taken by this thread. Unfreeze the LifoAlloc to allow
+    // mutations.
+    builder->alloc().lifoAlloc()->setReadWrite();
+
     currentTask.emplace(builder);
 
     JSRuntime* rt = builder->script()->compartment()->runtimeFromAnyThread();
@@ -1971,7 +2019,7 @@ HelperThread::handleIonWorkload(AutoLockHelperThreadState& locked)
 
         AutoSetContextRuntime ascr(rt);
         jit::JitContext jctx(jit::CompileRuntime::get(rt),
-                             jit::CompileCompartment::get(builder->script()->compartment()),
+                             jit::CompileRealm::get(builder->script()->realm()),
                              &builder->alloc());
         builder->setBackgroundCodegen(jit::CompileBackEnd(builder));
     }
@@ -2059,9 +2107,12 @@ HelperThread::handleParseWorkload(AutoLockHelperThreadState& locked)
     currentTask.emplace(HelperThreadState().parseWorklist(locked).popCopy());
     ParseTask* task = parseTask();
 
+    JSRuntime* runtime = task->parseGlobal->runtimeFromAnyThread();
+    runtime->incOffThreadParsesRunning();
+
     {
         AutoUnlockHelperThreadState unlock(locked);
-        AutoSetContextRuntime ascr(task->parseGlobal->runtimeFromAnyThread());
+        AutoSetContextRuntime ascr(runtime);
 
         JSContext* cx = TlsContext.get();
 
@@ -2085,6 +2136,8 @@ HelperThread::handleParseWorkload(AutoLockHelperThreadState& locked)
     // migrate it into the correct compartment.
     HelperThreadState().parseFinishedList(locked).insertBack(task);
 
+    runtime->decOffThreadParsesRunning();
+
     currentTask.reset();
 
     // Notify the main thread in case it is waiting for the parse/emit to finish.
@@ -2100,7 +2153,7 @@ HelperThread::handleCompressionWorkload(AutoLockHelperThreadState& locked)
     UniquePtr<SourceCompressionTask> task;
     {
         auto& worklist = HelperThreadState().compressionWorklist(locked);
-        task = Move(worklist.back());
+        task = std::move(worklist.back());
         worklist.popBack();
         currentTask.emplace(task.get());
     }
@@ -2116,7 +2169,7 @@ HelperThread::handleCompressionWorkload(AutoLockHelperThreadState& locked)
 
     {
         AutoEnterOOMUnsafeRegion oomUnsafe;
-        if (!HelperThreadState().compressionFinishedList(locked).append(Move(task)))
+        if (!HelperThreadState().compressionFinishedList(locked).append(std::move(task)))
             oomUnsafe.crash("handleCompressionWorkload");
     }
 
@@ -2132,7 +2185,7 @@ js::EnqueueOffThreadCompression(JSContext* cx, UniquePtr<SourceCompressionTask> 
     AutoLockHelperThreadState lock;
 
     auto& pending = HelperThreadState().compressionPendingList(lock);
-    if (!pending.append(Move(task))) {
+    if (!pending.append(std::move(task))) {
         if (!cx->helperThread())
             ReportOutOfMemory(cx);
         return false;
@@ -2227,7 +2280,7 @@ js::StartOffThreadPromiseHelperTask(PromiseHelperTask* task)
 }
 
 void
-GlobalHelperThreadState::trace(JSTracer* trc, gc::AutoTraceSession& session)
+GlobalHelperThreadState::trace(JSTracer* trc)
 {
     AutoLockHelperThreadState lock;
     for (auto builder : ionWorklist(lock))
@@ -2355,6 +2408,8 @@ HelperThread::threadLoop()
     JS::AutoSuppressGCAnalysis nogc;
     AutoLockHelperThreadState lock;
 
+    ensureRegisteredWithProfiler();
+
     JSContext cx(nullptr, JS::ContextOptions());
     {
         AutoEnterOOMUnsafeRegion oomUnsafe;
@@ -2383,6 +2438,8 @@ HelperThread::threadLoop()
         (this->*(task->handleWorkload))(lock);
         js::oom::SetThreadType(js::THREAD_TYPE_NONE);
     }
+
+    unregisterWithProfilerIfNeeded();
 }
 
 const HelperThread::TaskSpec*

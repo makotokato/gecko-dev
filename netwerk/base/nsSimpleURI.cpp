@@ -512,7 +512,7 @@ nsresult
 nsSimpleURI::SetRef(const nsACString &aRef)
 {
     nsAutoCString ref;
-    nsresult rv = NS_EscapeURL(aRef, esc_OnlyNonASCII, ref, fallible);
+    nsresult rv = NS_EscapeURL(aRef, esc_OnlyNonASCII | esc_Spaces, ref, fallible);
     if (NS_FAILED(rv)) {
         return rv;
     }
@@ -627,7 +627,7 @@ nsSimpleURI::SetRefOnClone(nsSimpleURI* url,
     }
 }
 
-NS_IMETHODIMP
+nsresult
 nsSimpleURI::Clone(nsIURI** result)
 {
     return CloneInternal(eHonorRef, EmptyCString(), result);

@@ -1808,6 +1808,10 @@ nsChildView::SetInputContext(const InputContext& aContext,
     }
   }
 
+  // IMEInputHandler::IsEditableContent() returns false when both
+  // IsASCIICableOnly() and IsIMEEnabled() return false.  So, be careful
+  // when you change the following code.  You might need to change
+  // IMEInputHandler::IsEditableContent() too.
   mInputContext = aContext;
   switch (aContext.mIMEState.mEnabled) {
     case IMEState::ENABLED:
@@ -3762,7 +3766,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
     return;
   }
 
-  AUTO_PROFILER_LABEL("ChildView::drawRect", GRAPHICS);
+  AUTO_PROFILER_LABEL("ChildView::drawRect", OTHER);
 
   // The CGContext that drawRect supplies us with comes with a transform that
   // scales one user space unit to one Cocoa point, which can consist of
@@ -3828,7 +3832,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
 - (void)drawUsingOpenGL
 {
-  AUTO_PROFILER_LABEL("ChildView::drawUsingOpenGL", GRAPHICS);
+  AUTO_PROFILER_LABEL("ChildView::drawUsingOpenGL", OTHER);
 
   if (![self isUsingOpenGL] || !mGeckoChild->IsVisible())
     return;
@@ -3997,7 +4001,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
       }
       widgetArray.AppendElement(mGeckoChild);
       nsCOMPtr<nsIRunnable> releaserRunnable =
-        new WidgetsReleaserRunnable(Move(widgetArray));
+        new WidgetsReleaserRunnable(std::move(widgetArray));
       NS_DispatchToMainThread(releaserRunnable);
     }
 
@@ -4642,6 +4646,10 @@ NSEvent* gLastDragMouseDownEvent = nil;
   // This might destroy our widget (and null out mGeckoChild).
   bool defaultPrevented =
     (mGeckoChild->DispatchInputEvent(&geckoEvent) == nsEventStatus_eConsumeNoDefault);
+
+  if (!mGeckoChild) {
+    return;
+  }
 
   // Check to see if we are double-clicking in draggable parts of the window.
   if (!defaultPrevented && [theEvent clickCount] == 2 &&
@@ -6149,7 +6157,7 @@ GetIntegerDeltaForEvent(NSEvent* aEvent)
       if (!NS_SUCCEEDED(dragSession->GetCanDrop(&canDrop)) || !canDrop) {
         [self doDragAction:eDragExit sender:aSender];
 
-        nsCOMPtr<nsIDOMNode> sourceNode;
+        nsCOMPtr<nsINode> sourceNode;
         dragSession->GetSourceNode(getter_AddRefs(sourceNode));
         if (!sourceNode) {
           mDragService->EndDragSession(
@@ -6207,7 +6215,7 @@ GetIntegerDeltaForEvent(NSEvent* aEvent)
       }
       case eDragExit:
       case eDrop: {
-        nsCOMPtr<nsIDOMNode> sourceNode;
+        nsCOMPtr<nsINode> sourceNode;
         dragSession->GetSourceNode(getter_AddRefs(sourceNode));
         if (!sourceNode) {
           // We're leaving a window while doing a drag that was

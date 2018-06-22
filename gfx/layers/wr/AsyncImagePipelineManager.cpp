@@ -13,6 +13,7 @@
 #include "mozilla/layers/SharedSurfacesParent.h"
 #include "mozilla/layers/WebRenderImageHost.h"
 #include "mozilla/layers/WebRenderTextureHost.h"
+#include "mozilla/webrender/RenderThread.h"
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "mozilla/webrender/WebRenderTypes.h"
 
@@ -35,6 +36,7 @@ AsyncImagePipelineManager::AsyncImagePipelineManager(already_AddRefed<wr::WebRen
  , mAsyncImageEpoch{0}
  , mWillGenerateFrame(false)
  , mDestroyed(false)
+ , mUpdatesLock("UpdatesLock")
 {
   MOZ_COUNT_CTOR(AsyncImagePipelineManager);
 }
@@ -318,18 +320,19 @@ AsyncImagePipelineManager::ApplyAsyncImages(wr::TransactionBuilder& aTxn)
     wr::DisplayListBuilder builder(pipelineId, contentSize);
 
     float opacity = 1.0f;
-    builder.PushStackingContext(wr::ToLayoutRect(pipeline->mScBounds),
-                                nullptr,
-                                nullptr,
-                                &opacity,
-                                pipeline->mScTransform.IsIdentity() ? nullptr : &pipeline->mScTransform,
-                                wr::TransformStyle::Flat,
-                                nullptr,
-                                pipeline->mMixBlendMode,
-                                nsTArray<wr::WrFilterOp>(),
-                                true,
-                                // This is fine to do unconditionally because we only push images here.
-                                wr::GlyphRasterSpace::Screen());
+    Maybe<wr::WrClipId> referenceFrameId = builder.PushStackingContext(
+        wr::ToLayoutRect(pipeline->mScBounds),
+        nullptr,
+        nullptr,
+        &opacity,
+        pipeline->mScTransform.IsIdentity() ? nullptr : &pipeline->mScTransform,
+        wr::TransformStyle::Flat,
+        nullptr,
+        pipeline->mMixBlendMode,
+        nsTArray<wr::WrFilterOp>(),
+        true,
+        // This is fine to do unconditionally because we only push images here.
+        wr::GlyphRasterSpace::Screen());
 
     if (pipeline->mCurrentTexture && !keys.IsEmpty()) {
       LayoutDeviceRect rect(0, 0, pipeline->mCurrentTexture->GetSize().width, pipeline->mCurrentTexture->GetSize().height);
@@ -356,7 +359,7 @@ AsyncImagePipelineManager::ApplyAsyncImages(wr::TransactionBuilder& aTxn)
       }
     }
 
-    builder.PopStackingContext();
+    builder.PopStackingContext(referenceFrameId.isSome());
 
     wr::BuiltDisplayList dl;
     wr::LayoutSize builderContentSize;
@@ -405,11 +408,64 @@ AsyncImagePipelineManager::HoldExternalImage(const wr::PipelineId& aPipelineId, 
 }
 
 void
-AsyncImagePipelineManager::PipelineRendered(const wr::PipelineId& aPipelineId, const wr::Epoch& aEpoch)
+AsyncImagePipelineManager::NotifyPipelinesUpdated(wr::WrPipelineInfo aInfo)
 {
+  // This is called on the render thread, so we just stash the data into
+  // mUpdatesQueue and process it later on the compositor thread.
+  MOZ_ASSERT(wr::RenderThread::IsInRenderThread());
+
+  MutexAutoLock lock(mUpdatesLock);
+  for (uintptr_t i = 0; i < aInfo.epochs.length; i++) {
+    mUpdatesQueue.push(std::make_pair(
+        aInfo.epochs.data[i].pipeline_id,
+        Some(aInfo.epochs.data[i].epoch)));
+  }
+  for (uintptr_t i = 0; i < aInfo.removed_pipelines.length; i++) {
+    mUpdatesQueue.push(std::make_pair(
+        aInfo.removed_pipelines.data[i],
+        Nothing()));
+  }
+  // Queue a runnable on the compositor thread to process the queue
+  layers::CompositorThreadHolder::Loop()->PostTask(
+      NewRunnableMethod("ProcessPipelineUpdates",
+                        this,
+                        &AsyncImagePipelineManager::ProcessPipelineUpdates));
+}
+
+void
+AsyncImagePipelineManager::ProcessPipelineUpdates()
+{
+  MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread());
+
   if (mDestroyed) {
     return;
   }
+
+  while (true) {
+    wr::PipelineId pipelineId;
+    Maybe<wr::Epoch> epoch;
+
+    { // scope lock to extract one item from the queue
+      MutexAutoLock lock(mUpdatesLock);
+      if (mUpdatesQueue.empty()) {
+        break;
+      }
+      pipelineId = mUpdatesQueue.front().first;
+      epoch = mUpdatesQueue.front().second;
+      mUpdatesQueue.pop();
+    }
+
+    if (epoch.isSome()) {
+      ProcessPipelineRendered(pipelineId, *epoch);
+    } else {
+      ProcessPipelineRemoved(pipelineId);
+    }
+  }
+}
+
+void
+AsyncImagePipelineManager::ProcessPipelineRendered(const wr::PipelineId& aPipelineId, const wr::Epoch& aEpoch)
+{
   if (auto entry = mPipelineTexturesHolders.Lookup(wr::AsUint64(aPipelineId))) {
     PipelineTexturesHolder* holder = entry.Data();
     // Release TextureHosts based on Epoch
@@ -432,7 +488,7 @@ AsyncImagePipelineManager::PipelineRendered(const wr::PipelineId& aPipelineId, c
 }
 
 void
-AsyncImagePipelineManager::PipelineRemoved(const wr::PipelineId& aPipelineId)
+AsyncImagePipelineManager::ProcessPipelineRemoved(const wr::PipelineId& aPipelineId)
 {
   if (mDestroyed) {
     return;

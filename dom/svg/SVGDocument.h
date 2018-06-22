@@ -23,6 +23,7 @@ class SVGForeignObjectElement;
 class SVGDocument final : public XMLDocument
 {
   friend class SVGForeignObjectElement; // To call EnsureNonSVGUserAgentStyleSheetsLoaded
+  friend class nsIDocument; // Same reason.
 
 public:
   SVGDocument()
@@ -34,8 +35,6 @@ public:
 
   virtual nsresult InsertChildBefore(nsIContent* aKid, nsIContent* aBeforeThis,
                                      bool aNotify) override;
-  virtual nsresult InsertChildAt_Deprecated(nsIContent* aKid, uint32_t aIndex,
-                                            bool aNotify) override;
   virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
                          bool aPreallocateChildren) const override;
 

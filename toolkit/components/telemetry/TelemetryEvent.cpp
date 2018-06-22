@@ -32,7 +32,6 @@ using mozilla::StaticMutex;
 using mozilla::StaticMutexAutoLock;
 using mozilla::ArrayLength;
 using mozilla::Maybe;
-using mozilla::Move;
 using mozilla::Nothing;
 using mozilla::StaticAutoPtr;
 using mozilla::TimeStamp;
@@ -322,9 +321,6 @@ typedef nsTArray<EventRecord> EventRecordArray;
 typedef nsClassHashtable<ProcessIDHashKey, EventRecordArray> EventRecordsMapType;
 
 EventRecordsMapType gEventRecords;
-// Provide separate storage for "dynamic builtin" events needed to
-// support "build faster" in local developer builds.
-EventRecordsMapType gBuiltinEventRecords;
 
 // The details on dynamic events that are recorded from addons are registered here.
 StaticAutoPtr<nsTArray<DynamicEventInfo>> gDynamicEventInfo;
@@ -404,17 +400,12 @@ IsExpired(const EventKey& key)
 
 EventRecordArray*
 GetEventRecordsForProcess(const StaticMutexAutoLock& lock, ProcessID processType,
-                          const EventKey& eventKey, bool isDynamicBuiltin)
+                          const EventKey& eventKey)
 {
-  // Put dynamic-builtin events (used to support "build faster") in a
-  // separate storage.
-  EventRecordsMapType& processStorage =
-    isDynamicBuiltin ? gBuiltinEventRecords : gEventRecords;
-
   EventRecordArray* eventRecords = nullptr;
-  if (!processStorage.Get(uint32_t(processType), &eventRecords)) {
+  if (!gEventRecords.Get(uint32_t(processType), &eventRecords)) {
     eventRecords = new EventRecordArray();
-    processStorage.Put(uint32_t(processType), eventRecords);
+    gEventRecords.Put(uint32_t(processType), eventRecords);
   }
   return eventRecords;
 }
@@ -483,9 +474,8 @@ RecordEvent(const StaticMutexAutoLock& lock, ProcessID processType,
     processType = ProcessID::Dynamic;
   }
 
-  bool isDynamicBuiltin = eventKey->dynamic && (*gDynamicEventInfo)[eventKey->id].builtin;
   EventRecordArray* eventRecords =
-    GetEventRecordsForProcess(lock, processType, *eventKey, isDynamicBuiltin);
+    GetEventRecordsForProcess(lock, processType, *eventKey);
 
   // Apply hard limit on event count in storage.
   if (eventRecords->Length() >= kMaxEventRecords) {
@@ -555,10 +545,14 @@ RegisterEvents(const StaticMutexAutoLock& lock, const nsACString& category,
   for (uint32_t i = 0, len = eventInfos.Length(); i < len; ++i) {
     const nsCString& eventName = UniqueEventName(eventInfos[i]);
 
-    // Re-registering events can happen when add-ons update, so we don't print warnings.
-    // We don't support changing their definition, but the expiry might have changed.
+    // Re-registering events can happen for two reasons and we don't print warnings:
+    //
+    // * When add-ons update.
+    //   We don't support changing their definition, but the expiry might have changed.
+    // * When dynamic builtins ("build faster") events are registered.
+    //   The dynamic definition takes precedence then.
     EventKey* existing = nullptr;
-    if (gEventNameIDMap.Get(eventName, &existing)) {
+    if (!aBuiltin && gEventNameIDMap.Get(eventName, &existing)) {
       if (eventExpired[i]) {
         existing->id = kExpiredEventId;
       }
@@ -756,7 +750,6 @@ TelemetryEvent::DeInitializeGlobalState()
   gCategoryNames.Clear();
   gEnabledCategories.Clear();
   gEventRecords.Clear();
-  gBuiltinEventRecords.Clear();
 
   gDynamicEventInfo = nullptr;
 
@@ -1161,18 +1154,16 @@ TelemetryEvent::CreateSnapshots(uint32_t aDataset, bool aClear, JSContext* cx,
 
         if (events.Length()) {
           const char* processName = GetNameForProcessID(ProcessID(iter.Key()));
-          processEvents.AppendElement(mozilla::MakePair(processName, Move(events)));
+          processEvents.AppendElement(mozilla::MakePair(processName, std::move(events)));
         }
       }
     };
 
     // Take a snapshot of the plain and dynamic builtin events.
     snapshotter(gEventRecords);
-    snapshotter(gBuiltinEventRecords);
 
     if (aClear) {
       gEventRecords.Clear();
-      gBuiltinEventRecords.Clear();
     }
   }
 
@@ -1212,7 +1203,6 @@ TelemetryEvent::ClearEvents()
   }
 
   gEventRecords.Clear();
-  gBuiltinEventRecords.Clear();
 }
 
 void
@@ -1255,7 +1245,6 @@ TelemetryEvent::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf)
   };
 
   n += getSizeOfRecords(gEventRecords);
-  n += getSizeOfRecords(gBuiltinEventRecords);
 
   n += gEventNameIDMap.ShallowSizeOfExcludingThis(aMallocSizeOf);
   for (auto iter = gEventNameIDMap.ConstIter(); !iter.Done(); iter.Next()) {

@@ -683,10 +683,10 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter
         writeOpWithOperandId(CacheOp::GuardMagicValue, val);
         buffer_.writeByte(uint32_t(magic));
     }
-    void guardCompartment(ObjOperandId obj, JSObject* global, JSCompartment* compartment) {
+    void guardCompartment(ObjOperandId obj, JSObject* global, JS::Compartment* compartment) {
         assertSameCompartment(global);
         writeOpWithOperandId(CacheOp::GuardCompartment, obj);
-        // Add a reference to the compartment's global to keep it alive.
+        // Add a reference to a global in the compartment to keep it alive.
         addStubField(uintptr_t(global), StubField::Type::JSObject);
         // Use RawWord, because compartments never move and it can't be GCed.
         addStubField(uintptr_t(compartment), StubField::Type::RawWord);
@@ -873,7 +873,7 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter
     }
 
     void storeTypedObjectReferenceProperty(ObjOperandId obj, uint32_t offset,
-                                           TypedThingLayout layout, ReferenceTypeDescr::Type type,
+                                           TypedThingLayout layout, ReferenceType type,
                                            ValOperandId rhs)
     {
         writeOpWithOperandId(CacheOp::StoreTypedObjectReferenceProperty, obj);
@@ -1225,8 +1225,8 @@ class MOZ_RAII CacheIRReader
     uint32_t uint32Immediate() { return buffer_.readUnsigned(); }
     void* pointer() { return buffer_.readRawPointer(); }
 
-    ReferenceTypeDescr::Type referenceTypeDescrType() {
-        return ReferenceTypeDescr::Type(buffer_.readByte());
+    ReferenceType referenceTypeDescrType() {
+        return ReferenceType(buffer_.readByte());
     }
 
     uint8_t readByte() {
