@@ -17,7 +17,7 @@
 
     ; set up frame
     PROLOG_SAVE_REG_PAIR fp, lr, #-32!
-    PROLOG_SAVE_REG_PAIR x19, x20, #16
+    stp         x19, x20, [sp, #16]
 
     ; save methodIndex across function calls
     mov         w20, w1
@@ -58,10 +58,9 @@
     ldr         x16, [x16]
     blr         x16
 
-    add         sp, sp, w19, uxth #3
-
+    EPILOG_STACK_RESTORE
     EPILOG_RESTORE_REG_PAIR x19, x20, #16
-    EPILOG_RESTORE_REG_PAIR fp, lr, #32!
+    EPILOG_RESTORE_REG_PAIR_INDEXED fp, lr, #32
     EPILOG_RETURN
 
     NESTED_END _NS_InvokeByIndex

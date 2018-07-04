@@ -17,14 +17,14 @@
 
     PROLOG_SAVE_REG_PAIR fp, lr, #-144!
 
-    PROLOG_SAVE_REG_PAIR x0, x1, #80
-    PROLOG_SAVE_REG_PAIR x2, x3, #96
-    PROLOG_SAVE_REG_PAIR x4, x5, #112
-    PROLOG_SAVE_REG_PAIR x6, x7, #128
-    PROLOG_SAVE_REG_PAIR d0, d1, #16
-    PROLOG_SAVE_REG_PAIR d2, d3, #32
-    PROLOG_SAVE_REG_PAIR d4, d5, #48
-    PROLOG_SAVE_REG_PAIR d6, d7, #64
+    stp         x0, x1, [sp, #80]
+    stp         x2, x3, [sp, #96]
+    stp         x4, x5, [sp, #112]
+    stp         x6, x7, [sp, #128]
+    stp         d0, d1, [sp, #16]
+    stp         d2, d3, [sp, #32]
+    stp         d4, d5, [sp, #48]
+    stp         d6, d7, [sp, #64]
 
     ; methodIndex passed from stub
     mov         w1, w17
