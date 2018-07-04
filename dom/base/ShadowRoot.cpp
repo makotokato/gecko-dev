@@ -6,7 +6,6 @@
 
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/ShadowRoot.h"
-#include "mozilla/dom/ShadowRootBinding.h"
 #include "mozilla/dom/DocumentFragment.h"
 #include "ChildIterator.h"
 #include "nsContentUtils.h"
@@ -122,7 +121,7 @@ ShadowRoot::SetIsComposedDocParticipant(bool aIsComposedDocParticipant)
 JSObject*
 ShadowRoot::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return mozilla::dom::ShadowRootBinding::Wrap(aCx, this, aGivenProto);
+  return mozilla::dom::ShadowRoot_Binding::Wrap(aCx, this, aGivenProto);
 }
 
 void
@@ -322,48 +321,6 @@ ShadowRoot::InsertSheetAt(size_t aIndex, StyleSheet& aSheet)
   DocumentOrShadowRoot::InsertSheetAt(aIndex, aSheet);
   if (aSheet.IsApplicable()) {
     InsertSheetIntoAuthorData(aIndex, aSheet);
-  }
-}
-
-void
-ShadowRoot::AppendStyleSheet(StyleSheet& aSheet)
-{
-  DocumentOrShadowRoot::AppendSheet(aSheet);
-  if (aSheet.IsApplicable()) {
-    Servo_AuthorStyles_AppendStyleSheet(mServoStyles.get(), &aSheet);
-    if (mStyleRuleMap) {
-      mStyleRuleMap->SheetAdded(aSheet);
-    }
-    ApplicableRulesChanged();
-  }
-}
-
-void
-ShadowRoot::InsertSheet(StyleSheet* aSheet, nsIContent* aLinkingContent)
-{
-  nsCOMPtr<nsIStyleSheetLinkingElement>
-    linkingElement = do_QueryInterface(aLinkingContent);
-
-  // FIXME(emilio, bug 1410578): <link> should probably also be allowed here.
-  MOZ_ASSERT(linkingElement, "The only styles in a ShadowRoot should come "
-                             "from <style>.");
-
-  linkingElement->SetStyleSheet(aSheet); // This sets the ownerNode on the sheet
-
-  // Find the correct position to insert into the style sheet list (must
-  // be in tree order).
-  for (size_t i = 0; i <= SheetCount(); i++) {
-    if (i == SheetCount()) {
-      AppendStyleSheet(*aSheet);
-      return;
-    }
-
-    StyleSheet* sheet = SheetAt(i);
-    nsINode* sheetOwningNode = sheet->GetOwnerNode();
-    if (nsContentUtils::PositionIsBefore(aLinkingContent, sheetOwningNode)) {
-      InsertSheetAt(i, *aSheet);
-      return;
-    }
   }
 }
 

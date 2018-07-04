@@ -19,6 +19,8 @@
 #include "nsUnicharUtils.h"
 #include "prtime.h"
 #include "nsQueryObject.h"
+#include "mozilla/dom/PlacesObservers.h"
+#include "mozilla/dom/PlacesVisit.h"
 
 #include "nsCycleCollectionParticipant.h"
 
@@ -562,7 +564,7 @@ nsNavHistoryContainerResultNode::AreChildrenVisible()
 {
   nsNavHistoryResult* result = GetResult();
   if (!result) {
-    NS_NOTREACHED("Invalid result");
+    MOZ_ASSERT_UNREACHABLE("Invalid result");
     return false;
   }
 
@@ -952,7 +954,7 @@ nsNavHistoryContainerResultNode::GetSortingComparator(uint16_t aSortType)
     case nsINavHistoryQueryOptions::SORT_BY_FRECENCY_DESCENDING:
       return &SortComparison_FrecencyGreater;
     default:
-      NS_NOTREACHED("Bad sorting type");
+      MOZ_ASSERT_UNREACHABLE("Bad sorting type");
       return nullptr;
   }
 }
@@ -3448,13 +3450,14 @@ nsNavHistoryFolderResultNode::OnItemAdded(int64_t aItemId,
   // here, try to do something reasonable if the bookmark service gives us
   // a bogus index.
   if (aIndex < 0) {
-    NS_NOTREACHED("Invalid index for item adding: <0");
+    MOZ_ASSERT_UNREACHABLE("Invalid index for item adding: <0");
     aIndex = 0;
   }
   else if (aIndex > mChildren.Count()) {
     if (!excludeItems) {
       // Something wrong happened while updating indexes.
-      NS_NOTREACHED("Invalid index for item adding: greater than count");
+      MOZ_ASSERT_UNREACHABLE("Invalid index for item adding: greater than "
+                             "count");
     }
     aIndex = mChildren.Count();
   }
@@ -3680,7 +3683,7 @@ nsNavHistoryResultNode::OnItemChanged(int64_t aItemId,
       NOTIFY_RESULT_OBSERVERS(result, NodeKeywordChanged(this, aNewValue));
   }
   else
-    NS_NOTREACHED("Unknown bookmark property changing.");
+    MOZ_ASSERT_UNREACHABLE("Unknown bookmark property changing.");
 
   if (!mParent)
     return NS_OK;
@@ -3995,6 +3998,9 @@ nsNavHistoryResult::StopObserving()
     nsNavHistory* history = nsNavHistory::GetHistoryService();
     if (history) {
       history->RemoveObserver(this);
+      AutoTArray<PlacesEventType, 1> events;
+      events.AppendElement(PlacesEventType::Page_visited);
+      PlacesObservers::RemoveListener(events, this);
       mIsHistoryObserver = false;
     }
   }
@@ -4007,6 +4013,9 @@ nsNavHistoryResult::AddHistoryObserver(nsNavHistoryQueryResultNode* aNode)
       nsNavHistory* history = nsNavHistory::GetHistoryService();
       NS_ASSERTION(history, "Can't create history service");
       history->AddObserver(this, true);
+      AutoTArray<PlacesEventType, 1> events;
+      events.AppendElement(PlacesEventType::Page_visited);
+      PlacesObservers::AddListener(events, this);
       mIsHistoryObserver = true;
   }
   // Don't add duplicate observers.  In some case we don't unregister when
@@ -4024,7 +4033,7 @@ nsNavHistoryResult::AddAllBookmarksObserver(nsNavHistoryQueryResultNode* aNode)
   if (!mIsAllBookmarksObserver && !mIsBookmarkFolderObserver) {
     nsNavBookmarks* bookmarks = nsNavBookmarks::GetBookmarksService();
     if (!bookmarks) {
-      NS_NOTREACHED("Can't create bookmark service");
+      MOZ_ASSERT_UNREACHABLE("Can't create bookmark service");
       return;
     }
     bookmarks->AddObserver(this, true);
@@ -4064,7 +4073,7 @@ nsNavHistoryResult::AddBookmarkFolderObserver(nsNavHistoryFolderResultNode* aNod
   if (!mIsBookmarkFolderObserver && !mIsAllBookmarksObserver) {
     nsNavBookmarks* bookmarks = nsNavBookmarks::GetBookmarksService();
     if (!bookmarks) {
-      NS_NOTREACHED("Can't create bookmark service");
+      MOZ_ASSERT_UNREACHABLE("Can't create bookmark service");
       return;
     }
     bookmarks->AddObserver(this, true);
@@ -4219,7 +4228,7 @@ NS_IMETHODIMP
 nsNavHistoryResult::GetRoot(nsINavHistoryContainerResultNode** aRoot)
 {
   if (!mRootNode) {
-    NS_NOTREACHED("Root is null");
+    MOZ_ASSERT_UNREACHABLE("Root is null");
     *aRoot = nullptr;
     return NS_ERROR_FAILURE;
   }
@@ -4590,32 +4599,27 @@ nsNavHistoryResult::OnVisit(nsIURI* aURI, int64_t aVisitId, PRTime aTime,
 }
 
 
-NS_IMETHODIMP
-nsNavHistoryResult::OnVisits(nsIVisitData** aVisits,
-                             uint32_t aVisitsCount) {
-  for (uint32_t i = 0; i < aVisitsCount; ++i) {
-    nsIVisitData* place = aVisits[i];
+void
+nsNavHistoryResult::HandlePlacesEvent(const PlacesEventSequence& aEvents) {
+  for (const auto& event : aEvents) {
+    if (NS_WARN_IF(event->Type() != PlacesEventType::Page_visited)) {
+      continue;
+    }
+
+    const dom::PlacesVisit* visit = event->AsPlacesVisit();
+    if (NS_WARN_IF(!visit)) {
+      continue;
+    }
+
     nsCOMPtr<nsIURI> uri;
-    MOZ_ALWAYS_SUCCEEDS(place->GetUri(getter_AddRefs(uri)));
-    int64_t visitId;
-    MOZ_ALWAYS_SUCCEEDS(place->GetVisitId(&visitId));
-    PRTime time;
-    MOZ_ALWAYS_SUCCEEDS(place->GetTime(&time));
-    uint32_t transitionType;
-    MOZ_ALWAYS_SUCCEEDS(place->GetTransitionType(&transitionType));
-    nsCString guid;
-    MOZ_ALWAYS_SUCCEEDS(place->GetGuid(guid));
-    bool hidden;
-    MOZ_ALWAYS_SUCCEEDS(place->GetHidden(&hidden));
-    uint32_t visitCount;
-    MOZ_ALWAYS_SUCCEEDS(place->GetVisitCount(&visitCount));
-    nsString lastKnownTitle;
-    MOZ_ALWAYS_SUCCEEDS(place->GetLastKnownTitle(lastKnownTitle));
-    nsresult rv = OnVisit(uri, visitId, time, transitionType, guid, hidden,
-                          visitCount, lastKnownTitle);
-    NS_ENSURE_SUCCESS(rv, rv);
+    MOZ_ALWAYS_SUCCEEDS(NS_NewURI(getter_AddRefs(uri), visit->mUrl));
+    if (!uri) {
+      return;
+    }
+    OnVisit(uri, visit->mVisitId, visit->mVisitTime * 1000,
+            visit->mTransitionType, visit->mPageGuid,
+            visit->mHidden, visit->mVisitCount, visit->mLastKnownTitle);
   }
-  return NS_OK;
 }
 
 

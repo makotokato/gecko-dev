@@ -74,6 +74,10 @@ MarkupContainer.prototype = {
 
     // Marking the node as shown or hidden
     this.updateIsDisplayed();
+
+    if (node.isShadowRoot) {
+      this.markup.telemetry.scalarSet("devtools.shadowdom.shadow_root_displayed", true);
+    }
   },
 
   buildMarkup: function() {
@@ -332,6 +336,10 @@ MarkupContainer.prototype = {
     if (this.showExpander) {
       this.tagLine.setAttribute("aria-expanded", this.expanded);
     }
+
+    if (this.node.isShadowRoot) {
+      this.markup.telemetry.scalarSet("devtools.shadowdom.shadow_root_expanded", true);
+    }
   },
 
   /**
@@ -438,6 +446,7 @@ MarkupContainer.prototype = {
            tagName !== "body" &&
            tagName !== "head" &&
            this.win.getSelection().isCollapsed &&
+           this.node.parentNode() &&
            this.node.parentNode().tagName !== null;
   },
 

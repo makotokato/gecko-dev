@@ -217,6 +217,8 @@ struct JSContext : public JS::RootingContext,
     inline void enterRealmOf(js::ObjectGroup* target);
     inline void enterNullRealm();
 
+    inline void setRealmForJitExceptionHandler(JS::Realm* realm);
+
     inline void leaveRealm(JS::Realm* oldRealm);
     inline void leaveAtomsZone(JS::Realm* oldRealm,
                                const js::AutoLockForExclusiveAccess& lock);
@@ -737,7 +739,7 @@ struct JSContext : public JS::RootingContext,
     bool isThrowingDebuggeeWouldRun();
     bool isClosingGenerator();
 
-    void setPendingException(const js::Value& v);
+    void setPendingException(JS::HandleValue v);
 
     void clearPendingException() {
         throwing = false;
@@ -1274,24 +1276,24 @@ struct MOZ_RAII AutoSetThreadIsPerformingGC
 #endif
 };
 
-// In debug builds, set/unset the GC sweeping flag for the current thread.
+// In debug builds, set/reset the GC sweeping flag for the current thread.
 struct MOZ_RAII AutoSetThreadIsSweeping
 {
 #ifdef DEBUG
     AutoSetThreadIsSweeping()
-      : cx(TlsContext.get())
+      : cx(TlsContext.get()),
+        prevState(cx->gcSweeping)
     {
-        MOZ_ASSERT(!cx->gcSweeping);
         cx->gcSweeping = true;
     }
 
     ~AutoSetThreadIsSweeping() {
-        MOZ_ASSERT(cx->gcSweeping);
-        cx->gcSweeping = false;
+        cx->gcSweeping = prevState;
     }
 
   private:
     JSContext* cx;
+    bool prevState;
 #else
     AutoSetThreadIsSweeping() {}
 #endif

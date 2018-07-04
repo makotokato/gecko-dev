@@ -1001,6 +1001,12 @@ case "$target" in
             # jemalloc uses __declspec(allocator) as a profiler hint,
             # which clang-cl doesn't understand.
             CXXFLAGS="$CXXFLAGS -Wno-ignored-attributes"
+            # __attribute__((unused)) really means "might be unused" and
+            # we use it to avoid warnings about things that are unused
+            # in some compilation units, but used in many others.  This
+            # warning insists on complaining about the latter case, which
+            # is annoying, and rather noisy.
+            CXXFLAGS="$CXXFLAGS -Wno-used-but-marked-unused"
         fi
         # make 'foo == bar;' error out
         CFLAGS="$CFLAGS -we4553"
@@ -2681,32 +2687,14 @@ fi # COMPILE_ENVIRONMENT
 dnl ========================================================
 dnl Gamepad support
 dnl ========================================================
-MOZ_GAMEPAD_BACKEND=stub
 
-case "$OS_TARGET" in
-Darwin)
-    if test -z "$MOZ_IOS"; then
-        MOZ_GAMEPAD_BACKEND=cocoa
-    fi
-    ;;
-WINNT)
-    MOZ_GAMEPAD_BACKEND=windows
-    ;;
-Linux)
+dnl Moved gamepad platform check to moz.build, linux header check still needed here.
+if test "$OS_TARGET" = "Linux"; then
     MOZ_CHECK_HEADER([linux/joystick.h])
     if test "$ac_cv_header_linux_joystick_h" != "yes"; then
       AC_MSG_ERROR([Can't find header linux/joystick.h, needed for gamepad support. Please install Linux kernel headers.])
     fi
-    MOZ_GAMEPAD_BACKEND=linux
-    ;;
-Android)
-    MOZ_GAMEPAD_BACKEND=android
-    ;;
-*)
-    ;;
-esac
-
-AC_SUBST(MOZ_GAMEPAD_BACKEND)
+fi
 
 dnl ========================================================
 dnl = Breakpad crash reporting (on by default on supported platforms)
@@ -3757,7 +3745,7 @@ else
   # These options are based on analyzing what the normal clang driver sends to
   # cc1 when given the "correct" dependency options.
   if test -n "$CLANG_CL"; then
-   _DEPEND_CFLAGS='-Xclang -MP -Xclang -MG -Xclang -dependency-file -Xclang $(MDDEPDIR)/$(@F).pp -Xclang -MT -Xclang $@'
+   _DEPEND_CFLAGS='-Xclang -MP -Xclang -dependency-file -Xclang $(MDDEPDIR)/$(@F).pp -Xclang -MT -Xclang $@'
   fi
   dnl Don't override this for MSVC
   if test -z "$_WIN32_MSVC"; then

@@ -365,7 +365,8 @@ WebRenderAPI::HitTest(const wr::WorldPoint& aPoint,
 }
 
 void
-WebRenderAPI::Readback(gfx::IntSize size,
+WebRenderAPI::Readback(const TimeStamp& aStartTime,
+                       gfx::IntSize size,
                        uint8_t *buffer,
                        uint32_t buffer_size)
 {
@@ -373,8 +374,10 @@ WebRenderAPI::Readback(gfx::IntSize size,
     {
         public:
             explicit Readback(layers::SynchronousTask* aTask,
+                              TimeStamp aStartTime,
                               gfx::IntSize aSize, uint8_t *aBuffer, uint32_t aBufferSize)
                 : mTask(aTask)
+                , mStartTime(aStartTime)
                 , mSize(aSize)
                 , mBuffer(aBuffer)
                 , mBufferSize(aBufferSize)
@@ -389,20 +392,21 @@ WebRenderAPI::Readback(gfx::IntSize size,
 
             virtual void Run(RenderThread& aRenderThread, WindowId aWindowId) override
             {
-                aRenderThread.UpdateAndRender(aWindowId, /* aReadback */ true);
+                aRenderThread.UpdateAndRender(aWindowId, mStartTime, /* aReadback */ true);
                 wr_renderer_readback(aRenderThread.GetRenderer(aWindowId)->GetRenderer(),
                                      mSize.width, mSize.height, mBuffer, mBufferSize);
                 layers::AutoCompleteTask complete(mTask);
             }
 
             layers::SynchronousTask* mTask;
+            TimeStamp mStartTime;
             gfx::IntSize mSize;
             uint8_t *mBuffer;
             uint32_t mBufferSize;
     };
 
     layers::SynchronousTask task("Readback");
-    auto event = MakeUnique<Readback>(&task, size, buffer, buffer_size);
+    auto event = MakeUnique<Readback>(&task, aStartTime, size, buffer, buffer_size);
     // This event will be passed from wr_backend thread to renderer thread. That
     // implies that all frame data have been processed when the renderer runs this
     // read-back event. Then, we could make sure this read-back event gets the
@@ -1127,6 +1131,9 @@ DisplayListBuilder::PushBorderGradient(const wr::LayoutRect& aBounds,
                                        const wr::LayoutRect& aClip,
                                        bool aIsBackfaceVisible,
                                        const wr::BorderWidths& aWidths,
+                                       const uint32_t aWidth,
+                                       const uint32_t aHeight,
+                                       const wr::SideOffsets2D<uint32_t>& aSlice,
                                        const wr::LayoutPoint& aStartPoint,
                                        const wr::LayoutPoint& aEndPoint,
                                        const nsTArray<wr::GradientStop>& aStops,
@@ -1134,7 +1141,7 @@ DisplayListBuilder::PushBorderGradient(const wr::LayoutRect& aBounds,
                                        const wr::SideOffsets2D<float>& aOutset)
 {
   wr_dp_push_border_gradient(mWrState, aBounds, aClip, aIsBackfaceVisible,
-                             aWidths, aStartPoint, aEndPoint,
+                             aWidths, aWidth, aHeight, aSlice, aStartPoint, aEndPoint,
                              aStops.Elements(), aStops.Length(),
                              aExtendMode, aOutset);
 }

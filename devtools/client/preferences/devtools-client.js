@@ -44,6 +44,8 @@ pref("devtools.inspector.show-three-pane-tooltip", false);
 #endif
 // Enable the 3 pane mode in the inspector
 pref("devtools.inspector.three-pane-enabled", true);
+// Enable the 3 pane mode in the chrome inspector
+pref("devtools.inspector.chrome.three-pane-enabled", false);
 // Whether or not this is the first run of the 3 pane mode. Used to reset the default
 // inspector sidebar widths for its first run.
 pref("devtools.inspector.three-pane-first-run", true);
@@ -61,12 +63,8 @@ pref("devtools.inspector.flexboxHighlighter.enabled", false);
 pref("devtools.inspector.shapesHighlighter.enabled", true);
 // Enable the Flexbox Inspector panel
 pref("devtools.flexboxinspector.enabled", false);
-// Enable the new Animation Inspector in Nightly only
-#if defined(NIGHTLY_BUILD)
+// Enable the new Animation Inspector
 pref("devtools.new-animationinspector.enabled", true);
-#else
-pref("devtools.new-animationinspector.enabled", false);
-#endif
 // Enable the Variable Fonts editor
 pref("devtools.inspector.fonteditor.enabled", false);
 // Enable the font highlight-on-hover feature

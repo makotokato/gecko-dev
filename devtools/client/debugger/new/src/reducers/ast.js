@@ -103,11 +103,16 @@ function update(state = initialASTState(), action) {
 
         if (!action.value) {
           return state.set("preview", null);
+        } // NOTE: if the preview does not exist, it has been cleared
+
+
+        if (state.get("preview")) {
+          return state.set("preview", _objectSpread({}, action.value, {
+            updating: false
+          }));
         }
 
-        return state.set("preview", _objectSpread({}, action.value, {
-          updating: false
-        }));
+        return state;
       }
 
     case "RESUME":
@@ -149,7 +154,7 @@ function hasSymbols(state, source) {
     return false;
   }
 
-  return !symbols.hasOwnProperty("loading");
+  return !symbols.loading;
 }
 
 function isSymbolsLoading(state, source) {
@@ -159,7 +164,7 @@ function isSymbolsLoading(state, source) {
     return false;
   }
 
-  return symbols.hasOwnProperty("loading");
+  return symbols.loading;
 }
 
 function isEmptyLineInSource(state, line, selectedSourceId) {

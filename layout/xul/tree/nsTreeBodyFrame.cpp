@@ -254,7 +254,7 @@ nsTreeBodyFrame::CalcMaxRowWidth()
       nscoord desiredWidth, currentWidth;
       nsresult rv = GetCellWidth(row, col, rc, desiredWidth, currentWidth);
       if (NS_FAILED(rv)) {
-        NS_NOTREACHED("invalid column");
+        MOZ_ASSERT_UNREACHABLE("invalid column");
         continue;
       }
       rowWidth += desiredWidth;
@@ -1612,7 +1612,7 @@ nsTreeBodyFrame::GetCellAt(nscoord aX, nscoord aY, int32_t* aRow,
                                    mRowHeight,
                                    &cellRect);
     if (NS_FAILED(rv)) {
-      NS_NOTREACHED("column has no frame");
+      MOZ_ASSERT_UNREACHABLE("column has no frame");
       continue;
     }
 
@@ -1975,7 +1975,7 @@ nsTreeBodyFrame::PrefillPropertyArray(int32_t aRowIndex, nsTreeColumn* aCol)
     if (aCol->IsPrimary())
       mScratchArray.AppendElement(nsGkAtoms::primary);
 
-    if (aCol->GetType() == TreeColumnBinding::TYPE_CHECKBOX) {
+    if (aCol->GetType() == TreeColumn_Binding::TYPE_CHECKBOX) {
       mScratchArray.AppendElement(nsGkAtoms::checkbox);
 
       if (aRowIndex != -1) {
@@ -3033,7 +3033,7 @@ nsTreeBodyFrame::PaintRow(int32_t               aRowIndex,
       nsRect cellRect;
       rv = primaryCol->GetRect(this, rowRect.y, rowRect.height, &cellRect);
       if (NS_FAILED(rv)) {
-        NS_NOTREACHED("primary column is invalid");
+        MOZ_ASSERT_UNREACHABLE("primary column is invalid");
         return result;
       }
 
@@ -3058,7 +3058,8 @@ nsTreeBodyFrame::PaintRow(int32_t               aRowIndex,
         if (NS_SUCCEEDED(rv)) {
           currX = (prevColRect.x - mHorzPosition) + prevColRect.width + aPt.x;
         } else {
-          NS_NOTREACHED("The column before the primary column is invalid");
+          MOZ_ASSERT_UNREACHABLE("The column before the primary column is "
+                                 "invalid");
           currX = rowRect.x;
         }
       } else {
@@ -3346,12 +3347,12 @@ nsTreeBodyFrame::PaintCell(int32_t               aRowIndex,
     nsRect dirtyRect;
     if (dirtyRect.IntersectRect(aDirtyRect, elementRect)) {
       switch (aColumn->GetType()) {
-        case TreeColumnBinding::TYPE_TEXT:
-        case TreeColumnBinding::TYPE_PASSWORD:
+        case TreeColumn_Binding::TYPE_TEXT:
+        case TreeColumn_Binding::TYPE_PASSWORD:
           result &= PaintText(aRowIndex, aColumn, elementRect, aPresContext,
                               aRenderingContext, aDirtyRect, currX);
           break;
-        case TreeColumnBinding::TYPE_CHECKBOX:
+        case TreeColumn_Binding::TYPE_CHECKBOX:
           result &= PaintCheckbox(aRowIndex, aColumn, elementRect, aPresContext,
                                   aRenderingContext, aDirtyRect);
           break;
@@ -3664,7 +3665,7 @@ nsTreeBodyFrame::PaintText(int32_t              aRowIndex,
   nsAutoString text;
   mView->GetCellText(aRowIndex, aColumn, text);
 
-  if (aColumn->Type() == TreeColumnBinding::TYPE_PASSWORD) {
+  if (aColumn->Type() == TreeColumn_Binding::TYPE_PASSWORD) {
     TextEditRules::FillBufWithPWChars(&text, text.Length());
   }
 

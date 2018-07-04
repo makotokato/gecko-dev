@@ -35,7 +35,7 @@ FOR_EACH_OPCODE(ENUMERATE_OPCODE)
 } JSOp;
 
 /*
- * JS bytecode formats.
+ * [SMDOC] Bytecode Format flags (JOF_*)
  */
 enum {
     JOF_BYTE            = 0,        /* single bytecode, no immediates */
@@ -473,7 +473,7 @@ class SrcNoteLineScanner
 
   public:
     SrcNoteLineScanner(jssrcnote* sn, uint32_t lineno)
-        : offset(0), sn(sn), lineno(lineno)
+        : offset(0), sn(sn), lineno(lineno), lineHeader(false)
     {
     }
 
@@ -561,7 +561,7 @@ StackDefs(jsbytecode* pc)
     return ndefs;
 }
 
-#ifdef DEBUG
+#if defined(DEBUG) || defined(JS_JITSPEW)
 /*
  * Given bytecode address pc in script's main program code, compute the operand
  * stack depth just before (JSOp) *pc executes.  If *pc is not reachable, return
@@ -912,7 +912,7 @@ GetNextPc(jsbytecode* pc)
     return pc + GetBytecodeLength(pc);
 }
 
-#if defined(DEBUG)
+#if defined(DEBUG) || defined(JS_JITSPEW)
 /*
  * Disassemblers, for debugging only.
  */
@@ -926,7 +926,7 @@ Disassemble1(JSContext* cx, JS::Handle<JSScript*> script, jsbytecode* pc, unsign
 #endif
 
 extern MOZ_MUST_USE bool
-DumpCompartmentPCCounts(JSContext* cx);
+DumpRealmPCCounts(JSContext* cx);
 
 } // namespace js
 

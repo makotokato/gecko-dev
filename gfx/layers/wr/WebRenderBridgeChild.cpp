@@ -289,9 +289,7 @@ WebRenderBridgeChild::GetFontKeyForScaledFont(gfx::ScaledFont* aScaledFont)
 {
   MOZ_ASSERT(!mDestroyed);
   MOZ_ASSERT(aScaledFont);
-  MOZ_ASSERT((aScaledFont->GetType() == gfx::FontType::DWRITE) ||
-             (aScaledFont->GetType() == gfx::FontType::MAC) ||
-             (aScaledFont->GetType() == gfx::FontType::FONTCONFIG));
+  MOZ_ASSERT(aScaledFont->CanSerialize());
 
   wr::FontInstanceKey instanceKey = { wr::IdNamespace { 0 }, 0 };
   if (mFontInstanceKeys.Get(aScaledFont, &instanceKey)) {
@@ -544,11 +542,13 @@ WebRenderBridgeChild::InForwarderThread()
 }
 
 mozilla::ipc::IPCResult
-WebRenderBridgeChild::RecvWrUpdated(const wr::IdNamespace& aNewIdNamespace)
+WebRenderBridgeChild::RecvWrUpdated(const wr::IdNamespace& aNewIdNamespace,
+                                    const TextureFactoryIdentifier& textureFactoryIdentifier)
 {
   if (mManager) {
     mManager->WrUpdated();
   }
+  IdentifyTextureHost(textureFactoryIdentifier);
   // Update mIdNamespace to identify obsolete keys and messages by WebRenderBridgeParent.
   // Since usage of invalid keys could cause crash in webrender.
   mIdNamespace = aNewIdNamespace;

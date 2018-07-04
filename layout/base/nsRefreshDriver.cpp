@@ -148,11 +148,7 @@ public:
   {
   }
 
-  virtual ~RefreshDriverTimer()
-  {
-    MOZ_ASSERT(mContentRefreshDrivers.Length() == 0, "Should have removed all content refresh drivers from here by now!");
-    MOZ_ASSERT(mRootRefreshDrivers.Length() == 0, "Should have removed all root refresh drivers from here by now!");
-  }
+  NS_INLINE_DECL_REFCOUNTING(RefreshDriverTimer)
 
   virtual void AddRefreshDriver(nsRefreshDriver* aDriver)
   {
@@ -259,6 +255,12 @@ public:
   }
 
 protected:
+  virtual ~RefreshDriverTimer()
+  {
+    MOZ_ASSERT(mContentRefreshDrivers.Length() == 0, "Should have removed all content refresh drivers from here by now!");
+    MOZ_ASSERT(mRootRefreshDrivers.Length() == 0, "Should have removed all root refresh drivers from here by now!");
+  }
+
   virtual void StartTimer() = 0;
   virtual void StopTimer() = 0;
   virtual void ScheduleNextTick(TimeStamp aNowTime) = 0;
@@ -336,10 +338,11 @@ protected:
   nsTArray<RefPtr<nsRefreshDriver>> mRootRefreshDrivers;
 
   // useful callback for nsITimer-based derived classes, here
-  // bacause of c++ protected shenanigans
+  // because of c++ protected shenanigans
   static void TimerTick(nsITimer* aTimer, void* aClosure)
   {
-    RefreshDriverTimer *timer = static_cast<RefreshDriverTimer*>(aClosure);
+    RefPtr<RefreshDriverTimer> timer =
+      static_cast<RefreshDriverTimer*>(aClosure);
     timer->Tick();
   }
 };
@@ -471,9 +474,7 @@ public:
 private:
   // Since VsyncObservers are refCounted, but the RefreshDriverTimer are
   // explicitly shutdown. We create an inner class that has the VsyncObserver
-  // and is shutdown when the RefreshDriverTimer is deleted. The alternative is
-  // to (a) make all RefreshDriverTimer RefCounted or (b) use different
-  // VsyncObserver types.
+  // and is shutdown when the RefreshDriverTimer is deleted.
   class RefreshDriverVsyncObserver final : public VsyncObserver
   {
   public:
@@ -537,6 +538,9 @@ private:
 
     bool NotifyVsync(TimeStamp aVsyncTimestamp) override
     {
+      // IMPORTANT: All paths through this method MUST hold a strong ref on
+      // |this| for the duration of the TickRefreshDriver callback.
+
       if (!NS_IsMainThread()) {
         MOZ_ASSERT(XRE_IsParentProcess());
         // Compress vsync notifications such that only 1 may run at a time
@@ -571,6 +575,7 @@ private:
           return true;
         }
 
+        RefPtr<RefreshDriverVsyncObserver> kungFuDeathGrip(this);
         TickRefreshDriver(aVsyncTimestamp);
       }
 
@@ -670,7 +675,9 @@ private:
       // the scheduled TickRefreshDriver() runs. Check mVsyncRefreshDriverTimer
       // before use.
       if (mVsyncRefreshDriverTimer) {
-        mVsyncRefreshDriverTimer->RunRefreshDrivers(aVsyncTimestamp);
+        RefPtr<VsyncRefreshDriverTimer> timer = mVsyncRefreshDriverTimer;
+        timer->RunRefreshDrivers(aVsyncTimestamp);
+        // Note: mVsyncRefreshDriverTimer might be null now.
       }
 
       if (!XRE_IsParentProcess()) {
@@ -952,7 +959,8 @@ protected:
 
   static void TimerTickOne(nsITimer* aTimer, void* aClosure)
   {
-    InactiveRefreshDriverTimer *timer = static_cast<InactiveRefreshDriverTimer*>(aClosure);
+    RefPtr<InactiveRefreshDriverTimer> timer =
+      static_cast<InactiveRefreshDriverTimer*>(aClosure);
     timer->TickOne();
   }
 
@@ -963,8 +971,8 @@ protected:
 
 } // namespace mozilla
 
-static RefreshDriverTimer* sRegularRateTimer;
-static InactiveRefreshDriverTimer* sThrottledRateTimer;
+static StaticRefPtr<RefreshDriverTimer> sRegularRateTimer;
+static StaticRefPtr<InactiveRefreshDriverTimer> sThrottledRateTimer;
 
 static void
 CreateContentVsyncRefreshTimer(void*)
@@ -1038,9 +1046,6 @@ GetFirstFrameDelay(imgIRequest* req)
 nsRefreshDriver::Shutdown()
 {
   // clean up our timers
-  delete sRegularRateTimer;
-  delete sThrottledRateTimer;
-
   sRegularRateTimer = nullptr;
   sThrottledRateTimer = nullptr;
 }
@@ -1242,6 +1247,23 @@ nsRefreshDriver::RemoveRefreshObserver(nsARefreshObserver* aObserver,
   return array.RemoveElement(aObserver);
 }
 
+bool
+nsRefreshDriver::AddTimerAdjustmentObserver(
+  nsATimerAdjustmentObserver *aObserver)
+{
+  MOZ_ASSERT(!mTimerAdjustmentObservers.Contains(aObserver));
+
+  return mTimerAdjustmentObservers.AppendElement(aObserver) != nullptr;
+}
+
+bool
+nsRefreshDriver::RemoveTimerAdjustmentObserver(
+  nsATimerAdjustmentObserver *aObserver)
+{
+  MOZ_ASSERT(mTimerAdjustmentObservers.Contains(aObserver));
+  return mTimerAdjustmentObservers.RemoveElement(aObserver);
+}
+
 void
 nsRefreshDriver::PostScrollEvent(mozilla::Runnable* aScrollEvent)
 {
@@ -1382,7 +1404,7 @@ nsRefreshDriver::EnsureTimerStarted(EnsureTimerStartedFlags aFlags)
   // The one exception to this is when we are restoring the refresh driver
   // from test control in which case the time is expected to go backwards
   // (see bug 1043078).
-  mMostRecentRefresh =
+  TimeStamp newMostRecentRefresh =
     aFlags & eAllowTimeToGoBackwards
     ? mActiveTimer->MostRecentRefresh()
     : std::max(mActiveTimer->MostRecentRefresh(), mMostRecentRefresh);
@@ -1391,6 +1413,17 @@ nsRefreshDriver::EnsureTimerStarted(EnsureTimerStartedFlags aFlags)
     ? mActiveTimer->MostRecentRefreshEpochTime()
     : std::max(mActiveTimer->MostRecentRefreshEpochTime(),
                mMostRecentRefreshEpochTime);
+
+  if (mMostRecentRefresh != newMostRecentRefresh) {
+    mMostRecentRefresh = newMostRecentRefresh;
+
+    nsTObserverArray<nsATimerAdjustmentObserver*>::EndLimitedIterator
+      iter(mTimerAdjustmentObservers);
+    while (iter.HasMore()) {
+      nsATimerAdjustmentObserver* obs = iter.GetNext();
+      obs->NotifyTimerAdjusted(mMostRecentRefresh);
+    }
+  }
 }
 
 void
@@ -1424,6 +1457,7 @@ nsRefreshDriver::ObserverCount() const
   sum += mThrottledFrameRequestCallbackDocs.Length();
   sum += mViewManagerFlushIsPending;
   sum += mEarlyRunners.Length();
+  sum += mTimerAdjustmentObservers.Length();
   return sum;
 }
 
@@ -1436,6 +1470,9 @@ nsRefreshDriver::HasObservers() const
     }
   }
 
+  // We should NOT count mTimerAdjustmentObservers here since this method is
+  // used to determine whether or not to stop the timer or re-start it and timer
+  // adjustment observers should not influence timer starting or stopping.
   return mViewManagerFlushIsPending ||
          !mStyleFlushObservers.IsEmpty() ||
          !mLayoutFlushObservers.IsEmpty() ||
@@ -2288,16 +2325,15 @@ nsRefreshDriver::PVsyncActorCreated(VsyncChild* aVsyncChild)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(!XRE_IsParentProcess());
-  auto* vsyncRefreshDriverTimer =
-      new VsyncRefreshDriverTimer(aVsyncChild);
+  RefPtr<RefreshDriverTimer> vsyncRefreshDriverTimer =
+    new VsyncRefreshDriverTimer(aVsyncChild);
 
   // If we are using software timer, swap current timer to
   // VsyncRefreshDriverTimer.
   if (sRegularRateTimer) {
     sRegularRateTimer->SwapRefreshDrivers(vsyncRefreshDriverTimer);
-    delete sRegularRateTimer;
   }
-  sRegularRateTimer = vsyncRefreshDriverTimer;
+  sRegularRateTimer = vsyncRefreshDriverTimer.forget();
 }
 
 void

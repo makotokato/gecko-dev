@@ -54,6 +54,8 @@ using mozilla::IsBaseOf;
 using mozilla::IsSame;
 using mozilla::PodCopy;
 
+// [SMDOC] GC Tracing
+//
 // Tracing Overview
 // ================
 //
@@ -269,8 +271,7 @@ js::CheckTracedThing(JSTracer* trc, T* thing)
      * IsThingPoisoned would be racy in this case.
      */
     MOZ_ASSERT_IF(JS::RuntimeHeapIsBusy() &&
-                  !zone->isGCCompacting() &&
-                  !rt->gc.isBackgroundSweeping(),
+                  !zone->isGCSweeping() && !zone->isGCFinished() && !zone->isGCCompacting(),
                   !IsThingPoisoned(thing) || !InFreeList(thing->asTenured().arena(), thing));
 #endif
 }
@@ -905,9 +906,10 @@ template <typename T>
 bool
 js::GCMarker::mark(T* thing)
 {
+    if (IsInsideNursery(thing))
+        return false;
     AssertShouldMarkInZone(thing);
     TenuredCell* cell = TenuredCell::fromPointer(thing);
-    MOZ_ASSERT(!IsInsideNursery(cell));
 
     if (!TypeParticipatesInCC<T>::value)
         return cell->markIfUnmarked(MarkColor::Black);

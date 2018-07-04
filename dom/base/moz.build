@@ -201,11 +201,16 @@ EXPORTS.mozilla.dom += [
     'NodeInfoInlines.h',
     'NodeIterator.h',
     'ParentProcessMessageManager.h',
+    'PlacesEvent.h',
+    'PlacesObservers.h',
+    'PlacesVisit.h',
+    'PlacesWeakCallbackWrapper.h',
     'Pose.h',
     'ProcessGlobal.h',
     'ProcessMessageManager.h',
     'ResponsiveImageSelector.h',
     'SameProcessMessageQueue.h',
+    'ScreenLuminance.h',
     'ScreenOrientation.h',
     'Selection.h',
     'ShadowRoot.h',
@@ -355,6 +360,7 @@ UNIFIED_SOURCES += [
     'ProcessMessageManager.cpp',
     'ResponsiveImageSelector.cpp',
     'SameProcessMessageQueue.cpp',
+    'ScreenLuminance.cpp',
     'ScreenOrientation.cpp',
     'Selection.cpp',
     'SelectionChangeListener.cpp',
@@ -388,6 +394,13 @@ if CONFIG['MOZ_WEBRTC']:
 if CONFIG['FUZZING']:
     UNIFIED_SOURCES += [
         'FuzzingFunctions.cpp',
+    ]
+
+if CONFIG['MOZ_PLACES']:
+    UNIFIED_SOURCES += [
+        'PlacesEvent.cpp',
+        'PlacesObservers.cpp',
+        'PlacesWeakCallbackWrapper.cpp',
     ]
 
 # these files couldn't be in UNIFIED_SOURCES for now for reasons given below:

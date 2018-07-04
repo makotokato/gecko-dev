@@ -836,14 +836,6 @@ public:
     mBidiEnabled = true;
   }
 
-  /**
-   * Check if the document contains (or has contained) any MathML elements.
-   */
-  bool GetMathMLEnabled() const
-  {
-    return mMathMLEnabled;
-  }
-
   void SetMathMLEnabled()
   {
     mMathMLEnabled = true;
@@ -1468,41 +1460,12 @@ public:
    * Style sheets are ordered, most significant last.
    */
 
-  /**
-   * These exists to allow us to on-demand load user-agent style sheets that
-   * would otherwise be loaded by nsDocumentViewer::CreateStyleSet. This allows
-   * us to keep the memory used by a document's rule cascade data (the stuff in
-   * its nsStyleSet's nsCSSRuleProcessors) - which can be considerable - lower
-   * than it would be if we loaded all built-in user-agent style sheets up
-   * front.
-   *
-   * By "built-in" user-agent style sheets we mean the user-agent style sheets
-   * that gecko itself supplies (such as html.css and svg.css) as opposed to
-   * user-agent level style sheets inserted by add-ons or the like.
-   *
-   * This function prepends the given style sheet to the document's style set
-   * in order to make sure that it does not override user-agent style sheets
-   * supplied by add-ons or by the app (Firefox OS or Firefox Mobile, for
-   * example), since their sheets should override built-in sheets.
-   *
-   * TODO We can get rid of the whole concept of delayed loading if we fix
-   * bug 77999.
-   */
-  void EnsureOnDemandBuiltInUASheet(mozilla::StyleSheet* aSheet);
-
   mozilla::dom::StyleSheetList* StyleSheets()
   {
     return &DocumentOrShadowRoot::EnsureDOMStyleSheets();
   }
 
-  /**
-   * Insert a sheet at a particular spot in the stylesheet list (zero-based)
-   * @param aSheet the sheet to insert
-   * @param aIndex the index to insert at.
-   * @throws no exceptions
-   */
-  void InsertStyleSheetAt(mozilla::StyleSheet* aSheet, size_t aIndex);
-
+  void InsertSheetAt(size_t aIndex, mozilla::StyleSheet&);
 
   /**
    * Replace the stylesheets in aOldSheets with the stylesheets in
@@ -1518,8 +1481,15 @@ public:
 
   /**
    * Add a stylesheet to the document
+   *
+   * TODO(emilio): This is only used by parts of editor that are no longer in
+   * use by m-c or c-c, so remove.
    */
-  void AddStyleSheet(mozilla::StyleSheet* aSheet);
+  void AddStyleSheet(mozilla::StyleSheet* aSheet)
+  {
+    MOZ_ASSERT(aSheet);
+    InsertSheetAt(SheetCount(), *aSheet);
+  }
 
   /**
    * Remove a stylesheet from the document
@@ -1869,6 +1839,7 @@ public:
   // To make this easy and painless, use the mozAutoDocUpdate helper class.
   void BeginUpdate();
   virtual void EndUpdate() = 0;
+  uint32_t UpdateNestingLevel() { return mUpdateNestLevel; }
 
   virtual void BeginLoad() = 0;
   virtual void EndLoad() = 0;
@@ -2017,7 +1988,13 @@ public:
   }
   bool LoadsFullXULStyleSheetUpFront()
   {
-    return IsXULDocument() || AllowXULXBL();
+    if (IsXULDocument()) {
+      return true;
+    }
+    if (IsSVGDocument()) {
+      return false;
+    }
+    return AllowXULXBL();
   }
 
   bool IsScriptEnabled();
@@ -3390,18 +3367,25 @@ public:
 
   void PropagateUseCounters(nsIDocument* aParentDocument);
 
+  // Called to track whether this document has had any interaction.
+  // This is used to track whether we should permit "beforeunload".
   void SetUserHasInteracted(bool aUserHasInteracted);
   bool UserHasInteracted()
   {
     return mUserHasInteracted;
   }
 
-  // This would be called when document get activated by specific user gestures
-  // and propagate the user activation flag to its parent.
-  void NotifyUserActivation();
+  // This should be called when this document receives events which are likely
+  // to be user interaction with the document, rather than the byproduct of
+  // interaction with the browser (i.e. a keypress to scroll the view port,
+  // keyboard shortcuts, etc). This is used to decide whether we should
+  // permit autoplay audible media. This also gesture activates all other
+  // content documents in this tab.
+  void NotifyUserGestureActivation();
 
-  // Return true if document has interacted by specific user gestures.
-  bool HasBeenUserActivated();
+  // Return true if NotifyUserGestureActivation() has been called on any
+  // document in the document tree.
+  bool HasBeenUserGestureActivated();
 
   bool HasScriptsBlockedBySandbox();
 
@@ -3610,7 +3594,6 @@ protected:
 
   void UpdateDocumentStates(mozilla::EventStates);
 
-  void AddOnDemandBuiltInUASheet(mozilla::StyleSheet* aSheet);
   void RemoveDocStyleSheetsFromStyleSets();
   void RemoveStyleSheetsFromStyleSets(
       const nsTArray<RefPtr<mozilla::StyleSheet>>& aSheets,
@@ -3698,14 +3681,6 @@ protected:
 
   // Return the same type parent docuement if exists, or return null.
   nsIDocument* GetSameTypeParentDocument();
-
-  // Return the first parent document with same pricipal, return nullptr if we
-  // can't find it.
-  nsIDocument* GetFirstParentDocumentWithSamePrincipal(nsIPrincipal* aPrincipal);
-
-  // Activate the flag 'mUserHasActivatedInteraction' by specific user gestures.
-  void ActivateByUserGesture();
-  void MaybeActivateByUserGesture(nsIPrincipal* aPrincipal);
 
   // Helpers for GetElementsByName.
   static bool MatchNameAttribute(mozilla::dom::Element* aElement,
@@ -4246,9 +4221,12 @@ protected:
   // Whether the user has interacted with the document or not:
   bool mUserHasInteracted;
 
-  // Whether the user has interacted with the document via some specific user
-  // gestures.
-  bool mUserHasActivatedInteraction;
+  // Whether the user has interacted with the document via a restricted
+  // set of gestures which are likely to be interaction with the document,
+  // and not events that are fired as a byproduct of the user interacting
+  // with the browser (events for like scrolling the page, keyboard short
+  // cuts, etc).
+  bool mUserGestureActivated;
 
   mozilla::TimeStamp mPageUnloadingEventTimeStamp;
 
@@ -4412,7 +4390,6 @@ protected:
   nsCOMPtr<nsIRunnable> mMaybeEndOutermostXBLUpdateRunner;
   nsCOMPtr<nsIRequest> mOnloadBlocker;
 
-  nsTArray<RefPtr<mozilla::StyleSheet>> mOnDemandBuiltInUASheets;
   nsTArray<RefPtr<mozilla::StyleSheet>> mAdditionalSheets[AdditionalSheetTypeCount];
 
   // Member to store out last-selected stylesheet set.

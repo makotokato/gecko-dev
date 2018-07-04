@@ -44,7 +44,7 @@ using namespace mozilla::dom;
 JSObject*
 nsRange::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return RangeBinding::Wrap(aCx, this, aGivenProto);
+  return Range_Binding::Wrap(aCx, this, aGivenProto);
 }
 
 DocGroup*
@@ -2293,25 +2293,25 @@ nsRange::CompareBoundaryPoints(uint16_t aHow, nsRange& aOtherRange,
   uint32_t ourOffset, otherOffset;
 
   switch (aHow) {
-    case RangeBinding::START_TO_START:
+    case Range_Binding::START_TO_START:
       ourNode = mStart.Container();
       ourOffset = mStart.Offset();
       otherNode = aOtherRange.GetStartContainer();
       otherOffset = aOtherRange.StartOffset();
       break;
-    case RangeBinding::START_TO_END:
+    case Range_Binding::START_TO_END:
       ourNode = mEnd.Container();
       ourOffset = mEnd.Offset();
       otherNode = aOtherRange.GetStartContainer();
       otherOffset = aOtherRange.StartOffset();
       break;
-    case RangeBinding::END_TO_START:
+    case Range_Binding::END_TO_START:
       ourNode = mStart.Container();
       ourOffset = mStart.Offset();
       otherNode = aOtherRange.GetEndContainer();
       otherOffset = aOtherRange.EndOffset();
       break;
-    case RangeBinding::END_TO_END:
+    case Range_Binding::END_TO_END:
       ourNode = mEnd.Container();
       ourOffset = mEnd.Offset();
       otherNode = aOtherRange.GetEndContainer();
@@ -3030,14 +3030,14 @@ nsRange::CollectClientRectsAndText(nsLayoutUtils::RectCallback* aCollector,
   nsCOMPtr<nsINode> endContainer = aEndContainer;
 
   // Flush out layout so our frames are up to date.
-  if (!aStartContainer->IsInUncomposedDoc()) {
+  if (!aStartContainer->IsInComposedDoc()) {
     return;
   }
 
   if (aFlushLayout) {
     aStartContainer->OwnerDoc()->FlushPendingNotifications(FlushType::Layout);
     // Recheck whether we're still in the document
-    if (!aStartContainer->IsInUncomposedDoc()) {
+    if (!aStartContainer->IsInComposedDoc()) {
       return;
     }
   }
@@ -3170,7 +3170,7 @@ nsRange::GetUsedFontFaces(nsTArray<nsAutoPtr<InspectorFontFace>>& aResult,
   doc->FlushPendingNotifications(FlushType::Frames);
 
   // Recheck whether we're still in the document
-  NS_ENSURE_TRUE(mStart.Container()->IsInUncomposedDoc(), NS_ERROR_UNEXPECTED);
+  NS_ENSURE_TRUE(mStart.Container()->IsInComposedDoc(), NS_ERROR_UNEXPECTED);
 
   // A table to map gfxFontEntry objects to InspectorFontFace objects.
   // (We hold on to the InspectorFontFaces strongly due to the nsAutoPtrs

@@ -57,7 +57,7 @@
 #endif
     <!-- work-around bug 392512 -->
     <command id="Browser:AddBookmarkAs"
-             oncommand="PlacesCommandHook.bookmarkPage(gBrowser.selectedBrowser, true);"/>
+             oncommand="PlacesCommandHook.bookmarkPage(gBrowser.selectedBrowser);"/>
     <!-- The command disabled state must be manually updated through
          PlacesCommandHook.updateBookmarkAllTabsCommand() -->
     <command id="Browser:BookmarkAllTabs"
@@ -128,10 +128,6 @@
                  type="checkbox" group="sidebar"
                  sidebarurl="chrome://browser/content/places/historySidebar.xul"
                  oncommand="SidebarUI.toggle('viewHistorySidebar');"/>
-
-    <broadcaster id="viewWebPanelsSidebar" autoCheck="false"
-                 type="checkbox" group="sidebar" sidebarurl="chrome://browser/content/web-panels.xul"
-                 oncommand="SidebarUI.toggle('viewWebPanelsSidebar');"/>
 
     <broadcaster id="bookmarkThisPageBroadcaster"
                  label="&bookmarkThisPageCmd.label;"
@@ -369,9 +365,7 @@
 #endif
          reserved="true"/>
 
-#ifdef FULL_BROWSER_WINDOW
     <key id="key_undoCloseTab" command="History:UndoCloseTab" key="&tabCmd.commandkey;" modifiers="accel,shift"/>
-#endif
     <key id="key_undoCloseWindow" command="History:UndoCloseWindow" key="&newNavigatorCmd.key;" modifiers="accel,shift"/>
 
 #ifdef XP_GNOME

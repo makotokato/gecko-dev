@@ -8,6 +8,7 @@
 
 /* all localizable skin settings shall live here */
 @import url("chrome://global/locale/intl.css");
+@import url("chrome://global/content/widgets.css");
 
 @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
 
@@ -20,9 +21,12 @@ menulist > menupopup {
 /* ::::: Variables ::::: */
 :root {
   --arrowpanel-padding: 10px;
-  --arrowpanel-background: -moz-field;
-  --arrowpanel-color: -moz-FieldText;
-  --arrowpanel-border-color: ThreeDShadow;
+  --default-arrowpanel-background: -moz-field;
+  --default-arrowpanel-color: -moz-fieldText;
+  --default-arrowpanel-border-color: ThreeDShadow;
+  --arrowpanel-background: var(--default-arrowpanel-background);
+  --arrowpanel-color: var(--default-arrowpanel-color);
+  --arrowpanel-border-color: var(--default-arrowpanel-border-color);
   --panel-disabled-color: GrayText;
 }
 
@@ -125,6 +129,28 @@ sidebarheader > label {
 toolbar[mode="text"] .toolbarbutton-text {
   padding: 0 !important;
   margin: 3px 5px !important;
+}
+
+toolbar[is="printpreview-toolbar"] .navigate-button {
+  min-width: 1.9em;
+}
+
+toolbar[is="printpreview-toolbar"] .navigate-button > .toolbarbutton-icon {
+  display: none;
+}
+
+toolbar[is="printpreview-toolbar"] .toolbar-portrait-page {
+  list-style-image: url("chrome://global/skin/icons/Print-preview.png");
+  -moz-image-region: rect(0px 16px 16px 0px);
+}
+
+toolbar[is="printpreview-toolbar"] .toolbar-landscape-page {
+  list-style-image: url("chrome://global/skin/icons/Print-preview.png");
+  -moz-image-region: rect(0px 32px 16px 16px);
+}
+
+toolbar[is="printpreview-toolbar"] #pageNumber {
+  width: 3ch;
 }
 
 /* ::::: miscellaneous formatting ::::: */

@@ -2370,7 +2370,9 @@ RuntimeService::CreateSharedWorkerFromLoadInfo(JSContext* aCx,
     // We're done here.  Just queue up our error event and return our
     // dead-on-arrival SharedWorker.
     RefPtr<AsyncEventDispatcher> errorEvent =
-      new AsyncEventDispatcher(sharedWorker, NS_LITERAL_STRING("error"), false);
+      new AsyncEventDispatcher(sharedWorker,
+                               NS_LITERAL_STRING("error"),
+                               CanBubble::eNo);
     errorEvent->PostDOMEvent();
     sharedWorker.forget(aSharedWorker);
     return NS_OK;
@@ -2603,7 +2605,7 @@ RuntimeService::Observe(nsISupports* aSubject, const char* aTopic,
     return NS_OK;
   }
 
-  NS_NOTREACHED("Unknown observer topic!");
+  MOZ_ASSERT_UNREACHABLE("Unknown observer topic!");
   return NS_OK;
 }
 

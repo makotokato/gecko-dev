@@ -32,7 +32,6 @@
 #include "nsDataHashtable.h"
 #include "nsRefPtrHashtable.h"
 #include "nsTArrayForwardDeclare.h"
-#include "nsTObserverArray.h"
 
 class nsIConsoleReportCollector;
 
@@ -51,7 +50,6 @@ class ServiceWorkerJobQueue;
 class ServiceWorkerManagerChild;
 class ServiceWorkerPrivate;
 class ServiceWorkerRegistrar;
-class ServiceWorkerRegistrationListener;
 
 class ServiceWorkerUpdateFinishCallback
 {
@@ -101,8 +99,6 @@ public:
 
   struct RegistrationDataPerPrincipal;
   nsClassHashtable<nsCStringHashKey, RegistrationDataPerPrincipal> mRegistrationInfos;
-
-  nsTObserverArray<ServiceWorkerRegistrationListener*> mServiceWorkerRegistrationListeners;
 
   struct ControlledClientData
   {
@@ -311,14 +307,6 @@ public:
   ForceUnregister(RegistrationDataPerPrincipal* aRegistrationData,
                   ServiceWorkerRegistrationInfo* aRegistration);
 
-  NS_IMETHOD
-  AddRegistrationEventListener(const nsAString& aScope,
-                               ServiceWorkerRegistrationListener* aListener);
-
-  NS_IMETHOD
-  RemoveRegistrationEventListener(const nsAString& aScope,
-                                  ServiceWorkerRegistrationListener* aListener);
-
   void
   MaybeCheckNavigationUpdate(const ClientInfo& aClientInfo);
 
@@ -343,6 +331,10 @@ public:
   void
   RemovePendingReadyPromise(const ClientInfo& aClientInfo);
 
+  void
+  NoteInheritedController(const ClientInfo& aClientInfo,
+                          const ServiceWorkerDescriptor& aController);
+
 private:
   ServiceWorkerManager();
   ~ServiceWorkerManager();
@@ -352,7 +344,8 @@ private:
 
   RefPtr<GenericPromise>
   StartControllingClient(const ClientInfo& aClientInfo,
-                         ServiceWorkerRegistrationInfo* aRegistrationInfo);
+                         ServiceWorkerRegistrationInfo* aRegistrationInfo,
+                         bool aControlClientHandle = true);
 
   void
   StopControllingClient(const ClientInfo& aClientInfo);
@@ -387,12 +380,6 @@ private:
 
   ServiceWorkerInfo*
   GetActiveWorkerInfoForDocument(nsIDocument* aDocument);
-
-  void
-  UpdateRegistrationListeners(ServiceWorkerRegistrationInfo* aReg);
-
-  void
-  NotifyServiceWorkerRegistrationRemoved(ServiceWorkerRegistrationInfo* aRegistration);
 
   void
   StopControllingRegistration(ServiceWorkerRegistrationInfo* aRegistration);
@@ -441,9 +428,6 @@ private:
   void
   QueueFireEventOnServiceWorkerRegistrations(ServiceWorkerRegistrationInfo* aRegistration,
                                              const nsAString& aName);
-
-  void
-  FireUpdateFoundOnServiceWorkerRegistrations(ServiceWorkerRegistrationInfo* aRegistration);
 
   void
   UpdateClientControllers(ServiceWorkerRegistrationInfo* aRegistration);

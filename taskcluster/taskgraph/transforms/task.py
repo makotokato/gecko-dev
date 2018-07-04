@@ -410,6 +410,36 @@ task_description_schema = Schema({
             Required('name'): basestring,
         }],
     }, {
+        Required('implementation'): 'script-engine-autophone',
+        Required('os'): Any('macosx', 'linux'),
+
+        # A link for an executable to download
+        Optional('context'): basestring,
+
+        # Tells the worker whether machine should reboot
+        # after the task is finished.
+        Optional('reboot'):
+            Any(False, 'always', 'never', 'on-exception', 'on-failure'),
+
+        # the command to run
+        Optional('command'): [taskref_or_string],
+
+        # environment variables
+        Optional('env'): {basestring: taskref_or_string},
+
+        # artifacts to extract from the task image after completion
+        Optional('artifacts'): [{
+            # type of artifact -- simple file, or recursive directory
+            Required('type'): Any('file', 'directory'),
+
+            # task image path from which to read artifact
+            Required('path'): basestring,
+
+            # name of the produced artifact (root of the names for
+            # type=directory)
+            Required('name'): basestring,
+        }],
+    }, {
         Required('implementation'): 'scriptworker-signing',
 
         # the maximum time to run, in seconds
@@ -541,11 +571,11 @@ task_description_schema = Schema({
             Required('paths'): [basestring],
         }],
     }, {
-        Required('implementation'): 'shipit',
+        Required('implementation'): 'shipit-shipped',
         Required('release-name'): basestring,
     }, {
         Required('implementation'): 'treescript',
-        Required('tag'): bool,
+        Required('tags'): [Any('buildN', 'release', None)],
         Required('bump'): bool,
         Optional('bump-files'): [basestring],
         Optional('repo-param-prefix'): basestring,
@@ -764,6 +794,8 @@ def build_docker_worker_payload(config, task, task_def):
                 level=config.params['level'])
         )
         worker['env']['USE_SCCACHE'] = '1'
+        # Disable sccache idle shutdown.
+        worker['env']['SCCACHE_IDLE_TIMEOUT'] = '0'
     else:
         worker['env']['SCCACHE_DISABLE'] = '1'
 
@@ -1113,8 +1145,8 @@ def build_push_snap_payload(config, task, task_def):
     }
 
 
-@payload_builder('shipit')
-def build_ship_it_payload(config, task, task_def):
+@payload_builder('shipit-shipped')
+def build_ship_it_shipped_payload(config, task, task_def):
     worker = task['worker']
 
     task_def['payload'] = {
@@ -1139,14 +1171,19 @@ def build_treescript_payload(config, task, task_def):
 
     task_def['payload'] = {}
     task_def.setdefault('scopes', [])
-    if worker['tag']:
+    if worker['tags']:
+        tag_names = []
         product = task['shipping-product'].upper()
         version = release_config['version'].replace('.', '_')
         buildnum = release_config['build_number']
-        tag_names = [
-            "{}_{}_BUILD{}".format(product, version, buildnum),
-            "{}_{}_RELEASE".format(product, version)
-        ]
+        if 'buildN' in worker['tags']:
+            tag_names.extend([
+                "{}_{}_BUILD{}".format(product, version, buildnum),
+            ])
+        if 'release' in worker['tags']:
+            tag_names.extend([
+              "{}_{}_RELEASE".format(product, version)
+            ])
         tag_info = {
             'tags': tag_names,
             'revision': config.params['{}head_rev'.format(worker.get('repo-param-prefix', ''))],
@@ -1203,6 +1240,29 @@ def build_macosx_engine_payload(config, task, task_def):
 
     if task.get('needs-sccache'):
         raise Exception('needs-sccache not supported in native-engine')
+
+
+@payload_builder('script-engine-autophone')
+def build_script_engine_autophone_payload(config, task, task_def):
+    worker = task['worker']
+    artifacts = map(lambda artifact: {
+        'name': artifact['name'],
+        'path': artifact['path'],
+        'type': artifact['type'],
+        'expires': task_def['expires'],
+    }, worker.get('artifacts', []))
+
+    task_def['payload'] = {
+        'context': worker['context'],
+        'command': worker['command'],
+        'env': worker['env'],
+        'artifacts': artifacts,
+    }
+    if worker.get('reboot'):
+        task_def['payload'] = worker['reboot']
+
+    if task.get('needs-sccache'):
+        raise Exception('needs-sccache not supported in taskcluster-worker')
 
 
 transforms = TransformSequence()

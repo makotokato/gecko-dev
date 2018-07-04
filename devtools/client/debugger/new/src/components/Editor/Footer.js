@@ -50,7 +50,7 @@ class SourceFooter extends _react.PureComponent {
     const tooltip = L10N.getStr("sourceTabs.prettyPrint");
     const type = "prettyPrint";
     return _react2.default.createElement("button", {
-      onClick: () => togglePrettyPrint(selectedSource.get("id")),
+      onClick: () => togglePrettyPrint(selectedSource.id),
       className: (0, _classnames2.default)("action", type, {
         active: sourceLoaded,
         pretty: (0, _source.isPretty)(selectedSource)
@@ -70,7 +70,7 @@ class SourceFooter extends _react.PureComponent {
     } = this.props;
     const sourceLoaded = selectedSource && (0, _source.isLoaded)(selectedSource);
 
-    if (!sourceLoaded) {
+    if (!sourceLoaded || selectedSource.isPrettyPrinted) {
       return;
     }
 
@@ -78,7 +78,7 @@ class SourceFooter extends _react.PureComponent {
     const tooltip = L10N.getStr("sourceFooter.blackbox");
     const type = "black-box";
     return _react2.default.createElement("button", {
-      onClick: () => toggleBlackBox(selectedSource.toJS()),
+      onClick: () => toggleBlackBox(selectedSource),
       className: (0, _classnames2.default)("action", type, {
         active: sourceLoaded,
         blackboxed: blackboxed
@@ -153,7 +153,7 @@ class SourceFooter extends _react.PureComponent {
       const tooltip = L10N.getFormatStr("sourceFooter.mappedSourceTooltip", filename);
       const title = L10N.getFormatStr("sourceFooter.mappedSource", filename);
       const mappedSourceLocation = {
-        sourceId: selectedSource.get("id"),
+        sourceId: selectedSource.id,
         line: 1,
         column: 1
       };
@@ -195,4 +195,10 @@ const mapStateToProps = state => {
   };
 };
 
-exports.default = (0, _reactRedux.connect)(mapStateToProps, _actions2.default)(SourceFooter);
+exports.default = (0, _reactRedux.connect)(mapStateToProps, {
+  togglePrettyPrint: _actions2.default.togglePrettyPrint,
+  toggleBlackBox: _actions2.default.toggleBlackBox,
+  jumpToMappedLocation: _actions2.default.jumpToMappedLocation,
+  recordCoverage: _actions2.default.recordCoverage,
+  togglePaneCollapse: _actions2.default.togglePaneCollapse
+})(SourceFooter);

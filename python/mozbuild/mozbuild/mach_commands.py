@@ -1675,7 +1675,7 @@ class StaticAnalysis(MachCommandBase):
         # When no value is specified the default value is considered to be the source
         # in order to limit the dianostic message to the source files or folders.
         common_args.append('-header-filter=%s' %
-                           (header_filter if len(header_filter) else ''.join(source)))
+                           (header_filter if len(header_filter) else '|'.join(source)))
 
         if fix:
             common_args.append('-fix')
@@ -1692,7 +1692,7 @@ class StaticAnalysis(MachCommandBase):
             return 0
 
         args = [python, self._run_clang_tidy_path, '-p', self.topobjdir]
-        args += ['-j', str(jobs)] + source + common_args
+        args += ['-j', str(jobs)] + common_args + source
         cwd = self.topobjdir
 
         monitor = StaticAnalysisMonitor(self.topsrcdir, self.topobjdir, total)
@@ -1769,7 +1769,7 @@ class StaticAnalysis(MachCommandBase):
         # For each checker run it
         f = open(mozpath.join(self._clang_tidy_base_path, "config.yaml"))
         import yaml
-        config = yaml.load(f)
+        config = yaml.safe_load(f)
         platform, _ = self.platform
 
         if platform not in config['platforms']:
@@ -1834,7 +1834,7 @@ class StaticAnalysis(MachCommandBase):
                               'Delete local helpers and reset static analysis helper tool cache')
     def clear_cache(self, verbose=False):
         self._set_log_level(verbose)
-        rc = self._get_clang_tools(force=True, download_if_needed=False,
+        rc = self._get_clang_tools(force=True, download_if_needed=True, skip_cache=True,
                                    verbose=verbose)
         if rc != 0:
             return rc
@@ -1970,7 +1970,7 @@ class StaticAnalysis(MachCommandBase):
         import yaml
         with open(mozpath.join(self.topsrcdir, "tools", "clang-tidy", "config.yaml")) as f:
             try:
-                config = yaml.load(f)
+                config = yaml.safe_load(f)
                 for item in config['clang_checkers']:
                     if item['publish']:
                         checks += ',' + item['name']

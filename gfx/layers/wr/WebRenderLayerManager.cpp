@@ -240,16 +240,15 @@ WebRenderLayerManager::EndTransaction(DrawPaintedLayerCallback aCallback,
 void
 WebRenderLayerManager::EndTransactionWithoutLayer(nsDisplayList* aDisplayList,
                                                   nsDisplayListBuilder* aDisplayListBuilder,
-                                                  const nsTArray<wr::WrFilterOp>& aFilters)
+                                                  const nsTArray<wr::WrFilterOp>& aFilters,
+                                                  WebRenderBackgroundData* aBackground)
 {
-  MOZ_ASSERT(aDisplayList && aDisplayListBuilder);
-
   AUTO_PROFILER_TRACING("Paint", "RenderLayers");
 
 #if DUMP_LISTS
   // Useful for debugging, it dumps the display list *before* we try to build
   // WR commands from it
-  if (XRE_IsContentProcess()) nsFrame::PrintDisplayList(aDisplayListBuilder, *aDisplayList);
+  if (XRE_IsContentProcess() && aDisplayList) nsFrame::PrintDisplayList(aDisplayListBuilder, *aDisplayList);
 #endif
 
 #ifdef XP_WIN
@@ -266,13 +265,24 @@ WebRenderLayerManager::EndTransactionWithoutLayer(nsDisplayList* aDisplayList,
   wr::DisplayListBuilder builder(WrBridge()->GetPipeline(), contentSize, mLastDisplayListSize);
   wr::IpcResourceUpdateQueue resourceUpdates(WrBridge());
 
-  mWebRenderCommandBuilder.BuildWebRenderCommands(builder,
-                                                  resourceUpdates,
-                                                  aDisplayList,
-                                                  aDisplayListBuilder,
-                                                  mScrollData,
-                                                  contentSize,
-                                                  aFilters);
+  if (aDisplayList) {
+    MOZ_ASSERT(aDisplayListBuilder && !aBackground);
+    // Record the time spent "layerizing". WR doesn't actually layerize but
+    // generating the WR display list is the closest equivalent
+    PaintTelemetry::AutoRecord record(PaintTelemetry::Metric::Layerization);
+
+    mWebRenderCommandBuilder.BuildWebRenderCommands(builder,
+                                                    resourceUpdates,
+                                                    aDisplayList,
+                                                    aDisplayListBuilder,
+                                                    mScrollData,
+                                                    contentSize,
+                                                    aFilters);
+  } else {
+    // ViewToPaint does not have frame yet, then render only background clolor.
+    MOZ_ASSERT(!aDisplayListBuilder && aBackground);
+    aBackground->AddWebRenderCommands(builder);
+  }
 
   DiscardCompositorAnimations();
 

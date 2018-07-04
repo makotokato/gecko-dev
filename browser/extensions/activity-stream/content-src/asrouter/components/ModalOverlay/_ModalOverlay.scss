@@ -3,6 +3,7 @@
     overflow: hidden;
   }
 }
+
 .modalOverlayOuter {
   background: $white;
   opacity: 0.93;
@@ -11,7 +12,7 @@
   top: 0;
   width: 100%;
   display: none;
-  z-index: 100000;
+  z-index: 1100;
 
   &.active {
     display: block;
@@ -28,7 +29,7 @@
   box-shadow: 0 1px 15px 0 $black-30;
   border-radius: 4px;
   display: none;
-  z-index: 100001;
+  z-index: 1101;
 
 
   // modal takes over entire screen
@@ -43,6 +44,11 @@
 
   // if modal is short enough, add a vertical scroll bar
   @media(max-width: 850px) and (max-height: 730px) {
+    overflow-y: scroll;
+  }
+
+  // if modal is narrow enough, add a vertical scroll bar
+  @media(max-width: 650px) and (max-height: 600px) {
     overflow-y: scroll;
   }
 
@@ -82,11 +88,16 @@
       position: sticky;
     }
 
+    // if modal is narrow enough, footer becomes sticky
+    @media(max-width: 650px) and (max-height: 600px) {
+      position: sticky;
+    }
+
     .modalButton {
       margin-top: 20px;
       width: 150px;
       height: 30px;
-      padding: 4px 0 6px 0;
+      padding: 4px 0 6px;
       font-size: 15px;
     }
   }

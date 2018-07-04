@@ -378,24 +378,35 @@ wasm::EncodeLocalEntries(Encoder& e, const ValTypeVector& locals)
 }
 
 static bool
-DecodeValType(Decoder& d, ModuleKind kind, HasGcTypes gcTypesEnabled, ValType* type)
+DecodeValType(Decoder& d, ModuleKind kind, uint32_t numTypes, HasGcTypes gcTypesEnabled,
+              ValType* type)
 {
-    uint8_t unchecked;
-    if (!d.readValType(&unchecked))
+    uint8_t uncheckedCode;
+    uint32_t uncheckedRefTypeIndex;
+    if (!d.readValType(&uncheckedCode, &uncheckedRefTypeIndex))
         return false;
 
-    switch (unchecked) {
+    switch (uncheckedCode) {
       case uint8_t(ValType::I32):
       case uint8_t(ValType::F32):
       case uint8_t(ValType::F64):
       case uint8_t(ValType::I64):
-        *type = ValType::fromTypeCode(unchecked);
+        *type = ValType(ValType::Code(uncheckedCode));
         return true;
       case uint8_t(ValType::AnyRef):
         if (gcTypesEnabled == HasGcTypes::False)
             break;
-        *type = ValType::fromTypeCode(unchecked);
+        *type = ValType(ValType::Code(uncheckedCode));
         return true;
+      case uint8_t(ValType::Ref): {
+        if (gcTypesEnabled == HasGcTypes::False)
+            break;
+        if (uncheckedRefTypeIndex >= numTypes)
+            return d.fail("ref index out of range");
+        // We further validate ref types in the caller.
+        *type = ValType(ValType::Code(uncheckedCode), uncheckedRefTypeIndex);
+        return true;
+      }
       case uint8_t(ValType::I8x16):
       case uint8_t(ValType::I16x8):
       case uint8_t(ValType::I32x4):
@@ -405,7 +416,7 @@ DecodeValType(Decoder& d, ModuleKind kind, HasGcTypes gcTypesEnabled, ValType* t
       case uint8_t(ValType::B32x4):
         if (kind != ModuleKind::AsmJS)
             return d.fail("bad type");
-        *type = ValType::fromTypeCode(unchecked);
+        *type = ValType(ValType::Code(uncheckedCode));
         return true;
       default:
         break;
@@ -413,9 +424,17 @@ DecodeValType(Decoder& d, ModuleKind kind, HasGcTypes gcTypesEnabled, ValType* t
     return d.fail("bad type");
 }
 
+static bool
+ValidateRefType(Decoder& d, const TypeDefVector& types, ValType type)
+{
+    if (type.isRef() && !types[type.refTypeIndex()].isStructType())
+        return d.fail("ref does not reference a struct type");
+    return true;
+}
+
 bool
-wasm::DecodeLocalEntries(Decoder& d, ModuleKind kind, HasGcTypes gcTypesEnabled,
-                         ValTypeVector* locals)
+wasm::DecodeLocalEntries(Decoder& d, ModuleKind kind, const TypeDefVector& types,
+                         HasGcTypes gcTypesEnabled, ValTypeVector* locals)
 {
     uint32_t numLocalEntries;
     if (!d.readVarU32(&numLocalEntries))
@@ -430,9 +449,34 @@ wasm::DecodeLocalEntries(Decoder& d, ModuleKind kind, HasGcTypes gcTypesEnabled,
             return d.fail("too many locals");
 
         ValType type;
-        if (!DecodeValType(d, kind, gcTypesEnabled, &type))
+        if (!DecodeValType(d, kind, types.length(), gcTypesEnabled, &type))
+            return false;
+        if (!ValidateRefType(d, types, type))
             return false;
 
+        if (!locals->appendN(type, count))
+            return false;
+    }
+
+    return true;
+}
+
+bool
+wasm::DecodeValidatedLocalEntries(Decoder& d, ValTypeVector* locals)
+{
+    uint32_t numLocalEntries;
+    MOZ_ALWAYS_TRUE(d.readVarU32(&numLocalEntries));
+
+    for (uint32_t i = 0; i < numLocalEntries; i++) {
+        uint32_t count;
+        MOZ_ALWAYS_TRUE(d.readVarU32(&count));
+        MOZ_ASSERT(MaxLocals - locals->length() >= count);
+
+        uint8_t uncheckedCode;
+        uint32_t uncheckedRefTypeIndex;
+        MOZ_ALWAYS_TRUE(d.readValType(&uncheckedCode, &uncheckedRefTypeIndex));
+
+        ValType type = ValType(ValType::Code(uncheckedCode), uncheckedRefTypeIndex);
         if (!locals->appendN(type, count))
             return false;
     }
@@ -451,12 +495,12 @@ struct ValidatingPolicy
 typedef OpIter<ValidatingPolicy> ValidatingOpIter;
 
 static bool
-DecodeFunctionBodyExprs(const ModuleEnvironment& env, const Sig& sig, const ValTypeVector& locals,
-                        const uint8_t* bodyEnd, Decoder* d)
+DecodeFunctionBodyExprs(const ModuleEnvironment& env, const FuncType& funcType,
+                        const ValTypeVector& locals, const uint8_t* bodyEnd, Decoder* d)
 {
     ValidatingOpIter iter(env, *d);
 
-    if (!iter.readFunctionStart(sig.ret()))
+    if (!iter.readFunctionStart(funcType.ret()))
         return false;
 
 #define CHECK(c) if (!(c)) return false; break
@@ -830,7 +874,8 @@ DecodeFunctionBodyExprs(const ModuleEnvironment& env, const Sig& sig, const ValT
           case uint16_t(Op::RefNull): {
             if (env.gcTypesEnabled == HasGcTypes::False)
                 return iter.unrecognizedOpcode(&op);
-            CHECK(iter.readRefNull());
+            ValType unusedType;
+            CHECK(iter.readRefNull(&unusedType));
             break;
           }
           case uint16_t(Op::RefIsNull): {
@@ -1026,18 +1071,18 @@ bool
 wasm::ValidateFunctionBody(const ModuleEnvironment& env, uint32_t funcIndex, uint32_t bodySize,
                            Decoder& d)
 {
-    const Sig& sig = *env.funcSigs[funcIndex];
+    const FuncType& funcType = *env.funcTypes[funcIndex];
 
     ValTypeVector locals;
-    if (!locals.appendAll(sig.args()))
+    if (!locals.appendAll(funcType.args()))
         return false;
 
     const uint8_t* bodyBegin = d.currentPosition();
 
-    if (!DecodeLocalEntries(d, ModuleKind::Wasm, env.gcTypesEnabled, &locals))
+    if (!DecodeLocalEntries(d, ModuleKind::Wasm, env.types, env.gcTypesEnabled, &locals))
         return false;
 
-    if (!DecodeFunctionBodyExprs(env, sig, locals, bodyBegin + bodySize, &d))
+    if (!DecodeFunctionBodyExprs(env, funcType, locals, bodyBegin + bodySize, &d))
         return false;
 
     return true;
@@ -1063,8 +1108,38 @@ DecodePreamble(Decoder& d)
     return true;
 }
 
+enum class TypeState
+{
+    None,
+    Struct,
+    ForwardStruct,
+    Func
+};
+
+typedef Vector<TypeState, 0, SystemAllocPolicy> TypeStateVector;
+
 static bool
-DecodeFuncType(Decoder& d, ModuleEnvironment* env, uint32_t typeIndex)
+ValidateRefType(Decoder& d, TypeStateVector* typeState, ValType type)
+{
+    if (!type.isRef())
+        return true;
+
+    uint32_t refTypeIndex = type.refTypeIndex();
+    switch ((*typeState)[refTypeIndex]) {
+      case TypeState::None:
+        (*typeState)[refTypeIndex] = TypeState::ForwardStruct;
+        break;
+      case TypeState::Struct:
+      case TypeState::ForwardStruct:
+        break;
+      case TypeState::Func:
+        return d.fail("ref does not reference a struct type");
+    }
+    return true;
+}
+
+static bool
+DecodeFuncType(Decoder& d, ModuleEnvironment* env, TypeStateVector* typeState, uint32_t typeIndex)
 {
     uint32_t numArgs;
     if (!d.readVarU32(&numArgs))
@@ -1078,7 +1153,9 @@ DecodeFuncType(Decoder& d, ModuleEnvironment* env, uint32_t typeIndex)
         return false;
 
     for (uint32_t i = 0; i < numArgs; i++) {
-        if (!DecodeValType(d, ModuleKind::Wasm, env->gcTypesEnabled, &args[i]))
+        if (!DecodeValType(d, ModuleKind::Wasm, env->types.length(), env->gcTypesEnabled, &args[i]))
+            return false;
+        if (!ValidateRefType(d, typeState, args[i]))
             return false;
     }
 
@@ -1093,18 +1170,25 @@ DecodeFuncType(Decoder& d, ModuleEnvironment* env, uint32_t typeIndex)
 
     if (numRets == 1) {
         ValType type;
-        if (!DecodeValType(d, ModuleKind::Wasm, env->gcTypesEnabled, &type))
+        if (!DecodeValType(d, ModuleKind::Wasm, env->types.length(), env->gcTypesEnabled, &type))
+            return false;
+        if (!ValidateRefType(d, typeState, type))
             return false;
 
-        result = ToExprType(type);
+        result = ExprType(type);
     }
 
-    env->types[typeIndex] = TypeDef(Sig(std::move(args), result));
+    if ((*typeState)[typeIndex] != TypeState::None)
+        return d.fail("function type entry referenced as struct");
+
+    env->types[typeIndex] = TypeDef(FuncType(std::move(args), result));
+    (*typeState)[typeIndex] = TypeState::Func;
+
     return true;
 }
 
 static bool
-DecodeStructType(Decoder& d, ModuleEnvironment* env, uint32_t typeIndex)
+DecodeStructType(Decoder& d, ModuleEnvironment* env, TypeStateVector* typeState, uint32_t typeIndex)
 {
     if (env->gcTypesEnabled == HasGcTypes::False)
         return d.fail("Structure types not enabled");
@@ -1116,22 +1200,31 @@ DecodeStructType(Decoder& d, ModuleEnvironment* env, uint32_t typeIndex)
     if (numFields > MaxStructFields)
         return d.fail("too many fields in structure");
 
-    ValTypeVector fields;
+    StructFieldVector fields;
     if (!fields.resize(numFields))
-        return false;
-
-    Uint32Vector fieldOffsets;
-    if (!fieldOffsets.resize(numFields))
         return false;
 
     // TODO (subsequent patch): lay out the fields.
 
     for (uint32_t i = 0; i < numFields; i++) {
-        if (!DecodeValType(d, ModuleKind::Wasm, env->gcTypesEnabled, &fields[i]))
+        uint8_t flags;
+        if (!d.readFixedU8(&flags))
+            return d.fail("expected flag");
+        if ((flags & ~uint8_t(FieldFlags::AllowedMask)) != 0)
+            return d.fail("garbage flag bits");
+        fields[i].isMutable = flags & uint8_t(FieldFlags::Mutable);
+        if (!DecodeValType(d, ModuleKind::Wasm, env->types.length(), env->gcTypesEnabled, &fields[i].type))
+            return false;
+        if (!ValidateRefType(d, typeState, fields[i].type))
             return false;
     }
 
-    env->types[typeIndex] = TypeDef(StructType(std::move(fields), std::move(fieldOffsets)));
+    if ((*typeState)[typeIndex] != TypeState::None && (*typeState)[typeIndex] != TypeState::ForwardStruct)
+        return d.fail("struct type entry referenced as function");
+
+    env->types[typeIndex] = TypeDef(StructType(std::move(fields)));
+    (*typeState)[typeIndex] = TypeState::Struct;
+
     return true;
 }
 
@@ -1154,6 +1247,10 @@ DecodeTypeSection(Decoder& d, ModuleEnvironment* env)
     if (!env->types.resize(numTypes))
         return false;
 
+    TypeStateVector typeState;
+    if (!typeState.appendN(TypeState::None, numTypes))
+        return false;
+
     for (uint32_t typeIndex = 0; typeIndex < numTypes; typeIndex++) {
         uint8_t form;
         if (!d.readFixedU8(&form))
@@ -1161,11 +1258,11 @@ DecodeTypeSection(Decoder& d, ModuleEnvironment* env)
 
         switch (form) {
           case uint8_t(TypeCode::Func):
-            if (!DecodeFuncType(d, env, typeIndex))
+            if (!DecodeFuncType(d, env, &typeState, typeIndex))
                 return false;
             break;
           case uint8_t(TypeCode::Struct):
-            if (!DecodeStructType(d, env, typeIndex))
+            if (!DecodeStructType(d, env, &typeState, typeIndex))
                 return false;
             break;
           default:
@@ -1204,15 +1301,15 @@ DecodeName(Decoder& d)
 }
 
 static bool
-DecodeSignatureIndex(Decoder& d, const TypeDefVector& types, uint32_t* sigIndex)
+DecodeSignatureIndex(Decoder& d, const TypeDefVector& types, uint32_t* funcTypeIndex)
 {
-    if (!d.readVarU32(sigIndex))
+    if (!d.readVarU32(funcTypeIndex))
         return d.fail("expected signature index");
 
-    if (*sigIndex >= types.length())
+    if (*funcTypeIndex >= types.length())
         return d.fail("signature index out of range");
 
-    if (!types[*sigIndex].isFuncType())
+    if (!types[*funcTypeIndex].isFuncType())
         return d.fail("signature index references non-signature");
 
     return true;
@@ -1301,6 +1398,7 @@ GlobalIsJSCompatible(Decoder& d, ValType type, bool isMutable)
       case ValType::F32:
       case ValType::F64:
       case ValType::I64:
+      case ValType::AnyRef:
         break;
       default:
         return d.fail("unexpected variable type in global import/export");
@@ -1310,10 +1408,12 @@ GlobalIsJSCompatible(Decoder& d, ValType type, bool isMutable)
 }
 
 static bool
-DecodeGlobalType(Decoder& d, ValType* type, bool* isMutable)
+DecodeGlobalType(Decoder& d, const TypeDefVector& types, HasGcTypes gcTypesEnabled, ValType* type,
+                 bool* isMutable)
 {
-    // No gc types in globals at the moment.
-    if (!DecodeValType(d, ModuleKind::Wasm, HasGcTypes::False, type))
+    if (!DecodeValType(d, ModuleKind::Wasm, types.length(), gcTypesEnabled, type))
+        return false;
+    if (!ValidateRefType(d, types, *type))
         return false;
 
     uint8_t flags;
@@ -1387,12 +1487,12 @@ DecodeImport(Decoder& d, ModuleEnvironment* env)
 
     switch (importKind) {
       case DefinitionKind::Function: {
-        uint32_t sigIndex;
-        if (!DecodeSignatureIndex(d, env->types, &sigIndex))
+        uint32_t funcTypeIndex;
+        if (!DecodeSignatureIndex(d, env->types, &funcTypeIndex))
             return false;
-        if (!env->funcSigs.append(&env->types[sigIndex].funcType()))
+        if (!env->funcTypes.append(&env->types[funcTypeIndex].funcType()))
             return false;
-        if (env->funcSigs.length() > MaxFuncs)
+        if (env->funcTypes.length() > MaxFuncs)
             return d.fail("too many functions");
         break;
       }
@@ -1410,7 +1510,7 @@ DecodeImport(Decoder& d, ModuleEnvironment* env)
       case DefinitionKind::Global: {
         ValType type;
         bool isMutable;
-        if (!DecodeGlobalType(d, &type, &isMutable))
+        if (!DecodeGlobalType(d, env->types, env->gcTypesEnabled, &type, &isMutable))
             return false;
         if (!GlobalIsJSCompatible(d, type, isMutable))
             return false;
@@ -1452,7 +1552,7 @@ DecodeImportSection(Decoder& d, ModuleEnvironment* env)
         return false;
 
     // The global data offsets will be filled in by ModuleGenerator::init.
-    if (!env->funcImportGlobalDataOffsets.resize(env->funcSigs.length()))
+    if (!env->funcImportGlobalDataOffsets.resize(env->funcTypes.length()))
         return false;
 
     return true;
@@ -1471,19 +1571,19 @@ DecodeFunctionSection(Decoder& d, ModuleEnvironment* env)
     if (!d.readVarU32(&numDefs))
         return d.fail("expected number of function definitions");
 
-    CheckedInt<uint32_t> numFuncs = env->funcSigs.length();
+    CheckedInt<uint32_t> numFuncs = env->funcTypes.length();
     numFuncs += numDefs;
     if (!numFuncs.isValid() || numFuncs.value() > MaxFuncs)
         return d.fail("too many functions");
 
-    if (!env->funcSigs.reserve(numFuncs.value()))
+    if (!env->funcTypes.reserve(numFuncs.value()))
         return false;
 
     for (uint32_t i = 0; i < numDefs; i++) {
-        uint32_t sigIndex;
-        if (!DecodeSignatureIndex(d, env->types, &sigIndex))
+        uint32_t funcTypeIndex;
+        if (!DecodeSignatureIndex(d, env->types, &funcTypeIndex))
             return false;
-        env->funcSigs.infallibleAppend(&env->types[sigIndex].funcType());
+        env->funcTypes.infallibleAppend(&env->types[funcTypeIndex].funcType());
     }
 
     return d.finishSection(*range, "function");
@@ -1538,8 +1638,8 @@ DecodeMemorySection(Decoder& d, ModuleEnvironment* env)
 }
 
 static bool
-DecodeInitializerExpression(Decoder& d, const GlobalDescVector& globals, ValType expected,
-                            InitExpr* init)
+DecodeInitializerExpression(Decoder& d, HasGcTypes gcTypesEnabled, const GlobalDescVector& globals,
+                            ValType expected, InitExpr* init)
 {
     OpBytes op;
     if (!d.readOp(&op))
@@ -1550,28 +1650,40 @@ DecodeInitializerExpression(Decoder& d, const GlobalDescVector& globals, ValType
         int32_t i32;
         if (!d.readVarS32(&i32))
             return d.fail("failed to read initializer i32 expression");
-        *init = InitExpr(Val(uint32_t(i32)));
+        *init = InitExpr(LitVal(uint32_t(i32)));
         break;
       }
       case uint16_t(Op::I64Const): {
         int64_t i64;
         if (!d.readVarS64(&i64))
             return d.fail("failed to read initializer i64 expression");
-        *init = InitExpr(Val(uint64_t(i64)));
+        *init = InitExpr(LitVal(uint64_t(i64)));
         break;
       }
       case uint16_t(Op::F32Const): {
         float f32;
         if (!d.readFixedF32(&f32))
             return d.fail("failed to read initializer f32 expression");
-        *init = InitExpr(Val(f32));
+        *init = InitExpr(LitVal(f32));
         break;
       }
       case uint16_t(Op::F64Const): {
         double f64;
         if (!d.readFixedF64(&f64))
             return d.fail("failed to read initializer f64 expression");
-        *init = InitExpr(Val(f64));
+        *init = InitExpr(LitVal(f64));
+        break;
+      }
+      case uint16_t(Op::RefNull): {
+        if (gcTypesEnabled == HasGcTypes::False)
+            return d.fail("unexpected initializer expression");
+        uint8_t valType;
+        uint32_t unusedRefTypeIndex;
+        if (!d.readValType(&valType, &unusedRefTypeIndex))
+            return false;
+        if (valType != uint8_t(ValType::AnyRef))
+            return d.fail("expected anyref as type for ref.null");
+        *init = InitExpr(LitVal(ValType::AnyRef, nullptr));
         break;
       }
       case uint16_t(Op::GetGlobal): {
@@ -1624,11 +1736,11 @@ DecodeGlobalSection(Decoder& d, ModuleEnvironment* env)
     for (uint32_t i = 0; i < numDefs; i++) {
         ValType type;
         bool isMutable;
-        if (!DecodeGlobalType(d, &type, &isMutable))
+        if (!DecodeGlobalType(d, env->types, env->gcTypesEnabled, &type, &isMutable))
             return false;
 
         InitExpr initializer;
-        if (!DecodeInitializerExpression(d, env->globals, type, &initializer))
+        if (!DecodeInitializerExpression(d, env->gcTypesEnabled, env->globals, type, &initializer))
             return false;
 
         env->globals.infallibleAppend(GlobalDesc(initializer, isMutable));
@@ -1771,11 +1883,11 @@ DecodeStartSection(Decoder& d, ModuleEnvironment* env)
     if (funcIndex >= env->numFuncs())
         return d.fail("unknown start function");
 
-    const Sig& sig = *env->funcSigs[funcIndex];
-    if (!IsVoid(sig.ret()))
+    const FuncType& funcType = *env->funcTypes[funcIndex];
+    if (!IsVoid(funcType.ret()))
         return d.fail("start function must not return anything");
 
-    if (sig.args().length())
+    if (funcType.args().length())
         return d.fail("start function must be nullary");
 
     env->startFuncIndex = Some(funcIndex);
@@ -1809,7 +1921,8 @@ DecodeElemSection(Decoder& d, ModuleEnvironment* env)
             return d.fail("table index out of range");
 
         InitExpr offset;
-        if (!DecodeInitializerExpression(d, env->globals, ValType::I32, &offset))
+        if (!DecodeInitializerExpression(d, env->gcTypesEnabled, env->globals, ValType::I32,
+                                         &offset))
             return false;
 
         uint32_t numElems;
@@ -1979,7 +2092,8 @@ DecodeDataSection(Decoder& d, ModuleEnvironment* env)
             return d.fail("data segment requires a memory section");
 
         DataSegment seg;
-        if (!DecodeInitializerExpression(d, env->globals, ValType::I32, &seg.offset))
+        if (!DecodeInitializerExpression(d, env->gcTypesEnabled, env->globals, ValType::I32,
+                                         &seg.offset))
             return false;
 
         if (!d.readVarU32(&seg.length))

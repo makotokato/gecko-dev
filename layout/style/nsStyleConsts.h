@@ -86,6 +86,21 @@ enum class StyleClear : uint8_t {
   Max = 13  // Max = (Both | Line)
 };
 
+// Counters and generated content.
+enum class StyleContentType : uint8_t {
+  String = 1,
+  Image = 10,
+  Attr = 20,
+  Counter = 30,
+  Counters = 31,
+  OpenQuote = 40,
+  CloseQuote = 41,
+  NoOpenQuote = 42,
+  NoCloseQuote = 43,
+  AltContent = 50,
+  Uninitialized,
+};
+
 // Define geometry box for clip-path's reference-box, background-clip,
 // background-origin, mask-clip, mask-origin, shape-box and transform-box.
 enum class StyleGeometryBox : uint8_t {
@@ -345,7 +360,7 @@ enum class StyleContent : uint8_t {
   AltContent
 };
 
-// See nsStyleColor
+// See nsStyleUserInterface
 #define NS_STYLE_CURSOR_AUTO                    1
 #define NS_STYLE_CURSOR_CROSSHAIR               2
 #define NS_STYLE_CURSOR_DEFAULT                 3    // ie: an arrow
@@ -691,7 +706,7 @@ enum class StyleGridTrackBreadth : uint8_t {
 #define NS_STYLE_FRAME_SCROLL                   7
 #define NS_STYLE_FRAME_NOSCROLL                 8
 
-// See nsStyleDisplay.mOverflow
+// See nsStyleDisplay.mOverflow{X,Y}
 #define NS_STYLE_OVERFLOW_VISIBLE               0
 #define NS_STYLE_OVERFLOW_HIDDEN                1
 #define NS_STYLE_OVERFLOW_SCROLL                2
@@ -1100,7 +1115,7 @@ enum class StyleWhiteSpace : uint8_t {
 #define NS_STYLE_TEXT_RENDERING_OPTIMIZELEGIBILITY 2
 #define NS_STYLE_TEXT_RENDERING_GEOMETRICPRECISION 3
 
-// adjust-color
+// color-adjust
 #define NS_STYLE_COLOR_ADJUST_ECONOMY               0
 #define NS_STYLE_COLOR_ADJUST_EXACT                 1
 

@@ -13,8 +13,11 @@ ChromeUtils.defineModuleGetter(this, "BrowserWindowTracker",
 
 var {
   ExtensionError,
-  defineLazyGetter,
 } = ExtensionUtils;
+
+var {
+  defineLazyGetter,
+} = ExtensionCommon;
 
 const READER_MODE_PREFIX = "about:reader";
 
@@ -31,8 +34,8 @@ const getSender = (extension, target, sender) => {
     // page-open listener below).
     tabId = sender.tabId;
     delete sender.tabId;
-  } else if (ExtensionUtils.instanceOf(target, "XULElement") ||
-             ExtensionUtils.instanceOf(target, "HTMLIFrameElement")) {
+  } else if (ExtensionCommon.instanceOf(target, "XULElement") ||
+             ExtensionCommon.instanceOf(target, "HTMLIFrameElement")) {
     tabId = tabTracker.getBrowserData(target).tabId;
   }
 
@@ -707,6 +710,11 @@ class Tab extends TabBase {
     return this.nativeTab.selected;
   }
 
+  get highlighted() {
+    let {selected, multiselected} = this.nativeTab;
+    return selected || multiselected;
+  }
+
   get selected() {
     return this.nativeTab.selected;
   }
@@ -930,6 +938,13 @@ class Window extends WindowBase {
 
     for (let nativeTab of this.window.gBrowser.tabs) {
       yield tabManager.getWrapper(nativeTab);
+    }
+  }
+
+  * getHighlightedTabs() {
+    let {tabManager} = this.extension;
+    for (let tab of this.window.gBrowser.selectedTabs) {
+      yield tabManager.getWrapper(tab);
     }
   }
 

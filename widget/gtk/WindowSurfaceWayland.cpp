@@ -151,8 +151,9 @@ static nsWaylandDisplay* WaylandDisplayGet(wl_display *aDisplay);
 static void WaylandDisplayRelease(wl_display *aDisplay);
 static void WaylandDisplayLoop(wl_display *aDisplay);
 
-// TODO: is the 60pfs loop correct?
-#define EVENT_LOOP_DELAY (1000/60)
+// TODO: Bug 1467125 - We need to integrate wl_display_dispatch_queue_pending() with
+// compositor event loop.
+#define EVENT_LOOP_DELAY (1000/240)
 
 // Get WaylandDisplay for given wl_display and actual calling thread.
 static nsWaylandDisplay*
@@ -550,6 +551,8 @@ frame_callback_handler(void *data, struct wl_callback *callback, uint32_t time)
 {
   auto surface = reinterpret_cast<WindowSurfaceWayland*>(data);
   surface->FrameCallbackHandler();
+
+  gfxPlatformGtk::GetPlatform()->SetWaylandLastVsync(time);
 }
 
 static const struct wl_callback_listener frame_listener = {

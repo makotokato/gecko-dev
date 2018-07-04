@@ -227,7 +227,7 @@ pref("dom.keyboardevent.keypress.dispatch_non_printable_keys_only_system_group_i
 // if you need to limit under a directory, the path should end with "/" like
 // "example.com/foo/".  Note that this cannot limit port number for now.
 pref("dom.keyboardevent.keypress.hack.dispatch_non_printable_keys",
-     "docs.google.com,mail.google.com,hangouts.google.com,keep.google.com,inbox.google.com,*.etherpad.org/p/,etherpad.wikimedia.org/p/,board.net/p/,pad.riseup.net/p/,*.sandstorm.io,factor.cc/pad/,*.etherpad.fr/p/,piratenpad.de/p/,notes.typo3.org/p/,etherpad.net/p/,*.framapad.org/p/,pad.ouvaton.coop/,pad.systemli.org/p/,pad.lqdn.fr/p/,public.etherpad-mozilla.org/p/,*.cloudron.me/p/,pad.aquilenet.fr/p/,free.primarypad.com/p/,pad.ondesk.work/p/,demo.maadix.org/etherpad/pads/,paper.dropbox.com/doc");
+     "docs.google.com,mail.google.com,hangouts.google.com,keep.google.com,inbox.google.com,*.etherpad.org/p/,etherpad.wikimedia.org/p/,board.net/p/,pad.riseup.net/p/,*.sandstorm.io,factor.cc/pad/,*.etherpad.fr/p/,piratenpad.de/p/,notes.typo3.org/p/,etherpad.net/p/,*.framapad.org/p/,pad.ouvaton.coop/,pad.systemli.org/p/,pad.lqdn.fr/p/,public.etherpad-mozilla.org/p/,*.cloudron.me/p/,pad.aquilenet.fr/p/,free.primarypad.com/p/,pad.ondesk.work/p/,demo.maadix.org/etherpad/pads/");
 #else
 pref("dom.keyboardevent.keypress.dispatch_non_printable_keys_only_system_group_in_content", false);
 #endif
@@ -375,7 +375,6 @@ pref("media.wmf.dxva.enabled", true);
 pref("media.wmf.dxva.d3d11.enabled", true);
 pref("media.wmf.dxva.max-videos", 8);
 pref("media.wmf.low-latency.enabled", false);
-pref("media.wmf.amd.vp9.enabled", false);
 pref("media.wmf.amd.highres.enabled", true);
 pref("media.wmf.allow-unsupported-resolutions", false);
 pref("media.wmf.use-nv12-format", true);
@@ -547,6 +546,8 @@ pref("media.mediasource.experimental.enabled", false);
 pref("media.benchmark.vp9.threshold", 150);
 pref("media.benchmark.frames", 300);
 pref("media.benchmark.timeout", 1000);
+
+pref("media.media-capabilities.enabled", false);
 
 #ifdef MOZ_WEBSPEECH
 pref("media.webspeech.synth.enabled", false);
@@ -814,8 +815,6 @@ pref("gfx.content.azure.backends", "direct2d1.1,skia,cairo");
 #ifdef XP_MACOSX
 pref("gfx.content.azure.backends", "skia");
 pref("gfx.canvas.azure.backends", "skia");
-// Accelerated cg canvas where available (10.7+)
-pref("gfx.canvas.azure.accelerated", true);
 #else
 pref("gfx.canvas.azure.backends", "skia");
 pref("gfx.content.azure.backends", "skia");
@@ -854,6 +853,11 @@ pref("gfx.webrender.enabled", true);
 pref("gfx.webrender.enabled", false);
 #endif
 #endif
+
+// Also expose a pref to allow users to force-disable WR. This is exposed
+// on all channels because WR can be enabled on qualified hardware on all
+// channels.
+pref("gfx.webrender.force-disabled", false);
 
 #ifdef XP_WIN
 pref("gfx.webrender.force-angle", true);
@@ -958,6 +962,8 @@ pref("accessibility.mouse_focuses_formcontrol", false);
 
 // Type Ahead Find
 pref("accessibility.typeaheadfind", true);
+// Enable FAYT by pressing / or "
+pref("accessibility.typeaheadfind.manual", true);
 pref("accessibility.typeaheadfind.autostart", true);
 // casesensitive: controls the find bar's case-sensitivity
 //     0 - "never"  (case-insensitive)
@@ -1999,7 +2005,11 @@ pref("network.dns.ipv4OnlyDomains", "");
 pref("network.dns.disableIPv6", false);
 
 // This is the number of dns cache entries allowed
+#ifdef ANDROID
 pref("network.dnsCacheEntries", 400);
+#else
+pref("network.dnsCacheEntries", 800);
+#endif
 
 // In the absence of OS TTLs, the DNS cache TTL value
 pref("network.dnsCacheExpiration", 60);
@@ -2943,12 +2953,6 @@ pref("layout.css.osx-font-smoothing.enabled", true);
 pref("layout.css.osx-font-smoothing.enabled", false);
 #endif
 
-// Is support for the CSS-wide "unset" value enabled?
-pref("layout.css.unset-value.enabled", true);
-
-// Is support for the "all" shorthand enabled?
-pref("layout.css.all-shorthand.enabled", true);
-
 // Is support for CSS overflow-clip-box enabled for non-UA sheets?
 pref("layout.css.overflow-clip-box.enabled", false);
 
@@ -3115,12 +3119,6 @@ pref("input_event_queue.default_duration_per_event", 1);
 // required to process the following input events.
 pref("input_event_queue.count_for_prediction", 9);
 
-// Hang monitor timeout after which we kill the browser, in seconds
-// (0 is disabled)
-// Disabled on all platforms per bug 705748 until the found issues are
-// resolved.
-pref("hangmonitor.timeout", 0);
-
 pref("plugins.load_appdir_plugins", false);
 // If true, plugins will be click to play
 pref("plugins.click_to_play", false);
@@ -3216,6 +3214,14 @@ pref("dom.ipc.processCount.file", 1);
 // WebExtensions only support a single extension process.
 pref("dom.ipc.processCount.extension", 1);
 
+// Privileged content only supports a single content process.
+pref("dom.ipc.processCount.privileged", 1);
+
+// Keep a single privileged content process alive for performance reasons.
+// e.g. we do not want to throw content processes out every time we navigate
+// away from about:newtab.
+pref("dom.ipc.keepProcessesAlive.privileged", 1);
+
 // Whether a native event loop should be used in the content process.
 #if defined(XP_WIN)
 pref("dom.ipc.useNativeEventProcessing.content", false);
@@ -3251,6 +3257,9 @@ pref("browser.tabs.remote.separateFileUriProcess", true);
 // sorts of pages, which we have to do when we run them in the normal web
 // content process, causes compatibility issues.
 pref("browser.tabs.remote.allowLinkedWebInFileUriProcess", true);
+
+// Pref to control whether we use separate privileged content processes.
+pref("browser.tabs.remote.separatePrivilegedContentProcess", false);
 
 // Enable the use of display-lists for SVG hit-testing and painting.
 pref("svg.display-lists.hit-testing.enabled", true);
@@ -5131,12 +5140,17 @@ pref("memory.blob_report.stack_frames", 0);
 // observers (bug 780507).
 pref("dom.idle-observers-api.fuzz_time.disabled", true);
 
+// Activates the activity monitor
+pref("io.activity.enabled", false);
+
 // Minimum delay in milliseconds between I/O activity notifications (0 means
 // no notifications). I/O activity includes socket and disk files.
 //
 // The delay is the same for both read and write, though
 // they are handled separately. This pref is only read once at startup:
 // a restart is required to enable a new value.
+//
+// io.activity.enabled needs to be set to true
 pref("io.activity.intervalMilliseconds", 0);
 
 // If true, reuse the same global for (almost) everything loaded by the component

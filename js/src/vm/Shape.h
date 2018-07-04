@@ -34,6 +34,8 @@
 #include "vm/SymbolType.h"
 
 /*
+ * [SMDOC] Shapes
+ *
  * In isolation, a Shape represents a property that exists in one or more
  * objects; it has an id, flags, etc. (But it doesn't represent the property's
  * value.)  However, Shapes are always stored in linked linear sequence of
@@ -1524,7 +1526,8 @@ Shape::Shape(const StackShape& other, uint32_t nfixed)
     immutableFlags(other.immutableFlags),
     attrs(other.attrs),
     mutableFlags(other.mutableFlags),
-    parent(nullptr)
+    parent(nullptr),
+    listp(nullptr)
 {
     setNumFixedSlots(nfixed);
 
@@ -1558,7 +1561,8 @@ Shape::Shape(UnownedBaseShape* base, uint32_t nfixed)
     immutableFlags(SHAPE_INVALID_SLOT | (nfixed << FIXED_SLOTS_SHIFT)),
     attrs(0),
     mutableFlags(0),
-    parent(nullptr)
+    parent(nullptr),
+    listp(nullptr)
 {
     MOZ_ASSERT(base);
     kids.setNull();

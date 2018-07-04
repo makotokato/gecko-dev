@@ -3599,7 +3599,7 @@ CloneFunctionObject(JSContext* cx, HandleObject funobj, HandleObject env, Handle
         return nullptr;
     }
 
-    if (CanReuseScriptForClone(cx->compartment(), fun, env)) {
+    if (CanReuseScriptForClone(cx->realm(), fun, env)) {
         // If the script is to be reused, either the script can already handle
         // non-syntactic scopes, or there is only the standard global lexical
         // scope.
@@ -4361,7 +4361,7 @@ JS_BufferIsCompilableUnit(JSContext* cx, HandleObject obj, const char* utf8, siz
 
     cx->clearPendingException();
 
-    UniquePtr<char16_t> chars
+    UniqueTwoByteChars chars
         { JS::UTF8CharsToNewTwoByteCharsZ(cx, JS::UTF8Chars(utf8, length), &length).get() };
     if (!chars)
         return true;
@@ -4709,7 +4709,7 @@ JS::CloneAndExecuteScript(JSContext* cx, HandleScript scriptArg,
     CHECK_REQUEST(cx);
     RootedScript script(cx, scriptArg);
     RootedObject globalLexical(cx, &cx->global()->lexicalEnvironment());
-    if (script->compartment() != cx->compartment()) {
+    if (script->realm() != cx->realm()) {
         script = CloneGlobalScript(cx, ScopeKind::Global, script);
         if (!script)
             return false;
@@ -4726,7 +4726,7 @@ JS::CloneAndExecuteScript(JSContext* cx, JS::AutoObjectVector& envChain,
 {
     CHECK_REQUEST(cx);
     RootedScript script(cx, scriptArg);
-    if (script->compartment() != cx->compartment()) {
+    if (script->realm() != cx->realm()) {
         script = CloneGlobalScript(cx, ScopeKind::NonSyntactic, script);
         if (!script)
             return false;
@@ -5812,7 +5812,7 @@ JS_NewLatin1String(JSContext* cx, JS::Latin1Char* chars, size_t length)
 {
     AssertHeapIsIdle();
     CHECK_REQUEST(cx);
-    return NewString<CanGC>(cx, chars, length);
+    return NewString(cx, chars, length);
 }
 
 JS_PUBLIC_API(JSString*)
@@ -5820,7 +5820,7 @@ JS_NewUCString(JSContext* cx, char16_t* chars, size_t length)
 {
     AssertHeapIsIdle();
     CHECK_REQUEST(cx);
-    return NewString<CanGC>(cx, chars, length);
+    return NewString(cx, chars, length);
 }
 
 JS_PUBLIC_API(JSString*)
@@ -5828,7 +5828,7 @@ JS_NewUCStringDontDeflate(JSContext* cx, char16_t* chars, size_t length)
 {
     AssertHeapIsIdle();
     CHECK_REQUEST(cx);
-    return NewStringDontDeflate<CanGC>(cx, chars, length);
+    return NewStringDontDeflate(cx, chars, length);
 }
 
 JS_PUBLIC_API(JSString*)
@@ -6102,36 +6102,13 @@ JS_DecodeBytes(JSContext* cx, const char* src, size_t srclen, char16_t* dst, siz
     return true;
 }
 
-static char*
-EncodeLatin1(JSContext* cx, JSString* str)
-{
-    JSLinearString* linear = str->ensureLinear(cx);
-    if (!linear)
-        return nullptr;
-
-    JS::AutoCheckCannotGC nogc;
-    if (linear->hasTwoByteChars())
-        return JS::LossyTwoByteCharsToNewLatin1CharsZ(cx, linear->twoByteRange(nogc)).c_str();
-
-    size_t len = str->length();
-    Latin1Char* buf = cx->pod_malloc<Latin1Char>(len + 1);
-    if (!buf) {
-        ReportOutOfMemory(cx);
-        return nullptr;
-    }
-
-    mozilla::PodCopy(buf, linear->latin1Chars(nogc), len);
-    buf[len] = '\0';
-    return reinterpret_cast<char*>(buf);
-}
-
 JS_PUBLIC_API(char*)
 JS_EncodeString(JSContext* cx, JSString* str)
 {
     AssertHeapIsIdle();
     CHECK_REQUEST(cx);
 
-    return EncodeLatin1(cx, str);
+    return js::EncodeLatin1(cx, str).release();
 }
 
 JS_PUBLIC_API(char*)
@@ -6154,42 +6131,27 @@ JS_GetStringEncodingLength(JSContext* cx, JSString* str)
     return str->length();
 }
 
-JS_PUBLIC_API(size_t)
+JS_PUBLIC_API(bool)
 JS_EncodeStringToBuffer(JSContext* cx, JSString* str, char* buffer, size_t length)
 {
     AssertHeapIsIdle();
     CHECK_REQUEST(cx);
 
-    /*
-     * FIXME bug 612141 - fix DeflateStringToBuffer interface so the result
-     * would allow to distinguish between insufficient buffer and encoding
-     * error.
-     */
-    size_t writtenLength = length;
     JSLinearString* linear = str->ensureLinear(cx);
     if (!linear)
-         return size_t(-1);
+        return false;
 
-    bool res;
+    JS::AutoCheckCannotGC nogc;
+    size_t writeLength = Min(linear->length(), length);
     if (linear->hasLatin1Chars()) {
-        JS::AutoCheckCannotGC nogc;
-        res = DeflateStringToBuffer(nullptr, linear->latin1Chars(nogc), linear->length(), buffer,
-                                    &writtenLength);
+        mozilla::PodCopy(reinterpret_cast<Latin1Char*>(buffer), linear->latin1Chars(nogc),
+                         writeLength);
     } else {
-        JS::AutoCheckCannotGC nogc;
-        res = DeflateStringToBuffer(nullptr, linear->twoByteChars(nogc), linear->length(), buffer,
-                                    &writtenLength);
+        const char16_t* src = linear->twoByteChars(nogc);
+        for (size_t i = 0; i < writeLength; i++)
+            buffer[i] = char(src[i]);
     }
-    if (res) {
-        MOZ_ASSERT(writtenLength <= length);
-        return writtenLength;
-    }
-    MOZ_ASSERT(writtenLength <= length);
-    size_t necessaryLength = str->length();
-    if (necessaryLength == size_t(-1))
-        return size_t(-1);
-    MOZ_ASSERT(writtenLength == length); // C strings are NOT encoded.
-    return necessaryLength;
+    return true;
 }
 
 JS_PUBLIC_API(JS::Symbol*)
@@ -6630,7 +6592,7 @@ JS_NewRegExpObject(JSContext* cx, const char* bytes, size_t length, unsigned fla
     AssertHeapIsIdle();
     CHECK_REQUEST(cx);
 
-    ScopedJSFreePtr<char16_t> chars(InflateString(cx, bytes, length));
+    UniqueTwoByteChars chars(InflateString(cx, bytes, length));
     if (!chars)
         return nullptr;
 
@@ -6869,7 +6831,10 @@ JS::AutoSaveExceptionState::~AutoSaveExceptionState()
 }
 
 struct JSExceptionState {
-    explicit JSExceptionState(JSContext* cx) : exception(cx) {}
+    explicit JSExceptionState(JSContext* cx)
+      : throwing(false),
+        exception(cx)
+    {}
     bool throwing;
     PersistentRootedValue exception;
 };
@@ -7008,8 +6973,10 @@ JSErrorNotes::addNoteASCII(JSContext* cx,
 
     if (!note)
         return false;
-    if (!notes_.append(std::move(note)))
+    if (!notes_.append(std::move(note))) {
+        ReportOutOfMemory(cx);
         return false;
+    }
     return true;
 }
 
@@ -7027,8 +6994,10 @@ JSErrorNotes::addNoteLatin1(JSContext* cx,
 
     if (!note)
         return false;
-    if (!notes_.append(std::move(note)))
+    if (!notes_.append(std::move(note))) {
+        ReportOutOfMemory(cx);
         return false;
+    }
     return true;
 }
 
@@ -7046,8 +7015,10 @@ JSErrorNotes::addNoteUTF8(JSContext* cx,
 
     if (!note)
         return false;
-    if (!notes_.append(std::move(note)))
+    if (!notes_.append(std::move(note))) {
+        ReportOutOfMemory(cx);
         return false;
+    }
     return true;
 }
 

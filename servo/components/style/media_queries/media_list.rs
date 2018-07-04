@@ -14,8 +14,8 @@ use parser::ParserContext;
 use super::{Device, MediaQuery, Qualifier};
 
 /// A type that encapsulates a media query list.
-#[css(comma)]
-#[derive(Clone, Debug, MallocSizeOf, ToCss)]
+#[css(comma, derive_debug)]
+#[derive(Clone, MallocSizeOf, ToCss)]
 pub struct MediaList {
     /// The list of media queries.
     #[css(iterable)]
@@ -73,16 +73,14 @@ impl MediaList {
 
     /// Evaluate a whole `MediaList` against `Device`.
     pub fn evaluate(&self, device: &Device, quirks_mode: QuirksMode) -> bool {
-        // Check if it is an empty media query list or any queries match (OR condition)
+        // Check if it is an empty media query list or any queries match.
         // https://drafts.csswg.org/mediaqueries-4/#mq-list
         self.media_queries.is_empty() || self.media_queries.iter().any(|mq| {
             let media_match = mq.media_type.matches(device.media_type());
 
-            // Check if all conditions match (AND condition)
+            // Check if the media condition match.
             let query_match = media_match &&
-                mq.expressions
-                    .iter()
-                    .all(|expression| expression.matches(&device, quirks_mode));
+                mq.condition.as_ref().map_or(true, |c| c.matches(device, quirks_mode));
 
             // Apply the logical NOT qualifier to the result
             match mq.qualifier {

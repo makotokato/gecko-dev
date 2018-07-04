@@ -239,7 +239,7 @@ RemoveRawValueRoot(JSContext* cx, JS::Value* vp);
 JS_FRIEND_API(JSAtom*)
 GetPropertyNameFromPC(JSScript* script, jsbytecode* pc);
 
-#ifdef JS_DEBUG
+#if defined(DEBUG) || defined(JS_JITSPEW)
 
 /*
  * Routines to print out values during debugging. These are FRIEND_API to help
@@ -1424,7 +1424,7 @@ class MOZ_STACK_CLASS JS_FRIEND_API(AutoStableStringChars)
 
     /* Ensure the string is kept alive while we're using its chars. */
     JS::RootedString s_;
-    union {
+    MOZ_INIT_OUTSIDE_CTOR union {
         const char16_t* twoByteChars_;
         const JS::Latin1Char* latin1Chars_;
     };

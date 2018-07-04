@@ -39,11 +39,9 @@ SlottedNodeContainer.prototype = extend(MarkupContainer.prototype, {
       return;
     }
 
-    const selection = this.markup.inspector.selection;
-    if (selection.nodeFront != this.node || selection.isSlotted()) {
-      const reason = "reveal-from-slot";
-      this.markup.inspector.selection.setNodeFront(this.node, { reason });
-    }
+    const reason = "reveal-from-slot";
+    this.markup.inspector.selection.setNodeFront(this.node, { reason });
+    this.markup.telemetry.scalarSet("devtools.shadowdom.reveal_link_clicked", true);
   },
 
   isDraggable: function() {

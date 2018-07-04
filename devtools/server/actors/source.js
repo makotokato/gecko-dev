@@ -671,7 +671,22 @@ const SourceActor = ActorClassWithSpec(sourceSpec, {
    *        }
    */
   setPausePoints: function(pausePoints) {
-    this.pausePoints = pausePoints;
+    const uncompressed = {};
+    const points = {
+      0: {},
+      1: { break: true },
+      2: { step: true },
+      3: { break: true, step: true }
+    };
+
+    for (const line in pausePoints) {
+      uncompressed[line] = {};
+      for (const col in pausePoints[line]) {
+        uncompressed[line][col] = points[pausePoints[line][col]];
+      }
+    }
+
+    this.pausePoints = uncompressed;
   },
 
   /**
@@ -777,8 +792,10 @@ const SourceActor = ActorClassWithSpec(sourceSpec, {
 
     if (!this.isSourceMapped) {
       const generatedLocation = GeneratedLocation.fromOriginalLocation(originalLocation);
+      const isWasm = this.source && this.source.introductionType === "wasm";
       if (!this._setBreakpointAtGeneratedLocation(actor, generatedLocation) &&
-          !noSliding) {
+          !noSliding &&
+          !isWasm) {
         const query = { line: originalLine };
         // For most cases, we have a real source to query for. The
         // only time we don't is for HTML pages. In that case we want

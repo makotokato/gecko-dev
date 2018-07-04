@@ -5,6 +5,7 @@ ChromeUtils.defineModuleGetter(this, "ProfileAge",
 ChromeUtils.import("resource://gre/modules/Console.jsm");
 
 const FXA_USERNAME_PREF = "services.sync.username";
+const ONBOARDING_EXPERIMENT_PREF = "browser.newtabpage.activity-stream.asrouterOnboardingCohort";
 
 /**
  * removeRandomItemFromArray - Removes a random item from the array and returns it.
@@ -25,13 +26,17 @@ const TargetingGetters = {
   },
   get hasFxAccount() {
     return Services.prefs.prefHasUserValue(FXA_USERNAME_PREF);
+  },
+  // Temporary targeting function for the purposes of running the simplified onboarding experience
+  get isInExperimentCohort() {
+    return Services.prefs.getIntPref(ONBOARDING_EXPERIMENT_PREF, 0);
   }
 };
 
 this.ASRouterTargeting = {
   Environment: TargetingGetters,
 
-  isMatch(filterExpression, context = this.Environment) {
+  isMatch(filterExpression, target, context = this.Environment) {
     return FilterExpressions.eval(filterExpression, context);
   },
 
@@ -43,13 +48,26 @@ this.ASRouterTargeting = {
    * @param {obj|null} context A FilterExpression context. Defaults to TargetingGetters above.
    * @returns {obj} an AS router message
    */
-  async findMatchingMessage(messages, context) {
+  async findMatchingMessage(messages, target, context) {
     const arrayOfItems = [...messages];
     let match;
     let candidate;
     while (!match && arrayOfItems.length) {
       candidate = removeRandomItemFromArray(arrayOfItems);
-      if (candidate && (!candidate.targeting || await this.isMatch(candidate.targeting, context))) {
+      if (candidate && !candidate.trigger && (!candidate.targeting || await this.isMatch(candidate.targeting, target, context))) {
+        match = candidate;
+      }
+    }
+    return match;
+  },
+
+  async findMatchingMessageWithTrigger(messages, target, trigger, context) {
+    const arrayOfItems = [...messages];
+    let match;
+    let candidate;
+    while (!match && arrayOfItems.length) {
+      candidate = removeRandomItemFromArray(arrayOfItems);
+      if (candidate && candidate.trigger === trigger && (!candidate.targeting || await this.isMatch(candidate.targeting, target, context))) {
         match = candidate;
       }
     }

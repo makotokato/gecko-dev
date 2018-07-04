@@ -176,6 +176,8 @@
 #include "nsLayoutStylesheetCache.h"
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layers/FocusTarget.h"
+#include "mozilla/layers/WebRenderLayerManager.h"
+#include "mozilla/layers/WebRenderUserData.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/StyleSheet.h"
@@ -809,6 +811,7 @@ PresShell::PresShell()
   , mLastCallbackEventRequest(nullptr)
   , mLastReflowStart(0.0)
   , mLastAnchorScrollPositionY(0)
+  , mActiveSuppressDisplayport(0)
   , mAPZFocusSequenceNumber(0)
   , mDocumentLoading(false)
   , mIgnoreFrameDestruction(false)
@@ -871,7 +874,7 @@ PresShell::~PresShell()
   MOZ_LOG(gLog, LogLevel::Debug, ("PresShell::~PresShell this=%p", this));
 
   if (!mHaveShutDown) {
-    NS_NOTREACHED("Someone did not call nsIPresShell::destroy");
+    MOZ_ASSERT_UNREACHABLE("Someone did not call nsIPresShell::destroy");
     Destroy();
   }
 
@@ -2631,8 +2634,9 @@ PresShell::VerifyHasDirtyRootAncestor(nsIFrame* aFrame)
 
     aFrame = aFrame->GetParent();
   }
-  NS_NOTREACHED("Frame has dirty bits set but isn't scheduled to be "
-                "reflowed?");
+
+  MOZ_ASSERT_UNREACHABLE("Frame has dirty bits set but isn't scheduled to be "
+                         "reflowed?");
 }
 #endif
 
@@ -5114,8 +5118,9 @@ PresShell::RenderNode(nsINode* aNode,
   nsTArray<UniquePtr<RangePaintInfo>> rangeItems;
 
   // nothing to draw if the node isn't in a document
-  if (!aNode->IsInUncomposedDoc())
+  if (!aNode->IsInComposedDoc()) {
     return nullptr;
+  }
 
   RefPtr<nsRange> range = new nsRange(aNode);
   IgnoredErrorResult rv;
@@ -6317,7 +6322,15 @@ PresShell::Paint(nsView*         aViewToPaint,
   }
 
   if (layerManager->GetBackendType() == layers::LayersBackend::LAYERS_WR) {
-    // TODO: bug 1405465 - create a WR display list which simulates the color layer below.
+    nsPresContext* pc = GetPresContext();
+    LayoutDeviceRect bounds =
+      LayoutDeviceRect::FromAppUnits(pc->GetVisibleArea(), pc->AppUnitsPerDevPixel());
+    bgcolor = NS_ComposeColors(bgcolor, mCanvasBackgroundColor);
+    WebRenderBackgroundData data(wr::ToLayoutRect(bounds), wr::ToColorF(ToDeviceColor(bgcolor)));
+    nsTArray<wr::WrFilterOp> wrFilters;
+
+    MaybeSetupTransactionIdAllocator(layerManager, presContext);
+    layerManager->AsWebRenderLayerManager()->EndTransactionWithoutLayer(nullptr, nullptr, wrFilters, &data);
     return;
   }
 
@@ -7473,7 +7486,7 @@ PresShell::HandleEventInternal(WidgetEvent* aEvent,
             //     for some reasons (not sure) but we need to detect
             //     if a chrome event handler will call PreventDefault()
             //     again and check it later.
-            aEvent->PreventDefaultBeforeDispatch();
+            aEvent->PreventDefaultBeforeDispatch(CrossProcessForwarding::eStop);
             aEvent->mFlags.mOnlyChromeDispatch = true;
 
             // The event listeners in chrome can prevent this ESC behavior by
@@ -7492,7 +7505,7 @@ PresShell::HandleEventInternal(WidgetEvent* aEvent,
             // XXX See above comment to understand the reason why this needs
             //     to claim that the Escape key event is consumed by content
             //     even though it will be dispatched only into chrome.
-            aEvent->PreventDefaultBeforeDispatch();
+            aEvent->PreventDefaultBeforeDispatch(CrossProcessForwarding::eStop);
             aEvent->mFlags.mOnlyChromeDispatch = true;
             if (aEvent->mMessage == eKeyUp) {
               nsIDocument::UnlockPointer();
@@ -8553,6 +8566,47 @@ PresShell::IsVisible()
     return true;
 
   return frame->IsVisibleConsideringAncestors(nsIFrame::VISIBILITY_CROSS_CHROME_CONTENT_BOUNDARY);
+}
+
+void
+PresShell::SuppressDisplayport(bool aEnabled)
+{
+  if (aEnabled) {
+    mActiveSuppressDisplayport++;
+  } else {
+    bool isSuppressed = IsDisplayportSuppressed();
+    mActiveSuppressDisplayport--;
+    if (isSuppressed && !IsDisplayportSuppressed()) {
+      // We unsuppressed the displayport, trigger a paint
+      if (nsIFrame* rootFrame = mFrameConstructor->GetRootFrame()) {
+        rootFrame->SchedulePaint();
+      }
+    }
+  }
+
+  MOZ_ASSERT(mActiveSuppressDisplayport >= 0);
+}
+
+static bool sDisplayPortSuppressionRespected = true;
+
+void
+PresShell::RespectDisplayportSuppression(bool aEnabled)
+{
+  bool isSuppressed = IsDisplayportSuppressed();
+  sDisplayPortSuppressionRespected = aEnabled;
+  if (isSuppressed && !IsDisplayportSuppressed()) {
+    // We unsuppressed the displayport, trigger a paint
+    if (nsIFrame* rootFrame = mFrameConstructor->GetRootFrame()) {
+      rootFrame->SchedulePaint();
+    }
+  }
+}
+
+bool
+PresShell::IsDisplayportSuppressed()
+{
+  return sDisplayPortSuppressionRespected &&
+         mActiveSuppressDisplayport > 0;
 }
 
 nsresult

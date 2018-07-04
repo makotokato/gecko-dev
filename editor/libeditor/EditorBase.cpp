@@ -25,7 +25,6 @@
 #include "JoinNodeTransaction.h"        // for JoinNodeTransaction
 #include "PlaceholderTransaction.h"     // for PlaceholderTransaction
 #include "SplitNodeTransaction.h"       // for SplitNodeTransaction
-#include "StyleSheetTransactions.h"     // for AddStyleSheetTransaction, etc.
 #include "TextEditUtils.h"              // for TextEditUtils
 #include "mozilla/CheckedInt.h"         // for CheckedInt
 #include "mozilla/ComputedStyle.h"      // for ComputedStyle
@@ -2332,9 +2331,8 @@ NS_IMETHODIMP
 EditorBase::DebugUnitTests(int32_t* outNumTests,
                            int32_t* outNumTestsFailed)
 {
-#ifdef DEBUG
-  NS_NOTREACHED("This should never get called. Overridden by subclasses");
-#endif
+  MOZ_ASSERT_UNREACHABLE("This should never get called. Overridden by "
+                         "subclasses");
   return NS_OK;
 }
 
@@ -2926,7 +2924,7 @@ EditorBase::NotifyDocumentListeners(
       break;
     }
     default:
-      NS_NOTREACHED("Unknown notification");
+      MOZ_ASSERT_UNREACHABLE("Unknown notification");
   }
 
   return rv;
@@ -3614,7 +3612,7 @@ EditorBase::FindNextLeafNode(nsINode* aCurrentNode,
     cur = parent;
   }
 
-  NS_NOTREACHED("What part of for(;;) do you not understand?");
+  MOZ_ASSERT_UNREACHABLE("What part of for(;;) do you not understand?");
   return nullptr;
 }
 
@@ -3669,7 +3667,7 @@ EditorBase::GetRightmostChild(nsINode* aCurrentNode,
     cur = next;
   }
 
-  NS_NOTREACHED("What part of for(;;) do you not understand?");
+  MOZ_ASSERT_UNREACHABLE("What part of for(;;) do you not understand?");
   return nullptr;
 }
 
@@ -3693,7 +3691,7 @@ EditorBase::GetLeftmostChild(nsINode* aCurrentNode,
     cur = next;
   }
 
-  NS_NOTREACHED("What part of for(;;) do you not understand?");
+  MOZ_ASSERT_UNREACHABLE("What part of for(;;) do you not understand?");
   return nullptr;
 }
 

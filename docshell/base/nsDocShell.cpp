@@ -48,7 +48,6 @@
 #include "mozilla/dom/ScreenOrientation.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/ServiceWorkerInterceptController.h"
-#include "mozilla/dom/ServiceWorkerManager.h"
 #include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/dom/TabChild.h"
 #include "mozilla/dom/TabGroup.h"
@@ -190,7 +189,6 @@
 #include "nsRect.h"
 #include "nsRefreshTimer.h"
 #include "nsSandboxFlags.h"
-#include "nsIServiceWorkerManager.h"
 #include "nsSHistory.h"
 #include "nsStructuredCloneContainer.h"
 #include "nsSubDocumentFrame.h"
@@ -2769,31 +2767,7 @@ nsDocShell::MaybeCreateInitialClientSource(nsIPrincipal* aPrincipal)
     return;
   }
 
-  nsCOMPtr<nsIServiceWorkerManager> swm = mozilla::services::GetServiceWorkerManager();
-  if (!swm) {
-    return;
-  }
-
-  // If the parent is controlled then propagate that controller to the
-  // initial about:blank client as well.  This will set the controller
-  // in the ClientManagerService in the parent.
-  //
-  // Note: If the registration is missing from the SWM we avoid setting
-  //       the controller on the client.  We can do this synchronously
-  //       for now since SWM is in the child process.  In the future
-  //       when SWM is in the parent process we will probably have to
-  //       always set the initial client source and then somehow clear
-  //       it if we find the registration is acutally gone.  Its also
-  //       possible this race only occurs in cases where the resulting
-  //       window is no longer exposed.  For example, in theory the SW
-  //       should not go away if our parent window is controlled.
-  if (!swm->StartControlling(mInitialClientSource->Info(), controller.ref())) {
-    return;
-  }
-
-  // Also mark the ClientSource as controlled directly in case script
-  // immediately accesses navigator.serviceWorker.controller.
-  mInitialClientSource->SetController(controller.ref());
+  mInitialClientSource->InheritController(controller.ref());
 }
 
 Maybe<ClientInfo>
@@ -5611,7 +5585,7 @@ nsDocShell::GetVisibility(bool* aVisibility)
 
     // Null-check for crash in bug 267804
     if (!pPresShell) {
-      NS_NOTREACHED("parent docshell has null pres shell");
+      MOZ_ASSERT_UNREACHABLE("parent docshell has null pres shell");
       return NS_OK;
     }
 
@@ -6901,7 +6875,7 @@ NS_IMETHODIMP
 nsDocShell::OnLocationChange(nsIWebProgress* aProgress, nsIRequest* aRequest,
                              nsIURI* aURI, uint32_t aFlags)
 {
-  NS_NOTREACHED("notification excluded in AddProgressListener(...)");
+  MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
 
@@ -7011,7 +6985,7 @@ nsDocShell::OnStatusChange(nsIWebProgress* aWebProgress,
                            nsIRequest* aRequest,
                            nsresult aStatus, const char16_t* aMessage)
 {
-  NS_NOTREACHED("notification excluded in AddProgressListener(...)");
+  MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
 
@@ -7019,7 +6993,7 @@ NS_IMETHODIMP
 nsDocShell::OnSecurityChange(nsIWebProgress* aWebProgress,
                              nsIRequest* aRequest, uint32_t aState)
 {
-  NS_NOTREACHED("notification excluded in AddProgressListener(...)");
+  MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
 
@@ -10910,7 +10884,7 @@ nsDocShell::AddHeadersToChannel(nsIInputStream* aHeadersData,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  NS_NOTREACHED("oops");
+  MOZ_ASSERT_UNREACHABLE("oops");
   return NS_ERROR_UNEXPECTED;
 }
 

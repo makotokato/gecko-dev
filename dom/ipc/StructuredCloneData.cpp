@@ -12,14 +12,18 @@
 #include "ipc/IPCMessageUtils.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/BlobBinding.h"
-#include "mozilla/dom/IPCBlobUtils.h"
+#include "mozilla/dom/DOMTypes.h"
 #include "mozilla/dom/File.h"
+#include "mozilla/dom/IPCBlobUtils.h"
+#include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/ipc/IPCStreamUtils.h"
 #include "nsContentUtils.h"
 #include "nsJSEnvironment.h"
 #include "MainThreadUtils.h"
 #include "StructuredCloneTags.h"
 #include "jsapi.h"
+
+using namespace mozilla::ipc;
 
 namespace mozilla {
 namespace dom {
@@ -375,7 +379,7 @@ void
 StructuredCloneData::CopyFromClonedMessageDataForBackgroundParent(const ClonedMessageData& aClonedData)
 {
   MOZ_ASSERT(IsOnBackgroundThread());
-  UnpackClonedMessageData<BorrowMemory, Parent>(aClonedData, *this);
+  UnpackClonedMessageData<CopyMemory, Parent>(aClonedData, *this);
 }
 
 void
@@ -461,6 +465,12 @@ StructuredCloneData::StealExternalData(JSStructuredCloneData& aData)
   mSharedData = new SharedJSAllocatedData(std::move(aData));
   mInitialized = true;
   return true;
+}
+
+already_AddRefed<SharedJSAllocatedData>
+StructuredCloneData::TakeSharedData()
+{
+  return mSharedData.forget();
 }
 
 } // namespace ipc

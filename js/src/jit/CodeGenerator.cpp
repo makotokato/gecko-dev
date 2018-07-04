@@ -4263,6 +4263,11 @@ CodeGenerator::visitCallNative(LCallNative* call)
 
     masm.Push(argUintNReg);
 
+    if (call->mir()->maybeCrossRealm()) {
+        masm.movePtr(ImmGCPtr(target->rawJSFunction()), tempReg);
+        masm.switchToObjectRealm(tempReg, tempReg);
+    }
+
     // Construct native exit frame.
     uint32_t safepointOffset = masm.buildFakeExitFrame(tempReg);
     masm.enterFakeExitFrameForNative(argContextReg, tempReg, call->mir()->isConstructing());
@@ -4289,6 +4294,9 @@ CodeGenerator::visitCallNative(LCallNative* call)
 
     // Test for failure.
     masm.branchIfFalseBool(ReturnReg, masm.failureLabel());
+
+    if (call->mir()->maybeCrossRealm())
+        masm.switchToRealm(gen->realm->realmPtr(), ReturnReg);
 
     // Load the outparam vp[0] into output register(s).
     masm.loadValue(Address(masm.getStackPointer(), NativeExitFrameLayout::offsetOfResult()), JSReturnOperand);
@@ -4410,6 +4418,12 @@ CodeGenerator::visitCallDOMNative(LCallDOMNative* call)
     masm.Push(argObj);
     masm.moveStackPtrTo(argObj);
 
+    if (call->mir()->maybeCrossRealm()) {
+        // We use argJSContext as scratch register here.
+        masm.movePtr(ImmGCPtr(target->rawJSFunction()), argJSContext);
+        masm.switchToObjectRealm(argJSContext, argJSContext);
+    }
+
     // Construct native exit frame.
     uint32_t safepointOffset = masm.buildFakeExitFrame(argJSContext);
     masm.loadJSContext(argJSContext);
@@ -4437,6 +4451,14 @@ CodeGenerator::visitCallDOMNative(LCallDOMNative* call)
         // Load the outparam vp[0] into output register(s).
         masm.loadValue(Address(masm.getStackPointer(), IonDOMMethodExitFrameLayout::offsetOfResult()),
                        JSReturnOperand);
+    }
+
+    // Switch back to the current realm if needed. Note: if the DOM method threw
+    // an exception, the exception handler will do this.
+    if (call->mir()->maybeCrossRealm()) {
+        static_assert(!JSReturnOperand.aliases(ReturnReg),
+                      "Clobbering ReturnReg should not affect the return value");
+        masm.switchToRealm(gen->realm->realmPtr(), ReturnReg);
     }
 
     // Until C++ code is instrumented against Spectre, prevent speculative
@@ -4520,6 +4542,9 @@ CodeGenerator::visitCallGeneric(LCallGeneric* call)
                                 &invoke);
     }
 
+    if (call->mir()->maybeCrossRealm())
+        masm.switchToObjectRealm(calleereg, objreg);
+
     if (call->mir()->needsArgCheck())
         masm.loadJitCodeRaw(calleereg, objreg);
     else
@@ -4555,6 +4580,12 @@ CodeGenerator::visitCallGeneric(LCallGeneric* call)
     masm.bind(&makeCall);
     uint32_t callOffset = masm.callJit(objreg);
     markSafepointAt(callOffset, call);
+
+    if (call->mir()->maybeCrossRealm()) {
+        static_assert(!JSReturnOperand.aliases(ReturnReg),
+                      "ReturnReg available as scratch after scripted calls");
+        masm.switchToRealm(gen->realm->realmPtr(), ReturnReg);
+    }
 
     // Increment to remove IonFramePrefix; decrement to fill FrameSizeClass.
     // The return address has already been removed from the Ion frame.
@@ -4633,6 +4664,9 @@ CodeGenerator::visitCallKnown(LCallKnown* call)
         masm.branchIfFunctionHasNoJitEntry(calleereg, call->isConstructing(), &uncompiled);
     }
 
+    if (call->mir()->maybeCrossRealm())
+        masm.switchToObjectRealm(calleereg, objreg);
+
     if (call->mir()->needsArgCheck())
         masm.loadJitCodeRaw(calleereg, objreg);
     else
@@ -4651,6 +4685,12 @@ CodeGenerator::visitCallKnown(LCallKnown* call)
     // Finally call the function in objreg.
     uint32_t callOffset = masm.callJit(objreg);
     markSafepointAt(callOffset, call);
+
+    if (call->mir()->maybeCrossRealm()) {
+        static_assert(!JSReturnOperand.aliases(ReturnReg),
+                      "ReturnReg available as scratch after scripted calls");
+        masm.switchToRealm(gen->realm->realmPtr(), ReturnReg);
+    }
 
     // Increment to remove IonFramePrefix; decrement to fill FrameSizeClass.
     // The return address has already been removed from the Ion frame.
@@ -4940,11 +4980,14 @@ CodeGenerator::emitApplyGeneric(T* apply)
     masm.branchFunctionKind(Assembler::Equal, JSFunction::ClassConstructor,
                             calleereg, objreg, &invoke);
 
-    // Knowing that calleereg is a non-native function, load jitcode.
-    masm.loadJitCodeRaw(calleereg, objreg);
-
     // Call with an Ion frame or a rectifier frame.
     {
+        if (apply->mir()->maybeCrossRealm())
+            masm.switchToObjectRealm(calleereg, objreg);
+
+        // Knowing that calleereg is a non-native function, load jitcode.
+        masm.loadJitCodeRaw(calleereg, objreg);
+
         // Create the frame descriptor.
         unsigned pushed = masm.framePushed();
         Register stackSpace = extraStackSpace;
@@ -4985,6 +5028,12 @@ CodeGenerator::emitApplyGeneric(T* apply)
         // Finally call the function in objreg, as assigned by one of the paths above.
         uint32_t callOffset = masm.callJit(objreg);
         markSafepointAt(callOffset, apply);
+
+        if (apply->mir()->maybeCrossRealm()) {
+            static_assert(!JSReturnOperand.aliases(ReturnReg),
+                          "ReturnReg available as scratch after scripted calls");
+            masm.switchToRealm(gen->realm->realmPtr(), ReturnReg);
+        }
 
         // Recover the number of arguments from the frame descriptor.
         masm.loadPtr(Address(masm.getStackPointer(), 0), stackSpace);
@@ -5135,6 +5184,8 @@ CodeGenerator::generateArgumentsChecks(bool assert)
     AllocatableGeneralRegisterSet temps(GeneralRegisterSet::All());
     Register temp1 = temps.takeAny();
     Register temp2 = temps.takeAny();
+
+    masm.debugAssertContextRealm(gen->realm->realmPtr(), temp1);
 
     const CompileInfo& info = gen->info();
 
@@ -5333,7 +5384,7 @@ CodeGenerator::maybeCreateScriptCounts()
     if (!script)
         return nullptr;
 
-    UniquePtr<IonScriptCounts> counts(js_new<IonScriptCounts>());
+    auto counts = MakeUnique<IonScriptCounts>();
     if (!counts || !counts->init(graph.numBlocks()))
         return nullptr;
 
@@ -5354,7 +5405,7 @@ CodeGenerator::maybeCreateScriptCounts()
             if (block->entryResumePoint()->caller()) {
                 // Get the filename and line number of the inner script.
                 JSScript* innerScript = block->info().script();
-                description = (char*) js_calloc(200);
+                description = js_pod_calloc<char>(200);
                 if (description) {
                     snprintf(description, 200, "%s:%u",
                              innerScript->filename(), innerScript->lineno());
@@ -7086,6 +7137,7 @@ CodeGenerator::emitWasmCallBase(MWasmCall* mir, bool needsBoundsCheck)
     // TLS and pinned regs. The only case where where we don't have to reload
     // the TLS and pinned regs is when the callee preserves them.
     bool reloadRegs = true;
+    bool switchRealm = true;
 
     const wasm::CallSiteDesc& desc = mir->desc();
     const wasm::CalleeDesc& callee = mir->callee();
@@ -7093,6 +7145,7 @@ CodeGenerator::emitWasmCallBase(MWasmCall* mir, bool needsBoundsCheck)
       case wasm::CalleeDesc::Func:
         masm.call(desc, callee.funcIndex());
         reloadRegs = false;
+        switchRealm = false;
         break;
       case wasm::CalleeDesc::Import:
         masm.wasmCallImport(desc, callee);
@@ -7100,21 +7153,29 @@ CodeGenerator::emitWasmCallBase(MWasmCall* mir, bool needsBoundsCheck)
       case wasm::CalleeDesc::AsmJSTable:
       case wasm::CalleeDesc::WasmTable:
         masm.wasmCallIndirect(desc, callee, needsBoundsCheck);
-        reloadRegs = callee.which() == wasm::CalleeDesc::WasmTable && callee.wasmTableIsExternal();
+        reloadRegs = switchRealm =
+            (callee.which() == wasm::CalleeDesc::WasmTable && callee.wasmTableIsExternal());
         break;
       case wasm::CalleeDesc::Builtin:
         masm.call(desc, callee.builtin());
         reloadRegs = false;
+        switchRealm = false;
         break;
       case wasm::CalleeDesc::BuiltinInstanceMethod:
         masm.wasmCallBuiltinInstanceMethod(desc, mir->instanceArg(), callee.builtin());
+        switchRealm = false;
         break;
     }
 
     if (reloadRegs) {
         masm.loadWasmTlsRegFromFrame();
         masm.loadWasmPinnedRegsFromTls();
+        if (switchRealm)
+            masm.switchToWasmTlsRealm(ABINonArgReturnReg0, ABINonArgReturnReg1);
+    } else {
+        MOZ_ASSERT(!switchRealm);
     }
+
 
     if (mir->spIncrement())
         masm.reserveStack(mir->spIncrement());
@@ -10087,12 +10148,12 @@ CodeGenerator::visitRest(LRest* lir)
 }
 
 bool
-CodeGenerator::generateWasm(wasm::SigIdDesc sigId, wasm::BytecodeOffset trapOffset,
+CodeGenerator::generateWasm(wasm::FuncTypeIdDesc funcTypeId, wasm::BytecodeOffset trapOffset,
                             wasm::FuncOffsets* offsets)
 {
     JitSpew(JitSpew_Codegen, "# Emitting wasm code");
 
-    wasm::GenerateFunctionPrologue(masm, sigId, mozilla::Nothing(), offsets);
+    wasm::GenerateFunctionPrologue(masm, funcTypeId, mozilla::Nothing(), offsets);
 
     if (omitOverRecursedCheck())
         masm.reserveStack(frameSize());
@@ -12208,6 +12269,12 @@ CodeGenerator::visitGetDOMProperty(LGetDOMProperty* ins)
     // Rooting will happen at GC time.
     masm.moveStackPtrTo(ObjectReg);
 
+    Realm* getterRealm = ins->mir()->getterRealm();
+    if (gen->realm->realmPtr() != getterRealm) {
+        // We use JSContextReg as scratch register here.
+        masm.switchToRealm(getterRealm, JSContextReg);
+    }
+
     uint32_t safepointOffset = masm.buildFakeExitFrame(JSContextReg);
     masm.loadJSContext(JSContextReg);
     masm.enterFakeExitFrame(JSContextReg, JSContextReg, ExitFrameType::IonDOMGetter);
@@ -12231,6 +12298,14 @@ CodeGenerator::visitGetDOMProperty(LGetDOMProperty* ins)
 
         masm.loadValue(Address(masm.getStackPointer(), IonDOMExitFrameLayout::offsetOfResult()),
                        JSReturnOperand);
+    }
+
+    // Switch back to the current realm if needed. Note: if the getter threw an
+    // exception, the exception handler will do this.
+    if (gen->realm->realmPtr() != getterRealm) {
+        static_assert(!JSReturnOperand.aliases(ReturnReg),
+                      "Clobbering ReturnReg should not affect the return value");
+        masm.switchToRealm(gen->realm->realmPtr(), ReturnReg);
     }
 
     // Until C++ code is instrumented against Spectre, prevent speculative
@@ -12313,6 +12388,12 @@ CodeGenerator::visitSetDOMProperty(LSetDOMProperty* ins)
     // Rooting will happen at GC time.
     masm.moveStackPtrTo(ObjectReg);
 
+    Realm* setterRealm = ins->mir()->setterRealm();
+    if (gen->realm->realmPtr() != setterRealm) {
+        // We use JSContextReg as scratch register here.
+        masm.switchToRealm(setterRealm, JSContextReg);
+    }
+
     uint32_t safepointOffset = masm.buildFakeExitFrame(JSContextReg);
     masm.loadJSContext(JSContextReg);
     masm.enterFakeExitFrame(JSContextReg, JSContextReg, ExitFrameType::IonDOMSetter);
@@ -12329,6 +12410,11 @@ CodeGenerator::visitSetDOMProperty(LSetDOMProperty* ins)
                      CheckUnsafeCallWithABI::DontCheckHasExitFrame);
 
     masm.branchIfFalseBool(ReturnReg, masm.exceptionLabel());
+
+    // Switch back to the current realm if needed. Note: if the setter threw an
+    // exception, the exception handler will do this.
+    if (gen->realm->realmPtr() != setterRealm)
+        masm.switchToRealm(gen->realm->realmPtr(), ReturnReg);
 
     masm.adjustStack(IonDOMExitFrameLayout::Size());
 

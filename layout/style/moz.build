@@ -27,7 +27,6 @@ EXPORTS += [
     'AnimationCommon.h',
     'CounterStyleManager.h',
     'nsAnimationManager.h',
-    'nsComputedDOMStylePropertyList.h',
     'nsCSSAnonBoxes.h',
     'nsCSSAnonBoxList.h',
     'nsCSSCounterDescList.h',
@@ -69,9 +68,8 @@ EXPORTS.mozilla += [
     'CSSPropFlags.h',
     'DeclarationBlock.h',
     'DocumentStyleRootIterator.h',
-    'GenericSpecifiedValues.h',
-    'GenericSpecifiedValuesInlines.h',
     'LayerAnimationInfo.h',
+    'MappedDeclarations.h',
     'MediaFeatureChange.h',
     'PostTraversalTask.h',
     'PreloadedStyleSheet.h',
@@ -85,7 +83,6 @@ EXPORTS.mozilla += [
     'ServoCSSRuleList.h',
     'ServoElementSnapshot.h',
     'ServoElementSnapshotTable.h',
-    'ServoSpecifiedValues.h',
     'ServoStyleSet.h',
     'ServoStyleSetInlines.h',
     'ServoTraversalStatistics.h',
@@ -165,6 +162,7 @@ UNIFIED_SOURCES += [
     'ImageLoader.cpp',
     'LayerAnimationInfo.cpp',
     'Loader.cpp',
+    'MappedDeclarations.cpp',
     'MediaList.cpp',
     'MediaQueryList.cpp',
     'nsAnimationManager.cpp',
@@ -196,7 +194,6 @@ UNIFIED_SOURCES += [
     'ServoCSSParser.cpp',
     'ServoCSSRuleList.cpp',
     'ServoElementSnapshot.cpp',
-    'ServoSpecifiedValues.cpp',
     'ServoStyleSet.cpp',
     'StreamLoader.cpp',
     'StyleAnimationValue.cpp',
@@ -276,7 +273,14 @@ servo_props.inputs = [
 
 if CONFIG['COMPILE_ENVIRONMENT']:
     GENERATED_FILES += [
+        'nsComputedDOMStyleGenerated.cpp',
         'nsCSSPropsGenerated.inc',
+    ]
+
+    computed = GENERATED_FILES['nsComputedDOMStyleGenerated.cpp']
+    computed.script = 'GenerateComputedDOMStyleGenerated.py:generate'
+    computed.inputs = [
+        '!ServoCSSPropList.py',
     ]
 
     css_props = GENERATED_FILES['nsCSSPropsGenerated.inc']

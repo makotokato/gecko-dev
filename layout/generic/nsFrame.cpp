@@ -722,7 +722,12 @@ nsFrame::Init(nsIContent*       aContent,
   // Usually we update the state when the frame is restyled and has a
   // VisibilityChange change hint but we don't generate any change hints for
   // newly created frames.
-  UpdateVisibleDescendantsState();
+  // Note: We don't need to do this for placeholders since placeholders have
+  // different styles so that the styles don't have visibility:hidden even if
+  // the parent has visibility:hidden style.
+  if (!IsPlaceholderFrame()) {
+    UpdateVisibleDescendantsState();
+  }
 }
 
 void
@@ -1691,7 +1696,7 @@ nsIFrame::ComputeBorderRadii(const nsStyleCorners& aBorderRadius,
         aRadii[i] = 0;
       }
     } else {
-      NS_NOTREACHED("ComputeBorderRadii: bad unit");
+      MOZ_ASSERT_UNREACHABLE("ComputeBorderRadii: bad unit");
       aRadii[i] = 0;
     }
   }
@@ -3659,14 +3664,11 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
   const nsStyleEffects* effects = child->StyleEffects();
   const nsStylePosition* pos = child->StylePosition();
 
-  const bool isVisuallyAtomic =
-    child->IsVisuallyAtomic(effectSet, disp, effects);
-
   const bool isPositioned =
     disp->IsAbsPosContainingBlock(child);
 
   const bool isStackingContext =
-    child->IsStackingContext(disp, pos, isPositioned, isVisuallyAtomic) ||
+    child->IsStackingContext(effectSet, disp, pos, effects, isPositioned) ||
     (aFlags & DISPLAY_CHILD_FORCE_STACKING_CONTEXT);
 
   if (pseudoStackingContext || isStackingContext || isPositioned ||
@@ -3816,7 +3818,7 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
 
   buildingForChild.RestoreBuildingInvisibleItemsValue();
 
-  if (isPositioned || isVisuallyAtomic ||
+  if (isPositioned || isStackingContext ||
       (aFlags & DISPLAY_CHILD_FORCE_STACKING_CONTEXT)) {
     // Genuine stacking contexts, and positioned pseudo-stacking-contexts,
     // go in this level.
@@ -3868,7 +3870,10 @@ nsFrame::FireDOMEvent(const nsAString& aDOMEventName, nsIContent *aContent)
 
   if (target) {
     RefPtr<AsyncEventDispatcher> asyncDispatcher =
-      new AsyncEventDispatcher(target, aDOMEventName, true, false);
+      new AsyncEventDispatcher(target,
+                               aDOMEventName,
+                               CanBubble::eYes,
+                               ChromeOnlyDispatch::eNo);
     DebugOnly<nsresult> rv = asyncDispatcher->PostDOMEvent();
     NS_ASSERTION(NS_SUCCEEDED(rv), "AsyncEventDispatcher failed to dispatch");
   }
@@ -6505,7 +6510,7 @@ nsIFrame::IsContentDisabled() const
 nsresult
 nsFrame::CharacterDataChanged(const CharacterDataChangeInfo&)
 {
-  NS_NOTREACHED("should only be called for text frames");
+  MOZ_ASSERT_UNREACHABLE("should only be called for text frames");
   return NS_OK;
 }
 
@@ -9082,7 +9087,7 @@ nsView* nsIFrame::GetClosestView(nsPoint* aOffset) const
     offset += f->GetPosition();
   }
 
-  NS_NOTREACHED("No view on any parent?  How did that happen?");
+  MOZ_ASSERT_UNREACHABLE("No view on any parent?  How did that happen?");
   return nullptr;
 }
 
@@ -9090,8 +9095,8 @@ nsView* nsIFrame::GetClosestView(nsPoint* aOffset) const
 /* virtual */ void
 nsFrame::ChildIsDirty(nsIFrame* aChild)
 {
-  NS_NOTREACHED("should never be called on a frame that doesn't inherit from "
-                "nsContainerFrame");
+  MOZ_ASSERT_UNREACHABLE("should never be called on a frame that doesn't "
+                         "inherit from nsContainerFrame");
 }
 
 
@@ -9901,7 +9906,7 @@ nsFrame::DoGetParentComputedStyle(nsIFrame** aProviderFrame) const
   // reached from the first-in-flow.
   nsPlaceholderFrame* placeholder = FirstInFlow()->GetPlaceholderFrame();
   if (!placeholder) {
-    NS_NOTREACHED("no placeholder frame for out-of-flow frame");
+    MOZ_ASSERT_UNREACHABLE("no placeholder frame for out-of-flow frame");
     *aProviderFrame = GetCorrectedParent(this);
     return *aProviderFrame ? (*aProviderFrame)->Style() : nullptr;
   }
@@ -10028,7 +10033,7 @@ ConvertSVGDominantBaselineToVerticalAlign(uint8_t aDominantBaseline)
     // css3-linebox now defines.
     return NS_STYLE_VERTICAL_ALIGN_BASELINE;
   default:
-    NS_NOTREACHED("unexpected aDominantBaseline value");
+    MOZ_ASSERT_UNREACHABLE("unexpected aDominantBaseline value");
     return NS_STYLE_VERTICAL_ALIGN_BASELINE;
   }
 }
@@ -10926,9 +10931,12 @@ nsIFrame::IsSelected() const
 }
 
 bool
-nsIFrame::IsVisuallyAtomic(EffectSet* aEffectSet,
-                           const nsStyleDisplay* aStyleDisplay,
-                           const nsStyleEffects* aStyleEffects) {
+nsIFrame::IsStackingContext(EffectSet* aEffectSet,
+                            const nsStyleDisplay* aStyleDisplay,
+                            const nsStylePosition* aStylePosition,
+                            const nsStyleEffects* aStyleEffects,
+                            bool aIsPositioned)
+{
   return HasOpacity(aEffectSet) ||
          IsTransformed(aStyleDisplay) ||
          aStyleDisplay->IsContainPaint() ||
@@ -10936,16 +10944,7 @@ nsIFrame::IsVisuallyAtomic(EffectSet* aEffectSet,
          // but the spec says it acts like the rest of these
          ChildrenHavePerspective(aStyleDisplay) ||
          aStyleEffects->mMixBlendMode != NS_STYLE_BLEND_NORMAL ||
-         nsSVGIntegrationUtils::UsingEffectsForFrame(this);
-}
-
-bool
-nsIFrame::IsStackingContext(const nsStyleDisplay* aStyleDisplay,
-                            const nsStylePosition* aStylePosition,
-                            bool aIsPositioned,
-                            bool aIsVisuallyAtomic)
-{
-  return aIsVisuallyAtomic ||
+         nsSVGIntegrationUtils::UsingEffectsForFrame(this) ||
          (aIsPositioned && (aStyleDisplay->IsPositionForcingStackingContext() ||
                             aStylePosition->mZIndex.GetUnit() == eStyleUnit_Integer)) ||
          (aStyleDisplay->mWillChangeBitField & NS_STYLE_WILL_CHANGE_STACKING_CONTEXT) ||
@@ -10956,26 +10955,19 @@ bool
 nsIFrame::IsStackingContext()
 {
   const nsStyleDisplay* disp = StyleDisplay();
-  const bool isVisuallyAtomic = IsVisuallyAtomic(EffectSet::GetEffectSet(this),
-                                                 disp, StyleEffects());
-  if (isVisuallyAtomic) {
-    // If this is changed, the function above should be updated as well.
-    return true;
-  }
-
   const bool isPositioned = disp->IsAbsPosContainingBlock(this);
-  return IsStackingContext(disp, StylePosition(),
-                           isPositioned, isVisuallyAtomic);
+  return IsStackingContext(EffectSet::GetEffectSet(this), disp,
+                           StylePosition(), StyleEffects(),
+                           isPositioned);
 }
 
 static bool
-IsFrameScrolledOutOfView(nsIFrame* aTarget,
+IsFrameScrolledOutOfView(const nsIFrame* aTarget,
                          const nsRect& aTargetRect,
-                         nsIFrame* aParent)
+                         const nsIFrame* aParent)
 {
   nsIScrollableFrame* scrollableFrame =
-    nsLayoutUtils::GetNearestScrollableFrame(aParent,
-      nsLayoutUtils::SCROLLABLE_SAME_DOC |
+    nsLayoutUtils::GetNearestScrollableFrame(const_cast<nsIFrame*>(aParent),
       nsLayoutUtils::SCROLLABLE_FIXEDPOS_FINDS_ROOT |
       nsLayoutUtils::SCROLLABLE_INCLUDE_HIDDEN);
   if (!scrollableFrame) {
@@ -11018,7 +11010,7 @@ IsFrameScrolledOutOfView(nsIFrame* aTarget,
 }
 
 bool
-nsIFrame::IsScrolledOutOfView()
+nsIFrame::IsScrolledOutOfView() const
 {
   nsRect rect = GetVisualOverflowRectRelativeToSelf();
   return IsFrameScrolledOutOfView(this, rect, this);
@@ -11930,13 +11922,38 @@ void DR_State::AddRule(nsTArray<DR_Rule*>& aRules,
   aRules.AppendElement(&aRule);
 }
 
+static Maybe<bool> ShouldLogReflow(const char* processes)
+{
+  switch (processes[0]) {
+  case 'A': case 'a': return Some(true);
+  case 'P': case 'p': return Some(XRE_IsParentProcess());
+  case 'C': case 'c': return Some(XRE_IsContentProcess());
+  default: return Nothing{};
+  }
+}
+
 void DR_State::ParseRulesFile()
 {
+  char* processes = PR_GetEnv("GECKO_DISPLAY_REFLOW_PROCESSES");
+  if (processes) {
+    Maybe<bool> enableLog = ShouldLogReflow(processes);
+    if (enableLog.isNothing()) {
+      MOZ_CRASH("GECKO_DISPLAY_REFLOW_PROCESSES: [a]ll [p]arent [c]ontent");
+    } else if (enableLog.value()) {
+      DR_Rule* rule = new DR_Rule;
+      rule->AddPart(LayoutFrameType::None);
+      rule->mDisplay = true;
+      AddRule(mWildRules, *rule);
+      mActive = true;
+    }
+    return;
+  }
+
   char* path = PR_GetEnv("GECKO_DISPLAY_REFLOW_RULES_FILE");
   if (path) {
     FILE* inFile = fopen(path, "r");
     if (!inFile) {
-      MOZ_CRASH("Failed to open the specified rules file");
+      MOZ_CRASH("Failed to open the specified rules file; Try `--setpref security.sandbox.content.level=2` if the sandbox is at cause");
     }
     for (DR_Rule* rule = ParseRule(inFile); rule; rule = ParseRule(inFile)) {
       if (rule->mTarget) {

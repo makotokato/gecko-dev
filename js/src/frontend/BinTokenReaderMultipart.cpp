@@ -126,7 +126,7 @@ BinTokenReaderMultipart::readHeader()
     if (!slicesTable_.reserve(stringsNumberOfEntries))
         return raiseOOM();
     if (!variantsTable_.init())
-        return cx_->alreadyReportedError();
+        return raiseOOM();
 
     RootedAtom atom(cx_);
     for (uint32_t i = 0; i < stringsNumberOfEntries; ++i) {
@@ -344,7 +344,8 @@ BinTokenReaderMultipart::AutoBase::init()
 }
 
 BinTokenReaderMultipart::AutoBase::AutoBase(BinTokenReaderMultipart& reader)
-    : reader_(reader)
+    : initialized_(false)
+    , reader_(reader)
 { }
 
 BinTokenReaderMultipart::AutoBase::~AutoBase()

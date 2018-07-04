@@ -625,7 +625,7 @@ GeneratePrototypeGuards(CacheIRWriter& writer, JSObject* obj, JSObject* holder, 
     // [[GetOwnProperty]] has no definition of the target property.
     //
     //
-    // Shape Teleporting Optimization
+    // [SMDOC] Shape Teleporting Optimization
     // ------------------------------
     //
     // Starting with the assumption (and guideline to developers) that mutating
@@ -3543,6 +3543,13 @@ SetPropIRGenerator::tryAttachSetDenseElement(HandleObject obj, ObjOperandId objI
     if (!nobj->containsDenseElement(index) || nobj->getElementsHeader()->isFrozen())
         return false;
 
+    // Don't optimize INITELEM (DefineProperty) on non-extensible objects: when
+    // the elements are sealed, we have to throw an exception. Note that we have
+    // to check !isExtensible instead of denseElementsAreSealed because sealing
+    // a (non-extensible) object does not necessarily trigger a Shape change.
+    if (IsPropertyInitOp(JSOp(*pc_)) && !nobj->isExtensible())
+        return false;
+
     if (typeCheckInfo_.needsTypeBarrier())
         writer.guardGroupForTypeBarrier(objId, nobj->group());
     TestMatchingNativeReceiver(writer, nobj, objId);
@@ -4989,6 +4996,7 @@ UnaryArithIRGenerator::trackAttached(const char* name)
 #ifdef JS_CACHEIR_SPEW
     if (const CacheIRSpewer::Guard& sp = CacheIRSpewer::Guard(*this, name)) {
         sp.valueProperty("val", val_);
+        sp.valueProperty("res", res_);
     }
 #endif
 }
@@ -5038,7 +5046,7 @@ UnaryArithIRGenerator::tryAttachNumber()
         return false;
 
     ValOperandId valId(writer.setInputOperandId(0));
-    writer.guardType(valId, JSVAL_TYPE_DOUBLE);
+    writer.guardIsNumber(valId);
     Int32OperandId truncatedId;
     switch (op_) {
       case JSOP_BITNOT:

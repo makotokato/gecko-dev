@@ -8,6 +8,7 @@ exports.getPauseReason = getPauseReason;
 exports.getPauseCommand = getPauseCommand;
 exports.isStepping = isStepping;
 exports.isPaused = isPaused;
+exports.getIsPaused = getIsPaused;
 exports.getPreviousPauseFrameLocation = getPreviousPauseFrameLocation;
 exports.isEvaluatingExpression = isEvaluatingExpression;
 exports.getPopupObjectProperties = getPopupObjectProperties;
@@ -304,6 +305,10 @@ function isPaused(state) {
   return !!getFrames(state);
 }
 
+function getIsPaused(state) {
+  return !!getFrames(state);
+}
+
 function getPreviousPauseFrameLocation(state) {
   return state.pause.previousLocation;
 }
@@ -376,7 +381,7 @@ function getSelectedScope(state) {
   const frameId = getSelectedFrameId(state);
   const {
     scope
-  } = getFrameScope(state, sourceRecord && sourceRecord.get("id"), frameId) || {};
+  } = getFrameScope(state, sourceRecord && sourceRecord.id, frameId) || {};
   return scope || null;
 }
 

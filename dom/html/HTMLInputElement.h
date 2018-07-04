@@ -1225,10 +1225,10 @@ protected:
       case VALUE_MODE_VALUE:
       case VALUE_MODE_FILENAME:
         return mValueChanged;
-      default:
-        NS_NOTREACHED("We should not be there: there are no other modes.");
-        return false;
     }
+
+    MOZ_ASSERT_UNREACHABLE("We should not be there: there are no other modes.");
+    return false;
   }
 
   /**
@@ -1667,7 +1667,7 @@ protected:
 
 private:
   static void MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
-                                    GenericSpecifiedValues* aGenericData);
+                                    MappedDeclarations&);
 
   /**
    * Returns true if this input's type will fire a DOM "change" event when it

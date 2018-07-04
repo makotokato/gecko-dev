@@ -328,12 +328,14 @@ nsFileControlFrame::DnDListener::HandleEvent(Event* aEvent)
 
       nsContentUtils::DispatchTrustedEvent(inputElement->OwnerDoc(),
                                            static_cast<nsINode*>(inputElement),
-                                           NS_LITERAL_STRING("input"), true,
-                                           false);
+                                           NS_LITERAL_STRING("input"),
+                                           CanBubble::eYes,
+                                           Cancelable::eNo);
       nsContentUtils::DispatchTrustedEvent(inputElement->OwnerDoc(),
                                            static_cast<nsINode*>(inputElement),
-                                           NS_LITERAL_STRING("change"), true,
-                                           false);
+                                           NS_LITERAL_STRING("change"),
+                                           CanBubble::eYes,
+                                           Cancelable::eNo);
     }
   }
 
@@ -380,6 +382,10 @@ nsFileControlFrame::DnDListener::GetBlobImplForWebkitDirectory(FileList* aFileLi
 bool
 nsFileControlFrame::DnDListener::IsValidDropData(DataTransfer* aDataTransfer)
 {
+  if (!aDataTransfer) {
+    return false;
+  }
+
   // We only support dropping files onto a file upload control
   nsTArray<nsString> types;
   aDataTransfer->GetTypes(types, CallerType::System);
@@ -438,7 +444,7 @@ nsFileControlFrame::AttributeChanged(int32_t  aNameSpaceID,
                                      int32_t  aModType)
 {
   if (aNameSpaceID == kNameSpaceID_None && aAttribute == nsGkAtoms::tabindex) {
-    if (aModType == MutationEventBinding::REMOVAL) {
+    if (aModType == MutationEvent_Binding::REMOVAL) {
       mBrowseFilesOrDirs->UnsetAttr(aNameSpaceID, aAttribute, true);
     } else {
       nsAutoString value;

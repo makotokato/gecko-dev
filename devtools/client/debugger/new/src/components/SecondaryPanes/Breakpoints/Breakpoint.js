@@ -152,6 +152,8 @@ class Breakpoint extends _react.PureComponent {
       __html: node.innerHTML
     };
   }
+  /* eslint-disable react/no-danger */
+
 
   render() {
     const {
@@ -189,8 +191,20 @@ class Breakpoint extends _react.PureComponent {
 }
 
 const mapStateToProps = state => ({
+  breakpoints: (0, _selectors.getBreakpoints)(state),
   frame: (0, _selectors.getTopFrame)(state),
   selectedSource: (0, _selectors.getSelectedSource)(state)
 });
 
-exports.default = (0, _reactRedux.connect)(mapStateToProps, _actions2.default)(Breakpoint);
+exports.default = (0, _reactRedux.connect)(mapStateToProps, {
+  enableBreakpoint: _actions2.default.enableBreakpoint,
+  removeBreakpoint: _actions2.default.removeBreakpoint,
+  removeBreakpoints: _actions2.default.removeBreakpoints,
+  removeAllBreakpoints: _actions2.default.removeAllBreakpoints,
+  disableBreakpoint: _actions2.default.disableBreakpoint,
+  selectSpecificLocation: _actions2.default.selectSpecificLocation,
+  selectLocation: _actions2.default.selectLocation,
+  toggleAllBreakpoints: _actions2.default.toggleAllBreakpoints,
+  toggleBreakpoints: _actions2.default.toggleBreakpoints,
+  openConditionalPanel: _actions2.default.openConditionalPanel
+})(Breakpoint);

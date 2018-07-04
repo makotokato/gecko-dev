@@ -5461,6 +5461,9 @@ nsDisplayBorder::CreateBorderImageWebRenderCommands(mozilla::wr::DisplayListBuil
                                     clip,
                                     !BackfaceIsHidden(),
                                     wr::ToBorderWidths(widths[0], widths[1], widths[2], widths[3]),
+                                    (float)(mBorderImageRenderer->mImageSize.width) / appUnitsPerDevPixel,
+                                    (float)(mBorderImageRenderer->mImageSize.height) / appUnitsPerDevPixel,
+                                    wr::ToSideOffsets2D_u32(slice[0], slice[1], slice[2], slice[3]),
                                     wr::ToLayoutPoint(startPoint),
                                     wr::ToLayoutPoint(endPoint),
                                     stops,
@@ -9839,15 +9842,13 @@ nsDisplayFilter::CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuild
         float appUnitsPerDevPixel = mFrame->PresContext()->AppUnitsPerDevPixel();
         nsCSSShadowArray* shadows = filter.GetDropShadow();
         if (!shadows || shadows->Length() != 1) {
-          NS_NOTREACHED("Exactly one drop shadow should have been parsed.");
+          MOZ_ASSERT_UNREACHABLE("Exactly one drop shadow should have been "
+                                 "parsed.");
           return false;
         }
 
         nsCSSShadowItem* shadow = shadows->ShadowAt(0);
-        nscolor color = shadow->mColor;
-        if (!shadow->mHasColor) {
-          color = mFrame->StyleColor()->mColor;
-        }
+        nscolor color = shadow->mColor.CalcColor(mFrame);
 
         mozilla::wr::WrFilterOp filterOp = {
           wr::ToWrFilterOpType(filter.GetType()),
@@ -10026,6 +10027,7 @@ PaintTelemetry::AutoRecordPaint::~AutoRecordPaint()
 
   double dlMs = sMetrics[Metric::DisplayList];
   double flbMs = sMetrics[Metric::Layerization];
+  double frMs = sMetrics[Metric::FlushRasterization];
   double rMs = sMetrics[Metric::Rasterization];
 
   // If the total time was >= 16ms, then it's likely we missed a frame due to
@@ -10033,10 +10035,12 @@ PaintTelemetry::AutoRecordPaint::~AutoRecordPaint()
   if (totalMs >= 16.0) {
     recordLarge(NS_LITERAL_CSTRING("dl"), dlMs);
     recordLarge(NS_LITERAL_CSTRING("flb"), flbMs);
+    recordLarge(NS_LITERAL_CSTRING("fr"), frMs);
     recordLarge(NS_LITERAL_CSTRING("r"), rMs);
   } else {
     recordSmall(NS_LITERAL_CSTRING("dl"), dlMs);
     recordSmall(NS_LITERAL_CSTRING("flb"), flbMs);
+    recordSmall(NS_LITERAL_CSTRING("fr"), frMs);
     recordSmall(NS_LITERAL_CSTRING("r"), rMs);
   }
 }

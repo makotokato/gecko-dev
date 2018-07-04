@@ -79,7 +79,6 @@
 #include "ServiceWorkerRegisterJob.h"
 #include "ServiceWorkerRegistrar.h"
 #include "ServiceWorkerRegistration.h"
-#include "ServiceWorkerRegistrationListener.h"
 #include "ServiceWorkerScriptCache.h"
 #include "ServiceWorkerEvents.h"
 #include "ServiceWorkerUnregisterJob.h"
@@ -311,11 +310,13 @@ ServiceWorkerManager::Init(ServiceWorkerRegistrar* aRegistrar)
 
 RefPtr<GenericPromise>
 ServiceWorkerManager::StartControllingClient(const ClientInfo& aClientInfo,
-                                             ServiceWorkerRegistrationInfo* aRegistrationInfo)
+                                             ServiceWorkerRegistrationInfo* aRegistrationInfo,
+                                             bool aControlClientHandle)
 {
   MOZ_DIAGNOSTIC_ASSERT(aRegistrationInfo->GetActive());
 
   RefPtr<GenericPromise> ref;
+  RefPtr<ServiceWorkerManager> self(this);
 
   const ServiceWorkerDescriptor& active =
     aRegistrationInfo->GetActive()->Descriptor();
@@ -325,7 +326,12 @@ ServiceWorkerManager::StartControllingClient(const ClientInfo& aClientInfo,
     RefPtr<ServiceWorkerRegistrationInfo> old =
       entry.Data()->mRegistrationInfo.forget();
 
-    ref = entry.Data()->mClientHandle->Control(active);
+    if (aControlClientHandle) {
+      ref = entry.Data()->mClientHandle->Control(active);
+    } else {
+      ref = GenericPromise::CreateAndResolve(false, __func__);
+    }
+
     entry.Data()->mRegistrationInfo = aRegistrationInfo;
 
     if (old != aRegistrationInfo) {
@@ -335,6 +341,17 @@ ServiceWorkerManager::StartControllingClient(const ClientInfo& aClientInfo,
 
     Telemetry::Accumulate(Telemetry::SERVICE_WORKER_CONTROLLED_DOCUMENTS, 1);
 
+    // Always check to see if we failed to actually control the client.  In
+    // that case removed the client from our list of controlled clients.
+    ref->Then(
+      SystemGroup::EventTargetFor(TaskCategory::Other), __func__,
+      [] (bool) {
+        // do nothing on success
+      }, [self, aClientInfo] (nsresult aRv) {
+        // failed to control, forget about this client
+        self->StopControllingClient(aClientInfo);
+      });
+
     return ref;
   }
 
@@ -342,7 +359,11 @@ ServiceWorkerManager::StartControllingClient(const ClientInfo& aClientInfo,
     ClientManager::CreateHandle(aClientInfo,
                                 SystemGroup::EventTargetFor(TaskCategory::Other));
 
-  ref = clientHandle->Control(active);
+  if (aControlClientHandle) {
+    ref = clientHandle->Control(active);
+  } else {
+    ref = GenericPromise::CreateAndResolve(false, __func__);
+  }
 
   aRegistrationInfo->StartControllingClient();
 
@@ -350,14 +371,24 @@ ServiceWorkerManager::StartControllingClient(const ClientInfo& aClientInfo,
     return new ControlledClientData(clientHandle, aRegistrationInfo);
   });
 
-  RefPtr<ServiceWorkerManager> self(this);
   clientHandle->OnDetach()->Then(
     SystemGroup::EventTargetFor(TaskCategory::Other), __func__,
-    [self = std::move(self), aClientInfo] {
+    [self, aClientInfo] {
       self->StopControllingClient(aClientInfo);
     });
 
   Telemetry::Accumulate(Telemetry::SERVICE_WORKER_CONTROLLED_DOCUMENTS, 1);
+
+  // Always check to see if we failed to actually control the client.  In
+  // that case removed the client from our list of controlled clients.
+  ref->Then(
+    SystemGroup::EventTargetFor(TaskCategory::Other), __func__,
+    [] (bool) {
+      // do nothing on success
+    }, [self, aClientInfo] (nsresult aRv) {
+      // failed to control, forget about this client
+      self->StopControllingClient(aClientInfo);
+    });
 
   return ref;
 }
@@ -1159,6 +1190,29 @@ ServiceWorkerManager::RemovePendingReadyPromise(const ClientInfo& aClientInfo)
   }
 }
 
+void
+ServiceWorkerManager::NoteInheritedController(const ClientInfo& aClientInfo,
+                                              const ServiceWorkerDescriptor& aController)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  nsCOMPtr<nsIPrincipal> principal =
+    PrincipalInfoToPrincipal(aController.PrincipalInfo());
+  NS_ENSURE_TRUE_VOID(principal);
+
+  nsCOMPtr<nsIURI> scope;
+  nsresult rv =
+    NS_NewURI(getter_AddRefs(scope), aController.Scope(), nullptr, nullptr);
+  NS_ENSURE_SUCCESS_VOID(rv);
+
+  RefPtr<ServiceWorkerRegistrationInfo> registration =
+    GetServiceWorkerRegistrationInfo(principal, scope);
+  NS_ENSURE_TRUE_VOID(registration);
+  NS_ENSURE_TRUE_VOID(registration->GetActive());
+
+  StartControllingClient(aClientInfo, registration, false /* aControlClientHandle */);
+}
+
 ServiceWorkerInfo*
 ServiceWorkerManager::GetActiveWorkerInfoForScope(const OriginAttributes& aOriginAttributes,
                                                   const nsACString& aScope)
@@ -1528,6 +1582,8 @@ ServiceWorkerManager::LoadRegistration(
     registration->SetActive(
       new ServiceWorkerInfo(registration->Principal(),
                             registration->Scope(),
+                            registration->Id(),
+                            registration->Version(),
                             currentWorkerURL,
                             aRegistration.cacheName(),
                             importsLoadFlags));
@@ -1851,7 +1907,7 @@ ServiceWorkerManager::RemoveScopeAndRegistration(ServiceWorkerRegistrationInfo* 
   swm->NotifyListenersOnUnregister(info);
 
   swm->MaybeRemoveRegistrationInfo(scopeKey);
-  swm->NotifyServiceWorkerRegistrationRemoved(aRegistration);
+  aRegistration->NotifyRemoved();
 }
 
 void
@@ -1949,64 +2005,6 @@ ServiceWorkerManager::GetScopeForUrl(nsIPrincipal* aPrincipal,
 
   aScope = NS_ConvertUTF8toUTF16(r->Scope());
   return NS_OK;
-}
-
-NS_IMETHODIMP
-ServiceWorkerManager::AddRegistrationEventListener(const nsAString& aScope,
-                                                   ServiceWorkerRegistrationListener* aListener)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(aListener);
-#ifdef DEBUG
-  // Ensure a registration is only listening for it's own scope.
-  nsAutoString regScope;
-  aListener->GetScope(regScope);
-  MOZ_ASSERT(!regScope.IsEmpty());
-  MOZ_ASSERT(aScope.Equals(regScope));
-#endif
-
-  MOZ_ASSERT(!mServiceWorkerRegistrationListeners.Contains(aListener));
-  mServiceWorkerRegistrationListeners.AppendElement(aListener);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-ServiceWorkerManager::RemoveRegistrationEventListener(const nsAString& aScope,
-                                                      ServiceWorkerRegistrationListener* aListener)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(aListener);
-#ifdef DEBUG
-  // Ensure a registration is unregistering for it's own scope.
-  nsAutoString regScope;
-  aListener->GetScope(regScope);
-  MOZ_ASSERT(!regScope.IsEmpty());
-  MOZ_ASSERT(aScope.Equals(regScope));
-#endif
-
-  MOZ_ASSERT(mServiceWorkerRegistrationListeners.Contains(aListener));
-  mServiceWorkerRegistrationListeners.RemoveElement(aListener);
-  return NS_OK;
-}
-
-void
-ServiceWorkerManager::FireUpdateFoundOnServiceWorkerRegistrations(
-  ServiceWorkerRegistrationInfo* aRegistration)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-
-  nsTObserverArray<ServiceWorkerRegistrationListener*>::ForwardIterator it(mServiceWorkerRegistrationListeners);
-  while (it.HasMore()) {
-    RefPtr<ServiceWorkerRegistrationListener> target = it.GetNext();
-    nsAutoString regScope;
-    target->GetScope(regScope);
-    MOZ_ASSERT(!regScope.IsEmpty());
-
-    NS_ConvertUTF16toUTF8 utf8Scope(regScope);
-    if (utf8Scope.Equals(aRegistration->Scope())) {
-      target->UpdateFound();
-    }
-  }
 }
 
 namespace {
@@ -2308,38 +2306,6 @@ ServiceWorkerManager::GetClientRegistration(const ClientInfo& aClientInfo,
   RefPtr<ServiceWorkerRegistrationInfo> ref = data->mRegistrationInfo;
   ref.forget(aRegistrationInfo);
   return NS_OK;
-}
-
-void
-ServiceWorkerManager::UpdateRegistrationListeners(ServiceWorkerRegistrationInfo* aReg)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  nsTObserverArray<ServiceWorkerRegistrationListener*>::ForwardIterator it(mServiceWorkerRegistrationListeners);
-  while (it.HasMore()) {
-    RefPtr<ServiceWorkerRegistrationListener> target = it.GetNext();
-    if (target->MatchesDescriptor(aReg->Descriptor())) {
-      target->UpdateState(aReg->Descriptor());
-    }
-  }
-}
-
-void
-ServiceWorkerManager::NotifyServiceWorkerRegistrationRemoved(ServiceWorkerRegistrationInfo* aRegistration)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  nsTObserverArray<ServiceWorkerRegistrationListener*>::ForwardIterator it(mServiceWorkerRegistrationListeners);
-  while (it.HasMore()) {
-    RefPtr<ServiceWorkerRegistrationListener> target = it.GetNext();
-    nsAutoString regScope;
-    target->GetScope(regScope);
-    MOZ_ASSERT(!regScope.IsEmpty());
-
-    NS_ConvertUTF16toUTF8 utf8Scope(regScope);
-
-    if (utf8Scope.Equals(aRegistration->Scope())) {
-      target->RegistrationRemoved();
-    }
-  }
 }
 
 void
@@ -2667,7 +2633,20 @@ ServiceWorkerManager::UpdateClientControllers(ServiceWorkerRegistrationInfo* aRe
   // Fire event after iterating mControlledClients is done to prevent
   // modification by reentering from the event handlers during iteration.
   for (auto& handle : handleList) {
-    handle->Control(activeWorker->Descriptor());
+    RefPtr<GenericPromise> p = handle->Control(activeWorker->Descriptor());
+
+    RefPtr<ServiceWorkerManager> self = this;
+
+    // If we fail to control the client, then automatically remove it
+    // from our list of controlled clients.
+    p->Then(
+      SystemGroup::EventTargetFor(TaskCategory::Other), __func__,
+      [] (bool) {
+        // do nothing on success
+      }, [self, clientInfo = handle->Info()] (nsresult aRv) {
+        // failed to control, forget about this client
+        self->StopControllingClient(clientInfo);
+      });
   }
 }
 

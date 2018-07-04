@@ -146,6 +146,7 @@
 #include "nsISiteSecurityService.h"
 #include "nsISound.h"
 #include "nsISpellChecker.h"
+#include "nsIStringBundle.h"
 #include "nsISupportsPrimitives.h"
 #include "nsITimer.h"
 #include "nsIURIFixup.h"
@@ -1277,6 +1278,17 @@ ContentParent::GetAllEvenIfDead(nsTArray<ContentParent*>& aArray)
   }
 }
 
+void
+ContentParent::BroadcastStringBundle(const StringBundleDescriptor& aBundle)
+{
+  AutoTArray<StringBundleDescriptor, 1> array;
+  array.AppendElement(aBundle);
+
+  for (auto* cp : AllProcesses(eLive)) {
+    Unused << cp->SendRegisterStringBundles(array);
+  }
+}
+
 const nsAString&
 ContentParent::GetRemoteType() const
 {
@@ -1857,8 +1869,8 @@ ContentParent::ShouldKeepProcessAlive() const
     return false;
   }
 
-  // We might want to keep alive some content processes alive during test runs,
-  // for performance reasons. This should never be used in production.
+  // We might want to keep some content processes alive for performance reasons.
+  // e.g. test runs and privileged content process for some about: pages.
   // We don't want to alter behavior if the pref is not set, so default to 0.
   int32_t processesToKeepAlive = 0;
 
@@ -2317,6 +2329,10 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority)
     static_cast<nsChromeRegistryChrome*>(registrySvc.get());
   chromeRegistry->SendRegisteredChrome(this);
 
+  nsCOMPtr<nsIStringBundleService> stringBundleService =
+    services::GetStringBundleService();
+  stringBundleService->SendContentBundles(this);
+
   if (gAppData) {
     nsCString version(gAppData->version);
     nsCString buildID(gAppData->buildID);
@@ -2703,6 +2719,16 @@ ContentParent::RecvClipboardHasType(nsTArray<nsCString>&& aTypes,
                                     aWhichClipboard, aHasType);
 
   delete [] typesChrs;
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+ContentParent::RecvGetExternalClipboardFormats(const int32_t& aWhichClipboard,
+                                     const bool& aPlainTextOnly,
+                                     nsTArray<nsCString>* aTypes)
+{
+  MOZ_ASSERT(aTypes);
+  DataTransfer::GetExternalClipboardFormats(aWhichClipboard, aPlainTextOnly, aTypes);
   return IPC_OK();
 }
 

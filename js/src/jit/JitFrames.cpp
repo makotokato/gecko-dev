@@ -661,13 +661,21 @@ HandleException(ResumeFromException* rfe)
     // iterating, we need a variant here that is automatically updated should
     // on-stack recompilation occur.
     DebugModeOSRVolatileJitFrameIter iter(cx);
-    while (!iter.done()) {
+    while (true) {
+        iter.skipNonScriptedJSFrames();
+        if (iter.done())
+            break;
+
         if (iter.isWasm()) {
             HandleExceptionWasm(cx, &iter.asWasm(), rfe);
             if (!iter.done())
                 ++iter;
             continue;
         }
+
+        // JIT code can enter same-compartment realms, so reset cx->realm to
+        // this frame's realm.
+        cx->setRealmForJitExceptionHandler(iter.realm());
 
         const JSJitFrameIter& frame = iter.asJSJit();
 
@@ -1405,7 +1413,7 @@ GetPcScript(JSContext* cx, JSScript** scriptRes, jsbytecode** pcRes)
 
         // Lazily initialize the cache. The allocation may safely fail and will not GC.
         if (MOZ_UNLIKELY(cx->ionPcScriptCache == nullptr)) {
-            cx->ionPcScriptCache = (PcScriptCache*)js_malloc(sizeof(struct PcScriptCache));
+            cx->ionPcScriptCache = js_pod_malloc<PcScriptCache>();
             if (cx->ionPcScriptCache)
                 cx->ionPcScriptCache->clear(cx->runtime()->gc.gcNumber());
         }
@@ -2325,7 +2333,7 @@ struct DumpOp {
     unsigned int i_;
     void operator()(const Value& v) {
         fprintf(stderr, "  actual (arg %d): ", i_);
-#ifdef DEBUG
+#if defined(DEBUG) || defined(JS_JITSPEW)
         DumpValue(v);
 #else
         fprintf(stderr, "?\n");
@@ -2348,7 +2356,7 @@ InlineFrameIterator::dump() const
     if (isFunctionFrame()) {
         isFunction = true;
         fprintf(stderr, "  callee fun: ");
-#ifdef DEBUG
+#if defined(DEBUG) || defined(JS_JITSPEW)
         DumpObject(callee(fallback));
 #else
         fprintf(stderr, "?\n");
@@ -2387,7 +2395,7 @@ InlineFrameIterator::dump() const
             }
         } else
             fprintf(stderr, "  slot %u: ", i);
-#ifdef DEBUG
+#if defined(DEBUG) || defined(JS_JITSPEW)
         DumpValue(si.maybeRead(fallback));
 #else
         fprintf(stderr, "?\n");

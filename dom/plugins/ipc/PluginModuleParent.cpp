@@ -9,6 +9,7 @@
 #include "base/process_util.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/AutoRestore.h"
+#include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/ipc/CrashReporterClient.h"
@@ -580,7 +581,7 @@ PluginModuleChromeParent::InitCrashReporter()
     }
 
     {
-      mozilla::MutexAutoLock lock(mCrashReporterMutex);
+      mozilla::RecursiveMutexAutoLock lock(mCrashReporterMutex);
       mCrashReporter = MakeUnique<ipc::CrashReporterHost>(
         GeckoProcessType_Plugin,
         shmem,
@@ -660,7 +661,7 @@ PluginModuleChromeParent::PluginModuleChromeParent(const char* aFilePath,
     mSandboxLevel = aSandboxLevel;
     mRunID = GeckoChildProcessHost::GetUniqueID();
 
-    mozilla::HangMonitor::RegisterAnnotator(*this);
+    mozilla::BackgroundHangMonitor::RegisterAnnotator(*this);
 }
 
 PluginModuleChromeParent::~PluginModuleChromeParent()
@@ -713,14 +714,14 @@ PluginModuleChromeParent::~PluginModuleChromeParent()
     }
 #endif
 
-    mozilla::HangMonitor::UnregisterAnnotator(*this);
+    mozilla::BackgroundHangMonitor::UnregisterAnnotator(*this);
 }
 
 void
 PluginModuleChromeParent::WriteExtraDataForMinidump()
 {
     // mCrashReporterMutex is already held by the caller
-    mCrashReporterMutex.AssertCurrentThreadOwns();
+    mCrashReporterMutex.AssertCurrentThreadIn();
 
     typedef nsDependentCString cstring;
 
@@ -992,16 +993,16 @@ PluginModuleChromeParent::ExitedCxxStack()
 }
 
 /**
- * This function is always called by the HangMonitor thread.
+ * This function is always called by the BackgroundHangMonitor thread.
  */
 void
-PluginModuleChromeParent::AnnotateHang(mozilla::HangMonitor::HangAnnotations& aAnnotations)
+PluginModuleChromeParent::AnnotateHang(mozilla::BackgroundHangAnnotations& aAnnotations)
 {
     uint32_t flags = mHangAnnotationFlags;
     if (flags) {
         /* We don't actually annotate anything specifically for kInPluginCall;
            we use it to determine whether to annotate other things. It will
-           be pretty obvious from the ChromeHang stack that we're in a plugin
+           be pretty obvious from the hang stack that we're in a plugin
            call when the hang occurred. */
         if (flags & kHangUIShown) {
             aAnnotations.AddAnnotation(NS_LITERAL_STRING("HangUIShown"),
@@ -1086,7 +1087,7 @@ PluginModuleChromeParent::TakeFullMinidump(base::ProcessId aContentPid,
                                            std::function<void(nsString)>&& aCallback,
                                            bool aAsync)
 {
-    mozilla::MutexAutoLock lock(mCrashReporterMutex);
+    mozilla::RecursiveMutexAutoLock lock(mCrashReporterMutex);
 
     if (!mCrashReporter || !mTakeFullMinidumpCallback.IsEmpty()) {
         aCallback(EmptyString());
@@ -1173,7 +1174,7 @@ PluginModuleChromeParent::TakeBrowserAndPluginMinidumps(bool aReportsReady,
                                                         const nsAString& aBrowserDumpId,
                                                         bool aAsync)
 {
-    mCrashReporterMutex.AssertCurrentThreadOwns();
+    mCrashReporterMutex.AssertCurrentThreadIn();
 
     // Generate crash report including plugin and browser process minidumps.
     // The plugin process is the parent report with additional dumps including
@@ -1208,7 +1209,7 @@ PluginModuleChromeParent::OnTakeFullMinidumpComplete(bool aReportsReady,
                                                      base::ProcessId aContentPid,
                                                      const nsAString& aBrowserDumpId)
 {
-    mCrashReporterMutex.AssertCurrentThreadOwns();
+    mCrashReporterMutex.AssertCurrentThreadIn();
 
     if (aReportsReady) {
         nsString dumpId = mCrashReporter->MinidumpID();
@@ -1293,7 +1294,7 @@ void
 PluginModuleChromeParent::TerminateChildProcessOnDumpComplete(MessageLoop* aMsgLoop,
                                                               const nsCString& aMonitorDescription)
 {
-    mCrashReporterMutex.AssertCurrentThreadOwns();
+    mCrashReporterMutex.AssertCurrentThreadIn();
 
     if (!mCrashReporter) {
         // If mCrashReporter is null then the hang has ended, the plugin module
@@ -1510,7 +1511,7 @@ RemoveMinidump(nsIFile* minidump)
 void
 PluginModuleChromeParent::ProcessFirstMinidump()
 {
-    mozilla::MutexAutoLock lock(mCrashReporterMutex);
+    mozilla::RecursiveMutexAutoLock lock(mCrashReporterMutex);
 
     if (!mCrashReporter)
         return;
@@ -2618,7 +2619,7 @@ PluginModuleParent::RecvProcessNativeEventsInInterruptCall()
     ProcessNativeEventsInInterruptCall();
     return IPC_OK();
 #else
-    NS_NOTREACHED(
+    MOZ_ASSERT_UNREACHABLE(
         "PluginModuleParent::RecvProcessNativeEventsInInterruptCall not implemented!");
     return IPC_FAIL_NO_REASON(this);
 #endif
@@ -2631,7 +2632,7 @@ PluginModuleParent::ProcessRemoteNativeEventsInInterruptCall()
     Unused << SendProcessNativeEventsInInterruptCall();
     return;
 #endif
-    NS_NOTREACHED(
+    MOZ_ASSERT_UNREACHABLE(
         "PluginModuleParent::ProcessRemoteNativeEventsInInterruptCall not implemented!");
 }
 
@@ -2646,7 +2647,7 @@ PluginModuleParent::RecvPluginShowWindow(const uint32_t& aWindowId, const bool& 
     mac_plugin_interposing::parent::OnPluginShowWindow(aWindowId, windowBound, aModal);
     return IPC_OK();
 #else
-    NS_NOTREACHED(
+    MOZ_ASSERT_UNREACHABLE(
         "PluginInstanceParent::RecvPluginShowWindow not implemented!");
     return IPC_FAIL_NO_REASON(this);
 #endif
@@ -2660,7 +2661,7 @@ PluginModuleParent::RecvPluginHideWindow(const uint32_t& aWindowId)
     mac_plugin_interposing::parent::OnPluginHideWindow(aWindowId, OtherPid());
     return IPC_OK();
 #else
-    NS_NOTREACHED(
+    MOZ_ASSERT_UNREACHABLE(
         "PluginInstanceParent::RecvPluginHideWindow not implemented!");
     return IPC_FAIL_NO_REASON(this);
 #endif
@@ -2674,7 +2675,7 @@ PluginModuleParent::RecvSetCursor(const NSCursorInfo& aCursorInfo)
     mac_plugin_interposing::parent::OnSetCursor(aCursorInfo);
     return IPC_OK();
 #else
-    NS_NOTREACHED(
+    MOZ_ASSERT_UNREACHABLE(
         "PluginInstanceParent::RecvSetCursor not implemented!");
     return IPC_FAIL_NO_REASON(this);
 #endif
@@ -2688,7 +2689,7 @@ PluginModuleParent::RecvShowCursor(const bool& aShow)
     mac_plugin_interposing::parent::OnShowCursor(aShow);
     return IPC_OK();
 #else
-    NS_NOTREACHED(
+    MOZ_ASSERT_UNREACHABLE(
         "PluginInstanceParent::RecvShowCursor not implemented!");
     return IPC_FAIL_NO_REASON(this);
 #endif
@@ -2702,7 +2703,7 @@ PluginModuleParent::RecvPushCursor(const NSCursorInfo& aCursorInfo)
     mac_plugin_interposing::parent::OnPushCursor(aCursorInfo);
     return IPC_OK();
 #else
-    NS_NOTREACHED(
+    MOZ_ASSERT_UNREACHABLE(
         "PluginInstanceParent::RecvPushCursor not implemented!");
     return IPC_FAIL_NO_REASON(this);
 #endif
@@ -2716,7 +2717,7 @@ PluginModuleParent::RecvPopCursor()
     mac_plugin_interposing::parent::OnPopCursor();
     return IPC_OK();
 #else
-    NS_NOTREACHED(
+    MOZ_ASSERT_UNREACHABLE(
         "PluginInstanceParent::RecvPopCursor not implemented!");
     return IPC_FAIL_NO_REASON(this);
 #endif

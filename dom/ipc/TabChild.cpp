@@ -25,7 +25,6 @@
 #include "mozilla/dom/MessageManagerBinding.h"
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/PaymentRequestChild.h"
-#include "mozilla/dom/TelemetryScrollProbe.h"
 #include "mozilla/IMEStateManager.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/layers/APZChild.h"
@@ -402,7 +401,6 @@ TabChild::TabChild(nsIContentChild* aManager,
   , mManager(aManager)
   , mChromeFlags(aChromeFlags)
   , mMaxTouchPoints(0)
-  , mActiveSuppressDisplayport(0)
   , mLayersId{0}
   , mBeforeUnloadListeners(0)
   , mDidFakeShow(false)
@@ -1343,14 +1341,9 @@ TabChild::UpdateFrame(const FrameMetrics& aFrameMetrics)
 mozilla::ipc::IPCResult
 TabChild::RecvSuppressDisplayport(const bool& aEnabled)
 {
-  if (aEnabled) {
-    mActiveSuppressDisplayport++;
-  } else {
-    mActiveSuppressDisplayport--;
+  if (nsCOMPtr<nsIPresShell> shell = GetPresShell()) {
+    shell->SuppressDisplayport(aEnabled);
   }
-
-  MOZ_ASSERT(mActiveSuppressDisplayport >= 0);
-  APZCCallbackHelper::SuppressDisplayport(aEnabled, GetPresShell());
   return IPC_OK();
 }
 
@@ -1546,7 +1539,7 @@ TabChild::RecvMouseEvent(const nsString& aType,
   APZCCallbackHelper::DispatchMouseEvent(GetPresShell(), aType,
                                          CSSPoint(aX, aY), aButton, aClickCount,
                                          aModifiers, aIgnoreRootScrollFrame,
-                                         MouseEventBinding::MOZ_SOURCE_UNKNOWN,
+                                         MouseEvent_Binding::MOZ_SOURCE_UNKNOWN,
                                          0 /* Use the default value here. */);
   return IPC_OK();
 }
@@ -2132,6 +2125,14 @@ TabChild::RecvRealKeyEvent(const WidgetKeyboardEvent& aEvent)
         status == nsEventStatus_eConsumeNoDefault) {
       localEvent.PreventDefault();
     }
+    // This is an ugly hack, mNoRemoteProcessDispatch is set to true when the
+    // event's PreventDefault() or StopScrollProcessForwarding() is called.
+    // And then, it'll be checked by ParamTraits<mozilla::WidgetEvent>::Write()
+    // whether the event is being sent to remote process unexpectedly.
+    // However, unfortunately, it cannot check the destination.  Therefore,
+    // we need to clear the flag explicitly here because ParamTraits should
+    // keep checking the flag for avoiding regression.
+    localEvent.mFlags.mNoRemoteProcessDispatch = false;
     SendReplyKeyEvent(localEvent);
   }
 
@@ -2503,11 +2504,6 @@ TabChild::RecvDestroy()
       child->Destroy();
   }
 
-  while (mActiveSuppressDisplayport > 0) {
-    APZCCallbackHelper::SuppressDisplayport(false, nullptr);
-    mActiveSuppressDisplayport--;
-  }
-
   if (mTabChildGlobal) {
     // Message handlers are called from the event loop, so it better be safe to
     // run script.
@@ -2665,7 +2661,7 @@ TabChild::RecvRenderLayers(const bool& aEnabled, const bool& aForceRepaint, cons
       // we get back to the event loop again. We suppress the display port so that
       // we only paint what's visible. This ensures that the tab we're switching
       // to paints as quickly as possible.
-      APZCCallbackHelper::SuppressDisplayport(true, presShell);
+      presShell->SuppressDisplayport(true);
       if (nsContentUtils::IsSafeToRunScript()) {
         WebWidget()->PaintNowIfNeeded();
       } else {
@@ -2675,7 +2671,7 @@ TabChild::RecvRenderLayers(const bool& aEnabled, const bool& aForceRepaint, cons
                            nsIPresShell::PAINT_LAYERS);
         }
       }
-      APZCCallbackHelper::SuppressDisplayport(false, presShell);
+      presShell->SuppressDisplayport(false);
     }
   } else {
     if (sVisibleTabs) {
@@ -2761,8 +2757,6 @@ TabChild::InitTabChildGlobal()
         mTabChildGlobal = nullptr;
         return false;
     }
-
-    scope->Init();
 
     nsCOMPtr<nsPIWindowRoot> root = do_QueryInterface(chromeHandler);
     if (NS_WARN_IF(!root)) {
@@ -3516,12 +3510,6 @@ TabChildGlobal::~TabChildGlobal()
 {
 }
 
-void
-TabChildGlobal::Init()
-{
-  TelemetryScrollProbe::Create(this);
-}
-
 NS_IMPL_CYCLE_COLLECTION_CLASS(TabChildGlobal)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(TabChildGlobal,
@@ -3554,9 +3542,9 @@ TabChildGlobal::WrapGlobalObject(JSContext* aCx,
                                  JS::RealmOptions& aOptions,
                                  JS::MutableHandle<JSObject*> aReflector)
 {
-  bool ok = ContentFrameMessageManagerBinding::Wrap(aCx, this, this, aOptions,
-                                                    nsJSPrincipals::get(mTabChild->GetPrincipal()),
-                                                    true, aReflector);
+  bool ok = ContentFrameMessageManager_Binding::Wrap(aCx, this, this, aOptions,
+                                                       nsJSPrincipals::get(mTabChild->GetPrincipal()),
+                                                       true, aReflector);
   if (ok) {
     // Since we can't rewrap we have to preserve the global's wrapper here.
     PreserveWrapper(ToSupports(this));

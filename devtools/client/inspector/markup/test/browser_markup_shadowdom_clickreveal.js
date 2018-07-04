@@ -2,11 +2,7 @@
 /* Any copyright is dedicated to the Public Domain.
  http://creativecommons.org/publicdomain/zero/1.0/ */
 
-/* import-globals-from helper_shadowdom.js */
-
 "use strict";
-
-loadHelperScript("helper_shadowdom.js");
 
 // Test that the corresponding non-slotted node container gets selected when clicking on
 // the reveal link for a slotted node.
@@ -74,17 +70,4 @@ async function checkRevealLink(inspector, node) {
   ok(!inspector.selection.isSlotted(), "The selection is not the slotted version");
   ok(!inspector.markup.getSelectedContainer().isSlotted(),
     "The selected container is not slotted");
-}
-
-async function clickOnRevealLink(inspector, container) {
-  const onSelection = inspector.selection.once("new-node-front");
-  const revealLink = container.elt.querySelector(".reveal-link");
-  const tagline = revealLink.closest(".tag-line");
-  const win = inspector.markup.doc.defaultView;
-
-  // First send a mouseover on the tagline to force the link to be displayed.
-  EventUtils.synthesizeMouseAtCenter(tagline, {type: "mouseover"}, win);
-  EventUtils.synthesizeMouseAtCenter(revealLink, {}, win);
-
-  await onSelection;
 }

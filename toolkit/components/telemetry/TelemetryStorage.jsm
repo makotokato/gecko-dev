@@ -415,13 +415,6 @@ var TelemetryStorage = {
   },
 
   /**
-   * The number of pending pings on disk.
-   */
-  get pendingPingCount() {
-    return TelemetryStorageImpl.pendingPingCount;
-  },
-
-  /**
    * Loads a ping file.
    * @param {String} aFilePath The path of the ping file.
    * @return {Promise<Object>} A promise resolved with the ping content or rejected if the
@@ -871,7 +864,7 @@ var TelemetryStorageImpl = {
         continue;
       }
 
-      // If this archive directory is older than 180 days, remove it.
+      // If this archive directory is older than allowed, remove it.
       if ((startTimeStamp - archiveDate.getTime()) > MAX_ARCHIVED_PINGS_RETENTION_MS) {
         try {
           await OS.File.removeDir(dir.path);
@@ -1029,7 +1022,7 @@ var TelemetryStorageImpl = {
       return;
     }
 
-    // Remove pings older than 180 days.
+    // Remove pings older than allowed.
     try {
       await this._purgeOldPings();
     } catch (ex) {
@@ -1646,10 +1639,6 @@ var TelemetryStorageImpl = {
 
     list.sort((a, b) => b.lastModificationDate - a.lastModificationDate);
     return list;
-  },
-
-  get pendingPingCount() {
-    return this._pendingPings.size;
   },
 
   /**

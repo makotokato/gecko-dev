@@ -205,14 +205,6 @@
     "n_values": 21,
     "description": "Maximum number of concurrent threads reached during a given download session"
   },
-  "BLOCKLIST_SYNC_FILE_LOAD": {
-    "record_in_processes": ["main", "content"],
-    "bug_numbers": [1439405],
-    "alert_emails": ["gijs@mozilla.com"],
-    "expires_in_version": "64",
-    "kind": "boolean",
-    "description": "Whether blocklist.xml was loaded synchronously. True means it was loaded synchronously, false means it was preloaded asynchronously."
-  },
   "CHECKERBOARD_DURATION": {
     "record_in_processes": ["main", "content", "gpu"],
     "alert_emails": ["kgupta@mozilla.com"],
@@ -7192,6 +7184,19 @@
     "kind": "count",
     "description": "Count of TelemetrySession scheduler ticks that were delayed long enough to suspect sleep."
   },
+  "TELEMETRY_EVENT_PING_SENT": {
+    "record_in_processes": ["main"],
+    "alert_emails": ["telemetry-client-dev@mozilla.com", "chutten@mozilla.com"],
+    "bug_numbers": [1460595],
+    "expires_in_version": "never",
+    "kind": "categorical",
+    "labels": [
+      "periodic",
+      "max",
+      "shutdown"
+    ],
+    "description": "Number of 'event' pings sent, by reason"
+  },
   "TELEMETRY_TEST_FLAG": {
     "record_in_processes": ["main", "content"],
     "alert_emails": ["telemetry-client-dev@mozilla.com"],
@@ -9545,6 +9550,17 @@
     "releaseChannelCollection": "opt-out",
     "description": "How long has the platform accessibility been active (seconds) in accessibility panel."
   },
+  "DEVTOOLS_APPLICATION_TIME_ACTIVE_SECONDS": {
+    "record_in_processes": ["main", "content"],
+    "expires_in_version": "66",
+    "kind": "exponential",
+    "high": 86400,
+    "n_buckets": 100,
+    "bug_numbers": [1451734],
+    "alert_emails": ["dev-developer-tools@lists.mozilla.org", "jdescottes@mozilla.com"],
+    "releaseChannelCollection": "opt-out",
+    "description": "How long has the application panel been active (seconds)."
+  },
   "DEVTOOLS_TOOLBOX_TIME_ACTIVE_SECONDS": {
     "record_in_processes": ["main", "content"],
     "expires_in_version": "never",
@@ -11164,22 +11180,6 @@
     "kind": "boolean",
     "description": "Intercepted fetch sending back same Request object. File bugs in Core::DOM in case of a Telemetry regression."
   },
-  "E10S_STATUS": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
-    "expires_in_version": "never",
-    "kind": "enumerated",
-    "n_values": 12,
-    "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1241294],
-    "description": "Why e10s is enabled or disabled (0=ENABLED_BY_USER, 1=ENABLED_BY_DEFAULT, 2=DISABLED_BY_USER, 3=DISABLED_IN_SAFE_MODE, 4=DISABLED_FOR_ACCESSIBILITY, 5=DISABLED_FOR_MAC_GFX, 6=DISABLED_FOR_BIDI, 7=DISABLED_FOR_ADDONS, 8=FORCE_DISABLED, 9=DISABLED_FOR_XPLAYERS, 10=DISABLED_FOR_OS_VERSION)"
-  },
-  "E10S_BLOCKED_FROM_RUNNING": {
-    "record_in_processes": ["main", "content"],
-    "expires_in_version": "never",
-    "kind": "boolean",
-    "description": "Whether the e10s pref was set but it was blocked from running due to blacklisted conditions"
-  },
   "ONBEFOREUNLOAD_PROMPT_ACTION" : {
     "record_in_processes": ["main", "content"],
     "expires_in_version": "45",
@@ -12208,24 +12208,6 @@
     "releaseChannelCollection": "opt-out",
     "description": "Graphics Crash Reason (...)"
   },
-  "TOTAL_SCROLL_Y": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["hkirschner@mozilla.com"],
-    "bug_numbers": [1297867],
-    "expires_in_version": "58",
-    "kind": "count",
-    "description": "Count of the total number of CSS pixels scrolled up or down in the vertical axis of the root frame of all the pages visited in a subsession. This doesn't include any scrolling of nested scroll frames such as inputs, iframes, or scrollable divs."
-  },
-  "PAGE_MAX_SCROLL_Y": {
-    "record_in_processes": ["main", "content"],
-    "alert_emails": ["hkirschner@mozilla.com"],
-    "bug_numbers": [1312881],
-    "expires_in_version": "58",
-    "kind": "exponential",
-    "high": 100000,
-    "n_buckets": 50,
-    "description": "Maximum distance in CSS pixels a user scrolls down the vertical axis of the root frame of a page. This doesn't include any scrolling of nested scroll frames such as inputs, iframes, or scrollable divs."
-  },
   "WEB_NOTIFICATION_CLICKED": {
     "record_in_processes": ["main", "content"],
     "releaseChannelCollection": "opt-out",
@@ -12817,7 +12799,7 @@
     "kind": "exponential",
     "high": 1000,
     "n_buckets": 50,
-    "description": "Time spent in the paint pipeline for content."
+    "description": "Time spent in the paint pipeline for content in milliseconds."
   },
   "CONTENT_LARGE_PAINT_PHASE_WEIGHT": {
     "record_in_processes": ["main", "content"],
@@ -12825,10 +12807,11 @@
     "bug_numbers": [1309442],
     "expires_in_version": "66",
     "keyed": true,
+    "keys": ["dl", "flb", "fr", "r"],
     "kind": "linear",
     "high": 100,
     "n_buckets": 10,
-    "description": "Percentage of time taken by phases in expensive content paints."
+    "description": "Percentages of times for phases in an expensive content paint relative to the time spent in the entire expensive paint. (\"dl\" = Display list, \"flb\" = Frame layer builder, \"fr\" = Flush rasterization, \"r\" = Rasterization)"
   },
   "CONTENT_SMALL_PAINT_PHASE_WEIGHT": {
     "record_in_processes": ["main", "content"],
@@ -12836,10 +12819,11 @@
     "bug_numbers": [1430897],
     "expires_in_version": "66",
     "keyed": true,
+    "keys": ["dl", "flb", "fr", "r"],
     "kind": "linear",
     "high": 100,
     "n_buckets": 10,
-    "description": "Percentage of time taken by phases in normal content paints."
+    "description": "Percentages of times for phases in a normal content paint relative to the time spent in the entire normal paint. (\"dl\" = Display list, \"flb\" = Frame layer builder, \"fr\" = Flush rasterization, \"r\" = Rasterization)"
   },
   "NARRATE_CONTENT_BY_LANGUAGE_2": {
     "record_in_processes": ["main", "content"],
@@ -13797,25 +13781,25 @@
     "releaseChannelCollection": "opt-out",
     "description": "Number of HTML editors whose inline table editing UI is actually used by users."
   },
-  "ACTIVE_DOCGROUPS_PER_TABGROUP": {
+  "ACTIVE_HTTP_DOCGROUPS_PER_TABGROUP": {
     "record_in_processes": ["content"],
     "alert_emails": ["farre@mozilla.com"],
-    "bug_numbers": [1441972],
+    "bug_numbers": [1441972, 1468843],
     "expires_in_version": "67",
     "kind": "exponential",
     "high": 50,
     "n_buckets": 20,
-    "description": "Number of active doc groups per tab group. Collected at the point when the top level document of the tab group is unloaded."
+    "description": "Number of active http:// and https:// doc groups per tab group. Collected at the point when the top level document of the tab group is unloaded."
   },
-  "TOTAL_DOCGROUPS_PER_TABGROUP": {
+  "TOTAL_HTTP_DOCGROUPS_PER_TABGROUP": {
     "record_in_processes": ["content"],
     "alert_emails": ["farre@mozilla.com"],
-    "bug_numbers": [1441972],
+    "bug_numbers": [1441972, 1468843],
     "expires_in_version": "67",
     "kind": "exponential",
     "high": 50,
     "n_buckets": 20,
-    "description": "Total number of doc groups per tab group, including docgroups fully in bfcache. Collected at the point when the top level document of the tab group is unloaded."
+    "description": "Total number of http:// and https:// doc groups per tab group, including docgroups fully in bfcache. Collected at the point when the top level document of the tab group is unloaded."
   },
   "HIDDEN_VIEWPORT_OVERFLOW_TYPE": {
     "record_in_processes": ["content"],

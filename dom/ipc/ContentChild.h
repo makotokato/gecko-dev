@@ -394,6 +394,8 @@ public:
                                                    const IPC::Principal& aPrincipal,
                                                    const ClonedMessageData& aData) override;
 
+  mozilla::ipc::IPCResult RecvRegisterStringBundles(nsTArray<StringBundleDescriptor>&& stringBundles) override;
+
   virtual mozilla::ipc::IPCResult RecvGeolocationUpdate(nsIDOMGeoPosition* aPosition) override;
 
   virtual mozilla::ipc::IPCResult RecvGeolocationError(const uint16_t& errorCode) override;
@@ -624,10 +626,10 @@ public:
   RecvShareCodeCoverageMutex(const CrossProcessMutexHandle& aHandle) override;
 
   virtual mozilla::ipc::IPCResult
-  RecvDumpCodeCoverageCounters() override;
+  RecvDumpCodeCoverageCounters(DumpCodeCoverageCountersResolver&& aResolver) override;
 
   virtual mozilla::ipc::IPCResult
-  RecvResetCodeCoverageCounters() override;
+  RecvResetCodeCoverageCounters(ResetCodeCoverageCountersResolver&& aResolver) override;
 
   virtual mozilla::ipc::IPCResult
   RecvSetInputEventQueueEnabled() override;

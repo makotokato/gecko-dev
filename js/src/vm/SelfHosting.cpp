@@ -123,11 +123,11 @@ intrinsic_IsArray(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
-intrinsic_IsWrappedArrayConstructor(JSContext* cx, unsigned argc, Value* vp)
+intrinsic_IsCrossRealmArrayConstructor(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     bool result = false;
-    if (!IsWrappedArrayConstructor(cx, args[0], &result))
+    if (!IsCrossRealmArrayConstructor(cx, args[0], &result))
         return false;
     args.rval().setBoolean(result);
     return true;
@@ -2420,8 +2420,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_INLINABLE_FN("ToObject",      intrinsic_ToObject,                1,0, IntrinsicToObject),
     JS_INLINABLE_FN("IsObject",      intrinsic_IsObject,                1,0, IntrinsicIsObject),
     JS_INLINABLE_FN("IsArray",       intrinsic_IsArray,                 1,0, ArrayIsArray),
-    JS_INLINABLE_FN("IsWrappedArrayConstructor", intrinsic_IsWrappedArrayConstructor, 1,0,
-                    IntrinsicIsWrappedArrayConstructor),
+    JS_INLINABLE_FN("IsCrossRealmArrayConstructor", intrinsic_IsCrossRealmArrayConstructor, 1,0,
+                    IntrinsicIsCrossRealmArrayConstructor),
     JS_INLINABLE_FN("ToInteger",     intrinsic_ToInteger,               1,0, IntrinsicToInteger),
     JS_INLINABLE_FN("ToString",      intrinsic_ToString,                1,0, IntrinsicToString),
     JS_FN("ToSource",                intrinsic_ToSource,                1,0),
@@ -2955,14 +2955,14 @@ JSRuntime::initSelfHosting(JSContext* cx)
 
     const unsigned char* compressed = compressedSources;
     uint32_t compressedLen = GetCompressedSize();
-    ScopedJSFreePtr<char> src(selfHostingGlobal_->zone()->pod_malloc<char>(srcLen));
+    auto src = selfHostingGlobal_->zone()->make_pod_array<char>(srcLen);
     if (!src || !DecompressString(compressed, compressedLen,
                                   reinterpret_cast<unsigned char*>(src.get()), srcLen))
     {
         return false;
     }
 
-    if (!Evaluate(cx, options, src, srcLen, &rv))
+    if (!Evaluate(cx, options, src.get(), srcLen, &rv))
         return false;
 
     if (!VerifyGlobalNames(cx, shg))
@@ -3132,7 +3132,7 @@ CloneObject(JSContext* cx, HandleNativeObject selfHostedObject)
             Handle<GlobalObject*> global = cx->global();
             Rooted<LexicalEnvironmentObject*> globalLexical(cx, &global->lexicalEnvironment());
             RootedScope emptyGlobalScope(cx, &global->emptyGlobalScope());
-            MOZ_ASSERT(!CanReuseScriptForClone(cx->compartment(), selfHostedFunction, global));
+            MOZ_ASSERT(!CanReuseScriptForClone(cx->realm(), selfHostedFunction, global));
             clone = CloneFunctionAndScript(cx, selfHostedFunction, globalLexical, emptyGlobalScope,
                                            kind);
             // To be able to re-lazify the cloned function, its name in the

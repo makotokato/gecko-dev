@@ -19,6 +19,10 @@ module.exports = {
     "eslint:recommended",
     "plugin:mozilla/recommended" // require("eslint-plugin-mozilla")
   ],
+  "globals": {
+    // Remove this when m-c updates their eslint: See https://github.com/mozilla/activity-stream/pull/4219
+    "RPMSendAsyncMessage": true
+  },
   "overrides": [{
     // Use a configuration that's more appropriate for JSMs
     "files": "**/*.jsm",
@@ -33,8 +37,6 @@ module.exports = {
     }
   }],
   "rules": {
-    "no-undef": 1, // Override eslint-plugin-mozilla until 0.13.1+ is available
-
     "promise/catch-or-return": 2,
     "promise/param-names": 2,
 

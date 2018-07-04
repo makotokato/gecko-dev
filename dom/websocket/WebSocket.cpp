@@ -820,6 +820,11 @@ WebSocketImpl::ScheduleConnectionCloseEvents(nsISupports* aContext,
       aStatusCode = NS_OK;
     }
 
+    if (aStatusCode == NS_ERROR_NET_INADEQUATE_SECURITY) {
+      // TLS negotiation failed so we need to set status code to 1015.
+      mCloseEventCode = 1015;
+    }
+
     if (NS_FAILED(aStatusCode)) {
       ConsoleError();
       mFailed = true;
@@ -951,7 +956,7 @@ WebSocket::~WebSocket()
 JSObject*
 WebSocket::WrapObject(JSContext* cx, JS::Handle<JSObject*> aGivenProto)
 {
-  return WebSocketBinding::Wrap(cx, this, aGivenProto);
+  return WebSocket_Binding::Wrap(cx, this, aGivenProto);
 }
 
 void
@@ -2024,8 +2029,9 @@ WebSocket::CreateAndDispatchMessageEvent(const nsACString& aData,
 
   RefPtr<MessageEvent> event = new MessageEvent(this, nullptr, nullptr);
 
-  event->InitMessageEvent(nullptr, MESSAGE_EVENT_STRING, false, false,
-                          jsData, mImpl->mUTF16Origin, EmptyString(), nullptr,
+  event->InitMessageEvent(nullptr, MESSAGE_EVENT_STRING, CanBubble::eNo,
+                          Cancelable::eNo, jsData, mImpl->mUTF16Origin,
+                          EmptyString(), nullptr,
                           Sequence<OwningNonNull<MessagePort>>());
   event->SetTrusted(true);
 

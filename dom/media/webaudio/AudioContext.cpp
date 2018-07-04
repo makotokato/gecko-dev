@@ -37,6 +37,7 @@
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/StereoPannerNodeBinding.h"
 #include "mozilla/dom/WaveShaperNodeBinding.h"
+#include "mozilla/dom/Worklet.h"
 
 #include "AudioBuffer.h"
 #include "AudioBufferSourceNode.h"
@@ -60,6 +61,7 @@
 #include "MediaStreamAudioSourceNode.h"
 #include "MediaStreamGraph.h"
 #include "nsContentUtils.h"
+#include "nsGlobalWindowInner.h"
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
 #include "nsPIDOMWindow.h"
@@ -209,9 +211,9 @@ JSObject*
 AudioContext::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
   if (mIsOffline) {
-    return OfflineAudioContextBinding::Wrap(aCx, this, aGivenProto);
+    return OfflineAudioContext_Binding::Wrap(aCx, this, aGivenProto);
   } else {
-    return AudioContextBinding::Wrap(aCx, this, aGivenProto);
+    return AudioContext_Binding::Wrap(aCx, this, aGivenProto);
   }
 }
 
@@ -537,6 +539,28 @@ AudioContext::Listener()
   return mListener;
 }
 
+Worklet*
+AudioContext::GetAudioWorklet(ErrorResult& aRv)
+{
+  if (!mWorklet) {
+    nsCOMPtr<nsPIDOMWindowInner> window = GetOwner();
+    if (NS_WARN_IF(!window)) {
+      aRv.Throw(NS_ERROR_FAILURE);
+      return nullptr;
+    }
+    nsCOMPtr<nsIPrincipal> principal =
+        nsGlobalWindowInner::Cast(window)->GetPrincipal();
+    if (NS_WARN_IF(!principal)) {
+      aRv.Throw(NS_ERROR_FAILURE);
+      return nullptr;
+    }
+
+    mWorklet = new Worklet(window, principal, Worklet::eAudioWorklet);
+  }
+
+  return mWorklet;
+}
+
 bool
 AudioContext::IsRunning() const
 {
@@ -841,7 +865,7 @@ public:
     return nsContentUtils::DispatchTrustedEvent(doc,
                                 static_cast<DOMEventTargetHelper*>(mAudioContext),
                                 NS_LITERAL_STRING("statechange"),
-                                false, false);
+                                CanBubble::eNo, Cancelable::eNo);
   }
 
 private:

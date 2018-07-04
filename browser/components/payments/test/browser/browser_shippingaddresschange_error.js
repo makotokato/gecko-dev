@@ -92,6 +92,7 @@ add_task(async function test_show_field_specific_error_on_addresschange() {
       eventName: "shippingaddresschange",
       details: Object.assign({},
                              PTU.Details.fieldSpecificErrors,
+                             PTU.Details.noShippingOptions,
                              PTU.Details.total2USD),
     }, PTU.ContentTasks.updateWith);
 
@@ -130,7 +131,7 @@ add_task(async function test_show_field_specific_error_on_addresschange() {
       let errorFieldMap =
         Cu.waiveXrays(content.document.querySelector("address-form"))._errorFieldMap;
       for (let [errorName, errorValue] of Object.entries(shippingAddressErrors)) {
-        let field = content.document.querySelector(errorFieldMap[errorName]);
+        let field = content.document.querySelector(errorFieldMap[errorName] + "-container");
         try {
           is(field.querySelector(".error-text").textContent, errorValue,
              "Field specific error should be associated with " + errorName);
@@ -194,4 +195,4 @@ add_task(async function test_show_field_specific_error_on_addresschange() {
 
     await BrowserTestUtils.waitForCondition(() => win.closed, "dialog should be closed");
   });
-}).skip();
+});

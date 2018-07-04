@@ -197,6 +197,13 @@ public:
   bool GetVerticalOverflow() const { return mVerticalOverflow; }
   bool GetHorizontalOverflow() const {return mHorizontalOverflow; }
 
+  // This returns the property array where atoms are stored for style during
+  // draw, whether the row currently being drawn is selected, hovered, etc.
+  const mozilla::AtomArray& GetPropertyArrayForCurrentDrawingItem()
+  {
+    return mScratchArray;
+  }
+
 protected:
   friend class nsOverflowChecker;
 
@@ -507,7 +514,13 @@ protected: // Data Members
 
   class Slots {
     public:
-      Slots() {
+      Slots()
+        : mDropAllowed(false)
+        , mIsDragging(false)
+        , mDropRow(-1)
+        , mDropOrient(-1)
+        , mScrollLines(0)
+        , mDragAction(0) {
       }
 
       ~Slots() {

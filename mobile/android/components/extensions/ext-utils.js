@@ -9,13 +9,17 @@ ChromeUtils.defineModuleGetter(this, "PrivateBrowsingUtils",
 /* globals EventDispatcher */
 ChromeUtils.import("resource://gre/modules/Messaging.jsm");
 
+ChromeUtils.import("resource://gre/modules/ExtensionCommon.jsm");
 ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
 
 var {
   DefaultWeakMap,
   ExtensionError,
-  defineLazyGetter,
 } = ExtensionUtils;
+
+var {
+  defineLazyGetter,
+} = ExtensionCommon;
 
 global.GlobalEventDispatcher = EventDispatcher.instance;
 
@@ -520,6 +524,10 @@ class Tab extends TabBase {
     return this.nativeTab.getActive();
   }
 
+  get highlighted() {
+    return this.active;
+  }
+
   get selected() {
     return this.nativeTab.getActive();
   }
@@ -661,6 +669,10 @@ class Window extends WindowBase {
     for (let nativeTab of this.window.BrowserApp.tabs) {
       yield tabManager.getWrapper(nativeTab);
     }
+  }
+
+  * getHighlightedTabs() {
+    yield this.activeTab;
   }
 
   get activeTab() {

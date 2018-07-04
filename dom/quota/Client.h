@@ -19,6 +19,7 @@ class nsIRunnable;
 #define IDB_DIRECTORY_NAME "idb"
 #define ASMJSCACHE_DIRECTORY_NAME "asmjs"
 #define DOMCACHE_DIRECTORY_NAME "cache"
+#define LS_DIRECTORY_NAME "ls"
 
 BEGIN_QUOTA_NAMESPACE
 
@@ -65,7 +66,7 @@ public:
 
       case TYPE_MAX:
       default:
-        NS_NOTREACHED("Bad id value!");
+        MOZ_ASSERT_UNREACHABLE("Bad id value!");
         return NS_ERROR_UNEXPECTED;
     }
 

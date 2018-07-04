@@ -58,6 +58,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/dom/AudioTrack.h"
 #include "mozilla/dom/AudioTrackList.h"
+#include "mozilla/dom/AutoplayRequest.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/ElementInlines.h"
 #include "mozilla/dom/HTMLAudioElement.h"
@@ -130,7 +131,7 @@ static mozilla::LazyLogModule gMediaElementEventsLog("nsMediaElementEvents");
 
 using namespace mozilla::layers;
 using mozilla::net::nsMediaFragmentURIParser;
-using namespace mozilla::dom::HTMLMediaElementBinding;
+using namespace mozilla::dom::HTMLMediaElement_Binding;
 
 namespace mozilla {
 namespace dom {
@@ -364,7 +365,8 @@ public:
     LOG_EVENT(LogLevel::Debug,
               ("%p Dispatching simple event source error", mElement.get()));
     return nsContentUtils::DispatchTrustedEvent(
-      mElement->OwnerDoc(), mSource, NS_LITERAL_STRING("error"), false, false);
+      mElement->OwnerDoc(), mSource, NS_LITERAL_STRING("error"),
+      CanBubble::eNo, Cancelable::eNo);
   }
 };
 
@@ -1434,8 +1436,7 @@ public:
       mOwner->OwnerDoc(),
       static_cast<nsIContent*>(mOwner),
       NS_LITERAL_STRING("OpenMediaWithExternalApp"),
-      true,
-      true);
+      CanBubble::eYes, Cancelable::eYes);
   }
 
   RefPtr<MediaError> mError;
@@ -1844,6 +1845,10 @@ HTMLMediaElement::AbortExistingLoads()
     UpdateAudioChannelPlayingState();
   }
 
+  // Disconnect requests for permission to play. We'll make a new request
+  // if required should the new media resource try to play.
+  mAutoplayPermissionRequest.DisconnectIfExists();
+
   // We may have changed mPaused, mAutoplaying, and other
   // things which can affect AddRemoveSelfReference
   AddRemoveSelfReference();
@@ -1993,10 +1998,10 @@ HTMLMediaElement::Load()
        HasSourceChildren(this),
        EventStateManager::IsHandlingUserInput(),
        HasAttr(kNameSpaceID_None, nsGkAtoms::autoplay),
-       IsAllowedToPlay(),
+       AutoplayPolicy::IsAllowedToPlay(*this) == Authorization::Allowed,
        OwnerDoc(),
        DocumentOrigin(OwnerDoc()).get(),
-       OwnerDoc() ? OwnerDoc()->HasBeenUserActivated() : 0,
+       OwnerDoc() ? OwnerDoc()->HasBeenUserGestureActivated() : 0,
        mMuted,
        mVolume));
 
@@ -2473,7 +2478,7 @@ HTMLMediaElement::LoadFromSourceChildren()
     // If we fail to load, loop back and try loading the next resource.
     DispatchAsyncSourceError(child);
   }
-  NS_NOTREACHED("Execution should not reach here!");
+  MOZ_ASSERT_UNREACHABLE("Execution should not reach here!");
 }
 
 void
@@ -2515,7 +2520,7 @@ HTMLMediaElement::UpdatePreloadAction()
   PreloadAction nextAction = PRELOAD_UNDEFINED;
   // If autoplay is set, or we're playing, we should always preload data,
   // as we'll need it to play.
-  if ((AutoplayPolicy::IsMediaElementAllowedToPlay(WrapNotNull(this)) &&
+  if ((AutoplayPolicy::IsAllowedToPlay(*this) == Authorization::Allowed &&
        HasAttr(kNameSpaceID_None, nsGkAtoms::autoplay)) ||
       !mPaused) {
     nextAction = HTMLMediaElement::PRELOAD_ENOUGH;
@@ -2720,12 +2725,6 @@ HTMLMediaElement::FastSeek(double aTime, ErrorResult& aRv)
 already_AddRefed<Promise>
 HTMLMediaElement::SeekToNextFrame(ErrorResult& aRv)
 {
-  if (mSeekDOMPromise) {
-    // We can't perform NextFrameSeek while seek is already in action.
-    // Just return the pending seek promise.
-    return do_AddRef(mSeekDOMPromise);
-  }
-
   /* This will cause JIT code to be kept around longer, to help performance
    * when using SeekToNextFrame to iterate through every frame of a video.
    */
@@ -3054,7 +3053,7 @@ HTMLMediaElement::PauseIfShouldNotBePlaying()
   if (GetPaused()) {
     return;
   }
-  if (!AutoplayPolicy::IsMediaElementAllowedToPlay(WrapNotNull(this))) {
+  if (AutoplayPolicy::IsAllowedToPlay(*this) != Authorization::Allowed) {
     ErrorResult rv;
     Pause(rv);
   }
@@ -3925,6 +3924,7 @@ HTMLMediaElement::~HTMLMediaElement()
   UnregisterActivityObserver();
 
   mSetCDMRequest.DisconnectIfExists();
+  mAutoplayPermissionRequest.DisconnectIfExists();
   if (mDecoder) {
     ShutdownDecoder();
   }
@@ -3997,62 +3997,32 @@ HTMLMediaElement::NotifyXPCOMShutdown()
   ShutdownDecoder();
 }
 
+bool
+HTMLMediaElement::AudioChannelAgentDelayingPlayback()
+{
+  return mAudioChannelWrapper && mAudioChannelWrapper->IsPlaybackBlocked();
+}
+
 already_AddRefed<Promise>
 HTMLMediaElement::Play(ErrorResult& aRv)
 {
   LOG(LogLevel::Debug,
       ("%p Play() called by JS readyState=%d", this, mReadyState));
 
-  if (mAudioChannelWrapper && mAudioChannelWrapper->IsPlaybackBlocked()) {
-    MaybeDoLoad();
-
-    // A blocked media element will be resumed later, so we return a pending
-    // promise which might be resolved/rejected depends on the result of
-    // resuming the blocked media element.
-    RefPtr<PlayPromise> promise = CreatePlayPromise(aRv);
-
-    if (NS_WARN_IF(aRv.Failed())) {
-      return nullptr;
-    }
-
-    LOG(LogLevel::Debug, ("%p Play() call delayed by AudioChannelAgent", this));
-
-    mPendingPlayPromises.AppendElement(promise);
-    return promise.forget();
-  }
-
-  RefPtr<Promise> promise = PlayInternal(aRv);
-
-  UpdateCustomPolicyAfterPlayed();
-
-  return promise.forget();
-}
-
-already_AddRefed<Promise>
-HTMLMediaElement::PlayInternal(ErrorResult& aRv)
-{
-  MOZ_ASSERT(!aRv.Failed());
-
-  RefPtr<PlayPromise> promise = CreatePlayPromise(aRv);
-
-  if (NS_WARN_IF(aRv.Failed())) {
-    return nullptr;
-  }
-
   // 4.8.12.8
   // When the play() method on a media element is invoked, the user agent must
   // run the following steps.
 
+  RefPtr<PlayPromise> promise = CreatePlayPromise(aRv);
+  if (NS_WARN_IF(aRv.Failed())) {
+    return nullptr;
+  }
+
   // 4.8.12.8 - Step 1:
   // If the media element is not allowed to play, return a promise rejected
   // with a "NotAllowedError" DOMException and abort these steps.
-  if (!IsAllowedToPlay()) {
-    // NOTE: for promise-based-play, will return a rejected promise here.
-    LOG(LogLevel::Debug,
-        ("%p Play() promise rejected because not allowed to play.", this));
-    promise->MaybeReject(NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR);
-    return promise.forget();
-  }
+  // NOTE: we may require requesting permission from the user, so we do the
+  // "not allowed" check below.
 
   // 4.8.12.8 - Step 2:
   // If the media element's error attribute is not null and its code
@@ -4068,8 +4038,104 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
   // 4.8.12.8 - Step 3:
   // Let promise be a new promise and append promise to the list of pending
   // play promises.
-  mPendingPlayPromises.AppendElement(promise);
+  // Note: Promise appended to list of pending promises as needed below.
 
+  if (AudioChannelAgentDelayingPlayback()) {
+    // The audio channel agent may delay starting playback of a media resource
+    // until the tab the media element is in has been in the foreground.
+    // Save a reference to the promise, and return it. The AudioChannelAgent
+    // will call Play() again if the tab is brought to the foreground, or the
+    // audio tab indicator is clicked, which will resolve the promise if we end
+    // up playing.
+    LOG(LogLevel::Debug, ("%p Play() call delayed by AudioChannelAgent", this));
+    MaybeDoLoad();
+    mPendingPlayPromises.AppendElement(promise);
+    return promise.forget();
+  }
+
+  if (AudioChannelAgentBlockedPlay()) {
+    LOG(LogLevel::Debug, ("%p play blocked by AudioChannelAgent.", this));
+    promise->MaybeReject(NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR);
+    if (StaticPrefs::MediaBlockEventEnabled()) {
+      DispatchAsyncEvent(NS_LITERAL_STRING("blocked"));
+    }
+    return promise.forget();
+  }
+
+  const bool handlingUserInput = EventStateManager::IsHandlingUserInput();
+  switch (AutoplayPolicy::IsAllowedToPlay(*this)) {
+    case Authorization::Allowed: {
+      mPendingPlayPromises.AppendElement(promise);
+      PlayInternal(handlingUserInput);
+      UpdateCustomPolicyAfterPlayed();
+      break;
+    }
+    case Authorization::Blocked: {
+      LOG(LogLevel::Debug, ("%p play not blocked.", this));
+      promise->MaybeReject(NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR);
+      if (StaticPrefs::MediaBlockEventEnabled()) {
+        DispatchAsyncEvent(NS_LITERAL_STRING("blocked"));
+      }
+      break;
+    }
+    case Authorization::Prompt: {
+      // Prompt the user for permission to play.
+      mPendingPlayPromises.AppendElement(promise);
+      EnsureAutoplayRequested(handlingUserInput);
+      break;
+    }
+  }
+  return promise.forget();
+}
+
+void
+HTMLMediaElement::EnsureAutoplayRequested(bool aHandlingUserInput)
+{
+  if (mAutoplayPermissionRequest.Exists()) {
+    // Autoplay has already been requested in a previous play() call.
+    // Await for the previous request to be approved or denied. This
+    // play request's promise will be fulfilled with all other pending
+    // promises when the permission prompt is resolved.
+    LOG(LogLevel::Debug,
+        ("%p EnsureAutoplayRequested() existing request, bailing.", this));
+    return;
+  }
+
+  RefPtr<AutoplayRequest> request = AutoplayPolicy::RequestFor(*OwnerDoc());
+  if (!request) {
+    AsyncRejectPendingPlayPromises(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return;
+  }
+  RefPtr<HTMLMediaElement> self = this;
+  request->RequestWithPrompt()
+    ->Then(mAbstractMainThread,
+           __func__,
+           [ self, handlingUserInput = aHandlingUserInput, request ](
+             bool aApproved) {
+             self->mAutoplayPermissionRequest.Complete();
+             LOG(LogLevel::Debug,
+                 ("%p Autoplay request approved request=%p",
+                  self.get(),
+                  request.get()));
+             self->PlayInternal(handlingUserInput);
+             self->UpdateCustomPolicyAfterPlayed();
+           },
+           [self, request](nsresult aError) {
+             self->mAutoplayPermissionRequest.Complete();
+             LOG(LogLevel::Debug,
+                 ("%p Autoplay request denied request=%p",
+                  self.get(),
+                  request.get()));
+             LOG(LogLevel::Debug, ("%s rejecting play promimses", __func__));
+             self->AsyncRejectPendingPlayPromises(
+               NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR);
+           })
+    ->Track(mAutoplayPermissionRequest);
+}
+
+void
+HTMLMediaElement::PlayInternal(bool aHandlingUserInput)
+{
   if (mPreloadAction == HTMLMediaElement::PRELOAD_NONE) {
     // The media load algorithm will be initiated by a user interaction.
     // We want to boost the channel priority for better responsiveness.
@@ -4122,7 +4188,7 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
   // it is allowed to autoplay. Note: we can reach here when not in
   // a user generated event handler if our readyState has not yet
   // reached HAVE_METADATA.
-  mIsBlessed |= EventStateManager::IsHandlingUserInput();
+  mIsBlessed |= aHandlingUserInput;
 
   // TODO: If the playback has ended, then the user agent must set
   // seek to the effective start.
@@ -4172,7 +4238,7 @@ HTMLMediaElement::PlayInternal(ErrorResult& aRv)
   // 8. Set the media element's autoplaying flag to false. (Already done.)
 
   // 9. Return promise.
-  return promise.forget();
+  // (Done in caller.)
 }
 
 void
@@ -6058,7 +6124,9 @@ HTMLMediaElement::ChangeReadyState(nsMediaReadyState aState)
   if (oldState < HAVE_FUTURE_DATA && mReadyState >= HAVE_FUTURE_DATA) {
     DispatchAsyncEvent(NS_LITERAL_STRING("canplay"));
     if (!mPaused) {
-      if (mDecoder) {
+      if (mDecoder && !mPausedForInactiveDocumentOrChannel) {
+        MOZ_ASSERT(AutoplayPolicy::IsAllowedToPlay(*this) ==
+                   Authorization::Allowed);
         mDecoder->Play();
       }
       NotifyAboutPlaying();
@@ -6118,10 +6186,6 @@ HTMLMediaElement::CanActivateAutoplay()
   // download is controlled by the script and there is no way to evaluate
   // MediaDecoder::CanPlayThrough().
 
-  if (!AutoplayPolicy::IsMediaElementAllowedToPlay(WrapNotNull(this))) {
-    return false;
-  }
-
   if (!HasAttr(kNameSpaceID_None, nsGkAtoms::autoplay)) {
     return false;
   }
@@ -6173,6 +6237,16 @@ HTMLMediaElement::CheckAutoplayDataReady()
     return;
   }
 
+  switch (AutoplayPolicy::IsAllowedToPlay(*this)) {
+    case Authorization::Blocked:
+      return;
+    case Authorization::Prompt:
+      EnsureAutoplayRequested(false);
+      return;
+    case Authorization::Allowed:
+      break;
+  }
+
   mPaused = false;
   // We changed mPaused which can affect AddRemoveSelfReference
   AddRemoveSelfReference();
@@ -6184,6 +6258,7 @@ HTMLMediaElement::CheckAutoplayDataReady()
     if (mCurrentPlayRangeStart == -1.0) {
       mCurrentPlayRangeStart = CurrentTime();
     }
+    MOZ_ASSERT(!mPausedForInactiveDocumentOrChannel);
     mDecoder->Play();
   } else if (mSrcStream) {
     SetPlayedOrSeeked(true);
@@ -6314,7 +6389,9 @@ HTMLMediaElement::DispatchEvent(const nsAString& aName)
   }
 
   return nsContentUtils::DispatchTrustedEvent(
-    OwnerDoc(), static_cast<nsIContent*>(this), aName, false, false);
+    OwnerDoc(), static_cast<nsIContent*>(this), aName,
+    CanBubble::eNo,
+    Cancelable::eNo);
 }
 
 void
@@ -6709,7 +6786,7 @@ HTMLMediaElement::GetNextSource()
       return child->AsElement();
     }
   }
-  NS_NOTREACHED("Execution should not reach here!");
+  MOZ_ASSERT_UNREACHABLE("Execution should not reach here!");
   return nullptr;
 }
 
@@ -6958,48 +7035,22 @@ HTMLMediaElement::UpdateAudioChannelPlayingState(bool aForcePlaying)
 }
 
 bool
-HTMLMediaElement::IsAllowedToPlay()
+HTMLMediaElement::AudioChannelAgentBlockedPlay()
 {
-  if (!AutoplayPolicy::IsMediaElementAllowedToPlay(WrapNotNull(this))) {
-#if defined(MOZ_WIDGET_ANDROID)
-    nsContentUtils::DispatchTrustedEvent(
-      OwnerDoc(),
-      static_cast<nsIContent*>(this),
-      NS_LITERAL_STRING("MozAutoplayMediaBlocked"),
-      false,
-      false);
-#endif
+  if (!mAudioChannelWrapper) {
+    // If the mAudioChannelWrapper doesn't exist that means the CC happened.
     LOG(LogLevel::Debug,
-        ("%p %s AutoplayPolicy blocked autoplay.", this, __func__));
-    return false;
-  }
-
-  LOG(LogLevel::Debug,
-      ("%p %s AutoplayPolicy did not block autoplay.", this, __func__));
-
-  // Check our custom playback policy.
-  if (mAudioChannelWrapper) {
-    // Note: SUSPENDED_PAUSE and SUSPENDED_BLOCK will be merged into one single
-    // state.
-    if (mAudioChannelWrapper->GetSuspendType() ==
-          nsISuspendedTypes::SUSPENDED_PAUSE ||
-        mAudioChannelWrapper->GetSuspendType() ==
-          nsISuspendedTypes::SUSPENDED_BLOCK) {
-      LOG(LogLevel::Debug,
-          ("%p IsAllowedToPlay() returning false due to AudioChannelAgent.",
-           this));
-      return false;
-    }
-
-    LOG(LogLevel::Debug, ("%p IsAllowedToPlay() returning true.", this));
+        ("%p AudioChannelAgentBlockedPlay() returning true due to null "
+         "AudioChannelAgent.",
+         this));
     return true;
   }
 
-  // If the mAudioChannelWrapper doesn't exist that means the CC happened.
-  LOG(LogLevel::Debug,
-      ("%p IsAllowedToPlay() returning false due to null AudioChannelAgent.",
-       this));
-  return false;
+  // Note: SUSPENDED_PAUSE and SUSPENDED_BLOCK will be merged into one single
+  // state.
+  const auto suspendType = mAudioChannelWrapper->GetSuspendType();
+  return suspendType == nsISuspendedTypes::SUSPENDED_PAUSE ||
+         suspendType == nsISuspendedTypes::SUSPENDED_BLOCK;
 }
 
 static const char*
@@ -7641,7 +7692,7 @@ HTMLMediaElement::MarkAsContentSource(CallerAPI aAPI)
     // 1 = ALL_INVISIBLE
     Telemetry::Accumulate(Telemetry::VIDEO_AS_CONTENT_SOURCE, 1);
 
-    if (IsInUncomposedDoc()) {
+    if (IsInComposedDoc()) {
       // 0 = ALL_IN_TREE
       Telemetry::Accumulate(Telemetry::VIDEO_AS_CONTENT_SOURCE_IN_TREE_OR_NOT,
                             0);
@@ -7661,7 +7712,7 @@ HTMLMediaElement::MarkAsContentSource(CallerAPI aAPI)
         // 3 = drawImage_INVISIBLE
         Telemetry::Accumulate(Telemetry::VIDEO_AS_CONTENT_SOURCE, 3);
 
-        if (IsInUncomposedDoc()) {
+        if (IsInComposedDoc()) {
           // 2 = drawImage_IN_TREE
           Telemetry::Accumulate(
             Telemetry::VIDEO_AS_CONTENT_SOURCE_IN_TREE_OR_NOT, 2);
@@ -7681,7 +7732,7 @@ HTMLMediaElement::MarkAsContentSource(CallerAPI aAPI)
         // 5 = createPattern_INVISIBLE
         Telemetry::Accumulate(Telemetry::VIDEO_AS_CONTENT_SOURCE, 5);
 
-        if (IsInUncomposedDoc()) {
+        if (IsInComposedDoc()) {
           // 4 = createPattern_IN_TREE
           Telemetry::Accumulate(
             Telemetry::VIDEO_AS_CONTENT_SOURCE_IN_TREE_OR_NOT, 4);
@@ -7701,7 +7752,7 @@ HTMLMediaElement::MarkAsContentSource(CallerAPI aAPI)
         // 7 = createImageBitmap_INVISIBLE
         Telemetry::Accumulate(Telemetry::VIDEO_AS_CONTENT_SOURCE, 7);
 
-        if (IsInUncomposedDoc()) {
+        if (IsInComposedDoc()) {
           // 6 = createImageBitmap_IN_TREE
           Telemetry::Accumulate(
             Telemetry::VIDEO_AS_CONTENT_SOURCE_IN_TREE_OR_NOT, 6);
@@ -7721,7 +7772,7 @@ HTMLMediaElement::MarkAsContentSource(CallerAPI aAPI)
         // 9 = captureStream_INVISIBLE
         Telemetry::Accumulate(Telemetry::VIDEO_AS_CONTENT_SOURCE, 9);
 
-        if (IsInUncomposedDoc()) {
+        if (IsInComposedDoc()) {
           // 8 = captureStream_IN_TREE
           Telemetry::Accumulate(
             Telemetry::VIDEO_AS_CONTENT_SOURCE_IN_TREE_OR_NOT, 8);
@@ -7746,7 +7797,7 @@ HTMLMediaElement::MarkAsContentSource(CallerAPI aAPI)
         ("%p Log VIDEO_AS_CONTENT_SOURCE_IN_TREE_OR_NOT: inTree = %u, API: "
          "'%d' and 'All'",
          this,
-         IsInUncomposedDoc(),
+         IsInComposedDoc(),
          static_cast<int>(aAPI)));
   }
 }
@@ -7827,8 +7878,20 @@ HTMLMediaElement::AsyncResolvePendingPlayPromises()
 void
 HTMLMediaElement::AsyncRejectPendingPlayPromises(nsresult aError)
 {
+  mAutoplayPermissionRequest.DisconnectIfExists();
+
+  if (!mPaused) {
+    mPaused = true;
+    DispatchAsyncEvent(NS_LITERAL_STRING("pause"));
+  }
+
   if (mShuttingDown) {
     return;
+  }
+
+  if (aError == NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR &&
+      Preferences::GetBool("media.autoplay.block-event.enabled", false)) {
+    DispatchAsyncEvent(NS_LITERAL_STRING("blocked"));
   }
 
   nsCOMPtr<nsIRunnable> event = new nsResolveOrRejectPendingPlayPromisesRunner(
@@ -7861,7 +7924,7 @@ HTMLMediaElement::NotifyDecoderActivityChanges() const
 {
   if (mDecoder) {
     mDecoder->NotifyOwnerActivityChanged(
-      !IsHidden(), mVisibilityState, IsInUncomposedDoc());
+      !IsHidden(), mVisibilityState, IsInComposedDoc());
   }
 }
 

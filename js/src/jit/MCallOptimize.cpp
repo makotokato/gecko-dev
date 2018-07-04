@@ -65,6 +65,13 @@ IonBuilder::inlineNativeCall(CallInfo& callInfo, JSFunction* target)
         return InliningStatus_NotInlined;
     }
 
+    // Don't inline if we're constructing and new.target != callee. This can
+    // happen with Reflect.construct or derived class constructors.
+    if (callInfo.constructing() && callInfo.getNewTarget() != callInfo.fun()) {
+        trackOptimizationOutcome(TrackedOutcome::CantInlineUnexpectedNewTarget);
+        return InliningStatus_NotInlined;
+    }
+
     // Default failure reason is observing an unsupported type.
     trackOptimizationOutcome(TrackedOutcome::CantInlineNativeBadType);
 
@@ -309,8 +316,8 @@ IonBuilder::inlineNativeCall(CallInfo& callInfo, JSFunction* target)
         return inlineToObject(callInfo);
       case InlinableNative::IntrinsicIsObject:
         return inlineIsObject(callInfo);
-      case InlinableNative::IntrinsicIsWrappedArrayConstructor:
-        return inlineIsWrappedArrayConstructor(callInfo);
+      case InlinableNative::IntrinsicIsCrossRealmArrayConstructor:
+        return inlineIsCrossRealmArrayConstructor(callInfo);
       case InlinableNative::IntrinsicToInteger:
         return inlineToInteger(callInfo);
       case InlinableNative::IntrinsicToString:
@@ -459,6 +466,15 @@ IonBuilder::inlineNonFunctionCall(CallInfo& callInfo, JSObject* target)
 {
     // Inline a call to a non-function object, invoking the object's call or
     // construct hook.
+
+    MOZ_ASSERT(target->nonCCWRealm() == script()->realm());
+
+    // Don't inline if we're constructing and new.target != callee. This can
+    // happen with Reflect.construct or derived class constructors.
+    if (callInfo.constructing() && callInfo.getNewTarget() != callInfo.fun()) {
+        trackOptimizationOutcome(TrackedOutcome::CantInlineUnexpectedNewTarget);
+        return InliningStatus_NotInlined;
+    }
 
     if (callInfo.constructing() && target->constructHook() == TypedObject::construct)
         return inlineConstructTypedObject(callInfo, &target->as<TypeDescr>());
@@ -3283,7 +3299,7 @@ IonBuilder::inlineToObject(CallInfo& callInfo)
 }
 
 IonBuilder::InliningResult
-IonBuilder::inlineIsWrappedArrayConstructor(CallInfo& callInfo)
+IonBuilder::inlineIsCrossRealmArrayConstructor(CallInfo& callInfo)
 {
     MOZ_ASSERT(!callInfo.constructing());
     MOZ_ASSERT(callInfo.argc() == 1);
@@ -3295,18 +3311,14 @@ IonBuilder::inlineIsWrappedArrayConstructor(CallInfo& callInfo)
         return InliningStatus_NotInlined;
 
     TemporaryTypeSet* types = arg->resultTypeSet();
-    switch (types->forAllClasses(constraints(), IsProxyClass)) {
-      case TemporaryTypeSet::ForAllResult::ALL_FALSE:
-        break;
-      case TemporaryTypeSet::ForAllResult::EMPTY:
-      case TemporaryTypeSet::ForAllResult::ALL_TRUE:
-      case TemporaryTypeSet::ForAllResult::MIXED:
+    Realm* realm = types->getKnownRealm(constraints());
+    if (!realm || realm != script()->realm())
         return InliningStatus_NotInlined;
-    }
 
     callInfo.setImplicitlyUsedUnchecked();
 
-    // Inline only if argument is absolutely *not* a Proxy.
+    // Inline only if argument is absolutely *not* a wrapper or a cross-realm
+    // object.
     pushConstant(BooleanValue(false));
     return InliningStatus_Inlined;
 }

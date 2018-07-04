@@ -51,6 +51,8 @@ $pocket-teal: #50BCB6;
 $bookmark-icon-fill: #0A84FF;
 $download-icon-fill: #12BC00;
 $pocket-icon-fill: #D70022;
+$email-input-focus: rgba($blue-50, 0.3);
+$email-input-invalid: rgba($red-60, 0.3);
 
 // Photon transitions from http://design.firefox.com/photon/motion/duration-and-easing.html
 $photon-easing: cubic-bezier(0.07, 0.95, 0, 1);
@@ -138,7 +140,7 @@ $textbox-shadow-size: 4px;
     cursor: pointer;
     fill: var(--newtab-icon-primary-color);
     height: $context-menu-button-size;
-    offset-inline-end: -($context-menu-button-size / 2);
+    inset-inline-end: -($context-menu-button-size / 2);
     opacity: 0;
     position: absolute;
     top: -($context-menu-button-size / 2);
@@ -165,8 +167,8 @@ $textbox-shadow-size: 4px;
   .context-menu {
     margin-inline-end: auto;
     margin-inline-start: auto;
-    offset-inline-end: auto;
-    offset-inline-start: -$base-gutter;
+    inset-inline-end: auto;
+    inset-inline-start: -$base-gutter;
   }
 }
 
@@ -174,8 +176,8 @@ $textbox-shadow-size: 4px;
   .context-menu {
     margin-inline-end: 5px;
     margin-inline-start: auto;
-    offset-inline-end: 0;
-    offset-inline-start: auto;
+    inset-inline-end: 0;
+    inset-inline-start: auto;
   }
 }
 

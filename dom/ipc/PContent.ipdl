@@ -289,6 +289,13 @@ struct XPCOMInitData
     DynamicScalarDefinition[] dynamicScalarDefs;
 };
 
+struct StringBundleDescriptor
+{
+    nsCString bundleURL;
+    FileDescriptor mapFile;
+    uint32_t mapSize;
+};
+
 /**
  * The PContent protocol is a top-level protocol between the UI process
  * and a content process. There is exactly one PContentParent/PContentChild pair
@@ -456,6 +463,8 @@ child:
     async UpdateRequestedLocales(nsCString[] requestedLocales);
 
     async ClearSiteDataReloadNeeded(nsString origin);
+
+    async RegisterStringBundles(StringBundleDescriptor[] stringBundles);
 
     // nsIPermissionManager messages
     async AddPermission(Permission permission);
@@ -633,8 +642,8 @@ child:
     async SetPluginList(uint32_t pluginEpoch, PluginTag[] plugins, FakePluginTag[] fakePlugins);
 
     async ShareCodeCoverageMutex(CrossProcessMutexHandle handle);
-    async DumpCodeCoverageCounters();
-    async ResetCodeCoverageCounters();
+    async DumpCodeCoverageCounters() returns (bool unused);
+    async ResetCodeCoverageCounters() returns (bool unused);
 
     /*
      * IPC message to enable the input event queue on the main thread of the
@@ -854,6 +863,9 @@ parent:
     // first type that matches.
     sync GetClipboard(nsCString[] aTypes, int32_t aWhichClipboard)
         returns (IPCDataTransfer dataTransfer);
+
+    // Returns a list of formats supported by the clipboard
+    sync GetExternalClipboardFormats(int32_t aWhichClipboard, bool aPlainTextOnly) returns (nsCString[] aTypes);
 
     // Clears the clipboard.
     async EmptyClipboard(int32_t aWhichClipboard);

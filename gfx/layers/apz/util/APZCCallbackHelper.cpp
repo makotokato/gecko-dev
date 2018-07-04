@@ -518,7 +518,7 @@ APZCCallbackHelper::DispatchSynthesizedMouseEvent(EventMessage aMsg,
   event.mRefPoint = LayoutDeviceIntPoint::Truncate(aRefPoint.x, aRefPoint.y);
   event.mTime = aTime;
   event.button = WidgetMouseEvent::eLeftButton;
-  event.inputSource = dom::MouseEventBinding::MOZ_SOURCE_TOUCH;
+  event.inputSource = dom::MouseEvent_Binding::MOZ_SOURCE_TOUCH;
   if (aMsg == eMouseLongTap) {
     event.mFlags.mOnlyChromeDispatch = true;
   }
@@ -862,7 +862,8 @@ APZCCallbackHelper::NotifyMozMouseScrollEvent(const FrameMetrics::ViewID& aScrol
   nsContentUtils::DispatchTrustedEvent(
     ownerDoc, targetContent,
     aEvent,
-    true, true);
+    CanBubble::eYes,
+    Cancelable::eYes);
 }
 
 void
@@ -882,48 +883,6 @@ APZCCallbackHelper::NotifyFlushComplete(nsIPresShell* aShell)
   nsCOMPtr<nsIObserverService> observerService = mozilla::services::GetObserverService();
   MOZ_ASSERT(observerService);
   observerService->NotifyObservers(nullptr, "apz-repaints-flushed", nullptr);
-}
-
-static int32_t sActiveSuppressDisplayport = 0;
-static bool sDisplayPortSuppressionRespected = true;
-
-void
-APZCCallbackHelper::SuppressDisplayport(const bool& aEnabled,
-                                        const nsCOMPtr<nsIPresShell>& aShell)
-{
-  if (aEnabled) {
-    sActiveSuppressDisplayport++;
-  } else {
-    bool isSuppressed = IsDisplayportSuppressed();
-    sActiveSuppressDisplayport--;
-    if (isSuppressed && !IsDisplayportSuppressed() &&
-        aShell && aShell->GetRootFrame()) {
-      // We unsuppressed the displayport, trigger a paint
-      aShell->GetRootFrame()->SchedulePaint();
-    }
-  }
-
-  MOZ_ASSERT(sActiveSuppressDisplayport >= 0);
-}
-
-void
-APZCCallbackHelper::RespectDisplayPortSuppression(bool aEnabled,
-                                                  const nsCOMPtr<nsIPresShell>& aShell)
-{
-  bool isSuppressed = IsDisplayportSuppressed();
-  sDisplayPortSuppressionRespected = aEnabled;
-  if (isSuppressed && !IsDisplayportSuppressed() &&
-      aShell && aShell->GetRootFrame()) {
-    // We unsuppressed the displayport, trigger a paint
-    aShell->GetRootFrame()->SchedulePaint();
-  }
-}
-
-bool
-APZCCallbackHelper::IsDisplayportSuppressed()
-{
-  return sDisplayPortSuppressionRespected
-      && sActiveSuppressDisplayport > 0;
 }
 
 /* static */ bool

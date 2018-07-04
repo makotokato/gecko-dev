@@ -186,6 +186,10 @@ pref("xpinstall.whitelist.add", "https://addons.mozilla.org,https://testpilot.fi
 pref("extensions.langpacks.signatures.required", true);
 pref("xpinstall.signatures.required", true);
 
+// Disable add-ons that are not installed by the user in all scopes by default (See the SCOPE
+// constants in AddonManager.jsm for values to use here, and Bug 1405528 for a rationale).
+pref("extensions.autoDisableScopes", 15);
+
 pref("extensions.enabledScopes", 1);
 pref("extensions.autoupdate.enabled", true);
 pref("extensions.autoupdate.interval", 86400);
@@ -704,9 +708,9 @@ pref("dom.phonenumber.substringmatching.BR", 8);
 pref("dom.phonenumber.substringmatching.CO", 10);
 pref("dom.phonenumber.substringmatching.VE", 7);
 
-// Enable hardware-accelerated Skia canvas
+// Support, but deprecate, hardware-accelerated Skia canvas
 pref("gfx.canvas.azure.backends", "skia");
-pref("gfx.canvas.azure.accelerated", true);
+pref("gfx.canvas.azure.accelerated", false);
 pref("gfx.canvas.azure.accelerated.limit", 64);
 
 // See ua-update.json.in for the packaged UA override list

@@ -1913,7 +1913,9 @@ public:
     }
 
     mCallee = aCallee;
-    APZCCallbackHelper::SuppressDisplayport(true, mCallee->mOuter->PresShell());
+    if (nsIPresShell* shell = mCallee->mOuter->PresShell()) {
+      shell->SuppressDisplayport(true);
+    }
     return true;
   }
 
@@ -1938,7 +1940,9 @@ private:
   void RemoveObserver() {
     if (mCallee) {
       RefreshDriver(mCallee)->RemoveRefreshObserver(this, FlushType::Style);
-      APZCCallbackHelper::SuppressDisplayport(false, mCallee->mOuter->PresShell());
+      if (nsIPresShell* shell = mCallee->mOuter->PresShell()) {
+        shell->SuppressDisplayport(false);
+      }
     }
   }
 };
@@ -4533,8 +4537,8 @@ ScrollFrameHelper::FireScrollEndEvent()
   nsContentUtils::DispatchEventOnlyToChrome(mOuter->GetContent()->OwnerDoc(),
                                             mOuter->GetContent(),
                                             NS_LITERAL_STRING("scrollend"),
-                                            true /* aCanBubble */,
-                                            false /* aCancelable */);
+                                            CanBubble::eYes,
+                                            Cancelable::eNo);
 }
 
 void
@@ -4984,7 +4988,6 @@ ScrollFrameHelper::FireScrollEvent()
   if (mIsRoot) {
     nsIDocument* doc = content->GetUncomposedDoc();
     if (doc) {
-      prescontext->SetTelemetryScrollY(GetScrollPosition().y);
       EventDispatcher::Dispatch(doc, prescontext, &event, nullptr,  &status);
     }
   } else {

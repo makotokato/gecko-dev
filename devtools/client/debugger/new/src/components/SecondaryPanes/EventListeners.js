@@ -102,8 +102,7 @@ const mapStateToProps = state => {
     return _objectSpread({}, listener, {
       breakpoint: (0, _selectors.getBreakpoint)(state, {
         sourceId: listener.sourceId,
-        line: listener.line,
-        column: null
+        line: listener.line
       })
     });
   });
@@ -112,4 +111,10 @@ const mapStateToProps = state => {
   };
 };
 
-exports.default = (0, _reactRedux.connect)(mapStateToProps, _actions2.default)(EventListeners);
+exports.default = (0, _reactRedux.connect)(mapStateToProps, {
+  selectLocation: _actions2.default.selectLocation,
+  addBreakpoint: _actions2.default.addBreakpoint,
+  enableBreakpoint: _actions2.default.enableBreakpoint,
+  disableBreakpoint: _actions2.default.disableBreakpoint,
+  removeBreakpoint: _actions2.default.removeBreakpoint
+})(EventListeners);

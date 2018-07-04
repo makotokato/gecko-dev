@@ -24,6 +24,8 @@ var {
 } = ExtensionUtils;
 
 const TABHIDE_PREFNAME = "extensions.webextensions.tabhide.enabled";
+const MULTISELECT_PREFNAME = "browser.tabs.multiselect";
+XPCOMUtils.defineLazyPreferenceGetter(this, "gMultiSelectEnabled", MULTISELECT_PREFNAME, false);
 
 const TAB_HIDE_CONFIRMED_TYPE = "tabHideNotification";
 
@@ -347,7 +349,7 @@ this.tabs = class extends ExtensionAPI {
   getAPI(context) {
     let {extension} = context;
 
-    let {tabManager} = extension;
+    let {tabManager, windowManager} = extension;
 
     function getTabOrActive(tabId) {
       if (tabId !== null) {
@@ -596,7 +598,8 @@ this.tabs = class extends ExtensionAPI {
               window.focusAndSelectUrlBar();
             }
 
-            if (createProperties.url && createProperties.url !== window.BROWSER_NEW_TAB_URL) {
+            if (createProperties.url &&
+                createProperties.url !== window.BROWSER_NEW_TAB_URL) {
               // We can't wait for a location change event for about:newtab,
               // since it may be pre-rendered, in which case its initial
               // location change event has already fired.
@@ -1234,6 +1237,30 @@ this.tabs = class extends ExtensionAPI {
             tabHidePopup.open(win, extension.id);
           }
           return hidden;
+        },
+
+        highlight(highlightInfo) {
+          if (!gMultiSelectEnabled) {
+            throw new ExtensionError(`tabs.highlight is currently experimental and must be enabled with the ${MULTISELECT_PREFNAME} preference.`);
+          }
+          let {windowId, tabs} = highlightInfo;
+          if (windowId == null) {
+            windowId = Window.WINDOW_ID_CURRENT;
+          }
+          let window = windowTracker.getWindow(windowId, context);
+          if (!Array.isArray(tabs)) {
+            tabs = [tabs];
+          } else if (tabs.length == 0) {
+            throw new ExtensionError("No highlighted tab.");
+          }
+          window.gBrowser.selectedTabs = tabs.map((tabIndex) => {
+            let tab = window.gBrowser.tabs[tabIndex];
+            if (!tab) {
+              throw new ExtensionError("No tab at index: " + tabIndex);
+            }
+            return tab;
+          });
+          return windowManager.convert(window, {populate: true});
         },
       },
     };

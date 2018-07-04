@@ -374,7 +374,7 @@ namespace JS {
  * Example use:
  *
  *    size_t length = 512;
- *    char16_t* chars = static_cast<char16_t*>(js_malloc(sizeof(char16_t) * length));
+ *    char16_t* chars = js_pod_malloc<char16_t>(length);
  *    JS::SourceBufferHolder srcBuf(chars, length, JS::SourceBufferHolder::GiveOwnership);
  *    JS::Compile(cx, options, srcBuf);
  */
@@ -4636,7 +4636,7 @@ JS_GetStringEncodingLength(JSContext* cx, JSString* str);
  * length parameter, the string will be cut and only length bytes will be
  * written into the buffer.
  */
-JS_PUBLIC_API(size_t)
+MOZ_MUST_USE JS_PUBLIC_API(bool)
 JS_EncodeStringToBuffer(JSContext* cx, JSString* str, char* buffer, size_t length);
 
 class MOZ_RAII JSAutoByteString

@@ -28,10 +28,6 @@ ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
     "chrome,all,dialog=no,extrachrome,menubar,resizable,scrollbars,status," +
     "location,toolbar,personalbar," +
     `left=${screenX},top=${screenY}`;
-
-  if (Services.prefs.getBoolPref("browser.suppress_first_window_animation"))
-    browserWindowFeatures += ",suppressanimation";
-
   let win = Services.ww.openWindow(null, "about:blank", null,
                                    browserWindowFeatures, null);
 
@@ -182,6 +178,10 @@ XPCOMUtils.defineLazyGetter(this, "gBrandBundle", function() {
 
 XPCOMUtils.defineLazyGetter(this, "gBrowserBundle", function() {
   return Services.strings.createBundle("chrome://browser/locale/browser.properties");
+});
+
+XPCOMUtils.defineLazyGetter(this, "gTabbrowserBundle", function() {
+  return Services.strings.createBundle("chrome://browser/locale/tabbrowser.properties");
 });
 
 const global = this;
@@ -486,7 +486,7 @@ BrowserGlue.prototype = {
           this._onDeviceDisconnected();
         }
         break;
-      case "fxaccounts:messages:display-tabs":
+      case "fxaccounts:commands:open-uri":
       case "weave:engine:clients:display-uris":
         this._onDisplaySyncURIs(subject);
         break;
@@ -520,10 +520,6 @@ BrowserGlue.prototype = {
           // To apply distribution bookmarks use "places-init-complete".
         } else if (data == "force-places-init") {
           this._initPlaces(false);
-        } else if (data == "smart-bookmarks-init") {
-          this.ensurePlacesDefaultQueriesInitialized().then(() => {
-            Services.obs.notifyObservers(null, "test-smart-bookmarks-done");
-          });
         } else if (data == "mock-alerts-service") {
           Object.defineProperty(this, "AlertsService", {
             value: subject.wrappedJSObject
@@ -641,7 +637,7 @@ BrowserGlue.prototype = {
     os.addObserver(this, "fxaccounts:device_connected");
     os.addObserver(this, "fxaccounts:verify_login");
     os.addObserver(this, "fxaccounts:device_disconnected");
-    os.addObserver(this, "fxaccounts:messages:display-tabs");
+    os.addObserver(this, "fxaccounts:commands:open-uri");
     os.addObserver(this, "weave:engine:clients:display-uris");
     os.addObserver(this, "session-save");
     os.addObserver(this, "places-init-complete");
@@ -684,7 +680,7 @@ BrowserGlue.prototype = {
     os.removeObserver(this, "fxaccounts:device_connected");
     os.removeObserver(this, "fxaccounts:verify_login");
     os.removeObserver(this, "fxaccounts:device_disconnected");
-    os.removeObserver(this, "fxaccounts:messages:display-tabs");
+    os.removeObserver(this, "fxaccounts:commands:open-uri");
     os.removeObserver(this, "weave:engine:clients:display-uris");
     os.removeObserver(this, "session-save");
     if (this._bookmarksBackupIdleTime) {
@@ -765,6 +761,8 @@ BrowserGlue.prototype = {
       toolbar_field_text: "rgb(249, 249, 250)",
       toolbar_field_border: "rgba(249, 249, 250, 0.2)",
       author: vendorShortName,
+    }, {
+      useInDarkMode: true
     });
 
     Normandy.init();
@@ -1113,8 +1111,9 @@ BrowserGlue.prototype = {
     AutoCompletePopup.uninit();
     DateTimePickerParent.uninit();
 
-    // Browser errors are only collected on Nightly
-    if (AppConstants.NIGHTLY_BUILD && AppConstants.MOZ_DATA_REPORTING) {
+    // Browser errors are only collected on Nightly, but telemetry for
+    // them is collected on all channels.
+    if (AppConstants.MOZ_DATA_REPORTING) {
       this.browserErrorReporter.uninit();
     }
 
@@ -1130,8 +1129,9 @@ BrowserGlue.prototype = {
     }
     this._windowsWereRestored = true;
 
-    // Browser errors are only collected on Nightly
-    if (AppConstants.NIGHTLY_BUILD && AppConstants.MOZ_DATA_REPORTING) {
+    // Browser errors are only collected on Nightly, but telemetry for
+    // them is collected on all channels.
+    if (AppConstants.MOZ_DATA_REPORTING) {
       this.browserErrorReporter.init();
     }
 
@@ -1367,11 +1367,7 @@ BrowserGlue.prototype = {
     // 4. The browser is currently in Private Browsing mode
     // 5. The browser will be restarted.
     //
-    // Otherwise these are the conditions and the associated dialogs that will be shown:
-    // 1. aQuitType == "lastwindow" or "quit" and browser.showQuitWarning == true
-    //    - The quit dialog will be shown
-    // 2. aQuitType == "lastwindow" && browser.tabs.warnOnClose == true
-    //    - The "closing multiple tabs" dialog will be shown
+    // Otherwise, we will show the "closing multiple tabs" dialog.
     //
     // aQuitType == "lastwindow" is overloaded. "lastwindow" is used to indicate
     // "the last window is closing but we're not quitting (a non-browser window is open)"
@@ -1382,21 +1378,16 @@ BrowserGlue.prototype = {
 
     var windowcount = 0;
     var pagecount = 0;
-    var browserEnum = Services.wm.getEnumerator("navigator:browser");
-    let allWindowsPrivate = true;
-    while (browserEnum.hasMoreElements()) {
-      // XXXbz should we skip closed windows here?
+    for (let win of BrowserWindowTracker.orderedWindows) {
+      if (win.closed) {
+        continue;
+      }
       windowcount++;
-
-      var browser = browserEnum.getNext();
-      if (!PrivateBrowsingUtils.isWindowPrivate(browser))
-        allWindowsPrivate = false;
-      var tabbrowser = browser.ownerGlobal.gBrowser;
+      let tabbrowser = win.gBrowser;
       if (tabbrowser)
         pagecount += tabbrowser.browsers.length - tabbrowser._numPinnedTabs;
     }
 
-    this._saveSession = false;
     if (pagecount < 2)
       return;
 
@@ -1409,80 +1400,26 @@ BrowserGlue.prototype = {
 
     var sessionWillBeRestored = Services.prefs.getIntPref("browser.startup.page") == 3 ||
                                 Services.prefs.getBoolPref("browser.sessionstore.resume_session_once");
-    if (sessionWillBeRestored || !Services.prefs.getBoolPref("browser.warnOnQuit"))
+    if (sessionWillBeRestored || !Services.prefs.getBoolPref("browser.warnOnQuit") ||
+        !Services.prefs.getBoolPref("browser.tabs.warnOnClose"))
       return;
 
-    let win = Services.wm.getMostRecentWindow("navigator:browser");
+    let win = BrowserWindowTracker.getTopWindow();
 
-    // On last window close or quit && showQuitWarning, we want to show the
-    // quit warning.
-    if (!Services.prefs.getBoolPref("browser.showQuitWarning")) {
-      if (aQuitType == "lastwindow") {
-        // If aQuitType is "lastwindow" and we aren't showing the quit warning,
-        // we should show the window closing warning instead. warnAboutClosing
-        // tabs checks browser.tabs.warnOnClose and returns if it's ok to close
-        // the window. It doesn't actually close the window.
-        aCancelQuit.data =
-          !win.gBrowser.warnAboutClosingTabs(win.gBrowser.closingTabsEnum.ALL);
-      }
-      return;
-    }
-
-    let prompt = Services.prompt;
-    let quitBundle = Services.strings.createBundle("chrome://browser/locale/quitDialog.properties");
-    let appName = gBrandBundle.GetStringFromName("brandShortName");
-    let quitDialogTitle = quitBundle.formatStringFromName("quitDialogTitle",
-                                                          [appName], 1);
-    let neverAskText = quitBundle.GetStringFromName("neverAsk2");
-    let neverAsk = {value: false};
-
-    let choice;
-    if (allWindowsPrivate) {
-      let text = quitBundle.formatStringFromName("messagePrivate", [appName], 1);
-      let flags = prompt.BUTTON_TITLE_IS_STRING * prompt.BUTTON_POS_0 +
-                  prompt.BUTTON_TITLE_IS_STRING * prompt.BUTTON_POS_1 +
-                  prompt.BUTTON_POS_0_DEFAULT;
-      choice = prompt.confirmEx(win, quitDialogTitle, text, flags,
-                                quitBundle.GetStringFromName("quitTitle"),
-                                quitBundle.GetStringFromName("cancelTitle"),
-                                null,
-                                neverAskText, neverAsk);
-
-      // The order of the buttons differs between the prompt.confirmEx calls
-      // here so we need to fix this for proper handling below.
-      if (choice == 0) {
-        choice = 2;
-      }
+    // warnAboutClosingTabs checks browser.tabs.warnOnClose and returns if it's
+    // ok to close the window. It doesn't actually close the window.
+    if (windowcount == 1) {
+      aCancelQuit.data =
+        !win.gBrowser.warnAboutClosingTabs(win.gBrowser.closingTabsEnum.ALL);
     } else {
-      let text = quitBundle.formatStringFromName(
-        windowcount == 1 ? "messageNoWindows" : "message", [appName], 1);
-      let flags = prompt.BUTTON_TITLE_IS_STRING * prompt.BUTTON_POS_0 +
-                  prompt.BUTTON_TITLE_IS_STRING * prompt.BUTTON_POS_1 +
-                  prompt.BUTTON_TITLE_IS_STRING * prompt.BUTTON_POS_2 +
-                  prompt.BUTTON_POS_0_DEFAULT;
-      choice = prompt.confirmEx(win, quitDialogTitle, text, flags,
-                                quitBundle.GetStringFromName("saveTitle"),
-                                quitBundle.GetStringFromName("cancelTitle"),
-                                quitBundle.GetStringFromName("quitTitle"),
-                                neverAskText, neverAsk);
-    }
-
-    switch (choice) {
-    case 2: // Quit
-      if (neverAsk.value)
-        Services.prefs.setBoolPref("browser.showQuitWarning", false);
-      break;
-    case 1: // Cancel
-      aCancelQuit.QueryInterface(Ci.nsISupportsPRBool);
-      aCancelQuit.data = true;
-      break;
-    case 0: // Save & Quit
-      this._saveSession = true;
-      if (neverAsk.value) {
-        // always save state when shutting down
-        Services.prefs.setIntPref("browser.startup.page", 3);
-      }
-      break;
+      // More than 1 window. Compose our own message.
+      let tabSubstring = gTabbrowserBundle.GetStringFromName("tabs.closeWarningMultipleWindowsTabSnippet");
+      tabSubstring = PluralForm.get(pagecount, tabSubstring).replace(/#1/, pagecount);
+      let windowString = gTabbrowserBundle.GetStringFromName("tabs.closeWarningMultipleWindows");
+      windowString = PluralForm.get(windowcount, windowString).replace(/#1/, windowcount);
+      windowString = windowString.replace(/%(?:1$)?S/i, tabSubstring);
+      aCancelQuit.data =
+        !win.gBrowser.warnAboutClosingTabs(win.gBrowser.closingTabsEnum.ALL, null, windowString);
     }
   },
 
@@ -1593,10 +1530,6 @@ BrowserGlue.prototype = {
    *
    * - browser.places.importBookmarksHTML
    *   Set to true will import the bookmarks.html file from the profile folder.
-   * - browser.places.smartBookmarksVersion
-   *   Set during HTML import to indicate that Smart Bookmarks were created.
-   *   Set to -1 to disable Smart Bookmarks creation.
-   *   Set to 0 to restore current Smart Bookmarks.
    * - browser.bookmarks.restore_default_bookmarks
    *   Set to true by safe-mode dialog to indicate we must restore default
    *   bookmarks.
@@ -1687,9 +1620,8 @@ BrowserGlue.prototype = {
         }
       }
 
-      // If bookmarks are not imported, then initialize smart bookmarks.  This
-      // happens during a common startup.
-      // Otherwise, if any kind of import runs, smart bookmarks creation should be
+      // Import default bookmarks when necessary.
+      // Otherwise, if any kind of import runs, default bookmarks creation should be
       // delayed till the import operations has finished.  Not doing so would
       // cause them to be overwritten by the newly imported bookmarks.
       if (!importBookmarks) {
@@ -1697,18 +1629,11 @@ BrowserGlue.prototype = {
         // This should always run after Places initialization.
         try {
           await this._distributionCustomizer.applyBookmarks();
-          await this.ensurePlacesDefaultQueriesInitialized();
         } catch (e) {
           Cu.reportError(e);
         }
       } else {
         // An import operation is about to run.
-        // Don't try to recreate smart bookmarks if autoExportHTML is true or
-        // smart bookmarks are disabled.
-        let smartBookmarksVersion = Services.prefs.getIntPref("browser.places.smartBookmarksVersion", 0);
-        if (!autoExportHTML && smartBookmarksVersion != -1)
-          Services.prefs.setIntPref("browser.places.smartBookmarksVersion", 0);
-
         let bookmarksUrl = null;
         if (restoreDefaultBookmarks) {
           // User wants to restore bookmarks.html file from default profile folder
@@ -1733,9 +1658,6 @@ BrowserGlue.prototype = {
             // Now apply distribution customized bookmarks.
             // This should always run after Places initialization.
             await this._distributionCustomizer.applyBookmarks();
-            // Ensure that smart bookmarks are created once the operation is
-            // complete.
-            await this.ensurePlacesDefaultQueriesInitialized();
           } catch (e) {
             Cu.reportError(e);
           }
@@ -2429,134 +2351,6 @@ BrowserGlue.prototype = {
     // and bookmarks before search suggestions.
     prefValue = prefValue || "general:5,suggestion:Infinity";
     Services.prefs.setCharPref(prefName, prefValue);
-  },
-
-  async ensurePlacesDefaultQueriesInitialized() {
-    // This is the current smart bookmarks version, it must be increased every
-    // time they change.
-    // When adding a new smart bookmark below, its newInVersion property must
-    // be set to the version it has been added in.  We will compare its value
-    // to users' smartBookmarksVersion and add new smart bookmarks without
-    // recreating old deleted ones.
-    const SMART_BOOKMARKS_VERSION = 8;
-    const SMART_BOOKMARKS_ANNO = "Places/SmartBookmark";
-    const SMART_BOOKMARKS_PREF = "browser.places.smartBookmarksVersion";
-
-    // TODO bug 399268: should this be a pref?
-    const MAX_RESULTS = 10;
-
-    // Get current smart bookmarks version.  If not set, create them.
-    let smartBookmarksCurrentVersion = Services.prefs.getIntPref(SMART_BOOKMARKS_PREF, 0);
-
-    // If version is current, or smart bookmarks are disabled, bail out.
-    if (smartBookmarksCurrentVersion == -1 ||
-        !Services.policies.isAllowed("defaultBookmarks") ||
-        smartBookmarksCurrentVersion >= SMART_BOOKMARKS_VERSION) {
-      return;
-    }
-
-    try {
-      let menuIndex = 0;
-      let toolbarIndex = 0;
-      let bundle = Services.strings.createBundle("chrome://browser/locale/places/places.properties");
-      let queryOptions = Ci.nsINavHistoryQueryOptions;
-
-      let smartBookmarks = {
-        MostVisited: {
-          title: bundle.GetStringFromName("mostVisitedTitle"),
-          url: "place:sort=" + queryOptions.SORT_BY_VISITCOUNT_DESCENDING +
-                    "&maxResults=" + MAX_RESULTS,
-          parentGuid: PlacesUtils.bookmarks.toolbarGuid,
-          newInVersion: 1
-        },
-        RecentTags: {
-          title: bundle.GetStringFromName("recentTagsTitle"),
-          url: "place:type=" + queryOptions.RESULTS_AS_TAGS_ROOT +
-                    "&sort=" + queryOptions.SORT_BY_LASTMODIFIED_DESCENDING +
-                    "&maxResults=" + MAX_RESULTS,
-          parentGuid: PlacesUtils.bookmarks.menuGuid,
-          newInVersion: 1
-        },
-      };
-
-      // Set current guid, parentGuid and index of existing Smart Bookmarks.
-      // We will use those to create a new version of the bookmark at the same
-      // position.
-      let smartBookmarkItemIds = PlacesUtils.annotations.getItemsWithAnnotation(SMART_BOOKMARKS_ANNO);
-      for (let itemId of smartBookmarkItemIds) {
-        let queryId = PlacesUtils.annotations.getItemAnnotation(itemId, SMART_BOOKMARKS_ANNO);
-        if (queryId in smartBookmarks) {
-          // Known smart bookmark.
-          let smartBookmark = smartBookmarks[queryId];
-          smartBookmark.guid = await PlacesUtils.promiseItemGuid(itemId);
-
-          if (!smartBookmark.url) {
-            await PlacesUtils.bookmarks.remove(smartBookmark.guid);
-            continue;
-          }
-
-          let bm = await PlacesUtils.bookmarks.fetch(smartBookmark.guid);
-          smartBookmark.parentGuid = bm.parentGuid;
-          smartBookmark.index = bm.index;
-        } else {
-          // We don't remove old Smart Bookmarks because user could still
-          // find them useful, or could have personalized them.
-          // Instead we remove the Smart Bookmark annotation.
-          PlacesUtils.annotations.removeItemAnnotation(itemId, SMART_BOOKMARKS_ANNO);
-        }
-      }
-
-      for (let queryId of Object.keys(smartBookmarks)) {
-        let smartBookmark = smartBookmarks[queryId];
-
-        // We update or create only changed or new smart bookmarks.
-        // Also we respect user choices, so we won't try to create a smart
-        // bookmark if it has been removed.
-        if (smartBookmarksCurrentVersion > 0 &&
-            smartBookmark.newInVersion <= smartBookmarksCurrentVersion &&
-            !smartBookmark.guid || !smartBookmark.url)
-          continue;
-
-        // Remove old version of the smart bookmark if it exists, since it
-        // will be replaced in place.
-        if (smartBookmark.guid) {
-          await PlacesUtils.bookmarks.remove(smartBookmark.guid);
-        }
-
-        // Create the new smart bookmark and store its updated guid.
-        if (!("index" in smartBookmark)) {
-          if (smartBookmark.parentGuid == PlacesUtils.bookmarks.toolbarGuid)
-            smartBookmark.index = toolbarIndex++;
-          else if (smartBookmark.parentGuid == PlacesUtils.bookmarks.menuGuid)
-            smartBookmark.index = menuIndex++;
-        }
-        smartBookmark = await PlacesUtils.bookmarks.insert(smartBookmark);
-        let itemId = await PlacesUtils.promiseItemId(smartBookmark.guid);
-        PlacesUtils.annotations.setItemAnnotation(itemId,
-                                                  SMART_BOOKMARKS_ANNO,
-                                                  queryId, 0,
-                                                  PlacesUtils.annotations.EXPIRE_NEVER);
-      }
-
-      // If we are creating all Smart Bookmarks from ground up, add a
-      // separator below them in the bookmarks menu.
-      if (smartBookmarksCurrentVersion == 0 &&
-          smartBookmarkItemIds.length == 0) {
-        let bm = await PlacesUtils.bookmarks.fetch({ parentGuid: PlacesUtils.bookmarks.menuGuid,
-                                                     index: menuIndex });
-        // Don't add a separator if the menu was empty or there is one already.
-        if (bm && bm.type != PlacesUtils.bookmarks.TYPE_SEPARATOR) {
-          await PlacesUtils.bookmarks.insert({ type: PlacesUtils.bookmarks.TYPE_SEPARATOR,
-                                               parentGuid: PlacesUtils.bookmarks.menuGuid,
-                                               index: menuIndex });
-        }
-      }
-    } catch (ex) {
-      Cu.reportError(ex);
-    } finally {
-      Services.prefs.setIntPref(SMART_BOOKMARKS_PREF, SMART_BOOKMARKS_VERSION);
-      Services.prefs.savePrefFile(null);
-    }
   },
 
   /**

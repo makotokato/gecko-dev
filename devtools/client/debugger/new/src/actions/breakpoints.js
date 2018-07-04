@@ -59,10 +59,16 @@ function syncBreakpoint(sourceId, pendingBreakpoint) {
     client,
     sourceMaps
   }) => {
+    const response = await (0, _syncBreakpoint.syncClientBreakpoint)(getState, client, sourceMaps, sourceId, pendingBreakpoint);
+
+    if (!response) {
+      return;
+    }
+
     const {
       breakpoint,
       previousLocation
-    } = await (0, _syncBreakpoint.syncClientBreakpoint)(getState, client, sourceMaps, sourceId, pendingBreakpoint);
+    } = response;
     return dispatch({
       type: "SYNC_BREAKPOINT",
       breakpoint,
@@ -285,13 +291,8 @@ function toggleBreakpoints(shouldDisableBreakpoints, breakpoints) {
   return async ({
     dispatch
   }) => {
-    for (const [, breakpoint] of breakpoints) {
-      if (shouldDisableBreakpoints) {
-        await dispatch(disableBreakpoint(breakpoint.location));
-      } else {
-        await dispatch(enableBreakpoint(breakpoint.location));
-      }
-    }
+    const promises = breakpoints.valueSeq().toJS().map(([, breakpoint]) => shouldDisableBreakpoints ? dispatch(disableBreakpoint(breakpoint.location)) : dispatch(enableBreakpoint(breakpoint.location)));
+    await Promise.all(promises);
   };
 }
 /**
@@ -307,11 +308,8 @@ function removeAllBreakpoints() {
     dispatch,
     getState
   }) => {
-    const breakpoints = (0, _selectors.getBreakpoints)(getState());
-
-    for (const [, breakpoint] of breakpoints) {
-      await dispatch(removeBreakpoint(breakpoint.location));
-    }
+    const breakpointList = (0, _selectors.getBreakpoints)(getState()).valueSeq().toJS();
+    return Promise.all(breakpointList.map(bp => dispatch(removeBreakpoint(bp.location))));
   };
 }
 /**
@@ -326,9 +324,8 @@ function removeBreakpoints(breakpoints) {
   return async ({
     dispatch
   }) => {
-    for (const [, breakpoint] of breakpoints) {
-      await dispatch(removeBreakpoint(breakpoint.location));
-    }
+    const breakpointList = breakpoints.valueSeq().toJS();
+    return Promise.all(breakpointList.map(bp => dispatch(removeBreakpoint(bp.location))));
   };
 }
 
@@ -407,12 +404,13 @@ function toggleBreakpoint(line, column) {
     client,
     sourceMaps
   }) => {
-    if (!line) {
+    const state = getState();
+    const selectedSource = (0, _selectors.getSelectedSource)(state);
+
+    if (!line || !selectedSource) {
       return;
     }
 
-    const state = getState();
-    const selectedSource = (0, _selectors.getSelectedSource)(state);
     const bp = (0, _selectors.getBreakpointAtLocation)(state, {
       line,
       column
@@ -449,11 +447,12 @@ function addOrToggleDisabledBreakpoint(line, column) {
     client,
     sourceMaps
   }) => {
-    if (!line) {
+    const selectedSource = (0, _selectors.getSelectedSource)(getState());
+
+    if (!line || !selectedSource) {
       return;
     }
 
-    const selectedSource = (0, _selectors.getSelectedSource)(getState());
     const bp = (0, _selectors.getBreakpointAtLocation)(getState(), {
       line,
       column
@@ -469,8 +468,8 @@ function addOrToggleDisabledBreakpoint(line, column) {
     }
 
     return dispatch(addBreakpoint({
-      sourceId: selectedSource.get("id"),
-      sourceUrl: selectedSource.get("url"),
+      sourceId: selectedSource.id,
+      sourceUrl: selectedSource.url,
       line: line,
       column: column
     }));

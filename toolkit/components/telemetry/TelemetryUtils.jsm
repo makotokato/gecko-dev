@@ -96,6 +96,12 @@ var TelemetryUtils = {
     NewProfilePingDelay: "toolkit.telemetry.newProfilePing.delay",
     PreviousBuildID: "toolkit.telemetry.previousBuildID",
 
+    // Event Ping Preferences
+    EventPingEnabled: "toolkit.telemetry.eventping.enabled",
+    EventPingEventLimit: "toolkit.telemetry.eventping.eventLimit",
+    EventPingMinimumFrequency: "toolkit.telemetry.eventping.minimumFrequency",
+    EventPingMaximumFrequency: "toolkit.telemetry.eventping.maximumFrequency",
+
     // Log Preferences
     LogLevel: "toolkit.telemetry.log.level",
     LogDump: "toolkit.telemetry.log.dump",

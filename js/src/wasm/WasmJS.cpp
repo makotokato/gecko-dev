@@ -45,6 +45,16 @@
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
 
+#define WASM_CRASH_IF_SIMD_TYPES \
+    case ValType::I8x16: \
+    case ValType::B8x16: \
+    case ValType::I16x8: \
+    case ValType::B16x8: \
+    case ValType::I32x4: \
+    case ValType::B32x4: \
+    case ValType::F32x4: \
+      MOZ_CRASH("unexpected SIMD type")
+
 using namespace js;
 using namespace js::jit;
 using namespace js::wasm;
@@ -109,39 +119,54 @@ wasm::HasSupport(JSContext* cx)
            HasAvailableCompilerTier(cx);
 }
 
-bool
-wasm::ToWebAssemblyValue(JSContext* cx, ValType targetType, HandleValue v, Val* val)
+static bool
+ToWebAssemblyValue(JSContext* cx, ValType targetType, HandleValue v, MutableHandleVal val)
 {
     switch (targetType.code()) {
       case ValType::I32: {
         int32_t i32;
         if (!ToInt32(cx, v, &i32))
             return false;
-        *val = Val(uint32_t(i32));
+        val.set(Val(uint32_t(i32)));
         return true;
       }
       case ValType::F32: {
         double d;
         if (!ToNumber(cx, v, &d))
             return false;
-        *val = Val(float(d));
+        val.set(Val(float(d)));
         return true;
       }
       case ValType::F64: {
         double d;
         if (!ToNumber(cx, v, &d))
             return false;
-        *val = Val(d);
+        val.set(Val(d));
         return true;
       }
-      default: {
-        MOZ_CRASH("unexpected import value type, caller must guard");
+      case ValType::AnyRef: {
+        if (v.isNull()) {
+            val.set(Val(nullptr));
+        } else {
+            JSObject* obj = ToObject(cx, v);
+            if (!obj)
+                return false;
+            MOZ_ASSERT(obj->compartment() == cx->compartment());
+            val.set(Val(obj));
+        }
+        return true;
+      }
+      WASM_CRASH_IF_SIMD_TYPES;
+      case ValType::Ref:
+      case ValType::I64: {
+        break;
       }
     }
+    MOZ_CRASH("unexpected import value type, caller must guard");
 }
 
-Value
-wasm::ToJSValue(const Val& val)
+static Value
+ToJSValue(const Val& val)
 {
     switch (val.type().code()) {
       case ValType::I32:
@@ -150,9 +175,16 @@ wasm::ToJSValue(const Val& val)
         return DoubleValue(JS::CanonicalizeNaN(double(val.f32())));
       case ValType::F64:
         return DoubleValue(JS::CanonicalizeNaN(val.f64()));
-      default:
-        MOZ_CRASH("unexpected type when translating to a JS value");
+      case ValType::AnyRef:
+        if (!val.ptr())
+            return NullValue();
+        return ObjectValue(*(JSObject*)val.ptr());
+      WASM_CRASH_IF_SIMD_TYPES;
+      case ValType::Ref:
+      case ValType::I64:
+        break;
     }
+    MOZ_CRASH("unexpected type when translating to a JS value");
 }
 
 // ============================================================================
@@ -191,7 +223,7 @@ GetImports(JSContext* cx,
            MutableHandleWasmTableObject tableImport,
            MutableHandleWasmMemoryObject memoryImport,
            WasmGlobalObjectVector& globalObjs,
-           ValVector* globalImportValues)
+           MutableHandleValVector globalImportValues)
 {
     const ImportVector& imports = module.imports();
     if (!imports.empty() && !importObj)
@@ -243,11 +275,11 @@ GetImports(JSContext* cx,
             break;
           }
           case DefinitionKind::Global: {
-            Val val;
             const uint32_t index = globalIndex++;
             const GlobalDesc& global = globals[index];
             MOZ_ASSERT(global.importIndex() == index);
 
+            RootedVal val(cx);
             if (v.isObject() && v.toObject().is<WasmGlobalObject>()) {
                 RootedWasmGlobalObject obj(cx, &v.toObject().as<WasmGlobalObject>());
 
@@ -265,9 +297,17 @@ GetImports(JSContext* cx,
                     return false;
                 }
                 globalObjs[index] = obj;
-                val = obj->val();
-            } else
-            if (v.isNumber()) {
+                obj->val(&val);
+            } else {
+                if (IsNumberType(global.type())) {
+                    if (!v.isNumber())
+                        return ThrowBadImportType(cx, import.field.get(), "Number");
+                } else {
+                    MOZ_ASSERT(global.type().isRefOrAnyRef());
+                    if (!v.isNull() && !v.isObject())
+                        return ThrowBadImportType(cx, import.field.get(), "Object-or-null");
+                }
+
                 if (global.type() == ValType::I64) {
                     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_WASM_BAD_I64_LINK);
                     return false;
@@ -280,11 +320,9 @@ GetImports(JSContext* cx,
 
                 if (!ToWebAssemblyValue(cx, global.type(), v, &val))
                     return false;
-            } else {
-                return ThrowBadImportType(cx, import.field.get(), "Number");
             }
 
-            if (!globalImportValues->append(val))
+            if (!globalImportValues.append(val))
                 return false;
 
             break;
@@ -359,11 +397,12 @@ wasm::Eval(JSContext* cx, Handle<TypedArrayObject*> code, HandleObject importObj
     RootedWasmMemoryObject memory(cx);
     Rooted<WasmGlobalObjectVector> globalObjs(cx);
 
-    ValVector globals;
+    RootedValVector globals(cx);
     if (!GetImports(cx, *module, importObj, &funcs, &table, &memory, globalObjs.get(), &globals))
         return false;
 
-    return module->instantiate(cx, funcs, table, memory, globals, globalObjs.get(), nullptr, instanceObj);
+    return module->instantiate(cx, funcs, table, memory, globals, globalObjs.get(), nullptr,
+                               instanceObj);
 }
 
 // ============================================================================
@@ -608,14 +647,14 @@ KindToString(JSContext* cx, const KindNames& names, DefinitionKind kind)
 }
 
 static JSString*
-SigToString(JSContext* cx, const Sig& sig)
+FuncTypeToString(JSContext* cx, const FuncType& funcType)
 {
     StringBuffer buf(cx);
     if (!buf.append('('))
         return nullptr;
 
     bool first = true;
-    for (ValType arg : sig.args()) {
+    for (ValType arg : funcType.args()) {
         if (!first && !buf.append(", ", strlen(", ")))
             return nullptr;
 
@@ -629,8 +668,8 @@ SigToString(JSContext* cx, const Sig& sig)
     if (!buf.append(") -> (", strlen(") -> (")))
         return nullptr;
 
-    if (sig.ret() != ExprType::Void) {
-        const char* retStr = ToCString(sig.ret());
+    if (funcType.ret() != ExprType::Void) {
+        const char* retStr = ToCString(funcType.ret());
         if (!buf.append(retStr, strlen(retStr)))
             return nullptr;
     }
@@ -688,10 +727,10 @@ WasmModuleObject::imports(JSContext* cx, unsigned argc, Value* vp)
         props.infallibleAppend(IdValuePair(NameToId(names.kind), StringValue(kindStr)));
 
         if (fuzzingSafe && import.kind == DefinitionKind::Function) {
-            JSString* sigStr = SigToString(cx, funcImports[numFuncImport++].sig());
-            if (!sigStr)
+            JSString* ftStr = FuncTypeToString(cx, funcImports[numFuncImport++].funcType());
+            if (!ftStr)
                 return false;
-            if (!props.append(IdValuePair(NameToId(names.signature), StringValue(sigStr))))
+            if (!props.append(IdValuePair(NameToId(names.signature), StringValue(ftStr))))
                 return false;
         }
 
@@ -746,10 +785,10 @@ WasmModuleObject::exports(JSContext* cx, unsigned argc, Value* vp)
         props.infallibleAppend(IdValuePair(NameToId(names.kind), StringValue(kindStr)));
 
         if (fuzzingSafe && exp.kind() == DefinitionKind::Function) {
-            JSString* sigStr = SigToString(cx, funcExports[numFuncExport++].sig());
-            if (!sigStr)
+            JSString* ftStr = FuncTypeToString(cx, funcExports[numFuncExport++].funcType());
+            if (!ftStr)
                 return false;
-            if (!props.append(IdValuePair(NameToId(names.signature), StringValue(sigStr))))
+            if (!props.append(IdValuePair(NameToId(names.signature), StringValue(ftStr))))
                 return false;
         }
 
@@ -1049,7 +1088,7 @@ WasmInstanceObject::create(JSContext* cx,
                            SharedTableVector&& tables,
                            Handle<FunctionVector> funcImports,
                            const GlobalDescVector& globals,
-                           const ValVector& globalImportValues,
+                           HandleValVector globalImportValues,
                            const WasmGlobalObjectVector& globalObjs,
                            HandleObject proto)
 {
@@ -1156,11 +1195,12 @@ Instantiate(JSContext* cx, const Module& module, HandleObject importObj,
     RootedWasmMemoryObject memory(cx);
     Rooted<WasmGlobalObjectVector> globalObjs(cx);
 
-    ValVector globals;
+    RootedValVector globals(cx);
     if (!GetImports(cx, module, importObj, &funcs, &table, &memory, globalObjs.get(), &globals))
         return false;
 
-    return module.instantiate(cx, funcs, table, memory, globals, globalObjs.get(), instanceProto, instanceObj);
+    return module.instantiate(cx, funcs, table, memory, globals, globalObjs.get(), instanceProto,
+                              instanceObj);
 }
 
 /* static */ bool
@@ -1300,8 +1340,8 @@ WasmInstanceObject::getExportedFunction(JSContext* cx, HandleWasmInstanceObject 
     if (!EnsureLazyEntryStub(instance, funcExportIndex, funcExport))
         return false;
 
-    const Sig& sig = funcExport.sig();
-    unsigned numArgs = sig.args().length();
+    const FuncType& funcType = funcExport.funcType();
+    unsigned numArgs = funcType.args().length();
 
     if (instance.isAsmJS()) {
         // asm.js needs to act like a normal JS function which means having the
@@ -1322,7 +1362,7 @@ WasmInstanceObject::getExportedFunction(JSContext* cx, HandleWasmInstanceObject 
         // Functions with anyref don't have jit entries yet, so they should
         // mostly behave like asm.js functions. Pretend it's the case, until
         // jit entries are implemented.
-        JSFunction::Flags flags = sig.temporarilyUnsupportedAnyRef()
+        JSFunction::Flags flags = funcType.temporarilyUnsupportedAnyRef()
                                 ? JSFunction::ASMJS_NATIVE
                                 : JSFunction::WASM_FUN;
 
@@ -1331,7 +1371,7 @@ WasmInstanceObject::getExportedFunction(JSContext* cx, HandleWasmInstanceObject 
         if (!fun)
             return false;
 
-        if (sig.temporarilyUnsupportedAnyRef())
+        if (funcType.temporarilyUnsupportedAnyRef())
             fun->setAsmJSIndex(funcIndex);
         else
             fun->setWasmJitEntry(instance.code().getAddressOfJitEntry(funcIndex));
@@ -2102,7 +2142,7 @@ const ClassOps WasmGlobalObject::classOps_ =
     nullptr, /* call */
     nullptr, /* hasInstance */
     nullptr, /* construct */
-    nullptr  /* trace */
+    WasmGlobalObject::trace
 };
 
 const Class WasmGlobalObject::class_ =
@@ -2114,6 +2154,26 @@ const Class WasmGlobalObject::class_ =
 };
 
 /* static */ void
+WasmGlobalObject::trace(JSTracer* trc, JSObject* obj)
+{
+    WasmGlobalObject* global = reinterpret_cast<WasmGlobalObject*>(obj);
+    switch (global->type().code()) {
+      case ValType::AnyRef:
+        if (global->cell()->ptr)
+            TraceManuallyBarrieredEdge(trc, &global->cell()->ptr, "wasm anyref global");
+        break;
+      case ValType::I32:
+      case ValType::F32:
+      case ValType::I64:
+      case ValType::F64:
+        break;
+      WASM_CRASH_IF_SIMD_TYPES;
+      case ValType::Ref:
+        MOZ_CRASH("Ref NYI");
+    }
+}
+
+/* static */ void
 WasmGlobalObject::finalize(FreeOp*, JSObject* obj)
 {
     WasmGlobalObject* global = reinterpret_cast<WasmGlobalObject*>(obj);
@@ -2121,20 +2181,8 @@ WasmGlobalObject::finalize(FreeOp*, JSObject* obj)
 }
 
 /* static */ WasmGlobalObject*
-WasmGlobalObject::create(JSContext* cx, const Val& val, bool isMutable)
+WasmGlobalObject::create(JSContext* cx, HandleVal hval, bool isMutable)
 {
-    UniquePtr<Cell> cell = js::MakeUnique<Cell>();
-    if (!cell)
-        return nullptr;
-
-    switch (val.type().code()) {
-      case ValType::I32: cell->i32 = val.i32(); break;
-      case ValType::I64: cell->i64 = val.i64(); break;
-      case ValType::F32: cell->f32 = val.f32(); break;
-      case ValType::F64: cell->f64 = val.f64(); break;
-      default:           MOZ_CRASH();
-    }
-
     RootedObject proto(cx, &cx->global()->getPrototype(JSProto_WasmGlobal).toObject());
 
     AutoSetNewObjectMetadata metadata(cx);
@@ -2142,9 +2190,43 @@ WasmGlobalObject::create(JSContext* cx, const Val& val, bool isMutable)
     if (!obj)
         return nullptr;
 
+    MOZ_ASSERT(obj->isTenured(), "assumed by set_global post barriers");
+
+    // It's simpler to initialize the cell after the object has been created,
+    // to avoid needing to root the cell before the object creation.
+
+    Cell* cell = js_new<Cell>();
+    if (!cell)
+        return nullptr;
+
+    const Val& val = hval.get();
+    switch (val.type().code()) {
+      case ValType::I32:
+        cell->i32 = val.i32();
+        break;
+      case ValType::I64:
+        cell->i64 = val.i64();
+        break;
+      case ValType::F32:
+        cell->f32 = val.f32();
+        break;
+      case ValType::F64:
+        cell->f64 = val.f64();
+        break;
+      case ValType::AnyRef:
+        MOZ_ASSERT(!cell->ptr, "no prebarriers needed");
+        cell->ptr = val.ptr();
+        if (cell->ptr)
+            JSObject::writeBarrierPost(&cell->ptr, nullptr, cell->ptr);
+        break;
+      WASM_CRASH_IF_SIMD_TYPES;
+      case ValType::Ref:
+        MOZ_CRASH("Ref NYI");
+    }
+
     obj->initReservedSlot(TYPE_SLOT, Int32Value(int32_t(val.type().bitsUnsafe())));
     obj->initReservedSlot(MUTABLE_SLOT, JS::BooleanValue(isMutable));
-    obj->initReservedSlot(CELL_SLOT, PrivateValue(cell.release()));
+    obj->initReservedSlot(CELL_SLOT, PrivateValue(cell));
 
     return obj;
 }
@@ -2182,10 +2264,18 @@ WasmGlobalObject::construct(JSContext* cx, unsigned argc, Value* vp)
     ValType globalType;
     if (StringEqualsAscii(typeLinearStr, "i32")) {
         globalType = ValType::I32;
+    } else if (args.length() == 1 && StringEqualsAscii(typeLinearStr, "i64")) {
+        // For the time being, i64 is allowed only if there is not an
+        // initializing value.
+        globalType = ValType::I64;
     } else if (StringEqualsAscii(typeLinearStr, "f32")) {
         globalType = ValType::F32;
     } else if (StringEqualsAscii(typeLinearStr, "f64")) {
         globalType = ValType::F64;
+#ifdef ENABLE_WASM_GC
+    } else if (cx->options().wasmGc() && StringEqualsAscii(typeLinearStr, "anyref")) {
+        globalType = ValType::AnyRef;
+#endif
     } else {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_WASM_BAD_GLOBAL_TYPE);
         return false;
@@ -2198,19 +2288,20 @@ WasmGlobalObject::construct(JSContext* cx, unsigned argc, Value* vp)
     bool isMutable = ToBoolean(mutableVal);
 
     // Extract the initial value, or provide a suitable default.
-    // Guard against control flow mistakes below failing to set |globalVal|.
-    Val globalVal = Val(uint32_t(0));
+    RootedVal globalVal(cx);
     if (args.length() >= 2) {
         RootedValue valueVal(cx, args.get(1));
-
         if (!ToWebAssemblyValue(cx, globalType, valueVal, &globalVal))
             return false;
     } else {
         switch (globalType.code()) {
-          case ValType::I32: /* set above */ break;
-          case ValType::F32: globalVal = Val(float(0.0));  break;
-          case ValType::F64: globalVal = Val(double(0.0)); break;
-          default: MOZ_CRASH();
+          case ValType::I32:    globalVal = Val(uint32_t(0)); break;
+          case ValType::I64:    globalVal = Val(uint64_t(0)); break;
+          case ValType::F32:    globalVal = Val(float(0.0));  break;
+          case ValType::F64:    globalVal = Val(double(0.0)); break;
+          case ValType::AnyRef: globalVal = Val(nullptr);     break;
+          WASM_CRASH_IF_SIMD_TYPES;
+          case ValType::Ref:    MOZ_CRASH("Ref NYI");
         }
     }
 
@@ -2235,14 +2326,17 @@ WasmGlobalObject::valueGetterImpl(JSContext* cx, const CallArgs& args)
       case ValType::I32:
       case ValType::F32:
       case ValType::F64:
-        args.rval().set(args.thisv().toObject().as<WasmGlobalObject>().value());
+      case ValType::AnyRef:
+        args.rval().set(args.thisv().toObject().as<WasmGlobalObject>().value(cx));
         return true;
       case ValType::I64:
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, JSMSG_WASM_BAD_I64_TYPE);
         return false;
-      default:
-        MOZ_CRASH();
+      WASM_CRASH_IF_SIMD_TYPES;
+      case ValType::Ref:
+        MOZ_CRASH("Ref NYI");
     }
+    MOZ_CRASH();
 }
 
 /* static */ bool
@@ -2266,16 +2360,34 @@ WasmGlobalObject::valueSetterImpl(JSContext* cx, const CallArgs& args)
         return false;
     }
 
-    Val val;
+    RootedVal val(cx);
     if (!ToWebAssemblyValue(cx, global->type(), args.get(0), &val))
         return false;
 
     Cell* cell = global->cell();
     switch (global->type().code()) {
-      case ValType::I32: cell->i32 = val.i32(); break;
-      case ValType::F32: cell->f32 = val.f32(); break;
-      case ValType::F64: cell->f64 = val.f64(); break;
-      default:           MOZ_CRASH();
+      case ValType::I32:
+        cell->i32 = val.get().i32();
+        break;
+      case ValType::F32:
+        cell->f32 = val.get().f32();
+        break;
+      case ValType::F64:
+        cell->f64 = val.get().f64();
+        break;
+      case ValType::AnyRef: {
+        JSObject* prevPtr = cell->ptr;
+        JSObject::writeBarrierPre(prevPtr);
+        cell->ptr = val.get().ptr();
+        if (cell->ptr)
+            JSObject::writeBarrierPost(&cell->ptr, prevPtr, cell->ptr);
+        break;
+      }
+      WASM_CRASH_IF_SIMD_TYPES;
+      case ValType::I64:
+        MOZ_CRASH("unexpected i64 when setting global's value");
+      case ValType::Ref:
+        MOZ_CRASH("Ref NYI");
     }
 
     args.rval().setUndefined();
@@ -2317,26 +2429,29 @@ WasmGlobalObject::isMutable() const
     return getReservedSlot(MUTABLE_SLOT).toBoolean();
 }
 
-Val
-WasmGlobalObject::val() const
+void
+WasmGlobalObject::val(MutableHandleVal outval) const
 {
     Cell* cell = this->cell();
-    Val val;
     switch (type().code()) {
-      case ValType::I32: val = Val(uint32_t(cell->i32)); break;
-      case ValType::I64: val = Val(uint64_t(cell->i64)); break;
-      case ValType::F32: val = Val(cell->f32); break;
-      case ValType::F64: val = Val(cell->f64); break;
-      default:           MOZ_CRASH();
+      case ValType::I32:    outval.set(Val(uint32_t(cell->i32))); return;
+      case ValType::I64:    outval.set(Val(uint64_t(cell->i64))); return;
+      case ValType::F32:    outval.set(Val(cell->f32));           return;
+      case ValType::F64:    outval.set(Val(cell->f64));           return;
+      case ValType::AnyRef: outval.set(Val(cell->ptr));           return;
+      WASM_CRASH_IF_SIMD_TYPES;
+      case ValType::Ref:    MOZ_CRASH("Ref NYI");
     }
-    return val;
+    MOZ_CRASH("unexpected Global type");
 }
 
 Value
-WasmGlobalObject::value() const
+WasmGlobalObject::value(JSContext* cx) const
 {
     // ToJSValue crashes on I64; this is desirable.
-    return ToJSValue(val());
+    RootedVal result(cx);
+    val(&result);
+    return ToJSValue(result.get());
 }
 
 WasmGlobalObject::Cell*
@@ -2892,6 +3007,7 @@ class CompileStreamTask : public PromiseHelperTask, public JS::StreamConsumer
         instantiate_(instantiate),
         importObj_(cx, importObj),
         streamState_(mutexid::WasmStreamStatus, Env),
+        codeSection_{},
         codeStreamEnd_(nullptr),
         exclusiveCodeStreamEnd_(mutexid::WasmCodeStreamEnd, nullptr),
         exclusiveTailBytes_(mutexid::WasmTailBytesPtr, nullptr),

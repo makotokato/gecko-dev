@@ -16,7 +16,7 @@ function findSource(sourceTree, sourceUrl) {
   let returnTarget = null;
 
   function _traverse(subtree) {
-    if ((0, _utils.nodeHasChildren)(subtree)) {
+    if (subtree.type === "directory") {
       for (const child of subtree.contents) {
         _traverse(child);
       }
@@ -28,7 +28,7 @@ function findSource(sourceTree, sourceUrl) {
     }
   }
 
-  sourceTree.contents.forEach(_traverse);
+  sourceTree.contents.forEach(node => _traverse(node));
 
   if (!returnTarget) {
     return sourceTree;
@@ -37,19 +37,19 @@ function findSource(sourceTree, sourceUrl) {
   return returnTarget;
 }
 
-function getDirectories(sourceUrl, sourceTree) {
-  const url = (0, _getURL.getURL)(sourceUrl);
+function getDirectories(source, sourceTree) {
+  const url = (0, _getURL.getURL)(source);
   const fullUrl = `${url.group}${url.path}`;
   const parentMap = (0, _utils.createParentMap)(sourceTree);
-  const source = findSource(sourceTree, fullUrl);
+  const subtreeSource = findSource(sourceTree, fullUrl);
 
-  if (!source) {
+  if (!subtreeSource) {
     return [];
   }
 
-  let node = source;
+  let node = subtreeSource;
   const directories = [];
-  directories.push(source);
+  directories.push(subtreeSource);
 
   while (true) {
     node = parentMap.get(node);

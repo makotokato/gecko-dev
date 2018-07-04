@@ -163,7 +163,7 @@ let InternalFaviconLoader = {
     });
   },
 
-  loadFavicon(browser, principal, uri, requestContextID) {
+  loadFavicon(browser, principal, uri, expiration, iconURI) {
     this.ensureInitialized();
     let win = browser.ownerGlobal;
     if (!gFaviconLoadDataMap.has(win)) {
@@ -186,9 +186,15 @@ let InternalFaviconLoader = {
       ? PlacesUtils.favicons.FAVICON_LOAD_PRIVATE
       : PlacesUtils.favicons.FAVICON_LOAD_NON_PRIVATE;
     let callback = this._makeCompletionCallback(win, innerWindowID);
+
+    if (iconURI && iconURI.schemeIs("data")) {
+      expiration = PlacesUtils.toPRTime(expiration);
+      PlacesUtils.favicons.replaceFaviconDataFromDataURL(uri, iconURI.spec,
+                                                         expiration, principal);
+    }
+
     let request = PlacesUtils.favicons.setAndFetchFaviconForPage(currentURI, uri, false,
-                                                                 loadType, callback, principal,
-                                                                 requestContextID);
+                                                                 loadType, callback, principal);
 
     // Now register the result so we can cancel it if/when necessary.
     if (!request) {
@@ -209,8 +215,6 @@ let InternalFaviconLoader = {
 };
 
 var PlacesUIUtils = {
-  LOAD_IN_SIDEBAR_ANNO: "bookmarkProperties/loadInSidebar",
-  DESCRIPTION_ANNO: "bookmarkProperties/description",
   LAST_USED_FOLDERS_META_KEY: "bookmarks/lastusedfolders",
 
   /**
@@ -307,15 +311,17 @@ var PlacesUIUtils = {
 
   /**
    * set and fetch a favicon. Can only be used from the parent process.
-   * @param browser   {Browser}   The XUL browser element for which we're fetching a favicon.
-   * @param principal {Principal} The loading principal to use for the fetch.
-   * @param uri       {URI}       The URI to fetch.
+   * @param browser    {Browser}   The XUL browser element for which we're fetching a favicon.
+   * @param principal  {Principal} The loading principal to use for the fetch.
+   * @param uri        {URI}       The URI to fetch.
+   * @param expiration {Number}    An optional expiration time.
+   * @param iconURI    {URI}       An optional data: URI holding the icon's data.
    */
-  loadFavicon(browser, principal, uri, requestContextID) {
+  loadFavicon(browser, principal, uri, expiration = 0, iconURI = null) {
     if (gInContentProcess) {
       throw new Error("Can't track loads from within the child process!");
     }
-    InternalFaviconLoader.loadFavicon(browser, principal, uri, requestContextID);
+    InternalFaviconLoader.loadFavicon(browser, principal, uri, expiration, iconURI);
   },
 
   /**
@@ -657,8 +663,8 @@ var PlacesUIUtils = {
   },
 
   /**
-   * Loads the node's URL in the appropriate tab or window or as a web
-   * panel given the user's preference specified by modifier keys tracked by a
+   * Loads the node's URL in the appropriate tab or window given the
+   * user's preference specified by modifier keys tracked by a
    * DOM mouse/key event.
    * @param   aNode
    *          An uri result node.
@@ -690,8 +696,7 @@ var PlacesUIUtils = {
   },
 
   /**
-   * Loads the node's URL in the appropriate tab or window or as a
-   * web panel.
+   * Loads the node's URL in the appropriate tab or window.
    * see also openUILinkIn
    */
   openNodeIn: function PUIU_openNodeIn(aNode, aWhere, aView, aPrivate) {
@@ -709,19 +714,6 @@ var PlacesUIUtils = {
           this.markPageAsFollowedBookmark(aNode.uri);
         else
           this.markPageAsTyped(aNode.uri);
-      }
-
-      // Check whether the node is a bookmark which should be opened as
-      // a web panel
-      if (aWhere == "current" && isBookmark) {
-        if (PlacesUtils.annotations
-                       .itemHasAnnotation(aNode.itemId, this.LOAD_IN_SIDEBAR_ANNO)) {
-          let browserWin = BrowserWindowTracker.getTopWindow();
-          if (browserWin) {
-            browserWin.openWebPanel(aNode.title, aNode.uri);
-            return;
-          }
-        }
       }
 
       aWindow.openTrustedLinkIn(aNode.uri, aWhere, {

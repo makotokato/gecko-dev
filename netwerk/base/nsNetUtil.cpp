@@ -1674,6 +1674,11 @@ private:
                 if (mCount != -1) {
                     MOZ_ASSERT(mCount >= writtenData);
                     mCount -= writtenData;
+
+                    // Is this the end of the reading?
+                    if (mCount == 0) {
+                        return NS_OK;
+                    }
                 }
 
                 continue;
@@ -2547,7 +2552,7 @@ NS_RelaxStrictFileOriginPolicy(nsIURI *aTargetURI,
 {
   if (!NS_URIIsLocalFile(aTargetURI)) {
     // This is probably not what the caller intended
-    NS_NOTREACHED("NS_RelaxStrictFileOriginPolicy called with non-file URI");
+    MOZ_ASSERT_UNREACHABLE("NS_RelaxStrictFileOriginPolicy called with non-file URI");
     return false;
   }
 

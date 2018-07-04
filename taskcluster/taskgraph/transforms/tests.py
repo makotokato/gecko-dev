@@ -544,9 +544,9 @@ def set_treeherder_machine_platform(config, tests):
         'win64-pgo/opt': 'windows10-64/pgo',
         # The build names for Android platforms have partially evolved over the
         # years and need to be translated.
-        'android-api-16/debug': 'android-4-3-armv7-api16/debug',
-        'android-api-16/opt': 'android-4-3-armv7-api16/opt',
-        'android-x86/opt': 'android-4-2-x86/opt',
+        'android-api-16/debug': 'android-em-4-3-armv7-api16/debug',
+        'android-api-16/opt': 'android-em-4-3-armv7-api16/opt',
+        'android-x86/opt': 'android-em-4-2-x86/opt',
         'android-api-16-gradle/opt': 'android-api-16-gradle/opt',
     }
     for test in tests:
@@ -558,6 +558,8 @@ def set_treeherder_machine_platform(config, tests):
         # Since it's unclear if the regular macOS builds can be removed from
         # the table, workaround the issue for QR.
         if '-qr' in test['test-platform']:
+            test['treeherder-machine-platform'] = test['test-platform']
+        elif 'android-hw' in test['test-platform']:
             test['treeherder-machine-platform'] = test['test-platform']
         else:
             test['treeherder-machine-platform'] = translation.get(
@@ -600,9 +602,9 @@ def set_tier(config, tests):
                                          'macosx64/debug',
                                          'macosx64-nightly/opt',
                                          'macosx64-devedition/opt',
-                                         'android-4.3-arm7-api-16/opt',
-                                         'android-4.3-arm7-api-16/debug',
-                                         'android-4.2-x86/opt']:
+                                         'android-em-4.3-arm7-api-16/opt',
+                                         'android-em-4.3-arm7-api-16/debug',
+                                         'android-em-4.2-x86/opt']:
                 test['tier'] = 1
             else:
                 test['tier'] = 2
@@ -685,6 +687,8 @@ def handle_suite_category(config, tests):
             pass
         elif script == 'android_emulator_unittest.py':
             category_arg = '--test-suite'
+        elif script == 'android_hardware_unittest.py':
+            category_arg = '--test-suite'
         elif script == 'desktop_unittest.py':
             category_arg = '--{}-suite'.format(suite)
 
@@ -702,6 +706,10 @@ def enable_code_coverage(config, tests):
     """Enable code coverage for the ccov and jsdcov build-platforms"""
     for test in tests:
         if 'ccov' in test['build-platform']:
+            # do not run tests on fuzzing or opt build
+            if 'opt' in test['build-platform'] or 'fuzzing' in test['build-platform']:
+                test['run-on-projects'] = []
+                continue
             test['mozharness'].setdefault('extra-options', []).append('--code-coverage')
             test['instance-size'] = 'xlarge'
             # Ensure we always run on the projects defined by the build, unless the test
@@ -928,6 +936,16 @@ def set_worker_type(config, tests):
                 ]
             # now we have the right platform set the worker type accordingly
             test['worker-type'] = win_worker_type_platform[test['virtualization']]
+        elif test_platform.startswith('android-hw-g5'):
+            if test['suite'] == 'raptor':
+                test['worker-type'] = 'proj-autophone/gecko-t-ap-perf-g5'
+            else:
+                test['worker-type'] = 'proj-autophone/gecko-t-ap-unit-g5'
+        elif test_platform.startswith('android-hw-p2'):
+            if test['suite'] == 'raptor':
+                test['worker-type'] = 'proj-autophone/gecko-t-ap-perf-p2'
+            else:
+                test['worker-type'] = 'proj-autophone/gecko-t-ap-unit-p2'
         elif test_platform.startswith('linux') or test_platform.startswith('android'):
             if test.get('suite', '') == 'talos' and \
                  not test['build-platform'].startswith('linux64-ccov'):

@@ -15,6 +15,7 @@
 using mozilla::MallocSizeOf;
 using mozilla::Maybe;
 using mozilla::DOMEventTargetHelper;
+using mozilla::dom::BlobURLProtocolHandler;
 using mozilla::dom::ClientInfo;
 using mozilla::dom::ServiceWorker;
 using mozilla::dom::ServiceWorkerDescriptor;
@@ -150,7 +151,7 @@ nsIGlobalObject::ForEachEventTargetObject(const std::function<void(DOMEventTarge
   // Protect against the function call triggering a mutation of the list
   // while we are iterating by copying the DETH references to a temporary
   // list.
-  AutoTArray<DOMEventTargetHelper*, 64> targetList;
+  AutoTArray<RefPtr<DOMEventTargetHelper>, 64> targetList;
   for (const DOMEventTargetHelper* deth = mEventTargetObjects.getFirst();
        deth; deth = deth->getNext()) {
     targetList.AppendElement(const_cast<DOMEventTargetHelper*>(deth));
@@ -201,6 +202,13 @@ nsIGlobalObject::GetController() const
 
 RefPtr<ServiceWorker>
 nsIGlobalObject::GetOrCreateServiceWorker(const ServiceWorkerDescriptor& aDescriptor)
+{
+  MOZ_DIAGNOSTIC_ASSERT(false, "this global should not have any service workers");
+  return nullptr;
+}
+
+RefPtr<ServiceWorkerRegistration>
+nsIGlobalObject::GetServiceWorkerRegistration(const mozilla::dom::ServiceWorkerRegistrationDescriptor& aDescriptor) const
 {
   MOZ_DIAGNOSTIC_ASSERT(false, "this global should not have any service workers");
   return nullptr;

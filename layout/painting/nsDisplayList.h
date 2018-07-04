@@ -2641,7 +2641,13 @@ public:
 
   void SetBuildingRect(const nsRect& aBuildingRect)
   {
+    if (aBuildingRect == mBuildingRect) {
+      // Avoid unnecessary paint rect recompution when the
+      // building rect is staying the same.
+      return;
+    }
     mPaintRect = mBuildingRect = aBuildingRect;
+    mPaintRectValid = false;
   }
 
   void SetPaintRect(const nsRect& aPaintRect) {
@@ -5031,7 +5037,7 @@ public:
    */
   virtual nsDisplayWrapList* WrapWithClone(nsDisplayListBuilder* aBuilder,
                                            nsDisplayItem* aItem) {
-    NS_NOTREACHED("We never returned nullptr for GetUnderlyingFrame!");
+    MOZ_ASSERT_UNREACHABLE("We never returned nullptr for GetUnderlyingFrame!");
     return nullptr;
   }
 
@@ -6856,6 +6862,7 @@ class PaintTelemetry
   enum class Metric {
     DisplayList,
     Layerization,
+    FlushRasterization,
     Rasterization,
     COUNT,
   };

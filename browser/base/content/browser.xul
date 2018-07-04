@@ -89,9 +89,7 @@
 # All sets except for popupsets (commands, keys, stringbundles and broadcasters)
 # *must* go into the browser-sets.inc file so that they can be shared with other
 # top level windows in macWindow.inc.xul.
-#define FULL_BROWSER_WINDOW
 #include browser-sets.inc
-#undef FULL_BROWSER_WINDOW
 
   <popupset id="mainPopupSet">
     <menupopup id="tabContextMenu"
@@ -99,6 +97,9 @@
                onpopuphidden="if (event.target == this) TabContextMenu.contextTab = null;">
       <menuitem id="context_reloadTab" label="&reloadTab.label;" accesskey="&reloadTab.accesskey;"
                 oncommand="gBrowser.reloadTab(TabContextMenu.contextTab);"/>
+      <menuitem id="context_reloadSelectedTabs" label="&reloadSelectedTabs.label;" hidden="true"
+                accesskey="&reloadSelectedTabs.accesskey;"
+                oncommand="gBrowser.reloadMultiSelectedTabs();"/>
       <menuitem id="context_toggleMuteTab" oncommand="TabContextMenu.contextTab.toggleMuteAudio();"/>
       <menuitem id="context_toggleMuteSelectedTabs" hidden="true"
                 oncommand="gBrowser.toggleMuteAudioOnMultiSelectedTabs(TabContextMenu.contextTab);"/>
@@ -109,6 +110,12 @@
       <menuitem id="context_unpinTab" label="&unpinTab.label;" hidden="true"
                 accesskey="&unpinTab.accesskey;"
                 oncommand="gBrowser.unpinTab(TabContextMenu.contextTab);"/>
+      <menuitem id="context_pinSelectedTabs" label="&pinSelectedTabs.label;" hidden="true"
+                accesskey="&pinSelectedTabs.accesskey;"
+                oncommand="gBrowser.pinMultiSelectedTabs();"/>
+      <menuitem id="context_unpinSelectedTabs" label="&unpinSelectedTabs.label;" hidden="true"
+                accesskey="&unpinSelectedTabs.accesskey;"
+                oncommand="gBrowser.unpinMultiSelectedTabs();"/>
       <menuitem id="context_duplicateTab" label="&duplicateTab.label;"
                 accesskey="&duplicateTab.accesskey;"
                 oncommand="duplicateTabIn(TabContextMenu.contextTab, 'tab');"/>
@@ -234,11 +241,17 @@
       <box class="panel-header">
         <label id="editBookmarkPanelTitle"/>
       </box>
-      <box>
+      <html:div id="editBookmarkPanelFaviconContainer">
         <html:img id="editBookmarkPanelFavicon"/>
-      </box>
+      </html:div>
       <box id="editBookmarkPanelImage"/>
 #include ../../components/places/content/editBookmarkPanel.inc.xul
+      <vbox id="editBookmarkPanelBottomContent" flex="1">
+        <checkbox id="editBookmarkPanel_showForNewBookmarks"
+                  label="&editBookmark.showForNewBookmarks.label;"
+                  accesskey="&editBookmark.showForNewBookmarks.accesskey;"
+                  oncommand="StarUI.onShowForNewBookmarksCheckboxCommand();"/>
+      </vbox>
       <hbox id="editBookmarkPanelBottomButtons" pack="end">
 #ifndef XP_UNIX
         <button id="editBookmarkPanelDoneButton"
@@ -464,21 +477,19 @@
         </panelview>
       </panelmultiview>
     </panel>
-    <panel id="pageActionFeedback"
+
+    <panel id="confirmation-hint"
            role="alert"
            type="arrow"
            hidden="true"
            flip="slide"
            position="bottomcenter topright"
            tabspecific="true"
-           noautofocus="true"
-           copyURLFeedback="&copyURLFeedback.label;"
-           sendToDeviceFeedback="&sendToDeviceFeedback.label;"
-           sendToDeviceOfflineFeedback="&sendToDeviceOfflineFeedback.label;">
-      <hbox id="pageActionFeedbackAnimatableBox">
-        <image id="pageActionFeedbackAnimatableImage"/>
+           noautofocus="true">
+      <hbox id="confirmation-hint-checkmark-animation-container">
+        <image id="confirmation-hint-checkmark-image"/>
       </hbox>
-      <label id="pageActionFeedbackMessage"/>
+      <label id="confirmation-hint-message"/>
     </panel>
 
     <menupopup id="pageActionContextMenu"
@@ -528,6 +539,7 @@
 #include ../../components/customizableui/content/panelUI.inc.xul
 #include ../../components/controlcenter/content/panel.inc.xul
 #include ../../components/downloads/content/downloadsPanel.inc.xul
+#include browser-allTabsMenu.inc.xul
 
     <hbox id="downloads-animation-container" mousethrough="always">
       <vbox id="downloads-notification-anchor" hidden="true">
@@ -679,29 +691,10 @@
 
       <toolbarbutton id="alltabs-button"
                      class="toolbarbutton-1 chromeclass-toolbar-additional tabs-alltabs-button badged-button"
-                     type="menu"
+                     oncommand="gTabsPanel.showAllTabsPanel();"
                      label="&listAllTabs.label;"
                      tooltiptext="&listAllTabs.label;"
-                     removable="false">
-        <menupopup id="alltabs-popup"
-                   position="after_end">
-          <menuitem id="alltabs_undoCloseTab"
-                    key="key_undoCloseTab"
-                    label="&undoCloseTab.label;"
-                    observes="History:UndoCloseTab"/>
-          <menuseparator id="alltabs-popup-separator-1"/>
-          <menu id="alltabs_containersTab"
-                label="&newUserContext.label;">
-            <menupopup id="alltabs_containersMenuTab" />
-          </menu>
-          <menuseparator id="alltabs-popup-separator-2"/>
-          <menu id="alltabs_hiddenTabs"
-                label="&hiddenTabs.label;">
-            <menupopup id="alltabs_hiddenTabsMenu"/>
-          </menu>
-          <menuseparator id="alltabs-popup-separator-3"/>
-        </menupopup>
-      </toolbarbutton>
+                     removable="false"/>
 
       <hbox class="titlebar-placeholder" type="post-tabs"
             ordinal="1000"

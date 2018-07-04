@@ -1431,7 +1431,7 @@ nsHttpConnection::ReadTimeoutTick(PRIntervalTime now)
       // succesfullu write to the socket and this can only happen after
       // the TLS handshake is done.
       PRIntervalTime initialTLSDelta = now - mLastWriteTime;
-      if (initialTLSDelta > gHttpHandler->TLSHandshakeTimeout()) {
+      if (initialTLSDelta > PR_MillisecondsToInterval(gHttpHandler->TLSHandshakeTimeout())) {
         LOG(("canceling transaction: tls handshake takes too long: tls handshake "
              "last %ums, timeout is %dms.",
              PR_IntervalToMilliseconds(initialTLSDelta),
@@ -1594,7 +1594,7 @@ nsHttpConnection::ResumeSend()
         return rv;
     }
 
-    NS_NOTREACHED("no socket output stream");
+    MOZ_ASSERT_UNREACHABLE("no socket output stream");
     return NS_ERROR_UNEXPECTED;
 }
 
@@ -1622,7 +1622,7 @@ nsHttpConnection::ResumeRecv()
     if (mSocketIn)
         return mSocketIn->AsyncWait(this, 0, 0, nullptr);
 
-    NS_NOTREACHED("no socket input stream");
+    MOZ_ASSERT_UNREACHABLE("no socket input stream");
     return NS_ERROR_UNEXPECTED;
 }
 

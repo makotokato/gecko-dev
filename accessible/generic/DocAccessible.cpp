@@ -680,14 +680,18 @@ NS_IMETHODIMP
 DocAccessible::OnPivotChanged(nsIAccessiblePivot* aPivot,
                               nsIAccessible* aOldAccessible,
                               int32_t aOldStart, int32_t aOldEnd,
+                              nsIAccessible* aNewAccessible,
+                              int32_t aNewStart, int32_t aNewEnd,
                               PivotMoveReason aReason,
                               bool aIsFromUserInput)
 {
   RefPtr<AccEvent> event =
     new AccVCChangeEvent(
       this, (aOldAccessible ? aOldAccessible->ToInternalAccessible() : nullptr),
-      aOldStart, aOldEnd, aReason,
-      aIsFromUserInput ? eFromUserInput : eNoUserInput);
+      aOldStart, aOldEnd,
+      (aNewAccessible ? aNewAccessible->ToInternalAccessible() : nullptr),
+      aNewStart, aNewEnd,
+      aReason, aIsFromUserInput ? eFromUserInput : eNoUserInput);
   nsEventShell::FireEvent(event);
 
   return NS_OK;
@@ -717,7 +721,7 @@ DocAccessible::AttributeWillChange(dom::Element* aElement,
   // Update dependent IDs cache. Take care of elements that are accessible
   // because dependent IDs cache doesn't contain IDs from non accessible
   // elements.
-  if (aModType != dom::MutationEventBinding::ADDITION)
+  if (aModType != dom::MutationEvent_Binding::ADDITION)
     RemoveDependentIDsFor(accessible, aAttribute);
 
   if (aAttribute == nsGkAtoms::id) {
@@ -735,7 +739,7 @@ DocAccessible::AttributeWillChange(dom::Element* aElement,
   // need to newly expose it as a toggle button) etc.
   if (aAttribute == nsGkAtoms::aria_checked ||
       aAttribute == nsGkAtoms::aria_pressed) {
-    mARIAAttrOldValue = (aModType != dom::MutationEventBinding::ADDITION) ?
+    mARIAAttrOldValue = (aModType != dom::MutationEvent_Binding::ADDITION) ?
       nsAccUtils::GetARIAToken(aElement, aAttribute) : nullptr;
     return;
   }
@@ -790,8 +794,8 @@ DocAccessible::AttributeChanged(dom::Element* aElement,
   // its accessible will be created later. It doesn't make sense to keep
   // dependent IDs for non accessible elements. For the second case we'll update
   // dependent IDs cache when its accessible is created.
-  if (aModType == dom::MutationEventBinding::MODIFICATION ||
-      aModType == dom::MutationEventBinding::ADDITION) {
+  if (aModType == dom::MutationEvent_Binding::MODIFICATION ||
+      aModType == dom::MutationEvent_Binding::ADDITION) {
     AddDependentIDsFor(accessible, aAttribute);
   }
 }

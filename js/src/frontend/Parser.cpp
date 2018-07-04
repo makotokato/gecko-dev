@@ -186,7 +186,7 @@ ParseContext::Scope::addPossibleAnnexBFunctionBox(ParseContext* pc, FunctionBox*
             return false;
     }
 
-    return possibleAnnexBFunctionBoxes_->append(funbox);
+    return maybeReportOOM(pc, possibleAnnexBFunctionBoxes_->append(funbox));
 }
 
 bool
@@ -856,9 +856,10 @@ PerHandlerParser<ParseHandler>::PerHandlerParser(JSContext* cx, LifoAlloc& alloc
                                                  bool foldConstants, UsedNameTracker& usedNames,
                                                  LazyScript* lazyOuterFunction,
                                                  ScriptSourceObject* sourceObject,
-                                                 ParseGoal parseGoal)
+                                                 ParseGoal parseGoal, void* internalSyntaxParser)
   : ParserBase(cx, alloc, options, foldConstants, usedNames, sourceObject, parseGoal),
-    handler(cx, alloc, lazyOuterFunction)
+    handler(cx, alloc, lazyOuterFunction),
+    internalSyntaxParser_(internalSyntaxParser)
 {
 
 }
@@ -873,17 +874,10 @@ GeneralParser<ParseHandler, CharT>::GeneralParser(JSContext* cx, LifoAlloc& allo
                                                   LazyScript* lazyOuterFunction,
                                                   ScriptSourceObject* sourceObject,
                                                   ParseGoal parseGoal)
-  : Base(cx, alloc, options, foldConstants, usedNames, lazyOuterFunction, sourceObject, parseGoal),
+  : Base(cx, alloc, options, foldConstants, usedNames, syntaxParser, lazyOuterFunction,
+         sourceObject, parseGoal),
     tokenStream(cx, options, chars, length)
-{
-    // The Mozilla specific JSOPTION_EXTRA_WARNINGS option adds extra warnings
-    // which are not generated if functions are parsed lazily. Note that the
-    // standard "use strict" does not inhibit lazy parsing.
-    if (options.extraWarningsOption)
-        disableSyntaxParser();
-    else
-        setSyntaxParser(syntaxParser);
-}
+{}
 
 template <typename CharT>
 void
@@ -9101,12 +9095,12 @@ Parser<FullParseHandler, CharT>::newRegExp()
                   "code below will need changing for UTF-8 handling");
 
     // Create the regexp and check its syntax.
-    const CharT* chars = tokenStream.getTokenbuf().begin();
-    size_t length = tokenStream.getTokenbuf().length();
+    const auto& chars = tokenStream.getCharBuffer();
     RegExpFlag flags = anyChars.currentToken().regExpFlags();
 
     Rooted<RegExpObject*> reobj(context);
-    reobj = RegExpObject::create(context, chars, length, flags, anyChars, alloc, TenuredObject);
+    reobj = RegExpObject::create(context, chars.begin(), chars.length(), flags, anyChars, alloc,
+                                 TenuredObject);
     if (!reobj)
         return null();
 
@@ -9123,11 +9117,10 @@ Parser<SyntaxParseHandler, CharT>::newRegExp()
                   "code below will need changing for UTF-8 handling");
 
     // Only check the regexp's syntax, but don't create a regexp object.
-    const CharT* chars = tokenStream.getTokenbuf().begin();
-    size_t length = tokenStream.getTokenbuf().length();
+    const auto& chars = tokenStream.getCharBuffer();
     RegExpFlag flags = anyChars.currentToken().regExpFlags();
 
-    mozilla::Range<const CharT> source(chars, length);
+    mozilla::Range<const CharT> source(chars.begin(), chars.length());
     if (!js::irregexp::ParsePatternSyntax(anyChars, alloc, source, flags & UnicodeFlag))
         return null();
 

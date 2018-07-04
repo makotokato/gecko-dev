@@ -63,7 +63,6 @@
 #include "vm/StringType.h"
 #include "vm/TraceLogging.h"
 #include "wasm/AsmJS.h"
-#include "wasm/WasmBinaryToText.h"
 #include "wasm/WasmJS.h"
 #include "wasm/WasmModule.h"
 #include "wasm/WasmSignalHandlers.h"
@@ -659,87 +658,58 @@ WasmTextToBinary(JSContext* cx, unsigned argc, Value* vp)
     if (!twoByteChars.initTwoByte(cx, args[0].toString()))
         return false;
 
+    bool withOffsets = false;
     if (args.hasDefined(1)) {
-        if (!args[1].isString()) {
-            ReportUsageErrorASCII(cx, callee, "Second argument, if present, must be a String");
+        if (!args[1].isBoolean()) {
+            ReportUsageErrorASCII(cx, callee, "Second argument, if present, must be a boolean");
             return false;
         }
+        withOffsets = ToBoolean(args[1]);
     }
 
     uintptr_t stackLimit = GetNativeStackLimit(cx);
 
     wasm::Bytes bytes;
     UniqueChars error;
-    if (!wasm::TextToBinary(twoByteChars.twoByteChars(), stackLimit, &bytes, &error)) {
+    wasm::Uint32Vector offsets;
+    if (!wasm::TextToBinary(twoByteChars.twoByteChars(), stackLimit, &bytes, &offsets, &error)) {
         JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_WASM_TEXT_FAIL,
                                   error.get() ? error.get() : "out of memory");
         return false;
     }
 
-    RootedObject obj(cx, JS_NewUint8Array(cx, bytes.length()));
+    RootedObject binary(cx, JS_NewUint8Array(cx, bytes.length()));
+    if (!binary)
+        return false;
+
+    memcpy(binary->as<TypedArrayObject>().viewDataUnshared(), bytes.begin(), bytes.length());
+
+    if (!withOffsets) {
+        args.rval().setObject(*binary);
+        return true;
+    }
+
+    RootedObject obj(cx, JS_NewPlainObject(cx));
     if (!obj)
         return false;
 
-    memcpy(obj->as<TypedArrayObject>().viewDataUnshared(), bytes.begin(), bytes.length());
+    constexpr unsigned propAttrs = JSPROP_ENUMERATE;
+    if (!JS_DefineProperty(cx, obj, "binary", binary, propAttrs))
+        return false;
+
+    RootedObject jsOffsets(cx, JS_NewArrayObject(cx, offsets.length()));
+    if (!jsOffsets)
+        return false;
+    for (size_t i = 0; i < offsets.length(); i++) {
+        uint32_t offset = offsets[i];
+        RootedValue offsetVal(cx, NumberValue(offset));
+        if (!JS_SetElement(cx, jsOffsets, i, offsetVal))
+            return false;
+    }
+    if (!JS_DefineProperty(cx, obj, "offsets", jsOffsets, propAttrs))
+        return false;
 
     args.rval().setObject(*obj);
-    return true;
-}
-
-static bool
-WasmBinaryToText(JSContext* cx, unsigned argc, Value* vp)
-{
-    if (!cx->options().wasm()) {
-        JS_ReportErrorASCII(cx, "wasm support unavailable");
-        return false;
-    }
-
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    if (!args.get(0).isObject() || !args.get(0).toObject().is<TypedArrayObject>()) {
-        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_WASM_BAD_BUF_ARG);
-        return false;
-    }
-
-    Rooted<TypedArrayObject*> code(cx, &args[0].toObject().as<TypedArrayObject>());
-
-    if (!TypedArrayObject::ensureHasBuffer(cx, code))
-        return false;
-
-    if (code->isSharedMemory()) {
-        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_WASM_BAD_BUF_ARG);
-        return false;
-    }
-
-    const uint8_t* bufferStart = code->bufferUnshared()->dataPointer();
-    const uint8_t* bytes = bufferStart + code->byteOffset();
-    uint32_t length = code->byteLength();
-
-    Vector<uint8_t> copy(cx);
-    if (code->bufferUnshared()->hasInlineData()) {
-        if (!copy.append(bytes, length))
-            return false;
-        bytes = copy.begin();
-    }
-
-    if (args.length() > 1) {
-        JS_ReportErrorASCII(cx, "wasm text format selection is not supported");
-        return false;
-    }
-
-    StringBuffer buffer(cx);
-    bool ok = wasm::BinaryToText(cx, bytes, length, buffer);
-    if (!ok) {
-        if (!cx->isExceptionPending())
-            JS_ReportErrorASCII(cx, "wasm binary to text print error");
-        return false;
-    }
-
-    JSString* result = buffer.finishString();
-    if (!result)
-        return false;
-
-    args.rval().setString(result);
     return true;
 }
 
@@ -1468,7 +1438,7 @@ NewExternalString(JSContext* cx, unsigned argc, Value* vp)
     RootedString str(cx, args[0].toString());
     size_t len = str->length();
 
-    UniqueTwoByteChars buf(cx->pod_malloc<char16_t>(len));
+    auto buf = cx->make_pod_array<char16_t>(len);
     if (!buf)
         return false;
 
@@ -1497,7 +1467,7 @@ NewMaybeExternalString(JSContext* cx, unsigned argc, Value* vp)
     RootedString str(cx, args[0].toString());
     size_t len = str->length();
 
-    UniqueTwoByteChars buf(cx->pod_malloc<char16_t>(len));
+    auto buf = cx->make_pod_array<char16_t>(len);
     if (!buf)
         return false;
 
@@ -2465,13 +2435,9 @@ ReadGeckoProfilingStack(JSContext* cx, unsigned argc, Value* vp)
             if (!JS_DefineProperty(cx, inlineFrameInfo, "kind", frameKind, propAttrs))
                 return false;
 
-            size_t length = strlen(inlineFrame.label.get());
-            auto* label = reinterpret_cast<Latin1Char*>(inlineFrame.label.release());
-            frameLabel = NewString<CanGC>(cx, label, length);
-            if (!frameLabel) {
-                js_free(label);
+            frameLabel = NewLatin1StringZ(cx, std::move(inlineFrame.label));
+            if (!frameLabel)
                 return false;
-            }
 
             if (!JS_DefineProperty(cx, inlineFrameInfo, "label", frameLabel, propAttrs))
                 return false;
@@ -2957,7 +2923,7 @@ class CloneBufferObject : public NativeObject {
             return false;
 
         size_t size = data->Size();
-        UniqueChars buffer(static_cast<char*>(js_malloc(size)));
+        UniqueChars buffer(js_pod_malloc<char>(size));
         if (!buffer) {
             ReportOutOfMemory(cx);
             return false;
@@ -2987,7 +2953,7 @@ class CloneBufferObject : public NativeObject {
             return false;
 
         size_t size = data->Size();
-        UniqueChars buffer(static_cast<char*>(js_malloc(size)));
+        UniqueChars buffer(js_pod_malloc<char>(size));
         if (!buffer) {
             ReportOutOfMemory(cx);
             return false;
@@ -3272,7 +3238,7 @@ DisableTraceLogger(JSContext* cx, unsigned argc, Value* vp)
 }
 #endif
 
-#ifdef DEBUG
+#if defined(DEBUG) || defined(JS_JITSPEW)
 static bool
 DumpObject(JSContext* cx, unsigned argc, Value* vp)
 {
@@ -3675,10 +3641,10 @@ FindPath(JSContext* cx, unsigned argc, Value* vp)
 
         heaptools::EdgeName edgeName = std::move(edges[i]);
 
-        RootedString edgeStr(cx, NewString<CanGC>(cx, edgeName.get(), js_strlen(edgeName.get())));
+        size_t edgeNameLength = js_strlen(edgeName.get());
+        RootedString edgeStr(cx, NewString<CanGC>(cx, std::move(edgeName), edgeNameLength));
         if (!edgeStr)
             return false;
-        mozilla::Unused << edgeName.release(); // edgeStr acquired ownership
 
         if (!JS_DefineProperty(cx, obj, "edge", edgeStr, JSPROP_ENUMERATE))
             return false;
@@ -4377,18 +4343,16 @@ GetLcovInfo(JSContext* cx, unsigned argc, Value* vp)
     }
 
     size_t length = 0;
-    char* content = nullptr;
+    UniqueChars content;
     {
         AutoRealm ar(cx, global);
-        content = js::GetCodeCoverageSummary(cx, &length);
+        content.reset(js::GetCodeCoverageSummary(cx, &length));
     }
 
     if (!content)
         return false;
 
-    JSString* str = JS_NewStringCopyN(cx, content, length);
-    js_free(content);
-
+    JSString* str = JS_NewStringCopyN(cx, content.get(), length);
     if (!str)
         return false;
 
@@ -5019,7 +4983,7 @@ MonotonicNow(JSContext* cx, unsigned argc, Value* vp)
     };
 
     timespec ts;
-    if (false && clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
         // Use a monotonic clock if available.
         now = ComputeNow(ts);
     } else {
@@ -5180,6 +5144,15 @@ ObjectGlobal(JSContext* cx, unsigned argc, Value* vp)
     obj = ToWindowProxyIfWindow(&obj->nonCCWGlobal());
 
     args.rval().setObject(*obj);
+    return true;
+}
+
+static bool
+AssertCorrectRealm(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_RELEASE_ASSERT(cx->realm() == args.callee().as<JSFunction>().realm());
+    args.rval().setUndefined();
     return true;
 }
 
@@ -5669,10 +5642,6 @@ gc::ZealModeHelpText),
 "wasmTextToBinary(str)",
 "  Translates the given text wasm module into its binary encoding."),
 
-    JS_FN_HELP("wasmBinaryToText", WasmBinaryToText, 1, 0,
-"wasmBinaryToText(bin)",
-"  Translates binary encoding to text format"),
-
     JS_FN_HELP("wasmExtractCode", WasmExtractCode, 1, 0,
 "wasmExtractCode(module[, tier])",
 "  Extracts generated machine code from WebAssembly.Module.  The tier is a string,\n"
@@ -5823,7 +5792,7 @@ gc::ZealModeHelpText),
 "  paths in each of those arrays is bounded by |maxNumPaths|. Each element in a\n"
 "  path is of the form |{ predecessor, edge }|."),
 
-#ifdef DEBUG
+#if defined(DEBUG) || defined(JS_JITSPEW)
     JS_FN_HELP("dumpObject", DumpObject, 1, 0,
 "dumpObject()",
 "  Dump an internal representation of an object."),
@@ -5986,6 +5955,10 @@ gc::ZealModeHelpText),
     JS_FN_HELP("objectGlobal", ObjectGlobal, 1, 0,
 "objectGlobal(obj)",
 "  Returns the object's global object or null if the object is a wrapper.\n"),
+
+    JS_FN_HELP("assertCorrectRealm", AssertCorrectRealm, 0, 0,
+"assertCorrectRealm()",
+"  Asserts cx->realm matches callee->raelm.\n"),
 
     JS_FN_HELP("baselineCompile", BaselineCompile, 2, 0,
 "baselineCompile([fun/code], forceDebugInstrumentation=false)",

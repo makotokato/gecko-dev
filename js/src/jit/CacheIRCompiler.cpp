@@ -1932,6 +1932,9 @@ CacheIRCompiler::emitTruncateDoubleToUInt32()
     ValueOperand val = allocator.useValueRegister(masm, reader.valOperandId());
     Register res = allocator.defineRegister(masm, reader.int32OperandId());
 
+    Label int32, done;
+    masm.branchTestInt32(Assembler::Equal, val, &int32);
+
     Label doneTruncate,  truncateABICall;
     if (mode_ != Mode::Baseline)
         masm.push(FloatReg0);
@@ -1960,6 +1963,13 @@ CacheIRCompiler::emitTruncateDoubleToUInt32()
     masm.bind(&doneTruncate);
     if (mode_ != Mode::Baseline)
         masm.pop(FloatReg0);
+
+    masm.jump(&done);
+    masm.bind(&int32);
+
+    masm.unboxInt32(val, res);
+
+    masm.bind(&done);
     return true;
 }
 

@@ -257,6 +257,7 @@ void Gecko_UpdateAnimations(RawGeckoElementBorrowed aElementOrPseudo,
                             ComputedStyleBorrowedOrNull aOldComputedValues,
                             ComputedStyleBorrowedOrNull aComputedValues,
                             mozilla::UpdateAnimationsTasks aTasks);
+size_t Gecko_GetAnimationEffectCount(RawGeckoElementBorrowed aElementOrPseudo);
 bool Gecko_ElementHasAnimations(RawGeckoElementBorrowed aElementOrPseudo);
 bool Gecko_ElementHasCSSAnimations(RawGeckoElementBorrowed aElementOrPseudo);
 bool Gecko_ElementHasCSSTransitions(RawGeckoElementBorrowed aElementOrPseudo);
@@ -381,7 +382,7 @@ void Gecko_CopyCursorArrayFrom(nsStyleUserInterface* dest,
 void Gecko_SetContentDataImageValue(nsStyleContentData* aList,
                                     mozilla::css::ImageValue* aImageValue);
 nsStyleContentData::CounterFunction* Gecko_SetCounterFunction(
-    nsStyleContentData* content_data, nsStyleContentType type);
+    nsStyleContentData* content_data, mozilla::StyleContentType);
 
 // Dirtiness tracking.
 void Gecko_SetNodeFlags(RawGeckoNodeBorrowed node, uint32_t flags);
@@ -536,6 +537,8 @@ void Gecko_nsStyleSVG_CopyContextProperties(nsStyleSVG* dst, const nsStyleSVG* s
 mozilla::css::URLValue* Gecko_NewURLValue(ServoBundledURI uri);
 size_t Gecko_URLValue_SizeOfIncludingThis(mozilla::css::URLValue* url);
 void Gecko_GetComputedURLSpec(const mozilla::css::URLValueData* url, nsCString* spec);
+void Gecko_nsIURI_Debug(nsIURI*, nsCString* spec);
+
 NS_DECL_THREADSAFE_FFI_REFCOUNTING(mozilla::css::URLValue, CSSURLValue);
 NS_DECL_THREADSAFE_FFI_REFCOUNTING(RawGeckoURLExtraData, URLExtraData);
 

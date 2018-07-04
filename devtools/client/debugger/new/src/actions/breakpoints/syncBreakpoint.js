@@ -59,6 +59,11 @@ async function syncClientBreakpoint(getState, client, sourceMaps, sourceId, pend
   const source = (0, _selectors.getSource)(getState(), sourceId);
   const generatedSourceId = sourceMaps.isOriginalId(sourceId) ? (0, _devtoolsSourceMap.originalToGeneratedId)(sourceId) : sourceId;
   const generatedSource = (0, _selectors.getSource)(getState(), generatedSourceId);
+
+  if (!source) {
+    return null;
+  }
+
   const {
     location,
     astLocation

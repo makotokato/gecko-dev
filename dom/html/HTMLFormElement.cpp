@@ -1141,8 +1141,10 @@ HTMLFormElement::PostPasswordEvent()
   }
 
   mFormPasswordEventDispatcher =
-    new AsyncEventDispatcher(this, NS_LITERAL_STRING("DOMFormHasPassword"),
-                             true, true);
+    new AsyncEventDispatcher(this,
+                             NS_LITERAL_STRING("DOMFormHasPassword"),
+                             CanBubble::eYes,
+                             ChromeOnlyDispatch::eYes);
   mFormPasswordEventDispatcher->PostDOMEvent();
 }
 
@@ -1871,7 +1873,8 @@ HTMLFormElement::CheckFormValidity(nsIMutableArray* aInvalidElements) const
       nsContentUtils::DispatchTrustedEvent(sortedControls[i]->OwnerDoc(),
                                            static_cast<nsIContent*>(sortedControls[i]),
                                            NS_LITERAL_STRING("invalid"),
-                                           false, true, &defaultAction);
+                                           CanBubble::eNo, Cancelable::eYes,
+                                           &defaultAction);
 
       // Add all unhandled invalid controls to aInvalidElements if the caller
       // requested them.
@@ -1950,7 +1953,12 @@ HTMLFormElement::CheckValidFormSubmission()
           // Input elements can trigger a form submission and we want to
           // update the style in that case.
           if (mControls->mElements[i]->IsHTMLElement(nsGkAtoms::input) &&
-              nsContentUtils::IsFocusedContent(mControls->mElements[i])) {
+              // We don't use nsContentUtils::IsFocusedContent here, because it
+              // doesn't really do what we want for number controls: it's true
+              // for the anonymous textnode inside, but not the number control
+              // itself.  We can use the focus state, though, because that gets
+              // synced to the number control by the anonymous text control.
+              mControls->mElements[i]->State().HasState(NS_EVENT_STATE_FOCUS)) {
             static_cast<HTMLInputElement*>(mControls->mElements[i])
               ->UpdateValidityUIBits(true);
           }
@@ -2102,7 +2110,7 @@ HTMLFormElement::OnProgressChange(nsIWebProgress* aWebProgress,
                                   int32_t aCurTotalProgress,
                                   int32_t aMaxTotalProgress)
 {
-  NS_NOTREACHED("notification excluded in AddProgressListener(...)");
+  MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
 
@@ -2112,7 +2120,7 @@ HTMLFormElement::OnLocationChange(nsIWebProgress* aWebProgress,
                                   nsIURI* location,
                                   uint32_t aFlags)
 {
-  NS_NOTREACHED("notification excluded in AddProgressListener(...)");
+  MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
 
@@ -2122,7 +2130,7 @@ HTMLFormElement::OnStatusChange(nsIWebProgress* aWebProgress,
                                 nsresult aStatus,
                                 const char16_t* aMessage)
 {
-  NS_NOTREACHED("notification excluded in AddProgressListener(...)");
+  MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
 
@@ -2131,7 +2139,7 @@ HTMLFormElement::OnSecurityChange(nsIWebProgress* aWebProgress,
                                   nsIRequest* aRequest,
                                   uint32_t state)
 {
-  NS_NOTREACHED("notification excluded in AddProgressListener(...)");
+  MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
 
@@ -2545,7 +2553,7 @@ HTMLFormElement::RemoveElementFromPastNamesMap(Element* aElement)
 JSObject*
 HTMLFormElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return HTMLFormElementBinding::Wrap(aCx, this, aGivenProto);
+  return HTMLFormElement_Binding::Wrap(aCx, this, aGivenProto);
 }
 
 } // namespace dom

@@ -374,9 +374,13 @@ MessageManagerTunnel.prototype = {
     "Forms:SelectDropDownItem",
     // Messages sent from SessionStore.jsm
     "SessionStore:flush",
+    "SessionStore:restoreHistory",
+    "SessionStore:restoreTabContent",
   ],
 
   INNER_TO_OUTER_MESSAGES: [
+    // Messages sent to browser.js
+    "Browser:LoadURI",
     // Messages sent to RemoteWebProgress.jsm
     "Content:LoadURIResult",
     "Content:LocationChange",
@@ -395,9 +399,6 @@ MessageManagerTunnel.prototype = {
     "contextmenu",
     // Messages sent to SelectParentHelper.jsm
     "Forms:UpdateDropDown",
-    // Messages sent to browser.js
-    "PageVisibility:Hide",
-    "PageVisibility:Show",
     // Messages sent to SessionStore.jsm
     "SessionStore:update",
     // Messages sent to BrowserTestUtils.jsm
@@ -405,6 +406,8 @@ MessageManagerTunnel.prototype = {
   ],
 
   OUTER_TO_INNER_MESSAGE_PREFIXES: [
+    // Messages sent from browser.xml
+    "Autoscroll:",
     // Messages sent from nsContextMenu.js
     "ContextMenu:",
     // Messages sent from DevTools
@@ -427,6 +430,8 @@ MessageManagerTunnel.prototype = {
   ],
 
   INNER_TO_OUTER_MESSAGE_PREFIXES: [
+    // Messages sent to browser.xml
+    "Autoscroll:",
     // Messages sent to nsContextMenu.js
     "ContextMenu:",
     // Messages sent to DevTools

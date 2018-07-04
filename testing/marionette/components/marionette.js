@@ -23,6 +23,8 @@ XPCOMUtils.defineLazyGetter(this, "log", Log.get);
 XPCOMUtils.defineLazyServiceGetter(
     this, "env", "@mozilla.org/process/environment;1", "nsIEnvironment");
 
+const XMLURI_PARSE_ERROR = "http://www.mozilla.org/newlayout/xml/parsererror.xml";
+
 const NOTIFY_RUNNING = "remote-active";
 
 // Complements -marionette flag for starting the Marionette server.
@@ -107,9 +109,6 @@ const RECOMMENDED_PREFS = new Map([
   // These should also be set in the profile prior to starting Firefox,
   // as it is picked up at runtime.
   ["browser.shell.checkDefaultBrowser", false],
-
-  // Do not warn when quitting with multiple tabs
-  ["browser.showQuitWarning", false],
 
   // Do not redirect user when a milstone upgrade of Firefox is detected
   ["browser.startup.homepage_override.mstone", "ignore"],
@@ -215,9 +214,6 @@ const RECOMMENDED_PREFS = new Map([
 
   // Do not scan Wifi
   ["geo.wifi.scan", false],
-
-  // No hang monitor
-  ["hangmonitor.timeout", 0],
 
   // Show chrome errors and warnings in the error console
   ["javascript.options.showInConsole", true],
@@ -325,6 +321,7 @@ class MarionetteParentProcess {
       case "profile-after-change":
         Services.obs.addObserver(this, "command-line-startup");
         Services.obs.addObserver(this, "sessionstore-windows-restored");
+        Services.obs.addObserver(this, "toplevel-window-ready");
 
         for (let [pref, value] of EnvironmentPrefs.from(ENV_PRESERVE_PREFS)) {
           Preferences.set(pref, value);
@@ -365,8 +362,22 @@ class MarionetteParentProcess {
         this.suppressSafeModeDialog(subject);
         break;
 
+      case "toplevel-window-ready":
+        subject.addEventListener("load", ev => {
+          if (ev.target.documentElement.namespaceURI == XMLURI_PARSE_ERROR) {
+            Services.obs.removeObserver(this, topic);
+
+            let parserError = ev.target.querySelector("parsererror");
+            log.fatal(parserError.textContent);
+            this.uninit();
+            Services.startup.quit(Ci.nsIAppStartup.eForceQuit);
+          }
+        }, {once: true});
+        break;
+
       case "sessionstore-windows-restored":
         Services.obs.removeObserver(this, topic);
+        Services.obs.removeObserver(this, "toplevel-window-ready");
 
         // When Firefox starts on Windows, an additional GFX sanity test
         // window may appear off-screen.  Marionette should wait for it

@@ -137,8 +137,8 @@ class AsmJSGlobal
                 VarInitKind initKind_;
                 union U {
                     ValType importType_;
-                    Val val_;
-                    U() : val_(Val()) {}
+                    LitVal val_;
+                    U() : val_(LitVal()) {}
                 } u;
             } var;
             uint32_t ffiIndex_;
@@ -178,7 +178,7 @@ class AsmJSGlobal
         MOZ_ASSERT(pod.which_ == Variable);
         return pod.u.var.initKind_;
     }
-    Val varInitVal() const {
+    LitVal varInitVal() const {
         MOZ_ASSERT(pod.which_ == Variable);
         MOZ_ASSERT(pod.u.var.initKind_ == InitConstant);
         return pod.u.var.u.val_;
@@ -338,6 +338,7 @@ struct js::AsmJSMetadata : Metadata, AsmJSMetadataCacheablePod
     AsmJSMetadata()
       : Metadata(ModuleKind::AsmJS),
         cacheResult(CacheResult::Miss),
+        toStringStart(0),
         srcStart(0),
         strict(false)
     {}
@@ -822,7 +823,7 @@ ParseVarOrConstStatement(AsmJSParser& parser, ParseNode** var)
 //
 // This class distinguishes between signed and unsigned integer SIMD types like
 // Int32x4 and Uint32x4, and so does Type below. The wasm ValType and ExprType
-// enums, and the wasm::Val class do not.
+// enums, and the wasm::LitVal class do not.
 class NumLit
 {
   public:
@@ -947,33 +948,33 @@ class NumLit
         return false;
     }
 
-    Val value() const {
+    LitVal value() const {
         switch (which_) {
           case NumLit::Fixnum:
           case NumLit::NegativeInt:
           case NumLit::BigUnsigned:
-            return Val(toUint32());
+            return LitVal(toUint32());
           case NumLit::Float:
-            return Val(toFloat());
+            return LitVal(toFloat());
           case NumLit::Double:
-            return Val(toDouble());
+            return LitVal(toDouble());
           case NumLit::Int8x16:
           case NumLit::Uint8x16:
-            return Val(simdValue().asInt8x16());
+            return LitVal(simdValue().asInt8x16());
           case NumLit::Int16x8:
           case NumLit::Uint16x8:
-            return Val(simdValue().asInt16x8());
+            return LitVal(simdValue().asInt16x8());
           case NumLit::Int32x4:
           case NumLit::Uint32x4:
-            return Val(simdValue().asInt32x4());
+            return LitVal(simdValue().asInt32x4());
           case NumLit::Float32x4:
-            return Val(simdValue().asFloat32x4());
+            return LitVal(simdValue().asFloat32x4());
           case NumLit::Bool8x16:
-            return Val(simdValue().asInt8x16(), ValType::B8x16);
+            return LitVal(simdValue().asInt8x16(), ValType::B8x16);
           case NumLit::Bool16x8:
-            return Val(simdValue().asInt16x8(), ValType::B16x8);
+            return LitVal(simdValue().asInt16x8(), ValType::B16x8);
           case NumLit::Bool32x4:
-            return Val(simdValue().asInt32x4(), ValType::B32x4);
+            return LitVal(simdValue().asInt32x4(), ValType::B32x4);
           case NumLit::OutOfRangeInt:;
         }
         MOZ_CRASH("bad literal");
@@ -1524,7 +1525,7 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
             // non-trivial constructor and therefore MUST be placement-new'd
             // into existence.
             MOZ_PUSH_DISABLE_NONTRIVIAL_UNION_WARNINGS
-            U() {}
+            U() : funcDefIndex_(0) {}
             MOZ_POP_DISABLE_NONTRIVIAL_UNION_WARNINGS
         } u;
 
@@ -1615,7 +1616,7 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
             AsmJSMathBuiltinFunction func;
         } u;
 
-        MathBuiltin() : kind(Kind(-1)) {}
+        MathBuiltin() : kind(Kind(-1)), u{} {}
         explicit MathBuiltin(double cst) : kind(Constant) {
             u.cst = cst;
         }
@@ -1647,17 +1648,17 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
         uint32_t sigIndex() const {
             return sigIndex_;
         }
-        const Sig& sig() const {
+        const FuncType& funcType() const {
             return types_[sigIndex_].funcType();
         }
 
         // Implement HashPolicy:
-        typedef const Sig& Lookup;
+        typedef const FuncType& Lookup;
         static HashNumber hash(Lookup l) {
             return l.hash();
         }
         static bool match(HashableSig lhs, Lookup rhs) {
-            return lhs.sig() == rhs;
+            return lhs.funcType() == rhs;
         }
     };
 
@@ -1676,14 +1677,14 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
         // Implement HashPolicy:
         struct Lookup {
             PropertyName* name;
-            const Sig& sig;
-            Lookup(PropertyName* name, const Sig& sig) : name(name), sig(sig) {}
+            const FuncType& funcType;
+            Lookup(PropertyName* name, const FuncType& funcType) : name(name), funcType(funcType) {}
         };
         static HashNumber hash(Lookup l) {
-            return HashGeneric(l.name, l.sig.hash());
+            return HashGeneric(l.name, l.funcType.hash());
         }
         static bool match(NamedSig lhs, Lookup rhs) {
-            return lhs.name() == rhs.name && lhs.sig() == rhs.sig;
+            return lhs.name() == rhs.name && lhs.funcType() == rhs.funcType;
         }
     };
 
@@ -1754,14 +1755,14 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
             return false;
         return standardLibrarySimdOpNames_.putNew(atom->asPropertyName(), op);
     }
-    bool newSig(Sig&& sig, uint32_t* sigIndex) {
+    bool newSig(FuncType&& sig, uint32_t* sigIndex) {
         if (env_.types.length() >= MaxTypes)
             return failCurrentOffset("too many signatures");
 
         *sigIndex = env_.types.length();
         return env_.types.append(std::move(sig));
     }
-    bool declareSig(Sig&& sig, uint32_t* sigIndex) {
+    bool declareSig(FuncType&& sig, uint32_t* sigIndex) {
         SigSet::AddPtr p = sigSet_.lookupForAdd(sig);
         if (p) {
             *sigIndex = p->sigIndex();
@@ -2224,7 +2225,7 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
                                                         func.srcBegin() - asmJSMetadata_->srcStart,
                                                         func.srcEnd() - asmJSMetadata_->srcStart);
     }
-    bool addFuncDef(PropertyName* name, uint32_t firstUse, Sig&& sig, Func** func) {
+    bool addFuncDef(PropertyName* name, uint32_t firstUse, FuncType&& sig, Func** func) {
         uint32_t sigIndex;
         if (!declareSig(std::move(sig), &sigIndex))
             return false;
@@ -2244,7 +2245,7 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
         *func = &funcDefs_.back();
         return true;
     }
-    bool declareFuncPtrTable(Sig&& sig, PropertyName* name, uint32_t firstUse, uint32_t mask,
+    bool declareFuncPtrTable(FuncType&& sig, PropertyName* name, uint32_t firstUse, uint32_t mask,
                              uint32_t* tableIndex)
     {
         if (mask > MaxTableInitialLength)
@@ -2286,9 +2287,9 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
         for (uint32_t& index : elems)
             index += funcImportMap_.count();
 
-        return env_.elemSegments.emplaceBack(tableIndex, InitExpr(Val(uint32_t(0))), std::move(elems));
+        return env_.elemSegments.emplaceBack(tableIndex, InitExpr(LitVal(uint32_t(0))), std::move(elems));
     }
-    bool declareImport(PropertyName* name, Sig&& sig, unsigned ffiIndex, uint32_t* importIndex) {
+    bool declareImport(PropertyName* name, FuncType&& sig, unsigned ffiIndex, uint32_t* importIndex) {
         FuncImportMap::AddPtr p = funcImportMap_.lookupForAdd(NamedSig::Lookup(name, sig));
         if (p) {
             *importIndex = p->value();
@@ -2451,18 +2452,18 @@ class MOZ_STACK_CLASS JS_HAZ_ROOTED ModuleValidator
         return true;
     }
     SharedModule finish() {
-        MOZ_ASSERT(env_.funcSigs.empty());
-        if (!env_.funcSigs.resize(funcImportMap_.count() + funcDefs_.length()))
+        MOZ_ASSERT(env_.funcTypes.empty());
+        if (!env_.funcTypes.resize(funcImportMap_.count() + funcDefs_.length()))
             return nullptr;
         for (FuncImportMap::Range r = funcImportMap_.all(); !r.empty(); r.popFront()) {
             uint32_t funcIndex = r.front().value();
-            MOZ_ASSERT(!env_.funcSigs[funcIndex]);
-            env_.funcSigs[funcIndex] = &env_.types[r.front().key().sigIndex()].funcType();
+            MOZ_ASSERT(!env_.funcTypes[funcIndex]);
+            env_.funcTypes[funcIndex] = &env_.types[r.front().key().sigIndex()].funcType();
         }
         for (const Func& func : funcDefs_) {
             uint32_t funcIndex = funcImportMap_.count() + func.funcDefIndex();
-            MOZ_ASSERT(!env_.funcSigs[funcIndex]);
-            env_.funcSigs[funcIndex] = &env_.types[func.sigIndex()].funcType();
+            MOZ_ASSERT(!env_.funcTypes[funcIndex]);
+            env_.funcTypes[funcIndex] = &env_.types[func.sigIndex()].funcType();
         }
 
         if (!env_.funcImportGlobalDataOffsets.resize(funcImportMap_.count()))
@@ -3196,7 +3197,7 @@ class MOZ_STACK_CLASS FunctionValidator
         return encoder().writeOp(Op::Else);
     }
     void setIfType(size_t typeAt, ExprType type) {
-        encoder().patchFixedU7(typeAt, uint8_t(type));
+        encoder().patchFixedU7(typeAt, uint8_t(type.code()));
     }
     bool popIf() {
         MOZ_ASSERT(blockDepth_ > 0);
@@ -4855,7 +4856,8 @@ CheckCallArgs(FunctionValidator& f, ParseNode* callNode, ValTypeVector* args)
 }
 
 static bool
-CheckSignatureAgainstExisting(ModuleValidator& m, ParseNode* usepn, const Sig& sig, const Sig& existing)
+CheckSignatureAgainstExisting(ModuleValidator& m, ParseNode* usepn, const FuncType& sig,
+                              const FuncType& existing)
 {
     if (sig.args().length() != existing.args().length()) {
         return m.failf(usepn, "incompatible number of arguments (%zu"
@@ -4880,7 +4882,7 @@ CheckSignatureAgainstExisting(ModuleValidator& m, ParseNode* usepn, const Sig& s
 }
 
 static bool
-CheckFunctionSignature(ModuleValidator& m, ParseNode* usepn, Sig&& sig, PropertyName* name,
+CheckFunctionSignature(ModuleValidator& m, ParseNode* usepn, FuncType&& sig, PropertyName* name,
                        ModuleValidator::Func** func)
 {
     if (sig.args().length() > MaxParams)
@@ -4893,7 +4895,7 @@ CheckFunctionSignature(ModuleValidator& m, ParseNode* usepn, Sig&& sig, Property
         return m.addFuncDef(name, usepn->pn_pos.begin, std::move(sig), func);
     }
 
-    const SigWithId& existingSig = m.env().types[existing->sigIndex()].funcType();
+    const FuncTypeWithId& existingSig = m.env().types[existing->sigIndex()].funcType();
 
     if (!CheckSignatureAgainstExisting(m, usepn, sig, existingSig))
         return false;
@@ -4923,7 +4925,7 @@ CheckInternalCall(FunctionValidator& f, ParseNode* callNode, PropertyName* calle
     if (!CheckCallArgs<CheckIsArgType>(f, callNode, &args))
         return false;
 
-    Sig sig(std::move(args), ret.canonicalToExprType());
+    FuncType sig(std::move(args), ret.canonicalToExprType());
 
     ModuleValidator::Func* callee;
     if (!CheckFunctionSignature(f.m(), callNode, std::move(sig), calleeName, &callee))
@@ -4941,7 +4943,7 @@ CheckInternalCall(FunctionValidator& f, ParseNode* callNode, PropertyName* calle
 
 static bool
 CheckFuncPtrTableAgainstExisting(ModuleValidator& m, ParseNode* usepn, PropertyName* name,
-                                 Sig&& sig, unsigned mask, uint32_t* tableIndex)
+                                 FuncType&& sig, unsigned mask, uint32_t* tableIndex)
 {
     if (const ModuleValidator::Global* existing = m.lookupGlobal(name)) {
         if (existing->which() != ModuleValidator::Global::Table)
@@ -5006,7 +5008,7 @@ CheckFuncPtrCall(FunctionValidator& f, ParseNode* callNode, Type ret, Type* type
     if (!CheckCallArgs<CheckIsArgType>(f, callNode, &args))
         return false;
 
-    Sig sig(std::move(args), ret.canonicalToExprType());
+    FuncType sig(std::move(args), ret.canonicalToExprType());
 
     uint32_t tableIndex;
     if (!CheckFuncPtrTableAgainstExisting(f.m(), tableNode, name, std::move(sig), mask, &tableIndex))
@@ -5047,7 +5049,7 @@ CheckFFICall(FunctionValidator& f, ParseNode* callNode, unsigned ffiIndex, Type 
     if (!CheckCallArgs<CheckIsExternType>(f, callNode, &args))
         return false;
 
-    Sig sig(std::move(args), ret.canonicalToExprType());
+    FuncType sig(std::move(args), ret.canonicalToExprType());
 
     uint32_t importIndex;
     if (!f.m().declareImport(calleeName, std::move(sig), ffiIndex, &importIndex))
@@ -6132,7 +6134,7 @@ CheckComma(FunctionValidator& f, ParseNode* comma, Type* type)
     if (!CheckExpr(f, pn, type))
         return false;
 
-    f.encoder().patchFixedU7(typeAt, uint8_t(type->toWasmBlockSignatureType()));
+    f.encoder().patchFixedU7(typeAt, uint8_t(type->toWasmBlockSignatureType().code()));
 
     return f.encoder().writeOp(Op::End);
 }
@@ -7305,8 +7307,11 @@ CheckFunction(ModuleValidator& m)
         return false;
 
     ModuleValidator::Func* func = nullptr;
-    if (!CheckFunctionSignature(m, fn, Sig(std::move(args), f.returnedType()), FunctionName(fn), &func))
+    if (!CheckFunctionSignature(m, fn, FuncType(std::move(args), f.returnedType()),
+                                FunctionName(fn), &func))
+    {
         return false;
+    }
 
     if (func->defined())
         return m.failName(fn, "function '%s' already defined", FunctionName(fn));
@@ -7366,7 +7371,7 @@ CheckFuncPtrTable(ModuleValidator& m, ParseNode* var)
     unsigned mask = length - 1;
 
     Uint32Vector elemFuncDefIndices;
-    const Sig* sig = nullptr;
+    const FuncType* sig = nullptr;
     for (ParseNode* elem = ListHead(arrayLiteral); elem; elem = NextNode(elem)) {
         if (!elem->isKind(ParseNodeKind::Name))
             return m.fail(elem, "function-pointer table's elements must be names of functions");
@@ -7376,7 +7381,7 @@ CheckFuncPtrTable(ModuleValidator& m, ParseNode* var)
         if (!func)
             return m.fail(elem, "function-pointer table's elements must be names of functions");
 
-        const Sig& funcSig = m.env().types[func->sigIndex()].funcType();
+        const FuncType& funcSig = m.env().types[func->sigIndex()].funcType();
         if (sig) {
             if (*sig != funcSig)
                 return m.fail(elem, "all functions in table must have same signature");
@@ -7388,7 +7393,7 @@ CheckFuncPtrTable(ModuleValidator& m, ParseNode* var)
             return false;
     }
 
-    Sig copy;
+    FuncType copy;
     if (!copy.clone(*sig))
         return false;
 
@@ -7666,11 +7671,12 @@ HasPureCoercion(JSContext* cx, HandleValue v)
 }
 
 static bool
-ValidateGlobalVariable(JSContext* cx, const AsmJSGlobal& global, HandleValue importVal, Val* val)
+ValidateGlobalVariable(JSContext* cx, const AsmJSGlobal& global, HandleValue importVal,
+                       Maybe<LitVal>* val)
 {
     switch (global.varInitKind()) {
       case AsmJSGlobal::InitConstant:
-        *val = global.varInitVal();
+        val->emplace(global.varInitVal());
         return true;
 
       case AsmJSGlobal::InitImport: {
@@ -7686,7 +7692,7 @@ ValidateGlobalVariable(JSContext* cx, const AsmJSGlobal& global, HandleValue imp
             int32_t i32;
             if (!ToInt32(cx, v, &i32))
                 return false;
-            *val = Val(uint32_t(i32));
+            val->emplace(uint32_t(i32));
             return true;
           }
           case ValType::I64:
@@ -7695,42 +7701,42 @@ ValidateGlobalVariable(JSContext* cx, const AsmJSGlobal& global, HandleValue imp
             float f;
             if (!RoundFloat32(cx, v, &f))
                 return false;
-            *val = Val(f);
+            val->emplace(f);
             return true;
           }
           case ValType::F64: {
             double d;
             if (!ToNumber(cx, v, &d))
                 return false;
-            *val = Val(d);
+            val->emplace(d);
             return true;
           }
           case ValType::I8x16: {
             SimdConstant simdConstant;
             if (!ToSimdConstant<Int8x16>(cx, v, &simdConstant))
                 return false;
-            *val = Val(simdConstant.asInt8x16());
+            val->emplace(simdConstant.asInt8x16());
             return true;
           }
           case ValType::I16x8: {
             SimdConstant simdConstant;
             if (!ToSimdConstant<Int16x8>(cx, v, &simdConstant))
                 return false;
-            *val = Val(simdConstant.asInt16x8());
+            val->emplace(simdConstant.asInt16x8());
             return true;
           }
           case ValType::I32x4: {
             SimdConstant simdConstant;
             if (!ToSimdConstant<Int32x4>(cx, v, &simdConstant))
                 return false;
-            *val = Val(simdConstant.asInt32x4());
+            val->emplace(simdConstant.asInt32x4());
             return true;
           }
           case ValType::F32x4: {
             SimdConstant simdConstant;
             if (!ToSimdConstant<Float32x4>(cx, v, &simdConstant))
                 return false;
-            *val = Val(simdConstant.asFloat32x4());
+            val->emplace(simdConstant.asFloat32x4());
             return true;
           }
           case ValType::B8x16: {
@@ -7738,7 +7744,7 @@ ValidateGlobalVariable(JSContext* cx, const AsmJSGlobal& global, HandleValue imp
             if (!ToSimdConstant<Bool8x16>(cx, v, &simdConstant))
                 return false;
             // Bool8x16 uses the same data layout as Int8x16.
-            *val = Val(simdConstant.asInt8x16());
+            val->emplace(simdConstant.asInt8x16());
             return true;
           }
           case ValType::B16x8: {
@@ -7746,7 +7752,7 @@ ValidateGlobalVariable(JSContext* cx, const AsmJSGlobal& global, HandleValue imp
             if (!ToSimdConstant<Bool16x8>(cx, v, &simdConstant))
                 return false;
             // Bool16x8 uses the same data layout as Int16x8.
-            *val = Val(simdConstant.asInt16x8());
+            val->emplace(simdConstant.asInt16x8());
             return true;
           }
           case ValType::B32x4: {
@@ -7754,9 +7760,10 @@ ValidateGlobalVariable(JSContext* cx, const AsmJSGlobal& global, HandleValue imp
             if (!ToSimdConstant<Bool32x4>(cx, v, &simdConstant))
                 return false;
             // Bool32x4 uses the same data layout as Int32x4.
-            *val = Val(simdConstant.asInt32x4());
+            val->emplace(simdConstant.asInt32x4());
             return true;
           }
+          case ValType::Ref:
           case ValType::AnyRef: {
             MOZ_CRASH("not available in asm.js");
           }
@@ -8127,7 +8134,8 @@ CheckBuffer(JSContext* cx, const AsmJSMetadata& metadata, HandleValue bufferVal,
 
 static bool
 GetImports(JSContext* cx, const AsmJSMetadata& metadata, HandleValue globalVal,
-           HandleValue importVal, MutableHandle<FunctionVector> funcImports, ValVector* valImports)
+           HandleValue importVal, MutableHandle<FunctionVector> funcImports,
+           MutableHandleValVector valImports)
 {
     Rooted<FunctionVector> ffis(cx, FunctionVector(cx));
     if (!ffis.resize(metadata.numFFIs))
@@ -8136,10 +8144,10 @@ GetImports(JSContext* cx, const AsmJSMetadata& metadata, HandleValue globalVal,
     for (const AsmJSGlobal& global : metadata.asmJSGlobals) {
         switch (global.which()) {
           case AsmJSGlobal::Variable: {
-            Val val;
-            if (!ValidateGlobalVariable(cx, global, importVal, &val))
+            Maybe<LitVal> litVal;
+            if (!ValidateGlobalVariable(cx, global, importVal, &litVal))
                 return false;
-            if (!valImports->append(val))
+            if (!valImports.append(Val(*litVal)))
                 return false;
             break;
           }
@@ -8202,7 +8210,7 @@ TryInstantiate(JSContext* cx, CallArgs args, Module& module, const AsmJSMetadata
             return false;
     }
 
-    ValVector valImports;
+    RootedValVector valImports(cx);
     Rooted<FunctionVector> funcs(cx, FunctionVector(cx));
     if (!GetImports(cx, metadata, globalVal, importVal, &funcs, &valImports))
         return false;
@@ -8210,7 +8218,8 @@ TryInstantiate(JSContext* cx, CallArgs args, Module& module, const AsmJSMetadata
     Rooted<WasmGlobalObjectVector> globalObjs(cx);
 
     RootedWasmTableObject table(cx);
-    if (!module.instantiate(cx, funcs, table, memory, valImports, globalObjs.get(), nullptr, instanceObj))
+    if (!module.instantiate(cx, funcs, table, memory, valImports, globalObjs.get(), nullptr,
+                            instanceObj))
         return false;
 
     exportObj.set(&instanceObj->exportsObj());

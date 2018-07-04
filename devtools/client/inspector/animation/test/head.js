@@ -277,8 +277,10 @@ const clickOnTargetNode = async function(animationInspector, panel, index) {
   const targetEl = panel.querySelectorAll(".animation-target .objectBox")[index];
   targetEl.scrollIntoView(false);
   const onHighlight = animationInspector.inspector.toolbox.once("node-highlight");
+  const onAnimationTargetUpdated = animationInspector.once("animation-target-rendered");
   EventUtils.synthesizeMouseAtCenter(targetEl, {}, targetEl.ownerGlobal);
-  await waitForRendering(animationInspector);
+  await onAnimationTargetUpdated;
+  await waitForSummaryAndDetail(animationInspector);
   await onHighlight;
 };
 
@@ -818,4 +820,18 @@ async function testKeyframesGraphComputedValuePath(testData) {
       }
     }
   }
+}
+
+/**
+ * Check the adjusted current time and created time from specified two animations.
+ *
+ * @param {AnimationPlayerFront.state} animation1
+ * @param {AnimationPlayerFront.state} animation2
+ */
+function checkAdjustingTheTime(animation1, animation2) {
+  const adjustedCurrentTimeDiff = animation2.currentTime / animation2.playbackRate
+                                  - animation1.currentTime / animation1.playbackRate;
+  const createdTimeDiff = animation1.createdTime - animation2.createdTime;
+  ok(Math.abs(adjustedCurrentTimeDiff - createdTimeDiff) < 0.1,
+     "Adjusted time is correct");
 }

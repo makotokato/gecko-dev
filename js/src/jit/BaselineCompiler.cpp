@@ -428,6 +428,9 @@ BaselineCompiler::emitPrologue()
     if (!initEnvironmentChain())
         return false;
 
+    frame.assertSyncedStack();
+    masm.debugAssertContextRealm(script->realm(), R1.scratchReg());
+
     if (!emitStackCheck())
         return false;
 
@@ -819,6 +822,14 @@ BaselineCompiler::emitDebugTrap()
     MOZ_ASSERT(frame.numUnsyncedSlots() == 0);
 
     bool enabled = script->stepModeEnabled() || script->hasBreakpointsAt(pc);
+
+#if defined(JS_CODEGEN_ARM64)
+    // Flush any pending constant pools to prevent incorrect
+    // PCMappingEntry offsets. See Bug 1446819.
+    masm.flush();
+    // Fix up the PCMappingEntry to avoid any constant pool.
+    pcMappingEntries_.back().nativeOffset = masm.currentOffset();
+#endif
 
     // Emit patchable call to debug trap handler.
     JitCode* handler = cx->runtime()->jitRuntime()->debugTrapHandler(cx);
@@ -4814,6 +4825,8 @@ BaselineCompiler::emit_JSOP_RESUME()
     masm.bind(&noExprStack);
     masm.pushValue(retVal);
 
+    masm.switchToObjectRealm(genObj, scratch2);
+
     if (resumeKind == GeneratorObject::NEXT) {
         // Determine the resume address based on the yieldAndAwaitIndex and the
         // yieldAndAwaitIndex -> native table in the BaselineScript.
@@ -4882,10 +4895,11 @@ BaselineCompiler::emit_JSOP_RESUME()
     if (!callVM(InterpretResumeInfo))
         return false;
 
-    // After the generator returns, we restore the stack pointer, push the
-    // return value and we're done.
+    // After the generator returns, we restore the stack pointer, switch back to
+    // the current realm, push the return value, and we're done.
     masm.bind(&returnTarget);
     masm.computeEffectiveAddress(frame.addressOfStackValue(frame.peek(-1)), masm.getStackPointer());
+    masm.switchToRealm(script->realm(), R2.scratchReg());
     frame.popn(2);
     frame.push(R0);
     return true;

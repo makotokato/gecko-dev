@@ -130,7 +130,7 @@ function waitForFrameLoad(ui, targetURL) {
 
 function waitForViewportResizeTo(ui, width, height) {
   return new Promise(async function(resolve) {
-    const isSizeMatching = (data) => data.width == width && data.height == height;
+    const isSizeMatching = data => data.width == width && data.height == height;
 
     // If the viewport has already the expected size, we resolve the promise immediately.
     const size = await getContentSize(ui);
@@ -158,7 +158,7 @@ function waitForViewportResizeTo(ui, width, height) {
 
     const onBrowserLoadEnd = async function() {
       const data = await getContentSize(ui);
-      onResize(undefined, data);
+      onResize(data);
     };
 
     info(`Waiting for content-resize to ${width} x ${height}`);
@@ -293,18 +293,17 @@ function getContentSize(ui) {
   }));
 }
 
-function waitForPageShow(browser) {
-  const mm = browser.messageManager;
-  return new Promise(resolve => {
-    const onShow = message => {
-      if (message.target != browser) {
-        return;
-      }
-      mm.removeMessageListener("PageVisibility:Show", onShow);
-      resolve();
-    };
-    mm.addMessageListener("PageVisibility:Show", onShow);
-  });
+async function waitForPageShow(browser) {
+  const tab = gBrowser.getTabForBrowser(browser);
+  const ui = ResponsiveUIManager.getResponsiveUIForTab(tab);
+  if (ui) {
+    browser = ui.getViewportBrowser();
+  }
+  info("Waiting for pageshow from " + (ui ? "responsive" : "regular") + " browser");
+  // Need to wait an extra tick after pageshow to ensure everyone is up-to-date,
+  // hence the waitForTick.
+  await BrowserTestUtils.waitForContentEvent(browser, "pageshow");
+  return waitForTick();
 }
 
 function waitForViewportLoad(ui) {

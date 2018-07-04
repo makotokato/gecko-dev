@@ -18,6 +18,7 @@
 #include "nsError.h"
 #include "nsISupportsBase.h"
 #include "nsISupportsUtils.h"
+#include "nsIThreadManager.h"
 #include "nsAutoPtr.h"
 #include "nsPrintfCString.h"
 #include "prthread.h"
@@ -508,7 +509,9 @@ static void DnsPrefChanged(const char* aPref, void* aClosure)
     MOZ_ASSERT(self);
 
     if (!strcmp(aPref, kPrefGetTtl)) {
+#ifdef DNSQUERY_AVAILABLE
         sGetTtlEnabled = Preferences::GetBool(kPrefGetTtl);
+#endif
     } else if (!strcmp(aPref, kPrefNativeIsLocalhost)) {
         gNativeIsLocalhost = Preferences::GetBool(kPrefNativeIsLocalhost);
     }
@@ -1049,7 +1052,8 @@ nsHostResolver::ConditionallyCreateThread(nsHostRecord *rec)
 
         // dispatch new worker thread
         nsCOMPtr<nsIThread> thread;
-        nsresult rv = NS_NewNamedThread(name, getter_AddRefs(thread), nullptr);
+        nsresult rv = NS_NewNamedThread(name, getter_AddRefs(thread), nullptr,
+                                        nsIThreadManager::kThreadPoolStackSize);
         if (NS_WARN_IF(NS_FAILED(rv)) || !thread) {
             return rv;
         }
@@ -1862,6 +1866,10 @@ nsHostResolver::ThreadFunc()
         }
     } while(true);
 
+    nsCOMPtr<nsIThread> thread = NS_GetCurrentThread();
+    NS_DispatchToMainThread(NS_NewRunnableFunction("nsHostResolver::ThreadFunc::AsyncShutdown", [thread]() {
+        thread->AsyncShutdown();
+    }));
     mThreadCount--;
     LOG(("DNS lookup thread - queue empty, thread finished.\n"));
 }
@@ -1883,16 +1891,17 @@ nsHostResolver::Create(uint32_t maxCacheEntries,
                        uint32_t defaultGracePeriod,
                        nsHostResolver **result)
 {
-    auto *res = new nsHostResolver(maxCacheEntries, defaultCacheEntryLifetime,
-                                   defaultGracePeriod);
-    NS_ADDREF(res);
+    RefPtr<nsHostResolver> res =
+        new nsHostResolver(maxCacheEntries, defaultCacheEntryLifetime,
+                           defaultGracePeriod);
 
     nsresult rv = res->Init();
-    if (NS_FAILED(rv))
-        NS_RELEASE(res);
+    if (NS_FAILED(rv)) {
+        return rv;
+    }
 
-    *result = res;
-    return rv;
+    res.forget(result);
+    return NS_OK;
 }
 
 void

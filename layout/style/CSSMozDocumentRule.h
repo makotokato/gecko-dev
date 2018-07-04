@@ -18,7 +18,10 @@ class CSSMozDocumentRule final : public css::ConditionRule
 {
 public:
   CSSMozDocumentRule(RefPtr<RawServoMozDocumentRule> aRawRule,
-                     uint32_t aLine, uint32_t aColumn);
+                     StyleSheet* aSheet,
+                     css::Rule* aParentRule,
+                     uint32_t aLine,
+                     uint32_t aColumn);
 
   NS_DECL_ISUPPORTS_INHERITED
 
@@ -35,7 +38,7 @@ public:
   RawServoMozDocumentRule* Raw() const { return mRawRule; }
 
   // WebIDL interface
-  uint16_t Type() const final { return CSSRuleBinding::DOCUMENT_RULE; }
+  uint16_t Type() const final { return CSSRule_Binding::DOCUMENT_RULE; }
   void GetCssText(nsAString& aCssText) const final;
   void GetConditionText(nsAString& aConditionText) final;
   void SetConditionText(const nsAString& aConditionText,

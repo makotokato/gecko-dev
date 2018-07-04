@@ -168,6 +168,10 @@ wasm::HandleThrow(JSContext* cx, WasmFrameIter& iter)
     RootedWasmInstanceObject keepAlive(cx, iter.instance()->object());
 
     for (; !iter.done(); ++iter) {
+        // Wasm code can enter same-compartment realms, so reset cx->realm to
+        // this frame's realm.
+        cx->setRealmForJitExceptionHandler(iter.instance()->realm());
+
         if (!iter.debugEnabled())
             continue;
 
@@ -347,9 +351,9 @@ CoerceInPlace_JitEntry(int funcExportIndex, TlsData* tlsData, Value* argv)
     const Code& code = tlsData->instance->code();
     const FuncExport& fe = code.metadata(code.stableTier()).funcExports[funcExportIndex];
 
-    for (size_t i = 0; i < fe.sig().args().length(); i++) {
+    for (size_t i = 0; i < fe.funcType().args().length(); i++) {
         HandleValue arg = HandleValue::fromMarkedLocation(&argv[i]);
-        switch (fe.sig().args()[i].code()) {
+        switch (fe.funcType().args()[i].code()) {
           case ValType::I32: {
             int32_t i32;
             if (!ToInt32(cx, arg, &i32))
@@ -673,6 +677,10 @@ AddressOf(SymbolicAddress imm, ABIFunctionType* abiType)
       case SymbolicAddress::MemFill:
         *abiType = Args_General4;
         return FuncCast(Instance::memFill, *abiType);
+      case SymbolicAddress::PostBarrier:
+        *abiType = Args_General2;
+        static_assert(sizeof(PostBarrierArg) == sizeof(uint32_t), "passed arg is a u32");
+        return FuncCast(Instance::postBarrier, *abiType);
 #if defined(JS_CODEGEN_MIPS32)
       case SymbolicAddress::js_jit_gAtomic64Lock:
         return &js::jit::gAtomic64Lock;
@@ -751,6 +759,7 @@ wasm::NeedsBuiltinThunk(SymbolicAddress sym)
       case SymbolicAddress::ReportInt64JSCall:
       case SymbolicAddress::MemCopy:
       case SymbolicAddress::MemFill:
+      case SymbolicAddress::PostBarrier:
         return true;
       case SymbolicAddress::Limit:
         break;
@@ -1038,13 +1047,13 @@ wasm::SymbolicAddressTarget(SymbolicAddress sym)
 }
 
 static Maybe<ABIFunctionType>
-ToBuiltinABIFunctionType(const Sig& sig)
+ToBuiltinABIFunctionType(const FuncType& funcType)
 {
-    const ValTypeVector& args = sig.args();
-    ExprType ret = sig.ret();
+    const ValTypeVector& args = funcType.args();
+    ExprType ret = funcType.ret();
 
     uint32_t abiType;
-    switch (ret) {
+    switch (ret.code()) {
       case ExprType::F32: abiType = ArgType_Float32 << RetType_Shift; break;
       case ExprType::F64: abiType = ArgType_Double << RetType_Shift; break;
       default: return Nothing();
@@ -1065,14 +1074,14 @@ ToBuiltinABIFunctionType(const Sig& sig)
 }
 
 void*
-wasm::MaybeGetBuiltinThunk(HandleFunction f, const Sig& sig)
+wasm::MaybeGetBuiltinThunk(HandleFunction f, const FuncType& funcType)
 {
     MOZ_ASSERT(builtinThunks);
 
     if (!f->isNative() || !f->hasJitInfo() || f->jitInfo()->type() != JSJitInfo::InlinableNative)
         return nullptr;
 
-    Maybe<ABIFunctionType> abiType = ToBuiltinABIFunctionType(sig);
+    Maybe<ABIFunctionType> abiType = ToBuiltinABIFunctionType(funcType);
     if (!abiType)
         return nullptr;
 

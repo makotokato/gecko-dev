@@ -151,8 +151,7 @@ private:
     }
 
     event->InitMessageEvent(nullptr, NS_LITERAL_STRING("message"),
-                            false /* non-bubbling */,
-                            false /* cancelable */, value, EmptyString(),
+                            CanBubble::eNo, Cancelable::eNo, value, EmptyString(),
                             EmptyString(), nullptr, ports);
     event->SetTrusted(true);
 
@@ -177,9 +176,9 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(MessagePort,
     NS_IMPL_CYCLE_COLLECTION_UNLINK(mPostMessageRunnable->mPort);
   }
 
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mMessages);
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mMessagesForTheOtherPort);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mUnshippedEntangledPort);
+
+  tmp->CloseForced();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(MessagePort,
@@ -308,7 +307,7 @@ MessagePort::Initialize(const nsID& aUUID,
 JSObject*
 MessagePort::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return MessagePortBinding::Wrap(aCx, this, aGivenProto);
+  return MessagePort_Binding::Wrap(aCx, this, aGivenProto);
 }
 
 void

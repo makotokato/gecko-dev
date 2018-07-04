@@ -2173,8 +2173,13 @@ InlineTransparentTypedObject::getOrCreateBuffer(JSContext* cx)
     ObjectRealm& realm = ObjectRealm::get(this);
     if (!realm.lazyArrayBuffers) {
         auto table = cx->make_unique<ObjectWeakMap>(cx);
-        if (!table || !table->init())
+        if (!table)
             return nullptr;
+
+        if (!table->init()) {
+            ReportOutOfMemory(cx);
+            return nullptr;
+        }
 
         realm.lazyArrayBuffers = std::move(table);
     }
@@ -2292,6 +2297,8 @@ TypedObject::construct(JSContext* cx, unsigned int argc, Value* vp)
 
     MOZ_ASSERT(args.callee().is<TypeDescr>());
     Rooted<TypeDescr*> callee(cx, &args.callee().as<TypeDescr>());
+
+    MOZ_ASSERT(cx->realm() == callee->realm());
 
     // Typed object constructors are overloaded in two ways:
     //

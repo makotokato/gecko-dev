@@ -903,7 +903,8 @@ var reducers = { TopSites, App, Snippets, Prefs, Dialog, Sections, Theme };
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
-/* WEBPACK VAR INJECTION */(function(global) {/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0_common_Actions_jsm__ = __webpack_require__(1);
+/* WEBPACK VAR INJECTION */(function(global) {/* unused harmony export convertLinks */
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0_common_Actions_jsm__ = __webpack_require__(1);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_1_fluent_react__ = __webpack_require__(25);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_2_content_src_lib_init_store__ = __webpack_require__(11);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_3__components_ImpressionsWrapper_ImpressionsWrapper__ = __webpack_require__(27);
@@ -933,13 +934,13 @@ const OUTGOING_MESSAGE_NAME = "ASRouter:child-to-parent";
 
 const ASRouterUtils = {
   addListener(listener) {
-    global.addMessageListener(INCOMING_MESSAGE_NAME, listener);
+    global.RPMAddMessageListener(INCOMING_MESSAGE_NAME, listener);
   },
   removeListener(listener) {
-    global.removeMessageListener(INCOMING_MESSAGE_NAME, listener);
+    global.RPMRemoveMessageListener(INCOMING_MESSAGE_NAME, listener);
   },
   sendMessage(action) {
-    global.sendAsyncMessage(OUTGOING_MESSAGE_NAME, action);
+    global.RPMSendAsyncMessage(OUTGOING_MESSAGE_NAME, action);
   },
   blockById(id) {
     ASRouterUtils.sendMessage({ type: "BLOCK_MESSAGE_BY_ID", data: { id } });
@@ -966,7 +967,21 @@ const ASRouterUtils = {
   },
   sendTelemetry(ping) {
     const payload = __WEBPACK_IMPORTED_MODULE_0_common_Actions_jsm__["b" /* actionCreators */].ASRouterUserEvent(ping);
-    global.sendAsyncMessage(__WEBPACK_IMPORTED_MODULE_2_content_src_lib_init_store__["a" /* OUTGOING_MESSAGE_NAME */], payload);
+    global.RPMSendAsyncMessage(__WEBPACK_IMPORTED_MODULE_2_content_src_lib_init_store__["a" /* OUTGOING_MESSAGE_NAME */], payload);
+  },
+  getEndpoint() {
+    if (window.location.href.includes("endpoint")) {
+      const params = new URLSearchParams(window.location.href.slice(window.location.href.indexOf("endpoint")));
+      try {
+        const endpoint = new URL(params.get("endpoint"));
+        return {
+          url: endpoint.href,
+          snippetId: params.get("snippetId")
+        };
+      } catch (e) {}
+    }
+
+    return null;
   }
 };
 /* harmony export (immutable) */ __webpack_exports__["b"] = ASRouterUtils;
@@ -997,10 +1012,10 @@ const ALLOWED_TAGS = {
  * Transform an object (tag name: {url}) into (tag name: anchor) where the url
  * is used as href, in order to render links inside a Fluent.Localized component.
  */
-function convertLinks(links) {
+function convertLinks(links, sendClick) {
   if (links) {
     return Object.keys(links).reduce((acc, linkTag) => {
-      acc[linkTag] = __WEBPACK_IMPORTED_MODULE_6_react___default.a.createElement("a", { href: Object(__WEBPACK_IMPORTED_MODULE_8__template_utils__["a" /* safeURI */])(links[linkTag].url) });
+      acc[linkTag] = __WEBPACK_IMPORTED_MODULE_6_react___default.a.createElement("a", { href: Object(__WEBPACK_IMPORTED_MODULE_8__template_utils__["a" /* safeURI */])(links[linkTag].url), "data-metric": links[linkTag].metric, onClick: sendClick });
       return acc;
     }, {});
   }
@@ -1014,7 +1029,7 @@ function convertLinks(links) {
 function RichText(props) {
   return __WEBPACK_IMPORTED_MODULE_6_react___default.a.createElement(
     __WEBPACK_IMPORTED_MODULE_1_fluent_react__["b" /* Localized */],
-    _extends({ id: "RichTextSnippet" }, ALLOWED_TAGS, convertLinks(props.links)),
+    _extends({ id: "RichTextSnippet" }, ALLOWED_TAGS, convertLinks(props.links, props.sendClick)),
     __WEBPACK_IMPORTED_MODULE_6_react___default.a.createElement(
       "span",
       null,
@@ -1027,6 +1042,7 @@ class ASRouterUISurface extends __WEBPACK_IMPORTED_MODULE_6_react___default.a.Pu
   constructor(props) {
     super(props);
     this.onMessageFromParent = this.onMessageFromParent.bind(this);
+    this.sendClick = this.sendClick.bind(this);
     this.sendImpression = this.sendImpression.bind(this);
     this.sendUserActionTelemetry = this.sendUserActionTelemetry.bind(this);
     this.state = { message: {}, bundle: {} };
@@ -1047,6 +1063,19 @@ class ASRouterUISurface extends __WEBPACK_IMPORTED_MODULE_6_react___default.a.Pu
 
   sendImpression(extraProps) {
     this.sendUserActionTelemetry(Object.assign({ event: "IMPRESSION" }, extraProps));
+  }
+
+  // If link has a `metric` data attribute send it as part of the `value`
+  // telemetry field which can have arbitrary values.
+  // Used for router messages with links as part of the content.
+  sendClick(event) {
+    const metric = {
+      value: event.target.dataset.metric,
+      // Used for the `source` of the event. Needed to differentiate
+      // from other snippet or onboarding events that may occur.
+      id: "NEWTAB_FOOTER_BAR_CONTENT"
+    };
+    this.sendUserActionTelemetry(Object.assign({ event: "CLICK_BUTTON" }, metric));
   }
 
   onBlockById(id) {
@@ -1081,8 +1110,15 @@ class ASRouterUISurface extends __WEBPACK_IMPORTED_MODULE_6_react___default.a.Pu
   }
 
   componentWillMount() {
+    const endpoint = ASRouterUtils.getEndpoint();
     ASRouterUtils.addListener(this.onMessageFromParent);
-    ASRouterUtils.sendMessage({ type: "CONNECT_UI_REQUEST" });
+
+    // If we are loading about:welcome we want to trigger the onboarding messages
+    if (this.props.document.location.href === "about:welcome") {
+      ASRouterUtils.sendMessage({ type: "TRIGGER", data: { trigger: "firstRun" } });
+    } else {
+      ASRouterUtils.sendMessage({ type: "CONNECT_UI_REQUEST", data: { endpoint } });
+    }
   }
 
   componentWillUnmount() {
@@ -1103,7 +1139,9 @@ class ASRouterUISurface extends __WEBPACK_IMPORTED_MODULE_6_react___default.a.Pu
         __WEBPACK_IMPORTED_MODULE_1_fluent_react__["a" /* LocalizationProvider */],
         { messages: generateMessages(this.state.message.content.text) },
         __WEBPACK_IMPORTED_MODULE_6_react___default.a.createElement(__WEBPACK_IMPORTED_MODULE_9__templates_SimpleSnippet_SimpleSnippet__["a" /* SimpleSnippet */], _extends({}, this.state.message, {
-          richText: __WEBPACK_IMPORTED_MODULE_6_react___default.a.createElement(RichText, { text: this.state.message.content.text, links: this.state.message.content.links }),
+          richText: __WEBPACK_IMPORTED_MODULE_6_react___default.a.createElement(RichText, { text: this.state.message.content.text,
+            links: this.state.message.content.links,
+            sendClick: this.sendClick }),
           UISurface: "NEWTAB_FOOTER_BAR",
           getNextMessage: ASRouterUtils.getNextMessage,
           onBlock: this.onBlockById(this.state.message.id),
@@ -3340,7 +3378,7 @@ function mergeStateReducer(mainReducer) {
 const messageMiddleware = store => next => action => {
   const skipLocal = action.meta && action.meta.skipLocal;
   if (__WEBPACK_IMPORTED_MODULE_0_common_Actions_jsm__["d" /* actionUtils */].isSendToMain(action)) {
-    sendAsyncMessage(OUTGOING_MESSAGE_NAME, action);
+    RPMSendAsyncMessage(OUTGOING_MESSAGE_NAME, action);
   }
   if (!skipLocal) {
     next(action);
@@ -3419,13 +3457,13 @@ const queueEarlyMessageMiddleware = store => next => action => {
  * @return {object}          A redux store
  */
 function initStore(reducers, initialState) {
-  const store = Object(__WEBPACK_IMPORTED_MODULE_1_redux__["createStore"])(mergeStateReducer(Object(__WEBPACK_IMPORTED_MODULE_1_redux__["combineReducers"])(reducers)), initialState, global.addMessageListener && Object(__WEBPACK_IMPORTED_MODULE_1_redux__["applyMiddleware"])(rehydrationMiddleware, queueEarlyMessageMiddleware, messageMiddleware));
+  const store = Object(__WEBPACK_IMPORTED_MODULE_1_redux__["createStore"])(mergeStateReducer(Object(__WEBPACK_IMPORTED_MODULE_1_redux__["combineReducers"])(reducers)), initialState, global.RPMAddMessageListener && Object(__WEBPACK_IMPORTED_MODULE_1_redux__["applyMiddleware"])(rehydrationMiddleware, queueEarlyMessageMiddleware, messageMiddleware));
 
   store._didRehydrate = false;
   store._didRequestInitialState = false;
 
-  if (global.addMessageListener) {
-    global.addMessageListener(INCOMING_MESSAGE_NAME, msg => {
+  if (global.RPMAddMessageListener) {
+    global.RPMAddMessageListener(INCOMING_MESSAGE_NAME, msg => {
       try {
         store.dispatch(msg.data);
       } catch (ex) {
@@ -5298,10 +5336,10 @@ class SnippetsMap extends Map {
   getTotalBookmarksCount() {
     return new Promise(resolve => {
       this._dispatch(__WEBPACK_IMPORTED_MODULE_0_common_Actions_jsm__["b" /* actionCreators */].OnlyToMain({ type: __WEBPACK_IMPORTED_MODULE_0_common_Actions_jsm__["c" /* actionTypes */].TOTAL_BOOKMARKS_REQUEST }));
-      global.addMessageListener("ActivityStream:MainToContent", function onMessage({ data: action }) {
+      global.RPMAddMessageListener("ActivityStream:MainToContent", function onMessage({ data: action }) {
         if (action.type === __WEBPACK_IMPORTED_MODULE_0_common_Actions_jsm__["c" /* actionTypes */].TOTAL_BOOKMARKS_RESPONSE) {
           resolve(action.data);
-          global.removeMessageListener("ActivityStream:MainToContent", onMessage);
+          global.RPMRemoveMessageListener("ActivityStream:MainToContent", onMessage);
         }
       });
     });
@@ -5310,10 +5348,10 @@ class SnippetsMap extends Map {
   getAddonsInfo() {
     return new Promise(resolve => {
       this._dispatch(__WEBPACK_IMPORTED_MODULE_0_common_Actions_jsm__["b" /* actionCreators */].OnlyToMain({ type: __WEBPACK_IMPORTED_MODULE_0_common_Actions_jsm__["c" /* actionTypes */].ADDONS_INFO_REQUEST }));
-      global.addMessageListener("ActivityStream:MainToContent", function onMessage({ data: action }) {
+      global.RPMAddMessageListener("ActivityStream:MainToContent", function onMessage({ data: action }) {
         if (action.type === __WEBPACK_IMPORTED_MODULE_0_common_Actions_jsm__["c" /* actionTypes */].ADDONS_INFO_RESPONSE) {
           resolve(action.data);
-          global.removeMessageListener("ActivityStream:MainToContent", onMessage);
+          global.RPMRemoveMessageListener("ActivityStream:MainToContent", onMessage);
         }
       });
     });
@@ -5550,8 +5588,8 @@ class SnippetsProvider {
       }, options);
 
       // Add listener so we know when snippets are blocked on other pages
-      if (global.addMessageListener) {
-        global.addMessageListener("ActivityStream:MainToContent", _this4._onAction);
+      if (global.RPMAddMessageListener) {
+        global.RPMAddMessageListener("ActivityStream:MainToContent", _this4._onAction);
       }
 
       // TODO: Requires enabling indexedDB on newtab
@@ -5593,8 +5631,8 @@ class SnippetsProvider {
   uninit() {
     window.dispatchEvent(new Event(SNIPPETS_DISABLED_EVENT));
     this._forceOnboardingVisibility(false);
-    if (global.removeMessageListener) {
-      global.removeMessageListener("ActivityStream:MainToContent", this._onAction);
+    if (global.RPMRemoveMessageListener) {
+      global.RPMRemoveMessageListener("ActivityStream:MainToContent", this._onAction);
     }
     this.initialized = false;
   }
@@ -5618,12 +5656,13 @@ function addSnippetsSubscriber(store) {
 
   store.subscribe(_asyncToGenerator(function* () {
     const state = store.getState();
+    const isASRouterEnabled = state.Prefs.values.asrouterExperimentEnabled && state.Prefs.values.asrouterOnboardingCohort > 0;
     // state.Prefs.values["feeds.snippets"]:  Should snippets be shown?
     // state.Snippets.initialized             Is the snippets data initialized?
     // snippets.initialized:                  Is SnippetsProvider currently initialised?
     if (state.Prefs.values["feeds.snippets"] &&
     // If the message center experiment is enabled, don't show snippets
-    !state.Prefs.values.asrouterExperimentEnabled && !state.Prefs.values.disableSnippets && state.Snippets.initialized && !snippets.initialized &&
+    !isASRouterEnabled && !state.Prefs.values.disableSnippets && state.Snippets.initialized && !snippets.initialized &&
     // Don't call init multiple times
     !initializing && location.href !== "about:welcome") {
       initializing = true;
@@ -5635,9 +5674,9 @@ function addSnippetsSubscriber(store) {
 
     // Turn on AS Router snippets if the experiment is enabled and the snippets pref is on;
     // otherwise, turn it off.
-    if (state.Prefs.values.asrouterExperimentEnabled && state.Prefs.values["feeds.snippets"] && !asrouterContent.initialized) {
+    if ((state.Prefs.values.asrouterExperimentEnabled || state.Prefs.values.asrouterOnboardingCohort > 0) && state.Prefs.values["feeds.snippets"] && !asrouterContent.initialized) {
       asrouterContent.init();
-    } else if ((!state.Prefs.values.asrouterExperimentEnabled || !state.Prefs.values["feeds.snippets"]) && asrouterContent.initialized) {
+    } else if ((!state.Prefs.values.asrouterExperimentEnabled && state.Prefs.values.asrouterOnboardingCohort === 0 || !state.Prefs.values["feeds.snippets"]) && asrouterContent.initialized) {
       asrouterContent.uninit();
     }
   }));
@@ -6637,12 +6676,19 @@ class _Base extends __WEBPACK_IMPORTED_MODULE_8_react___default.a.PureComponent 
     const { App, locale, strings } = props;
     const { initialized } = App;
 
-    if (props.Prefs.values.asrouterExperimentEnabled && window.location.hash === "#asrouter") {
+    const prefs = props.Prefs.values;
+    if ((prefs.asrouterExperimentEnabled || prefs.asrouterOnboardingCohort > 0) && window.location.hash === "#asrouter") {
       return __WEBPACK_IMPORTED_MODULE_8_react___default.a.createElement(__WEBPACK_IMPORTED_MODULE_2_content_src_components_ASRouterAdmin_ASRouterAdmin__["a" /* ASRouterAdmin */], null);
     }
 
     if (!props.isPrerendered && !initialized) {
       return null;
+    }
+
+    // Until we can delete the existing onboarding tour, just hide the onboarding button when users are in
+    // the new simplified onboarding experiment. CSS hacks ftw
+    if (prefs.asrouterOnboardingCohort > 0) {
+      global.document.body.classList.add("hide-onboarding");
     }
 
     return __WEBPACK_IMPORTED_MODULE_8_react___default.a.createElement(
@@ -6750,7 +6796,8 @@ class ASRouterAdmin extends __WEBPACK_IMPORTED_MODULE_1_react___default.a.PureCo
   }
 
   componentWillMount() {
-    __WEBPACK_IMPORTED_MODULE_0__asrouter_asrouter_content__["b" /* ASRouterUtils */].sendMessage({ type: "ADMIN_CONNECT_STATE" });
+    const endpoint = __WEBPACK_IMPORTED_MODULE_0__asrouter_asrouter_content__["b" /* ASRouterUtils */].getEndpoint();
+    __WEBPACK_IMPORTED_MODULE_0__asrouter_asrouter_content__["b" /* ASRouterUtils */].sendMessage({ type: "ADMIN_CONNECT_STATE", data: { endpoint } });
     __WEBPACK_IMPORTED_MODULE_0__asrouter_asrouter_content__["b" /* ASRouterUtils */].addListener(this.onMessage);
   }
 
@@ -8688,6 +8735,7 @@ class _StartupOverlay extends __WEBPACK_IMPORTED_MODULE_3_react___default.a.Pure
     this.clickSkip = this.clickSkip.bind(this);
     this.initScene = this.initScene.bind(this);
     this.removeOverlay = this.removeOverlay.bind(this);
+    this.onInputInvalid = this.onInputInvalid.bind(this);
 
     this.state = { emailInput: "" };
     this.initScene();
@@ -8711,7 +8759,10 @@ class _StartupOverlay extends __WEBPACK_IMPORTED_MODULE_3_react___default.a.Pure
   }
 
   onInputChange(e) {
+    let error = e.target.previousSibling;
     this.setState({ emailInput: e.target.value });
+    error.classList.remove("active");
+    e.target.classList.remove("invalid");
   }
 
   onSubmit() {
@@ -8722,6 +8773,13 @@ class _StartupOverlay extends __WEBPACK_IMPORTED_MODULE_3_react___default.a.Pure
   clickSkip() {
     this.props.dispatch(__WEBPACK_IMPORTED_MODULE_1_common_Actions_jsm__["b" /* actionCreators */].UserEvent({ event: "SKIPPED_SIGNIN" }));
     this.removeOverlay();
+  }
+
+  onInputInvalid(e) {
+    let error = e.target.previousSibling;
+    error.classList.add("active");
+    e.target.classList.add("invalid");
+    e.preventDefault(); // Override built-in form validation popup
   }
 
   render() {
@@ -8773,17 +8831,25 @@ class _StartupOverlay extends __WEBPACK_IMPORTED_MODULE_3_react___default.a.Pure
               __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement(__WEBPACK_IMPORTED_MODULE_0_react_intl__["FormattedMessage"], { id: "firstrun_form_header" }),
               __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement(
                 "span",
-                null,
+                { className: "sub-header" },
                 __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement(__WEBPACK_IMPORTED_MODULE_0_react_intl__["FormattedMessage"], { id: "firstrun_form_sub_header" })
               )
             ),
             __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement(
               "form",
-              { method: "get", action: "https://accounts.firefox.com?entrypoint=activity-stream-firstrun&utm_source=activity-stream&utm_campaign=firstrun", target: "_blank", rel: "noopener noreferrer", onSubmit: this.onSubmit },
+              { method: "get", action: "https://accounts.firefox.com", target: "_blank", rel: "noopener noreferrer", onSubmit: this.onSubmit },
               __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement("input", { name: "service", type: "hidden", value: "sync" }),
               __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement("input", { name: "action", type: "hidden", value: "email" }),
               __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement("input", { name: "context", type: "hidden", value: "fx_desktop_v3" }),
-              __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement("input", { className: "email-input", name: "email", type: "email", required: "true", placeholder: this.props.intl.formatMessage({ id: "firstrun_email_input_placeholder" }), onChange: this.onInputChange }),
+              __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement("input", { name: "entrypoint", type: "hidden", value: "activity-stream-firstrun" }),
+              __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement("input", { name: "utm_source", type: "hidden", value: "activity-stream" }),
+              __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement("input", { name: "utm_campaign", type: "hidden", value: "firstrun" }),
+              __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement(
+                "span",
+                { className: "error" },
+                this.props.intl.formatMessage({ id: "firstrun_invalid_input" })
+              ),
+              __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement("input", { className: "email-input", name: "email", type: "email", required: "true", onInvalid: this.onInputInvalid, placeholder: this.props.intl.formatMessage({ id: "firstrun_email_input_placeholder" }), onChange: this.onInputChange }),
               __WEBPACK_IMPORTED_MODULE_3_react___default.a.createElement(
                 "div",
                 { className: "extra-links" },

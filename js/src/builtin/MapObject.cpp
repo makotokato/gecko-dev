@@ -306,11 +306,10 @@ MapIteratorObject::objectMoved(JSObject* obj, JSObject* old)
     }
 
     AutoEnterOOMUnsafeRegion oomUnsafe;
-    auto newRange = iter->zone()->pod_malloc<ValueMap::Range>();
+    auto newRange = iter->zone()->new_<ValueMap::Range>(*range);
     if (!newRange)
         oomUnsafe.crash("MapIteratorObject failed to allocate Range data while tenuring.");
 
-    new (newRange) ValueMap::Range(*range);
     range->~Range();
     iter->setReservedSlot(MapIteratorObject::RangeSlot, PrivateValue(newRange));
     return sizeof(ValueMap::Range);
@@ -376,7 +375,8 @@ MapIteratorObject::createResultPair(JSContext* cx)
         return nullptr;
 
     Rooted<TaggedProto> proto(cx, resultPairObj->taggedProto());
-    ObjectGroup* group = ObjectGroupRealm::makeGroup(cx, resultPairObj->getClass(), proto);
+    ObjectGroup* group = ObjectGroupRealm::makeGroup(cx, resultPairObj->realm(),
+                                                     resultPairObj->getClass(), proto);
     if (!group)
         return nullptr;
     resultPairObj->setGroup(group);
@@ -651,7 +651,10 @@ MapObject::create(JSContext* cx, HandleObject proto /* = nullptr */)
 {
     auto map = cx->make_unique<ValueMap>(cx->zone(),
                                          cx->realm()->randomHashCodeScrambler());
-    if (!map || !map->init()) {
+    if (!map)
+        return nullptr;
+
+    if (!map->init()) {
         ReportOutOfMemory(cx);
         return nullptr;
     }
@@ -1157,11 +1160,10 @@ SetIteratorObject::objectMoved(JSObject* obj, JSObject* old)
     }
 
     AutoEnterOOMUnsafeRegion oomUnsafe;
-    auto newRange = iter->zone()->pod_malloc<ValueSet::Range>();
+    auto newRange = iter->zone()->new_<ValueSet::Range>(*range);
     if (!newRange)
         oomUnsafe.crash("SetIteratorObject failed to allocate Range data while tenuring.");
 
-    new (newRange) ValueSet::Range(*range);
     range->~Range();
     iter->setReservedSlot(SetIteratorObject::RangeSlot, PrivateValue(newRange));
     return sizeof(ValueSet::Range);
@@ -1204,7 +1206,8 @@ SetIteratorObject::createResult(JSContext* cx)
         return nullptr;
 
     Rooted<TaggedProto> proto(cx, resultObj->taggedProto());
-    ObjectGroup* group = ObjectGroupRealm::makeGroup(cx, resultObj->getClass(), proto);
+    ObjectGroup* group = ObjectGroupRealm::makeGroup(cx, resultObj->realm(),
+                                                     resultObj->getClass(), proto);
     if (!group)
         return nullptr;
     resultObj->setGroup(group);
@@ -1334,7 +1337,10 @@ SetObject::create(JSContext* cx, HandleObject proto /* = nullptr */)
 {
     auto set = cx->make_unique<ValueSet>(cx->zone(),
                                          cx->realm()->randomHashCodeScrambler());
-    if (!set || !set->init()) {
+    if (!set)
+        return nullptr;
+
+    if (!set->init()) {
         ReportOutOfMemory(cx);
         return nullptr;
     }

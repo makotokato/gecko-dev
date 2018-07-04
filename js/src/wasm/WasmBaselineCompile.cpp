@@ -16,7 +16,8 @@
  * limitations under the License.
  */
 
-/* WebAssembly baseline compiler ("RabaldrMonkey")
+/*
+ * [SMDOC] WebAssembly baseline compiler (RabaldrMonkey)
  *
  * General assumptions for 32-bit vs 64-bit code:
  *
@@ -138,6 +139,7 @@
 #endif
 
 #include "wasm/WasmGenerator.h"
+#include "wasm/WasmInstance.h"
 #include "wasm/WasmOpIter.h"
 #include "wasm/WasmSignalHandlers.h"
 #include "wasm/WasmValidate.h"
@@ -1010,6 +1012,8 @@ BaseLocalIter::BaseLocalIter(const ValTypeVector& locals, size_t argsLength, boo
     index_(0),
     localSize_(debugEnabled ? DebugFrame::offsetOfFrame() : 0),
     reservedSize_(localSize_),
+    frameOffset_(0),
+    mirType_(MIRType::Undefined),
     done_(false)
 {
     MOZ_ASSERT(argsLength <= locals.length());
@@ -1054,6 +1058,7 @@ BaseLocalIter::settle()
           case ValType::I64:
           case ValType::F32:
           case ValType::F64:
+          case ValType::Ref:
           case ValType::AnyRef:
             mirType_ = ToMIRType(locals_[index_]);
             frameOffset_ = pushLocal(MIRTypeToSize(mirType_));
@@ -1936,7 +1941,7 @@ class BaseCompiler final : public BaseCompilerInterface
     MOZ_MUST_USE bool emitFunction();
     void emitInitStackLocals();
 
-    const SigWithId& sig() const { return *env_.funcSigs[func_.index]; }
+    const FuncTypeWithId& funcType() const { return *env_.funcTypes[func_.index]; }
 
     // Used by some of the ScratchRegister implementations.
     operator MacroAssembler&() const { return masm; }
@@ -2128,25 +2133,39 @@ class BaseCompiler final : public BaseCompilerInterface
     }
 
     void maybeReserveJoinRegI(ExprType type) {
-        if (type == ExprType::I32)
+        switch (type.code()) {
+          case ExprType::I32:
             needI32(joinRegI32_);
-        else if (type == ExprType::I64)
+            break;
+          case ExprType::I64:
             needI64(joinRegI64_);
-        else if (type == ExprType::AnyRef)
+            break;
+          case ExprType::AnyRef:
+          case ExprType::Ref:
             needRef(joinRegPtr_);
+            break;
+          default:;
+        }
     }
 
     void maybeUnreserveJoinRegI(ExprType type) {
-        if (type == ExprType::I32)
+        switch (type.code()) {
+          case ExprType::I32:
             freeI32(joinRegI32_);
-        else if (type == ExprType::I64)
+            break;
+          case ExprType::I64:
             freeI64(joinRegI64_);
-        else if (type == ExprType::AnyRef)
+            break;
+          case ExprType::AnyRef:
+          case ExprType::Ref:
             freeRef(joinRegPtr_);
+            break;
+          default:;
+        }
     }
 
     void maybeReserveJoinReg(ExprType type) {
-        switch (type) {
+        switch (type.code()) {
           case ExprType::I32:
             needI32(joinRegI32_);
             break;
@@ -2159,6 +2178,7 @@ class BaseCompiler final : public BaseCompilerInterface
           case ExprType::F64:
             needF64(joinRegF64_);
             break;
+          case ExprType::Ref:
           case ExprType::AnyRef:
             needRef(joinRegPtr_);
             break;
@@ -2168,7 +2188,7 @@ class BaseCompiler final : public BaseCompilerInterface
     }
 
     void maybeUnreserveJoinReg(ExprType type) {
-        switch (type) {
+        switch (type.code()) {
           case ExprType::I32:
             freeI32(joinRegI32_);
             break;
@@ -2181,6 +2201,7 @@ class BaseCompiler final : public BaseCompilerInterface
           case ExprType::F64:
             freeF64(joinRegF64_);
             break;
+          case ExprType::Ref:
           case ExprType::AnyRef:
             freeRef(joinRegPtr_);
             break;
@@ -3097,7 +3118,7 @@ class BaseCompiler final : public BaseCompilerInterface
     // become available in that process.
 
     MOZ_MUST_USE Maybe<AnyReg> popJoinRegUnlessVoid(ExprType type) {
-        switch (type) {
+        switch (type.code()) {
           case ExprType::Void: {
             return Nothing();
           }
@@ -3125,6 +3146,7 @@ class BaseCompiler final : public BaseCompilerInterface
                        k == Stk::LocalF32);
             return Some(AnyReg(popF32(joinRegF32_)));
           }
+          case ExprType::Ref:
           case ExprType::AnyRef: {
             DebugOnly<Stk::Kind> k(stk_.back().kind());
             MOZ_ASSERT(k == Stk::RegisterRef || k == Stk::ConstRef || k == Stk::MemRef ||
@@ -3144,7 +3166,7 @@ class BaseCompiler final : public BaseCompilerInterface
     // to be found.
 
     MOZ_MUST_USE Maybe<AnyReg> captureJoinRegUnlessVoid(ExprType type) {
-        switch (type) {
+        switch (type.code()) {
           case ExprType::I32:
             MOZ_ASSERT(isAvailableI32(joinRegI32_));
             needI32(joinRegI32_);
@@ -3161,6 +3183,7 @@ class BaseCompiler final : public BaseCompilerInterface
             MOZ_ASSERT(isAvailableF64(joinRegF64_));
             needF64(joinRegF64_);
             return Some(AnyReg(joinRegF64_));
+          case ExprType::Ref:
           case ExprType::AnyRef:
             MOZ_ASSERT(isAvailableRef(joinRegPtr_));
             needRef(joinRegPtr_);
@@ -3357,7 +3380,7 @@ class BaseCompiler final : public BaseCompilerInterface
         JitSpew(JitSpew_Codegen, "# Emitting wasm baseline code");
 
         GenerateFunctionPrologue(masm,
-                                 env_.funcSigs[func_.index]->id,
+                                 env_.funcTypes[func_.index]->id,
                                  env_.mode == CompileMode::Tier1 ? Some(func_.index) : Nothing(),
                                  &offsets_);
 
@@ -3380,7 +3403,7 @@ class BaseCompiler final : public BaseCompilerInterface
 
         // Copy arguments from registers to stack.
 
-        const ValTypeVector& args = sig().args();
+        const ValTypeVector& args = funcType().args();
 
         for (ABIArgIter<const ValTypeVector> i(args); !i.done(); i++) {
             if (!i->argInRegister())
@@ -3417,7 +3440,7 @@ class BaseCompiler final : public BaseCompilerInterface
         MOZ_ASSERT(env_.debugEnabled());
         size_t debugFrameOffset = masm.framePushed() - DebugFrame::offsetOfFrame();
         Address resultsAddress(masm.getStackPointer(), debugFrameOffset + DebugFrame::offsetOfResults());
-        switch (sig().ret()) {
+        switch (funcType().ret().code()) {
           case ExprType::Void:
             break;
           case ExprType::I32:
@@ -3432,6 +3455,7 @@ class BaseCompiler final : public BaseCompilerInterface
           case ExprType::F32:
             masm.storeFloat32(RegF32(ReturnFloat32Reg), resultsAddress);
             break;
+          case ExprType::Ref:
           case ExprType::AnyRef:
             masm.storePtr(RegPtr(ReturnReg), resultsAddress);
             break;
@@ -3444,7 +3468,7 @@ class BaseCompiler final : public BaseCompilerInterface
         MOZ_ASSERT(env_.debugEnabled());
         size_t debugFrameOffset = masm.framePushed() - DebugFrame::offsetOfFrame();
         Address resultsAddress(masm.getStackPointer(), debugFrameOffset + DebugFrame::offsetOfResults());
-        switch (sig().ret()) {
+        switch (funcType().ret().code()) {
           case ExprType::Void:
             break;
           case ExprType::I32:
@@ -3459,6 +3483,7 @@ class BaseCompiler final : public BaseCompilerInterface
           case ExprType::F32:
             masm.loadFloat32(resultsAddress, RegF32(ReturnFloat32Reg));
             break;
+          case ExprType::Ref:
           case ExprType::AnyRef:
             masm.loadPtr(resultsAddress, RegPtr(ReturnReg));
             break;
@@ -3520,7 +3545,7 @@ class BaseCompiler final : public BaseCompilerInterface
     {
         explicit FunctionCall(uint32_t lineOrBytecode)
           : lineOrBytecode(lineOrBytecode),
-            reloadMachineStateAfter(false),
+            isInterModule(false),
             usesSystemAbi(false),
 #ifdef JS_CODEGEN_ARM
             hardFP(true),
@@ -3531,7 +3556,7 @@ class BaseCompiler final : public BaseCompilerInterface
 
         uint32_t lineOrBytecode;
         ABIArgGenerator abi;
-        bool reloadMachineStateAfter;
+        bool isInterModule;
         bool usesSystemAbi;
 #ifdef JS_CODEGEN_ARM
         bool hardFP;
@@ -3542,7 +3567,7 @@ class BaseCompiler final : public BaseCompilerInterface
 
     void beginCall(FunctionCall& call, UseABI useABI, InterModule interModule)
     {
-        call.reloadMachineStateAfter = interModule == InterModule::True || useABI == UseABI::System;
+        call.isInterModule = interModule == InterModule::True;
         call.usesSystemAbi = useABI == UseABI::System;
 
         if (call.usesSystemAbi) {
@@ -3573,7 +3598,11 @@ class BaseCompiler final : public BaseCompilerInterface
         size_t adjustment = call.stackArgAreaSize + call.frameAlignAdjustment;
         fr.freeArgAreaAndPopBytes(adjustment, stackSpace);
 
-        if (call.reloadMachineStateAfter) {
+        if (call.isInterModule) {
+            masm.loadWasmTlsRegFromFrame();
+            masm.loadWasmPinnedRegsFromTls();
+            masm.switchToWasmTlsRealm(ABINonArgReturnReg0, ABINonArgReturnReg1);
+        } else if (call.usesSystemAbi) {
             // On x86 there are no pinned registers, so don't waste time
             // reloading the Tls.
 #ifndef JS_CODEGEN_X86
@@ -3731,6 +3760,7 @@ class BaseCompiler final : public BaseCompilerInterface
             }
             break;
           }
+          case ValType::Ref:
           case ValType::AnyRef: {
             ABIArg argLoc = call->abi.next(MIRType::Pointer);
             if (argLoc.kind() == ABIArg::Stack) {
@@ -3760,10 +3790,10 @@ class BaseCompiler final : public BaseCompilerInterface
 
     // Precondition: sync()
 
-    void callIndirect(uint32_t sigIndex, const Stk& indexVal, const FunctionCall& call)
+    void callIndirect(uint32_t funcTypeIndex, const Stk& indexVal, const FunctionCall& call)
     {
-        const SigWithId& sig = env_.types[sigIndex].funcType();
-        MOZ_ASSERT(sig.id.kind() != SigIdDesc::Kind::None);
+        const FuncTypeWithId& funcType = env_.types[funcTypeIndex].funcType();
+        MOZ_ASSERT(funcType.id.kind() != FuncTypeIdDesc::Kind::None);
 
         MOZ_ASSERT(env_.tables.length() == 1);
         const TableDesc& table = env_.tables[0];
@@ -3771,7 +3801,7 @@ class BaseCompiler final : public BaseCompilerInterface
         loadI32(indexVal, RegI32(WasmTableCallIndexReg));
 
         CallSiteDesc desc(call.lineOrBytecode, CallSiteDesc::Dynamic);
-        CalleeDesc callee = CalleeDesc::wasmTable(table, sig.id);
+        CalleeDesc callee = CalleeDesc::wasmTable(table, funcType.id);
         masm.wasmCallIndirect(desc, callee, NeedsBoundsCheck(true));
     }
 
@@ -4366,7 +4396,6 @@ class BaseCompiler final : public BaseCompilerInterface
     Address addressOfGlobalVar(const GlobalDesc& global, RegI32 tmp)
     {
         uint32_t globalToTlsOffset = offsetof(TlsData, globalArea) + global.offset();
-
         masm.loadWasmTlsRegFromFrame(tmp);
         if (global.isIndirect()) {
             masm.loadPtr(Address(tmp, globalToTlsOffset), tmp);
@@ -5691,6 +5720,81 @@ class BaseCompiler final : public BaseCompilerInterface
     void branchTo(Assembler::Condition c, RegI64 lhs, Imm64 rhs, Label* l) {
         masm.branch64(c, lhs, rhs, l);
     }
+
+#ifdef ENABLE_WASM_GC
+    // The following couple of functions emit a GC pre-write barrier. This is
+    // needed when we replace a member field with a new value, and the previous
+    // field value might have no other referents. The field might belong to an
+    // object or be a stack slot or a register or a heap allocated value.
+    //
+    // let obj = { field: previousValue };
+    // obj.field = newValue; // previousValue must be marked with a pre-barrier.
+    //
+    // Implementing a pre-barrier looks like this:
+    // - call `testNeedPreBarrier` with a fresh label.
+    // - user code must put the address of the field we're about to clobber in
+    // PreBarrierReg (to avoid explicit pushing/popping).
+    // - call `emitPreBarrier`, which binds the label.
+
+    void testNeedPreBarrier(Label* skipBarrier) {
+        MOZ_ASSERT(!skipBarrier->used());
+        MOZ_ASSERT(!skipBarrier->bound());
+
+        // If no incremental GC has started, we don't need the barrier.
+        ScratchPtr scratch(*this);
+        masm.loadWasmTlsRegFromFrame(scratch);
+        masm.loadPtr(Address(scratch, offsetof(TlsData, addressOfNeedsIncrementalBarrier)), scratch);
+        masm.branchTest32(Assembler::Zero, Address(scratch, 0), Imm32(0x1), skipBarrier);
+    }
+
+    void emitPreBarrier(RegPtr valueAddr, Label* skipBarrier) {
+        MOZ_ASSERT(valueAddr == PreBarrierReg);
+
+        // If the previous value is null, we don't need the barrier.
+        ScratchPtr scratch(*this);
+        masm.loadPtr(Address(valueAddr, 0), scratch);
+        masm.branchTestPtr(Assembler::Zero, scratch, scratch, skipBarrier);
+
+        // Call the barrier. This assumes PreBarrierReg contains the address of
+        // the stored value.
+        masm.loadWasmTlsRegFromFrame(scratch);
+        masm.loadPtr(Address(scratch, offsetof(TlsData, instance)), scratch);
+        masm.loadPtr(Address(scratch, Instance::offsetOfPreBarrierCode()), scratch);
+        masm.call(scratch);
+
+        masm.bind(skipBarrier);
+    }
+
+    // This emits a GC post-write barrier. This is needed to ensure that the GC
+    // is aware of slots of tenured things containing references to nursery
+    // values. Pass None for object when the field's owner object is known to
+    // be tenured or heap-allocated.
+
+    void emitPostBarrier(const Maybe<RegPtr>& object, RegPtr setValue, PostBarrierArg arg) {
+        Label skipBarrier;
+
+        // If the set value is null, no barrier.
+        masm.branchTestPtr(Assembler::Zero, setValue, setValue, &skipBarrier);
+
+        RegPtr scratch = needRef();
+        if (object) {
+            // If the object value isn't tenured, no barrier.
+            masm.branchPtrInNurseryChunk(Assembler::Equal, *object, scratch, &skipBarrier);
+        }
+
+        // If the set value is tenured, no barrier.
+        masm.branchPtrInNurseryChunk(Assembler::NotEqual, setValue, scratch, &skipBarrier);
+
+        freeRef(scratch);
+
+        // Need a barrier.
+        uint32_t bytecodeOffset = iter_.lastOpcodeOffset();
+        pushI32(arg.rawPayload());
+        emitInstanceCall(bytecodeOffset, SigPI_, ExprType::Void, SymbolicAddress::PostBarrier);
+
+        masm.bind(&skipBarrier);
+    }
+#endif
 
     // Emit a conditional branch that optionally and optimally cleans up the CPU
     // stack before we branch.
@@ -7682,7 +7786,7 @@ BaseCompiler::emitDrop()
 void
 BaseCompiler::doReturn(ExprType type, bool popStack)
 {
-    switch (type) {
+    switch (type.code()) {
       case ExprType::Void: {
         returnCleanup(popStack);
         break;
@@ -7711,6 +7815,7 @@ BaseCompiler::doReturn(ExprType type, bool popStack)
         freeF32(rv);
         break;
       }
+      case ExprType::Ref:
       case ExprType::AnyRef: {
         RegPtr rv = popRef(RegPtr(ReturnReg));
         returnCleanup(popStack);
@@ -7733,7 +7838,7 @@ BaseCompiler::emitReturn()
     if (deadCode_)
         return true;
 
-    doReturn(sig().ret(), PopStack(true));
+    doReturn(funcType().ret(), PopStack(true));
     deadCode_ = true;
 
     return true;
@@ -7757,7 +7862,7 @@ BaseCompiler::emitCallArgs(const ValTypeVector& argTypes, FunctionCall* baseline
 void
 BaseCompiler::pushReturnedIfNonVoid(const FunctionCall& call, ExprType type)
 {
-    switch (type) {
+    switch (type.code()) {
       case ExprType::Void:
         // There's no return value.  Do nothing.
         break;
@@ -7781,6 +7886,7 @@ BaseCompiler::pushReturnedIfNonVoid(const FunctionCall& call, ExprType type)
         pushF64(rv);
         break;
       }
+      case ExprType::Ref:
       case ExprType::AnyRef: {
         RegPtr rv = captureReturnedRef();
         pushRef(rv);
@@ -7819,16 +7925,16 @@ BaseCompiler::emitCall()
 
     sync();
 
-    const Sig& sig = *env_.funcSigs[funcIndex];
+    const FuncType& funcType = *env_.funcTypes[funcIndex];
     bool import = env_.funcIsImport(funcIndex);
 
-    uint32_t numArgs = sig.args().length();
+    uint32_t numArgs = funcType.args().length();
     size_t stackSpace = stackConsumed(numArgs);
 
     FunctionCall baselineCall(lineOrBytecode);
     beginCall(baselineCall, UseABI::Wasm, import ? InterModule::True : InterModule::False);
 
-    if (!emitCallArgs(sig.args(), &baselineCall))
+    if (!emitCallArgs(funcType.args(), &baselineCall))
         return false;
 
     if (import)
@@ -7840,7 +7946,7 @@ BaseCompiler::emitCall()
 
     popValueStackBy(numArgs);
 
-    pushReturnedIfNonVoid(baselineCall, sig.ret());
+    pushReturnedIfNonVoid(baselineCall, funcType.ret());
 
     return true;
 }
@@ -7850,10 +7956,10 @@ BaseCompiler::emitCallIndirect()
 {
     uint32_t lineOrBytecode = readCallSiteLineOrBytecode();
 
-    uint32_t sigIndex;
+    uint32_t funcTypeIndex;
     Nothing callee_;
     BaseOpIter::ValueVector args_;
-    if (!iter_.readCallIndirect(&sigIndex, &callee_, &args_))
+    if (!iter_.readCallIndirect(&funcTypeIndex, &callee_, &args_))
         return false;
 
     if (deadCode_)
@@ -7861,11 +7967,11 @@ BaseCompiler::emitCallIndirect()
 
     sync();
 
-    const SigWithId& sig = env_.types[sigIndex].funcType();
+    const FuncTypeWithId& funcType = env_.types[funcTypeIndex].funcType();
 
     // Stack: ... arg1 .. argn callee
 
-    uint32_t numArgs = sig.args().length();
+    uint32_t numArgs = funcType.args().length();
     size_t stackSpace = stackConsumed(numArgs + 1);
 
     // The arguments must be at the stack top for emitCallArgs, so pop the
@@ -7877,16 +7983,16 @@ BaseCompiler::emitCallIndirect()
     FunctionCall baselineCall(lineOrBytecode);
     beginCall(baselineCall, UseABI::Wasm, InterModule::True);
 
-    if (!emitCallArgs(sig.args(), &baselineCall))
+    if (!emitCallArgs(funcType.args(), &baselineCall))
         return false;
 
-    callIndirect(sigIndex, callee, baselineCall);
+    callIndirect(funcTypeIndex, callee, baselineCall);
 
     endCall(baselineCall, stackSpace);
 
     popValueStackBy(numArgs);
 
-    pushReturnedIfNonVoid(baselineCall, sig.ret());
+    pushReturnedIfNonVoid(baselineCall, funcType.ret());
 
     return true;
 }
@@ -8111,6 +8217,7 @@ BaseCompiler::emitGetLocal()
       case ValType::F32:
         pushLocalF32(slot);
         break;
+      case ValType::Ref:
       case ValType::AnyRef:
         pushLocalRef(slot);
         break;
@@ -8170,6 +8277,7 @@ BaseCompiler::emitSetOrTeeLocal(uint32_t slot)
             pushF32(rv);
         break;
       }
+      case ValType::Ref:
       case ValType::AnyRef: {
         RegPtr rv = popRef();
         syncLocal(slot);
@@ -8220,7 +8328,7 @@ BaseCompiler::emitGetGlobal()
     const GlobalDesc& global = env_.globals[id];
 
     if (global.isConstant()) {
-        Val value = global.constantValue();
+        LitVal value = global.constantValue();
         switch (value.type().code()) {
           case ValType::I32:
             pushI32(value.i32());
@@ -8233,6 +8341,9 @@ BaseCompiler::emitGetGlobal()
             break;
           case ValType::F64:
             pushF64(value.f64());
+            break;
+          case ValType::AnyRef:
+            pushRef(intptr_t(value.ptr()));
             break;
           default:
             MOZ_CRASH("Global constant type");
@@ -8267,6 +8378,13 @@ BaseCompiler::emitGetGlobal()
         ScratchI32 tmp(*this);
         masm.loadDouble(addressOfGlobalVar(global, tmp), rv);
         pushF64(rv);
+        break;
+      }
+      case ValType::AnyRef: {
+        RegPtr rv = needRef();
+        ScratchI32 tmp(*this);
+        masm.loadPtr(addressOfGlobalVar(global, tmp), rv);
+        pushRef(rv);
         break;
       }
       default:
@@ -8318,6 +8436,33 @@ BaseCompiler::emitSetGlobal()
         freeF64(rv);
         break;
       }
+#ifdef ENABLE_WASM_GC
+      case ValType::AnyRef: {
+        Label skipBarrier;
+        testNeedPreBarrier(&skipBarrier);
+
+        RegPtr valueAddr(PreBarrierReg);
+        needRef(valueAddr);
+        {
+            ScratchI32 tmp(*this);
+            masm.computeEffectiveAddress(addressOfGlobalVar(global, tmp), valueAddr);
+        }
+        emitPreBarrier(valueAddr, &skipBarrier);
+        freeRef(valueAddr);
+
+        RegPtr rv = popRef();
+        {
+            // Actual store.
+            ScratchI32 tmp(*this);
+            masm.storePtr(rv, addressOfGlobalVar(global, tmp));
+        }
+
+        emitPostBarrier(Nothing(), rv, PostBarrierArg::Global(id));
+
+        freeRef(rv);
+        break;
+      }
+#endif
       default:
         MOZ_CRASH("Global variable type");
         break;
@@ -8700,6 +8845,7 @@ BaseCompiler::emitSelect()
         pushF64(r);
         break;
       }
+      case ValType::Ref:
       case ValType::AnyRef: {
         RegPtr r, rs;
         pop2xRef(&r, &rs);
@@ -8870,7 +9016,8 @@ BaseCompiler::emitCurrentMemory()
 bool
 BaseCompiler::emitRefNull()
 {
-    if (!iter_.readRefNull())
+    ValType type;
+    if (!iter_.readRefNull(&type))
         return false;
 
     if (deadCode_)
@@ -9247,7 +9394,7 @@ BaseCompiler::emitMemFill()
 bool
 BaseCompiler::emitBody()
 {
-    if (!iter_.readFunctionStart(sig().ret()))
+    if (!iter_.readFunctionStart(funcType().ret()))
         return false;
 
     initControl(controlItem());
@@ -9329,7 +9476,7 @@ BaseCompiler::emitBody()
 
             if (iter_.controlStackEmpty()) {
                 if (!deadCode_)
-                    doReturn(sig().ret(), PopStack(false));
+                    doReturn(funcType().ret(), PopStack(false));
                 return iter_.readFunctionEnd(iter_.end());
             }
             NEXT();
@@ -10134,7 +10281,7 @@ BaseCompiler::init()
         return false;
     }
 
-    if (!fr.setupLocals(locals_, sig().args(), env_.debugEnabled(), &localInfo_))
+    if (!fr.setupLocals(locals_, funcType().args(), env_.debugEnabled(), &localInfo_))
         return false;
 
     return true;
@@ -10207,9 +10354,9 @@ js::wasm::BaselineCompileFunctions(const ModuleEnvironment& env, LifoAlloc& lifo
         // Build the local types vector.
 
         ValTypeVector locals;
-        if (!locals.appendAll(env.funcSigs[func.index]->args()))
+        if (!locals.appendAll(env.funcTypes[func.index]->args()))
             return false;
-        if (!DecodeLocalEntries(d, env.kind, env.gcTypesEnabled, &locals))
+        if (!DecodeLocalEntries(d, env.kind, env.types, env.gcTypesEnabled, &locals))
             return false;
 
         // One-pass baseline compilation.

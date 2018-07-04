@@ -66,7 +66,7 @@ namespace dom {
 
 // Forward declare GetConstructorObject methods.
 #define HTML_TAG(_tag, _classname, _interfacename)                             \
-namespace HTML##_interfacename##ElementBinding {                               \
+namespace HTML##_interfacename##Element_Binding {                               \
   JSObject* GetConstructorObject(JSContext*);                                  \
 }
 #define HTML_OTHER(_tag)
@@ -77,12 +77,12 @@ namespace HTML##_interfacename##ElementBinding {                               \
 typedef JSObject* (*constructorGetterCallback)(JSContext*);
 
 // Mapping of html tag and GetConstructorObject methods.
-#define HTML_TAG(_tag, _classname, _interfacename) HTML##_interfacename##ElementBinding::GetConstructorObject,
+#define HTML_TAG(_tag, _classname, _interfacename) HTML##_interfacename##Element_Binding::GetConstructorObject,
 #define HTML_OTHER(_tag) nullptr,
 // We use eHTMLTag_foo (where foo is the tag) which is defined in nsHTMLTags.h
 // to index into this array.
 static const constructorGetterCallback sConstructorGetterCallback[] = {
-  HTMLUnknownElementBinding::GetConstructorObject,
+  HTMLUnknownElement_Binding::GetConstructorObject,
 #include "nsHTMLTagList.h"
 #undef HTML_TAG
 #undef HTML_OTHER
@@ -184,7 +184,7 @@ struct TErrorResult<CleanupPolicy>::Message {
     return GetErrorArgCount(mErrorNumber) == mArgs.Length();
   }
 
-  bool operator==(const TErrorResult<CleanupPolicy>::Message& aRight)
+  bool operator==(const TErrorResult<CleanupPolicy>::Message& aRight) const
   {
     return mErrorNumber == aRight.mErrorNumber &&
            mArgs == aRight.mArgs;
@@ -341,7 +341,7 @@ struct TErrorResult<CleanupPolicy>::DOMExceptionInfo {
   nsCString mMessage;
   nsresult mRv;
 
-  bool operator==(const TErrorResult<CleanupPolicy>::DOMExceptionInfo& aRight)
+  bool operator==(const TErrorResult<CleanupPolicy>::DOMExceptionInfo& aRight) const
   {
     return mRv == aRight.mRv &&
            mMessage == aRight.mMessage;
@@ -507,6 +507,32 @@ TErrorResult<CleanupPolicy>::operator=(TErrorResult<CleanupPolicy>&& aRHS)
   mResult = aRHS.mResult;
   aRHS.mResult = NS_OK;
   return *this;
+}
+
+template<typename CleanupPolicy>
+bool
+TErrorResult<CleanupPolicy>::operator==(const ErrorResult& aRight) const
+{
+  auto right = reinterpret_cast<const TErrorResult<CleanupPolicy>*>(&aRight);
+
+  if (mResult != right->mResult) {
+    return false;
+  }
+
+  if (IsJSException()) {
+    // js exceptions are always non-equal
+    return false;
+  }
+
+  if (IsErrorWithMessage()) {
+    return *mExtra.mMessage == *right->mExtra.mMessage;
+  }
+
+  if (IsDOMException()) {
+    return *mExtra.mDOMExceptionInfo == *right->mExtra.mDOMExceptionInfo;
+  }
+
+  return true;
 }
 
 template<typename CleanupPolicy>
@@ -2867,7 +2893,9 @@ ConvertJSValueToByteString(JSContext* cx, JS::Handle<JS::Value> v,
     return false;
   }
 
-  JS_EncodeStringToBuffer(cx, s, result.BeginWriting(), length);
+  if (!JS_EncodeStringToBuffer(cx, s, result.BeginWriting(), length)) {
+    return false;
+  }
 
   return true;
 }
@@ -2920,7 +2948,8 @@ IsNonExposedGlobal(JSContext* aCx, JSObject* aGlobal,
                 GlobalNames::SharedWorkerGlobalScope |
                 GlobalNames::ServiceWorkerGlobalScope |
                 GlobalNames::WorkerDebuggerGlobalScope |
-                GlobalNames::WorkletGlobalScope)) == 0,
+                GlobalNames::WorkletGlobalScope |
+                GlobalNames::AudioWorkletGlobalScope)) == 0,
              "Unknown non-exposed global type");
 
   const char* name = js::GetObjectClass(aGlobal)->name;
@@ -2957,6 +2986,11 @@ IsNonExposedGlobal(JSContext* aCx, JSObject* aGlobal,
 
   if ((aNonExposedGlobals & GlobalNames::WorkletGlobalScope) &&
       !strcmp(name, "WorkletGlobalScope")) {
+    return true;
+  }
+
+  if ((aNonExposedGlobals & GlobalNames::AudioWorkletGlobalScope) &&
+      !strcmp(name, "AudioWorkletGlobalScope")) {
     return true;
   }
 
@@ -3800,9 +3834,9 @@ HTMLConstructor(JSContext* aCx, unsigned aArgc, JS::Value* aVp,
 
     JS::Rooted<JSObject*> constructor(aCx);
     if (ns == kNameSpaceID_XUL) {
-      constructor = XULElementBinding::GetConstructorObject(aCx);
+      constructor = XULElement_Binding::GetConstructorObject(aCx);
     } else {
-      constructor = HTMLElementBinding::GetConstructorObject(aCx);
+      constructor = HTMLElement_Binding::GetConstructorObject(aCx);
     }
 
     if (!constructor) {
@@ -3833,9 +3867,9 @@ HTMLConstructor(JSContext* aCx, unsigned aArgc, JS::Value* aVp,
           definition->mLocalName == nsGkAtoms::popup ||
           definition->mLocalName == nsGkAtoms::panel ||
           definition->mLocalName == nsGkAtoms::tooltip) {
-        cb = XULPopupElementBinding::GetConstructorObject;
+        cb = XULPopupElement_Binding::GetConstructorObject;
       } else {
-        cb = XULElementBinding::GetConstructorObject;
+        cb = XULElement_Binding::GetConstructorObject;
       }
     }
 

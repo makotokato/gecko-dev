@@ -17,6 +17,7 @@
 #include "nsHistory.h"
 #include "nsDOMNavigationTiming.h"
 #include "nsIDOMStorageManager.h"
+#include "mozilla/dom/AutoplayRequest.h"
 #include "mozilla/dom/DOMJSProxyHandler.h"
 #include "mozilla/dom/DOMPrefs.h"
 #include "mozilla/dom/EventTarget.h"
@@ -2355,6 +2356,12 @@ nsPIDOMWindowInner::NoteCalledRegisterForServiceWorkerScope(const nsACString& aS
   nsGlobalWindowInner::Cast(this)->NoteCalledRegisterForServiceWorkerScope(aScope);
 }
 
+void
+nsPIDOMWindowInner::NoteDOMContentLoaded()
+{
+  nsGlobalWindowInner::Cast(this)->NoteDOMContentLoaded();
+}
+
 bool
 nsGlobalWindowInner::ShouldReportForServiceWorkerScope(const nsAString& aScope)
 {
@@ -2469,6 +2476,16 @@ nsGlobalWindowInner::NoteCalledRegisterForServiceWorkerScope(const nsACString& a
   }
 
   mClientSource->NoteCalledRegisterForServiceWorkerScope(aScope);
+}
+
+void
+nsGlobalWindowInner::NoteDOMContentLoaded()
+{
+  if (!mClientSource) {
+    return;
+  }
+
+  mClientSource->NoteDOMContentLoaded();
 }
 
 void
@@ -5204,8 +5221,8 @@ nsGlobalWindowInner::FireOfflineStatusEventIfChanged()
   nsContentUtils::DispatchTrustedEvent(mDoc,
                                        static_cast<EventTarget*>(this),
                                        name,
-                                       false,
-                                       false);
+                                       CanBubble::eNo,
+                                       Cancelable::eNo);
 }
 
 class NotifyIdleObserverRunnable : public Runnable
@@ -5883,8 +5900,8 @@ nsGlobalWindowInner::Observe(nsISupports* aSubject, const char* aTopic,
     // very likely situation where an event handler will try to read its value.
 
     if (mNavigator) {
-      NavigatorBinding::ClearCachedLanguageValue(mNavigator);
-      NavigatorBinding::ClearCachedLanguagesValue(mNavigator);
+      Navigator_Binding::ClearCachedLanguageValue(mNavigator);
+      Navigator_Binding::ClearCachedLanguagesValue(mNavigator);
     }
 
     // The event has to be dispatched only to the current inner window.
@@ -6395,8 +6412,8 @@ nsGlobalWindowInner::GetOrCreateServiceWorker(const ServiceWorkerDescriptor& aDe
   return ref.forget();
 }
 
-RefPtr<ServiceWorkerRegistration>
-nsGlobalWindowInner::GetOrCreateServiceWorkerRegistration(const ServiceWorkerRegistrationDescriptor& aDescriptor)
+RefPtr<mozilla::dom::ServiceWorkerRegistration>
+nsGlobalWindowInner::GetServiceWorkerRegistration(const mozilla::dom::ServiceWorkerRegistrationDescriptor& aDescriptor) const
 {
   MOZ_ASSERT(NS_IsMainThread());
   RefPtr<ServiceWorkerRegistration> ref;
@@ -6409,11 +6426,17 @@ nsGlobalWindowInner::GetOrCreateServiceWorkerRegistration(const ServiceWorkerReg
     ref = swr.forget();
     *aDoneOut = true;
   });
+  return ref.forget();
+}
 
+RefPtr<ServiceWorkerRegistration>
+nsGlobalWindowInner::GetOrCreateServiceWorkerRegistration(const ServiceWorkerRegistrationDescriptor& aDescriptor)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  RefPtr<ServiceWorkerRegistration> ref = GetServiceWorkerRegistration(aDescriptor);
   if (!ref) {
     ref = ServiceWorkerRegistration::CreateForMainThread(this, aDescriptor);
   }
-
   return ref.forget();
 }
 
@@ -7682,8 +7705,8 @@ void
 nsGlobalWindowInner::ClearDocumentDependentSlots(JSContext* aCx)
 {
   // If JSAPI OOMs here, there is basically nothing we can do to recover safely.
-  if (!WindowBinding::ClearCachedDocumentValue(aCx, this) ||
-      !WindowBinding::ClearCachedPerformanceValue(aCx, this)) {
+  if (!Window_Binding::ClearCachedDocumentValue(aCx, this) ||
+      !Window_Binding::ClearCachedPerformanceValue(aCx, this)) {
     MOZ_CRASH("Unhandlable OOM while clearing document dependent slots.");
   }
 }
@@ -8122,6 +8145,39 @@ const nsIGlobalObject*
 nsPIDOMWindowInner::AsGlobal() const
 {
   return nsGlobalWindowInner::Cast(this);
+}
+
+static nsPIDOMWindowInner*
+GetTopLevelInnerWindow(nsPIDOMWindowInner* aWindow)
+{
+  if (!aWindow) {
+    return nullptr;
+  }
+  nsIDocShell* docShell = aWindow->GetDocShell();
+  if (!docShell) {
+    return nullptr;
+  }
+  nsCOMPtr<nsIDocShellTreeItem> rootTreeItem;
+  docShell->GetSameTypeRootTreeItem(getter_AddRefs(rootTreeItem));
+  if (!rootTreeItem || !rootTreeItem->GetDocument()) {
+    return nullptr;
+  }
+  return rootTreeItem->GetDocument()->GetInnerWindow();
+}
+
+already_AddRefed<mozilla::AutoplayRequest>
+nsPIDOMWindowInner::GetAutoplayRequest()
+{
+  // The AutoplayRequest is stored on the top level window.
+  nsPIDOMWindowInner* window = GetTopLevelInnerWindow(this);
+  if (!window) {
+    return nullptr;
+  }
+  if (!window->mAutoplayRequest) {
+    window->mAutoplayRequest = AutoplayRequest::Create(nsGlobalWindowInner::Cast(window));
+  }
+  RefPtr<mozilla::AutoplayRequest> request = window->mAutoplayRequest;
+  return request.forget();
 }
 
 // XXX: Can we define this in a header instead of here?

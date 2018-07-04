@@ -37,6 +37,7 @@
 #include "jit/IonCode.h"
 #include "js/MemoryMetrics.h"
 #include "js/Printf.h"
+#include "js/UniquePtr.h"
 #include "js/Utility.h"
 #include "js/Wrapper.h"
 #include "util/StringBuffer.h"
@@ -1056,7 +1057,10 @@ JSScript::initScriptCounts(JSContext* cx)
     // Create realm's scriptCountsMap if necessary.
     if (!realm()->scriptCountsMap) {
         auto map = cx->make_unique<ScriptCountsMap>();
-        if (!map || !map->init()) {
+        if (!map)
+            return false;
+
+        if (!map->init()) {
             ReportOutOfMemory(cx);
             return false;
         }
@@ -1617,7 +1621,9 @@ ScriptSource::chunkChars(JSContext* cx, UncompressedSourceCache::AutoHoldEntry& 
 ScriptSource::PinnedChars::PinnedChars(JSContext* cx, ScriptSource* source,
                                        UncompressedSourceCache::AutoHoldEntry& holder,
                                        size_t begin, size_t len)
-  : source_(source)
+  : stack_(nullptr),
+    prev_(nullptr),
+    source_(source)
 {
     chars_ = source->chars(cx, holder, begin, len);
     if (chars_) {
@@ -2131,7 +2137,7 @@ ScriptSource::performXDR(XDRState<mode>* xdr)
 
         size_t byteLen = compressedLength ? compressedLength : (len * sizeof(char16_t));
         if (mode == XDR_DECODE) {
-            UniqueChars bytes(xdr->cx()->template pod_malloc<char>(Max<size_t>(byteLen, 1)));
+            auto bytes = xdr->cx()->template make_pod_array<char>(Max<size_t>(byteLen, 1));
             if (!bytes)
                 return xdr->fail(JS::TranscodeResult_Throw);
             MOZ_TRY(xdr->codeBytes(bytes.get(), byteLen));
@@ -2326,6 +2332,8 @@ ScriptSource::setSourceMapURL(JSContext* cx, const char16_t* sourceMapURL)
 }
 
 /*
+ * [SMDOC] JSScript data layout (shared)
+ *
  * Shared script data management.
  *
  * SharedScriptData::data contains data that can be shared within a
@@ -2499,6 +2507,8 @@ js::FreeScriptData(JSRuntime* rt)
 }
 
 /*
+ * [SMDOC] JSScript data layout (unshared)
+ *
  * JSScript::data and SharedScriptData::data have complex,
  * manually-controlled, memory layouts.
  *
@@ -2695,7 +2705,10 @@ JSScript::initScriptName(JSContext* cx)
     // Create realm's scriptNameMap if necessary.
     if (!realm()->scriptNameMap) {
         auto map = cx->make_unique<ScriptNameMap>();
-        if (!map || !map->init()) {
+        if (!map)
+            return false;
+
+        if (!map->init()) {
             ReportOutOfMemory(cx);
             return false;
         }
@@ -3451,7 +3464,7 @@ js::detail::CopyScript(JSContext* cx, HandleScript src, HandleScript dst,
     /* Script data */
 
     size_t size = src->dataSize();
-    ScopedJSFreePtr<uint8_t> data(AllocScriptData(cx->zone(), size));
+    UniquePtr<uint8_t, JS::FreePolicy> data(AllocScriptData(cx->zone(), size));
     if (size && !data) {
         ReportOutOfMemory(cx);
         return false;
@@ -3519,7 +3532,7 @@ js::detail::CopyScript(JSContext* cx, HandleScript src, HandleScript dst,
     }
 
     /* This assignment must occur before all the Rebase calls. */
-    dst->data = data.forget();
+    dst->data = data.release();
     dst->dataSize_ = size;
     MOZ_ASSERT(bool(dst->data) == bool(src->data));
     if (dst->data)
@@ -3754,20 +3767,29 @@ JSScript::ensureHasDebugScript(JSContext* cx)
 
     size_t nbytes = offsetof(DebugScript, breakpoints) + length() * sizeof(BreakpointSite*);
     UniqueDebugScript debug(reinterpret_cast<DebugScript*>(zone()->pod_calloc<uint8_t>(nbytes)));
-    if (!debug)
+    if (!debug) {
+        ReportOutOfMemory(cx);
         return false;
+    }
 
     /* Create realm's debugScriptMap if necessary. */
     if (!realm()->debugScriptMap) {
         auto map = cx->make_unique<DebugScriptMap>();
-        if (!map || !map->init())
+        if (!map)
             return false;
+
+        if (!map->init()) {
+            ReportOutOfMemory(cx);
+            return false;
+        }
 
         realm()->debugScriptMap = std::move(map);
     }
 
-    if (!realm()->debugScriptMap->putNew(this, std::move(debug)))
+    if (!realm()->debugScriptMap->putNew(this, std::move(debug))) {
+        ReportOutOfMemory(cx);
         return false;
+    }
 
     bitFields_.hasDebugScript_ = true; // safe to set this;  we can't fail after this point
 
@@ -4255,10 +4277,13 @@ LazyScript::CreateRaw(JSContext* cx, HandleFunction fun,
     size_t bytes = (p.numClosedOverBindings * sizeof(JSAtom*))
                  + (p.numInnerFunctions * sizeof(GCPtrFunction));
 
-    ScopedJSFreePtr<uint8_t> table(bytes ? fun->zone()->pod_malloc<uint8_t>(bytes) : nullptr);
-    if (bytes && !table) {
-        ReportOutOfMemory(cx);
-        return nullptr;
+    UniquePtr<uint8_t, JS::FreePolicy> table;
+    if (bytes) {
+        table.reset(fun->zone()->pod_malloc<uint8_t>(bytes));
+        if (!table) {
+            ReportOutOfMemory(cx);
+            return nullptr;
+        }
     }
 
     LazyScript* res = Allocate<LazyScript>(cx);
@@ -4267,8 +4292,8 @@ LazyScript::CreateRaw(JSContext* cx, HandleFunction fun,
 
     cx->realm()->scheduleDelazificationForDebugger();
 
-    return new (res) LazyScript(fun, *sourceObject, table.forget(), packed, sourceStart, sourceEnd,
-                                toStringStart, lineno, column);
+    return new (res) LazyScript(fun, *sourceObject, table.release(), packed, sourceStart,
+                                sourceEnd, toStringStart, lineno, column);
 }
 
 /* static */ LazyScript*

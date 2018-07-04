@@ -307,7 +307,8 @@ js::ReportOutOfMemory(JSContext* cx)
     if (JS::OutOfMemoryCallback oomCallback = cx->runtime()->oomCallback)
         oomCallback(cx, cx->runtime()->oomCallbackData);
 
-    cx->setPendingException(StringValue(cx->names().outOfMemory));
+    RootedValue oomMessage(cx, StringValue(cx->names().outOfMemory));
+    cx->setPendingException(oomMessage);
 }
 
 mozilla::GenericErrorResult<OOM&>
@@ -1032,7 +1033,11 @@ InternalEnqueuePromiseJobCallback(JSContext* cx, JS::HandleObject job,
                                   JS::HandleObject incumbentGlobal, void* data)
 {
     MOZ_ASSERT(job);
-    return cx->jobQueue->append(job);
+    if (!cx->jobQueue->append(job)) {
+        ReportOutOfMemory(cx);
+        return false;
+    }
+    return true;
 }
 
 namespace {

@@ -112,7 +112,6 @@ XPCOMUtils.defineLazyGetter(this, "LocalItemsSQLFragment", () => `
 // 1375896).
 const DB_URL_LENGTH_MAX = 65536;
 const DB_TITLE_LENGTH_MAX = 4096;
-const DB_DESCRIPTION_LENGTH_MAX = 256;
 
 const SQLITE_MAX_VARIABLE_NUMBER = 999;
 
@@ -131,9 +130,9 @@ function yieldingIterator(collection) {
  * It is persistent.
  *
  * The mirror schema is a hybrid of how Sync and Places represent bookmarks.
- * The `items` table contains item attributes (title, kind, description,
- * URL, etc.), while the `structure` table stores parent-child relationships and
- * position. This is similar to how iOS encodes "value" and "structure" state,
+ * The `items` table contains item attributes (title, kind, URL, etc.), while
+ * the `structure` table stores parent-child relationships and position.
+ * This is similar to how iOS encodes "value" and "structure" state,
  * though we handle these differently when merging. See `BookmarkMerger` for
  * details.
  *
@@ -671,22 +670,19 @@ class SyncedBookmarksMirror {
     let dateAdded = determineDateAdded(record);
     let title = validateTitle(record.title);
     let keyword = validateKeyword(record.keyword);
-    let description = validateDescription(record.description);
-    let loadInSidebar = record.loadInSidebar === true ? "1" : null;
 
     await this.db.executeCached(`
       REPLACE INTO items(guid, serverModified, needsMerge, kind,
                          dateAdded, title, keyword,
-                         urlId, description, loadInSidebar)
+                         urlId)
       VALUES(:guid, :serverModified, :needsMerge, :kind,
              :dateAdded, NULLIF(:title, ""), :keyword,
              (SELECT id FROM urls
               WHERE hash = hash(:url) AND
-                    url = :url),
-             :description, :loadInSidebar)`,
+                    url = :url))`,
       { guid, serverModified, needsMerge,
         kind: SyncedBookmarksMirror.KIND.BOOKMARK, dateAdded, title, keyword,
-        url: url.href, description, loadInSidebar });
+        url: url.href });
 
     let tags = record.tags;
     if (tags && Array.isArray(tags)) {
@@ -746,23 +742,18 @@ class SyncedBookmarksMirror {
     let serverModified = determineServerModified(record);
     let dateAdded = determineDateAdded(record);
     let title = validateTitle(record.title);
-    let description = validateDescription(record.description);
-    let smartBookmarkName = typeof record.queryId == "string" ?
-                            record.queryId : null;
 
     await this.db.executeCached(`
       REPLACE INTO items(guid, serverModified, needsMerge, kind,
-                         dateAdded, title, urlId, description,
-                         smartBookmarkName)
+                         dateAdded, title, urlId)
       VALUES(:guid, :serverModified, :needsMerge, :kind,
              :dateAdded, NULLIF(:title, ""),
              (SELECT id FROM urls
               WHERE hash = hash(:url) AND
-                    url = :url),
-             :description, :smartBookmarkName)`,
+                    url = :url))`,
       { guid, serverModified, needsMerge,
         kind: SyncedBookmarksMirror.KIND.QUERY, dateAdded, title,
-        url: url.href, description, smartBookmarkName });
+        url: url.href });
   }
 
   async storeRemoteFolder(record, { needsMerge }) {
@@ -779,16 +770,14 @@ class SyncedBookmarksMirror {
     let serverModified = determineServerModified(record);
     let dateAdded = determineDateAdded(record);
     let title = validateTitle(record.title);
-    let description = validateDescription(record.description);
 
     await this.db.executeCached(`
       REPLACE INTO items(guid, serverModified, needsMerge, kind,
-                         dateAdded, title, description)
+                         dateAdded, title)
       VALUES(:guid, :serverModified, :needsMerge, :kind,
-             :dateAdded, NULLIF(:title, ""),
-             :description)`,
+             :dateAdded, NULLIF(:title, ""))`,
       { guid, serverModified, needsMerge, kind: SyncedBookmarksMirror.KIND.FOLDER,
-        dateAdded, title, description });
+        dateAdded, title });
 
     let children = record.children;
     if (children && Array.isArray(children)) {
@@ -846,17 +835,16 @@ class SyncedBookmarksMirror {
     let serverModified = determineServerModified(record);
     let dateAdded = determineDateAdded(record);
     let title = validateTitle(record.title);
-    let description = validateDescription(record.description);
     let siteURL = validateURL(record.siteUri);
 
     await this.db.executeCached(`
       REPLACE INTO items(guid, serverModified, needsMerge, kind, dateAdded,
-                         title, description, feedURL, siteURL)
+                         title, feedURL, siteURL)
       VALUES(:guid, :serverModified, :needsMerge, :kind, :dateAdded,
-             NULLIF(:title, ""), :description, :feedURL, :siteURL)`,
+             NULLIF(:title, ""), :feedURL, :siteURL)`,
       { guid, serverModified, needsMerge,
         kind: SyncedBookmarksMirror.KIND.LIVEMARK,
-        dateAdded, title, description, feedURL: feedURL.href,
+        dateAdded, title, feedURL: feedURL.href,
         siteURL: siteURL ? siteURL.href : null });
   }
 
@@ -932,9 +920,11 @@ class SyncedBookmarksMirror {
       SELECT s.parentGuid AS guid, 0 AS missingParent, 0 AS missingChild,
              1 AS parentWithGaps
       FROM structure s
+      WHERE s.guid <> :rootGuid
       GROUP BY s.parentGuid
       HAVING (sum(DISTINCT position + 1) -
-                  (count(*) * (count(*) + 1) / 2)) <> 0`);
+                  (count(*) * (count(*) + 1) / 2)) <> 0`,
+      { rootGuid: PlacesUtils.bookmarks.rootGuid });
 
     for await (let row of yieldingIterator(orphanRows)) {
       let guid = row.getResultByName("guid");
@@ -1148,7 +1138,7 @@ class SyncedBookmarksMirror {
     let newRemoteContents = new Map();
 
     let rows = await this.db.execute(`
-      SELECT v.guid, IFNULL(v.title, "") AS title, u.url, v.smartBookmarkName,
+      SELECT v.guid, IFNULL(v.title, "") AS title, u.url,
              IFNULL(s.position, -1) AS position
       FROM items v
       LEFT JOIN urls u ON u.id = v.urlId
@@ -1249,10 +1239,6 @@ class SyncedBookmarksMirror {
 
     let rows = await this.db.execute(`
       SELECT b.guid, IFNULL(b.title, "") AS title, h.url,
-             (SELECT a.content FROM moz_items_annos a
-              JOIN moz_anno_attributes n ON n.id = a.anno_attribute_id
-              WHERE a.item_id = b.id AND
-                    n.name = :smartBookmarkAnno) AS smartBookmarkName,
              b.position
       FROM moz_bookmarks b
       JOIN moz_bookmarks p ON p.id = b.parent
@@ -1261,8 +1247,7 @@ class SyncedBookmarksMirror {
       WHERE v.guid IS NULL AND
             p.guid <> :rootGuid AND
             b.syncStatus <> :syncStatus`,
-      { smartBookmarkAnno: PlacesSyncUtils.bookmarks.SMART_BOOKMARKS_ANNO,
-        rootGuid: PlacesUtils.bookmarks.rootGuid,
+      { rootGuid: PlacesUtils.bookmarks.rootGuid,
         syncStatus: PlacesUtils.bookmarks.SYNC_STATUS.NORMAL });
 
     for await (let row of yieldingIterator(rows)) {
@@ -1573,8 +1558,7 @@ class SyncedBookmarksMirror {
       ${LocalItemsSQLFragment}
       INSERT INTO itemsToUpload(id, guid, syncChangeCounter, parentGuid,
                                 parentTitle, dateAdded, type, title, isQuery,
-                                url, tags, description, loadInSidebar,
-                                smartBookmarkName, keyword, feedURL, siteURL,
+                                url, tags, keyword, feedURL, siteURL,
                                 position, tagFolderName)
       SELECT s.id, s.guid, s.syncChangeCounter, s.parentGuid, s.parentTitle,
              s.dateAdded / 1000, s.type, s.title,
@@ -1586,19 +1570,6 @@ class SyncedBookmarksMirror {
               WHERE s.type = :bookmarkType AND
                     r.guid = :tagsGuid AND
                     e.fk = h.id),
-             (SELECT a.content FROM moz_items_annos a
-              JOIN moz_anno_attributes n ON n.id = a.anno_attribute_id
-              WHERE s.type IN (:bookmarkType, :folderType) AND
-                    a.item_id = s.id AND
-                    n.name = :descriptionAnno),
-             IFNULL((SELECT a.content FROM moz_items_annos a
-                     JOIN moz_anno_attributes n ON n.id = a.anno_attribute_id
-                     WHERE a.item_id = s.id AND
-                           n.name = :sidebarAnno), 0),
-             (SELECT a.content FROM moz_items_annos a
-              JOIN moz_anno_attributes n ON n.id = a.anno_attribute_id
-              WHERE a.item_id = s.id AND
-                    n.name = :smartBookmarkAnno),
              (SELECT keyword FROM moz_keywords WHERE place_id = h.id),
              (SELECT a.content FROM moz_items_annos a
               JOIN moz_anno_attributes n ON n.id = a.anno_attribute_id
@@ -1620,9 +1591,6 @@ class SyncedBookmarksMirror {
             w.id NOT NULL`,
       { bookmarkType: PlacesUtils.bookmarks.TYPE_BOOKMARK,
         tagsGuid: PlacesUtils.bookmarks.tagsGuid,
-        descriptionAnno: PlacesSyncUtils.bookmarks.DESCRIPTION_ANNO,
-        sidebarAnno: PlacesSyncUtils.bookmarks.SIDEBAR_ANNO,
-        smartBookmarkAnno: PlacesSyncUtils.bookmarks.SMART_BOOKMARKS_ANNO,
         folderType: PlacesUtils.bookmarks.TYPE_FOLDER,
         feedURLAnno: PlacesUtils.LMANNO_FEEDURI,
         siteURLAnno: PlacesUtils.LMANNO_SITEURI });
@@ -1670,9 +1638,8 @@ class SyncedBookmarksMirror {
 
     let itemRows = await this.db.execute(`
       SELECT id, syncChangeCounter, guid, isDeleted, type, isQuery,
-             smartBookmarkName, tagFolderName,
-             loadInSidebar, keyword, tags, url, IFNULL(title, "") AS title,
-             description, feedURL, siteURL, position, parentGuid,
+             tagFolderName, keyword, tags, url, IFNULL(title, "") AS title,
+             feedURL, siteURL, position, parentGuid,
              IFNULL(parentTitle, "") AS parentTitle, dateAdded
       FROM itemsToUpload`);
 
@@ -1719,14 +1686,9 @@ class SyncedBookmarksMirror {
               dateAdded: row.getResultByName("dateAdded") || undefined,
               bmkUri: row.getResultByName("url"),
               title: row.getResultByName("title"),
-              queryId: row.getResultByName("smartBookmarkName"),
               // folderName should never be an empty string or null
               folderName: row.getResultByName("tagFolderName") || undefined,
             };
-            let description = row.getResultByName("description");
-            if (description) {
-              queryCleartext.description = description;
-            }
             changeRecords[recordId] = new BookmarkChangeRecord(
               syncChangeCounter, queryCleartext);
             continue;
@@ -1742,14 +1704,6 @@ class SyncedBookmarksMirror {
             bmkUri: row.getResultByName("url"),
             title: row.getResultByName("title"),
           };
-          let description = row.getResultByName("description");
-          if (description) {
-            bookmarkCleartext.description = description;
-          }
-          let loadInSidebar = row.getResultByName("loadInSidebar");
-          if (loadInSidebar) {
-            bookmarkCleartext.loadInSidebar = true;
-          }
           let keyword = row.getResultByName("keyword");
           if (keyword) {
             bookmarkCleartext.keyword = keyword;
@@ -1778,10 +1732,6 @@ class SyncedBookmarksMirror {
               title: row.getResultByName("title"),
               feedUri: feedURLHref,
             };
-            let description = row.getResultByName("description");
-            if (description) {
-              livemarkCleartext.description = description;
-            }
             let siteURLHref = row.getResultByName("siteURL");
             if (siteURLHref) {
               livemarkCleartext.siteUri = siteURLHref;
@@ -1800,10 +1750,6 @@ class SyncedBookmarksMirror {
             dateAdded: row.getResultByName("dateAdded") || undefined,
             title: row.getResultByName("title"),
           };
-          let description = row.getResultByName("description");
-          if (description) {
-            folderCleartext.description = description;
-          }
           let localId = row.getResultByName("id");
           let childRecordIds = childRecordIdsByLocalParentId.get(localId);
           folderCleartext.children = childRecordIds || [];
@@ -1971,6 +1917,8 @@ async function initializeMirrorDatabase(db) {
     value NOT NULL
   )`);
 
+  // Note: description and loadInSidebar are not used as of Firefox 63, but
+  // remain to avoid rebuilding the database if the user happens to downgrade.
   await db.execute(`CREATE TABLE mirror.items(
     id INTEGER PRIMARY KEY,
     guid TEXT UNIQUE NOT NULL,
@@ -2085,18 +2033,6 @@ async function initializeTempMirrorEntities(db) {
   // We use this table to build SQL fragments for the `insertNewLocalItems` and
   // `updateExistingLocalItems` triggers below.
   const syncedAnnoTriggers = [{
-    annoName: PlacesSyncUtils.bookmarks.DESCRIPTION_ANNO,
-    columnName: "newDescription",
-    type: PlacesUtils.annotations.TYPE_STRING,
-  }, {
-    annoName: PlacesSyncUtils.bookmarks.SIDEBAR_ANNO,
-    columnName: "newLoadInSidebar",
-    type: PlacesUtils.annotations.TYPE_INT32,
-  }, {
-    annoName: PlacesSyncUtils.bookmarks.SMART_BOOKMARKS_ANNO,
-    columnName: "newSmartBookmarkName",
-    type: PlacesUtils.annotations.TYPE_STRING,
-  }, {
     annoName: PlacesUtils.LMANNO_FEEDURI,
     columnName: "newFeedURL",
     type: PlacesUtils.annotations.TYPE_STRING,
@@ -2199,9 +2135,7 @@ async function initializeTempMirrorEntities(db) {
                                   oldGuid, newGuid, newType,
                                   newDateAddedMicroseconds, newTitle,
                                   oldPlaceId, newPlaceId, newKeyword,
-                                  newDescription, newLoadInSidebar,
-                                  newSmartBookmarkName, newFeedURL,
-                                  newSiteURL) AS
+                                  newFeedURL, newSiteURL) AS
     SELECT b.id, v.id, r.valueState = ${BookmarkMergeState.TYPE.REMOTE},
            r.level, r.localGuid, r.mergedGuid,
            (CASE WHEN v.kind IN (${[
@@ -2217,8 +2151,8 @@ async function initializeTempMirrorEntities(db) {
               "v.dateAdded" is in milliseconds. */
            (CASE WHEN b.dateAdded / 1000 < v.dateAdded THEN b.dateAdded
                  ELSE v.dateAdded * 1000 END),
-           v.title, h.id, u.newPlaceId, v.keyword, v.description,
-           v.loadInSidebar, v.smartBookmarkName, v.feedURL, v.siteURL
+           v.title, h.id, u.newPlaceId, v.keyword,
+           v.feedURL, v.siteURL
     FROM items v
     JOIN mergeStates r ON r.mergedGuid = v.guid
     LEFT JOIN moz_bookmarks b ON b.guid = r.localGuid
@@ -2695,9 +2629,6 @@ async function initializeTempMirrorEntities(db) {
     isQuery BOOLEAN NOT NULL DEFAULT 0,
     url TEXT,
     tags TEXT,
-    description TEXT,
-    loadInSidebar BOOLEAN,
-    smartBookmarkName TEXT,
     tagFolderName TEXT,
     keyword TEXT,
     feedURL TEXT,
@@ -2759,13 +2690,6 @@ function validateURL(rawURL) {
     url = new URL(rawURL);
   } catch (ex) {}
   return url;
-}
-
-function validateDescription(rawDescription) {
-  if (typeof rawDescription != "string" || !rawDescription) {
-    return null;
-  }
-  return rawDescription.slice(0, DB_DESCRIPTION_LENGTH_MAX);
 }
 
 function validateKeyword(rawKeyword) {
@@ -2843,19 +2767,17 @@ async function withTiming(name, func, recordTiming) {
  * for how we determine if two items are dupes.
  */
 class BookmarkContent {
-  constructor(title, urlHref, smartBookmarkName, position) {
+  constructor(title, urlHref, position) {
     this.title = title;
     this.urlHref = urlHref;
-    this.smartBookmarkName = smartBookmarkName;
     this.position = position;
   }
 
   static fromRow(row) {
     let title = row.getResultByName("title");
     let urlHref = row.getResultByName("url");
-    let smartBookmarkName = row.getResultByName("smartBookmarkName");
     let position = row.getResultByName("position");
-    return new BookmarkContent(title, urlHref, smartBookmarkName, position);
+    return new BookmarkContent(title, urlHref, position);
   }
 }
 
@@ -2864,8 +2786,7 @@ class BookmarkContent {
  * with different GUIDs and similar content.
  *
  * - Bookmarks must have the same title and URL.
- * - Smart bookmarks must have the same smart bookmark name. Other queries
- *   must have the same title and query URL.
+ * - Queries must have the same title and query URL.
  * - Folders and livemarks must have the same title.
  * - Separators must have the same position within their parents.
  *
@@ -2878,15 +2799,11 @@ class BookmarkContent {
  */
 function makeDupeKey(node, content) {
   switch (node.kind) {
+    case SyncedBookmarksMirror.KIND.QUERY:
+      // Fallthrough, treat the same as a bookmark.
     case SyncedBookmarksMirror.KIND.BOOKMARK:
       // We use `JSON.stringify([...])` instead of `[...].join(",")` to avoid
       // escaping the `,` in titles and URLs.
-      return JSON.stringify([node.kind, content.title, content.urlHref]);
-
-    case SyncedBookmarksMirror.KIND.QUERY:
-      if (content.smartBookmarkName) {
-        return JSON.stringify([node.kind, content.smartBookmarkName]);
-      }
       return JSON.stringify([node.kind, content.title, content.urlHref]);
 
     case SyncedBookmarksMirror.KIND.FOLDER:

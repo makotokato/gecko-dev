@@ -34,6 +34,7 @@
 #include "BatteryManager.h"
 #include "mozilla/dom/CredentialsContainer.h"
 #include "mozilla/dom/GamepadServiceTest.h"
+#include "mozilla/dom/MediaCapabilities.h"
 #include "mozilla/dom/WakeLock.h"
 #include "mozilla/dom/power/PowerManagerService.h"
 #include "mozilla/dom/MIDIAccessManager.h"
@@ -152,6 +153,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Navigator)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCredentials)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMediaDevices)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mServiceWorkerContainer)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMediaCapabilities)
 
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mWindow)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMediaKeySystemAccessManager)
@@ -222,6 +224,8 @@ Navigator::Invalidate()
     mVRServiceTest->Shutdown();
     mVRServiceTest = nullptr;
   }
+
+  mMediaCapabilities = nullptr;
 }
 
 void
@@ -1379,7 +1383,7 @@ Navigator::NotifyVRDisplaysUpdated()
 void
 Navigator::NotifyActiveVRDisplaysChanged()
 {
-  NavigatorBinding::ClearCachedActiveVRDisplaysValue(this);
+  Navigator_Binding::ClearCachedActiveVRDisplaysValue(this);
 }
 
 VRServiceTest*
@@ -1497,7 +1501,7 @@ Navigator::OnNavigation()
 JSObject*
 Navigator::WrapObject(JSContext* cx, JS::Handle<JSObject*> aGivenProto)
 {
-  return NavigatorBinding::Wrap(cx, this, aGivenProto);
+  return Navigator_Binding::Wrap(cx, this, aGivenProto);
 }
 
 /* static */
@@ -1644,7 +1648,7 @@ Navigator::AppName(nsAString& aAppName, bool aUsePrefOverriddenValue)
 void
 Navigator::ClearUserAgentCache()
 {
-  NavigatorBinding::ClearCachedUserAgentValue(this);
+  Navigator_Binding::ClearCachedUserAgentValue(this);
 }
 
 nsresult
@@ -1793,6 +1797,16 @@ Navigator::Credentials()
     mCredentials = new CredentialsContainer(GetWindow());
   }
   return mCredentials;
+}
+
+dom::MediaCapabilities*
+Navigator::MediaCapabilities()
+{
+  if (!mMediaCapabilities) {
+    mMediaCapabilities =
+      new dom::MediaCapabilities(GetWindow()->AsGlobal());
+  }
+  return mMediaCapabilities;
 }
 
 /* static */

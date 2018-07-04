@@ -63,6 +63,7 @@ class nsDOMStringMap;
 
 namespace mozilla {
 class DeclarationBlock;
+struct MutationClosureData;
 class TextEditor;
 namespace css {
   struct URLValue;
@@ -149,7 +150,7 @@ public:
 #ifdef MOZILLA_INTERNAL_API
   explicit Element(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo) :
     FragmentOrElement(aNodeInfo),
-    mState(NS_EVENT_STATE_MOZ_READONLY)
+    mState(NS_EVENT_STATE_MOZ_READONLY | NS_EVENT_STATE_DEFINED)
   {
     MOZ_ASSERT(mNodeInfo->NodeType() == ELEMENT_NODE,
                "Bad NodeType in aNodeInfo");
@@ -324,12 +325,17 @@ public:
   }
 
   /**
-   * Set the inline style declaration for this element. This will send
-   * an appropriate AttributeChanged notification if aNotify is true.
+   * InlineStyleDeclarationWillChange is called before SetInlineStyleDeclaration
+   * so that the element implementation can access the old style attribute
+   * value.
    */
-  virtual nsresult SetInlineStyleDeclaration(DeclarationBlock* aDeclaration,
-                                             const nsAString* aSerialized,
-                                             bool aNotify);
+  virtual void InlineStyleDeclarationWillChange(MutationClosureData& aData);
+
+  /**
+   * Set the inline style declaration for this element.
+   */
+  virtual nsresult SetInlineStyleDeclaration(DeclarationBlock& aDeclaration,
+                                             MutationClosureData& aData);
 
   /**
    * Get the SMIL override style declaration for this element. If the
@@ -514,6 +520,10 @@ public:
    */
   inline CustomElementData* GetCustomElementData() const
   {
+    if (!HasCustomElementData()) {
+      return nullptr;
+    }
+
     const nsExtendedDOMSlots* slots = GetExistingExtendedDOMSlots();
     return slots ? slots->mCustomElementData.get() : nullptr;
   }
@@ -543,6 +553,14 @@ public:
    */
   void SetCustomElementDefinition(CustomElementDefinition* aDefinition);
 
+  void SetDefined(bool aSet)
+  {
+    if (aSet) {
+      AddStates(NS_EVENT_STATE_DEFINED);
+    } else {
+      RemoveStates(NS_EVENT_STATE_DEFINED);
+    }
+  }
 protected:
   /**
    * Method to get the _intrinsic_ content state of this element.  This is the
@@ -674,8 +692,8 @@ public:
    * @param aOldValue [out] Set to the old value of the attribute, but only if
    *   there are event listeners. If set, the type of aOldValue will be either
    *   nsAttrValue::eString or nsAttrValue::eAtom.
-   * @param aModType [out] Set to MutationEventBinding::MODIFICATION or to
-   *   MutationEventBinding::ADDITION, but only if this helper returns true
+   * @param aModType [out] Set to MutationEvent_Binding::MODIFICATION or to
+   *   MutationEvent_Binding::ADDITION, but only if this helper returns true
    * @param aHasListeners [out] Set to true if there are mutation event
    *   listeners listening for NS_EVENT_BITS_MUTATION_ATTRMODIFIED
    * @param aOldValueSet [out] Indicates whether an old attribute value has been
@@ -701,8 +719,8 @@ public:
    * @param aOldValue [out] Set to the old value of the attribute, but only if
    *   there are event listeners. If set, the type of aOldValue will be either
    *   nsAttrValue::eString or nsAttrValue::eAtom.
-   * @param aModType [out] Set to MutationEventBinding::MODIFICATION or to
-   *   MutationEventBinding::ADDITION, but only if this helper returns true
+   * @param aModType [out] Set to MutationEvent_Binding::MODIFICATION or to
+   *   MutationEvent_Binding::ADDITION, but only if this helper returns true
    * @param aHasListeners [out] Set to true if there are mutation event
    *   listeners listening for NS_EVENT_BITS_MUTATION_ATTRMODIFIED
    * @param aOldValueSet [out] Indicates whether an old attribute value has been
@@ -1263,6 +1281,10 @@ public:
   // Shadow DOM v1
   already_AddRefed<ShadowRoot> AttachShadow(const ShadowRootInit& aInit,
                                             ErrorResult& aError);
+
+  already_AddRefed<ShadowRoot> AttachShadowWithoutNameChecks(ShadowRootMode aMode);
+  void UnattachShadow();
+
   ShadowRoot* GetShadowRootByMode() const;
   void SetSlot(const nsAString& aName, ErrorResult& aError);
   void GetSlot(nsAString& aName);
@@ -1690,7 +1712,7 @@ protected:
    *                      non-null value does guarantee that a scripted caller
    *                      with the given principal is directly responsible for
    *                      the attribute change.
-   * @param aModType      MutationEventBinding::MODIFICATION or ADDITION.  Only
+   * @param aModType      MutationEvent_Binding::MODIFICATION or ADDITION.  Only
    *                      needed if aFireMutation or aNotify is true.
    * @param aFireMutation should mutation-events be fired?
    * @param aNotify       should we notify document-observers?

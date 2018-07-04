@@ -76,6 +76,7 @@ class LegacyMozTCPSocket;
 class VRDisplay;
 class VRServiceTest;
 class StorageManager;
+class MediaCapabilities;
 
 class Navigator final : public nsISupports
                       , public nsWrapperCache
@@ -142,7 +143,7 @@ public:
                                nsAString& aUserAgent);
 
   // Clears the user agent cache by calling:
-  // NavigatorBinding::ClearCachedUserAgentValue(this);
+  // Navigator_Binding::ClearCachedUserAgentValue(this);
   void ClearUserAgentCache();
 
   bool Vibrate(uint32_t aDuration);
@@ -215,6 +216,8 @@ public:
 
   static void GetAcceptLanguages(nsTArray<nsString>& aLanguages);
 
+  dom::MediaCapabilities* MediaCapabilities();
+
   // WebIDL helper methods
   static bool HasUserMediaSupport(JSContext* /* unused */,
                                   JSObject* /* unused */);
@@ -274,6 +277,7 @@ private:
   RefPtr<VRServiceTest> mVRServiceTest;
   nsTArray<uint32_t> mRequestedVibrationPattern;
   RefPtr<StorageManager> mStorageManager;
+  RefPtr<dom::MediaCapabilities> mMediaCapabilities;
 };
 
 } // namespace dom

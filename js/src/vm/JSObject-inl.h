@@ -158,8 +158,7 @@ JSObject::setSingleton(JSContext* cx, js::HandleObject obj)
 {
     MOZ_ASSERT(!IsInsideNursery(obj));
 
-    js::ObjectGroupRealm& realm = js::ObjectGroupRealm::get(obj->group_);
-    js::ObjectGroup* group = js::ObjectGroup::lazySingletonGroup(cx, realm, obj->getClass(),
+    js::ObjectGroup* group = js::ObjectGroup::lazySingletonGroup(cx, obj->group_, obj->getClass(),
                                                                  obj->taggedProto());
     if (!group)
         return false;
@@ -865,6 +864,10 @@ JSObject::isCallable() const
 {
     if (is<JSFunction>())
         return true;
+    if (is<js::ProxyObject>()) {
+        const js::ProxyObject& p = as<js::ProxyObject>();
+        return p.handler()->isCallable(const_cast<JSObject*>(this));
+    }
     return callHook() != nullptr;
 }
 
@@ -875,39 +878,23 @@ JSObject::isConstructor() const
         const JSFunction& fun = as<JSFunction>();
         return fun.isConstructor();
     }
+    if (is<js::ProxyObject>()) {
+        const js::ProxyObject& p = as<js::ProxyObject>();
+        return p.handler()->isConstructor(const_cast<JSObject*>(this));
+    }
     return constructHook() != nullptr;
 }
 
 MOZ_ALWAYS_INLINE JSNative
 JSObject::callHook() const
 {
-    const js::Class* clasp = getClass();
-
-    if (JSNative call = clasp->getCall())
-        return call;
-
-    if (is<js::ProxyObject>()) {
-        const js::ProxyObject& p = as<js::ProxyObject>();
-        if (p.handler()->isCallable(const_cast<JSObject*>(this)))
-            return js::proxy_Call;
-    }
-    return nullptr;
+    return getClass()->getCall();
 }
 
 MOZ_ALWAYS_INLINE JSNative
 JSObject::constructHook() const
 {
-    const js::Class* clasp = getClass();
-
-    if (JSNative construct = clasp->getConstruct())
-        return construct;
-
-    if (is<js::ProxyObject>()) {
-        const js::ProxyObject& p = as<js::ProxyObject>();
-        if (p.handler()->isConstructor(const_cast<JSObject*>(this)))
-            return js::proxy_Construct;
-    }
-    return nullptr;
+    return getClass()->getConstruct();
 }
 
 #endif /* vm_JSObject_inl_h */

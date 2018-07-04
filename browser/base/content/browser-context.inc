@@ -268,7 +268,7 @@
             accesskey="&sendPageToDevice.accesskey;"
             hidden="true">
         <menupopup id="context-sendpagetodevice-popup"
-                   onpopupshowing="(() => { let browser = gBrowser || getPanelBrowser(); gSync.populateSendTabToDevicesMenu(event.target, browser.currentURI.spec, browser.contentTitle); })()"/>
+                   onpopupshowing="(() => { gSync.populateSendTabToDevicesMenu(event.target, gBrowser.currentURI.spec, gBrowser.contentTitle); })()"/>
       </menu>
       <menuseparator id="context-sep-viewbgimage"/>
       <menuitem id="context-viewbgimage"
@@ -368,12 +368,7 @@
       <menuitem id="context-viewpartialsource-selection"
                 label="&viewPartialSourceForSelectionCmd.label;"
                 accesskey="&viewPartialSourceCmd.accesskey;"
-                oncommand="gContextMenu.viewPartialSource('selection');"
-                observes="isImage"/>
-      <menuitem id="context-viewpartialsource-mathml"
-                label="&viewPartialSourceForMathMLCmd.label;"
-                accesskey="&viewPartialSourceCmd.accesskey;"
-                oncommand="gContextMenu.viewPartialSource('mathml');"
+                oncommand="gContextMenu.viewPartialSource();"
                 observes="isImage"/>
       <menuseparator id="context-sep-viewsource"/>
       <menuitem id="context-viewsource"

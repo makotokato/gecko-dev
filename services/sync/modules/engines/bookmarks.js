@@ -31,8 +31,7 @@ XPCOMUtils.defineLazyGetter(this, "PlacesBundle", () => {
 });
 
 XPCOMUtils.defineLazyGetter(this, "ANNOS_TO_TRACK", () => [
-  PlacesSyncUtils.bookmarks.DESCRIPTION_ANNO,
-  PlacesSyncUtils.bookmarks.SIDEBAR_ANNO, PlacesUtils.LMANNO_FEEDURI,
+  PlacesUtils.LMANNO_FEEDURI,
   PlacesUtils.LMANNO_SITEURI,
 ]);
 
@@ -158,7 +157,6 @@ Bookmark.prototype = {
     info.title = this.title;
     info.url = this.bmkUri;
     info.description = this.description;
-    info.loadInSidebar = this.loadInSidebar;
     info.tags = this.tags;
     info.keyword = this.keyword;
     return info;
@@ -169,7 +167,6 @@ Bookmark.prototype = {
     this.title = item.title;
     this.bmkUri = item.url.href;
     this.description = item.description;
-    this.loadInSidebar = item.loadInSidebar;
     this.tags = item.tags;
     this.keyword = item.keyword;
   },
@@ -178,7 +175,7 @@ Bookmark.prototype = {
 Utils.deferGetSet(Bookmark,
                   "cleartext",
                   ["title", "bmkUri", "description",
-                   "loadInSidebar", "tags", "keyword"]);
+                   "tags", "keyword"]);
 
 function BookmarkQuery(collection, id) {
   Bookmark.call(this, collection, id, "query");
@@ -536,16 +533,7 @@ BookmarksEngine.prototype = {
       switch (placeType) {
         case PlacesUtils.TYPE_X_MOZ_PLACE:
           // Bookmark
-          let query = null;
-          if (node.annos && node.uri.startsWith("place:")) {
-            query = node.annos.find(({name}) =>
-              name === PlacesSyncUtils.bookmarks.SMART_BOOKMARKS_ANNO);
-          }
-          if (query && query.value) {
-            key = "q" + query.value;
-          } else {
-            key = "b" + node.uri + ":" + (node.title || "");
-          }
+          key = "b" + node.uri + ":" + (node.title || "");
           break;
         case PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER:
           // Folder
@@ -582,18 +570,9 @@ BookmarksEngine.prototype = {
   async _mapDupe(item) {
     // Figure out if we have something to key with.
     let key;
-    let altKey;
     switch (item.type) {
       case "query":
-        // Prior to Bug 610501, records didn't carry their Smart Bookmark
-        // anno, so we won't be able to dupe them correctly. This altKey
-        // hack should get them to dupe correctly.
-        if (item.queryId) {
-          key = "q" + item.queryId;
-          altKey = "b" + item.bmkUri + ":" + (item.title || "");
-          break;
-        }
-        // No queryID? Fall through to the regular bookmark case.
+        // Fallthrough, treat the same as a bookmark.
       case "bookmark":
         key = "b" + item.bmkUri + ":" + (item.title || "");
         break;
@@ -629,15 +608,7 @@ BookmarksEngine.prototype = {
       return dupe;
     }
 
-    if (altKey) {
-      dupe = parent[altKey];
-      if (dupe) {
-        this._log.trace("Mapped dupe using altKey " + altKey, dupe);
-        return dupe;
-      }
-    }
-
-    this._log.trace("No dupe found for key " + key + "/" + altKey + ".");
+    this._log.trace("No dupe found for key " + key + ".");
     return undefined;
   },
 

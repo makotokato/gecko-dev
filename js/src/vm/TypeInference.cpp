@@ -26,6 +26,7 @@
 #include "jit/JitRealm.h"
 #include "jit/OptimizationTracking.h"
 #include "js/MemoryMetrics.h"
+#include "js/UniquePtr.h"
 #include "vm/HelperThreads.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
@@ -2346,6 +2347,50 @@ TemporaryTypeSet::getKnownClass(CompilerConstraintList* constraints)
     return clasp;
 }
 
+Realm*
+TemporaryTypeSet::getKnownRealm(CompilerConstraintList* constraints)
+{
+    if (unknownObject())
+        return nullptr;
+
+    Realm* realm = nullptr;
+    unsigned count = getObjectCount();
+
+    for (unsigned i = 0; i < count; i++) {
+        const Class* clasp = getObjectClass(i);
+        if (!clasp)
+            continue;
+
+        // If clasp->isProxy(), this might be a cross-compartment wrapper and
+        // CCWs don't have a (single) realm, so we give up. If the object has
+        // unknownProperties(), hasStableClassAndProto (called below) will
+        // return |false| so fail now before attaching any constraints.
+        if (clasp->isProxy() || getObject(i)->unknownProperties())
+            return nullptr;
+
+        MOZ_ASSERT(hasSingleton(i) || hasGroup(i));
+
+        Realm* nrealm = hasSingleton(i) ? getSingleton(i)->nonCCWRealm() : getGroup(i)->realm();
+        MOZ_ASSERT(nrealm);
+        if (!realm) {
+            realm = nrealm;
+            continue;
+        }
+        if (realm != nrealm)
+            return nullptr;
+    }
+
+    if (realm) {
+        for (unsigned i = 0; i < count; i++) {
+            ObjectKey* key = getObject(i);
+            if (key && !key->hasStableClassAndProto(constraints))
+                return nullptr;
+        }
+    }
+
+    return realm;
+}
+
 void
 TemporaryTypeSet::getTypedArraySharedness(CompilerConstraintList* constraints,
                                           TypedArraySharedness* sharedness)
@@ -3475,7 +3520,7 @@ JSFunction::setTypeForScriptedFunction(JSContext* cx, HandleFunction fun,
     } else {
         RootedObject funProto(cx, fun->staticPrototype());
         Rooted<TaggedProto> taggedProto(cx, TaggedProto(funProto));
-        ObjectGroup* group = ObjectGroupRealm::makeGroup(cx, &JSFunction::class_,
+        ObjectGroup* group = ObjectGroupRealm::makeGroup(cx, fun->realm(), &JSFunction::class_,
                                                          taggedProto);
         if (!group)
             return false;
@@ -3641,7 +3686,7 @@ PreliminaryObjectArrayWithTemplate::maybeAnalyze(JSContext* cx, ObjectGroup* gro
 
     AutoEnterAnalysis enter(cx);
 
-    ScopedJSDeletePtr<PreliminaryObjectArrayWithTemplate> preliminaryObjects(this);
+    UniquePtr<PreliminaryObjectArrayWithTemplate> preliminaryObjects(this);
     group->detachPreliminaryObjects();
 
     MOZ_ASSERT(shape());
@@ -3663,7 +3708,7 @@ PreliminaryObjectArrayWithTemplate::maybeAnalyze(JSContext* cx, ObjectGroup* gro
             return;
     }
 
-    TryConvertToUnboxedLayout(cx, enter, shape(), group, preliminaryObjects);
+    TryConvertToUnboxedLayout(cx, enter, shape(), group, preliminaryObjects.get());
     AutoSweepObjectGroup sweep(group);
     if (group->maybeUnboxedLayout(sweep))
         return;
@@ -3692,7 +3737,7 @@ TypeNewScript::make(JSContext* cx, ObjectGroup* group, JSFunction* fun)
     if (group->unknownProperties(sweep))
         return true;
 
-    ScopedJSDeletePtr<TypeNewScript> newScript(cx->new_<TypeNewScript>());
+    auto newScript = cx->make_unique<TypeNewScript>();
     if (!newScript)
         return false;
 
@@ -3702,7 +3747,7 @@ TypeNewScript::make(JSContext* cx, ObjectGroup* group, JSFunction* fun)
     if (!newScript->preliminaryObjects)
         return true;
 
-    group->setNewScript(newScript.forget());
+    group->setNewScript(newScript.release());
 
     gc::gcTracer.traceTypeNewScript(group);
     return true;
@@ -3716,7 +3761,7 @@ TypeNewScript::makeNativeVersion(JSContext* cx, TypeNewScript* newScript,
 {
     MOZ_RELEASE_ASSERT(cx->zone()->types.activeAnalysis);
 
-    ScopedJSDeletePtr<TypeNewScript> nativeNewScript(cx->new_<TypeNewScript>());
+    auto nativeNewScript = cx->make_unique<TypeNewScript>();
     if (!nativeNewScript)
         return nullptr;
 
@@ -3734,7 +3779,7 @@ TypeNewScript::makeNativeVersion(JSContext* cx, TypeNewScript* newScript,
     }
     PodCopy(nativeNewScript->initializerList, newScript->initializerList, initializerLength);
 
-    return nativeNewScript.forget();
+    return nativeNewScript.release();
 }
 
 size_t
@@ -3994,8 +4039,8 @@ TypeNewScript::maybeAnalyze(JSContext* cx, ObjectGroup* group, bool* regenerate,
     ObjectGroupFlags initialFlags = group->flags(sweep) & OBJECT_FLAG_DYNAMIC_MASK;
 
     Rooted<TaggedProto> protoRoot(cx, group->proto());
-    ObjectGroup* initialGroup = ObjectGroupRealm::makeGroup(cx, group->clasp(), protoRoot,
-                                                            initialFlags);
+    ObjectGroup* initialGroup = ObjectGroupRealm::makeGroup(cx, group->realm(), group->clasp(),
+                                                            protoRoot, initialFlags);
     if (!initialGroup)
         return false;
 

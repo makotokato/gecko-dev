@@ -260,7 +260,7 @@ BroadcastChannel::~BroadcastChannel()
 JSObject*
 BroadcastChannel::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return BroadcastChannelBinding::Wrap(aCx, this, aGivenProto);
+  return BroadcastChannel_Binding::Wrap(aCx, this, aGivenProto);
 }
 
 /* static */ already_AddRefed<BroadcastChannel>
@@ -301,7 +301,7 @@ BroadcastChannel::Constructor(const GlobalObject& aGlobal,
       return nullptr;
     }
 
-    if (StaticPrefs::privacy_trackingprotection_storagerestriction_enabled() &&
+    if (StaticPrefs::privacy_restrict3rdpartystorage_enabled() &&
         nsContentUtils::StorageAllowedForWindow(window) !=
           nsContentUtils::StorageAccess::eAllow) {
       aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
@@ -313,7 +313,7 @@ BroadcastChannel::Constructor(const GlobalObject& aGlobal,
     WorkerPrivate* workerPrivate = GetWorkerPrivateFromContext(cx);
     MOZ_ASSERT(workerPrivate);
 
-    if (StaticPrefs::privacy_trackingprotection_storagerestriction_enabled() &&
+    if (StaticPrefs::privacy_restrict3rdpartystorage_enabled() &&
         !workerPrivate->IsStorageAllowed()) {
       aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
       return nullptr;

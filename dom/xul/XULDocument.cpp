@@ -295,14 +295,14 @@ NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED(XULDocument,
 void
 XULDocument::Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup)
 {
-    NS_NOTREACHED("Reset");
+    MOZ_ASSERT_UNREACHABLE("Reset");
 }
 
 void
 XULDocument::ResetToURI(nsIURI* aURI, nsILoadGroup* aLoadGroup,
                         nsIPrincipal* aPrincipal)
 {
-    NS_NOTREACHED("ResetToURI");
+    MOZ_ASSERT_UNREACHABLE("ResetToURI");
 }
 
 void
@@ -2564,7 +2564,7 @@ XULDocument::ResumeWalk()
             break;
 
             default:
-                NS_NOTREACHED("Unexpected nsXULPrototypeNode::Type value");
+                MOZ_ASSERT_UNREACHABLE("Unexpected nsXULPrototypeNode::Type");
             }
         }
 
@@ -2649,8 +2649,8 @@ XULDocument::DoneWalking()
             this,
             static_cast<nsIDocument*>(this),
             NS_LITERAL_STRING("MozBeforeInitialXULLayout"),
-            true,
-            false);
+            CanBubble::eYes,
+            Cancelable::eNo);
 
         // Before starting layout, check whether we're a toplevel chrome
         // window.  If we are, setup some state so that we don't have to restyle
@@ -3893,7 +3893,7 @@ XULDocument::CachedChromeStreamListener::OnDataAvailable(nsIRequest *request,
                                                          uint64_t aSourceOffset,
                                                          uint32_t aCount)
 {
-    NS_NOTREACHED("CachedChromeStream doesn't receive data");
+    MOZ_ASSERT_UNREACHABLE("CachedChromeStream doesn't receive data");
     return NS_ERROR_UNEXPECTED;
 }
 
@@ -4086,7 +4086,7 @@ XULDocument::ThreadSafeGetDocumentLWTheme() const
 JSObject*
 XULDocument::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aGivenProto)
 {
-  return XULDocumentBinding::Wrap(aCx, this, aGivenProto);
+  return XULDocument_Binding::Wrap(aCx, this, aGivenProto);
 }
 
 } // namespace dom

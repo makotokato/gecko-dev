@@ -4249,6 +4249,7 @@ class MCall
 
     bool needsArgCheck_:1;
     bool needsClassCheck_:1;
+    bool maybeCrossRealm_:1;
 
     MCall(WrappedFunction* target, uint32_t numActualArgs, bool construct, bool ignoresReturnValue)
       : MVariadicInstruction(classOpcode),
@@ -4257,7 +4258,8 @@ class MCall
         construct_(construct),
         ignoresReturnValue_(ignoresReturnValue),
         needsArgCheck_(true),
-        needsClassCheck_(true)
+        needsClassCheck_(true),
+        maybeCrossRealm_(true)
     {
         setResultType(MIRType::Value);
     }
@@ -4284,6 +4286,13 @@ class MCall
     }
     void disableClassCheck() {
         needsClassCheck_ = false;
+    }
+
+    bool maybeCrossRealm() const {
+        return maybeCrossRealm_;
+    }
+    void setNotCrossRealm() {
+        maybeCrossRealm_ = false;
     }
 
     MDefinition* getFunction() const {
@@ -4412,6 +4421,7 @@ class MApplyArgs
   protected:
     // Monomorphic cache of single target from TI, or nullptr.
     WrappedFunction* target_;
+    bool maybeCrossRealm_ = true;
 
     MApplyArgs(WrappedFunction* target, MDefinition* fun, MDefinition* argc, MDefinition* self)
       : MTernaryInstruction(classOpcode, fun, argc, self),
@@ -4429,6 +4439,13 @@ class MApplyArgs
     // For TI-informed monomorphic callsites.
     WrappedFunction* getSingleTarget() const {
         return target_;
+    }
+
+    bool maybeCrossRealm() const {
+        return maybeCrossRealm_;
+    }
+    void setNotCrossRealm() {
+        maybeCrossRealm_ = false;
     }
 
     bool possiblyCalls() const override {
@@ -4450,6 +4467,7 @@ class MApplyArray
   protected:
     // Monomorphic cache of single target from TI, or nullptr.
     WrappedFunction* target_;
+    bool maybeCrossRealm_ = true;
 
     MApplyArray(WrappedFunction* target, MDefinition* fun, MDefinition* elements, MDefinition* self)
       : MTernaryInstruction(classOpcode, fun, elements, self),
@@ -4466,6 +4484,13 @@ class MApplyArray
     // For TI-informed monomorphic callsites.
     WrappedFunction* getSingleTarget() const {
         return target_;
+    }
+
+    bool maybeCrossRealm() const {
+        return maybeCrossRealm_;
+    }
+    void setNotCrossRealm() {
+        maybeCrossRealm_ = false;
     }
 
     bool possiblyCalls() const override {
@@ -12360,12 +12385,14 @@ class MSetDOMProperty
     public MixPolicy<ObjectPolicy<0>, BoxPolicy<1> >::Data
 {
     const JSJitSetterOp func_;
+    Realm* setterRealm_;
     DOMObjectKind objectKind_;
 
-    MSetDOMProperty(const JSJitSetterOp func, DOMObjectKind objectKind, MDefinition* obj,
-                    MDefinition* val)
+    MSetDOMProperty(const JSJitSetterOp func, DOMObjectKind objectKind, Realm* setterRealm,
+                    MDefinition* obj, MDefinition* val)
       : MBinaryInstruction(classOpcode, obj, val),
         func_(func),
+        setterRealm_(setterRealm),
         objectKind_(objectKind)
     { }
 
@@ -12376,6 +12403,9 @@ class MSetDOMProperty
 
     JSJitSetterOp fun() const {
         return func_;
+    }
+    Realm* setterRealm() const {
+        return setterRealm_;
     }
     DOMObjectKind objectKind() const {
         return objectKind_;
@@ -12492,11 +12522,14 @@ class MGetDOMPropertyBase
 class MGetDOMProperty
   : public MGetDOMPropertyBase
 {
+    Realm* getterRealm_;
     DOMObjectKind objectKind_;
 
   protected:
-    MGetDOMProperty(const JSJitInfo* jitinfo, DOMObjectKind objectKind)
+    MGetDOMProperty(const JSJitInfo* jitinfo, DOMObjectKind objectKind,
+                    Realm* getterRealm)
       : MGetDOMPropertyBase(classOpcode, jitinfo),
+        getterRealm_(getterRealm),
         objectKind_(objectKind)
     {}
 
@@ -12504,20 +12537,27 @@ class MGetDOMProperty
     INSTRUCTION_HEADER(GetDOMProperty)
 
     static MGetDOMProperty* New(TempAllocator& alloc, const JSJitInfo* info, DOMObjectKind objectKind,
-                                MDefinition* obj, MDefinition* guard, MDefinition* globalGuard)
+                                Realm* getterRealm, MDefinition* obj, MDefinition* guard,
+                                MDefinition* globalGuard)
     {
-        auto* res = new(alloc) MGetDOMProperty(info, objectKind);
+        auto* res = new(alloc) MGetDOMProperty(info, objectKind, getterRealm);
         if (!res || !res->init(alloc, obj, guard, globalGuard))
             return nullptr;
         return res;
     }
 
+    Realm* getterRealm() const {
+        return getterRealm_;
+    }
     DOMObjectKind objectKind() const {
         return objectKind_;
     }
 
     bool congruentTo(const MDefinition* ins) const override {
         if (!ins->isGetDOMProperty())
+            return false;
+
+        if (ins->toGetDOMProperty()->getterRealm() != getterRealm())
             return false;
 
         return baseCongruentTo(ins->toGetDOMProperty());

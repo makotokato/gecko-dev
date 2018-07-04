@@ -14,13 +14,13 @@ const OUTGOING_MESSAGE_NAME = "ASRouter:child-to-parent";
 
 export const ASRouterUtils = {
   addListener(listener) {
-    global.addMessageListener(INCOMING_MESSAGE_NAME, listener);
+    global.RPMAddMessageListener(INCOMING_MESSAGE_NAME, listener);
   },
   removeListener(listener) {
-    global.removeMessageListener(INCOMING_MESSAGE_NAME, listener);
+    global.RPMRemoveMessageListener(INCOMING_MESSAGE_NAME, listener);
   },
   sendMessage(action) {
-    global.sendAsyncMessage(OUTGOING_MESSAGE_NAME, action);
+    global.RPMSendAsyncMessage(OUTGOING_MESSAGE_NAME, action);
   },
   blockById(id) {
     ASRouterUtils.sendMessage({type: "BLOCK_MESSAGE_BY_ID", data: {id}});
@@ -47,7 +47,21 @@ export const ASRouterUtils = {
   },
   sendTelemetry(ping) {
     const payload = ac.ASRouterUserEvent(ping);
-    global.sendAsyncMessage(AS_GENERAL_OUTGOING_MESSAGE_NAME, payload);
+    global.RPMSendAsyncMessage(AS_GENERAL_OUTGOING_MESSAGE_NAME, payload);
+  },
+  getEndpoint() {
+    if (window.location.href.includes("endpoint")) {
+      const params = new URLSearchParams(window.location.href.slice(window.location.href.indexOf("endpoint")));
+      try {
+        const endpoint = new URL(params.get("endpoint"));
+        return {
+          url: endpoint.href,
+          snippetId: params.get("snippetId")
+        };
+      } catch (e) {}
+    }
+
+    return null;
   }
 };
 
@@ -76,10 +90,10 @@ const ALLOWED_TAGS = {
  * Transform an object (tag name: {url}) into (tag name: anchor) where the url
  * is used as href, in order to render links inside a Fluent.Localized component.
  */
-function convertLinks(links) {
+export function convertLinks(links, sendClick) {
   if (links) {
     return Object.keys(links).reduce((acc, linkTag) => {
-      acc[linkTag] = <a href={safeURI(links[linkTag].url)} />;
+      acc[linkTag] = <a href={safeURI(links[linkTag].url)} data-metric={links[linkTag].metric} onClick={sendClick} />;
       return acc;
     }, {});
   }
@@ -92,7 +106,7 @@ function convertLinks(links) {
  */
 function RichText(props) {
   return (
-    <Localized id="RichTextSnippet" {...ALLOWED_TAGS} {...convertLinks(props.links)}>
+    <Localized id="RichTextSnippet" {...ALLOWED_TAGS} {...convertLinks(props.links, props.sendClick)}>
       <span>{props.text}</span>
     </Localized>
   );
@@ -102,6 +116,7 @@ export class ASRouterUISurface extends React.PureComponent {
   constructor(props) {
     super(props);
     this.onMessageFromParent = this.onMessageFromParent.bind(this);
+    this.sendClick = this.sendClick.bind(this);
     this.sendImpression = this.sendImpression.bind(this);
     this.sendUserActionTelemetry = this.sendUserActionTelemetry.bind(this);
     this.state = {message: {}, bundle: {}};
@@ -123,6 +138,19 @@ export class ASRouterUISurface extends React.PureComponent {
 
   sendImpression(extraProps) {
     this.sendUserActionTelemetry({event: "IMPRESSION", ...extraProps});
+  }
+
+  // If link has a `metric` data attribute send it as part of the `value`
+  // telemetry field which can have arbitrary values.
+  // Used for router messages with links as part of the content.
+  sendClick(event) {
+    const metric = {
+      value: event.target.dataset.metric,
+      // Used for the `source` of the event. Needed to differentiate
+      // from other snippet or onboarding events that may occur.
+      id: "NEWTAB_FOOTER_BAR_CONTENT"
+    };
+    this.sendUserActionTelemetry({event: "CLICK_BUTTON", ...metric});
   }
 
   onBlockById(id) {
@@ -157,8 +185,15 @@ export class ASRouterUISurface extends React.PureComponent {
   }
 
   componentWillMount() {
+    const endpoint = ASRouterUtils.getEndpoint();
     ASRouterUtils.addListener(this.onMessageFromParent);
-    ASRouterUtils.sendMessage({type: "CONNECT_UI_REQUEST"});
+
+    // If we are loading about:welcome we want to trigger the onboarding messages
+    if (this.props.document.location.href === "about:welcome") {
+      ASRouterUtils.sendMessage({type: "TRIGGER", data: {trigger: "firstRun"}});
+    } else {
+      ASRouterUtils.sendMessage({type: "CONNECT_UI_REQUEST", data: {endpoint}});
+    }
   }
 
   componentWillUnmount() {
@@ -177,7 +212,9 @@ export class ASRouterUISurface extends React.PureComponent {
           <LocalizationProvider messages={generateMessages(this.state.message.content.text)}>
             <SimpleSnippet
               {...this.state.message}
-              richText={<RichText text={this.state.message.content.text} links={this.state.message.content.links} />}
+              richText={<RichText text={this.state.message.content.text}
+                                  links={this.state.message.content.links}
+                                  sendClick={this.sendClick} />}
               UISurface="NEWTAB_FOOTER_BAR"
               getNextMessage={ASRouterUtils.getNextMessage}
               onBlock={this.onBlockById(this.state.message.id)}

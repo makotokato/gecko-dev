@@ -949,6 +949,7 @@ WebRenderBridgeParent::RecvGetSnapshot(PTextureParent* aTexture)
     return IPC_FAIL_NO_REASON(this);
   }
 
+  TimeStamp start = TimeStamp::Now();
   MOZ_ASSERT(bufferTexture->GetBufferDescriptor().type() == BufferDescriptor::TRGBDescriptor);
   DebugOnly<uint32_t> stride = ImageDataSerializer::GetRGBStride(bufferTexture->GetBufferDescriptor().get_RGBDescriptor());
   uint8_t* buffer = bufferTexture->GetBuffer();
@@ -964,7 +965,7 @@ WebRenderBridgeParent::RecvGetSnapshot(PTextureParent* aTexture)
 
   FlushSceneBuilds();
   FlushFrameGeneration();
-  mApi->Readback(size, buffer, buffer_size);
+  mApi->Readback(start, size, buffer, buffer_size);
 
   return IPC_OK();
 }
@@ -1120,7 +1121,8 @@ void
 WebRenderBridgeParent::UpdateWebRender(CompositorVsyncScheduler* aScheduler,
                                        wr::WebRenderAPI* aApi,
                                        AsyncImagePipelineManager* aImageMgr,
-                                       CompositorAnimationStorage* aAnimStorage)
+                                       CompositorAnimationStorage* aAnimStorage,
+                                       const TextureFactoryIdentifier& aTextureFactoryIdentifier)
 {
   MOZ_ASSERT(!mWidget);
   MOZ_ASSERT(aScheduler);
@@ -1143,7 +1145,7 @@ WebRenderBridgeParent::UpdateWebRender(CompositorVsyncScheduler* aScheduler,
   // after new layers/webrender keys allocation.
   // Without client side's layout refactoring, we could not finish all old layers/webrender keys removals
   // before new layer/webrender keys allocation. In future, we could address the problem.
-  Unused << SendWrUpdated(mIdNamespace);
+  Unused << SendWrUpdated(mIdNamespace, aTextureFactoryIdentifier);
   CompositorBridgeParentBase* cBridge = mCompositorBridge;
   // XXX Stop to clear resources if webreder supports resources sharing between different webrender instances.
   ClearResources();
@@ -1397,7 +1399,8 @@ WebRenderBridgeParent::CompositeToTarget(gfx::DrawTarget* aTarget, const gfx::In
     return;
   }
 
-  mAsyncImageManager->SetCompositionTime(TimeStamp::Now());
+  TimeStamp start = TimeStamp::Now();
+  mAsyncImageManager->SetCompositionTime(start);
 
   {
     // TODO: We can improve upon this by using two transactions: one for everything that
@@ -1442,7 +1445,7 @@ WebRenderBridgeParent::CompositeToTarget(gfx::DrawTarget* aTarget, const gfx::In
 
   SetAPZSampleTime();
 
-  wr::RenderThread::Get()->IncPendingFrameCount(mApi->GetId());
+  wr::RenderThread::Get()->IncPendingFrameCount(mApi->GetId(), start);
 
 #if defined(ENABLE_FRAME_LATENCY_LOG)
   auto startTime = TimeStamp::Now();

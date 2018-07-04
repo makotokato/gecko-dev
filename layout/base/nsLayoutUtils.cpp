@@ -156,8 +156,8 @@ using namespace mozilla::image;
 using namespace mozilla::layers;
 using namespace mozilla::layout;
 using namespace mozilla::gfx;
-using mozilla::dom::HTMLMediaElementBinding::HAVE_NOTHING;
-using mozilla::dom::HTMLMediaElementBinding::HAVE_METADATA;
+using mozilla::dom::HTMLMediaElement_Binding::HAVE_NOTHING;
+using mozilla::dom::HTMLMediaElement_Binding::HAVE_METADATA;
 
 #define INTERCHARACTER_RUBY_ENABLED_PREF_NAME "layout.css.ruby.intercharacter.enabled"
 #define CONTENT_SELECT_ENABLED_PREF_NAME "dom.select_popup_in_content.enabled"
@@ -521,22 +521,6 @@ nsLayoutUtils::CSSFiltersEnabled()
 }
 
 bool
-nsLayoutUtils::UnsetValueEnabled()
-{
-  static bool sUnsetValueEnabled;
-  static bool sUnsetValuePrefCached = false;
-
-  if (!sUnsetValuePrefCached) {
-    sUnsetValuePrefCached = true;
-    Preferences::AddBoolVarCache(&sUnsetValueEnabled,
-                                 "layout.css.unset-value.enabled",
-                                 false);
-  }
-
-  return sUnsetValueEnabled;
-}
-
-bool
 nsLayoutUtils::IsInterCharacterRubyEnabled()
 {
   static bool sInterCharacterRubyEnabled;
@@ -877,7 +861,10 @@ GetDisplayPortFromMarginsData(nsIContent* aContent,
   //   the choosing of the resolution to display-list building time.
   ScreenSize alignment;
 
-  if (APZCCallbackHelper::IsDisplayportSuppressed()) {
+  nsIPresShell* presShell = presContext->PresShell();
+  MOZ_ASSERT(presShell);
+
+  if (presShell->IsDisplayportSuppressed()) {
     alignment = ScreenSize(1, 1);
   } else if (gfxPrefs::LayersTilesEnabled()) {
     // Don't align to tiles if they are too large, because we could expand
@@ -1098,10 +1085,21 @@ GetDisplayPortImpl(nsIContent* aContent, nsRect* aResult, float aMultiplier,
     return true;
   }
 
+  bool isDisplayportSuppressed = false;
+
+  nsIFrame* frame = aContent->GetPrimaryFrame();
+  if (frame) {
+    nsPresContext* presContext = frame->PresContext();
+    MOZ_ASSERT(presContext);
+    nsIPresShell* presShell = presContext->PresShell();
+    MOZ_ASSERT(presShell);
+    isDisplayportSuppressed = presShell->IsDisplayportSuppressed();
+  }
+
   nsRect result;
   if (rectData) {
     result = GetDisplayPortFromRectData(aContent, rectData, aMultiplier);
-  } else if (APZCCallbackHelper::IsDisplayportSuppressed() ||
+  } else if (isDisplayportSuppressed ||
       nsLayoutUtils::ShouldDisableApzForElement(aContent)) {
     DisplayPortMarginsPropertyData noMargins(ScreenMargin(), 1);
     result = GetDisplayPortFromMarginsData(aContent, &noMargins, aMultiplier);
@@ -4765,7 +4763,7 @@ GetPercentBSize(const nsStyleCoord& aStyle,
   // behavior as layout when computing percentage heights.
   nsIFrame *f = aFrame->GetContainingBlock(nsIFrame::SKIP_SCROLLED_FRAME);
   if (!f) {
-    NS_NOTREACHED("top of frame tree not a containing block");
+    MOZ_ASSERT_UNREACHABLE("top of frame tree not a containing block");
     return false;
   }
 
@@ -6121,11 +6119,7 @@ nsLayoutUtils::PaintTextShadow(const nsIFrame* aFrame,
     nsPresContext* presCtx = aFrame->PresContext();
     nsContextBoxBlur contextBoxBlur;
 
-    nscolor shadowColor;
-    if (shadowDetails->mHasColor)
-      shadowColor = shadowDetails->mColor;
-    else
-      shadowColor = aForegroundColor;
+    nscolor shadowColor = shadowDetails->mColor.CalcColor(aForegroundColor);
 
     // Webrender just needs the shadow details
     if (auto* textDrawer = aContext->GetTextDrawer()) {
@@ -6194,6 +6188,9 @@ nsLayoutUtils::GetFirstLinePosition(WritingMode aWM,
                                     const nsIFrame* aFrame,
                                     LinePosition* aResult)
 {
+  if (aFrame->StyleDisplay()->IsContainSize()) {
+    return false;
+  }
   const nsBlockFrame* block = nsLayoutUtils::GetAsBlock(const_cast<nsIFrame*>(aFrame));
   if (!block) {
     // For the first-line baseline we also have to check for a table, and if
@@ -6227,7 +6224,7 @@ nsLayoutUtils::GetFirstLinePosition(WritingMode aWM,
     if (fType == LayoutFrameType::Scroll) {
       nsIScrollableFrame *sFrame = do_QueryFrame(const_cast<nsIFrame*>(aFrame));
       if (!sFrame) {
-        NS_NOTREACHED("not scroll frame");
+        MOZ_ASSERT_UNREACHABLE("not scroll frame");
       }
       LinePosition kidPosition;
       if (GetFirstLinePosition(aWM,
@@ -6292,6 +6289,10 @@ nsLayoutUtils::GetFirstLinePosition(WritingMode aWM,
 nsLayoutUtils::GetLastLineBaseline(WritingMode aWM,
                                    const nsIFrame* aFrame, nscoord* aResult)
 {
+  if (aFrame->StyleDisplay()->IsContainSize()) {
+    return false;
+  }
+
   const nsBlockFrame* block = nsLayoutUtils::GetAsBlock(const_cast<nsIFrame*>(aFrame));
   if (!block)
     // No baseline.  (We intentionally don't descend into scroll frames.)
@@ -7391,7 +7392,7 @@ nsLayoutUtils::GetTextRunOrientFlagsForStyle(ComputedStyle* aComputedStyle)
     case NS_STYLE_TEXT_ORIENTATION_SIDEWAYS:
       return gfx::ShapedTextFlags::TEXT_ORIENT_VERTICAL_SIDEWAYS_RIGHT;
     default:
-      NS_NOTREACHED("unknown text-orientation");
+      MOZ_ASSERT_UNREACHABLE("unknown text-orientation");
       return gfx::ShapedTextFlags();
     }
 
@@ -7402,7 +7403,7 @@ nsLayoutUtils::GetTextRunOrientFlagsForStyle(ComputedStyle* aComputedStyle)
     return gfx::ShapedTextFlags::TEXT_ORIENT_VERTICAL_SIDEWAYS_RIGHT;
 
   default:
-    NS_NOTREACHED("unknown writing-mode");
+    MOZ_ASSERT_UNREACHABLE("unknown writing-mode");
     return gfx::ShapedTextFlags();
   }
 }

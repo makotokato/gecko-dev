@@ -14,7 +14,6 @@ ChromeUtils.import("resource://gre/modules/TelemetryUtils.jsm", this);
 ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
-  TelemetrySend: "resource://gre/modules/TelemetrySend.jsm",
   AddonManagerPrivate: "resource://gre/modules/AddonManager.jsm",
   TelemetryController: "resource://gre/modules/TelemetryController.jsm",
   TelemetryStorage: "resource://gre/modules/TelemetryStorage.jsm",
@@ -793,8 +792,6 @@ var Impl = {
     for (let ioCounter in this._startupIO)
       ret[ioCounter] = this._startupIO[ioCounter];
 
-    ret.savedPings = TelemetryStorage.pendingPingCount;
-
     let activeTicks = this._sessionActiveTicks;
     if (isSubsession) {
       activeTicks = this._sessionActiveTicks - this._subsessionStartActiveTicks;
@@ -805,8 +802,6 @@ var Impl = {
     }
 
     ret.activeTicks = activeTicks;
-
-    ret.pingsOverdue = TelemetrySend.overduePingsCount;
 
     return ret;
   },
@@ -866,26 +861,6 @@ var Impl = {
     }
 
     return ret;
-  },
-
-  getEvents(isSubsession, clearSubsession) {
-    if (!isSubsession) {
-      // We only support scalars for subsessions.
-      this._log.trace("getEvents - We only support events in subsessions.");
-      return [];
-    }
-
-    let snapshot = Telemetry.snapshotEvents(this.getDatasetType(),
-                                            clearSubsession);
-
-    // Don't return the test events outside of test environments.
-    if (!this._testing) {
-      for (let proc of Object.keys(snapshot)) {
-        snapshot[proc] = snapshot[proc].filter(e => !e[1].startsWith("telemetry.test"));
-      }
-    }
-
-    return snapshot;
   },
 
   /**
@@ -1130,7 +1105,6 @@ var Impl = {
 
     // Add extended set measurements common to chrome & content processes
     if (Telemetry.canRecordExtended) {
-      payloadObj.chromeHangs = protect(() => Telemetry.chromeHangs);
       payloadObj.log = [];
       payloadObj.webrtc = protect(() => Telemetry.webrtcStats);
     }
@@ -1145,7 +1119,6 @@ var Impl = {
       keyedHistograms: protect(() => this.getKeyedHistograms(clearSubsession), {}),
       scalars: protect(() => this.getScalars(isSubsession, clearSubsession), {}),
       keyedScalars: protect(() => this.getScalars(isSubsession, clearSubsession, true), {}),
-      events: protect(() => this.getEvents(isSubsession, clearSubsession)),
     };
 
     let measurementsContainGPU = Object
@@ -1169,14 +1142,13 @@ var Impl = {
         if (processType == "parent" && (key == "histograms" || key == "keyedHistograms")) {
           payloadLoc = payloadObj;
         }
-        // The Dynamic process only collects events and scalars.
-        if (processType == "dynamic" && !["events", "scalars"].includes(key)) {
+        // The Dynamic process only collects scalars.
+        if (processType == "dynamic" && key !== "scalars") {
           continue;
         }
 
         // Process measurements can be empty, set a default value.
-        let defaultValue = key == "events" ? [] : {};
-        payloadLoc[key] = measurements[key][processType] || defaultValue;
+        payloadLoc[key] = measurements[key][processType] || {};
       }
 
       // Add process measurements to payload.

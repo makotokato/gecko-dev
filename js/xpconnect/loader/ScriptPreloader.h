@@ -22,6 +22,7 @@
 #include "nsIMemoryReporter.h"
 #include "nsIObserver.h"
 #include "nsIThread.h"
+#include "nsITimer.h"
 
 #include "jsapi.h"
 #include "js/GCAnnotations.h"
@@ -43,6 +44,7 @@ namespace loader {
         Parent,
         Web,
         Extension,
+        Privileged,
     };
 
     template <typename T>
@@ -379,6 +381,8 @@ private:
 
     void PrepareCacheWriteInternal();
 
+    void FinishContentStartup();
+
     // Returns a file pointer for the cache file with the given name in the
     // current profile.
     Result<nsCOMPtr<nsIFile>, nsresult>
@@ -393,11 +397,6 @@ private:
     static void OffThreadDecodeCallback(JS::OffThreadToken* token, void* context);
     void MaybeFinishOffThreadDecode();
     void DoFinishOffThreadDecode();
-
-    // Returns the global scope object for off-thread compilation. When global
-    // sharing is enabled in the component loader, this should be the shared
-    // module global. Otherwise, it should be the XPConnect compilation scope.
-    JSObject* CompilationScope(JSContext* cx);
 
     size_t ShallowHeapSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf)
     {
@@ -459,6 +458,7 @@ private:
 
     nsCOMPtr<nsIFile> mProfD;
     nsCOMPtr<nsIThread> mSaveThread;
+    nsCOMPtr<nsITimer> mSaveTimer;
 
     // The mmapped cache data from this session's cache file.
     AutoMemMap mCacheData;

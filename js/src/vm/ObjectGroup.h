@@ -65,7 +65,7 @@ enum NewObjectKind {
 };
 
 /*
- * Lazy object groups overview.
+ * [SMDOC] Type-Inference lazy ObjectGroup
  *
  * Object groups which represent at most one JS object are constructed lazily.
  * These include groups for native functions, standard classes, scripted
@@ -109,6 +109,8 @@ class ObjectGroup : public gc::TenuredCell
     void* addendum_ = nullptr;
 
     /*
+     * [SMDOC] Type-Inference object properties
+     *
      * Properties of this object.
      *
      * The type sets in the properties of a group describe the possible values
@@ -533,7 +535,7 @@ class ObjectGroup : public gc::TenuredCell
     static ObjectGroup* defaultNewGroup(JSContext* cx, const Class* clasp,
                                         TaggedProto proto,
                                         JSObject* associated = nullptr);
-    static ObjectGroup* lazySingletonGroup(JSContext* cx, ObjectGroupRealm& realm,
+    static ObjectGroup* lazySingletonGroup(JSContext* cx, ObjectGroup* oldGroup,
                                            const Class* clasp, TaggedProto proto);
 
     static void setDefaultNewGroupUnknown(JSContext* cx, ObjectGroupRealm& realm,
@@ -628,7 +630,11 @@ class ObjectGroupRealm
         JSObject* associated_;
 
       public:
-        DefaultNewGroupCache() { purge(); }
+        DefaultNewGroupCache()
+          : associated_(nullptr)
+        {
+            purge();
+        }
 
         void purge() {
             group_ = nullptr;
@@ -695,7 +701,7 @@ class ObjectGroupRealm
     void replaceDefaultNewGroup(const Class* clasp, TaggedProto proto, JSObject* associated,
                                 ObjectGroup* group);
 
-    static ObjectGroup* makeGroup(JSContext* cx, const Class* clasp,
+    static ObjectGroup* makeGroup(JSContext* cx, JS::Realm* realm, const Class* clasp,
                                   Handle<TaggedProto> proto,
                                   ObjectGroupFlags initialFlags = 0);
 

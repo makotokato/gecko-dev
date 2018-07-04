@@ -667,6 +667,16 @@ Gecko_UpdateAnimations(RawGeckoElementBorrowed aElement,
   }
 }
 
+size_t
+Gecko_GetAnimationEffectCount(RawGeckoElementBorrowed aElementOrPseudo)
+{
+  CSSPseudoElementType pseudoType =
+    GetPseudoTypeFromElementForAnimation(aElementOrPseudo);
+
+  EffectSet* effectSet = EffectSet::GetEffectSet(aElementOrPseudo, pseudoType);
+  return effectSet ? effectSet->Count() : 0;
+}
+
 bool
 Gecko_ElementHasAnimations(RawGeckoElementBorrowed aElement)
 {
@@ -1618,11 +1628,10 @@ Gecko_SetContentDataImageValue(nsStyleContentData* aContent,
 }
 
 nsStyleContentData::CounterFunction*
-Gecko_SetCounterFunction(nsStyleContentData* aContent, nsStyleContentType aType)
+Gecko_SetCounterFunction(nsStyleContentData* aContent, StyleContentType aType)
 {
-  RefPtr<nsStyleContentData::CounterFunction>
-    counterFunc = new nsStyleContentData::CounterFunction();
-  nsStyleContentData::CounterFunction* ptr = counterFunc;
+  auto counterFunc = MakeRefPtr<nsStyleContentData::CounterFunction>();
+  auto* ptr = counterFunc.get();
   aContent->SetCounters(aType, counterFunc.forget());
   return ptr;
 }
@@ -2145,6 +2154,15 @@ Gecko_GetComputedURLSpec(const URLValueData* aURL, nsCString* aOut)
   }
 
   aOut->AssignLiteral("about:invalid");
+}
+
+void
+Gecko_nsIURI_Debug(nsIURI* aURI, nsCString* aOut)
+{
+  // TODO(emilio): Do we have more useful stuff to put here, maybe?
+  if (aURI) {
+    *aOut = aURI->GetSpecOrDefault();
+  }
 }
 
 NS_IMPL_THREADSAFE_FFI_REFCOUNTING(css::URLValue, CSSURLValue);

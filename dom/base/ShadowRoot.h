@@ -10,9 +10,12 @@
 #include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/dom/DocumentOrShadowRoot.h"
 #include "mozilla/dom/NameSpaceConstants.h"
+#include "mozilla/dom/ShadowRootBinding.h"
+#include "mozilla/ServoBindings.h"
 #include "nsCOMPtr.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsIdentifierMapEntry.h"
+#include "nsStubMutationObserver.h"
 #include "nsTHashtable.h"
 
 class nsAtom;
@@ -68,7 +71,6 @@ public:
     return mMode == ShadowRootMode::Closed;
   }
 
-  void InsertSheet(StyleSheet* aSheet, nsIContent* aLinkingContent);
   void RemoveSheet(StyleSheet* aSheet);
   void RuleAdded(StyleSheet&, css::Rule&);
   void RuleRemoved(StyleSheet&, css::Rule&);
@@ -84,11 +86,15 @@ public:
    * Clones internal state, for example stylesheets, of aOther to 'this'.
    */
   void CloneInternalDataFrom(ShadowRoot* aOther);
+  void InsertSheetAt(size_t aIndex, StyleSheet&);
+
 private:
   void InsertSheetIntoAuthorData(size_t aIndex, StyleSheet&);
 
-  void InsertSheetAt(size_t aIndex, StyleSheet&);
-  void AppendStyleSheet(StyleSheet&);
+  void AppendStyleSheet(StyleSheet& aSheet)
+  {
+    InsertSheetAt(SheetCount(), aSheet);
+  }
 
   /**
    * Try to reassign an element to a slot and returns whether the assignment
@@ -139,6 +145,7 @@ private:
 public:
   void AddSlot(HTMLSlotElement* aSlot);
   void RemoveSlot(HTMLSlotElement* aSlot);
+  bool HasSlots() const { return !mSlotMap.IsEmpty(); };
 
   const RawServoAuthorStyles* ServoStyles() const
   {

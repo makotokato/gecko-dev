@@ -319,6 +319,7 @@ var _view_history = __webpack_require__(31);
 
 const DEFAULT_SCALE_DELTA = 1.1;
 const DISABLE_AUTO_FETCH_LOADING_BAR_TIMEOUT = 5000;
+const FORCE_PAGES_LOADED_TIMEOUT = 10000;
 const DefaultExternalServices = {
   updateFindControlState(data) {},
   initPassiveLoading(callbacks) {},
@@ -569,7 +570,10 @@ let PDFViewerApplication = {
         eventBus
       });
       pdfLinkService.setHistory(this.pdfHistory);
-      this.findController = new _pdf_find_controller.PDFFindController({ pdfViewer: this.pdfViewer });
+      this.findController = new _pdf_find_controller.PDFFindController({
+        pdfViewer: this.pdfViewer,
+        eventBus
+      });
       this.findController.onUpdateResultsCount = matchCount => {
         if (this.supportsIntegratedFind) {
           return;
@@ -931,8 +935,7 @@ let PDFViewerApplication = {
     let pageModePromise = pdfDocument.getPageMode().catch(function () {});
     this.toolbar.setPagesCount(pdfDocument.numPages, false);
     this.secondaryToolbar.setPagesCount(pdfDocument.numPages);
-    let id = this.documentFingerprint = pdfDocument.fingerprint;
-    let store = this.store = new _view_history.ViewHistory(id);
+    const store = this.store = new _view_history.ViewHistory(pdfDocument.fingerprint);
     let baseDocumentUrl;
     baseDocumentUrl = this.baseUrl;
     this.pdfLinkService.setDocument(pdfDocument, baseDocumentUrl);
@@ -948,7 +951,7 @@ let PDFViewerApplication = {
       this.loadingBar.setWidth(this.appConfig.viewerContainer);
       if (!_app_options.AppOptions.get('disableHistory') && !this.isViewerEmbedded) {
         let resetHistory = !_app_options.AppOptions.get('showPreviousViewOnLoad');
-        this.pdfHistory.initialize(id, resetHistory);
+        this.pdfHistory.initialize(pdfDocument.fingerprint, resetHistory);
         if (this.pdfHistory.initialBookmark) {
           this.initialBookmark = this.pdfHistory.initialBookmark;
           this.initialRotation = this.pdfHistory.initialRotation;
@@ -959,8 +962,7 @@ let PDFViewerApplication = {
         hash: null
       };
       let storePromise = store.getMultiple({
-        exists: false,
-        page: '1',
+        page: null,
         zoom: _ui_utils.DEFAULT_SCALE_VALUE,
         scrollLeft: '0',
         scrollTop: '0',
@@ -970,21 +972,18 @@ let PDFViewerApplication = {
         spreadMode: null
       }).catch(() => {});
       Promise.all([storePromise, pageModePromise]).then(([values = {}, pageMode]) => {
-        let hash = _app_options.AppOptions.get('defaultZoomValue') ? 'zoom=' + _app_options.AppOptions.get('defaultZoomValue') : null;
+        const zoom = _app_options.AppOptions.get('defaultZoomValue');
+        let hash = zoom ? `zoom=${zoom}` : null;
         let rotation = null;
         let sidebarView = _app_options.AppOptions.get('sidebarViewOnLoad');
         let scrollMode = _app_options.AppOptions.get('scrollModeOnLoad');
         let spreadMode = _app_options.AppOptions.get('spreadModeOnLoad');
-        if (values.exists && _app_options.AppOptions.get('showPreviousViewOnLoad')) {
-          hash = 'page=' + values.page + '&zoom=' + (_app_options.AppOptions.get('defaultZoomValue') || values.zoom) + ',' + values.scrollLeft + ',' + values.scrollTop;
+        if (values.page && _app_options.AppOptions.get('showPreviousViewOnLoad')) {
+          hash = 'page=' + values.page + '&zoom=' + (zoom || values.zoom) + ',' + values.scrollLeft + ',' + values.scrollTop;
           rotation = parseInt(values.rotation, 10);
           sidebarView = sidebarView || values.sidebarView | 0;
-          if (values.scrollMode !== null) {
-            scrollMode = values.scrollMode;
-          }
-          if (values.spreadMode !== null) {
-            spreadMode = values.spreadMode;
-          }
+          scrollMode = scrollMode || values.scrollMode | 0;
+          spreadMode = spreadMode || values.spreadMode | 0;
         }
         if (pageMode && !_app_options.AppOptions.get('disablePageMode')) {
           sidebarView = sidebarView || apiPageModeToSidebarView(pageMode);
@@ -1008,7 +1007,9 @@ let PDFViewerApplication = {
         if (!this.isViewerEmbedded) {
           pdfViewer.focus();
         }
-        return pagesPromise;
+        return Promise.race([pagesPromise, new Promise(resolve => {
+          setTimeout(resolve, FORCE_PAGES_LOADED_TIMEOUT);
+        })]);
       }).then(() => {
         if (!initialParams.bookmark && !initialParams.hash) {
           return;
@@ -1125,19 +1126,21 @@ let PDFViewerApplication = {
       });
     });
   },
-  setInitialView(storedHash, values = {}) {
-    let { rotation, sidebarView, scrollMode, spreadMode } = values;
+  setInitialView(storedHash, { rotation, sidebarView, scrollMode, spreadMode } = {}) {
     let setRotation = angle => {
       if ((0, _ui_utils.isValidRotation)(angle)) {
         this.pdfViewer.pagesRotation = angle;
       }
     };
-    if (Number.isInteger(scrollMode)) {
-      this.pdfViewer.setScrollMode(scrollMode);
-    }
-    if (Number.isInteger(spreadMode)) {
-      this.pdfViewer.setSpreadMode(spreadMode);
-    }
+    let setViewerModes = (scroll, spread) => {
+      if (Number.isInteger(scroll)) {
+        this.pdfViewer.scrollMode = scroll;
+      }
+      if (Number.isInteger(spread)) {
+        this.pdfViewer.spreadMode = spread;
+      }
+    };
+    setViewerModes(scrollMode, spreadMode);
     this.isInitialViewSet = true;
     this.pdfSidebar.setInitialView(sidebarView);
     if (this.initialBookmark) {
@@ -1482,7 +1485,6 @@ function webViewerUpdateViewarea(evt) {
       store = PDFViewerApplication.store;
   if (store && PDFViewerApplication.isInitialViewSet) {
     store.setMultiple({
-      'exists': true,
       'page': location.pageNumber,
       'zoom': location.scale,
       'scrollLeft': location.left,
@@ -1582,10 +1584,10 @@ function webViewerRotateCcw() {
   PDFViewerApplication.rotatePages(-90);
 }
 function webViewerSwitchScrollMode(evt) {
-  PDFViewerApplication.pdfViewer.setScrollMode(evt.mode);
+  PDFViewerApplication.pdfViewer.scrollMode = evt.mode;
 }
 function webViewerSwitchSpreadMode(evt) {
-  PDFViewerApplication.pdfViewer.setSpreadMode(evt.mode);
+  PDFViewerApplication.pdfViewer.spreadMode = evt.mode;
 }
 function webViewerDocumentProperties() {
   PDFViewerApplication.pdfDocumentProperties.open();
@@ -1941,7 +1943,7 @@ exports.PDFPrintServiceFactory = PDFPrintServiceFactory;
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.moveToEndOfArray = exports.waitOnEventOrTimeout = exports.WaitOnType = exports.animationStarted = exports.normalizeWheelEventDelta = exports.binarySearchFirstItem = exports.watchScroll = exports.scrollIntoView = exports.getOutputScale = exports.approximateFraction = exports.getPageSizeInches = exports.roundToDivide = exports.getVisibleElements = exports.backtrackBeforeAllVisibleElements = exports.parseQueryString = exports.noContextMenuHandler = exports.getPDFFileNameFromURL = exports.ProgressBar = exports.EventBus = exports.NullL10n = exports.TextLayerMode = exports.RendererType = exports.PresentationModeState = exports.cloneObj = exports.isPortraitOrientation = exports.isValidRotation = exports.VERTICAL_PADDING = exports.SCROLLBAR_PADDING = exports.MAX_AUTO_SCALE = exports.UNKNOWN_SCALE = exports.MAX_SCALE = exports.MIN_SCALE = exports.DEFAULT_SCALE = exports.DEFAULT_SCALE_VALUE = exports.CSS_UNITS = undefined;
+exports.moveToEndOfArray = exports.waitOnEventOrTimeout = exports.WaitOnType = exports.animationStarted = exports.normalizeWheelEventDelta = exports.binarySearchFirstItem = exports.watchScroll = exports.scrollIntoView = exports.getOutputScale = exports.approximateFraction = exports.getPageSizeInches = exports.roundToDivide = exports.getVisibleElements = exports.backtrackBeforeAllVisibleElements = exports.parseQueryString = exports.noContextMenuHandler = exports.getPDFFileNameFromURL = exports.ProgressBar = exports.EventBus = exports.NullL10n = exports.TextLayerMode = exports.RendererType = exports.PresentationModeState = exports.isPortraitOrientation = exports.isValidRotation = exports.VERTICAL_PADDING = exports.SCROLLBAR_PADDING = exports.MAX_AUTO_SCALE = exports.UNKNOWN_SCALE = exports.MAX_SCALE = exports.MIN_SCALE = exports.DEFAULT_SCALE = exports.DEFAULT_SCALE_VALUE = exports.CSS_UNITS = undefined;
 
 var _pdfjsLib = __webpack_require__(3);
 
@@ -2293,15 +2295,6 @@ function isValidRotation(angle) {
 function isPortraitOrientation(size) {
   return size.width <= size.height;
 }
-function cloneObj(obj) {
-  let result = Object.create(null);
-  for (let i in obj) {
-    if (Object.prototype.hasOwnProperty.call(obj, i)) {
-      result[i] = obj[i];
-    }
-  }
-  return result;
-}
 const WaitOnType = {
   EVENT: 'event',
   TIMEOUT: 'timeout'
@@ -2452,7 +2445,6 @@ exports.SCROLLBAR_PADDING = SCROLLBAR_PADDING;
 exports.VERTICAL_PADDING = VERTICAL_PADDING;
 exports.isValidRotation = isValidRotation;
 exports.isPortraitOrientation = isPortraitOrientation;
-exports.cloneObj = cloneObj;
 exports.PresentationModeState = PresentationModeState;
 exports.RendererType = RendererType;
 exports.TextLayerMode = TextLayerMode;
@@ -3206,10 +3198,6 @@ const defaultOptions = {
     value: './images/',
     kind: OptionKind.VIEWER
   },
-  locale: {
-    value: typeof navigator !== 'undefined' ? navigator.language : 'en-US',
-    kind: OptionKind.VIEWER
-  },
   maxCanvasPixels: {
     value: _viewer_compatibility.viewerCompatibilityParams.maxCanvasPixels || 16777216,
     kind: OptionKind.VIEWER
@@ -3231,6 +3219,14 @@ const defaultOptions = {
     kind: OptionKind.VIEWER
   },
   sidebarViewOnLoad: {
+    value: 0,
+    kind: OptionKind.VIEWER
+  },
+  scrollModeOnLoad: {
+    value: 0,
+    kind: OptionKind.VIEWER
+  },
+  spreadModeOnLoad: {
     value: 0,
     kind: OptionKind.VIEWER
   },
@@ -3263,11 +3259,11 @@ const defaultOptions = {
     kind: OptionKind.API
   },
   disableRange: {
-    value: _pdfjsLib.apiCompatibilityParams.disableRange || false,
+    value: false,
     kind: OptionKind.API
   },
   disableStream: {
-    value: _pdfjsLib.apiCompatibilityParams.disableStream || false,
+    value: false,
     kind: OptionKind.API
   },
   isEvalSupported: {
@@ -3299,6 +3295,7 @@ const defaultOptions = {
     kind: OptionKind.WORKER
   }
 };
+;
 const userOptions = Object.create(null);
 class AppOptions {
   constructor() {
@@ -3853,7 +3850,7 @@ class PDFDocumentProperties {
         if (fileSize === this.fieldData['fileSize']) {
           return;
         }
-        let data = (0, _ui_utils.cloneObj)(this.fieldData);
+        let data = Object.assign(Object.create(null), this.fieldData);
         data['fileSize'] = fileSize;
         freezeFieldData(data);
         this._updateUI();
@@ -4190,6 +4187,8 @@ exports.PDFFindController = exports.FindState = undefined;
 
 var _pdfjsLib = __webpack_require__(3);
 
+var _dom_events = __webpack_require__(10);
+
 var _ui_utils = __webpack_require__(2);
 
 const FindState = {
@@ -4215,8 +4214,9 @@ const CHARACTERS_TO_NORMALIZE = {
   '\u00BE': '3/4'
 };
 class PDFFindController {
-  constructor({ pdfViewer }) {
+  constructor({ pdfViewer, eventBus = (0, _dom_events.getGlobalEventBus)() }) {
     this.pdfViewer = pdfViewer;
+    this.eventBus = eventBus;
     this.onUpdateResultsCount = null;
     this.onUpdateState = null;
     this.reset();
@@ -4246,7 +4246,11 @@ class PDFFindController {
     this.dirtyMatch = false;
     this.findTimeout = null;
     this._firstPagePromise = new Promise(resolve => {
-      this.resolveFirstPage = resolve;
+      const eventBus = this.eventBus;
+      eventBus.on('pagesinit', function onPagesInit() {
+        eventBus.off('pagesinit', onPagesInit);
+        resolve();
+      });
     });
   }
   executeCommand(cmd, state) {
@@ -4726,7 +4730,7 @@ class PDFHistory {
     }
     let position = this._position;
     if (temporary) {
-      position = (0, _ui_utils.cloneObj)(this._position);
+      position = Object.assign(Object.create(null), this._position);
       position.temporary = true;
     }
     if (!this._destination) {
@@ -6349,11 +6353,11 @@ class PDFViewer extends _base_viewer.BaseViewer {
     return (0, _pdfjsLib.shadow)(this, '_setDocumentViewerElement', this.viewer);
   }
   _scrollIntoView({ pageDiv, pageSpot = null }) {
-    if (!pageSpot) {
+    if (!pageSpot && !this.isInPresentationMode) {
       const left = pageDiv.offsetLeft + pageDiv.clientLeft;
       const right = left + pageDiv.clientWidth;
       const { scrollLeft, clientWidth } = this.container;
-      if (this.scrollMode === _base_viewer.ScrollMode.HORIZONTAL || left < scrollLeft || right > scrollLeft + clientWidth) {
+      if (this._scrollMode === _base_viewer.ScrollMode.HORIZONTAL || left < scrollLeft || right > scrollLeft + clientWidth) {
         pageSpot = {
           left: 0,
           top: 0
@@ -6364,7 +6368,7 @@ class PDFViewer extends _base_viewer.BaseViewer {
   }
   _getVisiblePages() {
     if (!this.isInPresentationMode) {
-      return (0, _ui_utils.getVisibleElements)(this.container, this._pages, true, this.scrollMode === _base_viewer.ScrollMode.HORIZONTAL);
+      return (0, _ui_utils.getVisibleElements)(this.container, this._pages, true, this._scrollMode === _base_viewer.ScrollMode.HORIZONTAL);
     }
     let currentPage = this._pages[this._currentPageNumber - 1];
     let visible = [{
@@ -6410,33 +6414,8 @@ class PDFViewer extends _base_viewer.BaseViewer {
       location: this._location
     });
   }
-  _regroupSpreads() {
-    const container = this._setDocumentViewerElement,
-          pages = this._pages;
-    while (container.firstChild) {
-      container.firstChild.remove();
-    }
-    if (this.spreadMode === _base_viewer.SpreadMode.NONE) {
-      for (let i = 0, iMax = pages.length; i < iMax; ++i) {
-        container.appendChild(pages[i].div);
-      }
-    } else {
-      const parity = this.spreadMode - 1;
-      let spread = null;
-      for (let i = 0, iMax = pages.length; i < iMax; ++i) {
-        if (spread === null) {
-          spread = document.createElement('div');
-          spread.className = 'spread';
-          container.appendChild(spread);
-        } else if (i % 2 === parity) {
-          spread = spread.cloneNode(false);
-          container.appendChild(spread);
-        }
-        spread.appendChild(pages[i].div);
-      }
-    }
-    this.scrollPageIntoView({ pageNumber: this._currentPageNumber });
-    this.update();
+  get _isScrollModeHorizontal() {
+    return this.isInPresentationMode ? false : this._scrollMode === _base_viewer.ScrollMode.HORIZONTAL;
   }
 }
 exports.PDFViewer = PDFViewer;
@@ -6539,8 +6518,6 @@ class BaseViewer {
     this.useOnlyCssZoom = options.useOnlyCssZoom || false;
     this.maxCanvasPixels = options.maxCanvasPixels;
     this.l10n = options.l10n || _ui_utils.NullL10n;
-    this.scrollMode = options.scrollMode || ScrollMode.VERTICAL;
-    this.spreadMode = options.spreadMode || SpreadMode.NONE;
     this.defaultRenderingQueue = !options.renderingQueue;
     if (this.defaultRenderingQueue) {
       this.renderingQueue = new _pdf_rendering_queue.PDFRenderingQueue();
@@ -6554,7 +6531,6 @@ class BaseViewer {
     if (this.removePageBorders) {
       this.viewer.classList.add('removePageBorders');
     }
-    this._updateScrollModeClasses();
   }
   get pagesCount() {
     return this._pages.length;
@@ -6732,8 +6708,8 @@ class BaseViewer {
         bindOnAfterAndBeforeDraw(pageView);
         this._pages.push(pageView);
       }
-      if (this.spreadMode !== SpreadMode.NONE) {
-        this._regroupSpreads();
+      if (this._spreadMode !== SpreadMode.NONE) {
+        this._updateSpreadMode();
       }
       onePageRenderedCapability.promise.then(() => {
         if (pdfDocument.loadingParams['disableAutoFetch']) {
@@ -6762,9 +6738,6 @@ class BaseViewer {
       this.eventBus.dispatch('pagesinit', { source: this });
       if (this.defaultRenderingQueue) {
         this.update();
-      }
-      if (this.findController) {
-        this.findController.resolveFirstPage();
       }
     }).catch(reason => {
       console.error('Unable to initialize viewer', reason);
@@ -6799,7 +6772,10 @@ class BaseViewer {
     this._pagesRotation = 0;
     this._pagesRequests = [];
     this._pageViewsReady = false;
+    this._scrollMode = ScrollMode.VERTICAL;
+    this._spreadMode = SpreadMode.NONE;
     this.viewer.textContent = '';
+    this._updateScrollMode();
   }
   _scrollUpdate() {
     if (this.pagesCount === 0) {
@@ -6858,9 +6834,10 @@ class BaseViewer {
       if (!currentPage) {
         return;
       }
-      let hPadding = this.isInPresentationMode || this.removePageBorders ? 0 : _ui_utils.SCROLLBAR_PADDING;
-      let vPadding = this.isInPresentationMode || this.removePageBorders ? 0 : _ui_utils.VERTICAL_PADDING;
-      if (this.scrollMode === ScrollMode.HORIZONTAL) {
+      const noPadding = this.isInPresentationMode || this.removePageBorders;
+      let hPadding = noPadding ? 0 : _ui_utils.SCROLLBAR_PADDING;
+      let vPadding = noPadding ? 0 : _ui_utils.VERTICAL_PADDING;
+      if (!noPadding && this._isScrollModeHorizontal) {
         const temp = hPadding;
         hPadding = vPadding;
         vPadding = temp;
@@ -7030,6 +7007,9 @@ class BaseViewer {
   focus() {
     this.container.focus();
   }
+  get _isScrollModeHorizontal() {
+    throw new Error('Not implemented: _isScrollModeHorizontal');
+  }
   get isInPresentationMode() {
     return this.presentationModeState === _ui_utils.PresentationModeState.FULLSCREEN;
   }
@@ -7082,7 +7062,7 @@ class BaseViewer {
   }
   forceRendering(currentlyVisiblePages) {
     let visiblePages = currentlyVisiblePages || this._getVisiblePages();
-    let scrollAhead = this.scrollMode === ScrollMode.HORIZONTAL ? this.scroll.right : this.scroll.down;
+    let scrollAhead = this._isScrollModeHorizontal ? this.scroll.right : this.scroll.down;
     let pageView = this.renderingQueue.getHighestPriority(visiblePages, this._pages, scrollAhead);
     if (pageView) {
       this._ensurePdfPageLoaded(pageView).then(() => {
@@ -7155,33 +7135,96 @@ class BaseViewer {
       };
     });
   }
-  setScrollMode(mode) {
-    if (mode !== this.scrollMode) {
-      this.scrollMode = mode;
-      this._updateScrollModeClasses();
-      this.eventBus.dispatch('scrollmodechanged', { mode });
-      const pageNumber = this._currentPageNumber;
-      if (isNaN(this._currentScaleValue)) {
-        this._setScale(this._currentScaleValue, this.isInPresentationMode);
+  get scrollMode() {
+    return this._scrollMode;
+  }
+  set scrollMode(mode) {
+    if (this._scrollMode === mode) {
+      return;
+    }
+    if (!Number.isInteger(mode) || !Object.values(ScrollMode).includes(mode)) {
+      throw new Error(`Invalid scroll mode: ${mode}`);
+    }
+    this._scrollMode = mode;
+    this.eventBus.dispatch('scrollmodechanged', {
+      source: this,
+      mode
+    });
+    this._updateScrollMode(this._currentPageNumber);
+  }
+  _updateScrollMode(pageNumber = null) {
+    const scrollMode = this._scrollMode,
+          viewer = this.viewer;
+    if (scrollMode === ScrollMode.HORIZONTAL) {
+      viewer.classList.add('scrollHorizontal');
+    } else {
+      viewer.classList.remove('scrollHorizontal');
+    }
+    if (scrollMode === ScrollMode.WRAPPED) {
+      viewer.classList.add('scrollWrapped');
+    } else {
+      viewer.classList.remove('scrollWrapped');
+    }
+    if (!this.pdfDocument || !pageNumber) {
+      return;
+    }
+    if (this._currentScaleValue && isNaN(this._currentScaleValue)) {
+      this._setScale(this._currentScaleValue, true);
+    }
+    this.scrollPageIntoView({ pageNumber });
+    this.update();
+  }
+  setScrollMode(mode) {}
+  get spreadMode() {
+    return this._spreadMode;
+  }
+  set spreadMode(mode) {
+    if (this._spreadMode === mode) {
+      return;
+    }
+    if (!Number.isInteger(mode) || !Object.values(SpreadMode).includes(mode)) {
+      throw new Error(`Invalid spread mode: ${mode}`);
+    }
+    this._spreadMode = mode;
+    this.eventBus.dispatch('spreadmodechanged', {
+      source: this,
+      mode
+    });
+    this._updateSpreadMode(this._currentPageNumber);
+  }
+  _updateSpreadMode(pageNumber = null) {
+    if (!this.pdfDocument) {
+      return;
+    }
+    const viewer = this.viewer,
+          pages = this._pages;
+    viewer.textContent = '';
+    if (this._spreadMode === SpreadMode.NONE) {
+      for (let i = 0, iMax = pages.length; i < iMax; ++i) {
+        viewer.appendChild(pages[i].div);
       }
-      this.scrollPageIntoView({ pageNumber });
-      this.update();
+    } else {
+      const parity = this._spreadMode - 1;
+      let spread = null;
+      for (let i = 0, iMax = pages.length; i < iMax; ++i) {
+        if (spread === null) {
+          spread = document.createElement('div');
+          spread.className = 'spread';
+          viewer.appendChild(spread);
+        } else if (i % 2 === parity) {
+          spread = spread.cloneNode(false);
+          viewer.appendChild(spread);
+        }
+        spread.appendChild(pages[i].div);
+      }
     }
-  }
-  _updateScrollModeClasses() {
-    const mode = this.scrollMode,
-          { classList } = this.viewer;
-    classList.toggle('scrollHorizontal', mode === ScrollMode.HORIZONTAL);
-    classList.toggle('scrollWrapped', mode === ScrollMode.WRAPPED);
-  }
-  setSpreadMode(mode) {
-    if (mode !== this.spreadMode) {
-      this.spreadMode = mode;
-      this.eventBus.dispatch('spreadmodechanged', { mode });
-      this._regroupSpreads();
+    if (!pageNumber) {
+      return;
     }
+    this.scrollPageIntoView({ pageNumber });
+    this.update();
   }
-  _regroupSpreads() {}
+  setSpreadMode(mode) {}
 }
 exports.BaseViewer = BaseViewer;
 exports.ScrollMode = ScrollMode;
@@ -8135,6 +8178,8 @@ class SecondaryToolbar {
     this.pageNumber = 0;
     this.pagesCount = 0;
     this._updateUIState();
+    this.eventBus.dispatch('resetscrollmode', { source: this });
+    this.eventBus.dispatch('resetspreadmode', { source: this });
   }
   _updateUIState() {
     this.items.firstPage.disabled = this.pageNumber <= 1;
@@ -8175,17 +8220,51 @@ class SecondaryToolbar {
     });
   }
   _bindScrollModeListener(buttons) {
-    this.eventBus.on('scrollmodechanged', function (evt) {
-      buttons.scrollVerticalButton.classList.toggle('toggled', evt.mode === _base_viewer.ScrollMode.VERTICAL);
-      buttons.scrollHorizontalButton.classList.toggle('toggled', evt.mode === _base_viewer.ScrollMode.HORIZONTAL);
-      buttons.scrollWrappedButton.classList.toggle('toggled', evt.mode === _base_viewer.ScrollMode.WRAPPED);
+    function scrollModeChanged(evt) {
+      buttons.scrollVerticalButton.classList.remove('toggled');
+      buttons.scrollHorizontalButton.classList.remove('toggled');
+      buttons.scrollWrappedButton.classList.remove('toggled');
+      switch (evt.mode) {
+        case _base_viewer.ScrollMode.VERTICAL:
+          buttons.scrollVerticalButton.classList.add('toggled');
+          break;
+        case _base_viewer.ScrollMode.HORIZONTAL:
+          buttons.scrollHorizontalButton.classList.add('toggled');
+          break;
+        case _base_viewer.ScrollMode.WRAPPED:
+          buttons.scrollWrappedButton.classList.add('toggled');
+          break;
+      }
+    }
+    this.eventBus.on('scrollmodechanged', scrollModeChanged);
+    this.eventBus.on('resetscrollmode', evt => {
+      if (evt.source === this) {
+        scrollModeChanged({ mode: _base_viewer.ScrollMode.VERTICAL });
+      }
     });
   }
   _bindSpreadModeListener(buttons) {
-    this.eventBus.on('spreadmodechanged', function (evt) {
-      buttons.spreadNoneButton.classList.toggle('toggled', evt.mode === _base_viewer.SpreadMode.NONE);
-      buttons.spreadOddButton.classList.toggle('toggled', evt.mode === _base_viewer.SpreadMode.ODD);
-      buttons.spreadEvenButton.classList.toggle('toggled', evt.mode === _base_viewer.SpreadMode.EVEN);
+    function spreadModeChanged(evt) {
+      buttons.spreadNoneButton.classList.remove('toggled');
+      buttons.spreadOddButton.classList.remove('toggled');
+      buttons.spreadEvenButton.classList.remove('toggled');
+      switch (evt.mode) {
+        case _base_viewer.SpreadMode.NONE:
+          buttons.spreadNoneButton.classList.add('toggled');
+          break;
+        case _base_viewer.SpreadMode.ODD:
+          buttons.spreadOddButton.classList.add('toggled');
+          break;
+        case _base_viewer.SpreadMode.EVEN:
+          buttons.spreadEvenButton.classList.add('toggled');
+          break;
+      }
+    }
+    this.eventBus.on('spreadmodechanged', spreadModeChanged);
+    this.eventBus.on('resetspreadmode', evt => {
+      if (evt.source === this) {
+        spreadModeChanged({ mode: _base_viewer.SpreadMode.NONE });
+      }
     });
   }
   open() {
@@ -8430,11 +8509,12 @@ class ViewHistory {
       let database = JSON.parse(databaseStr || '{}');
       if (!('files' in database)) {
         database.files = [];
+      } else {
+        while (database.files.length >= this.cacheSize) {
+          database.files.shift();
+        }
       }
-      if (database.files.length >= this.cacheSize) {
-        database.files.shift();
-      }
-      let index;
+      let index = -1;
       for (let i = 0, length = database.files.length; i < length; i++) {
         let branch = database.files[i];
         if (branch.fingerprint === this.fingerprint) {
@@ -8442,7 +8522,7 @@ class ViewHistory {
           break;
         }
       }
-      if (typeof index !== 'number') {
+      if (index === -1) {
         index = database.files.push({ fingerprint: this.fingerprint }) - 1;
       }
       this.file = database.files[index];
@@ -8849,10 +8929,6 @@ exports.FirefoxCom = FirefoxCom;
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.BasePreferences = undefined;
-
-var _ui_utils = __webpack_require__(2);
-
 let defaultPreferences = null;
 function getDefaultPreferences() {
   if (!defaultPreferences) {
@@ -8894,7 +8970,7 @@ class BasePreferences {
         enumerable: true,
         configurable: false
       });
-      this.prefs = (0, _ui_utils.cloneObj)(defaults);
+      this.prefs = Object.assign(Object.create(null), defaults);
       return this._readFromStorage(defaults);
     }).then(prefObj => {
       if (prefObj) {
@@ -8910,7 +8986,7 @@ class BasePreferences {
   }
   reset() {
     return this._initializedPromise.then(() => {
-      this.prefs = (0, _ui_utils.cloneObj)(this.defaults);
+      this.prefs = Object.assign(Object.create(null), this.defaults);
       return this._writeToStorage(this.defaults);
     });
   }

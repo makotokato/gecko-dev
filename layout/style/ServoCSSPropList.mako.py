@@ -75,9 +75,29 @@ def method(prop):
 # but other non-trivial dependence like scrollbar colors.
 SERIALIZED_PREDEFINED_TYPES = [
     "Color",
+    "Content",
+    "CounterIncrement",
+    "CounterReset",
+    "FontFamily",
+    "FontFeatureSettings",
+    "FontLanguageOverride",
+    "FontSize",
+    "FontSizeAdjust",
+    "FontStretch",
+    "FontStyle",
+    "FontSynthesis",
+    "FontVariant",
+    "FontVariantAlternates",
+    "FontVariantEastAsian",
+    "FontVariantLigatures",
+    "FontVariantNumeric",
+    "FontVariationSettings",
+    "FontWeight",
     "Integer",
     "Length",
+    "ListStyleType",
     "Opacity",
+    "url::ImageUrlOrNone",
 ]
 
 def serialized_by_servo(prop):
@@ -96,6 +116,12 @@ def serialized_by_servo(prop):
     # TODO(emilio): Enable the rest of the longhands.
     return False
 
+def exposed_on_getcs(prop):
+    if prop.type() == "longhand":
+        return not is_internal(prop)
+    # TODO: bug 137688 / https://github.com/w3c/csswg-drafts/issues/2529
+    if prop.type() == "shorthand":
+        return "SHORTHAND_IN_GETCS" in prop.flags
 
 def flags(prop):
     result = []
@@ -111,9 +137,13 @@ def flags(prop):
         result.append("GetCSNeedsLayoutFlush")
     if "CAN_ANIMATE_ON_COMPOSITOR" in prop.flags:
         result.append("CanAnimateOnCompositor")
+    if exposed_on_getcs(prop):
+        result.append("ExposedOnGetCS")
     if serialized_by_servo(prop):
         result.append("SerializedByServo")
-    return ", ".join('"CSSPropFlags::{}"'.format(flag) for flag in result)
+    if prop.type() == "longhand" and prop.logical:
+        result.append("IsLogical")
+    return ", ".join('"{}"'.format(flag) for flag in result)
 
 def pref(prop):
     if prop.gecko_pref:

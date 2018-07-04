@@ -1037,7 +1037,9 @@ GetOutlineInnerRect(nsIFrame* aFrame)
     aFrame->GetProperty(nsIFrame::OutlineInnerRectProperty());
   if (savedOutlineInnerRect)
     return *savedOutlineInnerRect;
-  NS_NOTREACHED("we should have saved a frame property");
+
+  // FIXME bug 1221888
+  NS_ERROR("we should have saved a frame property");
   return nsRect(nsPoint(0, 0), aFrame->GetSize());
 }
 
@@ -1520,12 +1522,7 @@ nsCSSRendering::GetShadowColor(nsCSSShadowItem* aShadow,
                                float aOpacity)
 {
   // Get the shadow color; if not specified, use the foreground color
-  nscolor shadowColor;
-  if (aShadow->mHasColor)
-    shadowColor = aShadow->mColor;
-  else
-    shadowColor = aFrame->StyleColor()->mColor;
-
+  nscolor shadowColor = aShadow->mColor.CalcColor(aFrame);
   Color color = Color::FromABGR(shadowColor);
   color.a *= aOpacity;
   return color;
@@ -1804,7 +1801,7 @@ nsCSSRendering::ShouldPaintBoxShadowInner(nsIFrame* aFrame)
     return false;
 
   if (aFrame->IsThemed() && aFrame->GetContent() &&
-      !nsContentUtils::IsChromeDoc(aFrame->GetContent()->GetUncomposedDoc())) {
+      !nsContentUtils::IsChromeDoc(aFrame->GetContent()->GetComposedDoc())) {
     // There's no way of getting hold of a shape corresponding to a
     // "padding-box" for native-themed widgets, so just don't draw
     // inner box-shadows for them. But we allow chrome to paint inner

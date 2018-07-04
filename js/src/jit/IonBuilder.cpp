@@ -3992,6 +3992,11 @@ IonBuilder::makeInliningDecision(JSObject* targetArg, CallInfo& callInfo)
         return InliningDecision_DontInline;
     }
 
+    // Don't inline (native or scripted) cross-realm calls.
+    Realm* targetRealm = JS::GetObjectRealmOrNull(targetArg);
+    if (!targetRealm || targetRealm != script()->realm())
+        return InliningDecision_DontInline;
+
     // Inlining non-function targets is handled by inlineNonFunctionCall().
     if (!targetArg->is<JSFunction>())
         return InliningDecision_Inline;
@@ -5016,8 +5021,8 @@ IonBuilder::createThisScriptedBaseline(MDefinition* callee)
 MDefinition*
 IonBuilder::createThis(JSFunction* target, MDefinition* callee, MDefinition* newTarget)
 {
-    // Create |this| for unknown target.
-    if (!target) {
+    // Create |this| for unknown target or cross-realm target.
+    if (!target || target->realm() != script()->realm()) {
         if (MDefinition* createThis = createThisScriptedBaseline(callee))
             return createThis;
 
@@ -5222,6 +5227,9 @@ IonBuilder::jsop_spreadcall()
     current->push(apply);
     MOZ_TRY(resumeAfter(apply));
 
+    if (target && target->realm() == script()->realm())
+        apply->setNotCrossRealm();
+
     // TypeBarrier the call result
     TemporaryTypeSet* types = bytecodeTypes(pc);
     return pushTypeBarrier(apply, types, BarrierKind::TypeSet);
@@ -5259,6 +5267,9 @@ IonBuilder::jsop_funapplyarray(uint32_t argc)
     current->add(apply);
     current->push(apply);
     MOZ_TRY(resumeAfter(apply));
+
+    if (target && target->realm() == script()->realm())
+        apply->setNotCrossRealm();
 
     TemporaryTypeSet* types = bytecodeTypes(pc);
     return pushTypeBarrier(apply, types, BarrierKind::TypeSet);
@@ -5320,6 +5331,9 @@ IonBuilder::jsop_funapplyarguments(uint32_t argc)
         current->add(apply);
         current->push(apply);
         MOZ_TRY(resumeAfter(apply));
+
+        if (target && target->realm() == script()->realm())
+            apply->setNotCrossRealm();
 
         TemporaryTypeSet* types = bytecodeTypes(pc);
         return pushTypeBarrier(apply, types, BarrierKind::TypeSet);
@@ -5609,16 +5623,20 @@ IonBuilder::makeCallHelper(const Maybe<CallTargets>& targets, CallInfo& callInfo
         // Class check.
         call->disableClassCheck();
 
-        // Determine whether we can skip the callee's prologue type checks.
+        // Determine whether we can skip the callee's prologue type checks and
+        // whether we have to switch realms.
         bool needArgCheck = false;
+        bool maybeCrossRealm = false;
         for (JSFunction* target : targets.ref()) {
-            if (testNeedsArgumentCheck(target, callInfo)) {
+            if (testNeedsArgumentCheck(target, callInfo))
                 needArgCheck = true;
-                break;
-            }
+            if (target->realm() != script()->realm())
+                maybeCrossRealm = true;
         }
         if (!needArgCheck)
             call->disableArgCheck();
+        if (!maybeCrossRealm)
+            call->setNotCrossRealm();
     }
 
     call->initFunction(callInfo.fun());
@@ -9152,11 +9170,17 @@ IonBuilder::initOrSetElemDense(TemporaryTypeSet::DoubleConversion conversion,
 
     bool mayBeNonExtensible = ElementAccessMightBeNonExtensible(constraints(), obj);
 
-    if (mayBeNonExtensible && hasExtraIndexedProperty) {
+    if (mayBeNonExtensible) {
         // FallibleStoreElement does not know how to deal with extra indexed
         // properties on the prototype. This case should be rare so we fall back
         // to an IC.
-        return Ok();
+        if (hasExtraIndexedProperty)
+            return Ok();
+
+        // Don't optimize INITELEM (DefineProperty) on potentially non-extensible
+        // objects: when the array is sealed, we have to throw an exception.
+        if (IsPropertyInitOp(JSOp(*pc)))
+            return Ok();
     }
 
     *emitted = true;
@@ -10980,7 +11004,8 @@ IonBuilder::getPropTryCommonGetter(bool* emitted, MDefinition* obj, PropertyName
                 // needed.
                 get = MGetDOMMember::New(alloc(), jitinfo, obj, guard, globalGuard);
             } else {
-                get = MGetDOMProperty::New(alloc(), jitinfo, objKind, obj, guard, globalGuard);
+                get = MGetDOMProperty::New(alloc(), jitinfo, objKind, commonGetter->realm(), obj,
+                                           guard, globalGuard);
             }
             if (!get)
                 return abort(AbortReason::Alloc);
@@ -11669,7 +11694,7 @@ IonBuilder::setPropTryCommonDOMSetter(bool* emitted, MDefinition* obj,
     // Emit SetDOMProperty.
     MOZ_ASSERT(setter->jitInfo()->type() == JSJitInfo::Setter);
     MSetDOMProperty* set = MSetDOMProperty::New(alloc(), setter->jitInfo()->setter, objKind,
-                                                obj, value);
+                                                setter->realm(), obj, value);
 
     current->add(set);
     current->push(value);
