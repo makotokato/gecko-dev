@@ -68,6 +68,11 @@ do
       safeseh=
       shift 1
     ;;
+    -maarch64)
+      ml="armasm64"
+      safeseh=
+      shift 1
+    ;;
     -clang-cl)
       cl="clang-cl"
       shift 1
