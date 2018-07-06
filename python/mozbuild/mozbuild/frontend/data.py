@@ -421,7 +421,8 @@ class Linkable(ContextDerived):
         # The '$' check is here as a special temporary rule, allowing the
         # inherited use of make variables, most notably in TK_LIBS.
         if not lib.startswith('$') and not lib.startswith('-'):
-            if self.config.substs.get('GNU_CC'):
+            compiler_type = self.config.substs.get('HOST_CC_TYPE') if self.KIND == 'host' else self.config.substs.get('CC_TYPE')
+            if compiler_type in ('gcc', 'clang'):
                 lib = '-l%s' % lib
             else:
                 lib = '%s%s%s' % (
