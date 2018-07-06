@@ -123,11 +123,13 @@ CONFIG_TOOLS	= $(MOZ_BUILD_ROOT)/config
 AUTOCONF_TOOLS	= $(MOZILLA_DIR)/build/autoconf
 
 ifdef _MSC_VER
+ifndef MOZ_USING_SCCACHE
 # clang-cl is smart enough to generate dependencies directly.
 ifndef CLANG_CL
 CC_WRAPPER ?= $(call py_action,cl)
 CXX_WRAPPER ?= $(call py_action,cl)
 endif # CLANG_CL
+endif
 endif # _MSC_VER
 
 CC := $(CC_WRAPPER) $(CC)
