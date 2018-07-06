@@ -2373,6 +2373,12 @@ public:
   }
 
   /**
+   * This function is called when an item's list of children has been omdified
+   * by RetaineDisplayListBuilder.
+   */
+  virtual void InvalidateCachedChildInfo() {}
+
+  /**
    * @param aSnap set to true if the edges of the rectangles of the opaque
    * region would be snapped to device pixels when drawing
    * @return a region of the item that is opaque --- that is, every pixel
@@ -2783,6 +2789,11 @@ public:
   bool In3DContextAndBackfaceIsHidden()
   {
     return mBackfaceHidden;
+  }
+
+  bool HasDifferentFrame(const nsDisplayItem* aOther) const
+  {
+    return mFrame != aOther->mFrame;
   }
 
   bool HasSameTypeAndClip(const nsDisplayItem* aOther) const
@@ -3729,9 +3740,6 @@ public:
                                    LayerManager* aManager,
                                    const ContainerLayerParameters& aParameters) override;
 
-  virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
-                                             LayerManager* aManager,
-                                             const ContainerLayerParameters& aContainerParameters) override;
   virtual bool CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuilder,
                                        mozilla::wr::IpcResourceUpdateQueue& aResources,
                                        const StackingContextHelper& aSc,
@@ -3756,11 +3764,6 @@ public:
   }
 
 protected:
-  void CreateBorderImageWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuilder,
-                                          mozilla::wr::IpcResourceUpdateQueue& aResource,
-                                          const StackingContextHelper& aSc,
-                                          mozilla::layers::WebRenderLayerManager* aManager,
-                                          nsDisplayListBuilder* aDisplayListBuilder);
   template<typename T>
   T CalculateBounds(const nsStyleBorder& aStyleBorder) const
   {
@@ -3807,17 +3810,7 @@ protected:
     }
   }
 
-  mozilla::Array<mozilla::gfx::Color, 4> mColors;
-  mozilla::Array<mozilla::LayerCoord, 4> mWidths;
-  mozilla::Array<mozilla::LayerSize, 4> mCorners;
-  mozilla::Array<uint8_t, 4> mBorderStyles;
-  mozilla::LayerRect mRect;
-
-  mozilla::Maybe<nsCSSBorderRenderer> mBorderRenderer;
-  mozilla::Maybe<nsCSSBorderImageRenderer> mBorderImageRenderer;
-
   nsRect mBounds;
-  bool mBorderIsEmpty;
 };
 
 /**
@@ -4967,6 +4960,7 @@ public:
   virtual void Merge(const nsDisplayItem* aItem) override
   {
     MOZ_ASSERT(CanMerge(aItem));
+    MOZ_ASSERT(Frame() != aItem->Frame());
     MergeFromTrackingMergedFrames(static_cast<const nsDisplayWrapList*>(aItem));
   }
 
@@ -5115,17 +5109,19 @@ public:
   nsDisplayOpacity(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
                    nsDisplayList* aList,
                    const ActiveScrolledRoot* aActiveScrolledRoot,
-                   bool aForEventsAndPluginsOnly);
+                   bool aForEventsAndPluginsOnly,
+                   bool aNeedsActiveLayer);
 
   nsDisplayOpacity(nsDisplayListBuilder* aBuilder,
                    const nsDisplayOpacity& aOther)
     : nsDisplayWrapList(aBuilder, aOther)
     , mOpacity(aOther.mOpacity)
     , mForEventsAndPluginsOnly(aOther.mForEventsAndPluginsOnly)
-    , mOpacityAppliedToChildren(false)
+    , mNeedsActiveLayer(aOther.mNeedsActiveLayer)
+    , mChildOpacityState(ChildOpacityState::Unknown)
   {
     // We should not try to merge flattened opacities.
-    MOZ_ASSERT(!aOther.mOpacityAppliedToChildren);
+    MOZ_ASSERT(aOther.mChildOpacityState != ChildOpacityState::Applied);
   }
 
 #ifdef NS_BUILD_REFCNT_LOGGING
@@ -5136,7 +5132,6 @@ public:
   {
     nsDisplayItem::RestoreState();
     mOpacity = mState.mOpacity;
-    mOpacityAppliedToChildren = false;
   }
 
   virtual nsDisplayWrapList* Clone(nsDisplayListBuilder* aBuilder) const override
@@ -5144,6 +5139,8 @@ public:
     MOZ_COUNT_CTOR(nsDisplayOpacity);
     return MakeDisplayItem<nsDisplayOpacity>(aBuilder, *this);
   }
+
+  virtual void InvalidateCachedChildInfo() override { mChildOpacityState = ChildOpacityState::Unknown; }
 
   virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
                                    bool* aSnap) const override;
@@ -5161,7 +5158,7 @@ public:
     // items for the same content element should be merged into a single
     // compositing group
     // aItem->GetUnderlyingFrame() returns non-null because it's nsDisplayOpacity
-    return HasSameTypeAndClip(aItem) && HasSameContent(aItem);
+    return HasDifferentFrame(aItem) && HasSameTypeAndClip(aItem) && HasSameContent(aItem);
   }
 
   virtual nsDisplayItemGeometry* AllocateGeometry(nsDisplayListBuilder* aBuilder) override
@@ -5189,7 +5186,7 @@ public:
   /**
    * Returns true if ShouldFlattenAway() applied opacity to children.
    */
-  bool OpacityAppliedToChildren() const { return mOpacityAppliedToChildren; }
+  bool OpacityAppliedToChildren() const { return mChildOpacityState == ChildOpacityState::Applied; }
 
   static bool NeedsActiveLayer(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame);
   NS_DISPLAY_DECL_NAME("Opacity", TYPE_OPACITY)
@@ -5209,8 +5206,21 @@ private:
   bool ApplyOpacityToChildren(nsDisplayListBuilder* aBuilder);
 
   float mOpacity;
-  bool mForEventsAndPluginsOnly;
-  bool mOpacityAppliedToChildren;
+  bool mForEventsAndPluginsOnly : 1;
+  enum class ChildOpacityState : uint8_t {
+    // Our child list has changed since the last time ApplyOpacityToChildren was called.
+    Unknown,
+    // Our children defer opacity handling to us.
+    Deferred,
+    // Opacity is applied to our children.
+    Applied
+  };
+  bool mNeedsActiveLayer : 1;
+#ifndef __GNUC__
+  ChildOpacityState mChildOpacityState : 2;
+#else
+  ChildOpacityState mChildOpacityState;
+#endif
 
   struct {
     float mOpacity;
@@ -5381,7 +5391,7 @@ public:
     {
       // Items for the same content element should be merged into a single
       // compositing group.
-      return HasSameTypeAndClip(aItem) && HasSameContent(aItem)
+      return HasDifferentFrame(aItem) && HasSameTypeAndClip(aItem) && HasSameContent(aItem)
           && mIsForBackground == static_cast<const nsDisplayBlendContainer*>(aItem)->mIsForBackground;
     }
 
@@ -6136,7 +6146,7 @@ public:
   {
     // Items for the same content element should be merged into a single
     // compositing group.
-    return HasSameTypeAndClip(aItem) && HasSameContent(aItem);
+    return HasDifferentFrame(aItem) && HasSameTypeAndClip(aItem) && HasSameContent(aItem);
   }
 
   virtual void Merge(const nsDisplayItem* aItem) override

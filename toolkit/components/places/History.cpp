@@ -1167,8 +1167,18 @@ public:
     }
 
     {
-      // Trigger an update for all the hosts of the places we inserted
+      // Trigger insertions for all the new origins of the places we inserted.
       nsAutoCString query("DELETE FROM moz_updateoriginsinsert_temp");
+      nsCOMPtr<mozIStorageStatement> stmt = mHistory->GetStatement(query);
+      NS_ENSURE_STATE(stmt);
+      mozStorageStatementScoper scoper(stmt);
+      nsresult rv = stmt->Execute();
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    {
+      // Trigger frecency updates for all those origins.
+      nsAutoCString query("DELETE FROM moz_updateoriginsupdate_temp");
       nsCOMPtr<mozIStorageStatement> stmt = mHistory->GetStatement(query);
       NS_ENSURE_STATE(stmt);
       mozStorageStatementScoper scoper(stmt);
@@ -2763,13 +2773,6 @@ History::VisitURI(nsIURI* aURI,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  // Finally, notify that we've been visited.
-  nsCOMPtr<nsIObserverService> obsService =
-    mozilla::services::GetObserverService();
-  if (obsService) {
-    obsService->NotifyObservers(aURI, NS_LINK_VISITED_EVENT_TOPIC, nullptr);
-  }
-
   return NS_OK;
 }
 
@@ -2987,13 +2990,6 @@ History::AddDownload(nsIURI* aSource, nsIURI* aReferrer,
 
   rv = InsertVisitedURIs::Start(dbConn, placeArray, callback);
   NS_ENSURE_SUCCESS(rv, rv);
-
-  // Finally, notify that we've been visited.
-  nsCOMPtr<nsIObserverService> obsService =
-    mozilla::services::GetObserverService();
-  if (obsService) {
-    obsService->NotifyObservers(aSource, NS_LINK_VISITED_EVENT_TOPIC, nullptr);
-  }
 
   return NS_OK;
 }

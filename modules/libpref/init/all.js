@@ -2043,6 +2043,10 @@ pref("network.dns.forceResolve", "");
 // Contols whether or not "localhost" should resolve when offline
 pref("network.dns.offline-localhost", true);
 
+// Defines how much longer resolver threads should stay idle before are shut down.
+// A negative value will keep the thread alive forever.
+pref("network.dns.resolver-thread-extra-idle-time-seconds", 60);
+
 // The maximum allowed length for a URL - 1MB default
 pref("network.standard-url.max-length", 1048576);
 
@@ -2512,7 +2516,7 @@ pref("security.csp.enableStrictDynamic", true);
 
 #if defined(DEBUG) && !defined(ANDROID)
 // about:welcome has been added until Bug 1448359 is fixed at which time home, newtab, and welcome will all be removed.
-pref("csp.content_privileged_about_uris_without_csp", "blank,blocked,home,newtab,printpreview,srcdoc,welcome");
+pref("csp.content_privileged_about_uris_without_csp", "blank,home,newtab,printpreview,srcdoc,welcome");
 #endif
 
 #ifdef NIGHTLY_BUILD
@@ -3625,7 +3629,11 @@ pref("font.name-list.cursive.zh-CN", "KaiTi, KaiTi_GB2312");
 // Per Taiwanese users' demand. They don't want to use TC fonts for
 // rendering Latin letters. (bug 88579)
 pref("font.name-list.serif.zh-TW", "Times New Roman, PMingLiu, MingLiU, MingLiU-ExtB");
+#ifdef EARLY_BETA_OR_EARLIER
+pref("font.name-list.sans-serif.zh-TW", "Arial, Microsoft JhengHei, PMingLiU, MingLiU, MingLiU-ExtB");
+#else
 pref("font.name-list.sans-serif.zh-TW", "Arial, PMingLiU, MingLiU, MingLiU-ExtB");
+#endif
 pref("font.name-list.monospace.zh-TW", "MingLiU, MingLiU-ExtB");
 pref("font.name-list.cursive.zh-TW", "DFKai-SB");
 
@@ -4716,6 +4724,8 @@ pref("webgl.dxgl.enabled", true);
 pref("webgl.dxgl.needs-finish", false);
 #endif
 
+pref("dom.webgpu.enable", false);
+
 pref("gfx.offscreencanvas.enabled", false);
 
 // sendbuffer of 0 means use OS default, sendbuffer unset means use
@@ -5780,6 +5790,7 @@ pref("fuzzing.enabled", false);
 #ifdef MOZ_ASAN_REPORTER
 pref("asanreporter.apiurl", "https://anf1.fuzzing.mozilla.org/crashproxy/submit/");
 pref("asanreporter.clientid", "unknown");
+pref("toolkit.telemetry.overrideUpdateChannel", "nightly-asan");
 #endif
 
 #if defined(XP_WIN)
@@ -5811,7 +5822,7 @@ pref("toolkit.crashreporter.include_context_heap", true);
 // Open noopener links in a new process
 pref("dom.noopener.newprocess.enabled", true);
 
-#if defined(XP_WIN) || defined(XP_MACOSX)
+#if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GTK)
 pref("layers.omtp.enabled", true);
 #else
 pref("layers.omtp.enabled", false);

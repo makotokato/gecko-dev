@@ -886,6 +886,7 @@ public:
 
 nsGlobalWindowInner::nsGlobalWindowInner(nsGlobalWindowOuter *aOuterWindow)
   : nsPIDOMWindowInner(aOuterWindow->AsOuter()),
+    mozilla::webgpu::InstanceProvider(this),
     mIdleFuzzFactor(0),
     mIdleCallbackIndex(-1),
     mCurrentlyIdle(false),
@@ -917,8 +918,9 @@ nsGlobalWindowInner::nsGlobalWindowInner(nsGlobalWindowOuter *aOuterWindow)
     mCanSkipCCGeneration(0),
     mBeforeUnloadListenerCount(0)
 {
-  AssertIsOnMainThread();
+  mIsInnerWindow = true;
 
+  AssertIsOnMainThread();
   nsLayoutStatics::AddRef();
 
   // Initialize the PRCList (this).
@@ -1305,7 +1307,6 @@ nsGlobalWindowInner::FreeInnerObjects()
 
   mConsole = nullptr;
 
-  mAudioWorklet = nullptr;
   mPaintWorklet = nullptr;
 
   mExternal = nullptr;
@@ -1461,7 +1462,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsGlobalWindowInner)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCrypto)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mU2F)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mConsole)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAudioWorklet)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPaintWorklet)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mExternal)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mInstallTrigger)
@@ -1478,6 +1478,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsGlobalWindowInner)
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocumentFlushedResolvers[i]->mPromise);
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocumentFlushedResolvers[i]->mCallback);
   }
+
+  static_cast<mozilla::webgpu::InstanceProvider*>(tmp)->CcTraverse(cb);
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
@@ -1549,7 +1551,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindowInner)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mCrypto)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mU2F)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mConsole)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mAudioWorklet)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPaintWorklet)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mExternal)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mInstallTrigger)
@@ -1581,6 +1582,8 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindowInner)
     NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocumentFlushedResolvers[i]->mCallback);
   }
   tmp->mDocumentFlushedResolvers.Clear();
+
+  static_cast<mozilla::webgpu::InstanceProvider*>(tmp)->CcUnlink();
 
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
@@ -3280,6 +3283,16 @@ nsGlobalWindowInner::SetOpener(JSContext* aCx, JS::Handle<JS::Value> aOpener,
   }
 
   SetOpenerWindow(outer, false);
+}
+
+void
+nsGlobalWindowInner::GetEvent(JSContext* aCx, JS::MutableHandle<JS::Value> aRetval)
+{
+  if (mEvent) {
+    Unused << nsContentUtils::WrapNative(aCx, mEvent, aRetval);
+  } else {
+    aRetval.setUndefined();
+  }
 }
 
 void
@@ -7995,22 +8008,6 @@ nsGlobalWindowInner::AbstractMainThreadFor(TaskCategory aCategory)
 }
 
 Worklet*
-nsGlobalWindowInner::GetAudioWorklet(ErrorResult& aRv)
-{
-  if (!mAudioWorklet) {
-    nsIPrincipal* principal = GetPrincipal();
-    if (!principal) {
-      aRv.Throw(NS_ERROR_FAILURE);
-      return nullptr;
-    }
-
-    mAudioWorklet = new Worklet(this, principal, Worklet::eAudioWorklet);
-  }
-
-  return mAudioWorklet;
-}
-
-Worklet*
 nsGlobalWindowInner::GetPaintWorklet(ErrorResult& aRv)
 {
   if (!mPaintWorklet) {
@@ -8202,7 +8199,8 @@ nsPIDOMWindowInner::nsPIDOMWindowInner(nsPIDOMWindowOuter *aOuterWindow)
   mMarkedCCGeneration(0),
   mHasTriedToCacheTopInnerWindow(false),
   mNumOfIndexedDBDatabases(0),
-  mNumOfOpenWebSockets(0)
+  mNumOfOpenWebSockets(0),
+  mEvent(nullptr)
 {
   MOZ_ASSERT(aOuterWindow);
 }

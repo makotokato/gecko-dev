@@ -9,7 +9,6 @@
 #include "nsINavHistoryService.h"
 #include "nsINavBookmarksService.h"
 #include "nsIFaviconService.h"
-#include "nsIGlobalHistory2.h"
 
 #include "nsIObserverService.h"
 #include "nsICollation.h"
@@ -638,7 +637,7 @@ protected:
   void DecayFrecencyCompleted(uint16_t reason);
   uint32_t mDecayFrecencyPendingCount;
 
-  nsresult RecalculateFrecencyStatsInternal();
+  nsresult RecalculateOriginFrecencyStatsInternal();
 
   // in nsNavHistoryQuery.cpp
   nsresult TokensToQuery(const nsTArray<mozilla::places::QueryKeyValuePair>& aTokens,
