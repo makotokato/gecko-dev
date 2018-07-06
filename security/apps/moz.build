@@ -22,8 +22,6 @@ LOCAL_INCLUDES += [
 ]
 
 DEFINES['NSS_ENABLE_ECC'] = 'True'
-for var in ('DLL_PREFIX', 'DLL_SUFFIX'):
-    DEFINES[var] = '"%s"' % CONFIG[var]
 
 if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
     CXXFLAGS += [
