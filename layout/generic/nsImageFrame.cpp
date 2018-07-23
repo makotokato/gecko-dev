@@ -18,6 +18,7 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Helpers.h"
 #include "mozilla/gfx/PathHelpers.h"
+#include "mozilla/dom/GeneratedImageContent.h"
 #include "mozilla/dom/HTMLImageElement.h"
 #include "mozilla/dom/ResponsiveImageSelector.h"
 #include "mozilla/layers/WebRenderLayerManager.h"
@@ -139,7 +140,15 @@ NS_NewImageFrameForContentProperty(nsIPresShell* aPresShell,
                                    ComputedStyle* aStyle)
 {
   return new (aPresShell) nsImageFrame(
-    aStyle, nsImageFrame::Kind::NonGeneratedContentProperty);
+    aStyle, nsImageFrame::Kind::ContentProperty);
+}
+
+nsIFrame*
+NS_NewImageFrameForGeneratedContentIndex(nsIPresShell* aPresShell,
+                                         ComputedStyle* aStyle)
+{
+  return new (aPresShell) nsImageFrame(
+    aStyle, nsImageFrame::Kind::ContentPropertyAtIndex);
 }
 
 nsImageFrame*
@@ -156,6 +165,7 @@ nsImageFrame::nsImageFrame(ComputedStyle* aStyle, ClassID aID, Kind aKind)
   , mComputedSize(0, 0)
   , mIntrinsicRatio(0, 0)
   , mKind(aKind)
+  , mContentURLRequestRegistered(false)
   , mDisplayingIcon(false)
   , mFirstFrameComplete(false)
   , mReflowCallbackPosted(false)
@@ -224,6 +234,7 @@ nsImageFrame::DestroyFrom(nsIFrame* aDestructRoot, PostDestroyData& aPostDestroy
 
   if (mKind == Kind::ImageElement) {
     MOZ_ASSERT(!mContentURLRequest);
+    MOZ_ASSERT(!mContentURLRequestRegistered);
     nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(mContent);
     MOZ_ASSERT(imageLoader);
 
@@ -233,6 +244,8 @@ nsImageFrame::DestroyFrom(nsIFrame* aDestructRoot, PostDestroyData& aPostDestroy
     imageLoader->RemoveNativeObserver(mListener);
   } else {
     if (mContentURLRequest) {
+      nsLayoutUtils::DeregisterImageRequest(
+        PresContext(), mContentURLRequest, &mContentURLRequestRegistered);
       mContentURLRequest->Cancel(NS_BINDING_ABORTED);
     }
   }
@@ -258,7 +271,7 @@ nsImageFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle)
     return;
   }
 
-  nsStyleImageOrientation newOrientation = StyleVisibility()->mImageOrientation;
+  auto newOrientation = StyleVisibility()->mImageOrientation;
 
   // We need to update our orientation either if we had no ComputedStyle before
   // because this is the first time it's been set, or if the image-orientation
@@ -312,16 +325,29 @@ nsImageFrame::Init(nsIContent* aContent,
     // that it can register images.
     imageLoader->FrameCreated(this);
   } else {
-    if (auto* proxy = StyleContent()->ContentAt(0).GetImage()) {
+    uint32_t contentIndex = 0;
+    const nsStyleContent* styleContent = StyleContent();
+    if (mKind == Kind::ContentPropertyAtIndex) {
+      MOZ_RELEASE_ASSERT(
+        aParent->GetContent()->IsGeneratedContentContainerForAfter() ||
+        aParent->GetContent()->IsGeneratedContentContainerForBefore());
+      MOZ_RELEASE_ASSERT(aContent->IsHTMLElement(nsGkAtoms::mozgeneratedcontentimage));
+      nsIFrame* nonAnonymousParent = aParent;
+      while (nonAnonymousParent->Style()->IsAnonBox()) {
+        nonAnonymousParent = nonAnonymousParent->GetParent();
+      }
+      MOZ_RELEASE_ASSERT(aParent->GetContent() == nonAnonymousParent->GetContent());
+      styleContent = nonAnonymousParent->StyleContent();
+      contentIndex = static_cast<GeneratedImageContent*>(aContent)->Index();
+    }
+    MOZ_RELEASE_ASSERT(contentIndex < styleContent->ContentCount());
+    MOZ_RELEASE_ASSERT(styleContent->ContentAt(contentIndex).GetType() ==
+                       StyleContentType::Image);
+    if (auto* proxy = styleContent->ContentAt(contentIndex).GetImage()) {
       proxy->Clone(mListener,
                    mContent->OwnerDoc(),
                    getter_AddRefs(mContentURLRequest));
-      // Make sure we get the intrinsic size and such ASAP if available.
-      if (SizeIsAvailable(mContentURLRequest)) {
-        nsCOMPtr<imgIContainer> image;
-        mContentURLRequest->GetImage(getter_AddRefs(image));
-        OnSizeAvailable(mContentURLRequest, image);
-      }
+      SetupForContentURLRequest();
     }
   }
 
@@ -335,6 +361,36 @@ nsImageFrame::Init(nsIContent* aContent,
     }
 
     currentRequest->BoostPriority(categoryToBoostPriority);
+  }
+}
+
+void
+nsImageFrame::SetupForContentURLRequest()
+{
+  MOZ_ASSERT(mKind != Kind::ImageElement);
+  if (!mContentURLRequest) {
+    return;
+  }
+
+  uint32_t status = 0;
+  nsresult rv = mContentURLRequest->GetImageStatus(&status);
+  if (NS_FAILED(rv)) {
+    return;
+  }
+
+  if (status & imgIRequest::STATUS_SIZE_AVAILABLE) {
+    nsCOMPtr<imgIContainer> image;
+    mContentURLRequest->GetImage(getter_AddRefs(image));
+    OnSizeAvailable(mContentURLRequest, image);
+  }
+
+  if (status & imgIRequest::STATUS_FRAME_COMPLETE) {
+    mFirstFrameComplete = true;
+  }
+
+  if (status & imgIRequest::STATUS_IS_ANIMATED) {
+    nsLayoutUtils::RegisterImageRequest(
+        PresContext(), mContentURLRequest, &mContentURLRequestRegistered);
   }
 }
 
@@ -458,7 +514,7 @@ bool
 nsImageFrame::IsPendingLoad(imgIRequest* aRequest) const
 {
   // Default to pending load in case of errors
-  if (mKind == Kind::NonGeneratedContentProperty) {
+  if (mKind != Kind::ImageElement) {
     MOZ_ASSERT(aRequest == mContentURLRequest);
     return false;
   }
@@ -592,6 +648,12 @@ nsImageFrame::Notify(imgIRequest* aRequest,
 
   if (aType == imgINotificationObserver::FRAME_COMPLETE) {
     mFirstFrameComplete = true;
+  }
+
+  if (aType == imgINotificationObserver::IS_ANIMATED &&
+      mKind != Kind::ImageElement) {
+    nsLayoutUtils::RegisterImageRequest(
+        PresContext(), mContentURLRequest, &mContentURLRequestRegistered);
   }
 
   if (aType == imgINotificationObserver::LOAD_COMPLETE) {
@@ -886,7 +948,7 @@ nsImageFrame::EnsureIntrinsicSizeAndRatio()
   // NOTE(emilio, https://github.com/w3c/csswg-drafts/issues/2832): WebKit
   // and Blink behave differently here for content: url(..), for now adapt to
   // Blink's behavior.
-  const bool mayDisplayBrokenIcon = IsForNonGeneratedImageElement();
+  const bool mayDisplayBrokenIcon = mKind == Kind::ImageElement;
   if (!mayDisplayBrokenIcon) {
     return;
   }
@@ -1312,7 +1374,7 @@ struct nsRecessedBorder : public nsStyleBorder {
     : nsStyleBorder(aPresContext)
   {
     NS_FOR_CSS_SIDES(side) {
-      BorderColorFor(side) = StyleComplexColor::FromColor(NS_RGB(0, 0, 0));
+      BorderColorFor(side) = StyleComplexColor::Black();
       mBorder.Side(side) = aBorderWidth;
       // Note: use SetBorderStyle here because we want to affect
       // mComputedBorder
@@ -1833,7 +1895,7 @@ nsImageFrame::PaintImage(gfxContext& aRenderingContext, nsPoint aPt,
 already_AddRefed<imgIRequest>
 nsImageFrame::GetCurrentRequest() const
 {
-  if (mKind == Kind::NonGeneratedContentProperty) {
+  if (mKind != Kind::ImageElement) {
     return do_AddRef(mContentURLRequest);
   }
 

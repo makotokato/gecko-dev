@@ -60,7 +60,7 @@ mod box_shadow;
 #[cfg(any(feature = "capture", feature = "replay"))]
 mod capture;
 mod clip;
-mod clip_scroll_node;
+mod clip_node;
 mod clip_scroll_tree;
 mod debug_colors;
 #[cfg(feature = "debug_renderer")]
@@ -89,7 +89,6 @@ mod picture;
 mod prim_store;
 mod print_tree;
 mod profiler;
-mod query;
 mod record;
 mod render_backend;
 mod render_task;
@@ -99,6 +98,7 @@ mod scene;
 mod scene_builder;
 mod segment;
 mod shade;
+mod spatial_node;
 mod texture_allocator;
 mod texture_cache;
 mod tiling;

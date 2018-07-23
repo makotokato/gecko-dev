@@ -127,7 +127,7 @@ use style::gecko_properties;
 use style::invalidation::element::restyle_hints;
 use style::media_queries::MediaList;
 use style::parser::{Parse, ParserContext, self};
-use style::properties::{ComputedValues, DeclarationSource, Importance};
+use style::properties::{ComputedValues, Importance};
 use style::properties::{LonghandId, LonghandIdSet, PropertyDeclarationBlock, PropertyId};
 use style::properties::{PropertyDeclarationId, ShorthandId};
 use style::properties::{SourcePropertyDeclaration, StyleBuilder};
@@ -3276,7 +3276,6 @@ pub extern "C" fn Servo_ParseProperty(
             block.extend(
                 declarations.drain(),
                 Importance::Normal,
-                DeclarationSource::CssOm,
             );
             Arc::new(global_style_data.shared_lock.wrap(block)).into_strong()
         }
@@ -3583,16 +3582,20 @@ fn set_property(
         return false;
     }
 
-    before_change_closure.invoke();
-
     let importance = if is_important { Importance::Important } else { Importance::Normal };
+    let mut updates = Default::default();
+    let will_change = read_locked_arc(declarations, |decls: &PropertyDeclarationBlock| {
+        decls.prepare_for_update(&source_declarations, importance, &mut updates)
+    });
+    if !will_change {
+        return false;
+    }
+
+    before_change_closure.invoke();
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.extend(
-            source_declarations.drain(),
-            importance,
-            DeclarationSource::CssOm
-        )
-    })
+        decls.update(source_declarations.drain(), importance, &mut updates)
+    });
+    true
 }
 
 #[no_mangle]
@@ -3629,7 +3632,6 @@ pub unsafe extern "C" fn Servo_DeclarationBlock_SetPropertyToAnimationValue(
         decls.push(
             AnimationValue::as_arc(&animation_value).uncompute(),
             Importance::Normal,
-            DeclarationSource::CssOm,
         )
     })
 }
@@ -3846,6 +3848,32 @@ pub extern "C" fn Servo_MediaList_DeleteMedium(
     write_locked_arc(list, |list: &mut MediaList| list.delete_medium(&context, old_medium))
 }
 
+#[no_mangle]
+pub extern "C" fn Servo_MediaList_SizeOfIncludingThis(
+    malloc_size_of: GeckoMallocSizeOf,
+    malloc_enclosing_size_of: GeckoMallocSizeOf,
+    list: RawServoMediaListBorrowed,
+) -> usize {
+    use malloc_size_of::MallocSizeOf;
+    use malloc_size_of::MallocUnconditionalShallowSizeOf;
+
+    let global_style_data = &*GLOBAL_STYLE_DATA;
+    let guard = global_style_data.shared_lock.read();
+
+    let mut ops = MallocSizeOfOps::new(
+        malloc_size_of.unwrap(),
+        Some(malloc_enclosing_size_of.unwrap()),
+        None
+    );
+
+    Locked::<MediaList>::as_arc(&list).with_arc(|list| {
+        let mut n = 0;
+        n += list.unconditional_shallow_size_of(&mut ops);
+        n += list.read_with(&guard).size_of(&mut ops);
+        n
+    })
+}
+
 macro_rules! get_longhand_from_id {
     ($id:expr) => {
         match PropertyId::from_nscsspropertyid($id) {
@@ -3894,7 +3922,7 @@ pub unsafe extern "C" fn Servo_DeclarationBlock_SetIdentStringValue(
         XLang => Lang(Atom::from_raw(value)),
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(prop, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(prop, Importance::Normal);
     })
 }
 
@@ -3908,6 +3936,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetKeywordValue(
     use style::properties::{PropertyDeclaration, LonghandId};
     use style::properties::longhands;
     use style::values::specified::BorderStyle;
+    use style::values::specified::{Clear, Float};
     use style::values::generics::font::FontStyle;
 
     let long = get_longhand_from_id!(property);
@@ -3915,14 +3944,35 @@ pub extern "C" fn Servo_DeclarationBlock_SetKeywordValue(
 
     let prop = match_wrap_declared! { long,
         MozUserModify => longhands::_moz_user_modify::SpecifiedValue::from_gecko_keyword(value),
-        // TextEmphasisPosition => FIXME implement text-emphasis-position
         Direction => longhands::direction::SpecifiedValue::from_gecko_keyword(value),
         Display => longhands::display::SpecifiedValue::from_gecko_keyword(value),
-        Float => longhands::float::SpecifiedValue::from_gecko_keyword(value),
+        Float => {
+            const LEFT: u32 = structs::StyleFloat::Left as u32;
+            const RIGHT: u32 = structs::StyleFloat::Right as u32;
+            const NONE: u32 = structs::StyleFloat::None as u32;
+            match value {
+                LEFT => Float::Left,
+                RIGHT => Float::Right,
+                NONE => Float::None,
+                _ => unreachable!(),
+            }
+        },
+        Clear => {
+            const LEFT: u32 = structs::StyleClear::Left as u32;
+            const RIGHT: u32 = structs::StyleClear::Right as u32;
+            const NONE: u32 = structs::StyleClear::None as u32;
+            const BOTH: u32 = structs::StyleClear::Both as u32;
+            match value {
+                LEFT => Clear::Left,
+                RIGHT => Clear::Right,
+                NONE => Clear::None,
+                BOTH => Clear::Both,
+                _ => unreachable!(),
+            }
+        },
         VerticalAlign => longhands::vertical_align::SpecifiedValue::from_gecko_keyword(value),
         TextAlign => longhands::text_align::SpecifiedValue::from_gecko_keyword(value),
         TextEmphasisPosition => longhands::text_emphasis_position::SpecifiedValue::from_gecko_keyword(value),
-        Clear => longhands::clear::SpecifiedValue::from_gecko_keyword(value),
         FontSize => {
             // We rely on Gecko passing in font-size values (0...7) here.
             longhands::font_size::SpecifiedValue::from_html_size(value as u8)
@@ -3948,7 +3998,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetKeywordValue(
         BorderLeftStyle => BorderStyle::from_gecko_keyword(value),
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(prop, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(prop, Importance::Normal);
     })
 }
 
@@ -3969,7 +4019,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetIntValue(
         MozScriptLevel => MozScriptLevel::Relative(value),
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(prop, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(prop, Importance::Normal);
     })
 }
 
@@ -4024,7 +4074,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetPixelValue(
         },
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(prop, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(prop, Importance::Normal);
     })
 }
 
@@ -4062,7 +4112,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetLengthValue(
         MozScriptMinSize => MozScriptMinSize(nocalc),
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(prop, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(prop, Importance::Normal);
     })
 }
 
@@ -4084,7 +4134,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetNumberValue(
         MozScriptLevel => MozScriptLevel::MozAbsolute(value as i32),
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(prop, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(prop, Importance::Normal);
     })
 }
 
@@ -4112,7 +4162,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetPercentValue(
         FontSize => LengthOrPercentage::from(pc).into(),
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(prop, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(prop, Importance::Normal);
     })
 }
 
@@ -4136,7 +4186,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetAutoValue(
         MarginLeft => auto,
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(prop, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(prop, Importance::Normal);
     })
 }
 
@@ -4158,7 +4208,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetCurrentColor(
         BorderLeftColor => cc,
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(prop, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(prop, Importance::Normal);
     })
 }
 
@@ -4186,7 +4236,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetColorValue(
         BackgroundColor => color,
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(prop, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(prop, Importance::Normal);
     })
 }
 
@@ -4207,7 +4257,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetFontFamily(
         if parser.is_exhausted() {
             let decl = PropertyDeclaration::FontFamily(family);
             write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-                decls.push(decl, Importance::Normal, DeclarationSource::CssOm);
+                decls.push(decl, Importance::Normal);
             })
         }
     }
@@ -4240,7 +4290,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetBackgroundImage(
         vec![Either::Second(Image::Url(url))]
     ));
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(decl, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(decl, Importance::Normal);
     });
 }
 
@@ -4255,7 +4305,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetTextDecorationColorOverride(
     decoration |= TextDecorationLine::COLOR_OVERRIDE;
     let decl = PropertyDeclaration::TextDecorationLine(decoration);
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
-        decls.push(decl, Importance::Normal, DeclarationSource::CssOm);
+        decls.push(decl, Importance::Normal);
     })
 }
 
@@ -4610,6 +4660,7 @@ pub extern "C" fn Servo_GetComputedKeyframeValues(
             }
 
             let mut maybe_append_animation_value = |property: LonghandId, value: Option<AnimationValue>| {
+                debug_assert!(!property.is_logical());
                 if seen.contains(property) {
                     return;
                 }
@@ -4816,6 +4867,7 @@ fn fill_in_missing_keyframe_values(
 pub unsafe extern "C" fn Servo_StyleSet_GetKeyframesForName(
     raw_data: RawServoStyleSetBorrowed,
     element: RawGeckoElementBorrowed,
+    style: ComputedStyleBorrowed,
     name: *mut nsAtom,
     inherited_timing_function: nsTimingFunctionBorrowed,
     keyframes: RawGeckoKeyframeListBorrowedMut,
@@ -4840,6 +4892,8 @@ pub unsafe extern "C" fn Servo_StyleSet_GetKeyframesForName(
     let mut has_complete_initial_keyframe = false;
     let mut has_complete_final_keyframe = false;
     let mut current_offset = -1.;
+
+    let writing_mode = style.writing_mode;
 
     // Iterate over the keyframe rules backwards so we can drop overridden
     // properties (since declarations in later rules override those in earlier
@@ -4872,7 +4926,14 @@ pub unsafe extern "C" fn Servo_StyleSet_GetKeyframesForName(
                 // to represent that all properties animated by the keyframes
                 // animation should be set to the underlying computed value for
                 // that keyframe.
+                let mut seen = LonghandIdSet::new();
                 for property in animation.properties_changed.iter() {
+                    let property = property.to_physical(writing_mode);
+                    if seen.contains(property) {
+                        continue;
+                    }
+                    seen.insert(property);
+
                     Gecko_AppendPropertyValuePair(
                         &mut (*keyframe).mPropertyValues,
                         property.to_nscsspropertyid(),
@@ -4891,7 +4952,10 @@ pub unsafe extern "C" fn Servo_StyleSet_GetKeyframesForName(
 
                 // Filter out non-animatable properties and properties with
                 // !important.
-                for declaration in guard.normal_declaration_iter() {
+                //
+                // Also, iterate in reverse to respect the source order in case
+                // there are logical and physical longhands in the same block.
+                for declaration in guard.normal_declaration_iter().rev() {
                     let id = declaration.id();
 
                     let id = match id {
@@ -4907,13 +4971,12 @@ pub unsafe extern "C" fn Servo_StyleSet_GetKeyframesForName(
                                 continue;
                             }
 
-                            id
+                            id.to_physical(writing_mode)
                         }
                         PropertyDeclarationId::Custom(..) => {
                             custom_properties.push(
                                 declaration.clone(),
                                 Importance::Normal,
-                                DeclarationSource::CssOm,
                             );
                             continue;
                         }
@@ -4931,7 +4994,7 @@ pub unsafe extern "C" fn Servo_StyleSet_GetKeyframesForName(
                     (*pair).mServoDeclarationBlock.set_arc_leaky(
                         Arc::new(global_style_data.shared_lock.wrap(
                             PropertyDeclarationBlock::with_one(
-                                declaration.clone(),
+                                declaration.to_physical(writing_mode),
                                 Importance::Normal,
                             )
                         ))
@@ -4959,10 +5022,15 @@ pub unsafe extern "C" fn Servo_StyleSet_GetKeyframesForName(
         }
     }
 
+    let mut properties_changed = LonghandIdSet::new();
+    for property in animation.properties_changed.iter() {
+        properties_changed.insert(property.to_physical(writing_mode));
+    }
+
     // Append property values that are missing in the initial or the final keyframes.
     if !has_complete_initial_keyframe {
         fill_in_missing_keyframe_values(
-            &animation.properties_changed,
+            &properties_changed,
             inherited_timing_function,
             &properties_set_at_start,
             Offset::Zero,
@@ -4971,7 +5039,7 @@ pub unsafe extern "C" fn Servo_StyleSet_GetKeyframesForName(
     }
     if !has_complete_final_keyframe {
         fill_in_missing_keyframe_values(
-            &animation.properties_changed,
+            &properties_changed,
             inherited_timing_function,
             &properties_set_at_end,
             Offset::One,

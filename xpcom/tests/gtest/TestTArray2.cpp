@@ -1039,4 +1039,76 @@ TEST(TArray, test_SetLengthAndRetainStorage_no_ctor) {
 #undef RPAREN
 }
 
+template <typename Comparator>
+bool
+TestCompareMethods(const Comparator& aComp)
+{
+  nsTArray<int> ary({57, 4, 16, 17, 3, 5, 96, 12});
+
+  ary.Sort(aComp);
+
+  const int sorted[] = {3, 4, 5, 12, 16, 17, 57, 96 };
+  for (size_t i = 0; i < MOZ_ARRAY_LENGTH(sorted); i++) {
+    if (sorted[i] != ary[i]) {
+      return false;
+    }
+  }
+
+  if (!ary.ContainsSorted(5, aComp)) {
+    return false;
+  }
+  if (ary.ContainsSorted(42, aComp)) {
+    return false;
+  }
+
+  if (ary.BinaryIndexOf(16, aComp) != 4) {
+    return false;
+  }
+
+  return true;
+}
+
+struct IntComparator
+{
+  bool Equals(int aLeft, int aRight) const
+  {
+    return aLeft == aRight;
+  }
+
+  bool LessThan(int aLeft, int aRight) const
+  {
+    return aLeft < aRight;
+  }
+};
+
+TEST(TArray, test_comparator_objects) {
+  ASSERT_TRUE(TestCompareMethods(IntComparator()));
+  ASSERT_TRUE(TestCompareMethods([] (int aLeft, int aRight) { return aLeft - aRight; }));
+}
+
+struct Big
+{
+  uint64_t size[40] = {};
+};
+
+TEST(TArray, test_AutoTArray_SwapElements) {
+  AutoTArray<Big, 40> oneArray;
+  AutoTArray<Big, 40> another;
+
+  for (size_t i = 0; i < 8; ++i) {
+    oneArray.AppendElement(Big());
+  }
+  oneArray[0].size[10] = 1;
+  for (size_t i = 0; i < 9; ++i) {
+    another.AppendElement(Big());
+  }
+  oneArray.SwapElements(another);
+
+  ASSERT_EQ(oneArray.Length(), 9u);
+  ASSERT_EQ(another.Length(), 8u);
+
+  ASSERT_EQ(oneArray[0].size[10], 0u);
+  ASSERT_EQ(another[0].size[10], 1u);
+}
+
 } // namespace TestTArray

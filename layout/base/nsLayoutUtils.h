@@ -61,7 +61,6 @@ class nsPIDOMWindowOuter;
 class imgIRequest;
 class nsIDocument;
 struct nsStyleFont;
-struct nsStyleImageOrientation;
 struct nsOverflowAreas;
 
 namespace mozilla {
@@ -75,6 +74,7 @@ class WritingMode;
 class DisplayItemClip;
 class EffectSet;
 struct ActiveScrolledRoot;
+enum class StyleImageOrientation : uint8_t;
 namespace dom {
 class CanvasRenderingContext2D;
 class DOMRectList;
@@ -133,6 +133,12 @@ enum class DrawStringFlags {
   eForceHorizontal = 0x1 // Forces the text to be drawn horizontally.
 };
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(DrawStringFlags)
+
+enum class ReparentingDirection {
+  Backwards,
+  Forwards,
+  Variable // Could be either of the above; take most pessimistic action.
+};
 
 /**
  * nsLayoutUtils is a namespace class used for various helper
@@ -1221,10 +1227,11 @@ public:
    * or RECTS_USE_MARGIN_BOX, the corresponding type of box is used.
    * Otherwise (by default), the border box is used.
    */
-  static void GetAllInFlowRects(nsIFrame* aFrame, nsIFrame* aRelativeTo,
+  static void GetAllInFlowRects(nsIFrame* aFrame, const nsIFrame* aRelativeTo,
                                 RectCallback* aCallback, uint32_t aFlags = 0);
 
-  static void GetAllInFlowRectsAndTexts(nsIFrame* aFrame, nsIFrame* aRelativeTo,
+  static void GetAllInFlowRectsAndTexts(nsIFrame* aFrame,
+                                        const nsIFrame* aRelativeTo,
                                         RectCallback* aCallback,
                                         mozilla::dom::Sequence<nsString>* aTextList,
                                         uint32_t aFlags = 0);
@@ -1239,7 +1246,7 @@ public:
    * or RECTS_USE_MARGIN_BOX, the corresponding type of box is used.
    * Otherwise (by default), the border box is used.
    */
-  static nsRect GetAllInFlowRectsUnion(nsIFrame* aFrame, nsIFrame* aRelativeTo,
+  static nsRect GetAllInFlowRectsUnion(nsIFrame* aFrame, const nsIFrame* aRelativeTo,
                                        uint32_t aFlags = 0);
 
   enum {
@@ -1990,7 +1997,7 @@ public:
    */
   static already_AddRefed<imgIContainer>
   OrientImage(imgIContainer* aContainer,
-              const nsStyleImageOrientation& aOrientation);
+              const mozilla::StyleImageOrientation& aOrientation);
 
   /**
    * Determine if any corner radius is of nonzero size

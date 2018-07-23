@@ -35,6 +35,7 @@
 #include "mozilla/TimelineConsumers.h"
 #include "mozilla/WorkerTimelineMarker.h"
 #include "nsCycleCollector.h"
+#include "nsGlobalWindowInner.h"
 #include "nsNetUtil.h"
 #include "nsIMemoryReporter.h"
 #include "nsIPermissionManager.h"
@@ -54,6 +55,7 @@
 #include "mozilla/dom/ServiceWorkerEvents.h"
 #include "mozilla/dom/ServiceWorkerManager.h"
 #include "SharedWorker.h"
+#include "WorkerCSPEventListener.h"
 #include "WorkerDebugger.h"
 #include "WorkerDebuggerManager.h"
 #include "WorkerError.h"
@@ -328,80 +330,6 @@ private:
   }
 };
 
-class ReportCompileErrorRunnable final : public WorkerRunnable
-{
-public:
-  static void
-  CreateAndDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
-  {
-    MOZ_ASSERT(aWorkerPrivate);
-    aWorkerPrivate->AssertIsOnWorkerThread();
-
-    RefPtr<ReportCompileErrorRunnable> runnable =
-      new ReportCompileErrorRunnable(aCx, aWorkerPrivate);
-    runnable->Dispatch();
-  }
-
-private:
-  ReportCompileErrorRunnable(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
-    : WorkerRunnable(aWorkerPrivate, ParentThreadUnchangedBusyCount)
-  {
-    aWorkerPrivate->AssertIsOnWorkerThread();
-  }
-
-  void
-  PostDispatch(WorkerPrivate* aWorkerPrivate, bool aDispatchResult) override
-  {
-    aWorkerPrivate->AssertIsOnWorkerThread();
-
-    // Dispatch may fail if the worker was canceled, no need to report that as
-    // an error, so don't call base class PostDispatch.
-  }
-
-  bool
-  WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
-  {
-    if (aWorkerPrivate->IsFrozen() ||
-        aWorkerPrivate->IsParentWindowPaused()) {
-      MOZ_ASSERT(!IsDebuggerRunnable());
-      aWorkerPrivate->QueueRunnable(this);
-      return true;
-    }
-
-    if (aWorkerPrivate->IsSharedWorker()) {
-      aWorkerPrivate->BroadcastErrorToSharedWorkers(aCx, nullptr,
-                                                    /* isErrorEvent */ false);
-      return true;
-    }
-
-    if (aWorkerPrivate->IsServiceWorker()) {
-      RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
-      if (swm) {
-        swm->HandleError(aCx, aWorkerPrivate->GetPrincipal(),
-                         aWorkerPrivate->ServiceWorkerScope(),
-                         aWorkerPrivate->ScriptURL(),
-                         EmptyString(), EmptyString(), EmptyString(),
-                         0, 0, JSREPORT_ERROR, JSEXN_ERR);
-      }
-      return true;
-    }
-
-    if (!aWorkerPrivate->IsAcceptingEvents()) {
-      return true;
-    }
-
-    RefPtr<mozilla::dom::EventTarget> parentEventTarget =
-      aWorkerPrivate->ParentEventTargetRef();
-    RefPtr<Event> event =
-      Event::Constructor(parentEventTarget, NS_LITERAL_STRING("error"),
-                         EventInit());
-    event->SetTrusted(true);
-
-    parentEventTarget->DispatchEvent(*event);
-    return true;
-  }
-};
-
 class CompileScriptRunnable final : public WorkerRunnable
 {
   nsString mScriptURL;
@@ -424,6 +352,10 @@ private:
     aWorkerPrivate->AssertIsOnWorkerThread();
 
     if (NS_WARN_IF(!aWorkerPrivate->EnsureClientSource())) {
+      return false;
+    }
+
+    if (NS_WARN_IF(!aWorkerPrivate->EnsureCSPEventListener())) {
       return false;
     }
 
@@ -463,7 +395,7 @@ private:
     // because all the other errors are handled when the script is loaded.
     // See: https://dom.spec.whatwg.org/#concept-event-fire
     if (rv.Failed() && !rv.IsJSException()) {
-      ReportCompileErrorRunnable::CreateAndDispatch(aCx, aWorkerPrivate);
+      WorkerErrorReport::CreateAndDispatchGenericErrorRunnableToParent(aWorkerPrivate);
       rv.SuppressException();
       return false;
     }
@@ -501,8 +433,8 @@ public:
   : WorkerControlRunnable(aWorkerPrivate, WorkerThreadUnchangedBusyCount),
     mStatus(aStatus)
   {
-    MOZ_ASSERT(aStatus == Closing || aStatus == Terminating ||
-               aStatus == Canceling || aStatus == Killing);
+    MOZ_ASSERT(aStatus == Closing || aStatus == Canceling ||
+               aStatus == Killing);
   }
 
 private:
@@ -565,6 +497,22 @@ private:
   WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
   {
     return aWorkerPrivate->ThawInternal();
+  }
+};
+
+class PropagateFirstPartyStorageAccessGrantedRunnable final : public WorkerControlRunnable
+{
+public:
+  explicit PropagateFirstPartyStorageAccessGrantedRunnable(WorkerPrivate* aWorkerPrivate)
+    : WorkerControlRunnable(aWorkerPrivate, WorkerThreadUnchangedBusyCount)
+  {}
+
+private:
+  bool
+  WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
+  {
+    aWorkerPrivate->PropagateFirstPartyStorageAccessGrantedInternal();
+    return true;
   }
 };
 
@@ -1520,6 +1468,8 @@ WorkerPrivate::SetCSP(nsIContentSecurityPolicy* aCSP)
     return;
   }
   aCSP->EnsureEventTarget(mMainThreadEventTarget);
+  aCSP->SetEventListener(mCSPEventListener);
+
   mLoadInfo.mCSP = aCSP;
 }
 
@@ -1540,6 +1490,7 @@ WorkerPrivate::SetCSPFromHeaderValues(const nsACString& aCSPHeaderValue,
   }
 
   csp->EnsureEventTarget(mMainThreadEventTarget);
+  csp->SetEventListener(mCSPEventListener);
 
   // If there's a CSP header, apply it.
   if (!cspHeaderValue.IsEmpty()) {
@@ -1809,7 +1760,7 @@ WorkerPrivate::Notify(WorkerStatus aStatus)
     return true;
   }
 
-  NS_ASSERTION(aStatus != Terminating || mQueuedRunnables.IsEmpty(),
+  NS_ASSERTION(aStatus != Canceling || mQueuedRunnables.IsEmpty(),
                "Shouldn't have anything queued!");
 
   // Anything queued will be discarded.
@@ -1864,7 +1815,7 @@ WorkerPrivate::Freeze(nsPIDOMWindowInner* aWindow)
   {
     MutexAutoLock lock(mMutex);
 
-    if (mParentStatus >= Terminating) {
+    if (mParentStatus >= Canceling) {
       return true;
     }
   }
@@ -1883,8 +1834,6 @@ bool
 WorkerPrivate::Thaw(nsPIDOMWindowInner* aWindow)
 {
   AssertIsOnParentThread();
-
-  MOZ_ASSERT(mParentFrozen);
 
   // Shared workers are resumed if any of their owning documents are thawed.
   // It can happen that mSharedWorkers is empty but this thread has not been
@@ -1923,7 +1872,7 @@ WorkerPrivate::Thaw(nsPIDOMWindowInner* aWindow)
   {
     MutexAutoLock lock(mMutex);
 
-    if (mParentStatus >= Terminating) {
+    if (mParentStatus >= Canceling) {
       return true;
     }
   }
@@ -1974,7 +1923,7 @@ WorkerPrivate::ParentWindowResumed()
   {
     MutexAutoLock lock(mMutex);
 
-    if (mParentStatus >= Terminating) {
+    if (mParentStatus >= Canceling) {
       return;
     }
   }
@@ -1991,6 +1940,24 @@ WorkerPrivate::ParentWindowResumed()
       runnables[index]->Run();
     }
   }
+}
+
+void
+WorkerPrivate::PropagateFirstPartyStorageAccessGranted()
+{
+  AssertIsOnParentThread();
+
+  {
+    MutexAutoLock lock(mMutex);
+
+    if (mParentStatus >= Canceling) {
+      return;
+    }
+  }
+
+  RefPtr<PropagateFirstPartyStorageAccessGrantedRunnable> runnable =
+    new PropagateFirstPartyStorageAccessGrantedRunnable(this);
+  Unused << NS_WARN_IF(!runnable->Dispatch());
 }
 
 bool
@@ -2021,7 +1988,7 @@ WorkerPrivate::ModifyBusyCount(bool aIncrease)
     bool shouldCancel;
     {
       MutexAutoLock lock(mMutex);
-      shouldCancel = mParentStatus == Terminating;
+      shouldCancel = mParentStatus == Canceling;
     }
 
     if (shouldCancel && !Cancel()) {
@@ -2254,7 +2221,6 @@ WorkerPrivate::BroadcastErrorToSharedWorkers(
   }
 
   AutoTArray<WindowAction, 10> windowActions;
-  nsresult rv;
 
   // First fire the error event at all SharedWorker objects. This may include
   // multiple objects in a single window as well as objects in different
@@ -2348,9 +2314,8 @@ WorkerPrivate::BroadcastErrorToSharedWorkers(
     init.mBubbles = true;
 
     nsEventStatus status = nsEventStatus_eIgnore;
-    rv = sgo->HandleScriptError(init, &status);
-    if (NS_FAILED(rv)) {
-      ThrowAndReport(windowAction.mWindow, rv);
+    if (!sgo->HandleScriptError(init, &status)) {
+      ThrowAndReport(windowAction.mWindow, NS_ERROR_UNEXPECTED);
       continue;
     }
 
@@ -2984,12 +2949,7 @@ WorkerPrivate::GetLoadInfo(JSContext* aCx, nsPIDOMWindowInner* aWindow,
     // See if we're being called from a window.
     nsCOMPtr<nsPIDOMWindowInner> globalWindow = aWindow;
     if (!globalWindow) {
-      nsCOMPtr<nsIScriptGlobalObject> scriptGlobal =
-        nsJSUtils::GetStaticScriptGlobal(JS::CurrentGlobalOrNull(aCx));
-      if (scriptGlobal) {
-        globalWindow = do_QueryInterface(scriptGlobal);
-        MOZ_ASSERT(globalWindow);
-      }
+      globalWindow = xpc::CurrentWindowOrNull(aCx);
     }
 
     nsCOMPtr<nsIDocument> document;
@@ -3221,13 +3181,12 @@ WorkerPrivate::DoRunLoop(JSContext* aCx)
   Maybe<JSAutoRealm> workerCompartment;
 
   for (;;) {
-    WorkerStatus currentStatus, previousStatus;
+    WorkerStatus currentStatus;
     bool debuggerRunnablesPending = false;
     bool normalRunnablesPending = false;
 
     {
       MutexAutoLock lock(mMutex);
-      previousStatus = mStatus;
 
       while (mControlQueue.IsEmpty() &&
              !(debuggerRunnablesPending = !mDebuggerQueue.IsEmpty()) &&
@@ -3251,8 +3210,8 @@ WorkerPrivate::DoRunLoop(JSContext* aCx)
     // if all holders are done then we can kill this thread.
     if (currentStatus != Running && !HasActiveHolders()) {
 
-      // If we just changed status, we must schedule the current runnables.
-      if (previousStatus != Running && currentStatus != Killing) {
+      // Now we are ready to kill the worker thread.
+      if (currentStatus == Canceling) {
         NotifyInternal(Killing);
 
 #ifdef DEBUG
@@ -3269,7 +3228,7 @@ WorkerPrivate::DoRunLoop(JSContext* aCx)
       // If we're supposed to die then we should exit the loop.
       if (currentStatus == Killing) {
         // The ClientSource should be cleared in NotifyInternal() when we reach
-        // or pass Terminating.
+        // or pass Canceling.
         MOZ_DIAGNOSTIC_ASSERT(!mClientSource);
 
         // Flush uncaught rejections immediately, without
@@ -3482,6 +3441,17 @@ WorkerPrivate::EnsureClientSource()
   return true;
 }
 
+bool
+WorkerPrivate::EnsureCSPEventListener()
+{
+  mCSPEventListener = WorkerCSPEventListener::Create(this);
+  if (NS_WARN_IF(!mCSPEventListener)) {
+    return false;
+  }
+
+  return true;
+}
+
 void
 WorkerPrivate::EnsurePerformanceStorage()
 {
@@ -3498,7 +3468,7 @@ WorkerPrivate::GetClientInfo() const
   AssertIsOnWorkerThread();
   Maybe<ClientInfo> clientInfo;
   if (!mClientSource) {
-    MOZ_DIAGNOSTIC_ASSERT(mStatus >= Terminating);
+    MOZ_DIAGNOSTIC_ASSERT(mStatus >= Canceling);
     return clientInfo;
   }
   clientInfo.emplace(mClientSource->Info());
@@ -3521,7 +3491,7 @@ WorkerPrivate::GetController()
   AssertIsOnWorkerThread();
   {
     MutexAutoLock lock(mMutex);
-    if (mStatus >= Terminating) {
+    if (mStatus >= Canceling) {
       return Maybe<ServiceWorkerDescriptor>();
     }
   }
@@ -3537,7 +3507,7 @@ WorkerPrivate::Control(const ServiceWorkerDescriptor& aServiceWorker)
   MOZ_DIAGNOSTIC_ASSERT(Type() != WorkerTypeService);
   {
     MutexAutoLock lock(mMutex);
-    if (mStatus >= Terminating) {
+    if (mStatus >= Canceling) {
       return;
     }
   }
@@ -3560,7 +3530,7 @@ WorkerPrivate::ExecutionReady()
   AssertIsOnWorkerThread();
   {
     MutexAutoLock lock(mMutex);
-    if (mStatus >= Terminating) {
+    if (mStatus >= Canceling) {
       return;
     }
   }
@@ -3950,6 +3920,18 @@ WorkerPrivate::ThawInternal()
 }
 
 void
+WorkerPrivate::PropagateFirstPartyStorageAccessGrantedInternal()
+{
+  AssertIsOnWorkerThread();
+
+  mLoadInfo.mFirstPartyStorageAccessGranted = true;
+
+  for (uint32_t index = 0; index < mChildWorkers.Length(); index++) {
+    mChildWorkers[index]->PropagateFirstPartyStorageAccessGranted();
+  }
+}
+
+void
 WorkerPrivate::TraverseTimeouts(nsCycleCollectionTraversalCallback& cb)
 {
   for (uint32_t i = 0; i < mTimeouts.Length(); ++i) {
@@ -4138,7 +4120,7 @@ already_AddRefed<nsIEventTarget>
 WorkerPrivate::CreateNewSyncLoop(WorkerStatus aFailStatus)
 {
   AssertIsOnWorkerThread();
-  MOZ_ASSERT(aFailStatus >= Terminating,
+  MOZ_ASSERT(aFailStatus >= Canceling,
              "Sync loops can be created when the worker is in Running/Closing state!");
 
   {
@@ -4535,7 +4517,7 @@ WorkerPrivate::NotifyInternal(WorkerStatus aStatus)
       return true;
     }
 
-    if (aStatus >= Terminating) {
+    if (aStatus >= Canceling) {
       MutexAutoUnlock unlock(mMutex);
       mClientSource.reset();
       if (mScope) {
@@ -4623,9 +4605,7 @@ WorkerPrivate::NotifyInternal(WorkerStatus aStatus)
     return true;
   }
 
-  MOZ_ASSERT(aStatus == Terminating ||
-             aStatus == Canceling ||
-             aStatus == Killing);
+  MOZ_ASSERT(aStatus == Canceling || aStatus == Killing);
 
   // Always abort the script.
   return false;
@@ -5019,7 +4999,7 @@ WorkerPrivate::StartCancelingTimer()
   // This is not needed if we are already in an advanced shutdown state.
   {
     MutexAutoLock lock(mMutex);
-    if (ParentStatus() >= Terminating) {
+    if (ParentStatus() >= Canceling) {
       return;
     }
   }

@@ -86,7 +86,6 @@ const TEST_GLOBAL = {
   fetch() {},
   // eslint-disable-next-line object-shorthand
   Image: function() {}, // NB: This is a function/constructor
-  LightweightThemeManager: {currentThemeForDisplay: {}},
   PlacesUtils: {
     get bookmarks() {
       return TEST_GLOBAL.Cc["@mozilla.org/browser/nav-bookmarks-service;1"];
@@ -123,11 +122,17 @@ const TEST_GLOBAL = {
       addObserver() {},
       prefHasUserValue() {},
       removeObserver() {},
+      getPrefType() {},
+      clearUserPref() {},
       getStringPref() {},
       getIntPref() {},
       getBoolPref() {},
       setBoolPref() {},
+      setIntPref() {},
       getBranch() {},
+      PREF_BOOL: "boolean",
+      PREF_INT: "integer",
+      PREF_STRING: "string",
       getDefaultBranch() {
         return {
           setBoolPref() {},
@@ -167,7 +172,8 @@ const TEST_GLOBAL = {
       createNullPrincipal() {},
       getSystemPrincipal() {}
     },
-    wm: {getMostRecentWindow: () => window}
+    wm: {getMostRecentWindow: () => window},
+    appinfo: {appBuildID: "20180710100040"}
   },
   XPCOMUtils: {
     defineLazyGetter(_1, _2, f) { f(); },

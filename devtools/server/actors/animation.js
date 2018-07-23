@@ -88,6 +88,7 @@ var AnimationPlayerActor = protocol.ActorClassWithSpec(animationPlayerSpec, {
     }
 
     this.createdTime = createdTime;
+    this.currentTimeAtCreated = player.currentTime;
   },
 
   destroy: function() {
@@ -336,6 +337,8 @@ var AnimationPlayerActor = protocol.ActorClassWithSpec(animationPlayerSpec, {
       documentCurrentTime: this.node.ownerDocument.timeline.currentTime,
       // The time which this animation created.
       createdTime: this.createdTime,
+      // The time which an animation's current time when this animation has created.
+      currentTimeAtCreated: this.currentTimeAtCreated,
     };
   },
 
@@ -389,9 +392,8 @@ var AnimationPlayerActor = protocol.ActorClassWithSpec(animationPlayerSpec, {
       }
 
       if (hasCurrentAnimation(changedAnimations)) {
-        // Only consider the state has having changed if any of delay, duration,
-        // iterationCount, iterationStart, or playbackRate has changed (for now
-        // at least).
+        // Only consider the state has having changed if any of effect timing properties,
+        // animationTimingFunction or playbackRate has changed.
         const newState = this.getState();
         const oldState = this.currentState;
         hasChanged = newState.delay !== oldState.delay ||
@@ -399,6 +401,11 @@ var AnimationPlayerActor = protocol.ActorClassWithSpec(animationPlayerSpec, {
                      newState.iterationStart !== oldState.iterationStart ||
                      newState.duration !== oldState.duration ||
                      newState.endDelay !== oldState.endDelay ||
+                     newState.direction !== oldState.direction ||
+                     newState.easing !== oldState.easing ||
+                     newState.fill !== oldState.fill ||
+                     newState.animationTimingFunction !==
+                       oldState.animationTimingFunction ||
                      newState.playbackRate !== oldState.playbackRate;
         break;
       }

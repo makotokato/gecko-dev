@@ -17,6 +17,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/LookAndFeel.h"
+#include "mozilla/NullPrincipal.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ProcessHangMonitorIPC.h"
 #include "mozilla/Unused.h"
@@ -48,6 +49,7 @@
 #include "mozilla/dom/URLClassifierChild.h"
 #include "mozilla/dom/WorkerDebugger.h"
 #include "mozilla/dom/WorkerDebuggerManager.h"
+#include "mozilla/dom/ipc/SharedMap.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/psm/PSMContentListener.h"
@@ -71,6 +73,7 @@
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/CookieServiceChild.h"
 #include "mozilla/net/CaptivePortalService.h"
+#include "mozilla/PerformanceMetricsCollector.h"
 #include "mozilla/PerformanceUtils.h"
 #include "mozilla/plugins/PluginInstanceParent.h"
 #include "mozilla/plugins/PluginModuleParent.h"
@@ -83,7 +86,6 @@
 #include "mozilla/HangDetails.h"
 #include "imgLoader.h"
 #include "GMPServiceChild.h"
-#include "NullPrincipal.h"
 #include "nsISimpleEnumerator.h"
 #include "nsIStringBundle.h"
 #include "nsIWorkerDebuggerManager.h"
@@ -113,7 +115,7 @@
 
 #include "mozInlineSpellChecker.h"
 #include "nsDocShell.h"
-#include "nsIDocShellLoadInfo.h"
+#include "nsDocShellLoadInfo.h"
 #include "nsIConsoleListener.h"
 #include "nsIContentViewer.h"
 #include "nsICycleCollectorListener.h"
@@ -545,6 +547,7 @@ ContentChild::ContentChild()
  , mMainChromeTid(0)
  , mMsaaID(0)
 #endif
+ , mIsForBrowser(false)
  , mIsAlive(true)
  , mShuttingDown(false)
 {
@@ -590,7 +593,9 @@ mozilla::ipc::IPCResult
 ContentChild::RecvSetXPCOMProcessAttributes(const XPCOMInitData& aXPCOMInit,
                                             const StructuredCloneData& aInitialData,
                                             nsTArray<LookAndFeelInt>&& aLookAndFeelIntCache,
-                                            nsTArray<SystemFontListEntry>&& aFontList)
+                                            nsTArray<SystemFontListEntry>&& aFontList,
+                                            const FileDescriptor& aSharedDataMapFile,
+                                            const uint32_t& aSharedDataMapSize)
 {
   if (!sShutdownCanary) {
     return IPC_OK();
@@ -601,6 +606,9 @@ ContentChild::RecvSetXPCOMProcessAttributes(const XPCOMInitData& aXPCOMInit,
   gfx::gfxVars::SetValuesForInitialize(aXPCOMInit.gfxNonDefaultVarUpdates());
   InitXPCOM(aXPCOMInit, aInitialData);
   InitGraphicsDeviceData(aXPCOMInit.contentDeviceData());
+
+  mSharedData = new SharedMap(ProcessGlobal::Get(), aSharedDataMapFile,
+                              aSharedDataMapSize);
 
   return IPC_OK();
 }
@@ -755,7 +763,7 @@ ContentChild::ProvideWindow(mozIDOMWindowProxy* aParent,
                             const nsAString& aName,
                             const nsACString& aFeatures,
                             bool aForceNoOpener,
-                            nsIDocShellLoadInfo* aLoadInfo,
+                            nsDocShellLoadInfo* aLoadInfo,
                             bool* aWindowIsNew,
                             mozIDOMWindowProxy** aReturn)
 {
@@ -767,7 +775,7 @@ ContentChild::ProvideWindow(mozIDOMWindowProxy* aParent,
 
 static nsresult
 GetCreateWindowParams(mozIDOMWindowProxy* aParent,
-                      nsIDocShellLoadInfo* aLoadInfo,
+                      nsDocShellLoadInfo* aLoadInfo,
                       nsACString& aBaseURIString, float* aFullZoom,
                       uint32_t* aReferrerPolicy,
                       nsIPrincipal** aTriggeringPrincipal)
@@ -795,13 +803,11 @@ GetCreateWindowParams(mozIDOMWindowProxy* aParent,
 
   baseURI->GetSpec(aBaseURIString);
 
-  bool sendReferrer = true;
   if (aLoadInfo) {
-    aLoadInfo->GetSendReferrer(&sendReferrer);
-    if (!sendReferrer) {
+    if (!aLoadInfo->SendReferrer()) {
       *aReferrerPolicy = mozilla::net::RP_No_Referrer;
     } else {
-      aLoadInfo->GetReferrerPolicy(aReferrerPolicy);
+      *aReferrerPolicy = aLoadInfo->ReferrerPolicy();
     }
   }
 
@@ -832,7 +838,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
                                   const nsAString& aName,
                                   const nsACString& aFeatures,
                                   bool aForceNoOpener,
-                                  nsIDocShellLoadInfo* aLoadInfo,
+                                  nsDocShellLoadInfo* aLoadInfo,
                                   bool* aWindowIsNew,
                                   mozIDOMWindowProxy** aReturn)
 {
@@ -982,6 +988,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
     CompositorOptions compositorOptions = info.compositorOptions();
     uint32_t maxTouchPoints = info.maxTouchPoints();
     DimensionInfo dimensionInfo = info.dimensions();
+    bool hasSiblings = info.hasSiblings();
 
     // Once this function exits, we should try to exit the nested event loop.
     ready = true;
@@ -1024,6 +1031,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
     }
 
     newChild->SetMaxTouchPoints(maxTouchPoints);
+    newChild->SetHasSiblings(hasSiblings);
 
     // Set the opener window for this window before we start loading the document
     // inside of it. We have to do this before loading the remote scripts, because
@@ -1392,12 +1400,12 @@ ContentChild::GetResultForRenderingInitFailure(base::ProcessId aOtherPid)
 }
 
 mozilla::ipc::IPCResult
-ContentChild::RecvRequestPerformanceMetrics()
+ContentChild::RecvRequestPerformanceMetrics(const nsID& aID)
 {
   MOZ_ASSERT(mozilla::StaticPrefs::dom_performance_enable_scheduler_timing());
   nsTArray<PerformanceInfo> info;
   CollectPerformanceInfo(info);
-  SendAddPerformanceMetrics(info);
+  SendAddPerformanceMetrics(aID, info);
   return IPC_OK();
 }
 
@@ -2378,6 +2386,8 @@ ContentChild::ActorDestroy(ActorDestroyReason why)
 
   BlobURLProtocolHandler::RemoveDataEntries();
 
+  mSharedData = nullptr;
+
   mAlertObservers.Clear();
 
   mIdleObservers.Clear();
@@ -2558,6 +2568,26 @@ ContentChild::RecvRegisterStringBundles(nsTArray<mozilla::dom::StringBundleDescr
 }
 
 mozilla::ipc::IPCResult
+ContentChild::RecvUpdateSharedData(const FileDescriptor& aMapFile,
+                                   const uint32_t& aMapSize,
+                                   nsTArray<IPCBlob>&& aBlobs,
+                                   nsTArray<nsCString>&& aChangedKeys)
+{
+  if (mSharedData) {
+    nsTArray<RefPtr<BlobImpl>> blobImpls(aBlobs.Length());
+    for (auto& ipcBlob : aBlobs) {
+      blobImpls.AppendElement(IPCBlobUtils::Deserialize(ipcBlob));
+    }
+
+    mSharedData->Update(aMapFile, aMapSize,
+                        std::move(blobImpls),
+                        std::move(aChangedKeys));
+  }
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
 ContentChild::RecvGeolocationUpdate(nsIDOMGeoPosition* aPosition)
 {
   nsCOMPtr<nsIGeolocationUpdate> gs =
@@ -2659,6 +2689,20 @@ ContentChild::RecvAddPermission(const IPC::Permission& permission)
                                  nsPermissionManager::eNotify,
                                  nsPermissionManager::eNoDBOperation);
 
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+ContentChild::RecvRemoveAllPermissions()
+{
+  nsCOMPtr<nsIPermissionManager> permissionManagerIface =
+    services::GetPermissionManager();
+  nsPermissionManager* permissionManager =
+    static_cast<nsPermissionManager*>(permissionManagerIface.get());
+  MOZ_ASSERT(permissionManager,
+         "We have no permissionManager in the Content process !");
+
+  permissionManager->RemoveAllFromIPC();
   return IPC_OK();
 }
 
@@ -3301,7 +3345,7 @@ ContentChild::RecvInvokeDragSession(nsTArray<IPCDataTransfer>&& aTransfers,
             variant->SetAsAString(data);
           } else if (item.data().type() == IPCDataTransferData::TShmem) {
             Shmem data = item.data().get_Shmem();
-            variant->SetAsACString(nsDependentCString(data.get<char>(), data.Size<char>()));
+            variant->SetAsACString(nsDependentCSubstring(data.get<char>(), data.Size<char>()));
             Unused << DeallocShmem(data);
           } else if (item.data().type() == IPCDataTransferData::TIPCBlob) {
             RefPtr<BlobImpl> blobImpl =

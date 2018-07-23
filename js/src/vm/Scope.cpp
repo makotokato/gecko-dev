@@ -6,6 +6,8 @@
 
 #include "vm/Scope.h"
 
+#include "mozilla/ScopeExit.h"
+
 #include <memory>
 #include <new>
 
@@ -154,11 +156,9 @@ CopyScopeData(JSContext* cx, Handle<typename ConcreteScope::Data*> data)
     }
 
     size_t size = SizeOfData<typename ConcreteScope::Data>(data->length);
-    void* bytes = cx->zone()->pod_malloc<char>(size);
-    if (!bytes) {
-        ReportOutOfMemory(cx);
+    void* bytes = cx->pod_malloc<char>(size);
+    if (!bytes)
         return nullptr;
-    }
 
     auto* dataCopy = new (bytes) typename ConcreteScope::Data(*data);
 
@@ -199,9 +199,7 @@ static UniquePtr<typename ConcreteScope::Data>
 NewEmptyScopeData(JSContext* cx, uint32_t length = 0)
 {
     size_t dataSize = SizeOfData<typename ConcreteScope::Data>(length);
-    uint8_t* bytes = cx->zone()->pod_malloc<uint8_t>(dataSize);
-    if (!bytes)
-        ReportOutOfMemory(cx);
+    uint8_t* bytes = cx->pod_malloc<uint8_t>(dataSize);
     auto data = reinterpret_cast<typename ConcreteScope::Data*>(bytes);
     if (data)
         new (data) typename ConcreteScope::Data(length);

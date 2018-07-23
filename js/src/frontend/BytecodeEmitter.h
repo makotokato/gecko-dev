@@ -14,6 +14,8 @@
 #include "ds/InlineTable.h"
 #include "frontend/BCEParserHandle.h"
 #include "frontend/EitherParser.h"
+#include "frontend/JumpList.h"
+#include "frontend/NameFunctions.h"
 #include "frontend/SharedContext.h"
 #include "frontend/SourceNotes.h"
 #include "vm/BytecodeUtil.h"
@@ -108,61 +110,6 @@ struct CGYieldAndAwaitOffsetList {
 typedef Vector<jsbytecode, 64> BytecodeVector;
 typedef Vector<jssrcnote, 64> SrcNotesVector;
 
-// Linked list of jump instructions that need to be patched. The linked list is
-// stored in the bytes of the incomplete bytecode that will be patched, so no
-// extra memory is needed, and patching the instructions destroys the list.
-//
-// Example:
-//
-//     JumpList brList;
-//     if (!emitJump(JSOP_IFEQ, &brList))
-//         return false;
-//     ...
-//     JumpTarget label;
-//     if (!emitJumpTarget(&label))
-//         return false;
-//     ...
-//     if (!emitJump(JSOP_GOTO, &brList))
-//         return false;
-//     ...
-//     patchJumpsToTarget(brList, label);
-//
-//                 +-> -1
-//                 |
-//                 |
-//    ifeq ..   <+ +                +-+   ifeq ..
-//    ..         |                  |     ..
-//  label:       |                  +-> label:
-//    jumptarget |                  |     jumptarget
-//    ..         |                  |     ..
-//    goto .. <+ +                  +-+   goto .. <+
-//             |                                   |
-//             |                                   |
-//             +                                   +
-//           brList                              brList
-//
-//       |                                  ^
-//       +------- patchJumpsToTarget -------+
-//
-
-// Offset of a jump target instruction, used for patching jump instructions.
-struct JumpTarget {
-    ptrdiff_t offset;
-};
-
-struct JumpList {
-    // -1 is used to mark the end of jump lists.
-    JumpList() : offset(-1) {}
-    ptrdiff_t offset;
-
-    // Add a jump instruction to the list.
-    void push(jsbytecode* code, ptrdiff_t jumpOffset);
-
-    // Patch all jump instructions in this list to jump to `target`.  This
-    // clobbers the list.
-    void patchAll(jsbytecode* code, JumpTarget target);
-};
-
 // Used to control whether JSOP_CALL_IGNORES_RV is emitted for function calls.
 enum class ValueUsage {
     // Assume the value of the current expression may be used. This is always
@@ -175,12 +122,12 @@ enum class ValueUsage {
     IgnoreValue
 };
 
+class EmitterScope;
+class NestableControl;
+class TDZCheckCache;
+
 struct MOZ_STACK_CLASS BytecodeEmitter
 {
-    class TDZCheckCache;
-    class NestableControl;
-    class EmitterScope;
-
     SharedContext* const sc;      /* context shared between parsing and bytecode generation */
 
     JSContext* const cx;
@@ -472,7 +419,11 @@ struct MOZ_STACK_CLASS BytecodeEmitter
     }
 
     void reportError(ParseNode* pn, unsigned errorNumber, ...);
+    void reportError(const mozilla::Maybe<uint32_t>& maybeOffset,
+                     unsigned errorNumber, ...);
     bool reportExtraWarning(ParseNode* pn, unsigned errorNumber, ...);
+    bool reportExtraWarning(const mozilla::Maybe<uint32_t>& maybeOffset,
+                            unsigned errorNumber, ...);
 
     // If pn contains a useful expression, return true with *answer set to true.
     // If pn contains a useless expression, return true with *answer set to
@@ -527,7 +478,11 @@ struct MOZ_STACK_CLASS BytecodeEmitter
     MOZ_MUST_USE bool emitScript(ParseNode* body);
 
     // Emit function code for the tree rooted at body.
-    MOZ_MUST_USE bool emitFunctionScript(ParseNode* body);
+    enum class TopLevelFunction {
+        No,
+        Yes
+    };
+    MOZ_MUST_USE bool emitFunctionScript(ParseNode* fn, TopLevelFunction isTopLevel);
 
     // If op is JOF_TYPESET (see the type barriers comment in TypeInference.h),
     // reserve a type set to store its result.

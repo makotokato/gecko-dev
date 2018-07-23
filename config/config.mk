@@ -159,7 +159,7 @@ endif
 # Enable profile-based feedback
 ifneq (1,$(NO_PROFILE_GUIDED_OPTIMIZE))
 ifdef MOZ_PROFILE_GENERATE
-PGO_CFLAGS += $(if $(filter $(notdir $<),$(notdir $(NO_PROFILE_GUIDED_OPTIMIZE))),,$(PROFILE_GEN_CFLAGS))
+PGO_CFLAGS += $(if $(filter $(notdir $<),$(notdir $(NO_PROFILE_GUIDED_OPTIMIZE))),,$(PROFILE_GEN_CFLAGS) $(COMPUTED_PROFILE_GEN_DYN_CFLAGS))
 PGO_LDFLAGS += $(PROFILE_GEN_LDFLAGS)
 ifeq (WINNT,$(OS_ARCH))
 AR_FLAGS += -LTCG
@@ -214,6 +214,26 @@ HOST_CFLAGS = $(COMPUTED_HOST_CFLAGS) $(_DEPEND_CFLAGS)
 HOST_CXXFLAGS = $(COMPUTED_HOST_CXXFLAGS) $(_DEPEND_CFLAGS)
 HOST_C_LDFLAGS = $(COMPUTED_HOST_C_LDFLAGS)
 HOST_CXX_LDFLAGS = $(COMPUTED_HOST_CXX_LDFLAGS)
+
+ifdef MOZ_LTO
+ifeq (Darwin,$(OS_TARGET))
+# When linking on macOS, debug info is not linked along with the final binary,
+# and the dwarf data stays in object files until they are "linked" with the
+# dsymutil tool.
+# With LTO, object files are temporary, and are not kept around, which
+# means there's no object file for dsymutil to do its job. Consequently,
+# there is no debug info for LTOed compilation units.
+# The macOS linker has however an option to explicitly keep those object
+# files, which dsymutil will then find.
+# The catch is that the linker uses sequential numbers for those object
+# files, and doesn't avoid conflicts from multiple linkers running at
+# the same time. So in directories with multiple binaries, object files
+# from the first linked binaries would be overwritten by those of the
+# last linked binary. So we use a subdirectory containing the name of the
+# linked binary.
+LDFLAGS += -Wl,-object_path_lto,$(@F).lto.o/
+endif
+endif
 
 # We only add color flags if neither the flag to disable color
 # (e.g. "-fno-color-diagnostics" nor a flag to control color
@@ -424,14 +444,14 @@ OBJ_SUFFIX := $(_OBJ_SUFFIX)
 
 OBJS_VAR_SUFFIX := OBJS
 
-# PGO builds with GCC build objects with instrumentation in a first pass,
-# then objects optimized, without instrumentation, in a second pass. If
-# we overwrite the objects from the first pass with those from the second,
-# we end up not getting instrumentation data for better optimization on
-# incremental builds. As a consequence, we use a different object suffix
-# for the first pass.
+# PGO builds with GCC and clang-cl build objects with instrumentation in
+# a first pass, then objects optimized, without instrumentation, in a
+# second pass. If we overwrite the objects from the first pass with
+# those from the second, we end up not getting instrumentation data for
+# better optimization on incremental builds. As a consequence, we use a
+# different object suffix for the first pass.
 ifdef MOZ_PROFILE_GENERATE
-ifdef GNU_CC
+ifneq (,$(GNU_CC)$(CLANG_CL))
 OBJS_VAR_SUFFIX := PGO_OBJS
 ifndef NO_PROFILE_GUIDED_OPTIMIZE
 OBJ_SUFFIX := i_o

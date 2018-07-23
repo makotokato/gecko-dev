@@ -2643,7 +2643,7 @@ already_AddRefed<LayerManager> nsDisplayList::PaintRoot(nsDisplayListBuilder* aB
         rootPresContext->CollectPluginGeometryUpdates(layerManager);
       }
 
-      WebRenderLayerManager* wrManager = static_cast<WebRenderLayerManager*>(layerManager.get());
+      auto* wrManager = static_cast<WebRenderLayerManager*>(layerManager.get());
 
       nsIDocShell* docShell = presContext->GetDocShell();
       nsTArray<wr::WrFilterOp> wrFilters;
@@ -3145,8 +3145,8 @@ nsDisplayItem::ComputeVisibility(nsDisplayListBuilder* aBuilder,
 
 bool
 nsDisplayItem::RecomputeVisibility(nsDisplayListBuilder* aBuilder,
-                                   nsRegion* aVisibleRegion,
-                                   bool aUseClipBounds) {
+                                   nsRegion* aVisibleRegion)
+{
   if (mForceNotVisible && !GetSameCoordinateSystemChildren()) {
     // mForceNotVisible wants to ensure that this display item doesn't render
     // anything itself. If this item has contents, then we obviously want to
@@ -3155,13 +3155,8 @@ nsDisplayItem::RecomputeVisibility(nsDisplayListBuilder* aBuilder,
       "invisible items without children should have empty vis rect");
     SetPaintRect(nsRect());
   } else {
-    nsRect bounds;
-    if (aUseClipBounds) {
-      bounds = GetClippedBounds(aBuilder);
-    } else {
-      bool snap;
-      bounds = GetBounds(aBuilder, &snap);
-    }
+    bool snap;
+    nsRect bounds = GetBounds(aBuilder, &snap);
 
     nsRegion itemVisible;
     itemVisible.And(*aVisibleRegion, bounds);
@@ -4295,7 +4290,7 @@ nsDisplayBackgroundImage::ComputeInvalidationRegion(nsDisplayListBuilder* aBuild
     return;
   }
 
-  const nsDisplayBackgroundGeometry* geometry = static_cast<const nsDisplayBackgroundGeometry*>(aGeometry);
+  auto* geometry = static_cast<const nsDisplayBackgroundGeometry*>(aGeometry);
 
   bool snap;
   nsRect bounds = GetBounds(aBuilder, &snap);
@@ -4522,7 +4517,8 @@ nsDisplayThemedBackground::ComputeInvalidationRegion(nsDisplayListBuilder* aBuil
                                                      const nsDisplayItemGeometry* aGeometry,
                                                      nsRegion* aInvalidRegion) const
 {
-  const nsDisplayThemedBackgroundGeometry* geometry = static_cast<const nsDisplayThemedBackgroundGeometry*>(aGeometry);
+  auto* geometry =
+    static_cast<const nsDisplayThemedBackgroundGeometry*>(aGeometry);
 
   bool snap;
   nsRect bounds = GetBounds(aBuilder, &snap);
@@ -4583,12 +4579,6 @@ nsDisplayImageContainer::ConfigureLayer(ImageLayer* aLayer,
     UpdateDrawResult(ImgDrawResult::SUCCESS);
   }
 
-  // XXX(seth): Right now we ignore aParameters.Scale() and
-  // aParameters.Offset(), because FrameLayerBuilder already applies
-  // aParameters.Scale() via the layer's post-transform, and
-  // aParameters.Offset() is always zero.
-  MOZ_ASSERT(aParameters.Offset() == LayerIntPoint(0,0));
-
   // It's possible (for example, due to downscale-during-decode) that the
   // ImageContainer this ImageLayer is holding has a different size from the
   // intrinsic size of the image. For this reason we compute the transform using
@@ -4606,7 +4596,8 @@ nsDisplayImageContainer::ConfigureLayer(ImageLayer* aLayer,
     LayoutDeviceIntRect::FromAppUnitsToNearest(GetDestRect(), factor));
 
   const LayoutDevicePoint p = destRect.TopLeft();
-  Matrix transform = Matrix::Translation(p.x, p.y);
+  Matrix transform = Matrix::Translation(p.x + aParameters.mOffset.x,
+                                         p.y + aParameters.mOffset.y);
   transform.PreScale(destRect.width / containerSize.width,
                      destRect.height / containerSize.height);
   aLayer->SetBaseTransform(gfx::Matrix4x4::From2D(transform));
@@ -4769,6 +4760,52 @@ nsDisplayBackgroundColor::CreateWebRenderCommands(mozilla::wr::DisplayListBuilde
 
   return true;
 }
+
+void
+nsDisplayBackgroundColor::PaintWithClip(nsDisplayListBuilder* aBuilder,
+                                        gfxContext* aCtx,
+                                        const DisplayItemClip& aClip)
+{
+  MOZ_ASSERT(mBackgroundStyle->StyleBackground()->mImage.mLayers[0].mClip != StyleGeometryBox::Text);
+  if (mColor == Color()) {
+    return;
+  }
+
+  nsRect fillRect = mBackgroundRect;
+  if (aClip.HasClip()) {
+    fillRect.IntersectRect(fillRect, aClip.GetClipRect());
+  }
+
+  DrawTarget* dt = aCtx->GetDrawTarget();
+  int32_t A2D = mFrame->PresContext()->AppUnitsPerDevPixel();
+  Rect bounds = ToRect(nsLayoutUtils::RectToGfxRect(fillRect, A2D));
+  MaybeSnapToDevicePixels(bounds, *dt);
+  ColorPattern fill(ToDeviceColor(mColor));
+
+  if (aClip.GetRoundedRectCount()) {
+    MOZ_ASSERT(aClip.GetRoundedRectCount() == 1);
+
+    AutoTArray<DisplayItemClip::RoundedRect, 1> roundedRect;
+    aClip.AppendRoundedRects(&roundedRect);
+
+    bool pushedClip = false;
+    if (!fillRect.Contains(roundedRect[0].mRect)) {
+      dt->PushClipRect(bounds);
+      pushedClip = true;
+    }
+
+    RefPtr<Path> path = aClip.MakeRoundedRectPath(*aCtx->GetDrawTarget(),
+                                                  A2D,
+                                                  roundedRect[0]);
+    dt->Fill(path, fill);
+    if (pushedClip) {
+      dt->PopClip();
+    }
+  } else {
+    dt->FillRect(bounds, fill);
+  }
+}
+
 
 void
 nsDisplayBackgroundColor::Paint(nsDisplayListBuilder* aBuilder,
@@ -5234,7 +5271,7 @@ nsDisplayBorder::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
                                            const nsDisplayItemGeometry* aGeometry,
                                            nsRegion* aInvalidRegion) const
 {
-  const nsDisplayBorderGeometry* geometry = static_cast<const nsDisplayBorderGeometry*>(aGeometry);
+  auto* geometry = static_cast<const nsDisplayBorderGeometry*>(aGeometry);
   bool snap;
 
   if (!geometry->mBounds.IsEqualInterior(GetBounds(aBuilder, &snap))) {
@@ -5278,8 +5315,8 @@ nsDisplayBorder::CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuild
 };
 
 void
-nsDisplayBorder::Paint(nsDisplayListBuilder* aBuilder,
-                       gfxContext* aCtx) {
+nsDisplayBorder::Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx)
+{
   nsPoint offset = ToReferenceFrame();
 
   PaintBorderFlags flags = aBuilder->ShouldSyncDecodeImages()
@@ -5520,7 +5557,7 @@ nsDisplayBoxShadowOuter::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilde
                                                    const nsDisplayItemGeometry* aGeometry,
                                                    nsRegion* aInvalidRegion) const
 {
-  const nsDisplayBoxShadowOuterGeometry* geometry =
+  auto* geometry =
     static_cast<const nsDisplayBoxShadowOuterGeometry*>(aGeometry);
   bool snap;
   if (!geometry->mBounds.IsEqualInterior(GetBounds(aBuilder, &snap)) ||
@@ -6285,8 +6322,7 @@ nsDisplayOpacity::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
                                             const nsDisplayItemGeometry* aGeometry,
                                             nsRegion* aInvalidRegion) const
 {
-  const nsDisplayOpacityGeometry* geometry =
-    static_cast<const nsDisplayOpacityGeometry*>(aGeometry);
+  auto* geometry = static_cast<const nsDisplayOpacityGeometry*>(aGeometry);
 
   bool snap;
   if (mOpacity != geometry->mOpacity) {
@@ -7601,6 +7637,7 @@ nsDisplayTransform::SetReferenceFrameToAncestor(nsDisplayListBuilder* aBuilder)
 void
 nsDisplayTransform::Init(nsDisplayListBuilder* aBuilder)
 {
+  mShouldFlatten = false;
   mHasBounds = false;
   mStoredList.SetClipChain(nullptr, true);
   mStoredList.SetBuildingRect(mChildrenBuildingRect);
@@ -7652,6 +7689,18 @@ nsDisplayTransform::nsDisplayTransform(nsDisplayListBuilder* aBuilder,
   MOZ_ASSERT(aFrame, "Must have a frame!");
   Init(aBuilder);
   UpdateBoundsFor3D(aBuilder);
+}
+
+bool
+nsDisplayTransform::ShouldFlattenAway(nsDisplayListBuilder* aBuilder)
+{
+  if (gfxVars::UseWebRender() || !gfxPrefs::LayoutFlattenTransform()) {
+    return false;
+  }
+
+  MOZ_ASSERT(!mShouldFlatten);
+  mShouldFlatten = GetTransform().Is2D();
+  return mShouldFlatten;
 }
 
 /* Returns the delta specified by the transform-origin property.
@@ -8144,7 +8193,7 @@ nsDisplayTransform::GetInverseTransform() const
 }
 
 Matrix4x4
-nsDisplayTransform::GetTransformForRendering(LayoutDevicePoint* aOutOrigin)
+nsDisplayTransform::GetTransformForRendering(LayoutDevicePoint* aOutOrigin) const
 {
   if (!mFrame->HasPerspective() || mTransformGetter || mIsTransformSeparator) {
     if (!mTransformGetter && !mIsTransformSeparator && aOutOrigin) {
@@ -8304,15 +8353,21 @@ nsDisplayTransform::UpdateScrollData(mozilla::layers::WebRenderScrollData* aData
   return true;
 }
 
+bool
+nsDisplayTransform::ShouldSkipTransform(nsDisplayListBuilder* aBuilder) const
+{
+  return (aBuilder->RootReferenceFrame() == mFrame) &&
+    (aBuilder->IsForGenerateGlyphMask() ||
+     aBuilder->IsForPaintingSelectionBG());
+}
+
 already_AddRefed<Layer> nsDisplayTransform::BuildLayer(nsDisplayListBuilder *aBuilder,
                                                        LayerManager *aManager,
                                                        const ContainerLayerParameters& aContainerParameters)
 {
   // While generating a glyph mask, the transform vector of the root frame had
   // been applied into the target context, so stop applying it again here.
-  const bool shouldSkipTransform =
-    (aBuilder->RootReferenceFrame() == mFrame) &&
-    (aBuilder->IsForGenerateGlyphMask() || aBuilder->IsForPaintingSelectionBG());
+  const bool shouldSkipTransform = ShouldSkipTransform(aBuilder);
 
   /* For frames without transform, it would not be removed for
    * backface hidden here.  But, it would be removed by the init
@@ -8902,10 +8957,10 @@ nsCharClipDisplayItem::AllocateGeometry(nsDisplayListBuilder* aBuilder)
 
 void
 nsCharClipDisplayItem::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
-                                         const nsDisplayItemGeometry* aGeometry,
-                                         nsRegion* aInvalidRegion) const
+                                                 const nsDisplayItemGeometry* aGeometry,
+                                                 nsRegion* aInvalidRegion) const
 {
-  const nsCharClipGeometry* geometry = static_cast<const nsCharClipGeometry*>(aGeometry);
+  auto* geometry = static_cast<const nsCharClipGeometry*>(aGeometry);
 
   bool snap;
   nsRect newRect = geometry->mBounds;
@@ -8980,8 +9035,7 @@ nsDisplaySVGEffects::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
                                                const nsDisplayItemGeometry* aGeometry,
                                                nsRegion* aInvalidRegion) const
 {
-  const nsDisplaySVGEffectGeometry* geometry =
-    static_cast<const nsDisplaySVGEffectGeometry*>(aGeometry);
+  auto* geometry = static_cast<const nsDisplaySVGEffectGeometry*>(aGeometry);
   bool snap;
   nsRect bounds = GetBounds(aBuilder, &snap);
   if (geometry->mFrameOffsetToReferenceFrame != ToReferenceFrame() ||
@@ -9200,7 +9254,8 @@ nsDisplayMask::BuildLayer(nsDisplayListBuilder* aBuilder,
 
 bool
 nsDisplayMask::PaintMask(nsDisplayListBuilder* aBuilder,
-                         gfxContext* aMaskContext)
+                         gfxContext* aMaskContext,
+                         bool* aMaskPainted)
 {
   MOZ_ASSERT(aMaskContext->GetDrawTarget()->GetFormat() == SurfaceFormat::A8);
 
@@ -9214,7 +9269,10 @@ nsDisplayMask::PaintMask(nsDisplayListBuilder* aBuilder,
                                                   nullptr,
                                                   mHandleOpacity, imgParmas);
   ComputeMaskGeometry(params);
-  nsSVGIntegrationUtils::PaintMask(params);
+  bool painted = nsSVGIntegrationUtils::PaintMask(params);
+  if (aMaskPainted) {
+    *aMaskPainted = painted;
+  }
 
   nsDisplayMaskGeometry::UpdateDrawResult(this, imgParmas.result);
 
@@ -9250,6 +9308,12 @@ bool nsDisplayMask::CanPaintOnMaskLayer(LayerManager* aManager)
     return false;
   }
 
+  // We don't currently support this item creating a mask
+  // for both the clip-path, and rounded rect clipping.
+  if (GetClip().GetRoundedRectCount() != 0) {
+    return false;
+  }
+
   return true;
 }
 
@@ -9272,8 +9336,7 @@ nsDisplayMask::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
   nsDisplaySVGEffects::ComputeInvalidationRegion(aBuilder, aGeometry,
                                                  aInvalidRegion);
 
-  const nsDisplayMaskGeometry* geometry =
-    static_cast<const nsDisplayMaskGeometry*>(aGeometry);
+  auto* geometry = static_cast<const nsDisplayMaskGeometry*>(aGeometry);
   bool snap;
   nsRect bounds = GetBounds(aBuilder, &snap);
 
@@ -9545,8 +9608,7 @@ nsDisplayFilter::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
   nsDisplaySVGEffects::ComputeInvalidationRegion(aBuilder, aGeometry,
                                                  aInvalidRegion);
 
-  const nsDisplayFilterGeometry* geometry =
-    static_cast<const nsDisplayFilterGeometry*>(aGeometry);
+  auto* geometry = static_cast<const nsDisplayFilterGeometry*>(aGeometry);
 
   if (aBuilder->ShouldSyncDecodeImages() &&
       geometry->ShouldInvalidateToSyncDecodeImages()) {
@@ -9838,6 +9900,8 @@ PaintTelemetry::AutoRecordPaint::~AutoRecordPaint()
     recordSmall(NS_LITERAL_CSTRING("fr"), frMs);
     recordSmall(NS_LITERAL_CSTRING("r"), rMs);
   }
+
+  Telemetry::Accumulate(Telemetry::PAINT_BUILD_LAYERS_TIME, flbMs);
 }
 
 PaintTelemetry::AutoRecord::AutoRecord(Metric aMetric)

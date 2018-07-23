@@ -20,7 +20,7 @@ use malloc_size_of::{MallocShallowSizeOf, MallocSizeOf, MallocSizeOfOps};
 #[cfg(feature = "gecko")]
 use malloc_size_of::MallocUnconditionalShallowSizeOf;
 use media_queries::Device;
-use properties::{self, CascadeFlags, ComputedValues};
+use properties::{self, CascadeMode, ComputedValues};
 use properties::{AnimationRules, PropertyDeclarationBlock};
 use rule_cache::{RuleCache, RuleCacheConditions};
 use rule_tree::{CascadeLevel, RuleTree, ShadowCascadeOrder, StrongRuleNode, StyleSource};
@@ -845,55 +845,18 @@ impl Stylist {
     {
         debug_assert!(pseudo.is_some() || element.is_some(), "Huh?");
 
-        let cascade_flags = pseudo.map_or(CascadeFlags::empty(), |p| p.cascade_flags());
-
         // We need to compute visited values if we have visited rules or if our
         // parent has visited values.
-        let mut visited_values = None;
-        if inputs.visited_rules.is_some() || parent_style.and_then(|s| s.visited_style()).is_some()
-        {
-            // At this point inputs may have visited rules, or rules.
-            let rule_node = match inputs.visited_rules.as_ref() {
-                Some(rules) => rules,
-                None => inputs.rules.as_ref().unwrap_or(self.rule_tree.root()),
-            };
-
-            let inherited_style;
-            let inherited_style_ignoring_first_line;
-            let layout_parent_style_for_visited;
-            if pseudo.is_none() && element.unwrap().is_link() {
-                // We just want to use our parent style as our parent.
-                inherited_style = parent_style;
-                inherited_style_ignoring_first_line = parent_style_ignoring_first_line;
-                layout_parent_style_for_visited = layout_parent_style;
-            } else {
-                // We want to use the visited bits (if any) from our parent
-                // style as our parent.
-                inherited_style = parent_style
-                    .map(|parent_style| parent_style.visited_style().unwrap_or(parent_style));
-                inherited_style_ignoring_first_line = parent_style_ignoring_first_line
-                    .map(|parent_style| parent_style.visited_style().unwrap_or(parent_style));
-                layout_parent_style_for_visited = layout_parent_style
-                    .map(|parent_style| parent_style.visited_style().unwrap_or(parent_style));
+        let visited_rules = match inputs.visited_rules.as_ref() {
+            Some(rules) => Some(rules),
+            None => {
+                if parent_style.and_then(|s| s.visited_style()).is_some() {
+                    Some(inputs.rules.as_ref().unwrap_or(self.rule_tree.root()))
+                } else {
+                    None
+                }
             }
-
-            visited_values = Some(properties::cascade::<E>(
-                &self.device,
-                pseudo,
-                rule_node,
-                guards,
-                inherited_style,
-                inherited_style_ignoring_first_line,
-                layout_parent_style_for_visited,
-                None,
-                font_metrics,
-                cascade_flags | CascadeFlags::VISITED_DEPENDENT_ONLY,
-                self.quirks_mode,
-                rule_cache,
-                rule_cache_conditions,
-                element,
-            ));
-        }
+        };
 
         // Read the comment on `precomputed_values_for_pseudo` to see why it's
         // difficult to assert that display: contents nodes never arrive here
@@ -909,9 +872,8 @@ impl Stylist {
             parent_style,
             parent_style_ignoring_first_line,
             layout_parent_style,
-            visited_values,
+            visited_rules,
             font_metrics,
-            cascade_flags,
             self.quirks_mode,
             rule_cache,
             rule_cache_conditions,
@@ -1175,7 +1137,6 @@ impl Stylist {
             pseudo_element.is_some()
         );
 
-        let only_default_rules = rule_inclusion == RuleInclusion::DefaultOnly;
         let matches_user_rules = rule_hash_target.matches_user_and_author_rules();
         let matches_author_rules =
             matches_user_rules && self.author_styles_enabled == AuthorStylesEnabled::Yes;
@@ -1220,7 +1181,11 @@ impl Stylist {
             }
         }
 
-        if pseudo_element.is_none() && !only_default_rules {
+        if rule_inclusion == RuleInclusion::DefaultOnly {
+            return;
+        }
+
+        if pseudo_element.is_none() {
             // Presentational hints.
             //
             // These go before author rules, but after user rules, see:
@@ -1230,8 +1195,8 @@ impl Stylist {
                 context.visited_handling(),
                 applicable_declarations,
             );
-            if applicable_declarations.len() != length_before_preshints {
-                if cfg!(debug_assertions) {
+            if cfg!(debug_assertions) {
+                if applicable_declarations.len() != length_before_preshints {
                     for declaration in &applicable_declarations[length_before_preshints..] {
                         assert_eq!(declaration.level(), CascadeLevel::PresHints);
                     }
@@ -1248,7 +1213,7 @@ impl Stylist {
         // particular, normally document rules override ::slotted() rules, but
         // for !important it should be the other way around. So probably we need
         // to add some sort of AuthorScoped cascade level or something.
-        if matches_author_rules && !only_default_rules {
+        if matches_author_rules {
             if let Some(shadow) = rule_hash_target.shadow_root() {
                 if let Some(map) = shadow.style_data().host_rules(pseudo_element) {
                     context.with_shadow_host(Some(rule_hash_target), |context| {
@@ -1296,8 +1261,9 @@ impl Stylist {
 
             if let Some(containing_shadow) = rule_hash_target.containing_shadow() {
                 let cascade_data = containing_shadow.style_data();
+                let host = containing_shadow.host();
                 if let Some(map) = cascade_data.normal_rules(pseudo_element) {
-                    context.with_shadow_host(Some(containing_shadow.host()), |context| {
+                    context.with_shadow_host(Some(host), |context| {
                         map.get_all_matching_rules(
                             element,
                             rule_hash_target,
@@ -1311,14 +1277,31 @@ impl Stylist {
                     shadow_cascade_order += 1;
                 }
 
-                match_document_author_rules = false;
+                // NOTE(emilio): Hack so <svg:use> matches document rules as
+                // expected.
+                //
+                // This is not a problem for invalidation and that kind of stuff
+                // because they still don't match rules based on elements
+                // outside of the shadow tree, and because the <svg:use> subtree
+                // is immutable and recreated each time the source tree changes.
+                //
+                // See: https://github.com/w3c/svgwg/issues/504
+                //
+                // Note that we always resolve URLs against the document, so we
+                // can't get into a nested shadow situation here.
+                //
+                // See: https://github.com/w3c/svgwg/issues/505
+                //
+                let host_is_svg_use =
+                    host.is_svg_element() &&
+                    host.local_name() == &*local_name!("use");
+
+                match_document_author_rules = host_is_svg_use;
             }
         }
 
-        // FIXME(emilio): It looks very wrong to match XBL rules even for
-        // getDefaultComputedStyle!
-        //
-        // Also, this doesn't account for the author_styles_enabled stuff.
+        // FIXME(emilio): This doesn't account for the author_styles_enabled
+        // stuff...
         let cut_xbl_binding_inheritance =
             element.each_xbl_cascade_data(|cascade_data, quirks_mode| {
                 if let Some(map) = cascade_data.normal_rules(pseudo_element) {
@@ -1349,7 +1332,7 @@ impl Stylist {
 
         match_document_author_rules &= !cut_xbl_binding_inheritance;
 
-        if match_document_author_rules && !only_default_rules {
+        if match_document_author_rules {
             // Author normal rules.
             if let Some(map) = self.cascade_data.author.normal_rules(pseudo_element) {
                 map.get_all_matching_rules(
@@ -1364,47 +1347,43 @@ impl Stylist {
             }
         }
 
-        if !only_default_rules {
-            // Style attribute ("Normal override declarations").
-            if let Some(sa) = style_attribute {
-                applicable_declarations.push(ApplicableDeclarationBlock::from_declarations(
-                    sa.clone_arc(),
-                    CascadeLevel::StyleAttributeNormal,
-                ));
-            }
+        // Style attribute ("Normal override declarations").
+        if let Some(sa) = style_attribute {
+            applicable_declarations.push(ApplicableDeclarationBlock::from_declarations(
+                sa.clone_arc(),
+                CascadeLevel::StyleAttributeNormal,
+            ));
+        }
 
-            // Declarations from SVG SMIL animation elements.
-            if let Some(so) = smil_override {
-                applicable_declarations.push(ApplicableDeclarationBlock::from_declarations(
-                    so.clone_arc(),
-                    CascadeLevel::SMILOverride,
-                ));
-            }
+        // Declarations from SVG SMIL animation elements.
+        if let Some(so) = smil_override {
+            applicable_declarations.push(ApplicableDeclarationBlock::from_declarations(
+                so.clone_arc(),
+                CascadeLevel::SMILOverride,
+            ));
+        }
 
-            // The animations sheet (CSS animations, script-generated
-            // animations, and CSS transitions that are no longer tied to CSS
-            // markup).
-            if let Some(anim) = animation_rules.0 {
-                applicable_declarations.push(ApplicableDeclarationBlock::from_declarations(
-                    anim.clone(),
-                    CascadeLevel::Animations,
-                ));
-            }
+        // The animations sheet (CSS animations, script-generated
+        // animations, and CSS transitions that are no longer tied to CSS
+        // markup).
+        if let Some(anim) = animation_rules.0 {
+            applicable_declarations.push(ApplicableDeclarationBlock::from_declarations(
+                anim.clone(),
+                CascadeLevel::Animations,
+            ));
         }
 
         //
         // !important rules are handled during rule tree insertion.
         //
 
-        if !only_default_rules {
-            // The transitions sheet (CSS transitions that are tied to CSS
-            // markup).
-            if let Some(anim) = animation_rules.1 {
-                applicable_declarations.push(ApplicableDeclarationBlock::from_declarations(
-                    anim.clone(),
-                    CascadeLevel::Transitions,
-                ));
-            }
+        // The transitions sheet (CSS transitions that are tied to CSS
+        // markup).
+        if let Some(anim) = animation_rules.1 {
+            applicable_declarations.push(ApplicableDeclarationBlock::from_declarations(
+                anim.clone(),
+                CascadeLevel::Transitions,
+            ));
         }
     }
 
@@ -1584,9 +1563,8 @@ impl Stylist {
             Some(parent_style),
             Some(parent_style),
             Some(parent_style),
-            None,
             &metrics,
-            CascadeFlags::empty(),
+            CascadeMode::Unvisited { visited_rules: None },
             self.quirks_mode,
             /* rule_cache = */ None,
             &mut Default::default(),

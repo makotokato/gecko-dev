@@ -527,18 +527,16 @@ describe("Top Stories Feed", () => {
         "spocs": [{"id": "spoc1"}, {"id": "spoc2"}]
       };
 
+      instance.onAction({type: at.NEW_TAB_REHYDRATED, meta: {fromTarget: {}}});
+      assert.notCalled(instance.store.dispatch);
+      assert.equal(instance.contentUpdateQueue.length, 1);
+
       instance.personalized = true;
       instance.show_spocs = true;
       instance.spocsPerNewTabs = 0.5;
       instance.stories_endpoint = "stories-endpoint";
       instance.store.getState = () => ({Sections: [{id: "topstories", rows: response.recommendations}], Prefs: {values: {showSponsored: true}}});
       fetchStub.resolves({ok: true, status: 200, json: () => Promise.resolve(response)});
-
-      instance.onAction({type: at.NEW_TAB_REHYDRATED, meta: {fromTarget: {}}});
-      assert.notCalled(instance.store.dispatch);
-      assert.equal(instance.contentUpdateQueue.length, 1);
-
-      instance.store.getState = () => ({Sections: [{id: "topstories", rows: response.recommendations}]});
 
       await instance.fetchStories();
       assert.equal(instance.contentUpdateQueue.length, 0);
@@ -953,8 +951,7 @@ describe("Top Stories Feed", () => {
       instance.cache.get = () => ({domainAffinities});
 
       await instance.loadCachedData();
-      assert.isUndefined(this.affinityProvider);
-
+      assert.isUndefined(instance.affinityProvider);
       instance.personalized = true;
       await instance.loadCachedData();
       assert.isDefined(instance.affinityProvider);

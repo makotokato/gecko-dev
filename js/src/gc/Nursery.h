@@ -102,6 +102,7 @@ class TenuringTracer : public JSTracer
   private:
     inline void insertIntoObjectFixupList(gc::RelocationOverlay* entry);
     inline void insertIntoStringFixupList(gc::RelocationOverlay* entry);
+
     template <typename T>
     inline T* allocTenured(JS::Zone* zone, gc::AllocKind kind);
 
@@ -323,9 +324,11 @@ class Nursery
     /* Print total profile times on shutdown. */
     void printTotalProfileTimes();
 
-    void* addressOfCurrentEnd() const { return (void*)&currentEnd_; }
-    void* addressOfPosition() const { return (void*)&position_; }
-    void* addressOfCurrentStringEnd() const { return (void*)&currentStringEnd_; }
+    void* addressOfPosition() const { return (void**)&position_; }
+    const void* addressOfCurrentEnd() const { return (void**)&currentEnd_; }
+    const void* addressOfCurrentStringEnd() const {
+        return (void*)&currentStringEnd_;
+    }
 
     void requestMinorGC(JS::gcreason::Reason reason) const;
 

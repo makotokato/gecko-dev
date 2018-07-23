@@ -713,7 +713,7 @@ EditorBase::GetSelection(Selection** aSelection)
 
 nsresult
 EditorBase::GetSelection(SelectionType aSelectionType,
-                         Selection** aSelection)
+                         Selection** aSelection) const
 {
   NS_ENSURE_TRUE(aSelection, NS_ERROR_NULL_POINTER);
   *aSelection = nullptr;
@@ -1000,13 +1000,7 @@ EditorBase::SetShouldTxnSetSelection(bool aShould)
 NS_IMETHODIMP
 EditorBase::GetDocumentIsEmpty(bool* aDocumentIsEmpty)
 {
-  *aDocumentIsEmpty = true;
-
-  dom::Element* root = GetRoot();
-  NS_ENSURE_TRUE(root, NS_ERROR_NULL_POINTER);
-
-  *aDocumentIsEmpty = !root->HasChildren();
-  return NS_OK;
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 // XXX: The rule system should tell us which node to select all on (ie, the
@@ -1138,13 +1132,19 @@ EditorBase::GetDocumentModified(bool* outDocModified)
 }
 
 NS_IMETHODIMP
-EditorBase::GetDocumentCharacterSet(nsACString& characterSet)
+EditorBase::GetDocumentCharacterSet(nsACString& aCharset)
+{
+  return GetDocumentCharsetInternal(aCharset);
+}
+
+nsresult
+EditorBase::GetDocumentCharsetInternal(nsACString& aCharset) const
 {
   nsCOMPtr<nsIDocument> document = GetDocument();
   if (NS_WARN_IF(!document)) {
     return NS_ERROR_UNEXPECTED;
   }
-  document->GetDocumentCharacterSet()->Name(characterSet);
+  document->GetDocumentCharacterSet()->Name(aCharset);
   return NS_OK;
 }
 
@@ -4797,6 +4797,27 @@ EditorBase::FinalizeSelection()
   nsContentUtils::AddScriptRunner(
                     new RepaintSelectionRunner(selectionController));
   return NS_OK;
+}
+
+void
+EditorBase::ReinitializeSelection(Element& aElement)
+{
+  if (NS_WARN_IF(Destroyed())) {
+    return;
+  }
+
+  OnFocus(&aElement);
+
+  // If previous focused editor turn on spellcheck and this editor doesn't
+  // turn on it, spellcheck state is mismatched.  So we need to re-sync it.
+  SyncRealTimeSpell();
+
+  nsPresContext* context = GetPresContext();
+  if (NS_WARN_IF(!context)) {
+    return;
+  }
+  nsCOMPtr<nsIContent> focusedContent = GetFocusedContentForIME();
+  IMEStateManager::OnFocusInEditor(context, focusedContent, *this);
 }
 
 Element*

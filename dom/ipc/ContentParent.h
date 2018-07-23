@@ -736,6 +736,7 @@ private:
                      nsresult& aResult,
                      nsCOMPtr<nsITabParent>& aNewTabParent,
                      bool* aWindowIsNew,
+                     int32_t& aOpenLocation,
                      nsIPrincipal* aTriggeringPrincipal,
                      uint32_t aReferrerPolicy,
                      bool aLoadUri);
@@ -856,7 +857,7 @@ private:
 
   mozilla::ipc::IPCResult RecvAddMemoryReport(const MemoryReport& aReport) override;
   mozilla::ipc::IPCResult RecvFinishMemoryReport(const uint32_t& aGeneration) override;
-  mozilla::ipc::IPCResult RecvAddPerformanceMetrics(nsTArray<PerformanceInfo>&& aMetrics) override;
+  mozilla::ipc::IPCResult RecvAddPerformanceMetrics(const nsID& aID, nsTArray<PerformanceInfo>&& aMetrics) override;
 
   virtual bool
   DeallocPJavaScriptParent(mozilla::jsipc::PJavaScriptParent*) override;
@@ -1223,6 +1224,12 @@ public:
 
   virtual mozilla::ipc::IPCResult RecvBHRThreadHang(
     const HangDetails& aHangDetails) override;
+
+  virtual mozilla::ipc::IPCResult
+  RecvFirstPartyStorageAccessGrantedForOrigin(const Principal& aParentPrincipal,
+                                              const nsCString& aTrackingOrigin,
+                                              const nsCString& aGrantedOrigin,
+                                              FirstPartyStorageAccessGrantedForOriginResolver&& aResolver) override;
 
   // Notify the ContentChild to enable the input event prioritization when
   // initializing.

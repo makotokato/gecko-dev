@@ -10,15 +10,17 @@ var _react2 = _interopRequireDefault(_react);
 
 var _reactRedux = require("devtools/client/shared/vendor/react-redux");
 
+var _devtoolsSourceMap = require("devtools/client/shared/source-map/index.js");
+
+var _classnames = require("devtools/client/debugger/new/dist/vendors").vendored["classnames"];
+
+var _classnames2 = _interopRequireDefault(_classnames);
+
 var _actions = require("../../actions/index");
 
 var _actions2 = _interopRequireDefault(_actions);
 
 var _selectors = require("../../selectors/index");
-
-var _classnames = require("devtools/client/debugger/new/dist/vendors").vendored["classnames"];
-
-var _classnames2 = _interopRequireDefault(_classnames);
 
 var _prefs = require("../../utils/prefs");
 
@@ -148,23 +150,23 @@ class SourceFooter extends _react.PureComponent {
       selectedSource
     } = this.props;
 
-    if (mappedSource) {
-      const filename = (0, _source.getFilename)(mappedSource);
-      const tooltip = L10N.getFormatStr("sourceFooter.mappedSourceTooltip", filename);
-      const title = L10N.getFormatStr("sourceFooter.mappedSource", filename);
-      const mappedSourceLocation = {
-        sourceId: selectedSource.id,
-        line: 1,
-        column: 1
-      };
-      return _react2.default.createElement("button", {
-        className: "mapped-source",
-        onClick: () => jumpToMappedLocation(mappedSourceLocation),
-        title: tooltip
-      }, _react2.default.createElement("span", null, title));
+    if (!mappedSource || !(0, _devtoolsSourceMap.isOriginalId)(selectedSource.id)) {
+      return null;
     }
 
-    return null;
+    const filename = (0, _source.getFilename)(mappedSource);
+    const tooltip = L10N.getFormatStr("sourceFooter.mappedSourceTooltip", filename);
+    const title = L10N.getFormatStr("sourceFooter.mappedSource", filename);
+    const mappedSourceLocation = {
+      sourceId: selectedSource.id,
+      line: 1,
+      column: 1
+    };
+    return _react2.default.createElement("button", {
+      className: "mapped-source",
+      onClick: () => jumpToMappedLocation(mappedSourceLocation),
+      title: tooltip
+    }, _react2.default.createElement("span", null, title));
   }
 
   render() {

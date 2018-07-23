@@ -1765,112 +1765,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleText
   mozilla::LogicalSide TextEmphasisSide(mozilla::WritingMode aWM) const;
 };
 
-struct nsStyleImageOrientation
-{
-  static nsStyleImageOrientation CreateAsAngleAndFlip(double aRadians,
-                                                      bool aFlip) {
-    uint8_t orientation(0);
-
-    // Compute the final angle value, rounding to the closest quarter turn.
-    double roundedAngle = fmod(aRadians, 2 * M_PI);
-    if (roundedAngle < 0) {
-      roundedAngle = roundedAngle + 2 * M_PI;
-    }
-    if      (roundedAngle < 0.25 * M_PI) { orientation = ANGLE_0;  }
-    else if (roundedAngle < 0.75 * M_PI) { orientation = ANGLE_90; }
-    else if (roundedAngle < 1.25 * M_PI) { orientation = ANGLE_180;}
-    else if (roundedAngle < 1.75 * M_PI) { orientation = ANGLE_270;}
-    else                                 { orientation = ANGLE_0;  }
-
-    // Add a bit for 'flip' if needed.
-    if (aFlip) {
-      orientation |= FLIP_MASK;
-    }
-
-    return nsStyleImageOrientation(orientation);
-  }
-
-  static nsStyleImageOrientation CreateAsOrientationAndFlip(uint8_t aOrientation,
-                                                            bool aFlip) {
-    MOZ_ASSERT(aOrientation <= ANGLE_270);
-    if (aFlip) {
-      aOrientation |= FLIP_MASK;
-    }
-    return nsStyleImageOrientation(aOrientation);
-  }
-
-  static nsStyleImageOrientation CreateAsFlip() {
-    return nsStyleImageOrientation(FLIP_MASK);
-  }
-
-  static nsStyleImageOrientation CreateAsFromImage() {
-    return nsStyleImageOrientation(FROM_IMAGE_MASK);
-  }
-
-  // The default constructor yields 0 degrees of rotation and no flip.
-  nsStyleImageOrientation() : mOrientation(0) { }
-
-  bool IsDefault()   const { return mOrientation == 0; }
-  bool IsFlipped()   const { return mOrientation & FLIP_MASK; }
-  bool IsFromImage() const { return mOrientation & FROM_IMAGE_MASK; }
-  bool SwapsWidthAndHeight() const {
-    uint8_t angle = mOrientation & ORIENTATION_MASK;
-    return (angle == ANGLE_90) || (angle == ANGLE_270);
-  }
-
-  mozilla::image::Angle Angle() const {
-    switch (mOrientation & ORIENTATION_MASK) {
-      case ANGLE_0:   return mozilla::image::Angle::D0;
-      case ANGLE_90:  return mozilla::image::Angle::D90;
-      case ANGLE_180: return mozilla::image::Angle::D180;
-      case ANGLE_270: return mozilla::image::Angle::D270;
-      default:
-        MOZ_ASSERT_UNREACHABLE("Unexpected angle");
-        return mozilla::image::Angle::D0;
-    }
-  }
-
-  nsStyleCoord AngleAsCoord() const {
-    switch (mOrientation & ORIENTATION_MASK) {
-      case ANGLE_0:   return nsStyleCoord(0.0f,   eStyleUnit_Degree);
-      case ANGLE_90:  return nsStyleCoord(90.0f,  eStyleUnit_Degree);
-      case ANGLE_180: return nsStyleCoord(180.0f, eStyleUnit_Degree);
-      case ANGLE_270: return nsStyleCoord(270.0f, eStyleUnit_Degree);
-      default:
-        MOZ_ASSERT_UNREACHABLE("Unexpected angle");
-        return nsStyleCoord();
-    }
-  }
-
-  bool operator==(const nsStyleImageOrientation& aOther) const {
-    return aOther.mOrientation == mOrientation;
-  }
-
-  bool operator!=(const nsStyleImageOrientation& aOther) const {
-    return !(*this == aOther);
-  }
-
-protected:
-  enum Bits {
-    ORIENTATION_MASK = 0x1 | 0x2,  // The bottom two bits are the angle.
-    FLIP_MASK        = 0x4,        // Whether the image should be flipped.
-    FROM_IMAGE_MASK  = 0x8,        // Whether the image's inherent orientation
-  };                               // should be used.
-
-  enum Angles {
-    ANGLE_0   = 0,
-    ANGLE_90  = 1,
-    ANGLE_180 = 2,
-    ANGLE_270 = 3,
-  };
-
-  explicit nsStyleImageOrientation(uint8_t aOrientation)
-    : mOrientation(aOrientation)
-  { }
-
-  uint8_t mOrientation;
-};
-
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleVisibility
 {
   explicit nsStyleVisibility(const nsPresContext* aContext);
@@ -1883,7 +1777,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleVisibility
 
   nsChangeHint CalcDifference(const nsStyleVisibility& aNewData) const;
 
-  nsStyleImageOrientation mImageOrientation;
+  mozilla::StyleImageOrientation mImageOrientation;
   uint8_t mDirection;                  // NS_STYLE_DIRECTION_*
   uint8_t mVisible;                    // NS_STYLE_VISIBILITY_VISIBLE_*
   uint8_t mImageRendering;             // NS_STYLE_IMAGE_RENDERING_*
@@ -2561,12 +2455,6 @@ private:
   inline bool HasFixedPosContainingBlockStyleInternal(
     mozilla::ComputedStyle&) const;
   void GenerateCombinedTransform();
-public:
-  // Return the 'float' and 'clear' properties, with inline-{start,end} values
-  // resolved to {left,right} according to the given writing mode. These are
-  // defined in WritingModes.h.
-  inline mozilla::StyleFloat PhysicalFloats(mozilla::WritingMode aWM) const;
-  inline mozilla::StyleClear PhysicalBreakType(mozilla::WritingMode aWM) const;
 };
 
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleTable
@@ -2977,24 +2865,25 @@ public:
   nsStyleSVGPaintType Type() const { return mType; }
 
   void SetNone();
-  void SetColor(nscolor aColor);
+  void SetColor(mozilla::StyleComplexColor aColor);
   void SetPaintServer(mozilla::css::URLValue* aPaintServer,
                       nsStyleSVGFallbackType aFallbackType,
-                      nscolor aFallbackColor);
+                      mozilla::StyleComplexColor aFallbackColor);
   void SetPaintServer(mozilla::css::URLValue* aPaintServer) {
     SetPaintServer(aPaintServer, eStyleSVGFallbackType_NotSet,
-                   NS_RGB(0, 0, 0));
+                   mozilla::StyleComplexColor::Black());
   }
   void SetContextValue(nsStyleSVGPaintType aType,
                        nsStyleSVGFallbackType aFallbackType,
-                       nscolor aFallbackColor);
+                       mozilla::StyleComplexColor aFallbackColor);
   void SetContextValue(nsStyleSVGPaintType aType) {
-    SetContextValue(aType, eStyleSVGFallbackType_NotSet, NS_RGB(0, 0, 0));
+    SetContextValue(aType, eStyleSVGFallbackType_NotSet,
+                    mozilla::StyleComplexColor::Black());
   }
 
-  nscolor GetColor() const {
+  nscolor GetColor(mozilla::ComputedStyle* aComputedStyle) const {
     MOZ_ASSERT(mType == eStyleSVGPaintType_Color);
-    return mPaint.mColor;
+    return mPaint.mColor.CalcColor(aComputedStyle);
   }
 
   mozilla::css::URLValue* GetPaintServer() const {
@@ -3006,11 +2895,11 @@ public:
     return mFallbackType;
   }
 
-  nscolor GetFallbackColor() const {
+  nscolor GetFallbackColor(mozilla::ComputedStyle* aComputedStyle) const {
     MOZ_ASSERT(mType == eStyleSVGPaintType_Server ||
                mType == eStyleSVGPaintType_ContextFill ||
                mType == eStyleSVGPaintType_ContextStroke);
-    return mFallbackColor;
+    return mFallbackColor.CalcColor(aComputedStyle);
   }
 
   bool operator==(const nsStyleSVGPaint& aOther) const;
@@ -3022,13 +2911,15 @@ private:
   void Reset();
   void Assign(const nsStyleSVGPaint& aOther);
 
-  union {
-    nscolor mColor;
+  union ColorOrPaintServer {
+    mozilla::StyleComplexColor mColor;
     mozilla::css::URLValue* mPaintServer;
-  } mPaint;
+    explicit ColorOrPaintServer(mozilla::StyleComplexColor c) : mColor(c) {}
+  };
+  ColorOrPaintServer mPaint;
   nsStyleSVGPaintType mType;
   nsStyleSVGFallbackType mFallbackType;
-  nscolor mFallbackColor;
+  mozilla::StyleComplexColor mFallbackColor;
 };
 
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleSVG

@@ -20,6 +20,7 @@
 
 #include "mozilla/CheckedInt.h"
 #include "mozilla/Unused.h"
+#include "mozilla/Utf8.h"
 
 #include "jit/JitOptions.h"
 #include "js/Printf.h"
@@ -32,6 +33,7 @@ using namespace js::jit;
 using namespace js::wasm;
 
 using mozilla::CheckedInt;
+using mozilla::IsValidUtf8;
 using mozilla::Unused;
 
 // Decoder implementation.
@@ -1287,7 +1289,7 @@ DecodeName(Decoder& d)
     if (!d.readBytes(numBytes, &bytes))
         return nullptr;
 
-    if (!JS::StringIsUTF8(bytes, numBytes))
+    if (!IsValidUtf8(bytes, numBytes))
         return nullptr;
 
     UniqueChars name(js_pod_malloc<char>(numBytes + 1));
@@ -1427,6 +1429,32 @@ DecodeGlobalType(Decoder& d, const TypeDefVector& types, HasGcTypes gcTypesEnabl
     return true;
 }
 
+void
+wasm::ConvertMemoryPagesToBytes(Limits* memory)
+{
+    CheckedInt<uint32_t> initialBytes = memory->initial;
+    initialBytes *= PageSize;
+
+    static_assert(MaxMemoryInitialPages < UINT16_MAX, "multiplying by PageSize can't overflow");
+    MOZ_ASSERT(initialBytes.isValid(), "can't overflow by above assertion");
+
+    memory->initial = initialBytes.value();
+
+    if (!memory->maximum)
+        return;
+
+    MOZ_ASSERT(*memory->maximum <= MaxMemoryMaximumPages);
+
+    CheckedInt<uint32_t> maximumBytes = *memory->maximum;
+    maximumBytes *= PageSize;
+
+    // Clamp the maximum memory value to UINT32_MAX; it's not semantically
+    // visible since growing will fail for values greater than INT32_MAX.
+    memory->maximum = Some(maximumBytes.isValid() ? maximumBytes.value() : UINT32_MAX);
+
+    MOZ_ASSERT(memory->initial <= *memory->maximum);
+}
+
 static bool
 DecodeMemoryLimits(Decoder& d, ModuleEnvironment* env)
 {
@@ -1440,22 +1468,10 @@ DecodeMemoryLimits(Decoder& d, ModuleEnvironment* env)
     if (memory.initial > MaxMemoryInitialPages)
         return d.fail("initial memory size too big");
 
-    CheckedInt<uint32_t> initialBytes = memory.initial;
-    initialBytes *= PageSize;
-    MOZ_ASSERT(initialBytes.isValid());
-    memory.initial = initialBytes.value();
+    if (memory.maximum && *memory.maximum > MaxMemoryMaximumPages)
+        return d.fail("maximum memory size too big");
 
-    if (memory.maximum) {
-        if (*memory.maximum > MaxMemoryMaximumPages)
-            return d.fail("maximum memory size too big");
-
-        CheckedInt<uint32_t> maximumBytes = *memory.maximum;
-        maximumBytes *= PageSize;
-
-        // Clamp the maximum memory value to UINT32_MAX; it's not semantically
-        // visible since growing will fail for values greater than INT32_MAX.
-        memory.maximum = Some(maximumBytes.isValid() ? maximumBytes.value() : UINT32_MAX);
-    }
+    ConvertMemoryPagesToBytes(&memory);
 
     if (memory.shared == Shareable::True && env->sharedMemoryEnabled == Shareable::False)
         return d.fail("shared memory is disabled");

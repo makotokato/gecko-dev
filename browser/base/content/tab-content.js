@@ -24,6 +24,8 @@ ChromeUtils.defineModuleGetter(this, "ReaderMode",
   "resource://gre/modules/ReaderMode.jsm");
 ChromeUtils.defineModuleGetter(this, "PageStyleHandler",
   "resource:///modules/PageStyleHandler.jsm");
+ChromeUtils.defineModuleGetter(this, "LightweightThemeChildListener",
+  "resource:///modules/LightweightThemeChildListener.jsm");
 
 // TabChildGlobal
 var global = this;
@@ -50,6 +52,14 @@ addMessageListener("Browser:HideSessionRestoreButton", function(message) {
   }
 });
 
+if (Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_CONTENT) {
+  addMessageListener("Browser:HasSiblings", function(message) {
+    let tabChild = docShell.QueryInterface(Ci.nsIInterfaceRequestor)
+                           .getInterface(Ci.nsITabChild);
+    let hasSiblings = message.data;
+    tabChild.hasSiblings = hasSiblings;
+  });
+}
 
 // XXX(nika): Should we try to call this in the parent process instead?
 addMessageListener("Browser:Reload", function(message) {
@@ -79,6 +89,34 @@ addMessageListener("MixedContent:ReenableProtection", function() {
   docShell.mixedContentChannel = null;
 });
 
+var LightweightThemeChildListenerStub = {
+  _childListener: null,
+  get childListener() {
+    if (!this._childListener) {
+      this._childListener = new LightweightThemeChildListener();
+    }
+    return this._childListener;
+  },
+
+  init() {
+    addEventListener("LightweightTheme:Support", this, false, true);
+    addMessageListener("LightweightTheme:Update", this);
+    sendAsyncMessage("LightweightTheme:Request");
+    this.init = null;
+  },
+
+  handleEvent(event) {
+    return this.childListener.handleEvent(event);
+  },
+
+  receiveMessage(msg) {
+    return this.childListener.receiveMessage(msg);
+  },
+};
+
+LightweightThemeChildListenerStub.init();
+
+
 var AboutReaderListener = {
 
   _articlePromise: null,
@@ -92,6 +130,7 @@ var AboutReaderListener = {
     addEventListener("pagehide", this, false);
     addMessageListener("Reader:ToggleReaderMode", this);
     addMessageListener("Reader:PushState", this);
+    this.init = null;
   },
 
   receiveMessage(message) {
@@ -235,6 +274,7 @@ var ContentSearchMediator = {
   init(chromeGlobal) {
     chromeGlobal.addEventListener("ContentSearchClient", this, true, true);
     addMessageListener("ContentSearch", this);
+    this.init = null;
   },
 
   handleEvent(event) {
@@ -370,6 +410,7 @@ var DOMFullscreenHandler = {
     addEventListener("MozDOMFullscreen:NewOrigin", this);
     addEventListener("MozDOMFullscreen:Exit", this);
     addEventListener("MozDOMFullscreen:Exited", this);
+    this.init = null;
   },
 
   get _windowUtils() {
@@ -455,6 +496,7 @@ DOMFullscreenHandler.init();
 var UserContextIdNotifier = {
   init() {
     addEventListener("DOMWindowCreated", this);
+    this.init = null;
   },
 
   uninit() {

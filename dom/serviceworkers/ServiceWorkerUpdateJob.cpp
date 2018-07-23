@@ -8,6 +8,11 @@
 
 #include "nsIScriptError.h"
 #include "nsIURL.h"
+#include "nsNetUtil.h"
+#include "nsProxyRelease.h"
+#include "ServiceWorkerManager.h"
+#include "ServiceWorkerPrivate.h"
+#include "ServiceWorkerRegistrationInfo.h"
 #include "ServiceWorkerScriptCache.h"
 #include "mozilla/dom/WorkerCommon.h"
 
@@ -203,6 +208,7 @@ ServiceWorkerUpdateJob::ServiceWorkerUpdateJob(
   : ServiceWorkerJob(aType, aPrincipal, aScope, aScriptSpec)
   , mLoadGroup(aLoadGroup)
   , mUpdateViaCache(aUpdateViaCache)
+  , mOnFailure(serviceWorkerScriptCache::OnFailure::DoNothing)
 {
 }
 

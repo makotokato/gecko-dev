@@ -61,7 +61,6 @@ class nsIBaseWindow;
 class nsIContent;
 class nsICSSDeclaration;
 class nsIDocShellTreeOwner;
-class nsIDOMOfflineResourceList;
 class nsIScrollableFrame;
 class nsIControllers;
 class nsIJSID;
@@ -72,6 +71,7 @@ class nsITimeoutHandler;
 class nsIWebBrowserChrome;
 class mozIDOMWindowProxy;
 
+class nsDocShellLoadInfo;
 class nsDOMWindowList;
 class nsScreen;
 class nsHistory;
@@ -491,6 +491,10 @@ public:
                         const nsAString& aPopupWindowName,
                         const nsAString& aPopupWindowFeatures) override;
 
+  virtual void
+  NotifyContentBlockingState(unsigned aState,
+                             nsIChannel* aChannel) override;
+
   virtual uint32_t GetSerial() override {
     return mSerial;
   }
@@ -611,7 +615,7 @@ public:
             mozilla::ErrorResult& aError);
   nsresult Open(const nsAString& aUrl, const nsAString& aName,
                 const nsAString& aOptions,
-                nsIDocShellLoadInfo* aLoadInfo,
+                nsDocShellLoadInfo* aLoadInfo,
                 bool aForceNoOpener,
                 nsPIDOMWindowOuter **_retval) override;
   mozilla::dom::Navigator* GetNavigator() override;
@@ -897,16 +901,19 @@ private:
                         bool aNavigate,
                         nsIArray *argv,
                         nsISupports *aExtraArgument,
-                        nsIDocShellLoadInfo* aLoadInfo,
+                        nsDocShellLoadInfo* aLoadInfo,
                         bool aForceNoOpener,
                         nsPIDOMWindowOuter **aReturn);
+
+  // Checks that the channel was loaded by the URI currently loaded in aDoc
+  static bool SameLoadingURI(nsIDocument *aDoc, nsIChannel *aChannel);
 
 public:
   // Helper Functions
   already_AddRefed<nsIDocShellTreeOwner> GetTreeOwner();
   already_AddRefed<nsIBaseWindow> GetTreeOwnerWindow();
   already_AddRefed<nsIWebBrowserChrome> GetWebBrowserChrome();
-  nsresult SecurityCheckURL(const char *aURL);
+  nsresult SecurityCheckURL(const char *aURL, nsIURI** aURI);
   bool IsPrivateBrowsing();
 
   bool PopupWhitelisted();
@@ -1052,6 +1059,8 @@ private:
   void SetIsBackgroundInternal(bool aIsBackground);
 
   nsresult GetInterfaceInternal(const nsIID& aIID, void** aSink);
+
+  void MaybeAllowStorageForOpenedWindow(nsIURI* aURI);
 
 public:
   // Dispatch a runnable related to the global.

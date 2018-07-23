@@ -956,7 +956,7 @@ public:
   }
 
 private:
-  PtrToNodeEntry* FindNodeEntry(void* aPtr)
+  PtrToNodeEntry* FindNodeEntry(void* aPtr) const
   {
     return static_cast<PtrToNodeEntry*>(mPtrToNodeMap.Search(aPtr));
   }
@@ -4387,8 +4387,9 @@ nsCycleCollector_shutdown(bool aDoCollect)
     data->mCollector = nullptr;
     if (data->mContext) {
       // Run any remaining tasks that may have been enqueued via
-      // RunInStableState during the final cycle collection.
+      // RunInStableState or DispatchToMicroTask during the final cycle collection.
       data->mContext->ProcessStableStateQueue();
+      data->mContext->PerformMicroTaskCheckPoint(true);
     }
     if (!data->mContext) {
       delete data;

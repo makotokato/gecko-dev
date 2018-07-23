@@ -753,9 +753,20 @@
   min-height: 12px;
 }
 
-#appMenu-allTabsView {
+#allTabsMenu-allTabsView {
   --blue-40: #45a1ff;
   max-width: 42em;
+}
+
+/* The list of tabs is in its own panel-subview-body which will scroll. We don't
+   want any padding above/below the scrollbars, so remove the padding/margin
+   from the separator and outer panel-subview-body. */
+#allTabsMenu-allTabsView > .panel-subview-body {
+  padding-bottom: 0;
+}
+
+#allTabsMenu-tabsSeparator {
+  margin-bottom: 0;
 }
 
 .all-tabs-item > .all-tabs-secondary-button {
@@ -774,6 +785,12 @@
   background-color: var(--arrowpanel-dimmed)
 }
 
+.all-tabs-item:hover > .all-tabs-button,
+.all-tabs-item:hover > .all-tabs-secondary-button {
+  /* Since the background is set on the item, don't set it on the children. */
+  background-color: transparent !important;
+}
+
 .all-tabs-item > .all-tabs-button > .tab-throbber-fallback {
   display: block;
   margin-inline-end: 0;
@@ -781,14 +798,6 @@
 
 .all-tabs-item[selected] {
   box-shadow: inset 4px 0 var(--blue-40);
-}
-
-.all-tabs-item[tabIsVisible] {
-  box-shadow: inset -4px 0 ThreeDShadow;
-}
-
-.all-tabs-item[selected][tabIsVisible] {
-  box-shadow: inset -4px 0 ThreeDShadow, inset 4px 0 var(--blue-40);
 }
 
 .all-tabs-button,

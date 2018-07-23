@@ -58,7 +58,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/dom/AudioTrack.h"
 #include "mozilla/dom/AudioTrackList.h"
-#include "mozilla/dom/AutoplayRequest.h"
+#include "mozilla/AutoplayPermissionManager.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/ElementInlines.h"
 #include "mozilla/dom/HTMLAudioElement.h"
@@ -87,6 +87,7 @@
 #include "nsGenericHTMLElement.h"
 #include "nsGkAtoms.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
+#include "nsIAutoplay.h"
 #include "nsICachingChannel.h"
 #include "nsICategoryManager.h"
 #include "nsIClassOfService.h"
@@ -1998,7 +1999,7 @@ HTMLMediaElement::Load()
        HasSourceChildren(this),
        EventStateManager::IsHandlingUserInput(),
        HasAttr(kNameSpaceID_None, nsGkAtoms::autoplay),
-       AutoplayPolicy::IsAllowedToPlay(*this) == Authorization::Allowed,
+       AutoplayPolicy::IsAllowedToPlay(*this) == nsIAutoplay::ALLOWED,
        OwnerDoc(),
        DocumentOrigin(OwnerDoc()).get(),
        OwnerDoc() ? OwnerDoc()->HasBeenUserGestureActivated() : 0,
@@ -2520,7 +2521,7 @@ HTMLMediaElement::UpdatePreloadAction()
   PreloadAction nextAction = PRELOAD_UNDEFINED;
   // If autoplay is set, or we're playing, we should always preload data,
   // as we'll need it to play.
-  if ((AutoplayPolicy::IsAllowedToPlay(*this) == Authorization::Allowed &&
+  if ((AutoplayPolicy::IsAllowedToPlay(*this) == nsIAutoplay::ALLOWED &&
        HasAttr(kNameSpaceID_None, nsGkAtoms::autoplay)) ||
       !mPaused) {
     nextAction = HTMLMediaElement::PRELOAD_ENOUGH;
@@ -3053,7 +3054,7 @@ HTMLMediaElement::PauseIfShouldNotBePlaying()
   if (GetPaused()) {
     return;
   }
-  if (AutoplayPolicy::IsAllowedToPlay(*this) != Authorization::Allowed) {
+  if (AutoplayPolicy::IsAllowedToPlay(*this) != nsIAutoplay::ALLOWED) {
     ErrorResult rv;
     Pause(rv);
   }
@@ -4064,13 +4065,13 @@ HTMLMediaElement::Play(ErrorResult& aRv)
 
   const bool handlingUserInput = EventStateManager::IsHandlingUserInput();
   switch (AutoplayPolicy::IsAllowedToPlay(*this)) {
-    case Authorization::Allowed: {
+    case nsIAutoplay::ALLOWED: {
       mPendingPlayPromises.AppendElement(promise);
       PlayInternal(handlingUserInput);
       UpdateCustomPolicyAfterPlayed();
       break;
     }
-    case Authorization::Blocked: {
+    case nsIAutoplay::BLOCKED: {
       LOG(LogLevel::Debug, ("%p play not blocked.", this));
       promise->MaybeReject(NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR);
       if (StaticPrefs::MediaBlockEventEnabled()) {
@@ -4078,7 +4079,7 @@ HTMLMediaElement::Play(ErrorResult& aRv)
       }
       break;
     }
-    case Authorization::Prompt: {
+    case nsIAutoplay::PROMPT: {
       // Prompt the user for permission to play.
       mPendingPlayPromises.AppendElement(promise);
       EnsureAutoplayRequested(handlingUserInput);
@@ -4101,7 +4102,8 @@ HTMLMediaElement::EnsureAutoplayRequested(bool aHandlingUserInput)
     return;
   }
 
-  RefPtr<AutoplayRequest> request = AutoplayPolicy::RequestFor(*OwnerDoc());
+  RefPtr<AutoplayPermissionManager> request =
+    AutoplayPolicy::RequestFor(*OwnerDoc());
   if (!request) {
     AsyncRejectPendingPlayPromises(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
@@ -4776,16 +4778,6 @@ HTMLMediaElement::UnbindFromTree(bool aDeep, bool aNullParent)
   RunInStableState(task);
 }
 
-static bool
-IsVP9InMP4(const MediaContainerType& aContainerType)
-{
-  const MediaContainerType mimeType(aContainerType.Type());
-  return DecoderTraits::IsMP4SupportedType(
-           mimeType,
-           /* DecoderDoctorDiagnostics* */ nullptr) &&
-         IsVP9CodecString(aContainerType.ExtendedType().Codecs().AsString());
-}
-
 /* static */
 CanPlayStatus
 HTMLMediaElement::GetCanPlay(const nsAString& aType,
@@ -4797,14 +4789,6 @@ HTMLMediaElement::GetCanPlay(const nsAString& aType,
   }
   CanPlayStatus status =
     DecoderTraits::CanHandleContainerType(*containerType, aDiagnostics);
-  if (status == CANPLAY_YES && IsVP9InMP4(*containerType)) {
-    // We don't have a demuxer that can handle VP9 in non-fragmented MP4.
-    // So special-case VP9 in MP4 here, as we assume canPlayType() implies
-    // non-fragmented MP4 anyway. Note we report that we can play VP9
-    // in MP4 in MediaSource.isTypeSupported(), as the fragmented MP4
-    // demuxer can handle VP9 in fragmented MP4.
-    return CANPLAY_NO;
-  }
   if (status == CANPLAY_YES &&
       (*containerType).ExtendedType().Codecs().IsEmpty()) {
     // Per spec: 'Generally, a user agent should never return "probably" for a
@@ -6126,7 +6110,7 @@ HTMLMediaElement::ChangeReadyState(nsMediaReadyState aState)
     if (!mPaused) {
       if (mDecoder && !mPausedForInactiveDocumentOrChannel) {
         MOZ_ASSERT(AutoplayPolicy::IsAllowedToPlay(*this) ==
-                   Authorization::Allowed);
+                   nsIAutoplay::ALLOWED);
         mDecoder->Play();
       }
       NotifyAboutPlaying();
@@ -6238,12 +6222,12 @@ HTMLMediaElement::CheckAutoplayDataReady()
   }
 
   switch (AutoplayPolicy::IsAllowedToPlay(*this)) {
-    case Authorization::Blocked:
+    case nsIAutoplay::BLOCKED:
       return;
-    case Authorization::Prompt:
+    case nsIAutoplay::PROMPT:
       EnsureAutoplayRequested(false);
       return;
-    case Authorization::Allowed:
+    case nsIAutoplay::ALLOWED:
       break;
   }
 
@@ -7865,6 +7849,12 @@ HTMLMediaElement::CreateDOMPromise(ErrorResult& aRv) const
 void
 HTMLMediaElement::AsyncResolvePendingPlayPromises()
 {
+  // Disconnect requests for permission to play. We're playing either way,
+  // so there's no point keeping the promise connected. Note: the front
+  // end permission prompt code will detect that we've started playing, and
+  // hide the permission prompt.
+  mAutoplayPermissionRequest.DisconnectIfExists();
+
   if (mShuttingDown) {
     return;
   }

@@ -408,6 +408,9 @@ RsdparsaSdpAttributeList::LoadAttribute(RustAttributeList *attributeList,
       case SdpAttribute::kIceOptionsAttribute:
         LoadIceOptions(attributeList);
         return;
+      case SdpAttribute::kDtlsMessageAttribute:
+        LoadDtlsMessage(attributeList);
+        return;
       case SdpAttribute::kFingerprintAttribute:
         LoadFingerprint(attributeList);
         return;
@@ -480,10 +483,11 @@ RsdparsaSdpAttributeList::LoadAttribute(RustAttributeList *attributeList,
       case SdpAttribute::kSimulcastAttribute:
         LoadSimulcast(attributeList);
         return;
-
-      case SdpAttribute::kDtlsMessageAttribute:
-      case SdpAttribute::kLabelAttribute:
       case SdpAttribute::kMaxptimeAttribute:
+        LoadMaxPtime(attributeList);
+        return;
+
+      case SdpAttribute::kLabelAttribute:
       case SdpAttribute::kSsrcGroupAttribute:
       case SdpAttribute::kRtcpRsizeAttribute:
       case SdpAttribute::kCandidateAttribute:
@@ -569,20 +573,51 @@ RsdparsaSdpAttributeList::LoadFingerprint(RustAttributeList* attributeList)
   sdp_get_fingerprints(attributeList, nFp, rustFingerprints.get());
   auto fingerprints = MakeUnique<SdpFingerprintAttributeList>();
   for(size_t i = 0; i < nFp; i++) {
-    RustSdpAttributeFingerprint& fingerprint = rustFingerprints[i];
-    std::string algorithm = convertStringView(fingerprint.hashAlgorithm);
-    std::string fingerprintToken = convertStringView(fingerprint.fingerprint);
-    std::vector<uint8_t> fingerprintBytes =
-      SdpFingerprintAttributeList::ParseFingerprint(fingerprintToken);
-    if (fingerprintBytes.size() == 0) {
-      // TODO: Should we load fingerprint earlier to detect if it is malformed
-      // and throw a proper error?
-      // TODO: We should improve our error checking. See Bug 1437169.
-      continue;
+    const RustSdpAttributeFingerprint& fingerprint = rustFingerprints[i];
+    std::string algorithm;
+    switch(fingerprint.hashAlgorithm) {
+      case RustSdpAttributeFingerprintHashAlgorithm::kSha1:
+        algorithm = "sha-1";
+        break;
+      case RustSdpAttributeFingerprintHashAlgorithm::kSha224:
+        algorithm = "sha-224";
+        break;
+      case RustSdpAttributeFingerprintHashAlgorithm::kSha256:
+        algorithm = "sha-256";
+        break;
+      case RustSdpAttributeFingerprintHashAlgorithm::kSha384:
+        algorithm = "sha-384";
+        break;
+      case RustSdpAttributeFingerprintHashAlgorithm::kSha512:
+        algorithm = "sha-512";
+        break;
     }
+
+    std::vector<uint8_t> fingerprintBytes =
+                                    convertU8Vec(fingerprint.fingerprint);
+
     fingerprints->PushEntry(algorithm, fingerprintBytes);
   }
   SetAttribute(fingerprints.release());
+}
+
+void
+RsdparsaSdpAttributeList::LoadDtlsMessage(RustAttributeList* attributeList)
+{
+  RustSdpAttributeDtlsMessage rustDtlsMessage;
+  nsresult nr = sdp_get_dtls_message(attributeList, &rustDtlsMessage);
+  if (NS_SUCCEEDED(nr)) {
+    SdpDtlsMessageAttribute::Role role;
+    if (rustDtlsMessage.role == RustSdpAttributeDtlsMessageType::kClient) {
+      role = SdpDtlsMessageAttribute::kClient;
+    } else {
+      role = SdpDtlsMessageAttribute::kServer;
+    }
+
+    std::string value = convertStringView(rustDtlsMessage.value);
+
+    SetAttribute(new SdpDtlsMessageAttribute(role, value));
+  }
 }
 
 void
@@ -866,10 +901,7 @@ RsdparsaSdpAttributeList::LoadGroup(RustAttributeList* attributeList)
     return;
   }
   auto rustGroups = MakeUnique<RustSdpAttributeGroup[]>(numGroup);
-  nsresult nr = sdp_get_groups(attributeList, numGroup, rustGroups.get());
-  if (NS_FAILED(nr)) {
-    return;
-  }
+  sdp_get_groups(attributeList, numGroup, rustGroups.get());
   auto groups = MakeUnique<SdpGroupAttributeList>();
   for(size_t i = 0; i < numGroup; i++) {
     RustSdpAttributeGroup& group = rustGroups[i];
@@ -1003,6 +1035,65 @@ RsdparsaSdpAttributeList::LoadSimulcast(RustAttributeList* attributeList)
   }
 }
 
+SdpImageattrAttributeList::XYRange
+LoadImageattrXYRange(const RustSdpAttributeImageAttrXYRange& rustXYRange)
+{
+  SdpImageattrAttributeList::XYRange xyRange;
+
+  if (!rustXYRange.discrete_values) {
+    xyRange.min = rustXYRange.min;
+    xyRange.max = rustXYRange.max;
+    xyRange.step = rustXYRange.step;
+
+  } else {
+    xyRange.discreteValues = convertU32Vec(rustXYRange.discrete_values);
+  }
+
+  return xyRange;
+}
+
+std::vector<SdpImageattrAttributeList::Set>
+LoadImageattrSets(const RustSdpAttributeImageAttrSetVec* rustSets)
+{
+  std::vector<SdpImageattrAttributeList::Set> sets;
+
+  size_t rustSetCount = sdp_imageattr_get_set_count(rustSets);
+  if (!rustSetCount) {
+    return sets;
+  }
+
+  auto rustSetArray = MakeUnique<RustSdpAttributeImageAttrSet[]>(rustSetCount);
+  sdp_imageattr_get_sets(rustSets, rustSetCount, rustSetArray.get());
+
+  for(size_t i = 0; i < rustSetCount; i++) {
+    const RustSdpAttributeImageAttrSet& rustSet = rustSetArray[i];
+    SdpImageattrAttributeList::Set set;
+
+    set.xRange = LoadImageattrXYRange(rustSet.x);
+    set.yRange = LoadImageattrXYRange(rustSet.y);
+
+    if (rustSet.has_sar) {
+      if (!rustSet.sar.discrete_values) {
+        set.sRange.min = rustSet.sar.min;
+        set.sRange.max = rustSet.sar.max;
+      } else {
+        set.sRange.discreteValues = convertF32Vec(rustSet.sar.discrete_values);
+      }
+    }
+
+    if (rustSet.has_par) {
+      set.pRange.min = rustSet.par.min;
+      set.pRange.max = rustSet.par.max;
+    }
+
+    set.qValue = rustSet.q;
+
+    sets.push_back(set);
+  }
+
+  return sets;
+}
+
 void
 RsdparsaSdpAttributeList::LoadImageattr(RustAttributeList* attributeList)
 {
@@ -1010,17 +1101,31 @@ RsdparsaSdpAttributeList::LoadImageattr(RustAttributeList* attributeList)
   if (numImageattrs == 0) {
     return;
   }
-  auto rustImageattrs = MakeUnique<StringView[]>(numImageattrs);
+  auto rustImageattrs = MakeUnique<RustSdpAttributeImageAttr[]>(numImageattrs);
   sdp_get_imageattrs(attributeList, numImageattrs, rustImageattrs.get());
   auto imageattrList = MakeUnique<SdpImageattrAttributeList>();
   for(size_t i = 0; i < numImageattrs; i++) {
-    StringView& imageAttr = rustImageattrs[i];
-    std::string image = convertStringView(imageAttr);
-    std::string error;
-    size_t errorPos;
-    if (!imageattrList->PushEntry(image, &error, &errorPos)) {
-      // TODO: handle error, see Bug 1438237
+    const RustSdpAttributeImageAttr& rustImageAttr = rustImageattrs[i];
+
+    SdpImageattrAttributeList::Imageattr imageAttr;
+
+    if (rustImageAttr.payloadType != std::numeric_limits<uint32_t>::max()) {
+      imageAttr.pt = Some(rustImageAttr.payloadType);
     }
+
+    if (rustImageAttr.send.sets) {
+      imageAttr.sendSets = LoadImageattrSets(rustImageAttr.send.sets);
+    } else {
+      imageAttr.sendAll = true;
+    }
+
+    if (rustImageAttr.recv.sets) {
+      imageAttr.recvSets = LoadImageattrSets(rustImageAttr.recv.sets);
+    } else {
+      imageAttr.recvAll = true;
+    }
+
+    imageattrList->mImageattrs.push_back(imageAttr);
   }
   SetAttribute(imageattrList.release());
 }
@@ -1150,7 +1255,7 @@ RsdparsaSdpAttributeList::LoadExtmap(RustAttributeList* attributeList)
     RustSdpAttributeExtmap& rustExtmap = rustExtmaps[i];
     std::string name = convertStringView(rustExtmap.url);
     SdpDirectionAttribute::Direction direction;
-    bool directionSpecified = true;
+    bool directionSpecified = rustExtmap.direction_specified;
     switch(rustExtmap.direction) {
       case RustDirection::kRustRecvonly:
         direction = SdpDirectionAttribute::kRecvonly;
@@ -1162,9 +1267,7 @@ RsdparsaSdpAttributeList::LoadExtmap(RustAttributeList* attributeList)
         direction = SdpDirectionAttribute::kSendrecv;
         break;
       case RustDirection::kRustInactive:
-        // TODO: Fix this, see Bug 1438544
-        direction = SdpDirectionAttribute::kSendrecv;
-        directionSpecified = false;
+        direction = SdpDirectionAttribute::kInactive;
         break;
     }
     std::string extensionAttributes;
@@ -1175,6 +1278,16 @@ RsdparsaSdpAttributeList::LoadExtmap(RustAttributeList* attributeList)
   SetAttribute(extmaps.release());
 }
 
+void
+RsdparsaSdpAttributeList::LoadMaxPtime(RustAttributeList* attributeList)
+{
+  uint64_t maxPtime = 0;
+  nsresult nr = sdp_get_maxptime(attributeList, &maxPtime);
+  if (NS_SUCCEEDED(nr)) {
+    SetAttribute(new SdpNumberAttribute(SdpAttribute::kMaxptimeAttribute,
+                                        maxPtime));
+  }
+}
 
 bool
 RsdparsaSdpAttributeList::IsAllowedHere(SdpAttribute::AttributeType type)

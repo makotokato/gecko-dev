@@ -1,6 +1,6 @@
 @charset "UTF-8";
 /* This is the mac variant */
-.dark-theme {
+[lwt-newtab-brighttext] {
   -moz-osx-font-smoothing: grayscale; }
 
 html {
@@ -69,7 +69,7 @@ body {
   --newtab-snippets-background-color: #FFF;
   --newtab-snippets-hairline-color: transparent; }
 
-.dark-theme {
+body[lwt-newtab-brighttext] {
   --newtab-background-color: #2A2A2E;
   --newtab-border-primary-color: rgba(249, 249, 250, 0.8);
   --newtab-border-secondary-color: rgba(249, 249, 250, 0.1);
@@ -233,8 +233,11 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Ubuntu', 'Helvetica Neue', sans-serif;
   font-size: 16px;
   overflow-y: scroll; }
-  body.hide-onboarding > #onboarding-overlay-button {
+  body.hide-onboarding > #onboarding-overlay-button,
+  body.hide-main > #onboarding-overlay-button {
     display: none !important; }
+  body.hide-main > #onboarding-notification-bar {
+    display: none; }
 
 h1,
 h2 {
@@ -335,6 +338,8 @@ main {
   margin: auto;
   padding-bottom: 68px;
   width: 274px; }
+  .hide-main main {
+    visibility: hidden; }
   @media (min-width: 482px) {
     main {
       width: 402px; } }
@@ -817,6 +822,7 @@ main {
 .overlay-wrapper {
   position: absolute;
   top: 0;
+  left: 0;
   width: 100vw;
   height: 100vh;
   z-index: 21000;
@@ -856,11 +862,15 @@ main {
       transition: none;
       opacity: 1; }
 
-.background {
+.background,
+body.hide-main {
   width: 100%;
   height: 100%;
   display: block;
-  background: url("../data/content/assets/fox-tail.png") top -200px center no-repeat, linear-gradient(to bottom, #003EAA 40%, #004EC2 60%, #0060DF 80%, #0080FF 90%, #00C7FF 100%) top center no-repeat, #003EAA;
+  background-image: url("../data/content/assets/fox-tail.png"), linear-gradient(to bottom, #003EAA 40%, #004EC2 60%, #0060DF 80%, #0080FF 90%, #00C7FF 100%);
+  background-position-x: center;
+  background-position-y: -200px, top;
+  background-repeat: no-repeat;
   background-size: cover;
   position: fixed; }
 
@@ -979,11 +989,11 @@ main {
   background: url("../data/content/assets/sync-devices.svg") bottom center no-repeat;
   padding-bottom: 210px; }
 
-.firstrun-link {
+a.firstrun-link {
   color: #FFF;
   display: block;
   text-decoration: underline; }
-  .firstrun-link:hover, .firstrun-link:active, .firstrun-link:focus {
+  a.firstrun-link:hover, a.firstrun-link:active, a.firstrun-link:focus {
     color: #FFF; }
 
 .firstrun-title {
@@ -1360,7 +1370,7 @@ main {
     height: 122px;
     overflow: hidden;
     position: relative; }
-    .dark-theme .card-outer .card-preview-image-outer {
+    [lwt-newtab-brighttext] .card-outer .card-preview-image-outer {
       background-color: #4A4A4F; }
     .card-outer .card-preview-image-outer::after {
       border-bottom: 1px solid var(--newtab-card-hairline-color);
@@ -1614,11 +1624,11 @@ main {
   .collapsible-section .section-disclaimer {
     color: var(--newtab-text-conditional-color);
     font-size: 13px;
-    margin-bottom: 16px;
-    position: relative; }
+    margin-bottom: 26px;
+    position: relative;
+    display: flex; }
     .collapsible-section .section-disclaimer .section-disclaimer-text {
       display: inline-block;
-      min-height: 26px;
       width: calc(100% - 130px); }
       @media (max-width: 610px) {
         .collapsible-section .section-disclaimer .section-disclaimer-text {
@@ -1632,10 +1642,10 @@ main {
       border: 1px solid #B1B1B3;
       border-radius: 4px;
       cursor: pointer;
-      margin-top: 2px;
       max-width: 130px;
       min-height: 26px;
-      inset-inline-end: 0; }
+      inset-inline-end: 0;
+      align-self: center; }
       .collapsible-section .section-disclaimer button:hover:not(.dismiss) {
         box-shadow: 0 0 0 5px var(--newtab-card-active-outline-color);
         transition: box-shadow 150ms; }
@@ -1683,7 +1693,7 @@ main {
   .asrouter-admin .message-item.current .message-id span {
     background: #FFE900;
     padding: 2px 5px; }
-    .dark-theme .asrouter-admin .message-item.current .message-id span {
+    [lwt-newtab-brighttext] .asrouter-admin .message-item.current .message-id span {
       color: #000; }
   .asrouter-admin .message-item.blocked .message-id,
   .asrouter-admin .message-item.blocked .message-summary {
@@ -1838,6 +1848,9 @@ main {
       height: 30px;
       padding: 4px 0 6px;
       font-size: 15px; }
+      .modalOverlayInner .footer .modalButton:focus, .modalOverlayInner .footer .modalButton.active {
+        box-shadow: 0 0 0 5px var(--newtab-card-active-outline-color);
+        transition: box-shadow 150ms; }
 
 .SimpleSnippet.tall {
   padding: 27px 0; }
@@ -1970,6 +1983,9 @@ main {
       .onboardingMessage .onboardingButton {
         float: none;
         margin-top: 30px; } }
+    .onboardingMessage .onboardingButton:focus, .onboardingMessage .onboardingButton.active {
+      box-shadow: 0 0 0 5px var(--newtab-card-active-outline-color);
+      transition: box-shadow 150ms; }
   .onboardingMessage::before {
     content: '';
     height: 220px;

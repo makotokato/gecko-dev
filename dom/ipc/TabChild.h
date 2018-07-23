@@ -105,6 +105,7 @@ public:
   virtual already_AddRefed<nsPIDOMWindowOuter> GetContent(ErrorResult& aError) override;
   virtual already_AddRefed<nsIDocShell> GetDocShell(ErrorResult& aError) override;
   virtual already_AddRefed<nsIEventTarget> GetTabEventTarget() override;
+  virtual uint64_t ChromeOuterWindowID() override;
 
   NS_FORWARD_SAFE_NSIMESSAGESENDER(mMessageManager)
   NS_DECL_NSICONTENTFRAMEMESSAGEMANAGER
@@ -831,7 +832,6 @@ private:
   layers::LayersId mLayersId;
   int64_t mBeforeUnloadListeners;
   CSSRect mUnscaledOuterRect;
-  nscolor mLastBackgroundColor;
   Maybe<bool> mLayersConnected;
   bool mDidFakeShow;
   bool mNotified;
@@ -848,6 +848,11 @@ private:
   // Position of tab, relative to parent widget (typically the window)
   LayoutDeviceIntPoint mChromeOffset;
   TabId mUniqueId;
+
+  // Whether or not this tab has siblings (other tabs in the same window).
+  // This is one factor used when choosing to allow or deny a non-system
+  // script's attempt to resize the window.
+  bool mHasSiblings;
 
   // Holds the compositor options for the compositor rendering this tab,
   // once we find out which compositor that is.

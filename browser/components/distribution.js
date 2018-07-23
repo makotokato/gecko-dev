@@ -227,11 +227,9 @@ DistributionCustomizer.prototype = {
     if (!this._ini)
       return this._checkCustomizationComplete();
 
-    // nsPrefService loads very early.  Reload prefs so we can set
-    // distribution defaults during the prefservice:after-app-defaults
-    // notification (see applyPrefDefaults below)
-    Services.prefs.QueryInterface(Ci.nsIObserver)
-      .observe(null, "reload-default-prefs", null);
+    if (!this._prefDefaultsApplied) {
+      this.applyPrefDefaults();
+    }
   },
 
   _bookmarksApplied: false,
@@ -426,7 +424,7 @@ DistributionCustomizer.prototype = {
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul";
 
     if (this._newProfile) {
-      let xulStore = Cc["@mozilla.org/xul/xulstore;1"].getService(Ci.nsIXULStore);
+      let xulStore = Services.xulStore;
 
       try {
         var showPersonalToolbar = Services.prefs.getBoolPref("browser.showPersonalToolbar");

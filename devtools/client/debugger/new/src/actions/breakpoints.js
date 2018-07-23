@@ -16,6 +16,7 @@ exports.removeBreakpoints = removeBreakpoints;
 exports.remapBreakpoints = remapBreakpoints;
 exports.setBreakpointCondition = setBreakpointCondition;
 exports.toggleBreakpoint = toggleBreakpoint;
+exports.toggleBreakpointsAtLine = toggleBreakpointsAtLine;
 exports.addOrToggleDisabledBreakpoint = addOrToggleDisabledBreakpoint;
 exports.toggleDisabledBreakpoint = toggleDisabledBreakpoint;
 
@@ -39,9 +40,15 @@ var _syncBreakpoint = require("./breakpoints/syncBreakpoint");
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i] != null ? arguments[i] : {}; var ownKeys = Object.keys(source); if (typeof Object.getOwnPropertySymbols === 'function') { ownKeys = ownKeys.concat(Object.getOwnPropertySymbols(source).filter(function (sym) { return Object.getOwnPropertyDescriptor(source, sym).enumerable; })); } ownKeys.forEach(function (key) { _defineProperty(target, key, source[key]); }); } return target; }
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
-function _defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
+/**
+ * Redux actions for breakpoints
+ * @module actions/breakpoints
+ */
+// this will need to be changed so that addCLientBreakpoint is removed
 
 /**
  * Syncing a breakpoint add breakpoint information that is stored, and
@@ -188,10 +195,9 @@ function enableBreakpoint(location) {
     } // To instantly reflect in the UI, we optimistically enable the breakpoint
 
 
-    const enabledBreakpoint = _objectSpread({}, breakpoint, {
+    const enabledBreakpoint = { ...breakpoint,
       disabled: false
-    });
-
+    };
     return dispatch({
       type: "ENABLE_BREAKPOINT",
       breakpoint: enabledBreakpoint,
@@ -220,11 +226,9 @@ function disableBreakpoint(location) {
     }
 
     await client.removeBreakpoint(bp.generatedLocation);
-
-    const newBreakpoint = _objectSpread({}, bp, {
+    const newBreakpoint = { ...bp,
       disabled: true
-    });
-
+    };
     return dispatch({
       type: "DISABLE_BREAKPOINT",
       breakpoint: newBreakpoint
@@ -251,17 +255,14 @@ function toggleAllBreakpoints(shouldDisableBreakpoints) {
     for (const [, breakpoint] of breakpoints) {
       if (shouldDisableBreakpoints) {
         await client.removeBreakpoint(breakpoint.generatedLocation);
-
-        const newBreakpoint = _objectSpread({}, breakpoint, {
+        const newBreakpoint = { ...breakpoint,
           disabled: true
-        });
-
+        };
         modifiedBreakpoints.push(newBreakpoint);
       } else {
-        const newBreakpoint = _objectSpread({}, breakpoint, {
+        const newBreakpoint = { ...breakpoint,
           disabled: false
-        });
-
+        };
         modifiedBreakpoints.push(newBreakpoint);
       }
     }
@@ -384,11 +385,9 @@ function setBreakpointCondition(location, {
     }
 
     await client.setBreakpointCondition(bp.id, location, condition, sourceMaps.isOriginalId(bp.location.sourceId));
-
-    const newBreakpoint = _objectSpread({}, bp, {
+    const newBreakpoint = { ...bp,
       condition
-    });
-
+    };
     (0, _breakpoint.assertBreakpoint)(newBreakpoint);
     return dispatch({
       type: "SET_BREAKPOINT_CONDITION",
@@ -437,6 +436,40 @@ function toggleBreakpoint(line, column) {
       line: line,
       column: column
     }));
+  };
+}
+
+function toggleBreakpointsAtLine(line, column) {
+  return ({
+    dispatch,
+    getState,
+    client,
+    sourceMaps
+  }) => {
+    const state = getState();
+    const selectedSource = (0, _selectors.getSelectedSource)(state);
+
+    if (!line || !selectedSource) {
+      return;
+    }
+
+    const bps = (0, _selectors.getBreakpointsAtLine)(state, line);
+    const isEmptyLine = (0, _ast.isEmptyLineInSource)(state, line, selectedSource.id);
+
+    if (isEmptyLine) {
+      return;
+    }
+
+    if (bps.size === 0) {
+      return dispatch(addBreakpoint({
+        sourceId: selectedSource.id,
+        sourceUrl: selectedSource.url,
+        line,
+        column
+      }));
+    }
+
+    return Promise.all(bps.map(bp => dispatch(removeBreakpoint(bp.location))));
   };
 }
 

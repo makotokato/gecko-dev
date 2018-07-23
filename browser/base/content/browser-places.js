@@ -62,13 +62,8 @@ var StarUI = {
       case "popuphidden": {
         clearTimeout(this._autoCloseTimer);
         if (aEvent.originalTarget == this.panel) {
-          let selectedFolderGuid;
-
-          if (!this._element("editBookmarkPanelContent").hidden) {
-            // Get the folder first, before we uninit the overlay.
-            selectedFolderGuid = gEditItemOverlay.selectedFolderGuid;
-            this.quitEditMode();
-          }
+          let selectedFolderGuid = gEditItemOverlay.selectedFolderGuid;
+          gEditItemOverlay.uninitPanel(true);
 
           this._anchorElement.removeAttribute("open");
           this._anchorElement = null;
@@ -187,7 +182,7 @@ var StarUI = {
     }
   },
 
-  async showEditBookmarkPopup(aNode, aIsNewBookmark, aUrl, aIsCurrentBrowser = true) {
+  async showEditBookmarkPopup(aNode, aIsNewBookmark, aUrl) {
     // Slow double-clicks (not true double-clicks) shouldn't
     // cause the panel to flicker.
     if (this.panel.state != "closed") {
@@ -204,9 +199,6 @@ var StarUI = {
 
     this._element("editBookmarkPanel_showForNewBookmarks").checked =
       this.showForNewBookmarks;
-
-    this._element("editBookmarkPanelBottomButtons").hidden = false;
-    this._element("editBookmarkPanelContent").hidden = false;
 
     this._itemGuids = [];
     await PlacesUtils.bookmarks.fetch({url: aUrl},
@@ -229,7 +221,7 @@ var StarUI = {
         gNavigatorBundle.getString("editBookmark.removeBookmarks.accesskey"));
     }
 
-    this._setIconAndPreviewImage(aIsCurrentBrowser);
+    this._setIconAndPreviewImage();
 
     this.beginBatch();
 
@@ -256,16 +248,10 @@ var StarUI = {
     this.panel.openPopup(this._anchorElement, "bottomcenter topright");
   },
 
-  _setIconAndPreviewImage(aIsCurrentBrowser) {
+  _setIconAndPreviewImage() {
     let faviconImage = this._element("editBookmarkPanelFavicon");
     faviconImage.removeAttribute("iconloadingprincipal");
     faviconImage.removeAttribute("src");
-
-    document.mozSetImageElement("editBookmarkPanelImageCanvas", null);
-
-    if (!aIsCurrentBrowser) {
-      return;
-    }
 
     let tab = gBrowser.selectedTab;
     if (tab.hasAttribute("image") && !tab.hasAttribute("busy")) {
@@ -277,23 +263,6 @@ var StarUI = {
     let canvas = PageThumbs.createCanvas(window);
     PageThumbs.captureToCanvas(gBrowser.selectedBrowser, canvas);
     document.mozSetImageElement("editBookmarkPanelImageCanvas", canvas);
-  },
-
-  panelShown:
-  function SU_panelShown(aEvent) {
-    if (aEvent.target == this.panel) {
-      if (this._element("editBookmarkPanelContent").hidden) {
-        // Note this isn't actually used anymore, we should remove this
-        // once we decide not to bring back the page bookmarked notification
-        this.panel.focus();
-      }
-    }
-  },
-
-  quitEditMode: function SU_quitEditMode() {
-    this._element("editBookmarkPanelContent").hidden = true;
-    this._element("editBookmarkPanelBottomButtons").hidden = true;
-    gEditItemOverlay.uninitPanel(true);
   },
 
   removeBookmarkButtonCommand: function SU_removeBookmarkButtonCommand() {
@@ -388,19 +357,10 @@ var StarUI = {
 var PlacesCommandHook = {
   /**
    * Adds a bookmark to the page loaded in the current browser.
-   *
-   * @param [optional] aUrl
-   *        Option to provide a URL to bookmark rather than the current page
-   * @param [optional] aTitle
-   *        Option to provide a title for a bookmark to use rather than the
-   *        getting the current page's title
    */
-  async bookmarkPage(aUrl = null, aTitle = null) {
+  async bookmarkPage() {
     let browser = gBrowser.selectedBrowser;
-    // If aUrl is provided, we want to bookmark that url rather than the
-    // the current page
-    let isCurrentBrowser = !aUrl;
-    let url = aUrl ? new URL(aUrl) : new URL(browser.currentURI.spec);
+    let url = new URL(browser.currentURI.spec);
     let info = await PlacesUtils.bookmarks.fetch({ url });
     let isNewBookmark = !info;
     let showEditUI = !isNewBookmark || StarUI.showForNewBookmarks;
@@ -411,7 +371,7 @@ var PlacesCommandHook = {
       let charset = null;
 
       let isErrorPage = false;
-      if (!aUrl && browser.documentURI) {
+      if (browser.documentURI) {
         isErrorPage = /^about:(neterror|certerror|blocked)/.test(browser.documentURI.spec);
       }
 
@@ -422,10 +382,10 @@ var PlacesCommandHook = {
             info.title = entry.title;
           }
         } else {
-          info.title = aTitle || browser.contentTitle;
+          info.title = browser.contentTitle;
         }
         info.title = info.title || url.href;
-        charset = aUrl ? null : browser.characterSet;
+        charset = browser.characterSet;
       } catch (e) {
         Cu.reportError(e);
       }
@@ -440,8 +400,9 @@ var PlacesCommandHook = {
       info.guid = await PlacesTransactions.NewBookmark(info).transact();
 
       // Set the character-set
-      if (charset && !PrivateBrowsingUtils.isBrowserPrivate(browser))
-         PlacesUtils.setCharsetForURI(makeURI(url.href), charset);
+      if (charset && !PrivateBrowsingUtils.isBrowserPrivate(browser)) {
+        PlacesUtils.setCharsetForURI(makeURI(url.href), charset);
+      }
     }
 
     // Revert the contents of the location bar
@@ -455,20 +416,17 @@ var PlacesCommandHook = {
 
     let node = await PlacesUIUtils.promiseNodeLikeFromFetchInfo(info);
 
-    await StarUI.showEditBookmarkPopup(node, isNewBookmark, url, isCurrentBrowser);
+    await StarUI.showEditBookmarkPopup(node, isNewBookmark, url);
   },
 
   /**
    * Adds a bookmark to the page targeted by a link.
-   * @param parentId
-   *        The folder in which to create a new bookmark if aURL isn't
-   *        bookmarked.
    * @param url (string)
    *        the address of the link target
    * @param title
    *        The link text
    */
-  async bookmarkLink(parentId, url, title) {
+  async bookmarkLink(url, title) {
     let bm = await PlacesUtils.bookmarks.fetch({url});
     if (bm) {
       let node = await PlacesUIUtils.promiseNodeLikeFromFetchInfo(bm);
@@ -476,10 +434,10 @@ var PlacesCommandHook = {
       return;
     }
 
-    let parentGuid = parentId == PlacesUtils.bookmarksMenuFolderId ?
-                       PlacesUtils.bookmarks.menuGuid :
-                       await PlacesUtils.promiseItemGuid(parentId);
-    let defaultInsertionPoint = new PlacesInsertionPoint({ parentId, parentGuid });
+    let defaultInsertionPoint = new PlacesInsertionPoint({
+      parentId: PlacesUtils.bookmarksMenuFolderId,
+      parentGuid: PlacesUtils.bookmarks.menuGuid
+    });
     PlacesUIUtils.showBookmarkDialog({ action: "add",
                                        type: "bookmark",
                                        uri: makeURI(url),
@@ -490,20 +448,19 @@ var PlacesCommandHook = {
   },
 
   /**
-   * List of nsIURI objects characterizing the tabs currently open in the
-   * browser, modulo pinned tabs.  The URIs will be in the order in which their
-   * corresponding tabs appeared and duplicates are discarded.
-   */
-  get uniqueCurrentPages() {
+   * List of nsIURI objects characterizing tabs given in param.
+   * Duplicates are discarded.
+  */
+  getUniquePages(tabs) {
     let uniquePages = {};
     let URIs = [];
 
-    gBrowser.visibleTabs.forEach(tab => {
+    tabs.forEach(tab => {
       let browser = tab.linkedBrowser;
       let uri = browser.currentURI;
       let title = browser.contentTitle || tab.label;
       let spec = uri.spec;
-      if (!tab.pinned && !(spec in uniquePages)) {
+      if (!(spec in uniquePages)) {
         uniquePages[spec] = null;
         URIs.push({ uri, title });
       }
@@ -512,16 +469,33 @@ var PlacesCommandHook = {
   },
 
   /**
-   * Adds a folder with bookmarks to all of the currently open tabs in this
-   * window.
+   * List of nsIURI objects characterizing the tabs currently open in the
+   * browser, modulo pinned tabs. The URIs will be in the order in which their
+   * corresponding tabs appeared and duplicates are discarded.
    */
-  bookmarkCurrentPages: function PCH_bookmarkCurrentPages() {
-    let pages = this.uniqueCurrentPages;
-    if (pages.length > 1) {
-    PlacesUIUtils.showBookmarkDialog({ action: "add",
-                                       type: "folder",
-                                       URIList: pages
-                                     }, window);
+  get uniqueCurrentPages() {
+    let visibleUnpinnedTabs = gBrowser.visibleTabs
+                                      .filter(tab => !tab.pinned);
+    return this.getUniquePages(visibleUnpinnedTabs);
+  },
+
+   /**
+   * List of nsIURI objects characterizing the tabs currently
+   * selected in the window. Duplicates are discarded.
+   */
+  get uniqueSelectedPages() {
+    return this.getUniquePages(gBrowser.selectedTabs);
+  },
+
+  /**
+   * Adds a folder with bookmarks to URIList given in param.
+   */
+  bookmarkPages(URIList) {
+    if (URIList.length > 1) {
+      PlacesUIUtils.showBookmarkDialog({ action: "add",
+                                         type: "folder",
+                                         URIList,
+                                       }, window);
     }
   },
 

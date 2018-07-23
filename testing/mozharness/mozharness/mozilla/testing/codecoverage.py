@@ -111,34 +111,20 @@ class CodeCoverageMixin(SingleTestMixin):
         # Get the path to the build machines gcno files.
         self.url_to_gcno = self.query_build_dir_url('target.code-coverage-gcno.zip')
         self.url_to_chrome_map = self.query_build_dir_url('chrome-map.json')
-        dirs = self.query_abs_dirs()
 
-        # Create the grcov directory, get the tooltool manifest, and finally
-        # download and unpack the grcov binary.
+        # Create the grcov directory, then download it.
+        # TODO: use the fetch-content script to download artifacts.
         self.grcov_dir = tempfile.mkdtemp()
+        ARTIFACT_URL = 'https://queue.taskcluster.net/v1/task/{task}/artifacts/{artifact}'
+        for word in os.getenv('MOZ_FETCHES').split():
+            artifact, task = word.split('@', 1)
+            filename = os.path.basename(artifact)
+            url = ARTIFACT_URL.format(artifact=artifact, task=task)
+            self.download_file(url, parent_dir=self.grcov_dir)
 
-        if mozinfo.os == 'linux':
-            platform = 'linux64'
-            tar_file = 'grcov-linux-x86_64.tar.bz2'
-        elif mozinfo.os == 'win':
-            platform = 'win32'
-            tar_file = 'grcov-win-i686.tar.bz2'
-        elif mozinfo.os == 'mac':
-            platform = 'macosx64'
-            tar_file = 'grcov-osx-x86_64.tar.bz2'
-
-        manifest = os.path.join(dirs.get('abs_test_install_dir',
-                                         os.path.join(dirs['abs_work_dir'], 'tests')),
-                                'config/tooltool-manifests/%s/ccov.manifest' % platform)
-
-        self.tooltool_fetch(
-            manifest=manifest,
-            output_dir=self.grcov_dir,
-            cache=self.config.get('tooltool_cache')
-        )
-
-        with tarfile.open(os.path.join(self.grcov_dir, tar_file)) as tar:
-            tar.extractall(self.grcov_dir)
+            with tarfile.open(os.path.join(self.grcov_dir, filename), 'r') as tar:
+                tar.extractall(self.grcov_dir)
+            os.remove(os.path.join(self.grcov_dir, filename))
 
         # Download the gcno archive from the build machine.
         self.download_file(self.url_to_gcno, parent_dir=self.grcov_dir)
@@ -218,16 +204,20 @@ class CodeCoverageMixin(SingleTestMixin):
     def coverage_args(self):
         return []
 
-    def set_coverage_env(self, env):
+    def set_coverage_env(self, env, is_baseline_test=False):
         # Set the GCOV directory.
-        gcov_dir = tempfile.mkdtemp()
-        env['GCOV_PREFIX'] = gcov_dir
+        self.gcov_dir = tempfile.mkdtemp()
+        env['GCOV_PREFIX'] = self.gcov_dir
+
+        # Set the GCOV directory where counters will be dumped in per-test mode.
+        # Resetting/dumping is only available on Linux for the time being
+        # (https://bugzilla.mozilla.org/show_bug.cgi?id=1471576).
+        if self.per_test_coverage and not is_baseline_test and self._is_linux():
+            env['GCOV_RESULTS_DIR'] = tempfile.mkdtemp()
 
         # Set JSVM directory.
-        jsvm_dir = tempfile.mkdtemp()
-        env['JS_CODE_COVERAGE_OUTPUT_DIR'] = jsvm_dir
-
-        return (gcov_dir, jsvm_dir)
+        self.jsvm_dir = tempfile.mkdtemp()
+        env['JS_CODE_COVERAGE_OUTPUT_DIR'] = self.jsvm_dir
 
     @PreScriptAction('run-tests')
     def _set_gcov_prefix(self, action):
@@ -237,7 +227,7 @@ class CodeCoverageMixin(SingleTestMixin):
         if self.per_test_coverage:
             return
 
-        self.gcov_dir, self.jsvm_dir = self.set_coverage_env(os.environ)
+        self.set_coverage_env(os.environ)
 
     def parse_coverage_artifacts(self,
                                  gcov_dir,
@@ -300,9 +290,11 @@ class CodeCoverageMixin(SingleTestMixin):
         else:
             return grcov_output_file, jsvm_output_file
 
-    def add_per_test_coverage_report(self, gcov_dir, jsvm_dir, suite, test):
+    def add_per_test_coverage_report(self, env, suite, test):
+        gcov_dir = env['GCOV_RESULTS_DIR'] if 'GCOV_RESULTS_DIR' in env else self.gcov_dir
+
         grcov_file = self.parse_coverage_artifacts(
-            gcov_dir, jsvm_dir, merge=True, output_format='coveralls',
+            gcov_dir, self.jsvm_dir, merge=True, output_format='coveralls',
             filter_covered=True,
         )
 
@@ -313,6 +305,11 @@ class CodeCoverageMixin(SingleTestMixin):
             self.per_test_reports[suite] = {}
         assert test not in self.per_test_reports[suite]
         self.per_test_reports[suite][test] = report_file
+
+        if 'GCOV_RESULTS_DIR' in env:
+            # In this case, parse_coverage_artifacts has removed GCOV_RESULTS_DIR
+            # so we need to remove GCOV_PREFIX.
+            shutil.rmtree(self.gcov_dir)
 
     def is_covered(self, sf):
         # For C/C++ source files, we can consider a file as being uncovered

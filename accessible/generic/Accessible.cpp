@@ -639,7 +639,10 @@ Accessible::RelativeBounds(nsIFrame** aBoundingFrame) const
 {
   nsIFrame* frame = GetFrame();
   if (frame && mContent) {
-    bool* hasHitRegionRect = static_cast<bool*>(mContent->GetProperty(nsGkAtoms::hitregion));
+    bool* pHasHitRegionRect = static_cast<bool*>(mContent->GetProperty(nsGkAtoms::hitregion));
+    MOZ_ASSERT(pHasHitRegionRect == nullptr ||
+               *pHasHitRegionRect, "hitregion property is always null or true");
+    bool hasHitRegionRect = pHasHitRegionRect != nullptr && *pHasHitRegionRect;
 
     if (hasHitRegionRect && mContent->IsElement()) {
       // This is for canvas fallback content
@@ -934,7 +937,8 @@ Accessible::HandleAccEvent(AccEvent* aEvent)
             vcEvent->OldStartOffset(), vcEvent->OldEndOffset(),
             position ? reinterpret_cast<uintptr_t>(position->UniqueID()) : 0,
             vcEvent->NewStartOffset(), vcEvent->NewEndOffset(),
-            vcEvent->Reason(), vcEvent->IsFromUserInput());
+            vcEvent->Reason(), vcEvent->BoundaryType(),
+            vcEvent->IsFromUserInput());
           break;
         }
 #if defined(XP_WIN)
@@ -1352,10 +1356,11 @@ void
 Accessible::Value(nsString& aValue) const
 {
   const nsRoleMapEntry* roleMapEntry = ARIARoleMap();
-  if (!roleMapEntry)
-    return;
 
-  if (roleMapEntry->valueRule != eNoValue) {
+  if ((roleMapEntry && roleMapEntry->valueRule != eNoValue) ||
+      // Bug 1475376: aria-valuetext should also be supported for implicit ARIA
+      // roles; e.g. <input type="range">.
+      HasNumericValue()) {
     // aria-valuenow is a number, and aria-valuetext is the optional text
     // equivalent. For the string value, we will try the optional text
     // equivalent first.
@@ -1368,6 +1373,10 @@ Accessible::Value(nsString& aValue) const
       mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_valuenow,
                                      aValue);
     }
+    return;
+  }
+
+  if (!roleMapEntry) {
     return;
   }
 

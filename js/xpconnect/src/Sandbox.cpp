@@ -20,7 +20,6 @@
 #include "nsIURI.h"
 #include "nsJSUtils.h"
 #include "nsNetUtil.h"
-#include "NullPrincipal.h"
 #include "ExpandedPrincipal.h"
 #include "WrapperFactory.h"
 #include "xpcprivate.h"
@@ -62,6 +61,7 @@
 #include "mozilla/dom/XMLSerializerBinding.h"
 #include "mozilla/dom/FormDataBinding.h"
 #include "mozilla/DeferredFinalize.h"
+#include "mozilla/NullPrincipal.h"
 
 using namespace mozilla;
 using namespace JS;
@@ -586,8 +586,7 @@ SandboxCallableProxyHandler::call(JSContext* cx, JS::Handle<JSObject*> proxy,
 
     // The global of the sandboxProxy is the sandbox global, and the
     // target object is the original proto.
-    RootedObject sandboxGlobal(cx,
-      js::GetGlobalForObjectCrossCompartment(sandboxProxy));
+    RootedObject sandboxGlobal(cx, JS::GetNonCCWObjectGlobal(sandboxProxy));
     MOZ_ASSERT(IsSandbox(sandboxGlobal));
 
     // If our this object is the sandbox global, we call with this set to the

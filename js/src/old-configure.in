@@ -63,6 +63,8 @@ dnl ========================================================
 USE_PTHREADS=
 _PTHREAD_LDFLAGS=""
 
+LDFLAGS="$LDFLAGS $LINKER_LDFLAGS"
+
 if test -z "$JS_STANDALONE"; then
   autoconfmk=autoconf-js.mk
 fi
@@ -442,8 +444,12 @@ if test "$GNU_CC"; then
     fi
     WARNINGS_AS_ERRORS='-Werror'
     DSO_CFLAGS=''
-    DSO_PIC_CFLAGS='-fPIC'
-    ASFLAGS="$ASFLAGS -fPIC"
+
+    if test "$OS_ARCH" != "WINNT"; then
+        DSO_PIC_CFLAGS='-fPIC'
+        ASFLAGS="$ASFLAGS -fPIC"
+    fi
+
     AC_MSG_CHECKING([for --noexecstack option to as])
     _SAVE_CFLAGS=$CFLAGS
     CFLAGS="$CFLAGS -Wa,--noexecstack"
@@ -639,13 +645,19 @@ case "$target" in
         MKSHLIB='$(CXX) $(DSO_LDOPTS) -o $@'
         MKCSHLIB='$(CC) $(DSO_LDOPTS) -o $@'
         RC='$(WINDRES)'
-        # Use static libgcc and libstdc++
-        LDFLAGS="$LDFLAGS -static"
         # Use temp file for windres (bug 213281)
         RCFLAGS='-O coff --use-temp-file'
         # mingw doesn't require kernel32, user32, and advapi32 explicitly
         LIBS="$LIBS -lusp10 -lgdi32 -lwinmm -lwsock32"
         MOZ_FIX_LINK_PATHS=
+
+        if test -z "$CLANG_CC"; then
+            # Use static libgcc and libstdc++
+            LDFLAGS="$LDFLAGS -static"
+        else
+            # Silence problematic clang warnings
+            CXXFLAGS="$CXXFLAGS -Wno-incompatible-ms-struct"
+        fi
 
         MOZ_OPTIMIZE_FLAGS="-O2"
 
@@ -653,8 +665,26 @@ case "$target" in
         WIN32_GUI_EXE_LDFLAGS=-mwindows
     else
         TARGET_COMPILER_ABI=msvc
+<<<<<<< HEAD
         AR='lib'
         AR_FLAGS='-NOLOGO -OUT:$@'
+=======
+        HOST_CC='$(CC)'
+        HOST_CXX='$(CXX)'
+        if test "$AS_BIN"; then
+            AS="$(basename "$AS_BIN")"
+        fi
+        case "$LINKER" in
+        *lld*)
+            AR='llvm-lib'
+            AR_FLAGS='-llvmlibthin -out:$@'
+            ;;
+        *)
+            AR='lib'
+            AR_FLAGS='-NOLOGO -OUT:$@'
+            ;;
+        esac
+>>>>>>> master
         AR_EXTRACT=
         RANLIB='echo not_ranlib'
         STRIP='echo not_strip'
@@ -796,7 +826,7 @@ case "$target" in
         ;;
     esac
 
-    if test -n "$GNU_CC"; then
+    if test -n "$GNU_CC" -a -z "$CLANG_CC"; then
         CFLAGS="$CFLAGS -fno-keep-inline-dllexport"
         CXXFLAGS="$CXXFLAGS -fno-keep-inline-dllexport"
     fi

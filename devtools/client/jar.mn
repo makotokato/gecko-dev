@@ -9,7 +9,6 @@ devtools.jar:
     content/shared/widgets/widgets.css (shared/widgets/widgets.css)
     content/shared/widgets/VariablesView.xul (shared/widgets/VariablesView.xul)
     content/webconsole/index.html (webconsole/index.html)
-    content/webconsole/browserconsole.xul (webconsole/browserconsole.xul)
 *   content/scratchpad/index.xul (scratchpad/index.xul)
     content/shared/splitview.css (shared/splitview.css)
     content/shared/theme-switching.js (shared/theme-switching.js)
@@ -257,8 +256,10 @@ devtools.jar:
     skin/images/pane-expand.svg (themes/images/pane-expand.svg)
     skin/images/help.svg (themes/images/help.svg)
     skin/images/read-only.svg (themes/images/read-only.svg)
+    skin/images/reveal.svg (themes/images/reveal.svg)
 
     # Debugger
+    skin/images/debugger/angular.svg (themes/images/debugger/angular.svg)
     skin/images/debugger/arrow.svg (themes/images/debugger/arrow.svg)
     skin/images/debugger/back.svg (themes/images/debugger/back.svg)
     skin/images/debugger/blackBox.svg (themes/images/debugger/blackBox.svg)
@@ -281,6 +282,7 @@ devtools.jar:
     skin/images/debugger/stepOver.svg (themes/images/debugger/stepOver.svg)
     skin/images/debugger/tab.svg (themes/images/debugger/tab.svg)
     skin/images/debugger/typescript.svg (themes/images/debugger/typescript.svg)
+    skin/images/debugger/vuejs.svg (themes/images/debugger/vuejs.svg)
 
     # Netmonitor
     content/netmonitor/src/assets/styles/httpi.css (netmonitor/src/assets/styles/httpi.css)

@@ -21,9 +21,10 @@
 #ifdef MOZ_XUL
 #include "nsXULPopupManager.h"
 #endif
-#include "nsIRootBox.h"
+#include "nsIPopupContainer.h"
 #include "nsIBoxObject.h"
 #include "nsTreeColumns.h"
+#include "nsContentUtils.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
@@ -102,7 +103,13 @@ nsXULTooltipListener::MouseOut(Event* aEvent)
   // hide the tooltip
   if (currentTooltip) {
     // which node did the mouse leave?
-    nsCOMPtr<nsINode> targetNode = do_QueryInterface(aEvent->GetTarget());
+    EventTarget* eventTarget = aEvent->GetComposedTarget();
+    nsCOMPtr<nsIContent> content = do_QueryInterface(eventTarget);
+    if (content && !content->GetContainingShadow()) {
+      eventTarget = aEvent->GetTarget();
+    }
+
+    nsCOMPtr<nsINode> targetNode = do_QueryInterface(eventTarget);
 
     nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
     if (pm) {
@@ -173,7 +180,11 @@ nsXULTooltipListener::MouseMove(Event* aEvent)
   // showing and the tooltip hasn't been displayed since the mouse entered
   // the node, then start the timer to show the tooltip.
   if (!currentTooltip && !mTooltipShownOnce) {
-    nsCOMPtr<EventTarget> eventTarget = aEvent->GetTarget();
+    nsCOMPtr<EventTarget> eventTarget = aEvent->GetComposedTarget();
+    nsCOMPtr<nsIContent> content = do_QueryInterface(eventTarget);
+    if (content && !content->GetContainingShadow()) {
+      eventTarget = aEvent->GetTarget();
+    }
 
     // don't show tooltips attached to elements outside of a menu popup
     // when hovering over an element inside it. The popupsinherittooltip
@@ -400,7 +411,7 @@ nsXULTooltipListener::ShowTooltip()
 
   // set the node in the document that triggered the tooltip and show it
   if (tooltipNode->GetComposedDoc() &&
-      tooltipNode->GetComposedDoc()->IsXULDocument()) {
+      nsContentUtils::IsChromeDoc(tooltipNode->GetComposedDoc())) {
     // Make sure the target node is still attached to some document.
     // It might have been deleted.
     if (sourceNode->IsInComposedDoc()) {
@@ -578,15 +589,28 @@ nsXULTooltipListener::FindTooltip(nsIContent* aTarget, nsIContent** aTooltip)
     return NS_OK;
   }
 
+  // non-XUL documents should just use the default tooltip
+  if (!document->IsXULDocument()) {
+    nsIPopupContainer* popupContainer =
+      nsIPopupContainer::GetPopupContainer(document->GetShell());
+    NS_ENSURE_STATE(popupContainer);
+    if (RefPtr<Element> tooltip = popupContainer->GetDefaultTooltip()) {
+      tooltip.forget(aTooltip);
+      return NS_OK;
+    }
+    return NS_ERROR_FAILURE;
+  }
+
   nsAutoString tooltipText;
   if (aTarget->IsElement()) {
     aTarget->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::tooltiptext, tooltipText);
   }
   if (!tooltipText.IsEmpty()) {
     // specifying tooltiptext means we will always use the default tooltip
-    nsIRootBox* rootBox = nsIRootBox::GetRootBox(document->GetShell());
-    NS_ENSURE_STATE(rootBox);
-    if (RefPtr<Element> tooltip = rootBox->GetDefaultTooltip()) {
+    nsIPopupContainer* popupContainer =
+      nsIPopupContainer::GetPopupContainer(document->GetShell());
+    NS_ENSURE_STATE(popupContainer);
+    if (RefPtr<Element> tooltip = popupContainer->GetDefaultTooltip()) {
       tooltip->SetAttr(kNameSpaceID_None, nsGkAtoms::label, tooltipText, true);
       tooltip.forget(aTooltip);
     }
@@ -625,9 +649,10 @@ nsXULTooltipListener::FindTooltip(nsIContent* aTarget, nsIContent** aTooltip)
 #ifdef MOZ_XUL
   // titletips should just use the default tooltip
   if (mIsSourceTree && mNeedTitletip) {
-    nsIRootBox* rootBox = nsIRootBox::GetRootBox(document->GetShell());
-    NS_ENSURE_STATE(rootBox);
-    NS_IF_ADDREF(*aTooltip = rootBox->GetDefaultTooltip());
+    nsIPopupContainer* popupContainer =
+      nsIPopupContainer::GetPopupContainer(document->GetShell());
+    NS_ENSURE_STATE(popupContainer);
+    NS_IF_ADDREF(*aTooltip = popupContainer->GetDefaultTooltip());
   }
 #endif
 

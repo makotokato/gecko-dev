@@ -129,7 +129,7 @@ CSP_LogMessage(const nsAString& aMessage,
                uint32_t aLineNumber,
                uint32_t aColumnNumber,
                uint32_t aFlags,
-               const char *aCategory,
+               const nsACString& aCategory,
                uint64_t aInnerWindowID,
                bool aFromPrivateWindow)
 {
@@ -153,25 +153,30 @@ CSP_LogMessage(const nsAString& aMessage,
   // E.g. 'aSourceLine' might be: 'onclick attribute on DIV element'.
   // In such cases we append 'aSourceLine' directly to the error message.
   if (!aSourceLine.IsEmpty()) {
-    cspMsg.AppendLiteral(" Source: ");
+    cspMsg.AppendLiteral(u" Source: ");
     cspMsg.Append(aSourceLine);
     cspMsg.AppendLiteral(u".");
   }
 
+  // Since we are leveraging csp errors as the category names which
+  // we pass to devtools, we should prepend them with "CSP_" to
+  // allow easy distincution in devtools code. e.g.
+  // upgradeInsecureRequest -> CSP_upgradeInsecureRequest
+  nsCString category("CSP_");
+  category.Append(aCategory);
+
   nsresult rv;
   if (aInnerWindowID > 0) {
-    nsCString catStr;
-    catStr.AssignASCII(aCategory);
     rv = error->InitWithWindowID(cspMsg, aSourceName,
                                  aSourceLine, aLineNumber,
                                  aColumnNumber, aFlags,
-                                 catStr, aInnerWindowID);
+                                 category, aInnerWindowID);
   }
   else {
     rv = error->Init(cspMsg, aSourceName,
                      aSourceLine, aLineNumber,
                      aColumnNumber, aFlags,
-                     aCategory, aFromPrivateWindow);
+                     category.get(), aFromPrivateWindow);
   }
   if (NS_FAILED(rv)) {
     return;
@@ -191,7 +196,7 @@ CSP_LogLocalizedStr(const char* aName,
                     uint32_t aLineNumber,
                     uint32_t aColumnNumber,
                     uint32_t aFlags,
-                    const char* aCategory,
+                    const nsACString& aCategory,
                     uint64_t aInnerWindowID,
                     bool aFromPrivateWindow)
 {
@@ -763,6 +768,11 @@ nsCSPHostSrc::visit(nsCSPSrcVisitor* aVisitor) const
 void
 nsCSPHostSrc::toString(nsAString& outStr) const
 {
+  if (mGeneratedFromSelfKeyword) {
+    outStr.AppendASCII("'self'");
+    return;
+  }
+
   // If mHost is a single "*", we append the wildcard and return.
   if (mHost.EqualsASCII("*") &&
       mScheme.IsEmpty() &&
@@ -1264,6 +1274,18 @@ nsCSPDirective::getDirName(nsAString& outStr) const
   outStr.AppendASCII(CSP_CSPDirectiveToString(mDirective));
 }
 
+bool
+nsCSPDirective::hasReportSampleKeyword() const
+{
+  for (nsCSPBaseSrc* src : mSrcs) {
+    if (src->isReportSample()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /* =============== nsCSPChildSrcDirective ============= */
 
 nsCSPChildSrcDirective::nsCSPChildSrcDirective(CSPDirective aDirective)
@@ -1614,13 +1636,18 @@ nsCSPPolicy::hasDirective(CSPDirective aDir) const
  * for the ::permits() function family.
  */
 void
-nsCSPPolicy::getDirectiveStringForContentType(nsContentPolicyType aContentType,
-                                              nsAString& outDirective) const
+nsCSPPolicy::getDirectiveStringAndReportSampleForContentType(nsContentPolicyType aContentType,
+                                                             nsAString& outDirective,
+                                                             bool* aReportSample) const
 {
+  MOZ_ASSERT(aReportSample);
+  *aReportSample = false;
+
   nsCSPDirective* defaultDir = nullptr;
   for (uint32_t i = 0; i < mDirectives.Length(); i++) {
     if (mDirectives[i]->restrictsContentType(aContentType)) {
       mDirectives[i]->getDirName(outDirective);
+      *aReportSample = mDirectives[i]->hasReportSampleKeyword();
       return;
     }
     if (mDirectives[i]->isDefaultDirective()) {
@@ -1631,6 +1658,7 @@ nsCSPPolicy::getDirectiveStringForContentType(nsContentPolicyType aContentType,
   // the contentType must be restricted by the default directive
   if (defaultDir) {
     defaultDir->getDirName(outDirective);
+    *aReportSample = defaultDir->hasReportSampleKeyword();
     return;
   }
   NS_ASSERTION(false, "Can not query directive string for contentType!");

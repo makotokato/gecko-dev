@@ -1042,8 +1042,8 @@ JitCode*
 JitRuntime::getBaselineDebugModeOSRHandler(JSContext* cx)
 {
     if (!baselineDebugModeOSRHandler_) {
-        AutoLockForExclusiveAccess lock(cx);
-        AutoAtomsZone az(cx, lock);
+        MOZ_ASSERT(js::CurrentThreadCanAccessRuntime(cx->runtime()));
+        AutoAllocInAtomsZone az(cx);
         uint32_t offset;
         if (JitCode* code = generateBaselineDebugModeOSRHandler(cx, &offset)) {
             baselineDebugModeOSRHandler_ = code;
@@ -1182,6 +1182,9 @@ DebugModeOSRVolatileJitFrameIter::forwardLiveIterators(JSContext* cx,
                                                        uint8_t* oldAddr, uint8_t* newAddr)
 {
     DebugModeOSRVolatileJitFrameIter* iter;
-    for (iter = cx->liveVolatileJitFrameIter_; iter; iter = iter->prev)
+    for (iter = cx->liveVolatileJitFrameIter_; iter; iter = iter->prev) {
+        if (iter->isWasm())
+            continue;
         iter->asJSJit().exchangeReturnAddressIfMatch(oldAddr, newAddr);
+    }
 }

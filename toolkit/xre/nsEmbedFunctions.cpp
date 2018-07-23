@@ -244,13 +244,14 @@ GeckoProcessType sChildProcessType = GeckoProcessType_Default;
 
 #if defined(MOZ_WIDGET_ANDROID)
 void
-XRE_SetAndroidChildFds (JNIEnv* env, int prefsFd, int ipcFd, int crashFd, int crashAnnotationFd)
+XRE_SetAndroidChildFds (JNIEnv* env, const XRE_AndroidChildFds& fds)
 {
   mozilla::jni::SetGeckoThreadEnv(env);
-  mozilla::dom::SetPrefsFd(prefsFd);
-  IPC::Channel::SetClientChannelFd(ipcFd);
-  CrashReporter::SetNotificationPipeForChild(crashFd);
-  CrashReporter::SetCrashAnnotationPipeForChild(crashAnnotationFd);
+  mozilla::dom::SetPrefsFd(fds.mPrefsFd);
+  mozilla::dom::SetPrefMapFd(fds.mPrefMapFd);
+  IPC::Channel::SetClientChannelFd(fds.mIpcFd);
+  CrashReporter::SetNotificationPipeForChild(fds.mCrashFd);
+  CrashReporter::SetCrashAnnotationPipeForChild(fds.mCrashAnnotationFd);
 }
 #endif // defined(MOZ_WIDGET_ANDROID)
 
@@ -978,7 +979,7 @@ TestShellParent* GetOrCreateTestShellParent()
 bool
 XRE_SendTestShellCommand(JSContext* aCx,
                          JSString* aCommand,
-                         void* aCallback)
+                         JS::Value* aCallback)
 {
     JS::RootedString cmd(aCx, aCommand);
     TestShellParent* tsp = GetOrCreateTestShellParent();
@@ -995,8 +996,7 @@ XRE_SendTestShellCommand(JSContext* aCx,
         tsp->SendPTestShellCommandConstructor(command));
     NS_ENSURE_TRUE(callback, false);
 
-    JS::Value callbackVal = *reinterpret_cast<JS::Value*>(aCallback);
-    NS_ENSURE_TRUE(callback->SetCallback(aCx, callbackVal), false);
+    NS_ENSURE_TRUE(callback->SetCallback(aCx, *aCallback), false);
 
     return true;
 }

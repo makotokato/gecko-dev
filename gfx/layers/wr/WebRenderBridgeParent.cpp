@@ -337,9 +337,35 @@ WebRenderBridgeParent::UpdateResources(const nsTArray<OpUpdateResource>& aResour
         aUpdates.UpdateBlobImage(op.key(), op.descriptor(), bytes, wr::ToDeviceUintRect(op.dirtyRect()));
         break;
       }
+      case OpUpdateResource::TOpSetImageVisibleArea: {
+        const auto& op = cmd.get_OpSetImageVisibleArea();
+        wr::NormalizedRect area;
+        area.origin.x = op.area().x;
+        area.origin.y = op.area().y;
+        area.size.width = op.area().width;
+        area.size.height = op.area().height;
+        aUpdates.SetImageVisibleArea(op.key(), area);
+        break;
+      }
       case OpUpdateResource::TOpAddExternalImage: {
         const auto& op = cmd.get_OpAddExternalImage();
         if (!AddExternalImage(op.externalImageId(), op.key(), aUpdates)) {
+          return false;
+        }
+        break;
+      }
+      case OpUpdateResource::TOpPushExternalImageForTexture: {
+        const auto& op = cmd.get_OpPushExternalImageForTexture();
+        CompositableTextureHostRef texture;
+        texture = TextureHost::AsTextureHost(op.textureParent());
+        if (!PushExternalImageForTexture(op.externalImageId(), op.key(), texture, op.isUpdate(), aUpdates)) {
+          return false;
+        }
+        break;
+      }
+      case OpUpdateResource::TOpUpdateExternalImage: {
+        const auto& op = cmd.get_OpUpdateExternalImage();
+        if (!UpdateExternalImage(op.externalImageId(), op.key(), op.dirtyRect(), aUpdates)) {
           return false;
         }
         break;
@@ -409,8 +435,8 @@ WebRenderBridgeParent::AddExternalImage(wr::ExternalImageId aExtId, wr::ImageKey
 
   RefPtr<DataSourceSurface> dSurf = SharedSurfacesParent::Acquire(aExtId);
   if (dSurf) {
-    bool inserted = mSharedSurfaceIds.EnsureInserted(wr::AsUint64(aExtId));
-    if (!inserted) {
+    auto it = mSharedSurfaceIds.emplace(wr::AsUint64(aExtId));
+    if (!it.second) {
       // We already have a mapping for this image, so decrement the ownership
       // counter just increased unnecessarily. This can happen when an image is
       // slow to decode and we need to invalidate it by updating its image key.
@@ -426,31 +452,7 @@ WebRenderBridgeParent::AddExternalImage(wr::ExternalImageId aExtId, wr::ImageKey
       return true;
     }
   } else {
-    MOZ_ASSERT(mExternalImageIds.Get(wr::AsUint64(aExtId)).get());
-
-    RefPtr<WebRenderImageHost> host = mExternalImageIds.Get(wr::AsUint64(aExtId));
-    if (!host) {
-      gfxCriticalNote << "CompositableHost does not exist for extId:" << wr::AsUint64(aExtId);
-      return false;
-    }
-    if (!gfxEnv::EnableWebRenderRecording()) {
-      TextureHost* texture = host->GetAsTextureHostForComposite();
-      if (!texture) {
-        gfxCriticalNote << "TextureHost does not exist for extId:" << wr::AsUint64(aExtId);
-        return false;
-      }
-      WebRenderTextureHost* wrTexture = texture->AsWebRenderTextureHost();
-      if (wrTexture) {
-        wrTexture->PushResourceUpdates(aResources, TextureHost::ADD_IMAGE, keys,
-                                       wrTexture->GetExternalImageKey());
-        return true;
-      }
-    }
-    dSurf = host->GetAsSurface();
-  }
-
-  if (!dSurf) {
-    gfxCriticalNote << "TextureHost does not return DataSourceSurface for extId:" << wr::AsUint64(aExtId);
+    gfxCriticalNote << "DataSourceSurface of SharedSurfaces does not exist for extId:" << wr::AsUint64(aExtId);
     return false;
   }
 
@@ -467,6 +469,117 @@ WebRenderBridgeParent::AddExternalImage(wr::ExternalImageId aExtId, wr::ImageKey
   aResources.AddImage(keys[0], descriptor, data);
   dSurf->Unmap();
 
+  return true;
+}
+
+bool
+WebRenderBridgeParent::PushExternalImageForTexture(wr::ExternalImageId aExtId,
+                                                   wr::ImageKey aKey,
+                                                   TextureHost* aTexture,
+                                                   bool aIsUpdate,
+                                                   wr::TransactionBuilder& aResources)
+{
+  auto op = aIsUpdate ? TextureHost::UPDATE_IMAGE : TextureHost::ADD_IMAGE;
+  Range<wr::ImageKey> keys(&aKey, 1);
+  // Check if key is obsoleted.
+  if (keys[0].mNamespace != mIdNamespace) {
+    return true;
+  }
+
+  if(!aTexture) {
+    gfxCriticalNote << "TextureHost does not exist for extId:" << wr::AsUint64(aExtId);
+    return false;
+  }
+
+  if (!gfxEnv::EnableWebRenderRecording()) {
+    WebRenderTextureHost* wrTexture = aTexture->AsWebRenderTextureHost();
+    if (wrTexture) {
+      wrTexture->PushResourceUpdates(aResources, op, keys,
+                                     wrTexture->GetExternalImageKey());
+      auto it = mTextureHosts.find(wr::AsUint64(aKey));
+      MOZ_ASSERT((it == mTextureHosts.end() && !aIsUpdate) ||
+                 (it != mTextureHosts.end() && aIsUpdate));
+      if (it != mTextureHosts.end()) {
+        // Release Texture if it exists.
+        ReleaseTextureOfImage(aKey);
+      }
+      mTextureHosts.emplace(wr::AsUint64(aKey), CompositableTextureHostRef(aTexture));
+      return true;
+    }
+  }
+  RefPtr<DataSourceSurface> dSurf = aTexture->GetAsSurface();
+  if (!dSurf) {
+    gfxCriticalNote << "TextureHost does not return DataSourceSurface for extId:" << wr::AsUint64(aExtId);
+    return false;
+  }
+
+  DataSourceSurface::MappedSurface map;
+  if (!dSurf->Map(gfx::DataSourceSurface::MapType::READ, &map)) {
+    gfxCriticalNote << "DataSourceSurface failed to map for Image for extId:" << wr::AsUint64(aExtId);
+    return false;
+  }
+
+  IntSize size = dSurf->GetSize();
+  wr::ImageDescriptor descriptor(size, map.mStride, dSurf->GetFormat());
+  wr::Vec<uint8_t> data;
+  data.PushBytes(Range<uint8_t>(map.mData, size.height * map.mStride));
+
+  if (op == TextureHost::UPDATE_IMAGE) {
+    aResources.UpdateImageBuffer(keys[0], descriptor, data);
+  } else {
+    aResources.AddImage(keys[0], descriptor, data);
+  }
+
+  dSurf->Unmap();
+
+  return true;
+}
+
+bool
+WebRenderBridgeParent::UpdateExternalImage(wr::ExternalImageId aExtId,
+                                           wr::ImageKey aKey,
+                                           const ImageIntRect& aDirtyRect,
+                                           wr::TransactionBuilder& aResources)
+{
+  Range<wr::ImageKey> keys(&aKey, 1);
+  // Check if key is obsoleted.
+  if (keys[0].mNamespace != mIdNamespace) {
+    return true;
+  }
+
+  uint64_t imageId = wr::AsUint64(aExtId);
+  if (mSharedSurfaceIds.find(imageId) == mSharedSurfaceIds.end()) {
+    gfxCriticalNote << "Updating unknown shared surface: " << wr::AsUint64(aExtId);
+    return false;
+  }
+
+  RefPtr<DataSourceSurface> dSurf = SharedSurfacesParent::Get(aExtId);
+  if (!dSurf) {
+    gfxCriticalNote << "Shared surface does not exist for extId:" << wr::AsUint64(aExtId);
+    return false;
+  }
+
+  if (!gfxEnv::EnableWebRenderRecording()) {
+    wr::ImageDescriptor descriptor(dSurf->GetSize(), dSurf->Stride(),
+                                   dSurf->GetFormat());
+    aResources.UpdateExternalImageWithDirtyRect(aKey, descriptor, aExtId,
+                                                wr::WrExternalImageBufferType::ExternalBuffer,
+                                                wr::ToDeviceUintRect(aDirtyRect),
+                                                0);
+    return true;
+  }
+
+  DataSourceSurface::ScopedMap map(dSurf, DataSourceSurface::READ);
+  if (!map.IsMapped()) {
+    gfxCriticalNote << "DataSourceSurface failed to map for Image for extId:" << wr::AsUint64(aExtId);
+    return false;
+  }
+
+  IntSize size = dSurf->GetSize();
+  wr::ImageDescriptor descriptor(size, map.GetStride(), dSurf->GetFormat());
+  wr::Vec<uint8_t> data;
+  data.PushBytes(Range<uint8_t>(map.GetData(), size.height * map.GetStride()));
+  aResources.UpdateImageBuffer(keys[0], descriptor, data);
   return true;
 }
 
@@ -697,21 +810,11 @@ WebRenderBridgeParent::RecvSetDisplayList(const gfx::IntSize& aSize,
     txn.SetDisplayList(clearColor, wrEpoch, LayerSize(aSize.width, aSize.height),
                        mPipelineId, aContentSize,
                        dlDesc, dlData);
-    // The display list that we're sending to WR might contain references to
-    // other pipelines that we just added to the async image manager in the
-    // ProcessWebRenderParentCommands call above. If we send the display list
-    // alone then WR will not yet have the content for those other pipelines
-    // and so it will emit errors; the ApplyAsyncImages call below ensure that
-    // we provide the pipeline content to WR as part of the same transaction.
-    mAsyncImageManager->ApplyAsyncImages(txn);
 
     mApi->SendTransaction(txn);
 
-    if (!gfxPrefs::WebRenderAsyncSceneBuild()) {
-      // With async-scene-build enabled, we will trigger this after the scene
-      // build is done, so we don't need to do it here.
-      ScheduleGenerateFrame();
-    }
+    // We will schedule generating a frame after the scene
+    // build is done, so we don't need to do it here.
   }
 
   HoldPendingTransactionId(wrEpoch, aTransactionId, aRefreshStartTime, aTxnStartTime, aFwdTime);
@@ -839,7 +942,8 @@ WebRenderBridgeParent::ProcessWebRenderParentCommands(const InfallibleTArray<Web
         const OpAddPipelineIdForCompositable& op = cmd.get_OpAddPipelineIdForCompositable();
         AddPipelineIdForCompositable(op.pipelineId(),
                                      op.handle(),
-                                     op.isAsync());
+                                     op.isAsync(),
+                                     aTxn);
         break;
       }
       case WebRenderParentCommand::TOpRemovePipelineIdForCompositable: {
@@ -847,15 +951,14 @@ WebRenderBridgeParent::ProcessWebRenderParentCommands(const InfallibleTArray<Web
         RemovePipelineIdForCompositable(op.pipelineId(), aTxn);
         break;
       }
-      case WebRenderParentCommand::TOpAddExternalImageIdForCompositable: {
-        const OpAddExternalImageIdForCompositable& op = cmd.get_OpAddExternalImageIdForCompositable();
-        AddExternalImageIdForCompositable(op.externalImageId(),
-                                          op.handle());
-        break;
-      }
       case WebRenderParentCommand::TOpRemoveExternalImageId: {
         const OpRemoveExternalImageId& op = cmd.get_OpRemoveExternalImageId();
         RemoveExternalImageId(op.externalImageId());
+        break;
+      }
+      case WebRenderParentCommand::TOpReleaseTextureOfImage: {
+        const OpReleaseTextureOfImage& op = cmd.get_OpReleaseTextureOfImage();
+        ReleaseTextureOfImage(op.key());
         break;
       }
       case WebRenderParentCommand::TOpUpdateAsyncImagePipeline: {
@@ -866,6 +969,12 @@ WebRenderBridgeParent::ProcessWebRenderParentCommands(const InfallibleTArray<Web
                                                      op.scaleToSize(),
                                                      op.filter(),
                                                      op.mixBlendMode());
+        mAsyncImageManager->ApplyAsyncImageForPipeline(op.pipelineId(), aTxn);
+        break;
+      }
+      case WebRenderParentCommand::TOpUpdatedAsyncImagePipeline: {
+        const OpUpdatedAsyncImagePipeline& op = cmd.get_OpUpdatedAsyncImagePipeline();
+        mAsyncImageManager->ApplyAsyncImageForPipeline(op.pipelineId(), aTxn);
         break;
       }
       case WebRenderParentCommand::TCompositableOperation: {
@@ -896,29 +1005,25 @@ WebRenderBridgeParent::FlushSceneBuilds()
 {
   MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread());
 
-  if (gfxPrefs::WebRenderAsyncSceneBuild()) {
-    // If we are sending transactions through the scene builder thread, we need
-    // to block until all the inflight transactions have been processed. This
-    // flush message blocks until all previously sent scenes have been built
-    // and received by the render backend thread.
-    mApi->FlushSceneBuilder();
-    // The post-swap hook for async-scene-building calls the
-    // ScheduleRenderOnCompositorThread function from the scene builder thread,
-    // which then triggers a call to ScheduleGenerateFrame() on the compositor
-    // thread. But since *this* function is running on the compositor thread,
-    // that scheduling will not happen until this call stack unwinds (or we
-    // could spin a nested event loop, but that's more messy). Instead, we
-    // simulate it ourselves by calling ScheduleGenerateFrame() directly.
-    // In the case where async scene building is disabled, the
-    // ScheduleGenerateFrame() call in RecvSetDisplayList() serves this purpose.
-    // Note also that the post-swap hook will run and do another
-    // ScheduleGenerateFrame() after we unwind here, so we will end up with an
-    // extra render/composite that is probably avoidable, but in practice we
-    // shouldn't be calling this function all that much in production so this
-    // is probably fine. If it becomes an issue we can add more state tracking
-    // machinery to optimize it away.
-    ScheduleGenerateFrame();
-  }
+  // Since we are sending transactions through the scene builder thread, we need
+  // to block until all the inflight transactions have been processed. This
+  // flush message blocks until all previously sent scenes have been built
+  // and received by the render backend thread.
+  mApi->FlushSceneBuilder();
+  // The post-swap hook for async-scene-building calls the
+  // ScheduleRenderOnCompositorThread function from the scene builder thread,
+  // which then triggers a call to ScheduleGenerateFrame() on the compositor
+  // thread. But since *this* function is running on the compositor thread,
+  // that scheduling will not happen until this call stack unwinds (or we
+  // could spin a nested event loop, but that's more messy). Instead, we
+  // simulate it ourselves by calling ScheduleGenerateFrame() directly.
+  // Note also that the post-swap hook will run and do another
+  // ScheduleGenerateFrame() after we unwind here, so we will end up with an
+  // extra render/composite that is probably avoidable, but in practice we
+  // shouldn't be calling this function all that much in production so this
+  // is probably fine. If it becomes an issue we can add more state tracking
+  // machinery to optimize it away.
+  ScheduleGenerateFrame();
 }
 
 void
@@ -1004,13 +1109,14 @@ WebRenderBridgeParent::RecvGetSnapshot(PTextureParent* aTexture)
 void
 WebRenderBridgeParent::AddPipelineIdForCompositable(const wr::PipelineId& aPipelineId,
                                                     const CompositableHandle& aHandle,
-                                                    const bool& aAsync)
+                                                    const bool& aAsync,
+                                                    wr::TransactionBuilder& aTxn)
 {
   if (mDestroyed) {
     return;
   }
 
-  MOZ_ASSERT(!mAsyncCompositables.Get(wr::AsUint64(aPipelineId)).get());
+  MOZ_ASSERT(mAsyncCompositables.find(wr::AsUint64(aPipelineId)) == mAsyncCompositables.end());
 
   RefPtr<CompositableHost> host;
   if (aAsync) {
@@ -1038,9 +1144,16 @@ WebRenderBridgeParent::AddPipelineIdForCompositable(const wr::PipelineId& aPipel
 
   wrHost->SetWrBridge(this);
   wrHost->EnableUseAsyncImagePipeline();
-  mAsyncCompositables.Put(wr::AsUint64(aPipelineId), wrHost);
+  mAsyncCompositables.emplace(wr::AsUint64(aPipelineId), wrHost);
   mAsyncImageManager->AddAsyncImagePipeline(aPipelineId, wrHost);
 
+  // If this is being called from WebRenderBridgeParent::RecvSetDisplayList,
+  // then aTxn might contain a display list that references pipelines that
+  // we just added to the async image manager.
+  // If we send the display list alone then WR will not yet have the content for
+  // the pipelines and so it will emit errors; the SetEmptyDisplayList call
+  // below ensure that we provide its content to WR as part of the same transaction.
+  mAsyncImageManager->SetEmptyDisplayList(aPipelineId, aTxn);
   return;
 }
 
@@ -1052,42 +1165,16 @@ WebRenderBridgeParent::RemovePipelineIdForCompositable(const wr::PipelineId& aPi
     return;
   }
 
-  WebRenderImageHost* wrHost = mAsyncCompositables.Get(wr::AsUint64(aPipelineId)).get();
-  if (!wrHost) {
+  auto it = mAsyncCompositables.find(wr::AsUint64(aPipelineId));
+  if (it == mAsyncCompositables.end()) {
     return;
   }
+  RefPtr<WebRenderImageHost>& wrHost = it->second;
 
   wrHost->ClearWrBridge();
   mAsyncImageManager->RemoveAsyncImagePipeline(aPipelineId, aTxn);
   aTxn.RemovePipeline(aPipelineId);
-  mAsyncCompositables.Remove(wr::AsUint64(aPipelineId));
-  return;
-}
-
-void
-WebRenderBridgeParent::AddExternalImageIdForCompositable(const ExternalImageId& aImageId,
-                                                         const CompositableHandle& aHandle)
-{
-  if (mDestroyed) {
-    return;
-  }
-  MOZ_ASSERT(!mExternalImageIds.Get(wr::AsUint64(aImageId)).get());
-
-  RefPtr<CompositableHost> host = FindCompositable(aHandle);
-  WebRenderImageHost* wrHost = host->AsWebRenderImageHost();
-
-  MOZ_ASSERT(wrHost);
-  if (!wrHost) {
-    gfxCriticalNote << "Incompatible CompositableHost for external image at WebRenderBridgeParent.";
-  }
-
-  if (!wrHost) {
-    return;
-  }
-
-  wrHost->SetWrBridge(this);
-  mExternalImageIds.Put(wr::AsUint64(aImageId), wrHost);
-
+  mAsyncCompositables.erase(wr::AsUint64(aPipelineId));
   return;
 }
 
@@ -1099,20 +1186,31 @@ WebRenderBridgeParent::RemoveExternalImageId(const ExternalImageId& aImageId)
   }
 
   uint64_t imageId = wr::AsUint64(aImageId);
-  if (mSharedSurfaceIds.EnsureRemoved(imageId)) {
+  if (mSharedSurfaceIds.find(imageId) != mSharedSurfaceIds.end()) {
+    mSharedSurfaceIds.erase(imageId);
     mAsyncImageManager->HoldExternalImage(mPipelineId, mWrEpoch, aImageId);
+  }
+}
+
+void
+WebRenderBridgeParent::ReleaseTextureOfImage(const wr::ImageKey& aKey)
+{
+  if (mDestroyed) {
     return;
   }
 
-  WebRenderImageHost* wrHost = mExternalImageIds.Get(imageId).get();
-  if (!wrHost) {
-    return;
+  uint64_t id = wr::AsUint64(aKey);
+  CompositableTextureHostRef texture;
+  WebRenderTextureHost* wrTexture = nullptr;
+
+  auto it = mTextureHosts.find(id);
+  if (it != mTextureHosts.end()) {
+    wrTexture = (*it).second->AsWebRenderTextureHost();
   }
-
-  wrHost->ClearWrBridge();
-  mExternalImageIds.Remove(imageId);
-
-  return;
+  if (wrTexture) {
+    mAsyncImageManager->HoldExternalImage(mPipelineId, mWrEpoch, wrTexture);
+  }
+  mTextureHosts.erase(id);
 }
 
 mozilla::ipc::IPCResult
@@ -1140,8 +1238,8 @@ WebRenderBridgeParent::RecvClearCachedResources()
   // Schedule generate frame to clean up Pipeline
   ScheduleGenerateFrame();
   // Remove animations.
-  for (std::unordered_set<uint64_t>::iterator iter = mActiveAnimations.begin(); iter != mActiveAnimations.end(); iter++) {
-    mAnimStorage->ClearById(*iter);
+  for (const auto& id : mActiveAnimations) {
+    mAnimStorage->ClearById(id);
   }
   mActiveAnimations.clear();
   std::queue<CompositorAnimationIdsForEpoch>().swap(mCompositorAnimationsToDelete); // clear queue
@@ -1441,7 +1539,7 @@ WebRenderBridgeParent::CompositeToTarget(gfx::DrawTarget* aTarget, const gfx::In
     // building. Those other async pipelines can go in the other transaction that
     // we create below.
     wr::TransactionBuilder txn;
-    mAsyncImageManager->ApplyAsyncImages(txn);
+    mAsyncImageManager->ApplyAsyncImagesOfImageBridge(txn);
     mApi->SendTransaction(txn);
   }
 
@@ -1578,7 +1676,9 @@ WebRenderBridgeParent::FlushRendering()
     return;
   }
 
-  // XXX: do we need to flush any scene building here?
+  // This gets called during e.g. window resizes, so we need to flush the
+  // scene (which has the display list at the new window size).
+  FlushSceneBuilds();
   FlushFrameGeneration();
   FlushFramePresentation();
 }
@@ -1639,30 +1739,34 @@ WebRenderBridgeParent::ClearResources()
   // Schedule generate frame to clean up Pipeline
   ScheduleGenerateFrame();
   // WrFontKeys and WrImageKeys are deleted during WebRenderAPI destruction.
-  for (auto iter = mExternalImageIds.Iter(); !iter.Done(); iter.Next()) {
-    iter.Data()->ClearWrBridge();
+  for (const auto& entry : mTextureHosts) {
+    WebRenderTextureHost* wrTexture = entry.second->AsWebRenderTextureHost();
+    MOZ_ASSERT(wrTexture);
+    if (wrTexture) {
+      mAsyncImageManager->HoldExternalImage(mPipelineId, wrEpoch, wrTexture);
+    }
   }
-  mExternalImageIds.Clear();
-  for (auto iter = mAsyncCompositables.Iter(); !iter.Done(); iter.Next()) {
-    wr::PipelineId pipelineId = wr::AsPipelineId(iter.Key());
-    RefPtr<WebRenderImageHost> host = iter.Data();
+  mTextureHosts.clear();
+  for (const auto& entry : mAsyncCompositables) {
+    wr::PipelineId pipelineId = wr::AsPipelineId(entry.first);
+    RefPtr<WebRenderImageHost> host = entry.second;
     host->ClearWrBridge();
     mAsyncImageManager->RemoveAsyncImagePipeline(pipelineId, txn);
   }
-  mAsyncCompositables.Clear();
-  for (auto iter = mSharedSurfaceIds.Iter(); !iter.Done(); iter.Next()) {
-    wr::ExternalImageId id = wr::ToExternalImageId(iter.Get()->GetKey());
+  mAsyncCompositables.clear();
+  for (const auto& entry : mSharedSurfaceIds) {
+    wr::ExternalImageId id = wr::ToExternalImageId(entry);
     mAsyncImageManager->HoldExternalImage(mPipelineId, mWrEpoch, id);
   }
-  mSharedSurfaceIds.Clear();
+  mSharedSurfaceIds.clear();
 
   mAsyncImageManager->RemovePipeline(mPipelineId, wrEpoch);
   txn.RemovePipeline(mPipelineId);
 
   mApi->SendTransaction(txn);
 
-  for (std::unordered_set<uint64_t>::iterator iter = mActiveAnimations.begin(); iter != mActiveAnimations.end(); iter++) {
-    mAnimStorage->ClearById(*iter);
+  for (const auto& id : mActiveAnimations) {
+    mAnimStorage->ClearById(id);
   }
   mActiveAnimations.clear();
   std::queue<CompositorAnimationIdsForEpoch>().swap(mCompositorAnimationsToDelete); // clear queue
@@ -1766,6 +1870,7 @@ WebRenderBridgeParent::GetTextureFactoryIdentifier()
                                   XRE_GetProcessType(),
                                   mApi->GetMaxTextureSize(),
                                   mApi->GetUseANGLE(),
+                                  mApi->GetUseDComp(),
                                   false,
                                   false,
                                   false,

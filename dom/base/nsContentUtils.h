@@ -630,18 +630,6 @@ public:
    */
   static bool IsAbsoluteURL(const nsACString& aURL);
 
-  /**
-   * GetDocumentFromCaller gets its document by looking at the last called
-   * function and finding the document that the function itself relates to.
-   * For example, consider two windows A and B in the same origin. B has a
-   * function which does something that ends up needing the current document.
-   * If a script in window A were to call B's function, GetDocumentFromCaller
-   * would find that function (in B) and return B's document.
-   *
-   * @return The document or null if no JS Context.
-   */
-  static nsIDocument* GetDocumentFromCaller();
-
   // Check if a node is in the document prolog, i.e. before the document
   // element.
   static bool InProlog(nsINode *aNode);
@@ -1172,11 +1160,17 @@ public:
    */
   static bool DevToolsEnabled(JSContext* aCx);
 
+  static nsresult CalculateBufferSizeForImage(const uint32_t& aStride,
+                                            const mozilla::gfx::IntSize& aImageSize,
+                                            const mozilla::gfx::SurfaceFormat& aFormat,
+                                            size_t* aMaxBufferSize,
+                                            size_t* aUsedBufferSize);
+
+private:
   /**
    * Fill (with the parameters given) the localized string named |aKey| in
    * properties file |aFile|.
    */
-private:
   static nsresult FormatLocalizedString(PropertiesFile aFile,
                                         const char* aKey,
                                         const char16_t** aParams,
@@ -2361,14 +2355,6 @@ public:
     return sAnimationsAPICoreEnabled;
   }
 
-  /*
-   * Returns true if the DOM Animations Element.animate() API should be enabled.
-   */
-  static bool AnimationsAPIElementAnimateEnabled()
-  {
-    return sAnimationsAPIElementAnimateEnabled;
-  }
-
   /**
    * Returns true if the getBoxQuads API should be enabled.
    */
@@ -2970,6 +2956,19 @@ public:
                                             nsIURI* aURI);
 
   /*
+   * Returns true if this window/channel is a 3rd party context.
+   */
+  static bool IsThirdPartyWindowOrChannel(nsPIDOMWindowInner* aWindow,
+                                          nsIChannel* aChannel,
+                                          nsIURI* aURI);
+
+  /*
+   * Returns true if this window's channel has been marked as a tracking
+   * resource.
+   */
+  static bool IsTrackingResourceWindow(nsPIDOMWindowInner* aWindow);
+
+  /*
    * Serializes a HTML nsINode into its markup representation.
    */
   static bool SerializeNodeToMarkup(nsINode* aRoot,
@@ -3414,7 +3413,6 @@ private:
   static bool sSendPerformanceTimingNotifications;
   static bool sUseActivityCursor;
   static bool sAnimationsAPICoreEnabled;
-  static bool sAnimationsAPIElementAnimateEnabled;
   static bool sGetBoxQuadsEnabled;
   static bool sSkipCursorMoveForSameValueSet;
   static bool sRequestIdleCallbackEnabled;

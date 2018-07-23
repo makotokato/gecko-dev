@@ -12,7 +12,7 @@ ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
   if (!Services.prefs.getBoolPref("browser.startup.blankWindow", false))
     return;
 
-  let store = Cc["@mozilla.org/xul/xulstore;1"].getService(Ci.nsIXULStore);
+  let store = Services.xulStore;
   let getValue = attr =>
     store.getValue("chrome://browser/content/browser.xul", "main-window", attr);
   let width = getValue("width");
@@ -106,6 +106,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   FileSource: "resource://gre/modules/L10nRegistry.jsm",
   FormValidationHandler: "resource:///modules/FormValidationHandler.jsm",
   FxAccounts: "resource://gre/modules/FxAccounts.jsm",
+  HomePage: "resource:///modules/HomePage.jsm",
   HybridContentTelemetry: "resource://gre/modules/HybridContentTelemetry.jsm",
   Integration: "resource://gre/modules/Integration.jsm",
   L10nRegistry: "resource://gre/modules/L10nRegistry.jsm",
@@ -129,6 +130,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   ProcessHangMonitor: "resource:///modules/ProcessHangMonitor.jsm",
   ReaderParent: "resource:///modules/ReaderParent.jsm",
   RemotePrompt: "resource:///modules/RemotePrompt.jsm",
+  RemoteSettings: "resource://services-settings/remote-settings.js",
   SafeBrowsing: "resource://gre/modules/SafeBrowsing.jsm",
   Sanitizer: "resource:///modules/Sanitizer.jsm",
   SavantShieldStudy: "resource:///modules/SavantShieldStudy.jsm",
@@ -402,8 +404,7 @@ BrowserGlue.prototype = {
       newTabSetting = 3;
     }
 
-    const homePageURL = Services.prefs.getComplexValue("browser.startup.homepage",
-                                                       Ci.nsIPrefLocalizedString).data;
+    const homePageURL = HomePage.get();
     if (homePageURL === "about:home") {
       homePageSetting = 0;
     } else if (homePageURL === "about:blank") {
@@ -428,9 +429,6 @@ BrowserGlue.prototype = {
     switch (topic) {
       case "notifications-open-settings":
         this._openPreferences("privacy", { origin: "notifOpenSettings" });
-        break;
-      case "prefservice:after-app-defaults":
-        this._onAppDefaults();
         break;
       case "final-ui-startup":
         this._beforeUIStartup();
@@ -515,7 +513,6 @@ BrowserGlue.prototype = {
         } else if (data == "force-ui-migration") {
           this._migrateUI();
         } else if (data == "force-distribution-customization") {
-          this._distributionCustomizer.applyPrefDefaults();
           this._distributionCustomizer.applyCustomizations();
           // To apply distribution bookmarks use "places-init-complete".
         } else if (data == "force-places-init") {
@@ -621,7 +618,6 @@ BrowserGlue.prototype = {
   _init: function BG__init() {
     let os = Services.obs;
     os.addObserver(this, "notifications-open-settings");
-    os.addObserver(this, "prefservice:after-app-defaults");
     os.addObserver(this, "final-ui-startup");
     os.addObserver(this, "browser-delayed-startup-finished");
     os.addObserver(this, "sessionstore-windows-restored");
@@ -664,7 +660,6 @@ BrowserGlue.prototype = {
   _dispose: function BG__dispose() {
     let os = Services.obs;
     os.removeObserver(this, "notifications-open-settings");
-    os.removeObserver(this, "prefservice:after-app-defaults");
     os.removeObserver(this, "final-ui-startup");
     os.removeObserver(this, "sessionstore-windows-restored");
     os.removeObserver(this, "browser:purge-session-history");
@@ -708,12 +703,6 @@ BrowserGlue.prototype = {
     os.removeObserver(this, "shield-init-complete");
   },
 
-  _onAppDefaults: function BG__onAppDefaults() {
-    // apply distribution customizations (prefs)
-    // other customizations are applied in _beforeUIStartup()
-    this._distributionCustomizer.applyPrefDefaults();
-  },
-
   // runs on startup, before the first command line handler is invoked
   // (i.e. before the first window is opened)
   _beforeUIStartup: function BG__beforeUIStartup() {
@@ -724,7 +713,6 @@ BrowserGlue.prototype = {
     }
 
     // apply distribution customizations
-    // prefs are applied in _onAppDefaults()
     this._distributionCustomizer.applyCustomizations();
 
     // handle any UI migration
@@ -760,6 +748,8 @@ BrowserGlue.prototype = {
       popup_border: "#27272b",
       toolbar_field_text: "rgb(249, 249, 250)",
       toolbar_field_border: "rgba(249, 249, 250, 0.2)",
+      ntp_background: "#2A2A2E",
+      ntp_text: "rgb(249, 249, 250)",
       author: vendorShortName,
     }, {
       useInDarkMode: true
@@ -769,6 +759,9 @@ BrowserGlue.prototype = {
 
     // Initialize the default l10n resource sources for L10nRegistry.
     let locales = Services.locale.getPackagedLocales();
+    const greSource = new FileSource("toolkit", locales, "resource://gre/localization/{locale}/");
+    L10nRegistry.registerSource(greSource);
+
     const appSource = new FileSource("app", locales, "resource://app/localization/{locale}/");
     L10nRegistry.registerSource(appSource);
 
@@ -778,7 +771,6 @@ BrowserGlue.prototype = {
   _checkForOldBuildUpdates() {
     // check for update if our build is old
     if (AppConstants.MOZ_UPDATER &&
-        Services.prefs.getBoolPref("app.update.enabled") &&
         Services.prefs.getBoolPref("app.update.checkInstallTime")) {
 
       let buildID = Services.appinfo.appBuildID;
@@ -1318,6 +1310,10 @@ BrowserGlue.prototype = {
       // can check the log.
       this._gmpInstallManager.simpleCheckAndInstall().catch(() => {});
     });
+
+    Services.tm.idleDispatchToMainThread(() => {
+      RemoteSettings.init();
+    });
   },
 
   _createExtraDefaultProfile() {
@@ -1408,9 +1404,10 @@ BrowserGlue.prototype = {
 
     // warnAboutClosingTabs checks browser.tabs.warnOnClose and returns if it's
     // ok to close the window. It doesn't actually close the window.
+    let closingTabs = win.gBrowser.tabs.length - win.gBrowser._removingTabs.length;
     if (windowcount == 1) {
       aCancelQuit.data =
-        !win.gBrowser.warnAboutClosingTabs(win.gBrowser.closingTabsEnum.ALL);
+        !win.gBrowser.warnAboutClosingTabs(closingTabs, win.gBrowser.closingTabsEnum.ALL);
     } else {
       // More than 1 window. Compose our own message.
       let tabSubstring = gTabbrowserBundle.GetStringFromName("tabs.closeWarningMultipleWindowsTabSnippet");
@@ -1419,7 +1416,7 @@ BrowserGlue.prototype = {
       windowString = PluralForm.get(windowcount, windowString).replace(/#1/, windowcount);
       windowString = windowString.replace(/%(?:1$)?S/i, tabSubstring);
       aCancelQuit.data =
-        !win.gBrowser.warnAboutClosingTabs(win.gBrowser.closingTabsEnum.ALL, null, windowString);
+        !win.gBrowser.warnAboutClosingTabs(closingTabs, win.gBrowser.closingTabsEnum.ALL, null, windowString);
     }
   },
 
@@ -1795,7 +1792,7 @@ BrowserGlue.prototype = {
   _maybeToggleBookmarkToolbarVisibility() {
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul";
     const NUM_TOOLBAR_BOOKMARKS_TO_UNHIDE = 3;
-    let xulStore = Cc["@mozilla.org/xul/xulstore;1"].getService(Ci.nsIXULStore);
+    let xulStore = Services.xulStore;
 
     if (!xulStore.hasValue(BROWSER_DOCURL, "PersonalToolbar", "collapsed")) {
       // We consider the toolbar customized if it has more than NUM_TOOLBAR_BOOKMARKS_TO_UNHIDE
@@ -1842,7 +1839,7 @@ BrowserGlue.prototype = {
     if (currentUIVersion >= UI_VERSION)
       return;
 
-    let xulStore = Cc["@mozilla.org/xul/xulstore;1"].getService(Ci.nsIXULStore);
+    let xulStore = Services.xulStore;
 
     if (currentUIVersion < 36) {
       xulStore.removeValue("chrome://passwordmgr/content/passwordManager.xul",

@@ -94,6 +94,7 @@ UNIFIED_SOURCES += [
     'CryptoTask.cpp',
     'CSTrustDomain.cpp',
     'DataStorage.cpp',
+    'EnterpriseRoots.cpp',
     'LocalCertService.cpp',
     'nsCertOverrideService.cpp',
     'nsClientAuthRemember.cpp',
@@ -136,6 +137,11 @@ UNIFIED_SOURCES += [
     'SSLServerCertVerification.cpp',
     'TransportSecurityInfo.cpp',
 ]
+
+if CONFIG['OS_ARCH'] == 'Darwin':
+    OS_LIBS += [
+        '-framework Security'
+    ]
 
 IPDL_SOURCES += [
     'PPSMContentDownloader.ipdl',

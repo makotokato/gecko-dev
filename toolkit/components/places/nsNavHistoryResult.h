@@ -128,8 +128,7 @@ public:
 public:
   explicit nsNavHistoryResult(nsNavHistoryContainerResultNode* mRoot,
                               const RefPtr<nsNavHistoryQuery>& aQuery,
-                              const RefPtr<nsNavHistoryQueryOptions>& aOptions,
-                              bool aBatchInProgress);
+                              const RefPtr<nsNavHistoryQueryOptions>& aOptions);
 
   RefPtr<nsNavHistoryContainerResultNode> mRootNode;
 
@@ -178,7 +177,7 @@ public:
 
   void OnMobilePrefChanged();
 
-  static void OnMobilePrefChangedCallback(const char* prefName, void* closure);
+  static void OnMobilePrefChangedCallback(const char* prefName, nsNavHistoryResult* self);
 
 protected:
   virtual ~nsNavHistoryResult();

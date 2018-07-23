@@ -13,7 +13,7 @@ function handleRequest(aRequest, aResponse) {
     let hints = parseInt(getState("hints") || 0) + 1;
     setState("hints", hints.toString());
 
-    aResponse.setHeader("Cache-Control", "max-age=10000", false);
+    aResponse.setHeader("Set-Cookie", "foopy=1");
     aResponse.setHeader("Content-Type", "image/png", false);
     aResponse.write(IMAGE);
  }

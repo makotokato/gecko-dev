@@ -13,27 +13,20 @@ class nsIDocument;
 
 namespace mozilla {
 
-class AutoplayRequest;
+class AutoplayPermissionManager;
 
 namespace dom {
 
 class HTMLMediaElement;
 class AudioContext;
 
-enum class Authorization
-{
-  Allowed,
-  Blocked,
-  Prompt
-};
-
 /**
  * AutoplayPolicy is used to manage autoplay logic for all kinds of media,
  * including MediaElement, Web Audio and Web Speech.
  *
- * Autoplay could be disable by turn off the pref "media.autoplay.enabled".
- * Once user disable autoplay, media could only be played if one of following
- * conditions is true.
+ * Autoplay could be disable by setting the pref "media.autoplay.default"
+ * to anything but nsIAutoplay::Allowed. Once user disables autoplay, media
+ * could only be played if one of following conditions is true.
  * 1) Owner document is activated by user gestures
  *    We restrict user gestures to "mouse click", "keyboard press" and "touch".
  * 2) Muted media content or video without audio content.
@@ -43,14 +36,14 @@ class AutoplayPolicy
 {
 public:
   // Returns whether a given media element is allowed to play.
-  static Authorization IsAllowedToPlay(const HTMLMediaElement& aElement);
+  static uint32_t IsAllowedToPlay(const HTMLMediaElement& aElement);
 
   // Returns whether a given AudioContext is allowed to play.
   static bool IsAudioContextAllowedToPlay(NotNull<AudioContext*> aContext);
 
-  // Returns the AutoplayRequest that a given document must request on
+  // Returns the AutoplayPermissionManager that a given document must request on
   // for autoplay permission.
-  static already_AddRefed<AutoplayRequest> RequestFor(
+  static already_AddRefed<AutoplayPermissionManager> RequestFor(
     const nsIDocument& aDocument);
 };
 

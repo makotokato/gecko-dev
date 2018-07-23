@@ -70,7 +70,7 @@ function makeTest(id, expectedJSON, useReportOnlyPolicy, callback) {
   // set up a new CSP instance for each test.
   var csp = Cc["@mozilla.org/cspcontext;1"]
               .createInstance(Ci.nsIContentSecurityPolicy);
-  var policy = "default-src 'none'; " +
+  var policy = "default-src 'none' 'report-sample'; " +
                "report-uri " + REPORT_SERVER_URI +
                                ":" + REPORT_SERVER_PORT +
                                "/test" + id;
@@ -102,17 +102,15 @@ function run_test() {
                                ":" + REPORT_SERVER_PORT +
                                "/foo/self");
 
-  let content = Cc["@mozilla.org/supports-string;1"].
-                   createInstance(Ci.nsISupportsString);
-  content.data = "";
   // test that inline script violations cause a report.
-  makeTest(0, {"blocked-uri": ""}, false,
+  makeTest(0, {"blocked-uri": "inline"}, false,
       function(csp) {
         let inlineOK = true;
         inlineOK = csp.getAllowsInline(Ci.nsIContentPolicy.TYPE_SCRIPT,
                                        "", // aNonce
                                        false, // aParserCreated
-                                       content, // aContent
+                                       null, // aTriggeringElement
+                                       "", // aContentOfPseudoScript
                                        0, // aLineNumber
                                        0); // aColumnNumber
 
@@ -121,7 +119,7 @@ function run_test() {
       });
 
   // test that eval violations cause a report.
-  makeTest(1, {"blocked-uri": "",
+  makeTest(1, {"blocked-uri": "eval",
                // JSON script-sample is UTF8 encoded
                "script-sample" : "\xc2\xa3\xc2\xa5\xc2\xb5\xe5\x8c\x97\xf0\xa0\x9d\xb9",
                "line-number": 1,
@@ -138,6 +136,7 @@ function run_test() {
         if (oReportViolation.value) {
           // force the logging, since the getter doesn't.
           csp.logViolationDetails(Ci.nsIContentSecurityPolicy.VIOLATION_TYPE_EVAL,
+                                  null, // aTriggeringElement
                                   selfuri.asciiSpec,
                                   // sending UTF-16 script sample to make sure
                                   // csp report in JSON is not cut-off, please
@@ -148,7 +147,7 @@ function run_test() {
         }
       });
 
-  makeTest(2, {"blocked-uri": "http://blocked.test"}, false,
+  makeTest(2, {"blocked-uri": "http://blocked.test/foo.js"}, false,
       function(csp) {
         // shouldLoad creates and sends out the report here.
         csp.shouldLoad(Ci.nsIContentPolicy.TYPE_SCRIPT,
@@ -157,16 +156,14 @@ function run_test() {
       });
 
   // test that inline script violations cause a report in report-only policy
-  makeTest(3, {"blocked-uri": ""}, true,
+  makeTest(3, {"blocked-uri": "inline"}, true,
       function(csp) {
         let inlineOK = true;
-        let content = Cc["@mozilla.org/supports-string;1"].
-                         createInstance(Ci.nsISupportsString);
-        content.data = "";
         inlineOK = csp.getAllowsInline(Ci.nsIContentPolicy.TYPE_SCRIPT,
                                        "", // aNonce
                                        false, // aParserCreated
-                                       content, // aContent
+                                       null, // aTriggeringElement
+                                       "", // aContentOfPseudoScript
                                        0, // aLineNumber
                                        0); // aColumnNumber
 
@@ -175,7 +172,7 @@ function run_test() {
       });
 
   // test that eval violations cause a report in report-only policy
-  makeTest(4, {"blocked-uri": ""}, true,
+  makeTest(4, {"blocked-uri": "inline"}, true,
       function(csp) {
         let evalOK = true, oReportViolation = {'value': false};
         evalOK = csp.getAllowsEval(oReportViolation);
@@ -188,6 +185,7 @@ function run_test() {
         if (oReportViolation.value) {
           // force the logging, since the getter doesn't.
           csp.logViolationDetails(Ci.nsIContentSecurityPolicy.VIOLATION_TYPE_INLINE_SCRIPT,
+                                  null, // aTriggeringElement
                                   selfuri.asciiSpec,
                                   "script sample",
                                   4, // line number
@@ -228,7 +226,7 @@ function run_test() {
       });
 
   // test scheme of ftp:
-  makeTest(8, {"blocked-uri": "ftp://blocked.test"}, false,
+  makeTest(8, {"blocked-uri": "ftp://blocked.test/profile.png"}, false,
     function(csp) {
       // shouldLoad creates and sends out the report here.
       csp.shouldLoad(Ci.nsIContentPolicy.TYPE_SCRIPT,

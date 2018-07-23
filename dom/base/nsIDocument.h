@@ -180,6 +180,7 @@ class ServiceWorkerDescriptor;
 class StyleSheetList;
 class SVGDocument;
 class SVGSVGElement;
+class SVGUseElement;
 class Touch;
 class TouchList;
 class TreeWalker;
@@ -993,11 +994,27 @@ public:
   }
 
   /**
+   * Get tracking cookies blocked flag for this document.
+   */
+  bool GetHasTrackingCookiesBlocked()
+  {
+    return mHasTrackingCookiesBlocked;
+  }
+
+  /**
    * Set the tracking content blocked flag for this document.
    */
   void SetHasTrackingContentBlocked(bool aHasTrackingContentBlocked)
   {
     mHasTrackingContentBlocked = aHasTrackingContentBlocked;
+  }
+
+  /**
+   * Set the tracking cookies blocked flag for this document.
+   */
+  void SetHasTrackingCookiesBlocked(bool aHasTrackingCookiesBlocked)
+  {
+    mHasTrackingCookiesBlocked = aHasTrackingCookiesBlocked;
   }
 
   /**
@@ -1892,6 +1909,15 @@ public:
    */
   void FlushExternalResources(mozilla::FlushType aType);
 
+  // Triggers an update of <svg:use> element shadow trees.
+  void UpdateSVGUseElementShadowTrees()
+  {
+    if (mSVGUseElementsNeedingShadowTreeUpdate.IsEmpty()) {
+      return;
+    }
+    DoUpdateSVGUseElementShadowTrees();
+  }
+
   nsBindingManager* BindingManager() const
   {
     return mNodeInfoManager->GetBindingManager();
@@ -2783,6 +2809,20 @@ public:
   virtual DocumentTheme GetDocumentLWTheme() { return Doc_Theme_None; }
   virtual DocumentTheme ThreadSafeGetDocumentLWTheme() const { return Doc_Theme_None; }
 
+  // Whether we're a media document or not.
+  enum class MediaDocumentKind
+  {
+    NotMedia,
+    Video,
+    Image,
+    Plugin,
+  };
+
+  virtual enum MediaDocumentKind MediaDocumentKind() const
+  {
+    return MediaDocumentKind::NotMedia;
+  }
+
   /**
    * Returns the document state.
    * Document state bits have the form NS_DOCUMENT_STATE_* and are declared in
@@ -2893,17 +2933,26 @@ public:
     mResponsiveContent.RemoveEntry(aContent);
   }
 
-  void AddComposedDocShadowRoot(mozilla::dom::ShadowRoot& aShadowRoot)
+  void ScheduleSVGUseElementShadowTreeUpdate(mozilla::dom::SVGUseElement&);
+  void UnscheduleSVGUseElementShadowTreeUpdate(mozilla::dom::SVGUseElement& aElement)
   {
-    MOZ_ASSERT(IsShadowDOMEnabled());
-    mComposedShadowRoots.PutEntry(&aShadowRoot);
+    mSVGUseElementsNeedingShadowTreeUpdate.RemoveEntry(&aElement);
+  }
+
+  bool SVGUseElementNeedsShadowTreeUpdate(mozilla::dom::SVGUseElement& aElement) const
+  {
+    return mSVGUseElementsNeedingShadowTreeUpdate.GetEntry(&aElement);
   }
 
   using ShadowRootSet = nsTHashtable<nsPtrHashKey<mozilla::dom::ShadowRoot>>;
 
+  void AddComposedDocShadowRoot(mozilla::dom::ShadowRoot& aShadowRoot)
+  {
+    mComposedShadowRoots.PutEntry(&aShadowRoot);
+  }
+
   void RemoveComposedDocShadowRoot(mozilla::dom::ShadowRoot& aShadowRoot)
   {
-    MOZ_ASSERT(IsShadowDOMEnabled());
     mComposedShadowRoots.RemoveEntry(&aShadowRoot);
   }
 
@@ -3069,7 +3118,8 @@ public:
     eConnected,
     eDisconnected,
     eAdopted,
-    eAttributeChanged
+    eAttributeChanged,
+    eGetCustomInterface
   };
 
   nsIDocument* GetTopLevelContentDocument();
@@ -3526,6 +3576,8 @@ public:
   void ReportShadowDOMUsage();
 
 protected:
+  void DoUpdateSVGUseElementShadowTrees();
+
   already_AddRefed<nsIPrincipal> MaybeDowngradePrincipal(nsIPrincipal* aPrincipal);
 
   void EnsureOnloadBlocker();
@@ -3682,6 +3734,8 @@ protected:
   // Return the same type parent docuement if exists, or return null.
   nsIDocument* GetSameTypeParentDocument();
 
+  void MaybeAllowStorageForOpener();
+
   // Helpers for GetElementsByName.
   static bool MatchNameAttribute(mozilla::dom::Element* aElement,
                                  int32_t aNamespaceID,
@@ -3738,6 +3792,13 @@ protected:
   //
   // See ShadowRoot::SetIsComposedDocParticipant.
   ShadowRootSet mComposedShadowRoots;
+
+  using SVGUseElementSet =
+    nsTHashtable<nsPtrHashKey<mozilla::dom::SVGUseElement>>;
+
+  // The set of <svg:use> elements that need a shadow tree reclone because the
+  // tree they map to has changed.
+  SVGUseElementSet mSVGUseElementsNeedingShadowTreeUpdate;
 
   // The set of all object, embed, video/audio elements or
   // nsIObjectLoadingContent or nsIDocumentActivity for which this is the owner
@@ -3902,6 +3963,9 @@ protected:
 
   // True if a document has blocked Tracking Content
   bool mHasTrackingContentBlocked : 1;
+
+  // True if a document has blocked Tracking Cookies
+  bool mHasTrackingCookiesBlocked : 1;
 
   // True if a document has loaded Tracking Content
   bool mHasTrackingContentLoaded : 1;
@@ -4580,8 +4644,8 @@ nsINode::OwnerDocAsNode() const
 template<typename T>
 inline bool ShouldUseXBLScope(const T* aNode)
 {
-  return aNode->IsInAnonymousSubtree() &&
-         !aNode->IsAnonymousContentInSVGUseSubtree();
+  // TODO(emilio): Is the <svg:use> shadow tree check needed now?
+  return aNode->IsInAnonymousSubtree() && !aNode->IsInSVGUseShadowTree();
 }
 
 inline mozilla::dom::ParentObject

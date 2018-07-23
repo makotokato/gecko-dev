@@ -78,6 +78,8 @@ dnl ========================================================
 MOZ_USE_PTHREADS=
 _PTHREAD_LDFLAGS=""
 
+LDFLAGS="$LDFLAGS $LINKER_LDFLAGS"
+
 if test "$COMPILE_ENVIRONMENT"; then
     MOZ_ANDROID_NDK
 fi # COMPILE_ENVIRONMENT
@@ -531,8 +533,12 @@ if test "$GNU_CC"; then
     MKCSHLIB='$(CC) $(COMPUTED_C_LDFLAGS) $(PGO_CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-h,$(DSO_SONAME) -o $@'
     WARNINGS_AS_ERRORS='-Werror'
     DSO_CFLAGS=''
-    DSO_PIC_CFLAGS='-fPIC'
-    ASFLAGS="$ASFLAGS -fPIC"
+
+    if test "$OS_ARCH" != "WINNT" -o -z "$CLANG_CC"; then
+        DSO_PIC_CFLAGS='-fPIC'
+        ASFLAGS="$ASFLAGS -fPIC"
+    fi
+
     AC_MSG_CHECKING([for --noexecstack option to as])
     _SAVE_CFLAGS=$CFLAGS
     CFLAGS="$CFLAGS -Wa,--noexecstack"
@@ -853,8 +859,6 @@ case "$target" in
         MKSHLIB='$(CXX) $(DSO_LDOPTS) -o $@'
         MKCSHLIB='$(CC) $(DSO_LDOPTS) -o $@'
         RC='$(WINDRES)'
-        # Use static libgcc and libstdc++
-        LDFLAGS="$LDFLAGS -static"
         # Use temp file for windres (bug 213281)
         RCFLAGS='-O coff --use-temp-file'
         # mingw doesn't require kernel32, user32, and advapi32 explicitly
@@ -866,15 +870,39 @@ case "$target" in
         WIN32_CONSOLE_EXE_LDFLAGS=-mconsole
         WIN32_GUI_EXE_LDFLAGS=-mwindows
 
-        # GCC/binutils can't link to a function if we try to include dllexport function
-        # in the same library as dllimport caller. To work around it, we build NSPR
-        # and NSS with -mnop-fun-dllimport flag. The drawback of this solution is that
-        # function thunks need to be generated for cross-DLL calls.
-        MOZ_FOLD_LIBS_FLAGS="-mnop-fun-dllimport"
+        if test -z "$CLANG_CC"; then
+            # Use static libgcc and libstdc++
+            LDFLAGS="$LDFLAGS -static"
+
+            # GCC/binutils can't link to a function if we try to include dllexport function
+            # in the same library as dllimport caller. To work around it, we build NSPR
+            # and NSS with -mnop-fun-dllimport flag. The drawback of this solution is that
+            # function thunks need to be generated for cross-DLL calls.
+            MOZ_FOLD_LIBS_FLAGS="-mnop-fun-dllimport"
+        else
+            # Silence problematic clang warnings
+            CXXFLAGS="$CXXFLAGS -Wno-incompatible-ms-struct"
+        fi
     else
         TARGET_COMPILER_ABI=msvc
+<<<<<<< HEAD
         AR='lib'
         AR_FLAGS='-NOLOGO -OUT:$@'
+=======
+        if test "$AS_BIN"; then
+            AS="$(basename "$AS_BIN")"
+        fi
+        case "$LINKER" in
+        *lld*)
+            AR='llvm-lib'
+            AR_FLAGS='-llvmlibthin -out:$@'
+            ;;
+        *)
+            AR='lib'
+            AR_FLAGS='-NOLOGO -OUT:$@'
+            ;;
+        esac
+>>>>>>> master
         AR_EXTRACT=
         RANLIB='echo not_ranlib'
         STRIP='echo not_strip'
@@ -1048,7 +1076,7 @@ case "$target" in
         ;;
     esac
 
-    if test -n "$GNU_CC"; then
+    if test -n "$GNU_CC" -a -z "$CLANG_CC"; then
         CFLAGS="$CFLAGS -fno-keep-inline-dllexport"
         CXXFLAGS="$CXXFLAGS -fno-keep-inline-dllexport"
     fi
@@ -1763,7 +1791,7 @@ MOZ_ARG_WITH_BOOL(system-nss,
     _USE_SYSTEM_NSS=1 )
 
 if test -n "$_USE_SYSTEM_NSS"; then
-    AM_PATH_NSS(3.38, [MOZ_SYSTEM_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
+    AM_PATH_NSS(3.39, [MOZ_SYSTEM_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
 fi
 
 if test -z "$MOZ_SYSTEM_NSS"; then
@@ -2038,7 +2066,7 @@ dnl ========================================================
 
 case "$MOZ_BUILD_APP" in
 mobile/android)
-    MOZ_ANDROID_SDK(26, 23, 26.0.2)
+    MOZ_ANDROID_SDK(26, 26, 26.0.2)
     ;;
 esac
 

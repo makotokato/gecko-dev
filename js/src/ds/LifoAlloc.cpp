@@ -144,16 +144,34 @@ BumpChunk::removeMProtectHandler() const
 } // namespace js
 
 void
+LifoAlloc::reset(size_t defaultChunkSize)
+{
+    MOZ_ASSERT(mozilla::IsPowerOfTwo(defaultChunkSize));
+
+    while (!chunks_.empty()) {
+        chunks_.begin()->setRWUntil(Loc::End);
+        chunks_.popFirst();
+    }
+    while (!unused_.empty()) {
+        unused_.begin()->setRWUntil(Loc::End);
+        unused_.popFirst();
+    }
+    defaultChunkSize_ = defaultChunkSize;
+    markCount = 0;
+    curSize_ = 0;
+}
+
+void
 LifoAlloc::freeAll()
 {
     while (!chunks_.empty()) {
         chunks_.begin()->setRWUntil(Loc::End);
-        BumpChunk bc = chunks_.popFirst();
+        UniqueBumpChunk bc = chunks_.popFirst();
         decrementCurSize(bc->computedSizeOfIncludingThis());
     }
     while (!unused_.empty()) {
         unused_.begin()->setRWUntil(Loc::End);
-        BumpChunk bc = unused_.popFirst();
+        UniqueBumpChunk bc = unused_.popFirst();
         decrementCurSize(bc->computedSizeOfIncludingThis());
     }
 
@@ -162,14 +180,14 @@ LifoAlloc::freeAll()
     MOZ_ASSERT(curSize_ == 0);
 }
 
-LifoAlloc::BumpChunk
+LifoAlloc::UniqueBumpChunk
 LifoAlloc::newChunkWithCapacity(size_t n)
 {
     MOZ_ASSERT(fallibleScope_, "[OOM] Cannot allocate a new chunk in an infallible scope.");
 
     // Compute the size which should be requested in order to be able to fit |n|
     // bytes in the newly allocated chunk, or default the |defaultChunkSize_|.
-    size_t defaultChunkFreeSpace = defaultChunkSize_ - detail::BumpChunk::reservedSpace;
+    size_t defaultChunkFreeSpace = defaultChunkSize_ - detail::BumpChunkReservedSpace;
     size_t chunkSize;
     if (n > defaultChunkFreeSpace) {
         MOZ_ASSERT(defaultChunkFreeSpace < defaultChunkSize_);
@@ -190,10 +208,18 @@ LifoAlloc::newChunkWithCapacity(size_t n)
     bool protect = false;
 #ifdef LIFO_CHUNK_PROTECT
     protect = protect_;
+    // In a few cases where we keep adding memory protection, we might OOM while
+    // doing a mprotect / VirtualProtect due to the consumption of space in the
+    // page table reserved by the system. This error appears as an OOM on Linux,
+    // as an Invalid parameters on Windows and as a crash on OS/X. This code caps
+    // the amount of memory protected in order to limit occurences of this issue.
+    const size_t MaxPeakSize = 32 * 1024 * 1024;
+    if (protect && MaxPeakSize <= this->peakSize_)
+        protect = false;
 #endif
 
     // Create a new BumpChunk, and allocate space for it.
-    BumpChunk result = detail::BumpChunk::newWithCapacity(chunkSize, protect);
+    UniqueBumpChunk result = detail::BumpChunk::newWithCapacity(chunkSize, protect);
     if (!result)
         return nullptr;
     MOZ_ASSERT(result->computedSizeOfIncludingThis() == chunkSize);
@@ -206,14 +232,17 @@ LifoAlloc::getOrCreateChunk(size_t n)
     // This function is adding a new BumpChunk in which all upcoming allocation
     // would be made. Thus, we protect against out-of-bounds the last chunk in
     // which we did our previous allocations.
-    if (!chunks_.empty())
-        chunks_.last()->setRWUntil(Loc::Reserved);
+    auto protectLast = [&]() {
+        if (!chunks_.empty())
+            chunks_.last()->setRWUntil(Loc::Reserved);
+    };
 
     // Look for existing unused BumpChunks to satisfy the request, and pick the
     // first one which is large enough, and move it into the list of used
     // chunks.
     if (!unused_.empty()) {
         if (unused_.begin()->canAlloc(n)) {
+            protectLast();
             chunks_.append(unused_.popFirst());
             chunks_.last()->setRWUntil(Loc::End);
             return true;
@@ -225,6 +254,7 @@ LifoAlloc::getOrCreateChunk(size_t n)
             MOZ_ASSERT(elem->empty());
             if (elem->canAlloc(n)) {
                 BumpChunkList temp = unused_.splitAfter(i.get());
+                protectLast();
                 chunks_.append(temp.popFirst());
                 unused_.appendAll(std::move(temp));
                 chunks_.last()->setRWUntil(Loc::End);
@@ -234,13 +264,14 @@ LifoAlloc::getOrCreateChunk(size_t n)
     }
 
     // Allocate a new BumpChunk with enough space for the next allocation.
-    BumpChunk newChunk = newChunkWithCapacity(n);
+    UniqueBumpChunk newChunk = newChunkWithCapacity(n);
     if (!newChunk)
         return false;
     size_t size = newChunk->computedSizeOfIncludingThis();
     // The last chunk in which allocations are performed should be protected
     // with setRWUntil(Loc::End), but this is not necessary here because any new
     // allocation should be protected as RW already.
+    protectLast();
     chunks_.append(std::move(newChunk));
     incrementCurSize(size);
     return true;

@@ -293,7 +293,9 @@ class GCRuntime
     void onOutOfMallocMemory(const AutoLockGC& lock);
 
 #ifdef JS_GC_ZEAL
-    const void* addressOfZealModeBits() { return &zealModeBits; }
+    const uint32_t* addressOfZealModeBits() {
+        return &zealModeBits.refNoCheck();
+    }
     void getZealBits(uint32_t* zealBits, uint32_t* frequency, uint32_t* nextScheduled);
     void setZeal(uint8_t zeal, uint32_t frequency);
     bool parseAndSetZeal(const char* str);
@@ -503,6 +505,8 @@ class GCRuntime
     JSString* tryNewNurseryString(JSContext* cx, size_t thingSize, AllocKind kind);
     static TenuredCell* refillFreeListInGC(Zone* zone, AllocKind thingKind);
 
+    void setParallelAtomsAllocEnabled(bool enabled);
+
     void bufferGrayRoots();
 
     /*
@@ -532,9 +536,6 @@ class GCRuntime
     Arena* allocateArena(Chunk* chunk, Zone* zone, AllocKind kind,
                          ShouldCheckThresholds checkThresholds, const AutoLockGC& lock);
 
-
-    void arenaAllocatedDuringGC(JS::Zone* zone, Arena* arena);
-
     // Allocator internals
     MOZ_MUST_USE bool gcIfNeededAtAllocation(JSContext* cx);
     template <typename T>
@@ -554,7 +555,7 @@ class GCRuntime
 
     friend class BackgroundAllocTask;
     bool wantBackgroundAllocation(const AutoLockGC& lock) const;
-    void startBackgroundAllocTaskIfIdle();
+    bool startBackgroundAllocTaskIfIdle();
 
     void requestMajorGC(JS::gcreason::Reason reason);
     SliceBudget defaultBudget(JS::gcreason::Reason reason, int64_t millis);
@@ -712,8 +713,7 @@ class GCRuntime
     GCSchedulingTunables tunables;
     GCSchedulingState schedulingState;
 
-    // State used for managing atom mark bitmaps in each zone. Protected by the
-    // exclusive access lock.
+    // State used for managing atom mark bitmaps in each zone.
     AtomMarkingRuntime atomMarking;
 
   private:
@@ -739,12 +739,15 @@ class GCRuntime
     MainThreadData<RootedValueMap> rootsHash;
 
     // An incrementing id used to assign unique ids to cells that require one.
-    mozilla::Atomic<uint64_t, mozilla::ReleaseAcquire> nextCellUniqueId_;
+    mozilla::Atomic<uint64_t,
+                    mozilla::ReleaseAcquire,
+                    mozilla::recordreplay::Behavior::DontPreserve> nextCellUniqueId_;
 
     /*
      * Number of the committed arenas in all GC chunks including empty chunks.
      */
-    mozilla::Atomic<uint32_t, mozilla::ReleaseAcquire> numArenasFreeCommitted;
+    mozilla::Atomic<uint32_t, mozilla::ReleaseAcquire,
+                    mozilla::recordreplay::Behavior::DontPreserve> numArenasFreeCommitted;
     MainThreadData<VerifyPreTracer*> verifyPreData;
 
   private:
@@ -758,7 +761,9 @@ class GCRuntime
      */
     MainThreadData<JSGCMode> mode;
 
-    mozilla::Atomic<size_t, mozilla::ReleaseAcquire> numActiveZoneIters;
+    mozilla::Atomic<size_t,
+                    mozilla::ReleaseAcquire,
+                    mozilla::recordreplay::Behavior::DontPreserve> numActiveZoneIters;
 
     /* During shutdown, the GC needs to clean up every possible object. */
     MainThreadData<bool> cleanUpEverything;
@@ -792,7 +797,9 @@ class GCRuntime
      */
     UnprotectedData<bool> grayBitsValid;
 
-    mozilla::Atomic<JS::gcreason::Reason, mozilla::Relaxed> majorGCTriggerReason;
+    mozilla::Atomic<JS::gcreason::Reason,
+                    mozilla::Relaxed,
+                    mozilla::recordreplay::Behavior::DontPreserve> majorGCTriggerReason;
 
   private:
     /* Perform full GC if rt->keepAtoms() becomes false. */
@@ -871,7 +878,7 @@ class GCRuntime
     MainThreadOrGCTaskData<JS::Zone*> currentSweepGroup;
     MainThreadData<UniquePtr<SweepAction<GCRuntime*, FreeOp*, SliceBudget&>>> sweepActions;
     MainThreadOrGCTaskData<JS::Zone*> sweepZone;
-    MainThreadData<mozilla::Maybe<AtomSet::Enum>> maybeAtomsToSweep;
+    MainThreadData<mozilla::Maybe<AtomsTable::SweepIterator>> maybeAtomsToSweep;
     MainThreadOrGCTaskData<JS::detail::WeakCacheBase*> sweepCache;
     MainThreadData<bool> abortSweepAfterCurrentGroup;
 
@@ -1007,7 +1014,7 @@ class GCRuntime
     // after minor GC.
     MainThreadData<LifoAlloc> blocksToFreeAfterMinorGC;
 
-    const void* addressOfNurseryPosition() {
+    void* addressOfNurseryPosition() {
         return nursery_.refNoCheck().addressOfPosition();
     }
     const void* addressOfNurseryCurrentEnd() {

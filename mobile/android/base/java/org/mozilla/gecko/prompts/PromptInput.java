@@ -9,9 +9,12 @@ import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
 
+import org.mozilla.gecko.AppConstants;
 import org.mozilla.gecko.util.GeckoBundle;
 import org.mozilla.gecko.widget.AllCapsTextView;
+import org.mozilla.gecko.widget.FocusableDatePicker;
 import org.mozilla.gecko.widget.DateTimePicker;
+import org.mozilla.gecko.widget.FocusableTimePicker;
 
 import android.content.Context;
 import android.content.res.Configuration;
@@ -21,7 +24,9 @@ import android.text.InputType;
 import android.text.TextUtils;
 import android.text.format.DateFormat;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.ArrayAdapter;
@@ -177,7 +182,8 @@ public abstract class PromptInput {
         @Override
         public View getView(Context context) throws UnsupportedOperationException {
             if (mType.equals("date")) {
-                DatePicker input = new DatePicker(context);
+                // FocusableDatePicker allow us to have priority in responding to scroll events.
+                DatePicker input = new FocusableDatePicker(context);
                 try {
                     if (!TextUtils.isEmpty(mValue)) {
                         GregorianCalendar calendar = new GregorianCalendar();
@@ -189,13 +195,24 @@ public abstract class PromptInput {
                 } catch (Exception e) {
                     Log.e(LOGTAG, "error parsing format string: " + e);
                 }
+
+                // The Material CalendarView is only available on Android >= API 21
+                // Prior to this, using DatePicker with CalendarUI would cause issues
+                // such as in Bug 1460585 and Bug 1462299
+                // Because of this, on Android versions earlier than API 21 we'll force use the SpinnerUI
+                if (AppConstants.Versions.preLollipop) {
+                    input.setSpinnersShown(true);
+                    input.setCalendarViewShown(false);
+                }
+
                 mView = (View)input;
             } else if (mType.equals("week")) {
                 DateTimePicker input = new DateTimePicker(context, "yyyy-'W'ww", mValue,
                                                           DateTimePicker.PickersState.WEEK, mMinValue, mMaxValue);
                 mView = (View)input;
             } else if (mType.equals("time")) {
-                TimePicker input = new TimePicker(context);
+                // FocusableDatePicker allow us to have priority in responding to scroll events.
+                TimePicker input = new FocusableTimePicker(context);
                 input.setIs24HourView(DateFormat.is24HourFormat(context));
 
                 GregorianCalendar calendar = new GregorianCalendar();
@@ -217,6 +234,13 @@ public abstract class PromptInput {
                                                           DateTimePicker.PickersState.MONTH, mMinValue, mMaxValue);
                 mView = (View)input;
             }
+
+            // Make sure the widgets will not be chopped on smaller screens (Bug 1412517)
+            LinearLayout.LayoutParams parentParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            parentParams.gravity = Gravity.CENTER;
+            mView.setLayoutParams(parentParams);
+
             return mView;
         }
 

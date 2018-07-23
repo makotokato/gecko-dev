@@ -29,6 +29,11 @@ namespace mozilla {
 namespace dom {
 namespace ipc {
 
+using mozilla::ipc::AutoIPCStream;
+using mozilla::ipc::IPCStream;
+using mozilla::ipc::PBackgroundChild;
+using mozilla::ipc::PBackgroundParent;
+
 StructuredCloneData::StructuredCloneData()
   : StructuredCloneData(StructuredCloneHolder::TransferringSupported)
 {}
@@ -101,7 +106,7 @@ StructuredCloneData::Read(JSContext* aCx,
 {
   MOZ_ASSERT(mInitialized);
 
-  nsIGlobalObject *global = xpc::NativeGlobal(JS::CurrentGlobalOrNull(aCx));
+  nsIGlobalObject* global = xpc::CurrentNativeGlobal(aCx);
   MOZ_ASSERT(global);
 
   ReadFromBuffer(global, aCx, Data(), aValue, aRv);

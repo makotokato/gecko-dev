@@ -191,13 +191,11 @@ Gecko_GetAssignedNodes(RawGeckoElementBorrowed aElement)
 }
 
 void
-Gecko_ComputedStyle_Init(
-    mozilla::ComputedStyle* aStyle,
-    const mozilla::ComputedStyle* aParentContext,
-    RawGeckoPresContextBorrowed aPresContext,
-    const ServoComputedData* aValues,
-    mozilla::CSSPseudoElementType aPseudoType,
-    nsAtom* aPseudoTag)
+Gecko_ComputedStyle_Init(mozilla::ComputedStyle* aStyle,
+                         RawGeckoPresContextBorrowed aPresContext,
+                         const ServoComputedData* aValues,
+                         mozilla::CSSPseudoElementType aPseudoType,
+                         nsAtom* aPseudoTag)
 {
   auto* presContext = const_cast<nsPresContext*>(aPresContext);
   new (KnownNotNull, aStyle) mozilla::ComputedStyle(
@@ -1425,27 +1423,6 @@ Gecko_CopyAlternateValuesFrom(nsFont* aDest, const nsFont* aSrc)
 }
 
 void
-Gecko_SetImageOrientation(nsStyleVisibility* aVisibility,
-                          uint8_t aOrientation, bool aFlip)
-{
-  aVisibility->mImageOrientation =
-    nsStyleImageOrientation::CreateAsOrientationAndFlip(aOrientation, aFlip);
-}
-
-void
-Gecko_SetImageOrientationAsFromImage(nsStyleVisibility* aVisibility)
-{
-  aVisibility->mImageOrientation = nsStyleImageOrientation::CreateAsFromImage();
-}
-
-void
-Gecko_CopyImageOrientationFrom(nsStyleVisibility* aDst,
-                               const nsStyleVisibility* aSrc)
-{
-  aDst->mImageOrientation = aSrc->mImageOrientation;
-}
-
-void
 Gecko_SetCounterStyleToName(CounterStylePtr* aPtr, nsAtom* aName,
                             RawGeckoPresContextBorrowed aPresContext)
 {
@@ -1660,7 +1637,7 @@ Gecko_CreateGradient(uint8_t aShape,
 
   nsStyleGradientStop dummyStop = {
     nsStyleCoord(eStyleUnit_None),
-    StyleComplexColor::FromColor(NS_RGB(0, 0, 0)),
+    StyleComplexColor::Black(),
     0
   };
 
@@ -1999,7 +1976,9 @@ Gecko_AppendPropertyValuePair(nsTArray<PropertyValuePair>* aProperties,
                               nsCSSPropertyID aProperty)
 {
   MOZ_ASSERT(aProperties);
-  return aProperties->AppendElement(PropertyValuePair {aProperty});
+  MOZ_ASSERT(aProperty == eCSSPropertyExtra_variable ||
+             !nsCSSProps::PropHasFlags(aProperty, CSSPropFlags::IsLogical));
+  return aProperties->AppendElement(PropertyValuePair { aProperty });
 }
 
 void
@@ -2775,7 +2754,7 @@ Gecko_UnregisterProfilerThread()
 bool
 Gecko_DocumentRule_UseForPresentation(RawGeckoPresContextBorrowed aPresContext,
                                       const nsACString* aPattern,
-                                      css::URLMatchingFunction aURLMatchingFunction)
+                                      css::DocumentMatchingFunction aMatchingFunction)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -2789,7 +2768,7 @@ Gecko_DocumentRule_UseForPresentation(RawGeckoPresContextBorrowed aPresContext,
   }
 
   return CSSMozDocumentRule::Match(doc, docURI, docURISpec, *aPattern,
-                                   aURLMatchingFunction);
+                                   aMatchingFunction);
 }
 
 void

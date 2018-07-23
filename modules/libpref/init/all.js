@@ -563,12 +563,20 @@ pref("media.recorder.audio_node.enabled", false);
 // to keep up under load. Useful for tests but beware of memory consumption!
 pref("media.recorder.video.frame_drops", true);
 
-// Whether to autostart a media element with an |autoplay| attribute
-pref("media.autoplay.enabled", true);
+// Whether to autostart a media element with an |autoplay| attribute.
+// ALLOWED=0, BLOCKED=1, PROMPT=2, defined in dom/media/Autoplay.idl
+pref("media.autoplay.default", 0);
 
-// If "media.autoplay.enabled" is false, and this pref is true, then audible media
-// would only be allowed to autoplay after website has been activated by specific
-// user gestures, but the non-audible media won't be restricted.
+// By default, don't block WebAudio from playing automatically.
+pref("media.autoplay.block-webaudio", false);
+
+// By default, don't block muted media from playing automatically.
+pref("media.autoplay.allow-muted", true);
+
+// If "media.autoplay.default" is not ALLOWED, and this pref is true,
+// then audible media would only be allowed to autoplay after website has
+// been activated by specific user gestures, but non-audible
+// media won't be restricted.
 #ifdef NIGHTLY_BUILD
 pref("media.autoplay.enabled.user-gestures-needed", false);
 #endif
@@ -599,6 +607,10 @@ pref("media.cubeb.sandbox", false);
 #endif
 
 pref("media.webaudio.audiocontextoptions-samplerate.enabled", true);
+
+// setSinkId expected to be unconditionally enabled in 63. Till then the
+// implementation will remain hidden behind this pref (Bug 1152401, Bug 934425).
+pref("media.setsinkid.enabled", false);
 
 // Weather we allow AMD switchable graphics
 pref("layers.amd-switchable-gfx.enabled", true);
@@ -871,7 +883,6 @@ pref("gfx.compositor.glcontext.opaque", false);
 #endif
 
 pref("gfx.webrender.highlight-painted-layers", false);
-pref("gfx.webrender.async-scene-build", true);
 pref("gfx.webrender.blob-images", true);
 pref("gfx.webrender.blob.invalidation", true);
 
@@ -888,6 +899,8 @@ pref("gfx.webrender.debug.compact-profiler", false);
 pref("gfx.webrender.debug.echo-driver-messages", false);
 pref("gfx.webrender.debug.new-frame-indicator", false);
 pref("gfx.webrender.debug.new-scene-indicator", false);
+pref("gfx.webrender.dl.dump-parent", false);
+pref("gfx.webrender.dl.dump-content", false);
 
 pref("accessibility.browsewithcaret", false);
 pref("accessibility.warn_on_browsewithcaret", true);
@@ -2145,7 +2158,13 @@ pref("network.http.throttle.enable", false);
 #else
 pref("network.http.throttle.enable", true);
 #endif
+
+// Make HTTP throttling v2 algorithm Nightly-only due to bug 1462906
+#ifdef NIGHTLY_BUILD
 pref("network.http.throttle.version", 2);
+#else
+pref("network.http.throttle.version", 1);
+#endif
 
 // V1 prefs
 pref("network.http.throttle.suspend-for", 900);
@@ -2229,6 +2248,7 @@ pref("network.proxy.autoconfig_url.include_path", false);
 // until we reach interval_max or the PAC file is successfully loaded).
 pref("network.proxy.autoconfig_retry_interval_min", 5);    // 5 seconds
 pref("network.proxy.autoconfig_retry_interval_max", 300);  // 5 minutes
+pref("network.proxy.enable_wpad_over_dhcp", true);
 
 // Use the HSTS preload list by default
 pref("network.stricttransportsecurity.preloadlist", true);
@@ -2510,19 +2530,9 @@ pref("security.directory",              "");
 pref("security.dialog_enable_delay", 1000);
 pref("security.notification_enable_delay", 500);
 
-pref("security.csp.enable", true);
-pref("security.csp.experimentalEnabled", false);
-pref("security.csp.enableStrictDynamic", true);
-
 #if defined(DEBUG) && !defined(ANDROID)
 // about:welcome has been added until Bug 1448359 is fixed at which time home, newtab, and welcome will all be removed.
 pref("csp.content_privileged_about_uris_without_csp", "blank,home,newtab,printpreview,srcdoc,welcome");
-#endif
-
-#ifdef NIGHTLY_BUILD
-pref("security.csp.enable_violation_events", true);
-#else
-pref("security.csp.enable_violation_events", false);
 #endif
 
 // Default Content Security Policy to apply to signed contents.
@@ -2562,7 +2572,8 @@ pref("security.cert_pinning.process_headers_from_non_builtin_roots", false);
 // their protocol with the inner URI of the view-source URI
 pref("security.view-source.reachable-from-inner-protocol", false);
 
-// Services security settings
+// Remote settings preferences
+pref("services.settings.poll_interval", 86400); // 24H
 pref("services.settings.server", "https://firefox.settings.services.mozilla.com/v1");
 pref("services.settings.changes.path", "/buckets/monitor/collections/changes/records");
 pref("services.settings.default_bucket", "main");
@@ -2601,8 +2612,6 @@ pref("services.blocklist.pinning.signer", "pinning-preload.content-signature.moz
 pref("services.blocklist.gfx.collection", "gfx");
 pref("services.blocklist.gfx.checked", 0);
 pref("services.blocklist.gfx.signer", "remote-settings.content-signature.mozilla.org");
-// Enable blocklists via the services settings mechanism
-pref("services.blocklist.update_enabled", true);
 
 // Modifier key prefs: default to Windows settings,
 // menu access key = alt, accelerator key = control.
@@ -2931,7 +2940,7 @@ pref("layout.css.text-align-unsafe-value.enabled", false);
 // Is support for CSS text-justify property enabled?
 pref("layout.css.text-justify.enabled", true);
 
-// Is support for the CSS4 image-orientation property enabled?
+// Is support for the CSS image-orientation property enabled?
 pref("layout.css.image-orientation.enabled", true);
 
 // Is the paint-order property supported for HTML text?
@@ -3063,21 +3072,8 @@ pref("layout.idle_period.time_limit", 1);
 // Whether -webkit-appearance is aliased to -moz-appearance
 pref("layout.css.webkit-appearance.enabled", false);
 
-// Is support for the Web Animations API enabled?
-// Before enabling this by default, make sure also CSSPseudoElement interface
-// has been spec'ed properly, or we should add a separate pref for
-// CSSPseudoElement interface. See Bug 1174575 for further details.
-#ifdef RELEASE_OR_BETA
-pref("dom.animations-api.core.enabled", false);
-#else
+// Is support for the core interfaces of Web Animations API enabled?
 pref("dom.animations-api.core.enabled", true);
-#endif
-
-// Is support for the Element.animate() function (a subset of the Web Animations
-// API) enabled?
-// Note that if dom.animations-api.core.enabled is true, this preference is
-// ignored.
-pref("dom.animations-api.element-animate.enabled", true);
 
 // Pref to throttle offsreen animations
 pref("dom.animations.offscreen-throttling", true);
@@ -4828,7 +4824,7 @@ pref("layers.max-active", -1);
 // 0  -> full-tilt mode: Recomposite even if not transaction occured.
 pref("layers.offmainthreadcomposition.frame-rate", -1);
 
-#if defined(XP_MACOSX) || defined (OS_OPENBSD)
+#if defined(XP_MACOSX) || defined(MOZ_WIDGET_GTK)
 pref("layers.enable-tiles", true);
 #else
 pref("layers.enable-tiles", false);
@@ -5283,6 +5279,8 @@ pref("dom.vr.puppet.submitframe", 0);
 pref("dom.vr.display.rafMaxDuration", 50);
 // VR test system.
 pref("dom.vr.test.enabled", false);
+// Enable the VR Service, which interfaces with VR hardware in a separate thread
+pref("dom.vr.service.enabled", false);
 
 // If the user puts a finger down on an element and we think the user
 // might be executing a pan gesture, how long do we wait before

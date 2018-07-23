@@ -29,6 +29,7 @@
 #include "gfxPrefs.h"
 #include "ImageOps.h"
 #include "mozAutoDocUpdate.h"
+#include "mozilla/AntiTrackingCommon.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/AutoRestore.h"
@@ -157,6 +158,7 @@
 #include "nsIMIMEService.h"
 #include "nsINode.h"
 #include "mozilla/dom/NodeInfo.h"
+#include "mozilla/NullPrincipal.h"
 #include "nsIObjectLoadingContent.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
@@ -186,7 +188,6 @@
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
 #include "nsNodeInfoManager.h"
-#include "NullPrincipal.h"
 #include "nsParserCIID.h"
 #include "nsParserConstants.h"
 #include "nsPIDOMWindow.h"
@@ -301,7 +302,6 @@ bool nsContentUtils::sIsCustomElementsEnabled = false;
 bool nsContentUtils::sSendPerformanceTimingNotifications = false;
 bool nsContentUtils::sUseActivityCursor = false;
 bool nsContentUtils::sAnimationsAPICoreEnabled = false;
-bool nsContentUtils::sAnimationsAPIElementAnimateEnabled = false;
 bool nsContentUtils::sGetBoxQuadsEnabled = false;
 bool nsContentUtils::sSkipCursorMoveForSameValueSet = false;
 bool nsContentUtils::sRequestIdleCallbackEnabled = false;
@@ -515,41 +515,6 @@ EventListenerManagerHashClearEntry(PLDHashTable *table, PLDHashEntryHdr *entry)
   lm->~EventListenerManagerMapEntry();
 }
 
-static bool
-IsThirdPartyWindowOrChannel(nsPIDOMWindowInner* aWindow,
-                            nsIChannel* aChannel,
-                            nsIURI* aURI)
-{
-  MOZ_ASSERT(!aWindow || !aChannel,
-             "A window and channel should not both be provided.");
-
-  nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil = services::GetThirdPartyUtil();
-  if (!thirdPartyUtil) {
-    return false;
-  }
-
-  // In the absence of a window or channel, we assume that we are first-party.
-  bool thirdParty = false;
-
-  if (aWindow) {
-    Unused << thirdPartyUtil->IsThirdPartyWindow(aWindow->GetOuterWindow(),
-                                                 aURI,
-                                                 &thirdParty);
-  }
-
-  if (aChannel) {
-    // Note, we must call IsThirdPartyChannel() here and not just try to
-    // use nsILoadInfo.isThirdPartyContext.  That nsILoadInfo property only
-    // indicates if the parent loading window is third party or not.  We
-    // want to check the channel URI against the loading principal as well.
-    Unused << thirdPartyUtil->IsThirdPartyChannel(aChannel,
-                                                  nullptr,
-                                                  &thirdParty);
-  }
-
-  return thirdParty;
-}
-
 class SameOriginCheckerImpl final : public nsIChannelEventSink,
                                     public nsIInterfaceRequestor
 {
@@ -736,9 +701,6 @@ nsContentUtils::Init()
 
   Preferences::AddBoolVarCache(&sAnimationsAPICoreEnabled,
                                "dom.animations-api.core.enabled", false);
-
-  Preferences::AddBoolVarCache(&sAnimationsAPIElementAnimateEnabled,
-                               "dom.animations-api.element-animate.enabled", false);
 
   Preferences::AddBoolVarCache(&sGetBoxQuadsEnabled,
                                "layout.css.getBoxQuads.enabled", false);
@@ -2229,20 +2191,6 @@ nsContentUtils::InProlog(nsINode *aNode)
   nsIContent* root = doc->GetRootElement();
 
   return !root || doc->ComputeIndexOf(aNode) < doc->ComputeIndexOf(root);
-}
-
-nsIDocument*
-nsContentUtils::GetDocumentFromCaller()
-{
-  AutoJSContext cx;
-
-  nsCOMPtr<nsPIDOMWindowInner> win =
-    do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(JS::CurrentGlobalOrNull(cx)));
-  if (!win) {
-    return nullptr;
-  }
-
-  return win->GetExtantDoc();
 }
 
 bool
@@ -7821,8 +7769,8 @@ nsContentUtils::IPCTransferableToTransferable(const IPCDataTransfer& aDataTransf
 
         // The buffer contains the terminating null.
         Shmem itemData = item.data().get_Shmem();
-        const nsDependentCString text(itemData.get<char>(),
-                                      itemData.Size<char>());
+        const nsDependentCSubstring text(itemData.get<char>(),
+                                         itemData.Size<char>());
         rv = dataWrapper->SetData(text);
         NS_ENSURE_SUCCESS(rv, rv);
 
@@ -7921,6 +7869,23 @@ nsContentUtils::IsFileImage(nsIFile* aFile, nsACString& aType)
 }
 
 nsresult
+nsContentUtils::CalculateBufferSizeForImage(const uint32_t& aStride,
+                                            const IntSize& aImageSize,
+                                            const SurfaceFormat& aFormat,
+                                            size_t* aMaxBufferSize,
+                                            size_t* aUsedBufferSize)
+{
+  CheckedInt32 requiredBytes =
+    CheckedInt32(aStride) * CheckedInt32(aImageSize.height);
+  if (!requiredBytes.isValid()) {
+    return NS_ERROR_FAILURE;
+  }
+  *aMaxBufferSize = requiredBytes.value();
+  *aUsedBufferSize = *aMaxBufferSize - aStride + (aImageSize.width * BytesPerPixel(aFormat));
+  return NS_OK;
+}
+
+nsresult
 nsContentUtils::DataTransferItemToImage(const IPCDataTransferItem& aItem,
                                         imgIContainer** aContainer)
 {
@@ -7934,6 +7899,21 @@ nsContentUtils::DataTransferItemToImage(const IPCDataTransferItem& aItem,
   }
 
   Shmem data = aItem.data().get_Shmem();
+
+  // Validate shared memory buffer size
+  size_t imageBufLen = 0;
+  size_t maxBufLen = 0;
+  nsresult rv = CalculateBufferSizeForImage(imageDetails.stride(),
+                                            size,
+                                            imageDetails.format(),
+                                            &maxBufLen,
+                                            &imageBufLen);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+  if (imageBufLen > data.Size<uint8_t>()) {
+    return NS_ERROR_FAILURE;
+  }
 
   RefPtr<DataSourceSurface> image =
       CreateDataSourceSurfaceFromData(size,
@@ -7971,7 +7951,7 @@ ConvertToShmem(mozilla::dom::nsIContentChild* aChild,
            : static_cast<IShmemAllocator*>(aParent);
 
   Shmem result;
-  if (!allocator->AllocShmem(aInput.Length() + 1,
+  if (!allocator->AllocShmem(aInput.Length(),
                              SharedMemory::TYPE_BASIC,
                              &result)) {
     return result;
@@ -7979,7 +7959,7 @@ ConvertToShmem(mozilla::dom::nsIContentChild* aChild,
 
   memcpy(result.get<char>(),
          aInput.BeginReading(),
-         aInput.Length() + 1);
+         aInput.Length());
 
   return result;
 }
@@ -8285,20 +8265,17 @@ GetSurfaceDataImpl(mozilla::gfx::DataSourceSurface* aSurface,
     return GetSurfaceDataContext::NullValue();
   }
 
-  mozilla::gfx::IntSize size = aSurface->GetSize();
-  mozilla::CheckedInt32 requiredBytes =
-    mozilla::CheckedInt32(map.mStride) * mozilla::CheckedInt32(size.height);
-  if (!requiredBytes.isValid()) {
+  size_t bufLen = 0;
+  size_t maxBufLen = 0;
+  nsresult rv = nsContentUtils::CalculateBufferSizeForImage(map.mStride,
+                                                            aSurface->GetSize(),
+                                                            aSurface->GetFormat(),
+                                                            &maxBufLen,
+                                                            &bufLen);
+  if (NS_FAILED(rv)) {
     aSurface->Unmap();
     return GetSurfaceDataContext::NullValue();
   }
-
-  size_t maxBufLen = requiredBytes.value();
-  mozilla::gfx::SurfaceFormat format = aSurface->GetFormat();
-
-  // Surface data handling is totally nuts. This is the magic one needs to
-  // know to access the data.
-  size_t bufLen = maxBufLen - map.mStride + (size.width * BytesPerPixel(format));
 
   // nsDependentCString wants null-terminated string.
   typename GetSurfaceDataContext::ReturnType surfaceData = aContext.Allocate(maxBufLen + 1);
@@ -8853,32 +8830,145 @@ nsContentUtils::GetCookieBehaviorForPrincipal(nsIPrincipal* aPrincipal,
 
 // static public
 bool
-nsContentUtils::StorageDisabledByAntiTracking(nsPIDOMWindowInner* aWindow,
-                                              nsIChannel* aChannel,
-                                              nsIURI* aURI)
+nsContentUtils::IsThirdPartyWindowOrChannel(nsPIDOMWindowInner* aWindow,
+                                            nsIChannel* aChannel,
+                                            nsIURI* aURI)
+{
+  MOZ_ASSERT(!aWindow || !aChannel,
+             "A window and channel should not both be provided.");
+
+  nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil = services::GetThirdPartyUtil();
+  if (!thirdPartyUtil) {
+    return false;
+  }
+
+  // In the absence of a window or channel, we assume that we are first-party.
+  bool thirdParty = false;
+
+  if (aWindow) {
+    Unused << thirdPartyUtil->IsThirdPartyWindow(aWindow->GetOuterWindow(),
+                                                 aURI,
+                                                 &thirdParty);
+  }
+
+  if (aChannel) {
+    // Note, we must call IsThirdPartyChannel() here and not just try to
+    // use nsILoadInfo.isThirdPartyContext.  That nsILoadInfo property only
+    // indicates if the parent loading window is third party or not.  We
+    // want to check the channel URI against the loading principal as well.
+    Unused << thirdPartyUtil->IsThirdPartyChannel(aChannel,
+                                                  nullptr,
+                                                  &thirdParty);
+  }
+
+  return thirdParty;
+}
+
+// static public
+bool
+nsContentUtils::IsTrackingResourceWindow(nsPIDOMWindowInner* aWindow)
+{
+  MOZ_ASSERT(aWindow);
+
+  nsIDocument* document = aWindow->GetExtantDoc();
+  if (!document) {
+    return false;
+  }
+
+  nsCOMPtr<nsIHttpChannel> httpChannel =
+    do_QueryInterface(document->GetChannel());
+  if (!httpChannel) {
+    return false;
+  }
+
+  return httpChannel->GetIsTrackingResource();
+}
+
+static bool
+StorageDisabledByAntiTrackingInternal(nsPIDOMWindowInner* aWindow,
+                                      nsIChannel* aChannel,
+                                      nsIURI* aURI)
 {
   if (!StaticPrefs::privacy_restrict3rdpartystorage_enabled()) {
     return false;
   }
 
   // Let's check if this is a 3rd party context.
-  if (!IsThirdPartyWindowOrChannel(aWindow, aChannel, aURI)) {
+  if (!nsContentUtils::IsThirdPartyWindowOrChannel(aWindow, aChannel, aURI)) {
     return false;
   }
 
-  nsCOMPtr<nsIChannel> channel;
-
-  // aChannel and aWindow are mutually exclusive.
-  channel = aChannel;
   if (aWindow) {
-    nsIDocument* document = aWindow->GetExtantDoc();
-    if (document) {
-      channel = document->GetChannel();
+    nsGlobalWindowInner* innerWindow = nsGlobalWindowInner::Cast(aWindow);
+    nsGlobalWindowOuter* outerWindow =
+      nsGlobalWindowOuter::Cast(innerWindow->GetOuterWindow());
+    if (NS_WARN_IF(!outerWindow)) {
+      return false;
     }
+
+    // We are a first party resource.
+    if (outerWindow->IsTopLevelWindow()) {
+      return false;
+    }
+
+    nsIURI* documentURI = aURI ? aURI : aWindow->GetDocumentURI();
+    if (documentURI &&
+        AntiTrackingCommon::IsFirstPartyStorageAccessGrantedFor(aWindow,
+                                                                documentURI)) {
+      return false;
+    }
+
+    return true;
   }
 
-  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(channel);
-  return httpChannel && httpChannel->GetIsTrackingResource();
+  // aChannel and aWindow are mutually exclusive.
+  MOZ_ASSERT(aChannel);
+
+  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
+  if (!httpChannel) {
+    return false;
+  }
+
+  // If this is not a tracking resource, nothing is disabled.
+  if (!httpChannel->GetIsTrackingResource()) {
+    return false;
+  }
+
+  nsCOMPtr<nsIURI> uri;
+  nsresult rv = httpChannel->GetURI(getter_AddRefs(uri));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return false;
+  }
+
+  return AntiTrackingCommon::IsFirstPartyStorageAccessGrantedFor(httpChannel,
+                                                                 uri);
+}
+
+// static public
+bool
+nsContentUtils::StorageDisabledByAntiTracking(nsPIDOMWindowInner* aWindow,
+                                              nsIChannel* aChannel,
+                                              nsIURI* aURI)
+{
+  bool disabled =
+    StorageDisabledByAntiTrackingInternal(aWindow, aChannel, aURI);
+  if (disabled &&
+      StaticPrefs::privacy_restrict3rdpartystorage_ui_enabled()) {
+    nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil = services::GetThirdPartyUtil();
+    if (!thirdPartyUtil) {
+      return false;
+    }
+
+    nsCOMPtr<mozIDOMWindowProxy> win;
+    nsresult rv = thirdPartyUtil->GetTopWindowForChannel(aChannel,
+                                                         getter_AddRefs(win));
+    NS_ENSURE_SUCCESS(rv, false);
+    auto* pwin = nsPIDOMWindowOuter::From(win);
+
+    pwin->NotifyContentBlockingState(
+      nsIWebProgressListener::STATE_BLOCKED_TRACKING_COOKIES, aChannel);
+  }
+  return disabled;
 }
 
 // static, private
@@ -9613,7 +9703,8 @@ nsContentUtils::IsSpecificAboutPage(JSObject* aGlobal, const char* aUri)
   MOZ_ASSERT(strncmp(aUri, "about:", 6) == 0);
 
   // Make sure the global is a window
-  nsGlobalWindowInner* win = xpc::WindowGlobalOrNull(aGlobal);
+  MOZ_DIAGNOSTIC_ASSERT(JS_IsGlobalObject(aGlobal));
+  nsGlobalWindowInner* win = xpc::WindowOrNull(aGlobal);
   if (!win) {
     return false;
   }

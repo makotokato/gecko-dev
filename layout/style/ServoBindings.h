@@ -14,9 +14,9 @@
 #include "mozilla/ServoBindingTypes.h"
 #include "mozilla/ServoComputedDataInlines.h"
 #include "mozilla/ServoElementSnapshot.h"
+#include "mozilla/css/DocumentMatchingFunction.h"
 #include "mozilla/css/SheetLoadData.h"
 #include "mozilla/css/SheetParsingMode.h"
-#include "mozilla/css/URLMatchingFunction.h"
 #include "mozilla/EffectCompositor.h"
 #include "mozilla/ComputedTimingFunction.h"
 #include "nsChangeHint.h"
@@ -148,9 +148,10 @@ const nsTArray<RefPtr<nsINode>>* Gecko_GetAssignedNodes(RawGeckoElementBorrowed 
 void Gecko_DestroyAnonymousContentList(nsTArray<nsIContent*>* anon_content);
 
 void Gecko_ComputedStyle_Init(mozilla::ComputedStyle* context,
-                              ComputedStyleBorrowedOrNull parent_context,
-                              RawGeckoPresContextBorrowed pres_context, ServoComputedDataBorrowed values,
-                              mozilla::CSSPseudoElementType pseudo_type, nsAtom* pseudo_tag);
+                              RawGeckoPresContextBorrowed pres_context,
+                              ServoComputedDataBorrowed values,
+                              mozilla::CSSPseudoElementType pseudo_type,
+                              nsAtom* pseudo_tag);
 void Gecko_ComputedStyle_Destroy(mozilla::ComputedStyle* context);
 
 // By default, Servo walks the DOM by traversing the siblings of the DOM-view
@@ -672,7 +673,7 @@ void Gecko_UnregisterProfilerThread();
 
 bool Gecko_DocumentRule_UseForPresentation(RawGeckoPresContextBorrowed,
                                            const nsACString* aPattern,
-                                           mozilla::css::URLMatchingFunction aURLMatchingFunction);
+                                           mozilla::css::DocumentMatchingFunction);
 
 // Allocator hinting.
 void Gecko_SetJemallocThreadLocalArena(bool enabled);

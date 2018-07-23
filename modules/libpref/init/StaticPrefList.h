@@ -91,6 +91,64 @@ VARCACHE_PREF(
 // DOM prefs
 //---------------------------------------------------------------------------
 
+// Is support for composite operations from the Web Animations API enabled?
+#ifdef RELEASE_OR_BETA
+# define PREF_VALUE false
+#else
+# define PREF_VALUE true
+#endif
+VARCACHE_PREF(
+  "dom.animations-api.compositing.enabled",
+   dom_animations_api_compositing_enabled,
+  bool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+// Is support for Document.getAnimations() and Element.getAnimations()
+// supported?
+//
+// Before enabling this by default, make sure also CSSPseudoElement interface
+// has been spec'ed properly, or we should add a separate pref for
+// CSSPseudoElement interface. See Bug 1174575 for further details.
+#ifdef RELEASE_OR_BETA
+# define PREF_VALUE false
+#else
+# define PREF_VALUE true
+#endif
+VARCACHE_PREF(
+  "dom.animations-api.getAnimations.enabled",
+   dom_animations_api_getAnimations_enabled,
+  bool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+// Is support for animations from the Web Animations API without 0%/100%
+// keyframes enabled?
+#ifdef RELEASE_OR_BETA
+# define PREF_VALUE false
+#else
+# define PREF_VALUE true
+#endif
+VARCACHE_PREF(
+  "dom.animations-api.implicit-keyframes.enabled",
+   dom_animations_api_implicit_keyframes_enabled,
+  bool, PREF_VALUE
+)
+#undef PREF_VALUE
+
+// Is support for timelines from the Web Animations API enabled?
+#ifdef RELEASE_OR_BETA
+# define PREF_VALUE false
+#else
+# define PREF_VALUE true
+#endif
+VARCACHE_PREF(
+  "dom.animations-api.timelines.enabled",
+   dom_animations_api_timelines_enabled,
+  bool, PREF_VALUE
+)
+#undef PREF_VALUE
+
 VARCACHE_PREF(
   "dom.webcomponents.shadowdom.report_usage",
    dom_webcomponents_shadowdom_report_usage,
@@ -128,7 +186,7 @@ VARCACHE_PREF(
 // Clear-Site-Data prefs
 //---------------------------------------------------------------------------
 
-#ifdef NIGHTLY
+#ifdef NIGHTLY_BUILD
 # define PREF_VALUE true
 #else
 # define PREF_VALUE false
@@ -232,7 +290,7 @@ VARCACHE_PREF(
 VARCACHE_PREF(
   "layout.css.prefixes.device-pixel-ratio-webkit",
    layout_css_prefixes_device_pixel_ratio_webkit,
-  bool, false
+  bool, true
 )
 
 // Is -moz-prefixed gradient functions enabled?
@@ -246,7 +304,7 @@ VARCACHE_PREF(
 VARCACHE_PREF(
   "layout.css.offset-logical-properties.enabled",
    layout_css_offset_logical_properties_enabled,
-  bool, true
+  bool, false
 )
 
 // Should stray control characters be rendered visibly?
@@ -806,7 +864,7 @@ VARCACHE_PREF(
 VARCACHE_PREF(
   "media.av1.enabled",
    MediaAv1Enabled,
-  RelaxedAtomicBool, true
+  RelaxedAtomicBool, false
 )
 
 VARCACHE_PREF(
@@ -1083,6 +1141,63 @@ VARCACHE_PREF(
 PREF("preferences.allow.omt-write", bool, true)
 
 //---------------------------------------------------------------------------
+// Privacy prefs
+//---------------------------------------------------------------------------
+
+VARCACHE_PREF(
+  "privacy.restrict3rdpartystorage.enabled",
+   privacy_restrict3rdpartystorage_enabled,
+  RelaxedAtomicBool, false
+)
+
+VARCACHE_PREF(
+  "privacy.restrict3rdpartystorage.ui.enabled",
+   privacy_restrict3rdpartystorage_ui_enabled,
+  RelaxedAtomicBool, false
+)
+
+// Anti-tracking permission expiration
+VARCACHE_PREF(
+  "privacy.restrict3rdpartystorage.expiration",
+   privacy_restrict3rdpartystorage_expiration,
+  uint32_t, 2592000 // 30 days (in seconds)
+)
+
+//---------------------------------------------------------------------------
+// Security prefs
+//---------------------------------------------------------------------------
+
+VARCACHE_PREF(
+  "security.csp.enable",
+   security_csp_enable,
+  bool, true
+)
+
+VARCACHE_PREF(
+  "security.csp.experimentalEnabled",
+   security_csp_experimentalEnabled,
+  bool, false
+)
+
+VARCACHE_PREF(
+  "security.csp.enableStrictDynamic",
+   security_csp_enableStrictDynamic,
+  bool, true
+)
+
+VARCACHE_PREF(
+  "security.csp.enable_violation_events",
+   security_csp_enable_violation_events,
+  bool, true
+)
+
+VARCACHE_PREF(
+  "security.csp.reporting.script-sample.max-length",
+   security_csp_reporting_script_sample_max_length,
+  int32_t, 40
+)
+
+//---------------------------------------------------------------------------
 // View source prefs
 //---------------------------------------------------------------------------
 
@@ -1090,16 +1205,6 @@ VARCACHE_PREF(
   "view_source.editor.external",
    view_source_editor_external,
   bool, false
-)
-
-//---------------------------------------------------------------------------
-// Anti-Tracking prefs
-//---------------------------------------------------------------------------
-
-VARCACHE_PREF(
-  "privacy.restrict3rdpartystorage.enabled",
-   privacy_restrict3rdpartystorage_enabled,
-  RelaxedAtomicBool, false
 )
 
 //---------------------------------------------------------------------------

@@ -3946,8 +3946,7 @@ NS_INTERFACE_MAP_END
 
 nsNavHistoryResult::nsNavHistoryResult(nsNavHistoryContainerResultNode* aRoot,
                                        const RefPtr<nsNavHistoryQuery>& aQuery,
-                                       const RefPtr<nsNavHistoryQueryOptions>& aOptions,
-                                       bool aBatchInProgress
+                                       const RefPtr<nsNavHistoryQueryOptions>& aOptions
 ) : mRootNode(aRoot)
   , mQuery(aQuery)
   , mOptions(aOptions)
@@ -3957,7 +3956,7 @@ nsNavHistoryResult::nsNavHistoryResult(nsNavHistoryContainerResultNode* aRoot,
   , mIsAllBookmarksObserver(false)
   , mIsMobilePrefObserver(false)
   , mBookmarkFolderObservers(64)
-  , mBatchInProgress(aBatchInProgress)
+  , mBatchInProgress(false)
   , mSuppressNotifications(false)
 {
   mSortingMode = aOptions->SortingMode();
@@ -4712,10 +4711,10 @@ nsNavHistoryResult::OnMobilePrefChanged()
 
 void
 nsNavHistoryResult::OnMobilePrefChangedCallback(const char *prefName,
-                                                void *closure)
+                                                nsNavHistoryResult *self)
 {
   MOZ_ASSERT(!strcmp(prefName, MOBILE_BOOKMARKS_PREF),
     "We only expected Mobile Bookmarks pref change.");
 
-  static_cast<nsNavHistoryResult*>(closure)->OnMobilePrefChanged();
+  self->OnMobilePrefChanged();
 }

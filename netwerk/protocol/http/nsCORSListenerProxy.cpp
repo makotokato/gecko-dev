@@ -38,11 +38,11 @@
 #include "nsIDOMWindowUtils.h"
 #include "nsIDOMWindow.h"
 #include "nsINetworkInterceptController.h"
-#include "NullPrincipal.h"
 #include "nsICorsPreflightCallback.h"
 #include "nsISupportsImpl.h"
 #include "nsHttpChannel.h"
 #include "mozilla/LoadInfo.h"
+#include "mozilla/NullPrincipal.h"
 #include "nsIHttpHeaderVisitor.h"
 #include "nsQueryObject.h"
 #include <algorithm>
@@ -86,10 +86,11 @@ LogBlockedRequest(nsIRequest* aRequest,
   }
 
   nsAutoString msg(blockedMessage.get());
+  nsDependentCString category(aProperty);
 
   if (XRE_IsParentProcess()) {
     if (aCreatingChannel) {
-      rv = aCreatingChannel->LogBlockedCORSRequest(msg);
+      rv = aCreatingChannel->LogBlockedCORSRequest(msg, category);
       if (NS_SUCCEEDED(rv)) {
         return;
       }
@@ -105,10 +106,11 @@ LogBlockedRequest(nsIRequest* aRequest,
     privateBrowsing = nsContentUtils::IsInPrivateBrowsing(loadGroup);
   }
 
-  // log message ourselves
+  // we are passing aProperty as the category so we can link to the
+  // appropriate MDN docs depending on the specific error.
   uint64_t innerWindowID = nsContentUtils::GetInnerWindowID(aRequest);
   nsCORSListenerProxy::LogBlockedCORSRequest(innerWindowID, privateBrowsing,
-                                             msg);
+                                             msg, category);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -584,7 +586,7 @@ nsCORSListenerProxy::CheckRequestApproved(nsIRequest* aRequest)
   // check for duplicate headers
   rv = http->VisitOriginalResponseHeaders(visitor);
   if (NS_FAILED(rv)) {
-    LogBlockedRequest(aRequest, "CORSAllowOriginNotMatchingOrigin", nullptr, topChannel);
+    LogBlockedRequest(aRequest, "CORSMultipleAllowOriginNotAllowed", nullptr, topChannel);
     return rv;
   }
 
@@ -1074,17 +1076,6 @@ nsCORSListenerProxy::CheckPreflightNeeded(nsIChannel* aChannel, UpdateType aUpda
 
   if (!doPreflight) {
     return NS_OK;
-  }
-
-  // A preflight is needed. But if we've already been cross-site, then
-  // we already did a preflight when that happened, and so we're not allowed
-  // to do another preflight again.
-  if (aUpdateType != UpdateType::InternalOrHSTSRedirect) {
-    if (mHasBeenCrossSite) {
-      LogBlockedRequest(aChannel, "CORSPreflightDidNotSucceed", nullptr,
-                        mHttpChannel);
-      return NS_ERROR_DOM_BAD_URI;
-    }
   }
 
   nsCOMPtr<nsIHttpChannelInternal> internal = do_QueryInterface(http);
@@ -1589,7 +1580,8 @@ nsCORSListenerProxy::StartCORSPreflight(nsIChannel* aRequestChannel,
 void
 nsCORSListenerProxy::LogBlockedCORSRequest(uint64_t aInnerWindowID,
                                            bool aPrivateBrowsing,
-                                           const nsAString& aMessage)
+                                           const nsAString& aMessage,
+                                           const nsACString& aCategory)
 {
   nsresult rv = NS_OK;
 
@@ -1616,17 +1608,18 @@ nsCORSListenerProxy::LogBlockedCORSRequest(uint64_t aInnerWindowID,
                                               0,             // lineNumber
                                               0,             // columnNumber
                                               nsIScriptError::warningFlag,
-                                              "CORS",
+                                              aCategory,
                                               aInnerWindowID);
   }
   else {
+    nsCString category = PromiseFlatCString(aCategory);
     rv = scriptError->Init(aMessage,
                            EmptyString(), // sourceName
                            EmptyString(), // sourceLine
                            0,             // lineNumber
                            0,             // columnNumber
                            nsIScriptError::warningFlag,
-                           "CORS",
+                           category.get(),
                            aPrivateBrowsing);
   }
   if (NS_FAILED(rv)) {

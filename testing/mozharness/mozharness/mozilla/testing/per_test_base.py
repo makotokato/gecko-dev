@@ -23,6 +23,11 @@ class SingleTestMixin(object):
         self.reftest_test_dir = None
         self.jsreftest_test_dir = None
 
+    def _is_gpu_suite(self, suite):
+        if suite and (suite == 'gpu' or suite.startswith('webgl')):
+            return True
+        return False
+
     def _find_misc_tests(self, dirs, changed_files, gpu=False):
         manifests = [
             (os.path.join(dirs['abs_mochitest_dir'], 'tests', 'mochitest.ini'), 'plain'),
@@ -95,9 +100,11 @@ class SingleTestMixin(object):
             if not entry:
                 continue
 
-            if gpu and entry[1] not in ['gpu', 'webgl']:
+            if gpu and not self._is_gpu_suite(entry[1]):
+                self.info("Per-test run (gpu) discarded non-gpu test %s (%s)" % (file, entry[1]))
                 continue
-            elif not gpu and entry[1] in ['gpu', 'webgl']:
+            elif not gpu and self._is_gpu_suite(entry[1]):
+                self.info("Per-test run (non-gpu) discarded gpu test %s (%s)" % (file, entry[1]))
                 continue
 
             self.info("Per-test run found test %s (%s)" % (file, entry[0]))
@@ -205,7 +212,7 @@ class SingleTestMixin(object):
 
         if self.config.get('per_test_category') == "web-platform":
             self._find_wpt_tests(dirs, changed_files)
-        elif self.config.get('gpu_required', 'False') != 'False':
+        elif self.config.get('gpu_required', False) is not False:
             self._find_misc_tests(dirs, changed_files, gpu=True)
         else:
             self._find_misc_tests(dirs, changed_files)

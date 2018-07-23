@@ -12,6 +12,7 @@
 #include "nsDocument.h"
 #include "nsIDocumentInlines.h"
 #include "mozilla/AnimationComparator.h"
+#include "mozilla/AntiTrackingCommon.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/BinarySearch.h"
@@ -23,6 +24,7 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Likely.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/StaticPrefs.h"
 #include "mozilla/URLExtraData.h"
 #include <algorithm>
 
@@ -63,6 +65,7 @@
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/FramingChecker.h"
 #include "mozilla/dom/HTMLSharedElement.h"
+#include "mozilla/dom/SVGUseElement.h"
 #include "nsGenericHTMLElement.h"
 #include "mozilla/dom/CDATASection.h"
 #include "mozilla/dom/ProcessingInstruction.h"
@@ -108,7 +111,7 @@
 #include "nsIPermissionManager.h"
 #include "nsIPrincipal.h"
 #include "ExpandedPrincipal.h"
-#include "NullPrincipal.h"
+#include "mozilla/NullPrincipal.h"
 
 #include "nsIDOMWindow.h"
 #include "nsPIDOMWindow.h"
@@ -253,9 +256,7 @@
 #include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/TabGroup.h"
 #ifdef MOZ_XUL
-#include "mozilla/dom/ListBoxObject.h"
 #include "mozilla/dom/MenuBoxObject.h"
-#include "mozilla/dom/ScrollBoxObject.h"
 #include "mozilla/dom/TreeBoxObject.h"
 #include "nsIXULWindow.h"
 #include "nsIDocShellTreeOwner.h"
@@ -1683,15 +1684,12 @@ nsDocument::~nsDocument()
   mFirstChild = nullptr;
   mCachedRootElement = nullptr;
 
-  // Let the stylesheets know we're going away
-  for (StyleSheet* sheet : mStyleSheets) {
-    sheet->ClearAssociatedDocumentOrShadowRoot();
-  }
   for (auto& sheets : mAdditionalSheets) {
     for (StyleSheet* sheet : sheets) {
       sheet->ClearAssociatedDocumentOrShadowRoot();
     }
   }
+
   if (mAttrStyleSheet) {
     mAttrStyleSheet->SetOwningDocument(nullptr);
   }
@@ -2598,14 +2596,10 @@ nsIDocument::IsSynthesized() {
 }
 
 bool
-nsDocument::IsShadowDOMEnabled(JSContext* aCx, JSObject* aObject)
+nsDocument::IsShadowDOMEnabled(JSContext* aCx, JSObject* aGlobal)
 {
-  JS::Rooted<JSObject*> obj(aCx, aObject);
-
-  JSAutoRealm ar(aCx, obj);
-  JS::Rooted<JSObject*> global(aCx, JS_GetGlobalForObject(aCx, obj));
-  nsCOMPtr<nsPIDOMWindowInner> window =
-    do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(global));
+  MOZ_DIAGNOSTIC_ASSERT(JS_IsGlobalObject(aGlobal));
+  nsCOMPtr<nsPIDOMWindowInner> window = xpc::WindowOrNull(aGlobal);
 
   nsIDocument* doc = window ? window->GetExtantDoc() : nullptr;
   if (!doc) {
@@ -2613,6 +2607,21 @@ nsDocument::IsShadowDOMEnabled(JSContext* aCx, JSObject* aObject)
   }
 
   return doc->IsShadowDOMEnabled();
+}
+
+// static
+bool
+nsDocument::IsShadowDOMEnabledAndCallerIsChromeOrAddon(JSContext* aCx,
+                                                       JSObject* aObject)
+{
+  if (IsShadowDOMEnabled(aCx, aObject)) {
+    nsIPrincipal* principal = nsContentUtils::SubjectPrincipal(aCx);
+    return principal &&
+      (nsContentUtils::IsSystemPrincipal(principal) ||
+       principal->GetIsAddonOrExpandedAddonPrincipal());
+  }
+
+  return false;
 }
 
 bool
@@ -2835,7 +2844,7 @@ nsIDocument::InitCSP(nsIChannel* aChannel)
 {
   MOZ_ASSERT(!mScriptGlobalObject,
              "CSP must be initialized before mScriptGlobalObject is set!");
-  if (!CSPService::sCSPEnabled) {
+  if (!StaticPrefs::security_csp_enable()) {
     MOZ_LOG(gCspPRLog, LogLevel::Debug,
            ("CSP is disabled, skipping CSP init for document %p", this));
     return NS_OK;
@@ -3281,16 +3290,6 @@ nsIDocument::GetAllowPlugins()
 }
 
 bool
-nsDocument::IsElementAnimateEnabled(JSContext* aCx, JSObject* /*unused*/)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-
-  return nsContentUtils::IsSystemCaller(aCx) ||
-         nsContentUtils::AnimationsAPICoreEnabled() ||
-         nsContentUtils::AnimationsAPIElementAnimateEnabled();
-}
-
-bool
 nsDocument::IsWebAnimationsEnabled(JSContext* aCx, JSObject* /*unused*/)
 {
   MOZ_ASSERT(NS_IsMainThread());
@@ -3306,6 +3305,39 @@ nsDocument::IsWebAnimationsEnabled(CallerType aCallerType)
 
   return aCallerType == dom::CallerType::System ||
          nsContentUtils::AnimationsAPICoreEnabled();
+}
+
+bool
+nsDocument::IsWebAnimationsGetAnimationsEnabled(JSContext* aCx,
+                                                JSObject* /*unused*/
+)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  return nsContentUtils::IsSystemCaller(aCx) ||
+         StaticPrefs::dom_animations_api_getAnimations_enabled();
+}
+
+bool
+nsDocument::AreWebAnimationsImplicitKeyframesEnabled(JSContext* aCx,
+                                                     JSObject* /*unused*/
+)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  return nsContentUtils::IsSystemCaller(aCx) ||
+         StaticPrefs::dom_animations_api_implicit_keyframes_enabled();
+}
+
+bool
+nsDocument::AreWebAnimationsTimelinesEnabled(JSContext* aCx,
+                                             JSObject* /*unused*/
+)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  return nsContentUtils::IsSystemCaller(aCx) ||
+         StaticPrefs::dom_animations_api_timelines_enabled();
 }
 
 DocumentTimeline*
@@ -4635,7 +4667,7 @@ nsIDocument::SetScriptGlobalObject(nsIScriptGlobalObject *aScriptGlobalObject)
       JSObject *obj = GetWrapperPreserveColor();
       if (obj) {
         JSObject *newScope = aScriptGlobalObject->GetGlobalJSObject();
-        NS_ASSERTION(js::GetGlobalForObjectCrossCompartment(obj) == newScope,
+        NS_ASSERTION(JS::GetNonCCWObjectGlobal(obj) == newScope,
                      "Wrong scope, this is really bad!");
       }
     }
@@ -4717,12 +4749,9 @@ nsIDocument::SetScriptGlobalObject(nsIScriptGlobalObject *aScriptGlobalObject)
   }
 
   if (!mMaybeServiceWorkerControlled && mDocumentContainer && mScriptGlobalObject && GetChannel()) {
-    nsCOMPtr<nsIDocShell> docShell(mDocumentContainer);
-    uint32_t loadType;
-    docShell->GetLoadType(&loadType);
 
     // If we are shift-reloaded, don't associate with a ServiceWorker.
-    if (IsForceReloadType(loadType)) {
+    if (mDocumentContainer->IsForceReloading()) {
       NS_WARNING("Page was shift reloaded, skipping ServiceWorker control");
       return;
     }
@@ -6332,10 +6361,6 @@ nsIDocument::GetBoxObjectFor(Element* aElement, ErrorResult& aRv)
       boxObject = new MenuBoxObject();
     } else if (tag == nsGkAtoms::tree) {
       boxObject = new TreeBoxObject();
-    } else if (tag == nsGkAtoms::listbox) {
-      boxObject = new ListBoxObject();
-    } else if (tag == nsGkAtoms::scrollbox) {
-      boxObject = new ScrollBoxObject();
     } else {
       boxObject = new BoxObject();
     }
@@ -6774,7 +6799,7 @@ nsDOMAttributeMap::BlastSubtreeToPieces(nsINode* aNode)
   if (Element* element = Element::FromNode(aNode)) {
     if (const nsDOMAttributeMap* map = element->GetAttributeMap()) {
       while (true) {
-        nsCOMPtr<nsIAttribute> attr;
+        RefPtr<Attr> attr;
         {
           // Use an iterator to get an arbitrary attribute from the
           // cache. The iterator must be destroyed before any other
@@ -6786,8 +6811,6 @@ nsDOMAttributeMap::BlastSubtreeToPieces(nsINode* aNode)
           }
           attr = iter.UserData();
         }
-        NS_ASSERTION(attr.get(),
-                     "non-nsIAttribute somehow made it into the hashmap?!");
 
         BlastSubtreeToPieces(attr);
 
@@ -7399,8 +7422,7 @@ nsIDocument::FlushPendingNotifications(mozilla::ChangesToFlush aFlush)
 static bool
 Copy(nsIDocument* aDocument, void* aData)
 {
-  nsTArray<nsCOMPtr<nsIDocument> >* resources =
-    static_cast<nsTArray<nsCOMPtr<nsIDocument> >* >(aData);
+  auto* resources = static_cast<nsTArray<nsCOMPtr<nsIDocument>>*>(aData);
   resources->AppendElement(aDocument);
   return true;
 }
@@ -7413,7 +7435,8 @@ nsIDocument::FlushExternalResources(FlushType aType)
   if (GetDisplayDocument()) {
     return;
   }
-  nsTArray<nsCOMPtr<nsIDocument> > resources;
+
+  nsTArray<nsCOMPtr<nsIDocument>> resources;
   EnumerateExternalResources(Copy, &resources);
 
   for (uint32_t i = 0; i < resources.Length(); i++) {
@@ -9718,6 +9741,43 @@ nsIDocument::GetPlugins(nsTArray<nsIObjectLoadingContent*>& aPlugins)
 }
 
 void
+nsIDocument::ScheduleSVGUseElementShadowTreeUpdate(SVGUseElement& aUseElement)
+{
+  MOZ_ASSERT(aUseElement.IsInComposedDoc());
+
+  mSVGUseElementsNeedingShadowTreeUpdate.PutEntry(&aUseElement);
+
+  if (nsIPresShell* shell = GetShell()) {
+    shell->EnsureStyleFlush();
+  }
+}
+
+void
+nsIDocument::DoUpdateSVGUseElementShadowTrees()
+{
+  MOZ_ASSERT(!mSVGUseElementsNeedingShadowTreeUpdate.IsEmpty());
+  nsTArray<RefPtr<SVGUseElement>> useElementsToUpdate;
+
+  do {
+    useElementsToUpdate.Clear();
+    useElementsToUpdate.SetCapacity(mSVGUseElementsNeedingShadowTreeUpdate.Count());
+
+    {
+      for (auto iter = mSVGUseElementsNeedingShadowTreeUpdate.ConstIter();
+           !iter.Done();
+           iter.Next()) {
+        useElementsToUpdate.AppendElement(iter.Get()->GetKey());
+      }
+      mSVGUseElementsNeedingShadowTreeUpdate.Clear();
+    }
+
+    for (auto& useElement : useElementsToUpdate) {
+      useElement->UpdateShadowTree();
+    }
+  } while (!mSVGUseElementsNeedingShadowTreeUpdate.IsEmpty());
+}
+
+void
 nsIDocument::NotifyMediaFeatureValuesChanged()
 {
   for (auto iter = mResponsiveContent.ConstIter(); !iter.Done();
@@ -11583,6 +11643,14 @@ nsIDocument::DocAddSizeOfExcludingThis(nsWindowSizes& aSizes) const
     mNodeInfoManager->AddSizeOfIncludingThis(aSizes);
   }
 
+  aSizes.mDOMMediaQueryLists +=
+    mDOMMediaQueryLists.sizeOfExcludingThis(aSizes.mState.mMallocSizeOf);
+
+  for (const MediaQueryList* mql : mDOMMediaQueryLists) {
+    aSizes.mDOMMediaQueryLists +=
+      mql->SizeOfExcludingThis(aSizes.mState.mMallocSizeOf);
+  }
+
   // Measurement of the following members may be added later if DMD finds it
   // is worthwhile:
   // - many!
@@ -11947,7 +12015,8 @@ nsIDocument::InlineScriptAllowedByCSP()
     nsresult rv = csp->GetAllowsInline(nsIContentPolicy::TYPE_SCRIPT,
                                        EmptyString(), // aNonce
                                        true,          // aParserCreated
-                                       nullptr, // FIXME get script sample (bug 1314567)
+                                       nullptr,       // aTriggeringElement
+                                       EmptyString(), // FIXME get script sample (bug 1314567)
                                        0,             // aLineNumber
                                        0,             // aColumnNumber
                                        &allowsInlineScript);
@@ -12399,6 +12468,10 @@ nsIDocument::SetUserHasInteracted(bool aUserHasInteracted)
   MOZ_LOG(gUserInteractionPRLog, LogLevel::Debug,
           ("Document %p has been interacted by user.", this));
   mUserHasInteracted = aUserHasInteracted;
+
+  if (aUserHasInteracted) {
+    MaybeAllowStorageForOpener();
+  }
 }
 
 void
@@ -12414,6 +12487,77 @@ nsIDocument::NotifyUserGestureActivation()
     doc->mUserGestureActivated = true;
     doc = doc->GetSameTypeParentDocument();
   }
+}
+
+void
+nsIDocument::MaybeAllowStorageForOpener()
+{
+  if (!StaticPrefs::privacy_restrict3rdpartystorage_enabled()) {
+    return;
+  }
+
+  // This will probably change for project fission, but currently this document
+  // and the opener are on the same process. In the future, we should make this
+  // part async.
+
+  nsPIDOMWindowInner* inner = GetInnerWindow();
+  if (NS_WARN_IF(!inner)) {
+    return;
+  }
+
+  nsCOMPtr<nsPIDOMWindowOuter> outer = inner->GetOuterWindow();
+  if (NS_WARN_IF(!outer)) {
+    return;
+  }
+
+  nsCOMPtr<nsPIDOMWindowOuter> outerOpener = outer->GetOpener();
+  if (!outerOpener) {
+    return;
+  }
+
+  nsPIDOMWindowInner* openerInner = outerOpener->GetCurrentInnerWindow();
+  if (NS_WARN_IF(!openerInner)) {
+    return;
+  }
+
+  // Let's take the principal from the opener.
+  nsIDocument* openerDocument = openerInner->GetExtantDoc();
+  if (NS_WARN_IF(!openerDocument)) {
+    return;
+  }
+
+  nsCOMPtr<nsIURI> openerURI = openerDocument->GetDocumentURI();
+  if (NS_WARN_IF(!openerURI)) {
+    return;
+  }
+
+  // No tracking resource.
+  if (!nsContentUtils::IsTrackingResourceWindow(inner)) {
+    return;
+  }
+
+  // If the opener is not a 3rd party and if this window is not a 3rd party, we
+  // should not continue.
+  if (!nsContentUtils::IsThirdPartyWindowOrChannel(inner, nullptr, openerURI) &&
+      !nsContentUtils::IsThirdPartyWindowOrChannel(openerInner, nullptr,
+                                                   nullptr)) {
+    return;
+  }
+
+  nsCOMPtr<nsIURI> uri = GetDocumentURI();
+  if (NS_WARN_IF(!uri)) {
+    return;
+  }
+
+  nsAutoString origin;
+  nsresult rv = nsContentUtils::GetUTFOrigin(uri, origin);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return;
+  }
+
+  // We don't care when the asynchronous work finishes here.
+  Unused << AntiTrackingCommon::AddFirstPartyStorageAccessGrantedFor(origin,
+                                                                     openerInner);
 }
 
 bool
@@ -12514,38 +12658,44 @@ ArrayContainsTable(const nsTArray<nsCString>& aTableArray,
 
 namespace {
 
+static const char* gCallbackPrefs[] = {
+  // We only need to register string-typed preferences.
+  "urlclassifier.flashAllowTable",
+  "urlclassifier.flashAllowExceptTable",
+  "urlclassifier.flashTable",
+  "urlclassifier.flashExceptTable",
+  "urlclassifier.flashSubDocTable",
+  "urlclassifier.flashSubDocExceptTable",
+  nullptr,
+};
+
 // An object to store all preferences we need for flash blocking feature.
 struct PrefStore
 {
   PrefStore()
+    : mFlashBlockEnabled(false)
+    , mPluginsHttpOnly(false)
   {
     Preferences::AddBoolVarCache(&mFlashBlockEnabled,
                                  "plugins.flashBlock.enabled");
     Preferences::AddBoolVarCache(&mPluginsHttpOnly,
                                  "plugins.http_https_only");
 
-    // We only need to register string-typed preferences.
-    Preferences::RegisterCallback(UpdateStringPrefs, "urlclassifier.flashAllowTable", this);
-    Preferences::RegisterCallback(UpdateStringPrefs, "urlclassifier.flashAllowExceptTable", this);
-    Preferences::RegisterCallback(UpdateStringPrefs, "urlclassifier.flashTable", this);
-    Preferences::RegisterCallback(UpdateStringPrefs, "urlclassifier.flashExceptTable", this);
-    Preferences::RegisterCallback(UpdateStringPrefs, "urlclassifier.flashSubDocTable", this);
-    Preferences::RegisterCallback(UpdateStringPrefs, "urlclassifier.flashSubDocExceptTable", this);
+    Preferences::RegisterCallbacks(
+      PREF_CHANGE_METHOD(PrefStore::UpdateStringPrefs),
+      gCallbackPrefs, this);
 
     UpdateStringPrefs();
   }
 
   ~PrefStore()
   {
-    Preferences::UnregisterCallback(UpdateStringPrefs, "urlclassifier.flashAllowTable", this);
-    Preferences::UnregisterCallback(UpdateStringPrefs, "urlclassifier.flashAllowExceptTable", this);
-    Preferences::UnregisterCallback(UpdateStringPrefs, "urlclassifier.flashTable", this);
-    Preferences::UnregisterCallback(UpdateStringPrefs, "urlclassifier.flashExceptTable", this);
-    Preferences::UnregisterCallback(UpdateStringPrefs, "urlclassifier.flashSubDocTable", this);
-    Preferences::UnregisterCallback(UpdateStringPrefs, "urlclassifier.flashSubDocExceptTable", this);
+    Preferences::UnregisterCallbacks(
+      PREF_CHANGE_METHOD(PrefStore::UpdateStringPrefs),
+      gCallbackPrefs, this);
   }
 
-  void UpdateStringPrefs()
+  void UpdateStringPrefs(const char* aPref = nullptr)
   {
     Preferences::GetCString("urlclassifier.flashAllowTable", mAllowTables);
     Preferences::GetCString("urlclassifier.flashAllowExceptTable", mAllowExceptionsTables);
@@ -12553,11 +12703,6 @@ struct PrefStore
     Preferences::GetCString("urlclassifier.flashExceptTable", mDenyExceptionsTables);
     Preferences::GetCString("urlclassifier.flashSubDocTable", mSubDocDenyTables);
     Preferences::GetCString("urlclassifier.flashSubDocExceptTable", mSubDocDenyExceptionsTables);
-  }
-
-  static void UpdateStringPrefs(const char*, void* aClosure)
-  {
-    static_cast<PrefStore*>(aClosure)->UpdateStringPrefs();
   }
 
   bool mFlashBlockEnabled;

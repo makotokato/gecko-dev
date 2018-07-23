@@ -95,10 +95,10 @@
 #include "ImageOps.h"
 #include "UnitTransforms.h"
 #include <algorithm>
+#include "mozilla/NullPrincipal.h"
 #include "mozilla/WebBrowserPersistDocumentParent.h"
 #include "ProcessPriorityManager.h"
 #include "nsString.h"
-#include "NullPrincipal.h"
 
 #ifdef XP_WIN
 #include "mozilla/plugins/PluginWidgetParent.h"
@@ -161,6 +161,8 @@ TabParent::TabParent(nsIContentParent* aManager,
   , mTabId(aTabId)
   , mCreatingWindow(false)
   , mCursor(eCursorInvalid)
+  , mCustomCursorHotspotX(0)
+  , mCustomCursorHotspotY(0)
   , mTabSetsCursor(false)
   , mHasContentOpener(false)
 #ifdef DEBUG
@@ -3400,7 +3402,7 @@ TabParent::AddInitialDnDDataTo(DataTransfer* aDataTransfer,
           variant->SetAsISupports(imageContainer);
         } else {
           Shmem data = item.data().get_Shmem();
-          variant->SetAsACString(nsDependentCString(data.get<char>(), data.Size<char>()));
+          variant->SetAsACString(nsDependentCSubstring(data.get<char>(), data.Size<char>()));
         }
 
         mozilla::Unused << DeallocShmem(item.data().get_Shmem());
@@ -3528,22 +3530,6 @@ TabParent::GetShowInfo()
 
   return ShowInfo(EmptyString(), false, false, false,
                   false, mDPI, mRounding, mDefaultScale.scale);
-}
-
-mozilla::ipc::IPCResult
-TabParent::RecvGetTabCount(uint32_t* aValue)
-{
-  *aValue = 0;
-
-  nsCOMPtr<nsIXULBrowserWindow> xulBrowserWindow = GetXULBrowserWindow();
-  NS_ENSURE_TRUE(xulBrowserWindow, IPC_OK());
-
-  uint32_t tabCount;
-  nsresult rv = xulBrowserWindow->GetTabCount(&tabCount);
-  NS_ENSURE_SUCCESS(rv, IPC_OK());
-
-  *aValue = tabCount;
-  return IPC_OK();
 }
 
 mozilla::ipc::IPCResult

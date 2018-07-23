@@ -595,6 +595,10 @@ protected:
   already_AddRefed<ShadowRoot> AttachShadowInternal(
     ShadowRootMode, ErrorResult& aError);
 
+  MOZ_CAN_RUN_SCRIPT
+  nsIScrollableFrame* GetScrollFrame(nsIFrame **aStyledFrame = nullptr,
+                                     FlushType aFlushType = FlushType::Layout);
+
 private:
   // Need to allow the ESM, nsGlobalWindow, and the focus manager to
   // set our state
@@ -1913,8 +1917,6 @@ protected:
   InternalGetAttrNameFromQName(const nsAString& aStr,
                                nsAutoString* aNameToUse = nullptr) const;
 
-  nsIFrame* GetStyledFrame();
-
   virtual Element* GetNameSpaceElement() override
   {
     return this;
@@ -1985,9 +1987,13 @@ private:
    */
   MOZ_CAN_RUN_SCRIPT nsRect GetClientAreaRect();
 
-  MOZ_CAN_RUN_SCRIPT
-  nsIScrollableFrame* GetScrollFrame(nsIFrame **aStyledFrame = nullptr,
-                                     FlushType aFlushType = FlushType::Layout);
+  /**
+   * GetCustomInterface is somewhat like a GetInterface, but it is expected
+   * that the implementation is provided by a custom element or via the 
+   * the XBL implements keyword. To use this, create a public method that
+   * wraps a call to GetCustomInterface.
+   */
+  template<class T> void GetCustomInterface(nsGetterAddRefs<T> aResult);
 
   // Prevent people from doing pointless checks/casts on Element instances.
   void IsElement() = delete;

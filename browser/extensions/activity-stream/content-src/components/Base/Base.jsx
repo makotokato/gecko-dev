@@ -26,12 +26,12 @@ function addLocaleDataForReactIntl(locale) {
 
 export class _Base extends React.PureComponent {
   componentWillMount() {
-    const {App, locale, Theme} = this.props;
-    if (Theme.className) {
-      this.updateTheme(Theme);
-    }
+    const {App, locale} = this.props;
     this.sendNewTabRehydrated(App);
     addLocaleDataForReactIntl(locale);
+    if (this.props.isFirstrun) {
+      global.document.body.classList.add("welcome", "hide-main");
+    }
   }
 
   componentDidMount() {
@@ -45,19 +45,21 @@ export class _Base extends React.PureComponent {
   }
 
   componentWillUnmount() {
-    this.updateTheme({className: ""});
+    this.updateTheme();
   }
 
-  componentWillUpdate({App, Theme}) {
-    this.updateTheme(Theme);
+  componentWillUpdate({App}) {
+    this.updateTheme();
     this.sendNewTabRehydrated(App);
   }
 
-  updateTheme(Theme) {
+  updateTheme() {
     const bodyClassName = [
       "activity-stream",
-      Theme.className,
-      this.props.isFirstrun ? "welcome" : ""
+      // If we skipped the about:welcome overlay and removed the CSS classes
+      // we don't want to add them back to the Activity Stream view
+      document.body.classList.contains("welcome") ? "welcome" : "",
+      document.body.classList.contains("hide-main") ? "hide-main" : ""
     ].filter(v => v).join(" ");
     global.document.body.className = bodyClassName;
   }
@@ -152,4 +154,4 @@ export class BaseContent extends React.PureComponent {
   }
 }
 
-export const Base = connect(state => ({App: state.App, Prefs: state.Prefs, Theme: state.Theme}))(_Base);
+export const Base = connect(state => ({App: state.App, Prefs: state.Prefs}))(_Base);

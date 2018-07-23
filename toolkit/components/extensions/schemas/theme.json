@@ -52,6 +52,7 @@
               "additional_backgrounds": {
                 "type": "array",
                 "items": { "$ref": "ImageDataOrExtensionURL" },
+                "maxItems": 15,
                 "optional": true
               },
               "headerURL": {
@@ -194,6 +195,14 @@
                 "optional": true
               },
               "popup_highlight_text": {
+                "$ref": "ThemeColor",
+                "optional": true
+              },
+              "ntp_background": {
+                "$ref": "ThemeColor",
+                "optional": true
+              },
+              "ntp_text": {
                 "$ref": "ThemeColor",
                 "optional": true
               }
@@ -542,6 +551,7 @@
                     "right bottom", "right center", "right top"
                   ]
                 },
+                "maxItems": 15,
                 "optional": true
               },
               "additional_backgrounds_tiling": {
@@ -550,6 +560,7 @@
                   "type": "string",
                   "enum": ["no-repeat", "repeat", "repeat-x", "repeat-y"]
                 },
+                "maxItems": 15,
                 "optional": true
               }
             },

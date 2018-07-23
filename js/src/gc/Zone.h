@@ -160,7 +160,8 @@ class Zone : public JS::shadow::Zone,
         Pending,
         Active
     };
-    mozilla::Atomic<HelperThreadUse> helperThreadUse_;
+    mozilla::Atomic<HelperThreadUse, mozilla::SequentiallyConsistent,
+                    mozilla::recordreplay::Behavior::DontPreserve> helperThreadUse_;
 
     // The helper thread context with exclusive access to this zone, if
     // usedByHelperThread(), or nullptr when on the main thread.
@@ -709,28 +710,6 @@ class Zone : public JS::shadow::Zone,
 
     // Delete an empty compartment after its contents have been merged.
     void deleteEmptyCompartment(JS::Compartment* comp);
-
-    /*
-     * This variation of calloc will call the large-allocation-failure callback
-     * on OOM and retry the allocation.
-     */
-    template <typename T>
-    T* pod_callocCanGC(size_t numElems) {
-        T* p = pod_calloc<T>(numElems);
-        if (MOZ_LIKELY(!!p))
-            return p;
-        size_t bytes;
-        if (MOZ_UNLIKELY(!js::CalculateAllocSize<T>(numElems, &bytes))) {
-            reportAllocationOverflow();
-            return nullptr;
-        }
-        JSRuntime* rt = runtimeFromMainThread();
-        p = static_cast<T*>(rt->onOutOfMemoryCanGC(js::AllocFunction::Calloc, bytes));
-        if (!p)
-            return nullptr;
-        updateMallocCounter(bytes);
-        return p;
-    }
 
     // Non-zero if the storage underlying any typed object in this zone might
     // be detached. This is stored in Zone because IC stubs bake in a pointer

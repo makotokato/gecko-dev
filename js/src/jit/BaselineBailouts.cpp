@@ -423,41 +423,6 @@ struct BaselineStackBuilder
     }
 };
 
-// Ensure that all value locations are readable from the SnapshotIterator.
-// Remove RInstructionResults from the JitActivation if the frame got recovered
-// ahead of the bailout.
-class SnapshotIteratorForBailout : public SnapshotIterator
-{
-    JitActivation* activation_;
-    const JSJitFrameIter& iter_;
-
-  public:
-    SnapshotIteratorForBailout(JitActivation* activation, const JSJitFrameIter& iter)
-      : SnapshotIterator(iter, activation->bailoutData()->machineState()),
-        activation_(activation),
-        iter_(iter)
-    {
-        MOZ_ASSERT(iter.isBailoutJS());
-    }
-
-    ~SnapshotIteratorForBailout() {
-        // The bailout is complete, we no longer need the recover instruction
-        // results.
-        activation_->removeIonFrameRecovery(fp_);
-    }
-
-    // Take previously computed result out of the activation, or compute the
-    // results of all recover instructions contained in the snapshot.
-    MOZ_MUST_USE bool init(JSContext* cx) {
-
-        // Under a bailout, there is no need to invalidate the frame after
-        // evaluating the recover instruction, as the invalidation is only
-        // needed to cause of the frame which has been introspected.
-        MaybeReadFallback recoverBailout(cx, activation_, &iter_, MaybeReadFallback::Fallback_DoNothing);
-        return initInstructionResults(recoverBailout);
-    }
-};
-
 #ifdef DEBUG
 static inline bool
 IsInlinableFallback(ICFallbackStub* icEntry)
@@ -1515,6 +1480,7 @@ jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
 {
     MOZ_ASSERT(bailoutInfo != nullptr);
     MOZ_ASSERT(*bailoutInfo == nullptr);
+    MOZ_ASSERT(iter.isBailoutJS());
 
     TraceLoggerThread* logger = TraceLoggerForCurrentThread(cx);
     TraceLogStopEvent(logger, TraceLogger_IonMonkey);
@@ -1525,6 +1491,12 @@ jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
     // ensure that its Debugger.Frame entry is cleaned up.
     auto guardRemoveRematerializedFramesFromDebugger = mozilla::MakeScopeExit([&] {
         activation->removeRematerializedFramesFromDebugger(cx, iter.fp());
+    });
+
+    // Always remove the RInstructionResults from the JitActivation, even in
+    // case of failures as the stack frame is going away after the bailout.
+    auto removeIonFrameRecovery = mozilla::MakeScopeExit([&] {
+        activation->removeIonFrameRecovery(iter.jsFrame());
     });
 
     // The caller of the top frame must be one of the following:
@@ -1600,8 +1572,16 @@ jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
     }
     JitSpew(JitSpew_BaselineBailouts, "  Incoming frame ptr = %p", builder.startFrame());
 
-    SnapshotIteratorForBailout snapIter(activation, iter);
-    if (!snapIter.init(cx)) {
+    // Under a bailout, there is no need to invalidate the frame after
+    // evaluating the recover instruction, as the invalidation is only needed in
+    // cases where the frame is introspected ahead of the bailout.
+    MaybeReadFallback recoverBailout(cx, activation, &iter, MaybeReadFallback::Fallback_DoNothing);
+
+    // Ensure that all value locations are readable from the SnapshotIterator.
+    // Get the RInstructionResults from the JitActivation if the frame got
+    // recovered ahead of the bailout.
+    SnapshotIterator snapIter(iter, activation->bailoutData()->machineState());
+    if (!snapIter.initInstructionResults(recoverBailout)) {
         ReportOutOfMemory(cx);
         return BAILOUT_RETURN_FATAL_ERROR;
     }
@@ -1861,6 +1841,14 @@ jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfo)
     MOZ_ASSERT(numFrames > 0);
     BailoutKind bailoutKind = bailoutInfo->bailoutKind;
     bool checkGlobalDeclarationConflicts = bailoutInfo->checkGlobalDeclarationConflicts;
+    uint8_t* incomingStack = bailoutInfo->incomingStack;
+
+    // We have to get rid of the rematerialized frame, whether it is
+    // restored or unwound.
+    auto guardRemoveRematerializedFramesFromDebugger = mozilla::MakeScopeExit([&] {
+        JitActivation* act = cx->activation()->asJit();
+        act->removeRematerializedFramesFromDebugger(cx, incomingStack);
+    });
 
     // Free the bailout buffer.
     js_free(bailoutInfo);
@@ -1934,6 +1922,7 @@ jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfo)
             if (frameno == numFrames - 1) {
                 outerScript = frame->script();
                 outerFp = iter.fp();
+                MOZ_ASSERT(outerFp == incomingStack);
             }
 
             frameno++;
@@ -1952,7 +1941,7 @@ jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfo)
     // on.
     JitActivation* act = cx->activation()->asJit();
     if (act->hasRematerializedFrame(outerFp)) {
-        JSJitFrameIter iter(cx->activation()->asJit());
+        JSJitFrameIter iter(act);
         size_t inlineDepth = numFrames;
         bool ok = true;
         while (inlineDepth > 0) {
@@ -1960,18 +1949,22 @@ jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfo)
                 // We must attempt to copy all rematerialized frames over,
                 // even if earlier ones failed, to invoke the proper frame
                 // cleanup in the Debugger.
-                ok = CopyFromRematerializedFrame(cx, act, outerFp, --inlineDepth,
-                                                 iter.baselineFrame());
+                if (!CopyFromRematerializedFrame(cx, act, outerFp, --inlineDepth,
+                                                 iter.baselineFrame()))
+                {
+                    ok = false;
+                }
             }
             ++iter;
         }
 
-        // After copying from all the rematerialized frames, remove them from
-        // the table to keep the table up to date.
-        act->removeRematerializedFrame(outerFp);
-
         if (!ok)
             return false;
+
+        // After copying from all the rematerialized frames, remove them from
+        // the table to keep the table up to date.
+        guardRemoveRematerializedFramesFromDebugger.release();
+        act->removeRematerializedFrame(outerFp);
     }
 
     // If we are catching an exception, we need to unwind scopes.

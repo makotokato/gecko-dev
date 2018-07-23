@@ -75,9 +75,7 @@ pref("extensions.webextensions.default-content-security-policy", "script-src 'se
 pref("extensions.webextensions.remote", true);
 #endif
 
-#ifdef NIGHTLY_BUILD
 pref("extensions.webextensions.background-delayed-startup", true);
-#endif
 
 // Extensions that should not be flagged as legacy in about:addons
 pref("extensions.legacy.exceptions", "testpilot@cliqz.com,@testpilot-containers,jid1-NeEaf3sAHdKHPA@jetpack,@activity-streams,pulse@mozilla.com,@testpilot-addon,@min-vid,tabcentertest1@mozilla.com,snoozetabs@mozilla.com,speaktome@mozilla.com,hoverpad@mozilla.com");
@@ -125,13 +123,6 @@ pref("app.update.log", false);
 // the failure.
 pref("app.update.backgroundMaxErrors", 10);
 
-// Whether or not app updates are enabled
-#ifdef MOZ_UPDATER
-pref("app.update.enabled", true);
-#else
-pref("app.update.enabled", false);
-#endif
-
 // Whether or not to use the doorhanger application update UI.
 pref("app.update.doorhanger", true);
 
@@ -147,9 +138,8 @@ pref("app.update.download.promptMaxAttempts", 2);
 // download a fresh installer.
 pref("app.update.elevation.promptMaxAttempts", 2);
 
-// If set to true, the Update Service will automatically download updates when
-// app updates are enabled per the app.update.enabled preference and if the user
-// can apply updates.
+// If set to true, the Update Service will automatically download updates if the
+// user can apply updates.
 pref("app.update.auto", true);
 
 // If set to true, the Update Service will present no UI for any event.
@@ -245,7 +235,7 @@ pref("browser.defaultbrowser.notificationbar", false);
 // 0 = blank, 1 = home (browser.startup.homepage), 2 = last visited page, 3 = resume previous browser session
 // The behavior of option 3 is detailed at: http://wiki.mozilla.org/Session_Restore
 pref("browser.startup.page",                1);
-pref("browser.startup.homepage",            "chrome://branding/locale/browserconfig.properties");
+pref("browser.startup.homepage",            "about:home");
 // Whether we should skip the homepage when opening the first-run page
 pref("browser.startup.firstrunSkipsHomepage", true);
 
@@ -436,7 +426,11 @@ pref("browser.link.open_newwindow.disabled_in_fullscreen", false);
 #endif
 
 // Tabbed browser
+#if defined(NIGHTLY_BUILD)
+pref("browser.tabs.multiselect", true);
+#else
 pref("browser.tabs.multiselect", false);
+#endif
 pref("browser.tabs.20FpsThrobber", false);
 pref("browser.tabs.30FpsThrobber", false);
 pref("browser.tabs.closeTabByDblclick", false);
@@ -1070,20 +1064,24 @@ pref("security.sandbox.gmp.win32k-disable", false);
 pref("security.sandbox.content.level", 3);
 #endif
 
-// Enable the Mac Flash sandbox on Nightly and Beta, not Release
-#if defined(EARLY_BETA_OR_EARLIER) && defined(XP_MACOSX) && defined(MOZ_SANDBOX)
-// Controls whether and how the Mac NPAPI Flash plugin process is sandboxed.
-// On Mac these levels are:
+#if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
+// Prefs for controlling whether and how the Mac NPAPI Flash plugin process is
+// sandboxed. On Mac these levels are:
 // 0 - "no sandbox"
-// 1 - "write access to some Flash-specific directories and global
-//      read access triggered by file dialog activity"
-// 2 - "no global read access, read and write access to some
-//      Flash-specific directories"
-pref("dom.ipc.plugins.sandbox-level.flash", 1);
+// 1 - "global read access, limited write access for Flash functionality"
+// 2 - "read access triggered by file dialog activity, limited read/write"
+//     "access for Flash functionality"
+// 3 - "limited read/write access for Flash functionality"
+pref("dom.ipc.plugins.sandbox-level.flash", 2);
+// Controls the level used on older OS X versions. Is overriden when the
+// "dom.ipc.plugins.sandbox-level.flash" is set to 0.
+pref("dom.ipc.plugins.sandbox-level.flash.legacy", 1);
+// The max OS minor version where we use the above legacy sandbox level.
+pref("dom.ipc.plugins.sandbox-level.flash.max-legacy-os-minor", 10);
 // Controls the sandbox level used by plugins other than Flash. On Mac,
 // no other plugins are supported and this pref is only used for test
 // plugins used in automated tests.
-pref("dom.ipc.plugins.sandbox-level.default", 1);
+pref("dom.ipc.plugins.sandbox-level.default", 2);
 #endif
 
 #if defined(XP_LINUX) && defined(MOZ_SANDBOX) && defined(MOZ_CONTENT_SANDBOX)
@@ -1259,6 +1257,9 @@ pref("browser.newtabpage.activity-stream.debug", false);
 #endif
 
 pref("browser.library.activity-stream.enabled", true);
+
+// The remote FxA root content URL for the Activity Stream firstrun page.
+pref("browser.newtabpage.activity-stream.fxaccounts.endpoint", "https://accounts.firefox.com/");
 
 // Enable the DOM fullscreen API.
 pref("full-screen-api.enabled", true);
@@ -1448,7 +1449,19 @@ pref("media.gmp-widevinecdm.visible", true);
 pref("media.gmp-widevinecdm.enabled", true);
 #endif
 
+#ifdef NIGHTLY_BUILD
+// Switch block autoplay logic to v2, and enable UI.
+pref("media.autoplay.enabled.user-gestures-needed", true);
+// Allow asking for permission to autoplay to appear in UI.
+pref("media.autoplay.ask-permission", true);
+// Set Firefox to block autoplay, asking for permission by default.
+pref("media.autoplay.default", 2); // 0=Allowed, 1=Blocked, 2=Prompt
+#else
+pref("media.autoplay.default", 0); // 0=Allowed, 1=Blocked, 2=Prompt
+pref("media.autoplay.enabled.user-gestures-needed", false);
 pref("media.autoplay.ask-permission", false);
+#endif
+
 
 // Play with different values of the decay time and get telemetry,
 // 0 means to randomize (and persist) the experiment value in users' profiles,
@@ -1489,9 +1502,13 @@ pref("browser.ping-centre.production.endpoint", "https://tiles.services.mozilla.
 // Enable GMP support in the addon manager.
 pref("media.gmp-provider.enabled", true);
 
-pref("privacy.trackingprotection.ui.enabled", true);
 pref("privacy.trackingprotection.introCount", 0);
 pref("privacy.trackingprotection.introURL", "https://www.mozilla.org/%LOCALE%/firefox/%VERSION%/tracking-protection/start/");
+#ifdef NIGHTLY_BUILD
+pref("privacy.trackingprotection.appMenuToggle.enabled", true);
+#else
+pref("privacy.trackingprotection.appMenuToggle.enabled", false);
+#endif
 
 // Always enable newtab segregation using containers
 pref("privacy.usercontext.about_newtab_segregation.enabled", true);

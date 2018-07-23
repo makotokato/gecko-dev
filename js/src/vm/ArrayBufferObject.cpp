@@ -459,10 +459,8 @@ ArrayBufferObject::class_constructor(JSContext* cx, unsigned argc, Value* vp)
 static ArrayBufferObject::BufferContents
 AllocateArrayBufferContents(JSContext* cx, uint32_t nbytes)
 {
-    uint8_t* p = cx->zone()->pod_callocCanGC<uint8_t>(nbytes);
-    if (!p)
-        ReportOutOfMemory(cx);
-
+    uint8_t* p = cx->pod_callocCanGC<uint8_t>(nbytes,
+                                                      js::ArrayBufferContentsArena);
     return ArrayBufferObject::BufferContents::create<ArrayBufferObject::PLAIN>(p);
 }
 
@@ -1283,7 +1281,7 @@ ArrayBufferObject*
 ArrayBufferObject::createEmpty(JSContext* cx)
 {
     AutoSetNewObjectMetadata metadata(cx);
-    ArrayBufferObject* obj = NewObjectWithClassProto<ArrayBufferObject>(cx, nullptr);
+    ArrayBufferObject* obj = NewBuiltinClassInstance<ArrayBufferObject>(cx);
     if (!obj)
         return nullptr;
 
@@ -1300,7 +1298,7 @@ ArrayBufferObject::createFromNewRawBuffer(JSContext* cx, WasmArrayRawBuffer* buf
                                           uint32_t initialSize)
 {
     AutoSetNewObjectMetadata metadata(cx);
-    ArrayBufferObject* obj = NewObjectWithClassProto<ArrayBufferObject>(cx, nullptr);
+    ArrayBufferObject* obj = NewBuiltinClassInstance<ArrayBufferObject>(cx);
     if (!obj) {
         WasmArrayRawBuffer::Release(buffer->dataPointer());
         return nullptr;

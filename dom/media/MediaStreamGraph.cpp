@@ -2764,7 +2764,7 @@ SourceMediaStream::SetPullEnabled(bool aEnabled)
 bool
 SourceMediaStream::PullNewData(StreamTime aDesiredUpToTime)
 {
-  TRACE_AUDIO_CALLBACK();
+  TRACE_AUDIO_CALLBACK_COMMENT("SourceMediaStream %p", this);
   MutexAutoLock lock(mMutex);
   if (!mPullEnabled || mFinished) {
     return false;
@@ -3665,7 +3665,8 @@ MediaStreamGraphImpl::Destroy()
   // First unregister from memory reporting.
   UnregisterWeakMemoryReporter(this);
 
-  // Clear the self reference which will destroy this instance.
+  // Clear the self reference which will destroy this instance if all
+  // associated GraphDrivers are destroyed.
   mSelfRef = nullptr;
 }
 

@@ -45,17 +45,18 @@ const whitelist = {
     "resource://gre/modules/Log.jsm",
 
     // Session store
-    "resource:///modules/sessionstore/ContentRestore.jsm",
+    "resource:///modules/sessionstore/ContentSessionStore.jsm",
     "resource://gre/modules/sessionstore/SessionHistory.jsm",
 
     // Forms and passwords
+    "resource://formautofill/FormAutofill.jsm",
     "resource://formautofill/FormAutofillContent.jsm",
-    "resource://formautofill/FormAutofillUtils.jsm",
 
     // Browser front-end
     "resource:///modules/ContentLinkHandler.jsm",
     "resource:///modules/ContentMetaHandler.jsm",
     "resource:///modules/PageStyleHandler.jsm",
+    "resource:///modules/LightweightThemeChildListener.jsm",
     "resource://gre/modules/BrowserUtils.jsm",
     "resource://gre/modules/E10SUtils.jsm",
     "resource://gre/modules/PrivateBrowsingUtils.jsm",
@@ -83,6 +84,19 @@ const whitelist = {
 
     // Shield
     "resource://normandy-content/AboutPages.jsm",
+  ]),
+};
+
+// Items on this list are allowed to be loaded but not
+// required, as opposed to items in the main whitelist,
+// which are all required.
+const intermittently_loaded_whitelist = {
+  components: new Set([
+    "nsAsyncShutdown.js",
+  ]),
+  modules: new Set([
+    "resource://gre/modules/sessionstore/Utils.jsm",
+    "resource://gre/modules/TelemetryStopwatch.jsm",
   ]),
 };
 
@@ -142,6 +156,10 @@ add_task(async function() {
         return true;
       whitelist[scriptType].delete(c);
       return false;
+    });
+
+    loadedList[scriptType] = loadedList[scriptType].filter(c => {
+      return !intermittently_loaded_whitelist[scriptType].has(c);
     });
 
     is(loadedList[scriptType].length, 0,

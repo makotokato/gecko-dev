@@ -18,11 +18,15 @@ var gTabsPanel = {
     hiddenTabsView: "allTabsMenu-hiddenTabsView",
   },
   _initialized: false,
+  _initializedElements: false,
 
   initElements() {
+    if (this._initializedElements) return;
+
     for (let [name, id] of Object.entries(this.kElements)) {
       this[name] = document.getElementById(id);
     }
+    this._initializedElements = true;
   },
 
   init() {
@@ -30,8 +34,8 @@ var gTabsPanel = {
 
     this.initElements();
 
-    let hiddenTabsMenuButton = this.allTabsView.querySelector(".hidden-tabs-button");
-    let hiddenTabsSeparator = this.allTabsView.querySelector(".hidden-tabs-separator");
+    let hiddenTabsMenuButton = document.getElementById("allTabsMenu-hiddenTabsButton");
+    let hiddenTabsSeparator = document.getElementById("allTabsMenu-hiddenTabsSeparator");
     this.hiddenAudioTabsPopup = new TabsPanel({
       view: this.allTabsView,
       insertBefore: hiddenTabsSeparator,
@@ -41,31 +45,10 @@ var gTabsPanel = {
       view: this.allTabsView,
       containerNode: this.allTabsViewTabs,
       filterFn: (tab) => !tab.pinned && !tab.hidden,
-      onPopulate() {
-        // Set the visible tab status.
-        let tabContainer = gBrowser.tabContainer;
-        // We don't want menu item decoration unless there is overflow.
-        if (tabContainer.getAttribute("overflow") != "true") {
-          return;
-        }
-
-        let windowUtils = window.QueryInterface(Ci.nsIInterfaceRequestor)
-                                .getInterface(Ci.nsIDOMWindowUtils);
-        let arrowScrollboxRect = windowUtils.getBoundsWithoutFlushing(tabContainer.arrowScrollbox);
-        for (let row of this.rows) {
-          let curTabRect = windowUtils.getBoundsWithoutFlushing(row.tab);
-          if (curTabRect.left >= arrowScrollboxRect.left &&
-              curTabRect.right <= arrowScrollboxRect.right) {
-            row.setAttribute("tabIsVisible", "true");
-          } else {
-            row.removeAttribute("tabIsVisible");
-          }
-        }
-      },
     });
 
-    let containerTabsButton = this.allTabsView.querySelector(".container-tabs-button");
-    let containerTabsSeparator = this.allTabsView.querySelector(".container-tabs-separator");
+    let containerTabsButton = document.getElementById("allTabsMenu-containerTabsButton");
+    let containerTabsSeparator = document.getElementById("allTabsMenu-containerTabsSeparator");
     this.allTabsView.addEventListener("ViewShowing", (e) => {
       PanelUI._ensureShortcutsShown(this.allTabsView);
       e.target.querySelector(".undo-close-tab").disabled =
@@ -124,9 +107,16 @@ var gTabsPanel = {
     this._initialized = true;
   },
 
+  get canOpen() {
+    this.initElements();
+    return isElementVisible(this.allTabsButton);
+  },
+
   showAllTabsPanel() {
     this.init();
-    PanelUI.showSubView(this.kElements.allTabsView, this.allTabsButton);
+    if (this.canOpen) {
+      PanelUI.showSubView(this.kElements.allTabsView, this.allTabsButton);
+    }
   },
 
   hideAllTabsPanel() {
@@ -136,6 +126,9 @@ var gTabsPanel = {
 
   showHiddenTabsPanel() {
     this.init();
+    if (!this.canOpen) {
+      return;
+    }
     this.allTabsView.addEventListener("ViewShown", (e) => {
       PanelUI.showSubView(this.kElements.hiddenTabsView, this.hiddenTabsButton);
     }, {once: true});

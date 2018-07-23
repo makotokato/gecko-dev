@@ -344,12 +344,9 @@ nsIContent::GetLang() const
 already_AddRefed<nsIURI>
 nsIContent::GetBaseURI(bool aTryUseXHRDocBaseURI) const
 {
-  if (IsInAnonymousSubtree() && IsAnonymousContentInSVGUseSubtree()) {
-    nsIContent* bindingParent = GetBindingParent();
-    MOZ_ASSERT(bindingParent);
-    SVGUseElement* useElement = static_cast<SVGUseElement*>(bindingParent);
+  if (SVGUseElement* use = GetContainingSVGUseShadowHost()) {
     // XXX Ignore xml:base as we are removing it.
-    if (URLExtraData* data = useElement->GetContentURLData()) {
+    if (URLExtraData* data = use->GetContentURLData()) {
       return do_AddRef(data->BaseURI());
     }
   }
@@ -419,11 +416,8 @@ nsIContent::GetBaseURI(bool aTryUseXHRDocBaseURI) const
 nsIURI*
 nsIContent::GetBaseURIForStyleAttr() const
 {
-  if (IsInAnonymousSubtree() && IsAnonymousContentInSVGUseSubtree()) {
-    nsIContent* bindingParent = GetBindingParent();
-    MOZ_ASSERT(bindingParent);
-    SVGUseElement* useElement = static_cast<SVGUseElement*>(bindingParent);
-    if (URLExtraData* data = useElement->GetContentURLData()) {
+  if (SVGUseElement* use = GetContainingSVGUseShadowHost()) {
+    if (URLExtraData* data = use->GetContentURLData()) {
       return data->BaseURI();
     }
   }
@@ -435,11 +429,8 @@ nsIContent::GetBaseURIForStyleAttr() const
 already_AddRefed<URLExtraData>
 nsIContent::GetURLDataForStyleAttr(nsIPrincipal* aSubjectPrincipal) const
 {
-  if (IsInAnonymousSubtree() && IsAnonymousContentInSVGUseSubtree()) {
-    nsIContent* bindingParent = GetBindingParent();
-    MOZ_ASSERT(bindingParent);
-    SVGUseElement* useElement = static_cast<SVGUseElement*>(bindingParent);
-    if (URLExtraData* data = useElement->GetContentURLData()) {
+  if (SVGUseElement* use = GetContainingSVGUseShadowHost()) {
+    if (URLExtraData* data = use->GetContentURLData()) {
       return do_AddRef(data);
     }
   }
@@ -754,10 +745,6 @@ FragmentOrElement::nsExtendedDOMSlots::nsExtendedDOMSlots() = default;
 
 FragmentOrElement::nsExtendedDOMSlots::~nsExtendedDOMSlots()
 {
-  RefPtr<nsFrameLoader> frameLoader = do_QueryObject(mFrameLoaderOrOpener);
-  if (frameLoader) {
-    frameLoader->Destroy();
-  }
 }
 
 void
@@ -767,19 +754,16 @@ FragmentOrElement::nsExtendedDOMSlots::UnlinkExtendedSlots()
 
   // Don't clear mXBLBinding, it'll be done in
   // BindingManager::RemovedFromDocument from FragmentOrElement::Unlink.
+  //
+  // mShadowRoot will similarly be cleared explicitly from
+  // FragmentOrElement::Unlink.
   mSMILOverrideStyle = nullptr;
   mControllers = nullptr;
   mLabelsList = nullptr;
-  mShadowRoot = nullptr;
   if (mCustomElementData) {
     mCustomElementData->Unlink();
     mCustomElementData = nullptr;
   }
-  RefPtr<nsFrameLoader> frameLoader = do_QueryObject(mFrameLoaderOrOpener);
-  if (frameLoader) {
-    frameLoader->Destroy();
-  }
-  mFrameLoaderOrOpener = nullptr;
 }
 
 void
@@ -806,9 +790,6 @@ FragmentOrElement::nsExtendedDOMSlots::TraverseExtendedSlots(nsCycleCollectionTr
   if (mCustomElementData) {
     mCustomElementData->Traverse(aCb);
   }
-
-  NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCb, "mExtendedSlots->mFrameLoaderOrOpener");
-  aCb.NoteXPCOMChild(mFrameLoaderOrOpener);
 }
 
 FragmentOrElement::FragmentOrElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
@@ -1053,7 +1034,7 @@ nsIContent::GetEventTargetParent(EventChainPreVisitor& aVisitor)
             // Step 4.
             // "If target is relatedTarget and target is not event's
             //  relatedTarget, then return true."
-            aVisitor.IgnoreCurrentTarget();
+            aVisitor.IgnoreCurrentTargetBecauseOfShadowDOMRetargeting();
             // Old code relies on mTarget to point to the first element which
             // was not added to the event target chain because of mCanHandle
             // being false, but in Shadow DOM case mTarget really should
@@ -1097,7 +1078,7 @@ nsIContent::GetEventTargetParent(EventChainPreVisitor& aVisitor)
             // Step 11.5
             // "Otherwise, if parent and relatedTarget are identical, then set
             //  parent to null."
-            aVisitor.IgnoreCurrentTarget();
+            aVisitor.IgnoreCurrentTargetBecauseOfShadowDOMRetargeting();
             // Old code relies on mTarget to point to the first element which
             // was not added to the event target chain because of mCanHandle
             // being false, but in Shadow DOM case mTarget really should
@@ -1511,6 +1492,17 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(FragmentOrElement)
   // Clear flag here because unlinking slots will clear the
   // containing shadow root pointer.
   tmp->UnsetFlags(NODE_IS_IN_SHADOW_TREE);
+
+  if (ShadowRoot* shadowRoot = tmp->GetShadowRoot()) {
+    for (nsIContent* child = shadowRoot->GetFirstChild();
+         child;
+         child = child->GetNextSibling()) {
+      child->UnbindFromTree(true, false);
+    }
+
+    shadowRoot->SetIsComposedDocParticipant(false);
+    tmp->ExtendedDOMSlots()->mShadowRoot = nullptr;
+  }
 
   nsIDocument* doc = tmp->OwnerDoc();
   doc->BindingManager()->RemovedFromDocument(tmp, doc,

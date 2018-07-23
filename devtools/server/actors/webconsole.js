@@ -10,7 +10,8 @@
 
 const Services = require("Services");
 const { Cc, Ci, Cu } = require("chrome");
-const { DebuggerServer, ActorPool } = require("devtools/server/main");
+const { DebuggerServer } = require("devtools/server/main");
+const { ActorPool } = require("devtools/server/actors/common");
 const { ThreadActor } = require("devtools/server/actors/thread");
 const { ObjectActor } = require("devtools/server/actors/object");
 const { LongStringActor } = require("devtools/server/actors/object/long-string");
@@ -26,9 +27,11 @@ loader.lazyRequireGetter(this, "StackTraceCollector", "devtools/shared/webconsol
 loader.lazyRequireGetter(this, "JSPropertyProvider", "devtools/shared/webconsole/js-property-provider", true);
 loader.lazyRequireGetter(this, "Parser", "resource://devtools/shared/Parser.jsm", true);
 loader.lazyRequireGetter(this, "NetUtil", "resource://gre/modules/NetUtil.jsm", true);
+loader.lazyRequireGetter(this, "WebConsoleCommands", "devtools/server/actors/webconsole/utils", true);
 loader.lazyRequireGetter(this, "addWebConsoleCommands", "devtools/server/actors/webconsole/utils", true);
 loader.lazyRequireGetter(this, "formatCommand", "devtools/server/actors/webconsole/commands", true);
 loader.lazyRequireGetter(this, "isCommand", "devtools/server/actors/webconsole/commands", true);
+loader.lazyRequireGetter(this, "validCommands", "devtools/server/actors/webconsole/commands", true);
 loader.lazyRequireGetter(this, "CONSOLE_WORKER_IDS", "devtools/server/actors/webconsole/utils", true);
 loader.lazyRequireGetter(this, "WebConsoleUtils", "devtools/server/actors/webconsole/utils", true);
 loader.lazyRequireGetter(this, "EnvironmentActor", "devtools/server/actors/environment", true);
@@ -1083,60 +1086,68 @@ WebConsoleActor.prototype =
     let dbgObject = null;
     let environment = null;
     let hadDebuggee = false;
-
-    // This is the case of the paused debugger
-    if (frameActorId) {
-      const frameActor = this.conn.getActor(frameActorId);
-      try {
-        // Need to try/catch since accessing frame.environment
-        // can throw "Debugger.Frame is not live"
-        const frame = frameActor.frame;
-        environment = frame.environment;
-      } catch (e) {
-        DevToolsUtils.reportException("autocomplete",
-          Error("The frame actor was not found: " + frameActorId));
-      }
-    } else {
-      // This is the general case (non-paused debugger)
-      hadDebuggee = this.dbg.hasDebuggee(this.evalWindow);
-      dbgObject = this.dbg.addDebuggee(this.evalWindow);
-    }
-
-    const result = JSPropertyProvider(dbgObject, environment, request.text,
-                                    request.cursor, frameActorId) || {};
-
-    if (!hadDebuggee && dbgObject) {
-      this.dbg.removeDebuggee(this.evalWindow);
-    }
-
-    let matches = result.matches || [];
+    let matches = [];
+    let matchProp;
     const reqText = request.text.substr(0, request.cursor);
 
-    // We consider '$' as alphanumerc because it is used in the names of some
-    // helper functions.
-    const lastNonAlphaIsDot = /[.][a-zA-Z0-9$]*$/.test(reqText);
-    if (!lastNonAlphaIsDot) {
-      if (!this._webConsoleCommandsCache) {
-        const helpers = {
-          sandbox: Object.create(null)
-        };
-        addWebConsoleCommands(helpers);
-        this._webConsoleCommandsCache =
-          Object.getOwnPropertyNames(helpers.sandbox);
+    if (isCommand(reqText)) {
+      const commandsCache = this._getWebConsoleCommandsCache();
+      matchProp = reqText;
+      matches = validCommands
+        .filter(c => `:${c}`.startsWith(reqText)
+          && commandsCache.find(n => `:${n}`.startsWith(reqText))
+        )
+        .map(c => `:${c}`);
+    } else {
+      // This is the case of the paused debugger
+      if (frameActorId) {
+        const frameActor = this.conn.getActor(frameActorId);
+        try {
+          // Need to try/catch since accessing frame.environment
+          // can throw "Debugger.Frame is not live"
+          const frame = frameActor.frame;
+          environment = frame.environment;
+        } catch (e) {
+          DevToolsUtils.reportException("autocomplete",
+            Error("The frame actor was not found: " + frameActorId));
+        }
+      } else {
+        // This is the general case (non-paused debugger)
+        hadDebuggee = this.dbg.hasDebuggee(this.evalWindow);
+        dbgObject = this.dbg.addDebuggee(this.evalWindow);
       }
 
-      matches = matches.concat(this._webConsoleCommandsCache
-          .filter(n =>
-            // filter out `screenshot` command as it is inaccessible without
-            // the `:` prefix
-            n !== "screenshot" && n.startsWith(result.matchProp)
-          ));
+      const result = JSPropertyProvider(dbgObject, environment, request.text,
+                                      request.cursor, frameActorId) || {};
+
+      if (!hadDebuggee && dbgObject) {
+        this.dbg.removeDebuggee(this.evalWindow);
+      }
+
+      matches = result.matches || [];
+      matchProp = result.matchProp;
+
+      // We consider '$' as alphanumerc because it is used in the names of some
+      // helper functions.
+      const lastNonAlphaIsDot = /[.][a-zA-Z0-9$]*$/.test(reqText);
+      if (!lastNonAlphaIsDot) {
+        matches = matches.concat(this._getWebConsoleCommandsCache().filter(n =>
+          // filter out `screenshot` command as it is inaccessible without
+          // the `:` prefix
+          n !== "screenshot" && n.startsWith(result.matchProp)
+        ));
+      }
     }
+
+    // Make sure we return an array with unique items, since `matches` can hold twice
+    // the same function name if it was defined in the content page and match an helper
+    // function (e.g. $, keys, …).
+    matches = [...new Set(matches)].sort();
 
     return {
       from: this.actorID,
-      matches: matches.sort(),
-      matchProp: result.matchProp,
+      matches,
+      matchProp,
     };
   },
 
@@ -1265,6 +1276,17 @@ WebConsoleActor.prototype =
       Object.defineProperty(helpers.sandbox, name, desc);
     }
     return helpers;
+  },
+
+  _getWebConsoleCommandsCache: function() {
+    if (!this._webConsoleCommandsCache) {
+      const helpers = {
+        sandbox: Object.create(null)
+      };
+      addWebConsoleCommands(helpers);
+      this._webConsoleCommandsCache = Object.getOwnPropertyNames(helpers.sandbox);
+    }
+    return this._webConsoleCommandsCache;
   },
 
   /**
@@ -1417,39 +1439,35 @@ WebConsoleActor.prototype =
       }
     }
 
-    // Check if the Debugger.Frame or Debugger.Object for the global include
-    // $ or $$. We will not overwrite these functions with the Web Console
-    // commands.
-    let found$ = false, found$$ = false, disableScreenshot = false;
+    // Check if the Debugger.Frame or Debugger.Object for the global include any of the
+    // helper function we set. We will not overwrite these functions with the Web Console
+    // commands. The exception being "print" which should exist everywhere as
+    // `window.print`, and that we don't want to trigger from the console.
+    const availableHelpers = [...WebConsoleCommands._originalCommands.keys()]
+      .filter(h => h !== "print");
+
+    let helpersToDisable = [];
+    const helperCache = {};
+
     // do not override command functions if we are using the command key `:`
     // before the command string
     if (!isCmd) {
-      // if we do not have the command key as a prefix, screenshot is disabled by default
-      disableScreenshot = true;
       if (frame) {
         const env = frame.environment;
         if (env) {
-          found$ = !!env.find("$");
-          found$$ = !!env.find("$$");
+          helpersToDisable = availableHelpers.filter(name => !!env.find(name));
         }
       } else {
-        found$ = !!dbgWindow.getOwnPropertyDescriptor("$");
-        found$$ = !!dbgWindow.getOwnPropertyDescriptor("$$");
+        helpersToDisable = availableHelpers.filter(name =>
+          !!dbgWindow.getOwnPropertyDescriptor(name));
       }
+      // if we do not have the command key as a prefix, screenshot is disabled by default
+      helpersToDisable.push("screenshot");
     }
 
-    let $ = null, $$ = null, screenshot = null;
-    if (found$) {
-      $ = bindings.$;
-      delete bindings.$;
-    }
-    if (found$$) {
-      $$ = bindings.$$;
-      delete bindings.$$;
-    }
-    if (disableScreenshot) {
-      screenshot = bindings.screenshot;
-      delete bindings.screenshot;
+    for (const helper of helpersToDisable) {
+      helperCache[helper] = bindings[helper];
+      delete bindings[helper];
     }
 
     // Ready to evaluate the string.
@@ -1460,12 +1478,11 @@ WebConsoleActor.prototype =
       evalOptions = { url: options.url };
     }
 
-    // If the debugger object is changed from the last evaluation,
-    // adopt this._lastConsoleInputEvaluation value in the new debugger,
-    // to prevents "Debugger.Object belongs to a different Debugger" exceptions
-    // related to the $_ bindings.
-    if (this._lastConsoleInputEvaluation &&
-        this._lastConsoleInputEvaluation.global !== dbgWindow) {
+    // Adopt this._lastConsoleInputEvaluation value in the new debugger,
+    // to prevent "Debugger.Object belongs to a different Debugger" exceptions
+    // related to the $_ bindings if the debugger object is changed from the
+    // last evaluation.
+    if (this._lastConsoleInputEvaluation) {
       this._lastConsoleInputEvaluation = dbg.adoptDebuggeeValue(
         this._lastConsoleInputEvaluation
       );
@@ -1547,14 +1564,8 @@ WebConsoleActor.prototype =
     delete helpers.helperResult;
     delete helpers.selectedNode;
 
-    if ($) {
-      bindings.$ = $;
-    }
-    if ($$) {
-      bindings.$$ = $$;
-    }
-    if (screenshot) {
-      bindings.screenshot = screenshot;
+    for (const [helperName, helper] of Object.entries(helperCache)) {
+      bindings[helperName] = helper;
     }
 
     if (bindings._self) {

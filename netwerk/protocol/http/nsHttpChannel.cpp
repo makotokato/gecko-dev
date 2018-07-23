@@ -95,7 +95,6 @@
 #include "nsIHttpPushListener.h"
 #include "nsIX509Cert.h"
 #include "ScopedNSSTypes.h"
-#include "NullPrincipal.h"
 #include "nsIDeprecationWarner.h"
 #include "nsIDocument.h"
 #include "nsICompressConvStats.h"
@@ -104,6 +103,7 @@
 #include "mozilla/extensions/StreamFilterParent.h"
 #include "mozilla/net/Predictor.h"
 #include "mozilla/MathAlgorithms.h"
+#include "mozilla/NullPrincipal.h"
 #include "mozilla/StaticPrefs.h"
 #include "CacheControlParser.h"
 #include "nsMixedContentBlocker.h"
@@ -426,10 +426,10 @@ nsHttpChannel::AddSecurityMessage(const nsAString& aMessageTag,
 }
 
 NS_IMETHODIMP
-nsHttpChannel::LogBlockedCORSRequest(const nsAString& aMessage)
+nsHttpChannel::LogBlockedCORSRequest(const nsAString& aMessage, const nsACString& aCategory)
 {
     if (mWarningReporter) {
-        return mWarningReporter->LogBlockedCORSRequest(aMessage);
+        return mWarningReporter->LogBlockedCORSRequest(aMessage, aCategory);
     }
     return NS_ERROR_UNEXPECTED;
 }
@@ -499,6 +499,10 @@ nsHttpChannel::OnBeforeConnect()
 
     if (mUpgradeProtocolCallback) {
         mCaps |=  NS_HTTP_DISALLOW_SPDY;
+    }
+
+    if (mTRR) {
+        mCaps |= NS_HTTP_LARGE_KEEPALIVE | NS_HTTP_DISABLE_TRR;
     }
 
     // Finalize ConnectionInfo flags before SpeculativeConnect
@@ -758,7 +762,8 @@ nsHttpChannel::SpeculativeConnect()
         return;
 
     Unused << gHttpHandler->SpeculativeConnect(
-        mConnectionInfo, callbacks, mCaps & NS_HTTP_DISALLOW_SPDY);
+        mConnectionInfo, callbacks,
+        mCaps & (NS_HTTP_DISALLOW_SPDY | NS_HTTP_DISABLE_TRR));
 }
 
 void
@@ -973,9 +978,6 @@ nsHttpChannel::SetupTransaction()
 
     mUsedNetwork = 1;
 
-    if (mTRR) {
-        mCaps |= NS_HTTP_LARGE_KEEPALIVE;
-    }
     if (!mAllowSpdy) {
         mCaps |= NS_HTTP_DISALLOW_SPDY;
     }
@@ -6878,6 +6880,9 @@ nsHttpChannel::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
 
     LOG(("nsHttpChannel::OnStartRequest [this=%p request=%p status=%" PRIx32 "]\n",
          this, request, static_cast<uint32_t>(static_cast<nsresult>(mStatus))));
+
+    Telemetry::Accumulate(Telemetry::HTTP_CHANNEL_ONSTART_SUCCESS,
+                          NS_SUCCEEDED(mStatus));
 
     if (mRaceCacheWithNetwork) {
         LOG(("  racingNetAndCache - mFirstResponseSource:%d fromCache:%d fromNet:%d\n",

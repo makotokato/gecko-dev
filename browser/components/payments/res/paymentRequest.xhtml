@@ -10,6 +10,8 @@
 
   <!ENTITY viewAllItems               "View All Items">
   <!ENTITY paymentSummaryTitle        "Your Payment">
+  <!ENTITY header.payTo               "Pay to">
+
   <!ENTITY shippingAddressLabel       "Shipping Address">
   <!ENTITY deliveryAddressLabel       "Delivery Address">
   <!ENTITY pickupAddressLabel         "Pickup Address">
@@ -38,7 +40,6 @@
   <!ENTITY approvePaymentButton.label  "Pay">
   <!ENTITY processingPaymentButton.label "Processing">
   <!ENTITY successPaymentButton.label    "Done">
-  <!ENTITY failPaymentButton.label       "Fail">
   <!ENTITY unknownPaymentButton.label    "Unknown">
   <!ENTITY orderDetailsLabel          "Order Details">
   <!ENTITY orderTotalLabel            "Total">
@@ -53,6 +54,16 @@
   <!ENTITY addressPage.backButton.label       "Back">
   <!ENTITY addressPage.saveButton.label       "Save">
   <!ENTITY addressPage.persistCheckbox.label  "Save address to &brandShortName;">
+  <!ENTITY failErrorPage.title  "Sorry! Something went wrong with the payment process.">
+  <!ENTITY failErrorPage.suggestion1  "Check your credit card has not expired.">
+  <!ENTITY failErrorPage.suggestion2  "Make sure your credit card information is accurate.">
+  <!ENTITY failErrorPage.suggestion3  "If no other solutions work, check with shopping.com.">
+  <!ENTITY failErrorPage.doneButton.label     "OK">
+  <!ENTITY timeoutErrorPage.title  "Whoops! Shopping.com took too long to respond.">
+  <!ENTITY timeoutErrorPage.suggestion1  "Try again later.">
+  <!ENTITY timeoutErrorPage.suggestion2  "Check your network connection." >
+  <!ENTITY timeoutErrorPage.suggestion3  "If no other solutions work, check with shopping.com.">
+  <!ENTITY timeoutErrorPage.doneButton.label     "OK">
 ]>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
@@ -69,7 +80,10 @@
   <link rel="stylesheet" href="components/shipping-option.css"/>
   <link rel="stylesheet" href="components/payment-details-item.css"/>
   <link rel="stylesheet" href="containers/address-form.css"/>
+  <link rel="stylesheet" href="containers/basic-card-form.css"/>
   <link rel="stylesheet" href="containers/order-details.css"/>
+  <link rel="stylesheet" href="containers/rich-picker.css"/>
+  <link rel="stylesheet" href="containers/error-page.css"/>
 
   <script src="unprivileged-fallbacks.js"></script>
 
@@ -81,68 +95,58 @@
   <template id="payment-dialog-template">
     <header>
       <div id="total">
-        <h2 class="label"></h2>
-        <currency-amount></currency-amount>
-        <div id="host-name"></div>
+        <currency-amount display-code="display-code"></currency-amount>
+        <div>&header.payTo; <span id="host-name"></span></div>
       </div>
-      <div id="top-buttons" >
+      <div id="top-buttons" hidden="hidden">
         <button id="view-all" class="closed">&viewAllItems;</button>
       </div>
     </header>
 
     <div id="main-container">
-      <section id="payment-summary" class="page">
-        <h2>&paymentSummaryTitle;</h2>
-
-        <section>
+      <payment-request-page id="payment-summary">
+        <div class="page-body">
           <div id="error-text"></div>
-
-          <div class="shipping-related"
-               id="shipping-type-label"
-               data-shipping-address-label="&shippingAddressLabel;"
-               data-delivery-address-label="&deliveryAddressLabel;"
-               data-persist-checkbox-label="&addressPage.persistCheckbox.label;"
-               data-pickup-address-label="&pickupAddressLabel;"><label></label></div>
           <address-picker class="shipping-related"
                           data-add-link-label="&address.addLink.label;"
                           data-edit-link-label="&address.editLink.label;"
+                          data-shipping-address-label="&shippingAddressLabel;"
+                          data-delivery-address-label="&deliveryAddressLabel;"
+                          data-pickup-address-label="&pickupAddressLabel;"
                           selected-state-key="selectedShippingAddress"></address-picker>
 
-          <div class="shipping-related"><label>&shippingOptionsLabel;</label></div>
-          <shipping-option-picker class="shipping-related"></shipping-option-picker>
+          <shipping-option-picker class="shipping-related"
+                                  label="&shippingOptionsLabel;"></shipping-option-picker>
 
-          <div><label>&paymentMethodsLabel;</label></div>
           <payment-method-picker selected-state-key="selectedPaymentCard"
                                  data-add-link-label="&basicCard.addLink.label;"
-                                 data-edit-link-label="&basicCard.editLink.label;">
+                                 data-edit-link-label="&basicCard.editLink.label;"
+                                 label="&paymentMethodsLabel;">
           </payment-method-picker>
-
-          <div class="payer-related"><label>&payerLabel;</label></div>
           <address-picker class="payer-related"
+                          label="&payerLabel;"
                           data-add-link-label="&payer.addLink.label;"
                           data-edit-link-label="&payer.editLink.label;"
                           selected-state-key="selectedPayerAddress"></address-picker>
           <div id="error-text"></div>
-        </section>
+        </div>
 
-        <footer id="controls-container">
+        <footer>
           <button id="cancel">&cancelPaymentButton.label;</button>
           <button id="pay"
                   class="primary"
                   data-initial-label="&approvePaymentButton.label;"
                   data-processing-label="&processingPaymentButton.label;"
-                  data-fail-label="&failPaymentButton.label;"
                   data-unknown-label="&unknownPaymentButton.label;"
                   data-success-label="&successPaymentButton.label;"></button>
         </footer>
-      </section>
+      </payment-request-page>
       <section id="order-details-overlay" hidden="hidden">
         <h2>&orderDetailsLabel;</h2>
         <order-details></order-details>
       </section>
 
       <basic-card-form id="basic-card-page"
-                       class="page"
                        data-add-basic-card-title="&basicCard.addPage.title;"
                        data-edit-basic-card-title="&basicCard.editPage.title;"
                        data-error-generic-save="&basicCardPage.error.genericSave;"
@@ -157,13 +161,21 @@
                        hidden="hidden"></basic-card-form>
 
       <address-form id="address-page"
-                    class="page"
                     data-error-generic-save="&addressPage.error.genericSave;"
                     data-cancel-button-label="&addressPage.cancelButton.label;"
                     data-back-button-label="&addressPage.backButton.label;"
                     data-save-button-label="&addressPage.saveButton.label;"
                     data-persist-checkbox-label="&addressPage.persistCheckbox.label;"
                     hidden="hidden"></address-form>
+
+      <completion-error-page id="completion-timeout-error" class="illustrated"
+                  data-page-title="&timeoutErrorPage.title;"
+                  data-done-button-label="&timeoutErrorPage.doneButton.label;"
+                  hidden="hidden"></completion-error-page>
+      <completion-error-page id="completion-fail-error" class="illustrated"
+                  data-page-title="&failErrorPage.title;"
+                  data-done-button-label="&failErrorPage.doneButton.label;"
+                  hidden="hidden"></completion-error-page>
     </div>
 
     <div id="disabled-overlay" hidden="hidden">
@@ -183,8 +195,8 @@
 </head>
 <body dir="&locale.dir;">
   <iframe id="debugging-console"
-          hidden="hidden"
-          height="400"></iframe>
+          hidden="hidden">
+  </iframe>
   <payment-dialog data-shipping-address-title-add="&shippingAddress.addPage.title;"
                   data-shipping-address-title-edit="&shippingAddress.editPage.title;"
                   data-delivery-address-title-add="&deliveryAddress.addPage.title;"

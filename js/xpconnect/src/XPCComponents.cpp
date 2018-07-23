@@ -2038,10 +2038,11 @@ nsXPCComponents_Utils::ReportError(HandleValue error, HandleValue stack, JSConte
     nsCOMPtr<nsIScriptError> scripterr;
 
     if (errorObj) {
-        JS::RootedObject stackVal(cx,
-          FindExceptionStackForConsoleReport(win, error));
+        JS::RootedObject stackVal(cx);
+        JS::RootedObject stackGlobal(cx);
+        FindExceptionStackForConsoleReport(win, error, &stackVal, &stackGlobal);
         if (stackVal) {
-            scripterr = new nsScriptErrorWithStack(stackVal);
+            scripterr = new nsScriptErrorWithStack(stackVal, stackGlobal);
         }
     }
 
@@ -2050,20 +2051,27 @@ nsXPCComponents_Utils::ReportError(HandleValue error, HandleValue stack, JSConte
 
     if (!scripterr) {
         RootedObject stackObj(cx);
+        RootedObject stackGlobal(cx);
         if (stack.isObject()) {
-            if (!JS::IsSavedFrame(&stack.toObject())) {
+            if (!JS::IsMaybeWrappedSavedFrame(&stack.toObject())) {
                 return NS_ERROR_INVALID_ARG;
             }
 
+            // |stack| might be a wrapper, but it must be same-compartment with
+            // the current global.
             stackObj = &stack.toObject();
+            stackGlobal = JS::CurrentGlobalOrNull(cx);
+            js::AssertSameCompartment(stackObj, stackGlobal);
 
-            if (GetSavedFrameLine(cx, stackObj, &lineNo) != SavedFrameResult::Ok) {
+            JSPrincipals* principals = JS::GetRealmPrincipals(js::GetContextRealm(cx));
+
+            if (GetSavedFrameLine(cx, principals, stackObj, &lineNo) != SavedFrameResult::Ok) {
                 JS_ClearPendingException(cx);
             }
 
             RootedString source(cx);
             nsAutoJSString str;
-            if (GetSavedFrameSource(cx, stackObj, &source) == SavedFrameResult::Ok &&
+            if (GetSavedFrameSource(cx, principals, stackObj, &source) == SavedFrameResult::Ok &&
                 str.init(cx, source)) {
                 fileName = str;
             } else {
@@ -2078,12 +2086,14 @@ nsXPCComponents_Utils::ReportError(HandleValue error, HandleValue stack, JSConte
                 nsresult rv = frame->GetNativeSavedFrame(&stack);
                 if (NS_SUCCEEDED(rv) && stack.isObject()) {
                   stackObj = &stack.toObject();
+                  MOZ_ASSERT(JS::IsUnwrappedSavedFrame(stackObj));
+                  stackGlobal = JS::GetNonCCWObjectGlobal(stackObj);
                 }
             }
         }
 
         if (stackObj) {
-            scripterr = new nsScriptErrorWithStack(stackObj);
+            scripterr = new nsScriptErrorWithStack(stackObj, stackGlobal);
         }
     }
 
@@ -2447,17 +2457,11 @@ nsXPCComponents_Utils::GetGlobalForObject(HandleValue object,
     if (object.isPrimitive())
         return NS_ERROR_XPC_BAD_CONVERT_JS;
 
-    // Wrappers are parented to their the global in their home compartment. But
-    // when getting the global for a cross-compartment wrapper, we really want
+    // When getting the global for a cross-compartment wrapper, we really want
     // a wrapper for the foreign global. So we need to unwrap before getting the
-    // parent, enter the compartment for the duration of the call, and wrap the
-    // result.
+    // global and then wrap the result.
     Rooted<JSObject*> obj(cx, &object.toObject());
-    obj = js::UncheckedUnwrap(obj);
-    {
-        JSAutoRealm ar(cx, obj);
-        obj = JS_GetGlobalForObject(cx, obj);
-    }
+    obj = JS::GetNonCCWObjectGlobal(js::UncheckedUnwrap(obj));
 
     if (!JS_WrapObject(cx, &obj))
         return NS_ERROR_FAILURE;

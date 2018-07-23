@@ -7,6 +7,7 @@
 #ifndef mozilla_layers_WebRenderBridgeParent_h
 #define mozilla_layers_WebRenderBridgeParent_h
 
+#include <unordered_map>
 #include <unordered_set>
 
 #include "CompositableHost.h"           // for CompositableHost, ImageCompositeNotificationInfo
@@ -208,16 +209,25 @@ private:
                        wr::TransactionBuilder& aUpdates);
   bool AddExternalImage(wr::ExternalImageId aExtId, wr::ImageKey aKey,
                         wr::TransactionBuilder& aResources);
+  bool UpdateExternalImage(wr::ExternalImageId aExtId, wr::ImageKey aKey,
+                           const ImageIntRect& aDirtyRect,
+                           wr::TransactionBuilder& aResources);
+
+  bool PushExternalImageForTexture(wr::ExternalImageId aExtId,
+                                   wr::ImageKey aKey,
+                                   TextureHost* aTexture,
+                                   bool aIsUpdate,
+                                   wr::TransactionBuilder& aResources);
 
   void AddPipelineIdForCompositable(const wr::PipelineId& aPipelineIds,
                                     const CompositableHandle& aHandle,
-                                    const bool& aAsync);
+                                    const bool& aAsync,
+                                    wr::TransactionBuilder& aTxn);
   void RemovePipelineIdForCompositable(const wr::PipelineId& aPipelineId,
                                        wr::TransactionBuilder& aTxn);
 
-  void AddExternalImageIdForCompositable(const ExternalImageId& aImageId,
-                                         const CompositableHandle& aHandle);
   void RemoveExternalImageId(const ExternalImageId& aImageId);
+  void ReleaseTextureOfImage(const wr::ImageKey& aKey);
 
   LayersId GetLayersId() const;
   void ProcessWebRenderParentCommands(const InfallibleTArray<WebRenderParentCommand>& aCommands,
@@ -290,9 +300,9 @@ private:
   // mActiveAnimations is used to avoid leaking animations when WebRenderBridgeParent is
   // destroyed abnormally and Tab move between different windows.
   std::unordered_set<uint64_t> mActiveAnimations;
-  nsDataHashtable<nsUint64HashKey, RefPtr<WebRenderImageHost>> mAsyncCompositables;
-  nsDataHashtable<nsUint64HashKey, RefPtr<WebRenderImageHost>> mExternalImageIds;
-  nsTHashtable<nsUint64HashKey> mSharedSurfaceIds;
+  std::unordered_map<uint64_t, RefPtr<WebRenderImageHost>> mAsyncCompositables;
+  std::unordered_map<uint64_t, CompositableTextureHostRef> mTextureHosts;
+  std::unordered_set<uint64_t> mSharedSurfaceIds;
 
   TimeDuration mVsyncRate;
   TimeStamp mPreviousFrameTimeStamp;

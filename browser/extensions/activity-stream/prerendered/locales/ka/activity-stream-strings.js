@@ -2,7 +2,7 @@
 window.gActivityStreamStrings = {
   "newtab_page_title": "ახალი ჩანართი",
   "header_top_sites": "რჩეული საიტები",
-  "header_highlights": "მნიშვნელოვანი საიტები",
+  "header_highlights": "მნიშვნელოვანი",
   "header_recommended_by": "{provider}-ის შემოთავაზებული",
   "context_menu_button_sr": "კონტექსტური მენიუს გახსნა {title}",
   "section_context_menu_button_sr": "გვერდის ნაწილების პარამეტრები",
@@ -96,7 +96,7 @@ window.gActivityStreamStrings = {
   "firstrun_form_header": "შეიყვანეთ თქვენი ელფოსტა",
   "firstrun_form_sub_header": "Firefox Sync-ზე გადასასვლელად.",
   "firstrun_email_input_placeholder": "ელფოსტა",
-  "firstrun_invalid_input": "Valid email required",
+  "firstrun_invalid_input": "მართებული ელფოსტის მითითება აუცილებელია",
   "firstrun_extra_legal_links": "გაგრძელების შემთხვევაში, თქვენ ეთანხმებით {terms} და {privacy}.",
   "firstrun_terms_of_service": "გამოყენების პირობებსა",
   "firstrun_privacy_notice": "პირადი მონაცემების დაცვის განაცხადს",

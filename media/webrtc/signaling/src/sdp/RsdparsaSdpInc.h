@@ -20,6 +20,7 @@ struct StringVec;
 struct U8Vec;
 struct U32Vec;
 struct U16Vec;
+struct F32Vec;
 struct RustHeapString;
 
 enum class RustSdpAddrType {
@@ -71,9 +72,17 @@ enum class RustSdpFormatType {
   kRustStrings
 };
 
+enum class RustSdpAttributeFingerprintHashAlgorithm : uint16_t {
+  kSha1,
+  kSha224,
+  kSha256,
+  kSha384,
+  kSha512,
+};
+
 struct RustSdpAttributeFingerprint {
-  StringView hashAlgorithm;
-  StringView fingerprint;
+  RustSdpAttributeFingerprintHashAlgorithm hashAlgorithm;
+  U8Vec* fingerprint;
 };
 
 enum class RustSdpSetup {
@@ -81,6 +90,16 @@ enum class RustSdpSetup {
   kRustActpass,
   kRustHoldconn,
   kRustPassive
+};
+
+enum class RustSdpAttributeDtlsMessageType : uint8_t {
+  kClient,
+  kServer,
+};
+
+struct RustSdpAttributeDtlsMessage {
+  RustSdpAttributeDtlsMessageType role;
+  StringView value;
 };
 
 struct RustSdpAttributeSsrc {
@@ -119,6 +138,45 @@ struct RustSdpAttributeRid {
   U16Vec* formats;
   RustSdpAttributeRidParameters params;
   StringVec* depends;
+};
+
+struct RustSdpAttributeImageAttrXYRange {
+  uint32_t min;
+  uint32_t max;
+  uint32_t step;
+  U32Vec* discrete_values;
+};
+
+struct RustSdpAttributeImageAttrSRange {
+  float min;
+  float max;
+  F32Vec* discrete_values;
+};
+
+struct RustSdpAttributeImageAttrPRange {
+  float min;
+  float max;
+};
+
+struct RustSdpAttributeImageAttrSet {
+  RustSdpAttributeImageAttrXYRange x;
+  RustSdpAttributeImageAttrXYRange y;
+  bool has_sar;
+  RustSdpAttributeImageAttrSRange sar;
+  bool has_par;
+  RustSdpAttributeImageAttrPRange par;
+  float q;
+};
+
+struct RustSdpAttributeImageAttrSetVec;
+struct RustSdpAttributeImageAttrSetList {
+  RustSdpAttributeImageAttrSetVec* sets;
+};
+
+struct RustSdpAttributeImageAttr {
+  uint32_t payloadType;
+  RustSdpAttributeImageAttrSetList send;
+  RustSdpAttributeImageAttrSetList recv;
 };
 
 struct RustSdpAttributeFmtpParameters {
@@ -230,10 +288,9 @@ struct RustSdpAttributeRemoteCandidate {
   uint32_t port;
 };
 
-// TODO: Add field indicating whether direction was specified
-// See Bug 1438536.
 struct RustSdpAttributeExtmap {
   uint16_t id;
+  bool direction_specified;
   RustDirection direction;
   StringView url;
   StringView extensionAttributes;
@@ -244,6 +301,9 @@ extern "C" {
 size_t string_vec_len(const StringVec* vec);
 nsresult string_vec_get_view(const StringVec* vec, size_t index,
                              StringView* str);
+
+size_t f32_vec_len(const F32Vec* vec);
+nsresult f32_vec_get(const F32Vec* vec, size_t index, float* ret);
 
 size_t u32_vec_len(const U32Vec* vec);
 nsresult u32_vec_get(const U32Vec* vec, size_t index, uint32_t* ret);
@@ -256,7 +316,7 @@ nsresult u8_vec_get(const U8Vec* vec, size_t index, uint8_t* ret);
 
 void sdp_free_string(char* string);
 
-nsresult parse_sdp(const char* sdp, uint32_t length, bool fail_on_warning,
+nsresult parse_sdp(StringView sdp, bool fail_on_warning,
                    RustSdpSession** ret, RustSdpError** err);
 RustSdpSession* sdp_new_reference(RustSdpSession* aSess);
 void sdp_free_session(RustSdpSession* ret);
@@ -314,6 +374,9 @@ nsresult sdp_get_icepwd(const RustAttributeList* aList, StringView* ret);
 nsresult sdp_get_identity(const RustAttributeList* aList, StringView* ret);
 nsresult sdp_get_iceoptions(const RustAttributeList* aList, StringVec** ret);
 
+nsresult sdp_get_dtls_message(const RustAttributeList* aList,
+                              RustSdpAttributeDtlsMessage* ret);
+
 size_t sdp_get_fingerprint_count(const RustAttributeList* aList);
 void sdp_get_fingerprints(const RustAttributeList* aList, size_t listSize,
                           RustSdpAttributeFingerprint* ret);
@@ -335,6 +398,7 @@ size_t sdp_get_fmtp(const RustAttributeList* aList, size_t listSize,
 int64_t sdp_get_ptime(const RustAttributeList* aList);
 int64_t sdp_get_max_msg_size(const RustAttributeList* aList);
 int64_t sdp_get_sctp_port(const RustAttributeList* aList);
+nsresult sdp_get_maxptime(const RustAttributeList* aList, uint64_t* aMaxPtime);
 
 RustSdpAttributeFlags sdp_get_attribute_flags(const RustAttributeList* aList);
 
@@ -349,7 +413,7 @@ void sdp_get_msid_semantics(const RustAttributeList* aList, size_t listSize,
                             RustSdpAttributeMsidSemantic* ret);
 
 size_t sdp_get_group_count(const RustAttributeList* aList);
-nsresult sdp_get_groups(const RustAttributeList* aList, size_t listSize,
+void sdp_get_groups(const RustAttributeList* aList, size_t listSize,
                         RustSdpAttributeGroup* ret);
 
 nsresult sdp_get_rtcp(const RustAttributeList* aList,
@@ -362,7 +426,11 @@ void sdp_get_rtcpfbs(const RustAttributeList* aList, size_t listSize,
 
 size_t sdp_get_imageattr_count(const RustAttributeList* aList);
 void sdp_get_imageattrs(const RustAttributeList* aList, size_t listSize,
-                        StringView* ret);
+                        RustSdpAttributeImageAttr* ret);
+
+size_t sdp_imageattr_get_set_count(const RustSdpAttributeImageAttrSetVec* sets);
+void sdp_imageattr_get_sets(const RustSdpAttributeImageAttrSetVec* sets,
+                            size_t listSize, RustSdpAttributeImageAttrSet* ret);
 
 size_t sdp_get_sctpmap_count(const RustAttributeList* aList);
 void sdp_get_sctpmaps(const RustAttributeList* aList, size_t listSize,

@@ -40,10 +40,6 @@
   -moz-appearance: button-arrow-down;
 }
 
-#editBookmarkPanelContent {
-  min-width: 23em;
-}
-
 #editBMPanel_folderTree {
   margin-top: 2px;
   margin-bottom: 2px;
@@ -56,6 +52,14 @@
  */
 #editBMPanel_tagsField #treecolAutoCompleteValue {
   visibility: collapse;
+}
+
+#editBMPanel_tagsSelector > richlistitem > image {
+  -moz-appearance: checkbox;
+  -moz-box-align: center;
+  margin: 0 2px;
+  min-width: 13px;
+  min-height: 13px;
 }
 
 

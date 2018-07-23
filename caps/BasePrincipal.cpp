@@ -12,14 +12,14 @@
 #include "nsIObjectOutputStream.h"
 #include "nsIStandardURL.h"
 
-#include "ContentPrincipal.h"
 #include "ExpandedPrincipal.h"
 #include "nsNetUtil.h"
 #include "nsIURIWithPrincipal.h"
-#include "NullPrincipal.h"
 #include "nsScriptSecurityManager.h"
 #include "nsServiceManagerUtils.h"
 
+#include "mozilla/ContentPrincipal.h"
+#include "mozilla/NullPrincipal.h"
 #include "mozilla/dom/ChromeUtils.h"
 #include "mozilla/dom/CSPDictionariesBinding.h"
 #include "mozilla/dom/ToJSValue.h"
@@ -279,6 +279,13 @@ NS_IMETHODIMP
 BasePrincipal::GetIsSystemPrincipal(bool* aResult)
 {
   *aResult = Kind() == eSystemPrincipal;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+BasePrincipal::GetIsAddonOrExpandedAddonPrincipal(bool* aResult)
+{
+  *aResult = AddonPolicy() || ContentScriptAddonPolicy();
   return NS_OK;
 }
 

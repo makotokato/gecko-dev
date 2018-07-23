@@ -349,12 +349,6 @@ public:
    */
   nsContainerFrame* GetContentInsertionFrameFor(nsIContent* aContent);
 
-  void CreateListBoxContent(nsContainerFrame* aParentFrame,
-                            nsIFrame*         aPrevFrame,
-                            nsIContent*       aChild,
-                            nsIFrame**        aResult,
-                            bool              aIsAppend);
-
   // GetInitialContainingBlock() is deprecated in favor of GetRootElementFrame();
   // nsIFrame* GetInitialContainingBlock() { return mRootElementFrame; }
   // This returns the outermost frame for the root element
@@ -1456,16 +1450,14 @@ private:
                                                    nsIFrame* aParentFrame,
                                                    ComputedStyle* aComputedStyle);
   // HTML data-finding helper functions
-  static const FrameConstructionData*
-    FindImgData(Element* aElement, ComputedStyle* aComputedStyle);
-  static const FrameConstructionData*
-    FindImgControlData(Element* aElement, ComputedStyle* aComputedStyle);
-  static const FrameConstructionData*
-    FindInputData(Element* aElement, ComputedStyle* aComputedStyle);
-  static const FrameConstructionData*
-    FindObjectData(Element* aElement, ComputedStyle* aComputedStyle);
-  static const FrameConstructionData*
-    FindCanvasData(Element* aElement, ComputedStyle* aComputedStyle);
+  static const FrameConstructionData* FindImgData(Element*, ComputedStyle*);
+  static const FrameConstructionData* FindGeneratedImageData(Element*,
+                                                             ComputedStyle*);
+  static const FrameConstructionData* FindImgControlData(Element*,
+                                                         ComputedStyle*);
+  static const FrameConstructionData* FindInputData(Element*, ComputedStyle*);
+  static const FrameConstructionData* FindObjectData(Element*, ComputedStyle*);
+  static const FrameConstructionData* FindCanvasData(Element*, ComputedStyle*);
 
   /* Construct a frame from the given FrameConstructionItem.  This function
      will handle adding the frame to frame lists, processing children, setting
@@ -1567,10 +1559,6 @@ private:
   static const FrameConstructionData*
     FindXULMenubarData(Element* aElement, ComputedStyle* aComputedStyle);
 #endif /* XP_MACOSX */
-  static const FrameConstructionData*
-    FindXULListBoxBodyData(Element* aElement, ComputedStyle* aComputedStyle);
-  static const FrameConstructionData*
-    FindXULListItemData(Element* aElement, ComputedStyle* aComputedStyle);
 #endif /* MOZ_XUL */
 
   // Function to find FrameConstructionData for aContent using one of the XUL

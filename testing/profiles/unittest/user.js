@@ -50,8 +50,6 @@ user_pref("browser.safebrowsing.provider.google4.updateURL", "http://{server}/sa
 user_pref("browser.safebrowsing.provider.mozilla.gethashURL", "http://{server}/safebrowsing-dummy/gethash");
 user_pref("browser.safebrowsing.provider.mozilla.updateURL", "http://{server}/safebrowsing-dummy/update");
 user_pref("browser.search.suggest.timeout", 10000); // use a 10s suggestion timeout in tests
-// Bug 1458697 - Temporarily enable session store debug logging on Android to track down a test failure
-user_pref("browser.sessionstore.debug_logging", true);
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.snippets.firstrunHomepage.enabled", false);
 user_pref("browser.startup.page", 0); // use about:blank, not browser.startup.homepage
@@ -192,7 +190,6 @@ user_pref("lightweightThemes.selectedThemeID", "");
 // The prefs recommended by Marionette are typically geared towards
 // consumer automation; not vendor testing.
 user_pref("marionette.prefs.recommended", false);
-user_pref("media.autoplay.enabled", true);
 user_pref("media.cache_size", 1000);
 user_pref("media.dormant-on-pause-timeout-ms", 0); // Enter dormant immediately without waiting for timeout.
 // Set the number of shmems the PChromiumCDM protocol pre-allocates to 0,

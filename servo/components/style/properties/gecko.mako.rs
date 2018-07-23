@@ -49,8 +49,7 @@ use gecko::values::round_border_to_device_pixels;
 use logical_geometry::WritingMode;
 use media_queries::Device;
 use properties::computed_value_flags::*;
-use properties::{longhands, Importance, LonghandId};
-use properties::{PropertyDeclaration, PropertyDeclarationBlock, PropertyDeclarationId};
+use properties::longhands;
 use rule_tree::StrongRuleNode;
 use selector_parser::PseudoElement;
 use servo_arc::{Arc, RawOffsetArc};
@@ -58,7 +57,7 @@ use std::marker::PhantomData;
 use std::mem::{forget, uninitialized, transmute, zeroed};
 use std::{cmp, ops, ptr};
 use values::{self, CustomIdent, Either, KeyframesName, None_};
-use values::computed::{NonNegativeLength, ToComputedValue, Percentage, TransitionProperty};
+use values::computed::{NonNegativeLength, Percentage, TransitionProperty};
 use values::computed::font::FontSize;
 use values::computed::effects::{BoxShadow, Filter, SimpleShadow};
 use values::computed::outline::OutlineStyle;
@@ -84,7 +83,6 @@ pub struct ComputedValues(::gecko_bindings::structs::mozilla::ComputedStyle);
 impl ComputedValues {
     pub fn new(
         device: &Device,
-        parent: Option<<&ComputedValues>,
         pseudo: Option<<&PseudoElement>,
         custom_properties: Option<Arc<CustomPropertiesMap>>,
         writing_mode: WritingMode,
@@ -106,7 +104,6 @@ impl ComputedValues {
             % endfor
         ).to_outer(
             device.pres_context(),
-            parent,
             pseudo.map(|p| p.pseudo_info())
         )
     }
@@ -121,7 +118,7 @@ impl ComputedValues {
             % for style_struct in data.style_structs:
             style_structs::${style_struct.name}::default(pres_context),
             % endfor
-        ).to_outer(pres_context, None, None)
+        ).to_outer(pres_context, None)
     }
 
     pub fn pseudo(&self) -> Option<PseudoElement> {
@@ -196,7 +193,6 @@ impl Clone for ComputedValuesInner {
 }
 
 type PseudoInfo = (*mut structs::nsAtom, structs::CSSPseudoElementType);
-type ParentComputedStyleInfo<'a> = Option< &'a ComputedValues>;
 
 impl ComputedValuesInner {
     pub fn new(custom_properties: Option<Arc<CustomPropertiesMap>>,
@@ -223,7 +219,6 @@ impl ComputedValuesInner {
     fn to_outer(
         self,
         pres_context: RawGeckoPresContextBorrowed,
-        parent: ParentComputedStyleInfo,
         info: Option<PseudoInfo>
     ) -> Arc<ComputedValues> {
         let (tag, ty) = if let Some(info) = info {
@@ -232,21 +227,24 @@ impl ComputedValuesInner {
             (ptr::null_mut(), structs::CSSPseudoElementType::NotPseudo)
         };
 
-        unsafe { self.to_outer_helper(pres_context, parent, ty, tag) }
+        unsafe { self.to_outer_helper(pres_context, ty, tag) }
     }
 
     unsafe fn to_outer_helper(
         self,
         pres_context: bindings::RawGeckoPresContextBorrowed,
-        parent: ParentComputedStyleInfo,
         pseudo_ty: structs::CSSPseudoElementType,
         pseudo_tag: *mut structs::nsAtom
     ) -> Arc<ComputedValues> {
         let arc = {
             let arc: Arc<ComputedValues> = Arc::new(uninitialized());
-            bindings::Gecko_ComputedStyle_Init(&arc.0 as *const _ as *mut _,
-                                                   parent, pres_context,
-                                                   &self, pseudo_ty, pseudo_tag);
+            bindings::Gecko_ComputedStyle_Init(
+                &arc.0 as *const _ as *mut _,
+                pres_context,
+                &self,
+                pseudo_ty,
+                pseudo_tag
+            );
             // We're simulating a move by having C++ do a memcpy and then forgetting
             // it on this end.
             forget(self);
@@ -306,30 +304,6 @@ impl ComputedValuesInner {
     #[allow(non_snake_case)]
     pub fn has_moz_binding(&self) -> bool {
         !self.get_box().gecko.mBinding.mRawPtr.is_null()
-    }
-
-    pub fn to_declaration_block(&self, property: PropertyDeclarationId) -> PropertyDeclarationBlock {
-        let value = match property {
-            % for prop in data.longhands:
-                % if prop.animatable:
-                    PropertyDeclarationId::Longhand(LonghandId::${prop.camel_case}) => {
-                        PropertyDeclaration::${prop.camel_case}(
-                            % if prop.boxed:
-                                Box::new(
-                            % endif
-                            longhands::${prop.ident}::SpecifiedValue::from_computed_value(
-                              &self.get_${prop.style_struct.ident.strip("_")}().clone_${prop.ident}())
-                            % if prop.boxed:
-                                )
-                            % endif
-                        )
-                    },
-                % endif
-            % endfor
-            PropertyDeclarationId::Custom(_name) => unimplemented!(),
-            _ => unimplemented!()
-        };
-        PropertyDeclarationBlock::with_one(value, Importance::Normal)
     }
 }
 
@@ -693,14 +667,14 @@ def set_gecko_property(ffi_name, expr):
             SVGPaintKind::Color(color) => {
                 paint.mType = nsStyleSVGPaintType::eStyleSVGPaintType_Color;
                 unsafe {
-                    *paint.mPaint.mColor.as_mut() = convert_rgba_to_nscolor(&color);
+                    *paint.mPaint.mColor.as_mut() = color.into();
                 }
             }
         }
 
         paint.mFallbackType = match fallback {
             Some(Either::First(color)) => {
-                paint.mFallbackColor = convert_rgba_to_nscolor(&color);
+                paint.mFallbackColor = color.into();
                 nsStyleSVGFallbackType::eStyleSVGFallbackType_Color
             },
             Some(Either::Second(_)) => {
@@ -735,7 +709,7 @@ def set_gecko_property(ffi_name, expr):
 
         let fallback = match paint.mFallbackType {
             nsStyleSVGFallbackType::eStyleSVGFallbackType_Color => {
-                Some(Either::First(convert_nscolor_to_rgba(paint.mFallbackColor)))
+                Some(Either::First(paint.mFallbackColor.into()))
             },
             nsStyleSVGFallbackType::eStyleSVGFallbackType_None => {
                 Some(Either::Second(None_))
@@ -754,7 +728,8 @@ def set_gecko_property(ffi_name, expr):
                 })
             }
             nsStyleSVGPaintType::eStyleSVGPaintType_Color => {
-                unsafe { SVGPaintKind::Color(convert_nscolor_to_rgba(*paint.mPaint.mColor.as_ref())) }
+                let col = unsafe { *paint.mPaint.mColor.as_ref() };
+                SVGPaintKind::Color(col.into())
             }
         };
         SVGPaint {
@@ -3108,6 +3083,17 @@ fn static_assert() {
 
     <%call expr="impl_keyword_clone('display', 'mDisplay', display_keyword)"></%call>
 
+    <% float_keyword = Keyword("float", "Left Right None", gecko_enum_prefix="StyleFloat") %>
+    ${impl_keyword('float', 'mFloat', float_keyword)}
+
+    <% clear_keyword = Keyword(
+        "clear",
+        "Left Right None Both",
+        gecko_enum_prefix="StyleClear",
+        gecko_inexhaustive=True,
+    ) %>
+    ${impl_keyword('clear', 'mBreakType', clear_keyword)}
+
     <% overflow_x = data.longhands_by_name["overflow-x"] %>
     pub fn set_overflow_y(&mut self, v: longhands::overflow_y::computed_value::T) {
         use properties::longhands::overflow_x::computed_value::T as BaseType;
@@ -4558,64 +4544,7 @@ fn static_assert() {
 
 </%self:impl_trait>
 
-<%self:impl_trait style_struct_name="InheritedBox"
-                  skip_longhands="image-orientation">
-    // FIXME: Gecko uses a tricky way to store computed value of image-orientation
-    //        within an u8. We could inline following glue codes by implementing all
-    //        those tricky parts for Servo as well. But, it's not done yet just for
-    //        convenience.
-    pub fn set_image_orientation(&mut self, v: longhands::image_orientation::computed_value::T) {
-        use properties::longhands::image_orientation::computed_value::T;
-        match v {
-            T::FromImage => {
-                unsafe {
-                    bindings::Gecko_SetImageOrientationAsFromImage(&mut self.gecko);
-                }
-            },
-            T::AngleWithFlipped(ref orientation, flipped) => {
-                unsafe {
-                    bindings::Gecko_SetImageOrientation(&mut self.gecko, *orientation as u8, flipped);
-                }
-            }
-        }
-    }
-
-    pub fn copy_image_orientation_from(&mut self, other: &Self) {
-        unsafe {
-            bindings::Gecko_CopyImageOrientationFrom(&mut self.gecko, &other.gecko);
-        }
-    }
-
-    pub fn reset_image_orientation(&mut self, other: &Self) {
-        self.copy_image_orientation_from(other)
-    }
-
-    pub fn clone_image_orientation(&self) -> longhands::image_orientation::computed_value::T {
-        use gecko_bindings::structs::nsStyleImageOrientation_Angles;
-        use properties::longhands::image_orientation::computed_value::T;
-        use values::computed::Orientation;
-
-        let gecko_orientation = self.gecko.mImageOrientation.mOrientation;
-        if gecko_orientation & structs::nsStyleImageOrientation_Bits_FROM_IMAGE_MASK as u8 != 0 {
-            T::FromImage
-        } else {
-            const ANGLE0: u8 = nsStyleImageOrientation_Angles::ANGLE_0 as u8;
-            const ANGLE90: u8 = nsStyleImageOrientation_Angles::ANGLE_90 as u8;
-            const ANGLE180: u8 = nsStyleImageOrientation_Angles::ANGLE_180 as u8;
-            const ANGLE270: u8 = nsStyleImageOrientation_Angles::ANGLE_270 as u8;
-
-            let flip = gecko_orientation & structs::nsStyleImageOrientation_Bits_FLIP_MASK as u8 != 0;
-            let orientation =
-                match gecko_orientation & structs::nsStyleImageOrientation_Bits_ORIENTATION_MASK as u8 {
-                    ANGLE0 => Orientation::Angle0,
-                    ANGLE90 => Orientation::Angle90,
-                    ANGLE180 => Orientation::Angle180,
-                    ANGLE270 => Orientation::Angle270,
-                    _ => unreachable!()
-                };
-            T::AngleWithFlipped(orientation, flip)
-        }
-    }
+<%self:impl_trait style_struct_name="InheritedBox">
 </%self:impl_trait>
 
 <%self:impl_trait style_struct_name="InheritedTable"

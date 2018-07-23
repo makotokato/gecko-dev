@@ -15,7 +15,11 @@ XPIDL_MODULE = 'dom'
 
 EXPORTS.mozilla.dom.ipc += [
     'IdType.h',
+    'MemMapSnapshot.h',
+    'SharedMap.h',
+    'SharedMapChangeEvent.h',
     'SharedStringMap.h',
+    'StringTable.h',
     'StructuredCloneData.h',
 ]
 
@@ -69,6 +73,7 @@ UNIFIED_SOURCES += [
     'PermissionMessageUtils.cpp',
     'PreallocatedProcessManager.cpp',
     'ProcessPriorityManager.cpp',
+    'SharedMap.cpp',
     'SharedStringMap.cpp',
     'StructuredCloneData.cpp',
     'TabChild.cpp',
@@ -172,14 +177,12 @@ JAR_MANIFESTS += ['jar.mn']
 BROWSER_CHROME_MANIFESTS += ['tests/browser.ini']
 MOCHITEST_CHROME_MANIFESTS += ['tests/chrome.ini']
 MOCHITEST_MANIFESTS += ['tests/mochitest.ini']
+XPCSHELL_TESTS_MANIFESTS += ['tests/xpcshell.ini']
 
 CXXFLAGS += CONFIG['TK_CFLAGS']
 
 if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
     CXXFLAGS += ['-Wno-error=shadow']
-
-if CONFIG['NIGHTLY_BUILD']:
-    DEFINES['ASYNC_CONTENTPROC_LAUNCH'] = True
 
 if CONFIG['FUZZING'] and CONFIG['FUZZING_INTERFACES']:
     TEST_DIRS += [

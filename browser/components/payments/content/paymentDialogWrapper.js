@@ -164,18 +164,14 @@ var paymentDialogWrapper = {
     }
 
     let cardNumber;
-    if (cardData.isTemporary) {
-      cardNumber = cardData["cc-number"];
-    } else {
-      try {
-        cardNumber = await MasterPassword.decrypt(cardData["cc-number-encrypted"], true);
-      } catch (ex) {
-        if (ex.result != Cr.NS_ERROR_ABORT) {
-          throw ex;
-        }
-        // User canceled master password entry
-        return null;
+    try {
+      cardNumber = await MasterPassword.decrypt(cardData["cc-number-encrypted"], true);
+    } catch (ex) {
+      if (ex.result != Cr.NS_ERROR_ABORT) {
+        throw ex;
       }
+      // User canceled master password entry
+      return null;
     }
 
     let billingAddressGUID = cardData.billingAddressGUID;
@@ -557,6 +553,11 @@ var paymentDialogWrapper = {
     paymentSrv.changeShippingOption(this.request.requestId, optionID);
   },
 
+  onCloseDialogMessage() {
+    // The PR is complete(), just close the dialog
+    window.close();
+  },
+
   async onUpdateAutofillRecord(collectionName, record, guid, {
     errorStateChange,
     preserveOldProperties,
@@ -573,7 +574,6 @@ var paymentDialogWrapper = {
         return;
       }
     }
-
     let isTemporary = record.isTemporary;
     let collection = isTemporary ? this.temporaryStore[collectionName] :
                                    formAutofillStorage[collectionName];
@@ -660,6 +660,10 @@ var paymentDialogWrapper = {
       }
       case "changeShippingOption": {
         this.onChangeShippingOption(data);
+        break;
+      }
+      case "closeDialog": {
+        this.onCloseDialogMessage();
         break;
       }
       case "paymentCancel": {

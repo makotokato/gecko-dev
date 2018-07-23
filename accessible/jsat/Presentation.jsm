@@ -13,10 +13,16 @@ ChromeUtils.defineModuleGetter(this, "UtteranceGenerator", // jshint ignore:line
   "resource://gre/modules/accessibility/OutputGenerator.jsm");
 ChromeUtils.defineModuleGetter(this, "States", // jshint ignore:line
   "resource://gre/modules/accessibility/Constants.jsm");
+ChromeUtils.defineModuleGetter(this, "Roles", // jshint ignore:line
+  "resource://gre/modules/accessibility/Constants.jsm");
 ChromeUtils.defineModuleGetter(this, "AndroidEvents", // jshint ignore:line
   "resource://gre/modules/accessibility/Constants.jsm");
 
 var EXPORTED_SYMBOLS = ["Presentation"]; // jshint ignore:line
+
+const EDIT_TEXT_ROLES = new Set([
+  Roles.SPINBUTTON, Roles.PASSWORD_TEXT,
+  Roles.AUTOCOMPLETE, Roles.ENTRY, Roles.EDITCOMBOBOX]);
 
 class AndroidPresentor {
   constructor() {
@@ -30,9 +36,10 @@ class AndroidPresentor {
    *   position.
    * @param {int} aReason the reason for the pivot change.
    *   See nsIAccessiblePivot.
-   * @param {bool} aIsFromUserInput the pivot change was invoked by the user
+   * @param {bool} aBoundaryType the boundary type for the text movement
+   * or NO_BOUNDARY if it was not a text movement. See nsIAccessiblePivot.
    */
-  pivotChanged(aPosition, aOldPosition, aReason, aStartOffset, aEndOffset, aIsUserInput) {
+  pivotChanged(aPosition, aOldPosition, aStartOffset, aEndOffset, aReason, aBoundaryType) {
     let context = new PivotContext(
       aPosition, aOldPosition, aStartOffset, aEndOffset);
     if (!context.accessible) {
@@ -41,11 +48,7 @@ class AndroidPresentor {
 
     let androidEvents = [];
 
-    let isExploreByTouch = (aReason == Ci.nsIAccessiblePivot.REASON_POINT &&
-                            Utils.AndroidSdkVersion >= 14);
-    let focusEventType = (Utils.AndroidSdkVersion >= 16) ?
-      AndroidEvents.VIEW_ACCESSIBILITY_FOCUSED :
-      AndroidEvents.VIEW_FOCUSED;
+    const isExploreByTouch = aReason == Ci.nsIAccessiblePivot.REASON_POINT;
 
     if (isExploreByTouch) {
       // This isn't really used by TalkBack so this is a half-hearted attempt
@@ -53,28 +56,33 @@ class AndroidPresentor {
       androidEvents.push({eventType: AndroidEvents.VIEW_HOVER_EXIT, text: []});
     }
 
-    if (aReason === Ci.nsIAccessiblePivot.REASON_TEXT) {
-      if (Utils.AndroidSdkVersion >= 16) {
-        let adjustedText = context.textAndAdjustedOffsets;
-
-        androidEvents.push({
-          eventType: AndroidEvents.VIEW_TEXT_TRAVERSED_AT_MOVEMENT_GRANULARITY,
-          text: [adjustedText.text],
-          fromIndex: adjustedText.startOffset,
-          toIndex: adjustedText.endOffset
-        });
-      }
-    } else {
+    if (aPosition != aOldPosition) {
       let info = this._infoFromContext(context);
       let eventType = isExploreByTouch ?
-        AndroidEvents.VIEW_HOVER_ENTER : focusEventType;
+        AndroidEvents.VIEW_HOVER_ENTER :
+        AndroidEvents.VIEW_ACCESSIBILITY_FOCUSED;
       androidEvents.push({...info, eventType});
+
+      try {
+        context.accessibleForBounds.scrollTo(
+          Ci.nsIAccessibleScrollType.SCROLL_TYPE_ANYWHERE);
+      } catch (e) {}
     }
 
-    try {
-      context.accessibleForBounds.scrollTo(
+    if (aBoundaryType != Ci.nsIAccessiblePivot.NO_BOUNDARY) {
+      const adjustedText = context.textAndAdjustedOffsets;
+
+      androidEvents.push({
+        eventType: AndroidEvents.VIEW_TEXT_TRAVERSED_AT_MOVEMENT_GRANULARITY,
+        text: [adjustedText.text],
+        fromIndex: adjustedText.startOffset,
+        toIndex: adjustedText.endOffset
+      });
+
+      aPosition.QueryInterface(Ci.nsIAccessibleText).scrollSubstringTo(
+        aStartOffset, aEndOffset,
         Ci.nsIAccessibleScrollType.SCROLL_TYPE_ANYWHERE);
-    } catch (e) {}
+    }
 
     if (context.accessible) {
       this.displayedAccessibles.set(context.accessible.document.window, context);
@@ -143,17 +151,7 @@ class AndroidPresentor {
   textSelectionChanged(aText, aStart, aEnd, aOldStart, aOldEnd, aIsFromUserInput) {
     let androidEvents = [];
 
-    if (Utils.AndroidSdkVersion >= 14 && !aIsFromUserInput) {
-      androidEvents.push({
-        eventType: AndroidEvents.VIEW_TEXT_SELECTION_CHANGED,
-        text: [aText],
-        fromIndex: aStart,
-        toIndex: aEnd,
-        itemCount: aText.length
-      });
-    }
-
-    if (Utils.AndroidSdkVersion >= 16 && aIsFromUserInput) {
+    if (aIsFromUserInput) {
       let [from, to] = aOldStart < aStart ?
         [aOldStart, aStart] : [aStart, aOldStart];
       androidEvents.push({
@@ -161,6 +159,14 @@ class AndroidPresentor {
         text: [aText],
         fromIndex: from,
         toIndex: to
+      });
+    } else {
+      androidEvents.push({
+        eventType: AndroidEvents.VIEW_TEXT_SELECTION_CHANGED,
+        text: [aText],
+        fromIndex: aStart,
+        toIndex: aEnd,
+        itemCount: aText.length
       });
     }
 
@@ -207,17 +213,6 @@ class AndroidPresentor {
   }
 
   /**
-   * The current tab has changed.
-   * @param {PivotContext} aDocContext context object for tab's
-   *   document.
-   * @param {PivotContext} aVCContext context object for tab's current
-   *   virtual cursor position.
-   */
-  tabSelected(aDocContext, aVCContext) {
-    return this.pivotChanged(aVCContext, Ci.nsIAccessiblePivot.REASON_NONE);
-  }
-
-  /**
    * The viewport has changed, either a scroll, pan, zoom, or
    *    landscape/portrait toggle.
    * @param {Window} aWindow window of viewport that changed.
@@ -225,24 +220,19 @@ class AndroidPresentor {
   viewportChanged(aWindow) {
     let currentContext = this.displayedAccessibles.get(aWindow);
 
-    if (Utils.AndroidSdkVersion < 14) {
-      return null;
-    }
-
     let events = [{
       eventType: AndroidEvents.VIEW_SCROLLED,
-      text: [],
       scrollX: aWindow.scrollX,
       scrollY: aWindow.scrollY,
       maxScrollX: aWindow.scrollMaxX,
-      maxScrollY: aWindow.scrollMaxY
+      maxScrollY: aWindow.scrollMaxY,
     }];
 
-    if (Utils.AndroidSdkVersion >= 16 && currentContext) {
+    if (currentContext) {
       let currentAcc = currentContext.accessibleForBounds;
       if (Utils.isAliveAndVisible(currentAcc)) {
         events.push({
-          eventType: AndroidEvents.VIEW_ACCESSIBILITY_FOCUSED,
+          eventType: AndroidEvents.WINDOW_CONTENT_CHANGED,
           bounds: Utils.getBounds(currentAcc)
         });
       }
@@ -257,9 +247,7 @@ class AndroidPresentor {
   announce(aAnnouncement) {
     let localizedAnnouncement = Utils.localize(aAnnouncement).join(" ");
     return [{
-      eventType: (Utils.AndroidSdkVersion >= 16) ?
-        AndroidEvents.ANNOUNCEMENT :
-        AndroidEvents.VIEW_TEXT_CHANGED,
+      eventType: AndroidEvents.ANNOUNCEMENT,
       text: [localizedAnnouncement],
       addedCount: localizedAnnouncement.length,
       removedCount: 0,
@@ -295,9 +283,8 @@ class AndroidPresentor {
   }
 
   _infoFromContext(aContext) {
-    let state = Utils.getState(aContext.accessible);
-    return {
-      text: Utils.localize(UtteranceGenerator.genForContext(aContext)),
+    const state = Utils.getState(aContext.accessible);
+    const info = {
       bounds: aContext.bounds,
       focusable: state.contains(States.FOCUSABLE),
       focused: state.contains(States.FOCUSED),
@@ -305,6 +292,22 @@ class AndroidPresentor {
       checkable: state.contains(States.CHECKABLE),
       checked: state.contains(States.CHECKED),
       editable: state.contains(States.EDITABLE),
+    };
+
+    if (EDIT_TEXT_ROLES.has(aContext.accessible.role)) {
+      let textAcc = aContext.accessible.QueryInterface(Ci.nsIAccessibleText);
+      return {
+        ...info,
+        className: "android.widget.EditText",
+        hint: aContext.accessible.name,
+        text: [textAcc.getText(0, -1)]
+      };
+    }
+
+    return {
+      ...info,
+      className: "android.view.View",
+      text: Utils.localize(UtteranceGenerator.genForContext(aContext)),
     };
   }
 }

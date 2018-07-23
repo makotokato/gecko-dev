@@ -17,11 +17,12 @@ const Services = require("Services");
 const { ChromeDebuggerActor } = require("devtools/server/actors/thread");
 const { WebConsoleActor } = require("devtools/server/actors/webconsole");
 const makeDebugger = require("devtools/server/actors/utils/make-debugger");
-const { ActorPool } = require("devtools/server/main");
+const { ActorPool } = require("devtools/server/actors/common");
 const { assert } = require("devtools/shared/DevToolsUtils");
 const { TabSources } = require("devtools/server/actors/utils/TabSources");
 
 loader.lazyRequireGetter(this, "WorkerTargetActorList", "devtools/server/actors/worker/worker-list", true);
+loader.lazyRequireGetter(this, "MemoryActor", "devtools/server/actors/memory", true);
 
 function ContentProcessTargetActor(connection) {
   this.conn = connection;
@@ -104,13 +105,17 @@ ContentProcessTargetActor.prototype = {
       this.threadActor = new ChromeDebuggerActor(this.conn, this);
       this._contextPool.addActor(this.threadActor);
     }
-
+    if (!this.memoryActor) {
+      this.memoryActor = new MemoryActor(this.conn, this);
+      this._contextPool.addActor(this.memoryActor);
+    }
     return {
       actor: this.actorID,
       name: "Content process",
 
       consoleActor: this._consoleActor.actorID,
       chromeDebugger: this.threadActor.actorID,
+      memoryActor: this.memoryActor.actorID,
 
       traits: {
         highlightable: false,

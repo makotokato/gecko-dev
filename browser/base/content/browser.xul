@@ -6,7 +6,23 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-<?xml-stylesheet href="chrome://browser/content/browser-window.css" type="text/css"?>
+<!-- The "global.css" stylesheet is imported first to allow other stylesheets to
+     override rules using selectors with the same specificity. This applies to
+     both "content" and "skin" packages, which bug 1385444 will unify later. -->
+<?xml-stylesheet href="chrome://global/skin/" type="text/css"?>
+
+<?xml-stylesheet href="chrome://browser/content/browser.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/content/tabbrowser.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/content/downloads/downloads.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/content/places/places.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/content/usercontext/usercontext.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/skin/" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/skin/controlcenter/panel.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/skin/customizableui/panelUI.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/skin/downloads/downloads.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/skin/searchbar.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/skin/places/places.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/skin/places/editBookmark.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/skin/compacttheme.css" type="text/css" alternate="yes" title="Light/Dark"?>
 
 # All DTD information is stored in a separate file so that it can be shared by
@@ -98,13 +114,13 @@
             label="&reopenInContainer.label;"
             accesskey="&reopenInContainer.accesskey;"
             hidden="true">
-        <menupopup oncommand="reopenInContainer(event);"
-                   onpopupshowing="return createReopenInContainerMenu(event);" />
+        <menupopup oncommand="TabContextMenu.reopenInContainer(event);"
+                   onpopupshowing="TabContextMenu.createReopenInContainerMenu(event);"/>
       </menu>
       <menuitem id="context_openTabInWindow" label="&moveToNewWindow.label;"
                 accesskey="&moveToNewWindow.accesskey;"
                 tbattr="tabbrowser-multiple"
-                oncommand="gBrowser.replaceTabWithWindow(TabContextMenu.contextTab);"/>
+                oncommand="gBrowser.replaceTabsWithWindow(TabContextMenu.contextTab);"/>
       <menuseparator id="context_sendTabToDevice_separator" class="sync-ui-item"/>
       <menu id="context_sendTabToDevice" label="&sendTabToDevice.label;"
             class="sync-ui-item"
@@ -116,6 +132,11 @@
       <menuitem id="context_reloadAllTabs" label="&reloadAllTabs.label;" accesskey="&reloadAllTabs.accesskey;"
                 tbattr="tabbrowser-multiple-visible"
                 oncommand="gBrowser.reloadAllTabs();"/>
+       <menuitem id="context_bookmarkSelectedTabs"
+                hidden="true"
+                label="&bookmarkSelectedTabs.label;"
+                accesskey="&bookmarkSelectedTabs.accesskey;"
+                oncommand="PlacesCommandHook.bookmarkPages(PlacesCommandHook.uniqueSelectedPages);"/>
       <menuitem id="context_bookmarkAllTabs"
                 label="&bookmarkAllTabs.label;"
                 accesskey="&bookmarkAllTabs.accesskey;"
@@ -211,7 +232,6 @@
            ignorekeys="true"
            hidden="true"
            tabspecific="true"
-           onpopupshown="StarUI.panelShown(event);"
            aria-labelledby="editBookmarkPanelTitle">
       <box class="panel-header">
         <label id="editBookmarkPanelTitle"/>
@@ -221,7 +241,9 @@
       </html:div>
       <box id="editBookmarkPanelImage"/>
 #include ../../components/places/content/editBookmarkPanel.inc.xul
-      <vbox id="editBookmarkPanelBottomContent" flex="1">
+      <vbox id="editBookmarkPanelBottomContent"
+            flex="1"
+            style="min-width: &editBookmark.panel.width;;">
         <checkbox id="editBookmarkPanel_showForNewBookmarks"
                   label="&editBookmark.showForNewBookmarks.label;"
                   accesskey="&editBookmark.showForNewBookmarks.accesskey;"
@@ -388,10 +410,22 @@
     <menupopup id="blockedPopupOptions"
                onpopupshowing="gPopupBlockerObserver.fillPopupList(event);"
                onpopuphiding="gPopupBlockerObserver.onPopupHiding(event);">
-      <menuitem observes="blockedPopupAllowSite"/>
-      <menuitem observes="blockedPopupEditSettings"/>
-      <menuitem observes="blockedPopupDontShowMessage"/>
-      <menuseparator observes="blockedPopupsSeparator"/>
+      <menuitem id="blockedPopupAllowSite"
+                accesskey="&allowPopups.accesskey;"
+                oncommand="gPopupBlockerObserver.toggleAllowPopupsForSite(event);"/>
+      <menuitem
+#ifdef XP_WIN
+                label="&editPopupSettings.label;"
+#else
+                label="&editPopupSettingsUnix.label;"
+#endif
+                accesskey="&editPopupSettings.accesskey;"
+                oncommand="gPopupBlockerObserver.editPopupSettings();"/>
+      <menuitem id="blockedPopupDontShowMessage"
+                accesskey="&dontShowMessage.accesskey;"
+                type="checkbox"
+                oncommand="gPopupBlockerObserver.dontShowMessage();"/>
+      <menuseparator id="blockedPopupsSeparator"/>
     </menupopup>
 
     <menupopup id="autohide-context"
@@ -441,7 +475,8 @@
            emailLink-title="&emailPageCmd.label;"
            sendToDevice-title="&pageAction.sendTabToDevice.label;"
            sendToDevice-notReadyTitle="&sendToDevice.syncNotReady.label;"
-           shareURL-title="&pageAction.shareUrl.label;">
+           shareURL-title="&pageAction.shareUrl.label;"
+           shareMore-label="&pageAction.shareMore.label;">
       <panelmultiview id="pageActionPanelMultiView"
                       mainViewId="pageActionPanelMainView"
                       viewCacheId="appMenu-viewCache">
@@ -750,7 +785,7 @@
                        key="goHome"
                        onclick="BrowserGoHome(event);"
                        cui-areatype="toolbar"
-                       aboutHomeOverrideTooltip="&homeButton.defaultPage.tooltip;"/>
+                       tooltiptext="&homeButton.defaultPage.tooltip;"/>
         <toolbarspring cui-areatype="toolbar" class="chromeclass-toolbar-additional"/>
         <toolbaritem id="urlbar-container" flex="400" persist="width"
                      removable="false"
@@ -782,7 +817,12 @@
                        consumeanchor="identity-box"
                        onclick="PageProxyClickHandler(event);"/>
                 <image id="sharing-icon" mousethrough="always"/>
-                <image id="tracking-protection-icon"/>
+                <box id="tracking-protection-icon-box" animationsenabled="true">
+                  <image id="tracking-protection-icon"/>
+                  <box id="tracking-protection-icon-animatable-box" flex="1">
+                    <image id="tracking-protection-icon-animatable-image" flex="1"/>
+                  </box>
+                </box>
                 <box id="blocked-permissions-container" align="center">
                   <image data-permission-id="geo" class="blocked-permission-icon geo-icon" role="button"
                          tooltiptext="&urlbar.geolocationBlocked.tooltip;"/>

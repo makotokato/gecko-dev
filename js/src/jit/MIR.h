@@ -17,7 +17,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/MacroForEach.h"
 
-#include "builtin/SIMD.h"
+#include "builtin/SIMDConstants.h"
 #include "jit/AtomicOp.h"
 #include "jit/BaselineIC.h"
 #include "jit/FixedList.h"
@@ -3152,11 +3152,6 @@ class MGoto
     AliasSet getAliasSet() const override {
         return AliasSet::None();
     }
-};
-
-enum BranchDirection {
-    FALSE_BRANCH,
-    TRUE_BRANCH
 };
 
 static inline BranchDirection
@@ -7135,11 +7130,10 @@ class MMathFunction
 
   private:
     Function function_;
-    const MathCache* cache_;
 
     // A nullptr cache means this function will neither access nor update the cache.
-    MMathFunction(MDefinition* input, Function function, const MathCache* cache)
-      : MUnaryInstruction(classOpcode, input), function_(function), cache_(cache)
+    MMathFunction(MDefinition* input, Function function)
+      : MUnaryInstruction(classOpcode, input), function_(function)
     {
         setResultType(MIRType::Double);
         specialization_ = MIRType::Double;
@@ -7153,9 +7147,7 @@ class MMathFunction
     Function function() const {
         return function_;
     }
-    const MathCache* cache() const {
-        return cache_;
-    }
+
     bool congruentTo(const MDefinition* ins) const override {
         if (!ins->isMathFunction())
             return false;
@@ -7815,11 +7807,9 @@ class MSinCos
   : public MUnaryInstruction,
     public FloatingPointPolicy<0>::Data
 {
-    const MathCache* cache_;
 
-    MSinCos(MDefinition *input, const MathCache *cache)
-      : MUnaryInstruction(classOpcode, input),
-        cache_(cache)
+    explicit MSinCos(MDefinition *input)
+      : MUnaryInstruction(classOpcode, input)
     {
         setResultType(MIRType::SinCosDouble);
         specialization_ = MIRType::Double;
@@ -7829,9 +7819,9 @@ class MSinCos
   public:
     INSTRUCTION_HEADER(SinCos)
 
-    static MSinCos *New(TempAllocator &alloc, MDefinition *input, const MathCache *cache)
+    static MSinCos *New(TempAllocator &alloc, MDefinition *input)
     {
-        return new (alloc) MSinCos(input, cache);
+        return new (alloc) MSinCos(input);
     }
     AliasSet getAliasSet() const override {
         return AliasSet::None();
@@ -7841,9 +7831,6 @@ class MSinCos
     }
     bool possiblyCalls() const override {
         return true;
-    }
-    const MathCache* cache() const {
-        return cache_;
     }
 };
 

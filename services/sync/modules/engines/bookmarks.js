@@ -401,8 +401,10 @@ BaseBookmarksEngine.prototype = {
           "bookmarks");
       }
     } catch (ex) {
-      if (Async.isShutdownException(ex) || ex.status > 0) {
-        // Don't run maintenance on shutdown or HTTP errors.
+      if (Async.isShutdownException(ex) || ex.status > 0 ||
+          ex.name == "MergeConflictError") {
+        // Don't run maintenance on shutdown or HTTP errors, or if we aborted
+        // the sync because the user changed their bookmarks during merging.
         throw ex;
       }
       // Run Places maintenance periodically to try to recover from corruption
@@ -1160,11 +1162,6 @@ BookmarksStore.prototype = {
 
   clearPendingDeletions() {
     this._itemsToDelete.clear();
-  },
-
-  async GUIDForId(id) {
-    let guid = await PlacesUtils.promiseItemGuid(id);
-    return PlacesSyncUtils.bookmarks.guidToRecordId(guid);
   },
 
   async idForGUID(guid) {

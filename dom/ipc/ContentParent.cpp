@@ -29,6 +29,7 @@
 #include "mozilla/a11y/AccessibleWrap.h"
 #include "mozilla/a11y/Compatibility.h"
 #endif
+#include "mozilla/AntiTrackingCommon.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/StyleSheetInlines.h"
@@ -59,7 +60,9 @@
 #include "mozilla/dom/PPresentationParent.h"
 #include "mozilla/dom/PushNotifier.h"
 #include "mozilla/dom/quota/QuotaManagerService.h"
+#include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/dom/URLClassifierParent.h"
+#include "mozilla/dom/ipc/SharedMap.h"
 #include "mozilla/embedding/printingui/PrintingParent.h"
 #include "mozilla/extensions/StreamFilterParent.h"
 #include "mozilla/gfx/gfxVars.h"
@@ -188,7 +191,7 @@
 #include "ContentProcessManager.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/ipc/StructuredCloneData.h"
-#include "mozilla/PerformanceUtils.h"
+#include "mozilla/PerformanceMetricsCollector.h"
 #include "mozilla/psm/PSMContentListener.h"
 #include "nsPluginHost.h"
 #include "nsPluginTags.h"
@@ -2023,6 +2026,9 @@ ContentParent::LaunchSubprocess(ProcessPriority aInitialPriority /* = PROCESS_PR
   // Prefs information is passed via anonymous shared memory to avoid bloating
   // the command line.
 
+  size_t prefMapSize;
+  auto prefMapHandle = Preferences::EnsureSnapshot(&prefMapSize).ClonePlatformHandle();
+
   // Serialize the early prefs.
   nsAutoCStringN<1024> prefs;
   Preferences::SerializePreferences(prefs);
@@ -2043,14 +2049,22 @@ ContentParent::LaunchSubprocess(ProcessPriority aInitialPriority /* = PROCESS_PR
   // Copy the serialized prefs into the shared memory.
   memcpy(static_cast<char*>(shm.memory()), prefs.get(), prefs.Length());
 
+  // Formats a pointer or pointer-sized-integer as a string suitable for passing
+  // in an arguments list.
+  auto formatPtrArg = [] (auto arg) {
+    return nsPrintfCString("%zu", uintptr_t(arg));
+  };
+
 #if defined(XP_WIN)
   // Record the handle as to-be-shared, and pass it via a command flag. This
   // works because Windows handles are system-wide.
   HANDLE prefsHandle = shm.handle();
   mSubprocess->AddHandleToShare(prefsHandle);
+  mSubprocess->AddHandleToShare(prefMapHandle.get());
   extraArgs.push_back("-prefsHandle");
-  extraArgs.push_back(
-    nsPrintfCString("%zu", reinterpret_cast<uintptr_t>(prefsHandle)).get());
+  extraArgs.push_back(formatPtrArg(prefsHandle).get());
+  extraArgs.push_back("-prefMapHandle");
+  extraArgs.push_back(formatPtrArg(prefMapHandle.get()).get());
 #else
   // In contrast, Unix fds are per-process. So remap the fd to a fixed one that
   // will be used in the child.
@@ -2060,11 +2074,15 @@ ContentParent::LaunchSubprocess(ProcessPriority aInitialPriority /* = PROCESS_PR
   // and the fixed fd isn't used. However, we still need to mark it for
   // remapping so it doesn't get closed in the child.
   mSubprocess->AddFdToRemap(shm.handle().fd, kPrefsFileDescriptor);
+  mSubprocess->AddFdToRemap(prefMapHandle.get(), kPrefMapFileDescriptor);
 #endif
 
-  // Pass the length via a command flag.
+  // Pass the lengths via command line flags.
   extraArgs.push_back("-prefsLen");
-  extraArgs.push_back(nsPrintfCString("%zu", uintptr_t(prefs.Length())).get());
+  extraArgs.push_back(formatPtrArg(prefs.Length()).get());
+
+  extraArgs.push_back("-prefMapSize");
+  extraArgs.push_back(formatPtrArg(prefMapSize).get());
 
   // Scheduler prefs need to be handled differently because the scheduler needs
   // to start up in the content process before the normal preferences service.
@@ -2321,8 +2339,12 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority)
   ScreenManager& screenManager = ScreenManager::GetSingleton();
   screenManager.CopyScreensToRemote(this);
 
+  ipc::WritableSharedMap* sharedData = nsFrameMessageManager::sParentProcessManager->SharedData();
+  sharedData->Flush();
+
   Unused << SendSetXPCOMProcessAttributes(xpcomInit, initialData, lnfCache,
-                                          fontList);
+                                          fontList, sharedData->CloneMapFile(),
+                                          sharedData->MapSize());
 
   nsCOMPtr<nsIChromeRegistry> registrySvc = nsChromeRegistry::GetService();
   nsChromeRegistryChrome* chromeRegistry =
@@ -2467,7 +2489,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority)
   }
 #endif
 
-  {
+  if (!ServiceWorkerParentInterceptEnabled()) {
     RefPtr<ServiceWorkerRegistrar> swr = ServiceWorkerRegistrar::Get();
     MOZ_ASSERT(swr);
 
@@ -2871,6 +2893,7 @@ ContentParent::Observe(nsISupports* aSubject,
 
     // Okay to call ShutDownProcess multiple times.
     ShutDownProcess(SEND_SHUTDOWN_MESSAGE);
+    MarkAsDead();
 
     // Wait for shutdown to complete, so that we receive any shutdown
     // data (e.g. telemetry) from the child before we quit.
@@ -2898,9 +2921,12 @@ ContentParent::Observe(nsISupports* aSubject,
       BLACKLIST_ENTRY(u"app.update.lastUpdateTime."),
       BLACKLIST_ENTRY(u"datareporting.policy."),
       BLACKLIST_ENTRY(u"browser.safebrowsing.provider."),
+      BLACKLIST_ENTRY(u"browser.shell."),
+      BLACKLIST_ENTRY(u"browser.slowstartup."),
       BLACKLIST_ENTRY(u"extensions.getAddons.cache."),
       BLACKLIST_ENTRY(u"media.gmp-manager."),
       BLACKLIST_ENTRY(u"media.gmp-gmpopenh264."),
+      BLACKLIST_ENTRY(u"privacy.sanitize."),
     };
 #undef BLACKLIST_ENTRY
 
@@ -3339,14 +3365,16 @@ ContentParent::RecvFinishMemoryReport(const uint32_t& aGeneration)
 }
 
 mozilla::ipc::IPCResult
-ContentParent::RecvAddPerformanceMetrics(nsTArray<PerformanceInfo>&& aMetrics)
+ContentParent::RecvAddPerformanceMetrics(const nsID& aID,
+                                         nsTArray<PerformanceInfo>&& aMetrics)
 {
   if (!mozilla::StaticPrefs::dom_performance_enable_scheduler_timing()) {
     // The pref is off, we should not get a performance metrics from the content
     // child
     return IPC_OK();
   }
-  Unused << NS_WARN_IF(NS_FAILED(mozilla::NotifyPerformanceInfo(aMetrics)));
+  nsresult rv = PerformanceMetricsCollector::DataReceived(aID, aMetrics);
+  Unused << NS_WARN_IF(NS_FAILED(rv));
   return IPC_OK();
 }
 
@@ -4027,7 +4055,10 @@ ContentParent::RecvScriptErrorInternal(const nsString& aMessage,
     }
 
     JS::RootedObject stackObj(cx, &stack.toObject());
-    msg = new nsScriptErrorWithStack(stackObj);
+    MOZ_ASSERT(JS::IsUnwrappedSavedFrame(stackObj));
+
+    JS::RootedObject stackGlobal(cx, JS::GetNonCCWObjectGlobal(stackObj));
+    msg = new nsScriptErrorWithStack(stackObj, stackGlobal);
   } else {
     msg = new nsScriptError();
   }
@@ -4691,6 +4722,7 @@ ContentParent::CommonCreateWindow(PBrowserParent* aThisTab,
                                   nsresult& aResult,
                                   nsCOMPtr<nsITabParent>& aNewTabParent,
                                   bool* aWindowIsNew,
+                                  int32_t& aOpenLocation,
                                   nsIPrincipal* aTriggeringPrincipal,
                                   uint32_t aReferrerPolicy,
                                   bool aLoadURI)
@@ -4747,11 +4779,11 @@ ContentParent::CommonCreateWindow(PBrowserParent* aThisTab,
     }
   }
 
-  int32_t openLocation = nsWindowWatcher::GetWindowOpenLocation(
+  aOpenLocation = nsWindowWatcher::GetWindowOpenLocation(
     outerWin, aChromeFlags, aCalledFromJS, aPositionSpecified, aSizeSpecified);
 
-  MOZ_ASSERT(openLocation == nsIBrowserDOMWindow::OPEN_NEWTAB ||
-             openLocation == nsIBrowserDOMWindow::OPEN_NEWWINDOW);
+  MOZ_ASSERT(aOpenLocation == nsIBrowserDOMWindow::OPEN_NEWTAB ||
+             aOpenLocation == nsIBrowserDOMWindow::OPEN_NEWWINDOW);
 
   // Read the origin attributes for the tab from the opener tabParent.
   OriginAttributes openerOriginAttributes;
@@ -4762,7 +4794,7 @@ ContentParent::CommonCreateWindow(PBrowserParent* aThisTab,
     openerOriginAttributes.mPrivateBrowsingId = 1;
   }
 
-  if (openLocation == nsIBrowserDOMWindow::OPEN_NEWTAB) {
+  if (aOpenLocation == nsIBrowserDOMWindow::OPEN_NEWTAB) {
     if (NS_WARN_IF(!browserDOMWin)) {
       aResult = NS_ERROR_ABORT;
       return IPC_OK();
@@ -4780,13 +4812,13 @@ ContentParent::CommonCreateWindow(PBrowserParent* aThisTab,
     nsCOMPtr<nsIFrameLoaderOwner> frameLoaderOwner;
     if (aLoadURI) {
       aResult = browserDOMWin->OpenURIInFrame(aURIToLoad,
-                                              params, openLocation,
+                                              params, aOpenLocation,
                                               nsIBrowserDOMWindow::OPEN_NEW,
                                               aNextTabParentId, aName,
                                               getter_AddRefs(frameLoaderOwner));
     } else {
       aResult = browserDOMWin->CreateContentWindowInFrame(aURIToLoad,
-                                              params, openLocation,
+                                              params, aOpenLocation,
                                               nsIBrowserDOMWindow::OPEN_NEW,
                                               aNextTabParentId, aName,
                                               getter_AddRefs(frameLoaderOwner));
@@ -4805,13 +4837,13 @@ ContentParent::CommonCreateWindow(PBrowserParent* aThisTab,
     } else if (NS_SUCCEEDED(aResult) && !frameLoaderOwner) {
       // Fall through to the normal window opening code path when there is no
       // window which we can open a new tab in.
-      openLocation = nsIBrowserDOMWindow::OPEN_NEWWINDOW;
+      aOpenLocation = nsIBrowserDOMWindow::OPEN_NEWWINDOW;
     } else {
       *aWindowIsNew = false;
     }
 
     // If we didn't retarget our window open into a new window, we should return now.
-    if (openLocation != nsIBrowserDOMWindow::OPEN_NEWWINDOW) {
+    if (aOpenLocation != nsIBrowserDOMWindow::OPEN_NEWWINDOW) {
       return IPC_OK();
     }
   }
@@ -4913,6 +4945,7 @@ ContentParent::RecvCreateWindow(PBrowserParent* aThisTab,
   cwi.windowOpened() = true;
   cwi.layersId() = LayersId{0};
   cwi.maxTouchPoints() = 0;
+  cwi.hasSiblings() = false;
 
   // Make sure to resolve the resolver when this function exits, even if we
   // failed to generate a valid response.
@@ -4945,12 +4978,13 @@ ContentParent::RecvCreateWindow(PBrowserParent* aThisTab,
   const nsCOMPtr<nsIURI> uriToLoad = DeserializeURI(aURIToLoad);
 
   nsCOMPtr<nsITabParent> newRemoteTab;
+  int32_t openLocation = nsIBrowserDOMWindow::OPEN_NEWWINDOW;
   mozilla::ipc::IPCResult ipcResult =
     CommonCreateWindow(aThisTab, /* aSetOpener = */ true, aChromeFlags,
                        aCalledFromJS, aPositionSpecified, aSizeSpecified,
                        uriToLoad, aFeatures, aBaseURI, aFullZoom,
                        nextTabParentId, VoidString(), rv,
-                       newRemoteTab, &cwi.windowOpened(),
+                       newRemoteTab, &cwi.windowOpened(), openLocation,
                        aTriggeringPrincipal, aReferrerPolicy,
                        /* aLoadUri = */ false);
   if (!ipcResult) {
@@ -4981,6 +5015,8 @@ ContentParent::RecvCreateWindow(PBrowserParent* aThisTab,
     cwi.dimensions() = newTab->GetDimensionInfo();
   }
 
+  cwi.hasSiblings() = (openLocation == nsIBrowserDOMWindow::OPEN_NEWTAB);
+
   return IPC_OK();
 }
 
@@ -5002,14 +5038,16 @@ ContentParent::RecvCreateWindowInDifferentProcess(
   nsCOMPtr<nsITabParent> newRemoteTab;
   bool windowIsNew;
   nsCOMPtr<nsIURI> uriToLoad = DeserializeURI(aURIToLoad);
+  int32_t openLocation = nsIBrowserDOMWindow::OPEN_NEWWINDOW;
   nsresult rv;
   mozilla::ipc::IPCResult ipcResult =
     CommonCreateWindow(aThisTab, /* aSetOpener = */ false, aChromeFlags,
                        aCalledFromJS, aPositionSpecified, aSizeSpecified,
                        uriToLoad, aFeatures, aBaseURI, aFullZoom,
                        /* aNextTabParentId = */ 0, aName, rv,
-                       newRemoteTab, &windowIsNew, aTriggeringPrincipal,
-                       aReferrerPolicy, /* aLoadUri = */ true);
+                       newRemoteTab, &windowIsNew, openLocation,
+                       aTriggeringPrincipal, aReferrerPolicy,
+                       /* aLoadUri = */ true);
   if (!ipcResult) {
     return ipcResult;
   }
@@ -5746,5 +5784,18 @@ ContentParent::RecvBHRThreadHang(const HangDetails& aDetails)
       new nsHangDetails(HangDetails(aDetails));
     obs->NotifyObservers(hangDetails, "bhr-thread-hang", nullptr);
   }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+ContentParent::RecvFirstPartyStorageAccessGrantedForOrigin(const Principal& aParentPrincipal,
+                                                           const nsCString& aTrackingOrigin,
+                                                           const nsCString& aGrantedOrigin,
+                                                           FirstPartyStorageAccessGrantedForOriginResolver&& aResolver)
+{
+  AntiTrackingCommon::SaveFirstPartyStorageAccessGrantedForOriginOnParentProcess(aParentPrincipal,
+                                                                                 aTrackingOrigin,
+                                                                                 aGrantedOrigin,
+                                                                                 std::move(aResolver));
   return IPC_OK();
 }

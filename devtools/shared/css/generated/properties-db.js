@@ -6197,10 +6197,10 @@ exports.CSS_PROPERTIES = {
     ],
     "supports": [],
     "values": [
-      "flip",
       "from-image",
       "inherit",
       "initial",
+      "none",
       "unset"
     ]
   },
@@ -7270,58 +7270,6 @@ exports.CSS_PROPERTIES = {
       "left",
       "right",
       "top",
-      "unset"
-    ]
-  },
-  "offset-block-end": {
-    "isInherited": false,
-    "subproperties": [
-      "inset-block-end"
-    ],
-    "supports": [],
-    "values": [
-      "auto",
-      "inherit",
-      "initial",
-      "unset"
-    ]
-  },
-  "offset-block-start": {
-    "isInherited": false,
-    "subproperties": [
-      "inset-block-start"
-    ],
-    "supports": [],
-    "values": [
-      "auto",
-      "inherit",
-      "initial",
-      "unset"
-    ]
-  },
-  "offset-inline-end": {
-    "isInherited": false,
-    "subproperties": [
-      "inset-inline-end"
-    ],
-    "supports": [],
-    "values": [
-      "auto",
-      "inherit",
-      "initial",
-      "unset"
-    ]
-  },
-  "offset-inline-start": {
-    "isInherited": false,
-    "subproperties": [
-      "inset-inline-start"
-    ],
-    "supports": [],
-    "values": [
-      "auto",
-      "inherit",
-      "initial",
       "unset"
     ]
   },

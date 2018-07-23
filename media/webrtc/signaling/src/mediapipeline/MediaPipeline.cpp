@@ -1390,14 +1390,13 @@ MediaPipelineTransmit::SetDescription()
 
   if (!mDomTrack) {
     description += "no track]";
-    return;
+  } else {
+    nsString nsTrackId;
+    mDomTrack->GetId(nsTrackId);
+    std::string trackId(NS_ConvertUTF16toUTF8(nsTrackId).get());
+    description += trackId;
+    description += "]";
   }
-
-  nsString nsTrackId;
-  mDomTrack->GetId(nsTrackId);
-  std::string trackId(NS_ConvertUTF16toUTF8(nsTrackId).get());
-  description += trackId;
-  description += "]";
 
   RUN_ON_THREAD(
     mStsThread,
@@ -1731,6 +1730,8 @@ MediaPipelineTransmit::PipelineListener::NotifyQueuedChanges(
     return;
   }
 
+  TRACE_AUDIO_CALLBACK_COMMENT("Audio");
+
   if (mDirectConnect) {
     // ignore non-direct data if we're also getting direct data
     return;
@@ -2001,7 +2002,7 @@ private:
 
   void NotifyPullImpl(StreamTime aDesiredTime)
   {
-    TRACE();
+    TRACE_AUDIO_CALLBACK_COMMENT("Track %i", mTrackId);
     uint32_t samplesPer10ms = mRate / 100;
 
     // mSource's rate is not necessarily the same as the graph rate, since there
@@ -2124,7 +2125,6 @@ MediaPipelineReceiveAudio::DetachMedia()
   ASSERT_ON_THREAD(mMainThread);
   if (mListener) {
     mListener->EndTrack();
-    mListener = nullptr;
   }
 }
 
@@ -2181,6 +2181,7 @@ public:
   // Implement MediaStreamListener
   void NotifyPull(MediaStreamGraph* aGraph, StreamTime aDesiredTime) override
   {
+    TRACE_AUDIO_CALLBACK_COMMENT("Track %i", mTrackId);
     MutexAutoLock lock(mMutex);
 
     RefPtr<Image> image = mImage;
@@ -2322,7 +2323,6 @@ MediaPipelineReceiveVideo::DetachMedia()
   static_cast<VideoSessionConduit*>(mConduit.get())->DetachRenderer();
   if (mListener) {
     mListener->EndTrack();
-    mListener = nullptr;
   }
 }
 

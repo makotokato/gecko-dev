@@ -10,17 +10,16 @@ import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
-import android.app.Notification;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.content.ContentProviderClient;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -41,11 +40,9 @@ import android.os.StrictMode;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.annotation.StringRes;
-import android.support.annotation.UiThread;
 import android.support.design.widget.Snackbar;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentManager;
-import android.support.v4.app.NotificationCompat;
 import android.support.v4.content.res.ResourcesCompat;
 import android.support.v4.view.MenuItemCompat;
 import android.text.TextUtils;
@@ -92,9 +89,10 @@ import org.mozilla.gecko.delegates.OfflineTabStatusDelegate;
 import org.mozilla.gecko.delegates.ScreenshotDelegate;
 import org.mozilla.gecko.distribution.Distribution;
 import org.mozilla.gecko.distribution.DistributionStoreCallback;
-import org.mozilla.gecko.dlc.DownloadContentService;
+import org.mozilla.gecko.dlc.DlcStudyService;
+import org.mozilla.gecko.dlc.DlcSyncService;
 import org.mozilla.gecko.extensions.ExtensionPermissionsHelper;
-import org.mozilla.gecko.firstrun.FirstrunAnimationContainer;
+import org.mozilla.gecko.firstrun.OnboardingHelper;
 import org.mozilla.gecko.gfx.DynamicToolbarAnimator;
 import org.mozilla.gecko.gfx.DynamicToolbarAnimator.PinReason;
 import org.mozilla.gecko.home.BrowserSearch;
@@ -114,6 +112,7 @@ import org.mozilla.gecko.icons.decoders.FaviconDecoder;
 import org.mozilla.gecko.icons.decoders.IconDirectoryEntry;
 import org.mozilla.gecko.icons.decoders.LoadFaviconResult;
 import org.mozilla.gecko.lwt.LightweightTheme;
+import org.mozilla.gecko.media.PictureInPictureController;
 import org.mozilla.gecko.media.VideoPlayer;
 import org.mozilla.gecko.menu.GeckoMenu;
 import org.mozilla.gecko.menu.GeckoMenuItem;
@@ -162,6 +161,7 @@ import org.mozilla.gecko.util.GeckoBundle;
 import org.mozilla.gecko.util.HardwareUtils;
 import org.mozilla.gecko.util.IntentUtils;
 import org.mozilla.gecko.util.MenuUtils;
+import org.mozilla.gecko.util.NetworkUtils;
 import org.mozilla.gecko.util.PrefUtils;
 import org.mozilla.gecko.util.ShortcutUtils;
 import org.mozilla.gecko.util.StringUtils;
@@ -186,7 +186,6 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.UUID;
 import java.util.regex.Pattern;
 
 import static org.mozilla.gecko.mma.MmaDelegate.NEW_TAB;
@@ -204,7 +203,8 @@ public class BrowserApp extends GeckoApp
                                    OnUrlOpenInBackgroundListener,
                                    PropertyAnimator.PropertyAnimationListener,
                                    TabsPanel.TabsLayoutChangeListener,
-                                   View.OnKeyListener {
+                                   View.OnKeyListener,
+                                   OnboardingHelper.OnboardingListener {
     private static final String LOGTAG = "GeckoBrowserApp";
 
     private static final int TABS_ANIMATION_DURATION = 450;
@@ -233,15 +233,6 @@ public class BrowserApp extends GeckoApp
 
     public static final String ACTION_VIEW_MULTIPLE = AppConstants.ANDROID_PACKAGE_NAME + ".action.VIEW_MULTIPLE";
 
-    @RobocopTarget
-    public static final String EXTRA_SKIP_STARTPANE = "skipstartpane";
-    private static final String EOL_NOTIFIED = "eol_notified";
-
-    /**
-     * Be aware of {@link org.mozilla.gecko.fxa.EnvironmentUtils.GECKO_PREFS_FIRSTRUN_UUID}.
-     */
-    private static final String FIRSTRUN_UUID = "firstrun_uuid";
-
     private BrowserSearch mBrowserSearch;
     private View mBrowserSearchContainer;
 
@@ -249,12 +240,12 @@ public class BrowserApp extends GeckoApp
     public ViewFlipper mActionBarFlipper;
     public ActionModeCompatView mActionBar;
     private VideoPlayer mVideoPlayer;
+    private PictureInPictureController mPipController;
     private BrowserToolbar mBrowserToolbar;
     private View doorhangerOverlay;
     // We can't name the TabStrip class because it's not included on API 9.
     private TabStripInterface mTabStrip;
     private AnimatedProgressBar mProgressView;
-    private FirstrunAnimationContainer mFirstrunAnimationContainer;
     private HomeScreen mHomeScreen;
     private TabsPanel mTabsPanel;
 
@@ -282,6 +273,7 @@ public class BrowserApp extends GeckoApp
     private boolean mShowingToolbarChromeForActionBar;
 
     private SafeIntent safeStartingIntent;
+    private Intent startingIntentAfterPip;
     private boolean isInAutomation;
 
     private static class MenuItemInfo implements Parcelable {
@@ -433,6 +425,7 @@ public class BrowserApp extends GeckoApp
 
     @NonNull
     private SearchEngineManager mSearchEngineManager; // Contains reference to Context - DO NOT LEAK!
+    private OnboardingHelper mOnboardingHelper;       // Contains reference to Context - DO NOT LEAK!
 
     private boolean mHasResumed;
 
@@ -734,7 +727,7 @@ public class BrowserApp extends GeckoApp
         if (!isInAutomation && AppConstants.MOZ_ANDROID_DOWNLOAD_CONTENT_SERVICE) {
             // Kick off download of app content as early as possible so that in the best case it's
             // available before the user starts using the browser.
-            DownloadContentService.startStudy(this);
+            DlcStudyService.enqueueServiceWork(this);
         }
 
         // This has to be prepared prior to calling GeckoApp.onCreate, because
@@ -749,6 +742,7 @@ public class BrowserApp extends GeckoApp
           return;
         }
 
+        mOnboardingHelper = new OnboardingHelper(this, safeStartingIntent);
         initSwitchboardAndMma(this, safeStartingIntent, isInAutomation);
         initTelemetryUploader(isInAutomation);
 
@@ -798,7 +792,7 @@ public class BrowserApp extends GeckoApp
         // Initialize Tab History Controller.
         tabHistoryController = new TabHistoryController(new OnShowTabHistory() {
             @Override
-            public void onShowHistory(final List<TabHistoryPage> historyPageList, final int toIndex) {
+            public void onShowHistory(final List<TabHistoryPage> historyPageList, final int toIndex, final boolean isPrivate) {
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
@@ -812,7 +806,7 @@ public class BrowserApp extends GeckoApp
                             return;
                         }
 
-                        final TabHistoryFragment fragment = TabHistoryFragment.newInstance(historyPageList, toIndex);
+                        final TabHistoryFragment fragment = TabHistoryFragment.newInstance(historyPageList, toIndex, isPrivate);
                         final FragmentManager fragmentManager = getSupportFragmentManager();
                         GeckoAppShell.getHapticFeedbackDelegate().performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
                         fragment.show(R.id.tab_history_panel, fragmentManager.beginTransaction(), TAB_HISTORY_FRAGMENT_TAG);
@@ -875,6 +869,7 @@ public class BrowserApp extends GeckoApp
         }
 
         setBrowserToolbarListeners();
+        mPipController = new PictureInPictureController(this);
 
         mFindInPageBar = (FindInPageBar) findViewById(R.id.find_in_page);
         mMediaCastingBar = (MediaCastingBar) findViewById(R.id.media_casting);
@@ -1014,14 +1009,16 @@ public class BrowserApp extends GeckoApp
 
         final String serverExtra = intent.getStringExtra(INTENT_KEY_SWITCHBOARD_SERVER);
         final String serverUrl = TextUtils.isEmpty(serverExtra) ? SWITCHBOARD_SERVER : serverExtra;
-        new AsyncConfigLoader(context, serverUrl) {
+        final SwitchBoard.ConfigStatusListener configStatuslistener = mOnboardingHelper;
+        final MmaDelegate.MmaVariablesChangedListener variablesChangedListener = mOnboardingHelper;
+        new AsyncConfigLoader(context, serverUrl, configStatuslistener) {
             @Override
             protected Void doInBackground(Void... params) {
                 super.doInBackground(params);
-                SwitchBoard.loadConfig(context, serverUrl);
+                SwitchBoard.loadConfig(context, serverUrl, configStatuslistener);
                 if (GeckoPreferences.isMmaAvailableAndEnabled(context)) {
                     // Do LeanPlum start/init here
-                    MmaDelegate.init(BrowserApp.this);
+                    MmaDelegate.init(BrowserApp.this, variablesChangedListener);
                 }
                 return null;
             }
@@ -1048,145 +1045,6 @@ public class BrowserApp extends GeckoApp
                 .action(R.string.updater_permission_allow)
                 .callback(allowCallback)
                 .buildAndShow();
-    }
-
-    private void conditionallyNotifyEOL() {
-        final StrictMode.ThreadPolicy savedPolicy = StrictMode.allowThreadDiskReads();
-        try {
-            final SharedPreferences prefs = GeckoSharedPrefs.forProfile(this);
-            if (!prefs.contains(EOL_NOTIFIED)) {
-
-                // Launch main App to load SUMO url on EOL notification.
-                final String link = getString(R.string.eol_notification_url,
-                                              AppConstants.MOZ_APP_VERSION,
-                                              AppConstants.OS_TARGET,
-                                              Locales.getLanguageTag(Locale.getDefault()));
-
-                final Intent intent = new Intent(Intent.ACTION_VIEW);
-                intent.setClassName(AppConstants.ANDROID_PACKAGE_NAME, AppConstants.MOZ_ANDROID_BROWSER_INTENT_CLASS);
-                intent.setData(Uri.parse(link));
-                final PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT);
-
-                final Notification notification = new NotificationCompat.Builder(this)
-                        .setContentTitle(getString(R.string.eol_notification_title))
-                        .setContentText(getString(R.string.eol_notification_summary))
-                        .setSmallIcon(R.drawable.ic_status_logo)
-                        .setAutoCancel(true)
-                        .setContentIntent(pendingIntent)
-                        .build();
-
-                final NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-                final int notificationID = EOL_NOTIFIED.hashCode();
-                notificationManager.notify(notificationID, notification);
-
-                GeckoSharedPrefs.forProfile(this)
-                                .edit()
-                                .putBoolean(EOL_NOTIFIED, true)
-                                .apply();
-            }
-        } finally {
-            StrictMode.setThreadPolicy(savedPolicy);
-        }
-    }
-
-    /**
-     * Code to actually show the first run pager, separated
-     * for distribution purposes.
-     */
-    @UiThread
-    private void checkFirstrunInternal() {
-        showFirstrunPager();
-
-        if (HardwareUtils.isTablet()) {
-            mTabStrip.setOnTabChangedListener(new TabStripInterface.OnTabAddedOrRemovedListener() {
-                @Override
-                public void onTabChanged() {
-                    hideFirstrunPager(TelemetryContract.Method.BUTTON);
-                    mTabStrip.setOnTabChangedListener(null);
-                }
-            });
-        }
-    }
-
-    /**
-     * Check and show the firstrun pane if the browser has never been launched and
-     * is not opening an external link from another application.
-     *
-     * @param context Context of application; used to show firstrun pane if appropriate
-     * @param intent Intent that launched this activity
-     */
-    private void checkFirstrun(Context context, SafeIntent intent) {
-        if (getProfile().inGuestMode()) {
-            // We do not want to show any first run tour for guest profiles.
-            return;
-        }
-
-        if (intent.getBooleanExtra(EXTRA_SKIP_STARTPANE, false)) {
-            // Note that we don't set the pref, so subsequent launches can result
-            // in the firstrun pane being shown.
-            return;
-        }
-        final StrictMode.ThreadPolicy savedPolicy = StrictMode.allowThreadDiskReads();
-
-        try {
-            final SharedPreferences prefs = GeckoSharedPrefs.forProfile(this);
-
-            if (prefs.getBoolean(FirstrunAnimationContainer.PREF_FIRSTRUN_ENABLED_OLD, true) &&
-                prefs.getBoolean(FirstrunAnimationContainer.PREF_FIRSTRUN_ENABLED, true)) {
-                showSplashScreen = false;
-                if (!Intent.ACTION_VIEW.equals(intent.getAction())) {
-                    // Check to see if a distribution has turned off the first run pager.
-                    final Distribution distribution = Distribution.getInstance(BrowserApp.this);
-                    if (!distribution.shouldWaitForSystemDistribution()) {
-                        checkFirstrunInternal();
-                    } else {
-                        distribution.addOnDistributionReadyCallback(new Distribution.ReadyCallback() {
-                            @Override
-                            public void distributionNotFound() {
-                                ThreadUtils.postToUiThread(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        checkFirstrunInternal();
-                                    }
-                                });
-                            }
-
-                            @Override
-                            public void distributionFound(final Distribution distribution) {
-                                // Check preference again in case distribution turned it off.
-                                if (prefs.getBoolean(FirstrunAnimationContainer.PREF_FIRSTRUN_ENABLED, true)) {
-                                    ThreadUtils.postToUiThread(new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            checkFirstrunInternal();
-                                        }
-                                    });
-                                }
-                            }
-
-                            @Override
-                            public void distributionArrivedLate(final Distribution distribution) {
-                            }
-                        });
-                    }
-                }
-
-                prefs.edit()
-                        // Don't bother trying again to show the v1 minimal first run.
-                        .putBoolean(FirstrunAnimationContainer.PREF_FIRSTRUN_ENABLED, false)
-                        // Generate a unique identify for the current first run.
-                        // See Bug 1429735 for why we care to do this.
-                        .putString(FIRSTRUN_UUID, UUID.randomUUID().toString())
-                        .apply();
-
-                // We have no intention of stopping this session. The FIRSTRUN session
-                // ends when the browsing session/activity has ended. All events
-                // during firstrun will be tagged as FIRSTRUN.
-                Telemetry.startUISession(TelemetryContract.Session.FIRSTRUN);
-            }
-        } finally {
-            StrictMode.setThreadPolicy(savedPolicy);
-        }
     }
 
     private Class<?> getMediaPlayerManager() {
@@ -1246,7 +1104,7 @@ public class BrowserApp extends GeckoApp
 
         if (!IntentUtils.getIsInAutomationFromEnvironment(intent)) {
             // We can't show the first run experience until Gecko has finished initialization (bug 1077583).
-            checkFirstrun(this, intent);
+            mOnboardingHelper.checkFirstRun();
         }
     }
 
@@ -1332,6 +1190,38 @@ public class BrowserApp extends GeckoApp
     }
 
     @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        try {
+            mPipController.tryEnteringPictureInPictureMode();
+        } catch (IllegalStateException exception) {
+            Log.e(LOGTAG, "Cannot enter in Picture In Picture mode:\n" + exception.getMessage());
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+
+        if (!isInPictureInPictureMode) {
+            mPipController.cleanResources();
+
+            // User clicked a new link to be opened in Firefox.
+            // We returned from Picture-in-picture mode and now must try to open that link.
+            if (startingIntentAfterPip != null) {
+                getApplication().startActivity(startingIntentAfterPip);
+                startingIntentAfterPip = null;
+            } else {
+                // After returning from Picture-in-picture mode the video will still be playing
+                // in fullscreen. But now we have the status bar showing.
+                // Call setFullscreen(..) to hide it and offer the same fullscreen video experience
+                // that the user had before entering in Picture-in-picture mode.
+                ActivityUtils.setFullScreen(this, true);
+            }
+        }
+    }
+
+    @Override
     public void onRestart() {
         super.onRestart();
         if (mIsAbortingAppLaunch) {
@@ -1387,6 +1277,12 @@ public class BrowserApp extends GeckoApp
             return;
         }
 
+        if (mPipController.isInPipMode()) {
+            // If screen is locked we should exit PictureInPicture mode
+            moveTaskToBack(true);
+            mPipController.cleanResources();
+        }
+
         // We only show the guest mode notification when our activity is in the foreground.
         GuestSession.hideNotification(this);
 
@@ -1435,12 +1331,17 @@ public class BrowserApp extends GeckoApp
             }
         });
 
-        mBrowserToolbar.setOnFilterListener(new BrowserToolbar.OnFilterListener() {
-            @Override
-            public void onFilter(String searchText, AutocompleteHandler handler) {
-                filterEditingMode(searchText, handler);
-            }
-        });
+        // Website suggestions for address bar inputs should not be enabled when running in automation.
+        // After the upgrade to support library v.26 it could fail otherwise unrelated Robocop tests
+        // See https://bugzilla.mozilla.org/show_bug.cgi?id=1385464#c3
+        if (!isInAutomation) {
+            mBrowserToolbar.setOnFilterListener(new BrowserToolbar.OnFilterListener() {
+                @Override
+                public void onFilter(String searchText, AutocompleteHandler handler) {
+                    filterEditingMode(searchText, handler);
+                }
+            });
+        }
 
         mBrowserToolbar.setOnFocusChangeListener(new View.OnFocusChangeListener() {
             @Override
@@ -1775,6 +1676,8 @@ public class BrowserApp extends GeckoApp
         NotificationHelper.destroy();
         GeckoNetworkManager.destroy();
 
+        MmaDelegate.flushResources(this);
+
         super.onDestroy();
     }
 
@@ -1967,8 +1870,7 @@ public class BrowserApp extends GeckoApp
                 if (AppConstants.MOZ_ANDROID_DOWNLOAD_CONTENT_SERVICE &&
                         !IntentUtils.getIsInAutomationFromEnvironment(new SafeIntent(getIntent()))) {
                     // TODO: Better scheduling of DLC actions (Bug 1257492)
-                    DownloadContentService.startSync(this);
-                    DownloadContentService.startVerification(this);
+                    DlcSyncService.enqueueServiceWork(this);
                 }
 
                 break;
@@ -2660,9 +2562,10 @@ public class BrowserApp extends GeckoApp
                 && mHomeScreenContainer != null && mHomeScreenContainer.getVisibility() == View.VISIBLE);
     }
 
-    private boolean isFirstrunVisible() {
-        return (mFirstrunAnimationContainer != null && mFirstrunAnimationContainer.isVisible()
-                && mHomeScreenContainer != null && mHomeScreenContainer.getVisibility() == View.VISIBLE);
+    private SplashScreen getSplashScreen() {
+        final ViewGroup main = (ViewGroup) findViewById(R.id.gecko_layout);
+        final View splashLayout = LayoutInflater.from(this).inflate(R.layout.splash_screen, main);
+        return (SplashScreen) splashLayout.findViewById(R.id.splash_root);
     }
 
     /**
@@ -2915,8 +2818,11 @@ public class BrowserApp extends GeckoApp
         // URL, but the reverse doesn't apply: manually switching panels doesn't update the URL.)
         // Hence we need to restore the panel, in addition to panel state, here.
         if (isAboutHome(tab)) {
-            // For some reason(e.g. from SearchWidget) we are showing the splash schreen. We should hide it now.
-            if (splashScreen != null && splashScreen.getVisibility() == View.VISIBLE) {
+            // For some reason(e.g. from SearchWidget) we are showing the splash schreen.
+            // If we are not waiting for the onboarding screens we should hide it now.
+            if (!mOnboardingHelper.isPreparing() &&
+                    splashScreen != null &&
+                    splashScreen.getVisibility() == View.VISIBLE) {
                 // Below line will be run when LOCATION_CHANGE. Which means the page load is almost completed.
                 splashScreen.hide();
             }
@@ -2955,10 +2861,9 @@ public class BrowserApp extends GeckoApp
             // But if GeckoThread.isRunning, the will be 0 sec for web rendering.
             // In that case, we don't want to show the SlashScreen/
             if (showSplashScreen && !GeckoThread.isRunning()) {
-
-                final ViewGroup main = (ViewGroup) findViewById(R.id.gecko_layout);
-                final View splashLayout = LayoutInflater.from(this).inflate(R.layout.splash_screen, main);
-                splashScreen = (SplashScreen) splashLayout.findViewById(R.id.splash_root);
+                if (splashScreen == null) {
+                    splashScreen = getSplashScreen();
+                }
 
                 showSplashScreen = false;
             } else if (splashScreen != null) {
@@ -3021,26 +2926,6 @@ public class BrowserApp extends GeckoApp
 
                 super.onActivityResult(requestCode, resultCode, data);
         }
-    }
-
-    private void showFirstrunPager() {
-
-        if (mFirstrunAnimationContainer == null) {
-            final ViewStub firstrunPagerStub = (ViewStub) findViewById(R.id.firstrun_pager_stub);
-            mFirstrunAnimationContainer = (FirstrunAnimationContainer) firstrunPagerStub.inflate();
-            mFirstrunAnimationContainer.load(getApplicationContext(), getSupportFragmentManager());
-            mFirstrunAnimationContainer.registerOnFinishListener(new FirstrunAnimationContainer.OnFinishListener() {
-                @Override
-                public void onFinish() {
-                    if (mFirstrunAnimationContainer.showBrowserHint() &&
-                        !Tabs.hasHomepage(BrowserApp.this)) {
-                        enterEditingMode();
-                    }
-                }
-            });
-        }
-
-        mHomeScreenContainer.setVisibility(View.VISIBLE);
     }
 
     private void showHomePager(String panelId, Bundle panelRestoreData) {
@@ -3174,15 +3059,12 @@ public class BrowserApp extends GeckoApp
      * @return boolean of whether pager was visible
      */
     private boolean hideFirstrunPager(TelemetryContract.Method method) {
-        if (!isFirstrunVisible()) {
+        if (!mOnboardingHelper.hideOnboarding()) {
             return false;
         }
 
         Telemetry.sendUIEvent(TelemetryContract.Event.CANCEL, method, "firstrun-pane");
 
-        // Don't show any onFinish actions when hiding from this Activity.
-        mFirstrunAnimationContainer.registerOnFinishListener(null);
-        mFirstrunAnimationContainer.hide();
         return true;
     }
 
@@ -4276,6 +4158,33 @@ public class BrowserApp extends GeckoApp
      */
     @Override
     protected void onNewIntent(Intent externalIntent) {
+
+        // Currently there is no way to exit PictureInPicture mode programmatically
+        // https://issuetracker.google.com/issues/37254459
+        // but because we are "singleTask" we will receive the Intents to open a new link.
+        // When this happens, the new Intent will trigger `onPictureInPictureModeChanged(..)`
+        //
+        // Whenever the user presses a new link to be opened in Firefox we must
+        // cache the received Intent, wait for PictureInPicture mode to end and then act on that Intent.
+        if (mPipController.isInPipMode()) {
+
+            startingIntentAfterPip = externalIntent;
+
+            // Pattern used to exit MultiWindow - https://stackoverflow.com/a/43288507/4249825
+            // also works for us.
+            // Without this the old tab would continue playing media.
+            moveTaskToBack(true);
+            startingIntentAfterPip.setFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+
+            // To enter PictureInPicture mode the video must be playing in fullscreen, which also
+            // means the orientation will be changed to Landscape.
+            // If when pressing the new link the device is actually in Portrait we will force
+            // the activity to enter in Portrait before opening the new tab.
+            setRequestedOrientationForCurrentActivity(ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR);
+
+            return;
+        }
+
         final SafeIntent intent = new SafeIntent(externalIntent);
         String action = intent.getAction();
 
@@ -4633,5 +4542,36 @@ public class BrowserApp extends GeckoApp
     private void refreshStatusBarColor() {
         final boolean isPrivate = mBrowserToolbar.isPrivateMode();
         WindowUtil.setStatusBarColor(BrowserApp.this, isPrivate);
+    }
+
+    @Override
+    public void onOnboardingProcessStarted() {
+        if (splashScreen == null) {
+            splashScreen = getSplashScreen();
+        }
+
+        splashScreen.show(OnboardingHelper.DELAY_SHOW_DEFAULT_ONBOARDING);
+    }
+
+    @Override
+    public void onOnboardingScreensVisible() {
+        mHomeScreenContainer.setVisibility(View.VISIBLE);
+
+        if (HardwareUtils.isTablet()) {
+            mTabStrip.setOnTabChangedListener(new BrowserApp.TabStripInterface.OnTabAddedOrRemovedListener() {
+                @Override
+                public void onTabChanged() {
+                    hideFirstrunPager(TelemetryContract.Method.BUTTON);
+                    mTabStrip.setOnTabChangedListener(null);
+                }
+            });
+        }
+    }
+
+    @Override
+    public void onFinishedOnboarding(final boolean showBrowserHint) {
+        if (showBrowserHint && !Tabs.hasHomepage(this)) {
+            enterEditingMode();
+        }
     }
 }

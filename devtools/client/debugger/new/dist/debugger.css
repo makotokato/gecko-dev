@@ -1777,6 +1777,16 @@ menuseparator {
   fill: var(--theme-textbox-box-shadow);
 }
 
+.source-icon.vue {
+  background: url("chrome://devtools/skin/images/debugger/vuejs.svg") 1px 1px no-repeat;
+  background-size: 15px;
+}
+
+.source-icon.angular {
+  background: url("chrome://devtools/skin/images/debugger/angular.svg") 1px 1px no-repeat;
+  background-size: 13px 13px;
+}
+
 .source-icon.blackBox {
   mask: url("chrome://devtools/skin/images/debugger/blackBox.svg") no-repeat;
   mask-size: 100%;
@@ -1878,13 +1888,13 @@ menuseparator {
   background: var(--theme-highlight-blue);
 }
 
-.source-footer .blackbox-summary {
+.source-footer .blackbox-summary,
+.source-footer .mapped-source {
   color: var(--theme-body-color);
+  padding-left: 2.5px;
 }
 
 .source-footer .mapped-source {
-  color: var(--theme-body-color);
-  padding: 2.5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2704,22 +2714,32 @@ html[dir="rtl"] .editor-mount {
   --gutter-hover-background-color: #414141;
 }
 
-:not(.empty-line):not(.new-breakpoint) > .CodeMirror-gutter-wrapper:hover {
-  width: 60px;
+:not(.empty-line):not(.new-breakpoint)
+  > .CodeMirror-gutter-wrapper:hover
+  > .CodeMirror-linenumber {
   height: 13px;
-  left: -55px !important;
-  background-color: var(--gutter-hover-background-color) !important;
-  mask: url("chrome://devtools/skin/images/debugger/breakpoint.svg") no-repeat;
-  mask-size: 100%;
-  mask-position: 0 1px;
+  color: var(--theme-body-color);
+  /* Add 1px offset to the background to match it
+    with the actual breakpoint image dimensions */
+  background: linear-gradient(
+    to bottom,
+    transparent 1px,
+    var(--gutter-hover-background-color) 0
+  );
 }
 
 :not(.empty-line):not(.new-breakpoint)
   > .CodeMirror-gutter-wrapper:hover
-  > .CodeMirror-linenumber {
-  left: auto !important;
-  right: 6px;
-  color: var(--theme-body-color);
+  > .CodeMirror-linenumber::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  height: 12px;
+  width: 9px;
+  background-color: var(--gutter-hover-background-color);
+  mask: url("chrome://devtools/skin/images/debugger/breakpoint.svg") no-repeat;
+  mask-size: auto 12px;
+  mask-position: right;
 }
 
 .editor-wrapper .breakpoints {

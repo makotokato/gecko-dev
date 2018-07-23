@@ -65,8 +65,13 @@ pref("devtools.inspector.shapesHighlighter.enabled", true);
 pref("devtools.flexboxinspector.enabled", false);
 // Enable the new Animation Inspector
 pref("devtools.new-animationinspector.enabled", true);
-// Enable the Variable Fonts editor
+
+// Enable the Variable Fonts editor only in Nightly
+#if defined(NIGHTLY_BUILD)
+pref("devtools.inspector.fonteditor.enabled", true);
+#else
 pref("devtools.inspector.fonteditor.enabled", false);
+#endif
 // Enable the font highlight-on-hover feature
 pref("devtools.inspector.fonthighlighter.enabled", false);
 
@@ -228,9 +233,6 @@ pref("devtools.accessibility.enabled", false);
 // Web Audio Editor Inspector Width should be a preference
 pref("devtools.webaudioeditor.inspectorWidth", 300);
 
-// Experimental UI for the browser console that doesn't use a XUL wrapper doc
-pref("devtools.browserconsole.html", false);
-
 // Web console filters
 pref("devtools.webconsole.filter.error", true);
 pref("devtools.webconsole.filter.warn", true);
@@ -310,3 +312,10 @@ pref("devtools.responsive.reloadConditions.touchSimulation", false);
 pref("devtools.responsive.reloadConditions.userAgent", false);
 // Whether to show the notification about reloading to apply emulation
 pref("devtools.responsive.reloadNotification.enabled", true);
+
+// about:debugging: only show system add-ons in local builds by default.
+#ifdef MOZILLA_OFFICIAL
+  pref("devtools.aboutdebugging.showSystemAddons", false);
+#else
+  pref("devtools.aboutdebugging.showSystemAddons", true);
+#endif

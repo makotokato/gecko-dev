@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 import tempfile
+from multiprocessing import cpu_count
 
 from concurrent.futures import (
     ThreadPoolExecutor,
@@ -68,13 +69,15 @@ class MachCommands(MachCommandBase):
                      action='store_true',
                      help='Verbose output.')
     @CommandArgument('--python',
+                     default='2.7',
                      help='Version of Python for Pipenv to use. When given a '
                           'Python version, Pipenv will automatically scan your '
                           'system for a Python that matches that given version.')
     @CommandArgument('-j', '--jobs',
-                     default=1,
+                     default=None,
                      type=int,
-                     help='Number of concurrent jobs to run. Default is 1.')
+                     help='Number of concurrent jobs to run. Default is the number of CPUs '
+                          'in the system.')
     @CommandArgument('--subsuite',
                      default=None,
                      help=('Python subsuite to run. If not specified, all subsuites are run. '
@@ -96,11 +99,10 @@ class MachCommands(MachCommandBase):
                          test_objects=None,
                          subsuite=None,
                          verbose=False,
-                         jobs=1,
+                         jobs=None,
                          python=None,
                          **kwargs):
-        python = python or self.virtualenv_manager.python_path
-        self.activate_pipenv(pipfile=None, args=['--python', python], populate=True)
+        self.activate_pipenv(pipfile=None, populate=True, python=python)
 
         if test_objects is None:
             from moztest.resolve import TestResolver
@@ -143,7 +145,7 @@ class MachCommands(MachCommandBase):
             else:
                 parallel.append(test)
 
-        self.jobs = jobs
+        self.jobs = jobs or cpu_count()
         self.terminate = False
         self.verbose = verbose
 

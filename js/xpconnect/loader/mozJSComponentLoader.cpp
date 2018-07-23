@@ -534,7 +534,7 @@ mozJSComponentLoader::FindTargetObject(JSContext* aCx,
     // instead. This is needed when calling the subscript loader within a frame
     // script, since it the FrameScript NSVO will have been found.
     if (!aTargetObject ||
-        !IsLoaderGlobal(js::GetGlobalForObjectCrossCompartment(aTargetObject))) {
+        !IsLoaderGlobal(JS::GetNonCCWObjectGlobal(aTargetObject))) {
         aTargetObject.set(CurrentGlobalOrNull(aCx));
     }
 }
@@ -1298,6 +1298,8 @@ mozJSComponentLoader::Import(JSContext* aCx, const nsACString& aLocation,
         NS_ENSURE_SUCCESS(rv, rv);
     }
 
+    AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING(
+      "mozJSComponentLoader::Import", JS, aLocation);
     ComponentLoaderInfo info(aLocation);
 
     rv = info.EnsureKey();

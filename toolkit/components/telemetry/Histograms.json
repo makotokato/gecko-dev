@@ -2465,6 +2465,14 @@
     "description": "Upgrading display content Channel Disposition",
     "labels": ["cancel", "disk", "netOk", "netEarlyFail", "netLateFail"]
   },
+  "HTTP_CHANNEL_ONSTART_SUCCESS" : {
+    "record_in_processes": ["main"],
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "Successfully started HTTP channels",
+    "bug_numbers": [1473333],
+    "alert_emails": ["necko@mozilla.com", "dstenberg@mozilla.com"]
+  },
   "HTTP_CONNECTION_ENTRY_CACHE_HIT_1" : {
     "record_in_processes": ["main", "content"],
     "expires_in_version": "never",
@@ -3377,6 +3385,16 @@
     "record_in_processes": ["main", "content"],
     "expires_in_version": "never",
     "description": "Time spent in building displaylists in milliseconds",
+    "kind": "exponential",
+    "high": 1000,
+    "n_buckets": 50
+  },
+  "PAINT_BUILD_LAYERS_TIME" : {
+    "record_in_processes": ["content"],
+    "alert_emails": ["gfx-telemetry-alerts@mozilla.com","mwoodrow@mozilla.com"],
+    "bug_numbers": [1473908],
+    "expires_in_version": "never",
+    "description": "Time spent in building layers in milliseconds",
     "kind": "exponential",
     "high": 1000,
     "n_buckets": 50
@@ -4811,7 +4829,7 @@
   },
   "PLACES_DATABASE_CORRUPTION_HANDLING_STAGE": {
     "record_in_processes": ["main"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["mbonardo@mozilla.com", "mbanner@mozilla.com"],
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 6,
@@ -4831,7 +4849,7 @@
   },
   "PLACES_MOST_RECENT_EXPIRED_VISIT_DAYS": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["mbonardo@mozilla.com", "mbanner@mozilla.com"],
     "expires_in_version": "never",
     "kind": "linear",
     "low": 30,
@@ -5443,22 +5461,6 @@
     "releaseChannelCollection": "opt-out",
     "description": "Update: count of when the app.update.auto boolean preference is not the default value of true (true values are not submitted)"
   },
-  "UPDATE_NOT_PREF_UPDATE_ENABLED_EXTERNAL": {
-    "record_in_processes": ["main"],
-    "alert_emails": ["application-update-telemetry-alerts@mozilla.com"],
-    "expires_in_version": "never",
-    "kind": "count",
-    "releaseChannelCollection": "opt-out",
-    "description": "Update: count of when the app.update.enabled boolean preference is not the default value of true (true values are not submitted)"
-  },
-  "UPDATE_NOT_PREF_UPDATE_ENABLED_NOTIFY": {
-    "record_in_processes": ["main"],
-    "alert_emails": ["application-update-telemetry-alerts@mozilla.com"],
-    "expires_in_version": "never",
-    "kind": "count",
-    "releaseChannelCollection": "opt-out",
-    "description": "Update: count of when the app.update.enabled boolean preference is not the default value of true (true values are not submitted)"
-  },
   "UPDATE_NOT_PREF_UPDATE_STAGING_ENABLED_EXTERNAL": {
     "record_in_processes": ["main"],
     "alert_emails": ["application-update-telemetry-alerts@mozilla.com"],
@@ -5800,31 +5802,34 @@
   "FX_TAB_SWITCH_TOTAL_E10S_MS": {
     "record_in_processes": ["main"],
     "alert_emails": ["mconley@mozilla.com"],
-    "expires_in_version": "65",
+    "expires_in_version": "70",
     "kind": "exponential",
     "high": 1000,
     "n_buckets": 20,
+    "bug_numbers": [1156592],
     "releaseChannelCollection": "opt-out",
     "description": "Firefox: Time in ms between tab selection and tab content paint in e10s windows"
   },
   "FX_TAB_SWITCH_SPINNER_VISIBLE_MS": {
-    "record_in_processes": ["main", "content"],
-    "expires_in_version": "63",
+    "record_in_processes": ["main"],
+    "alert_emails": ["mconley@mozilla.com", "dothayer@mozilla.com"],
+    "expires_in_version": "70",
     "kind": "exponential",
     "high": 1000,
     "n_buckets": 20,
+    "bug_numbers": [1156592],
     "releaseChannelCollection": "opt-out",
     "description": "Firefox: If the spinner interstitial displays during tab switching, records the time in ms the graphic is visible"
   },
   "FX_TAB_SWITCH_SPINNER_VISIBLE_LONG_MS": {
-    "record_in_processes": ["main", "content"],
-    "expires_in_version": "63",
+    "record_in_processes": ["main"],
+    "alert_emails": ["mconley@mozilla.com", "dothayer@mozilla.com"],
+    "expires_in_version": "70",
     "kind": "exponential",
     "low": 1000,
     "high": 64000,
     "n_buckets": 7,
     "bug_numbers": [1301104],
-    "alert_emails": ["mconley@mozilla.com"],
     "releaseChannelCollection": "opt-out",
     "description": "Firefox: If the spinner interstitial displays during tab switching, records the time in ms the graphic is visible. This probe is similar to FX_TAB_SWITCH_SPINNER_VISIBLE_MS, but is for truly degenerate cases."
   },
@@ -5832,7 +5837,7 @@
     "record_in_processes": ["main"],
     "alert_emails": ["dothayer@mozilla.com"],
     "bug_numbers": [1442068],
-    "expires_in_version": "63",
+    "expires_in_version": "70",
     "kind": "categorical",
     "labels": ["none", "preActions", "postActions", "onLoadTimeout", "onLayersReady", "onSizeModeOrOcc", "onEndSwapDocShells"],
     "releaseChannelCollection": "opt-out",
@@ -5840,7 +5845,7 @@
   },
   "FX_TAB_SWITCH_REQUEST_TAB_WARMING_STATE": {
     "record_in_processes": ["main"],
-    "expires_in_version": "63",
+    "expires_in_version": "70",
     "alert_emails": ["mconley@mozilla.com"],
     "releaseChannelCollection": "opt-out",
     "kind": "categorical",
@@ -6584,7 +6589,7 @@
   },
   "FX_URLBAR_SELECTED_RESULT_INDEX": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["fx-search@mozilla.com"],
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 17,
@@ -6594,7 +6599,7 @@
   },
   "FX_URLBAR_SELECTED_RESULT_TYPE": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["fx-search@mozilla.com"],
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 14,
@@ -6604,7 +6609,7 @@
   },
   "FX_URLBAR_SELECTED_RESULT_INDEX_BY_TYPE": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["fx-search@mozilla.com"],
     "expires_in_version": "never",
     "kind": "enumerated",
     "n_values": 14,
@@ -6615,7 +6620,7 @@
   },
   "FX_URLBAR_SELECTED_RESULT_METHOD": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["dzeber@mozilla.com"],
+    "alert_emails": ["dzeber@mozilla.com", "fx-search@mozilla.com"],
     "expires_in_version": "never",
     "releaseChannelCollection": "opt-out",
     "kind": "categorical",
@@ -6974,26 +6979,6 @@
     "high": 300000,
     "n_buckets": 20,
     "description": "Time (ms) it takes for checking if the pending pings are over-quota"
-  },
-  "TELEMETRY_PENDING_LOAD_MS": {
-    "record_in_processes": ["main"],
-    "alert_emails": ["telemetry-client-dev@mozilla.com", "chutten@mozilla.com"],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": 2000,
-    "n_buckets": 20,
-    "bug_numbers": [1033860],
-    "description": "Time (ms) it takes for loading pending pings from disk"
-  },
-  "TELEMETRY_ARCHIVE_LOAD_MS": {
-    "record_in_processes": ["main"],
-    "alert_emails": ["telemetry-client-dev@mozilla.com", "chutten@mozilla.com"],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": 2000,
-    "n_buckets": 20,
-    "bug_numbers": [1033860],
-    "description": "Time (ms) it takes for loading archived pings from disk"
   },
   "TELEMETRY_SUCCESSFUL_SEND_PINGS_SIZE_KB": {
     "record_in_processes": ["main"],
@@ -10170,6 +10155,38 @@
     "description": "On page load, record the number of CSS Grid elements present on a page when the DevTools is open",
     "releaseChannelCollection": "opt-out"
   },
+  "DEVTOOLS_FONTEDITOR_N_FONT_AXES": {
+    "record_in_processes": ["main"],
+    "alert_emails": ["dev-developer-tools@lists.mozilla.org", "mbalfanz@mozilla.com"],
+    "expires_in_version": "66",
+    "bug_numbers": [1465424],
+    "description": "Indicates the number of variation axes of the variable fonts that are displayed in the font editor UI",
+    "releaseChannelCollection": "opt-out",
+    "kind": "exponential",
+    "high": 100,
+    "n_buckets": 20
+  },
+  "DEVTOOLS_FONTEDITOR_N_FONTS_RENDERED": {
+    "record_in_processes": ["main"],
+    "alert_emails": ["dev-developer-tools@lists.mozilla.org", "mbalfanz@mozilla.com"],
+    "expires_in_version": "66",
+    "bug_numbers": [1465424],
+    "description": "Indicates how many fonts the font editor displayed as being needed to render the selected element's content",
+    "releaseChannelCollection": "opt-out",
+    "kind": "exponential",
+    "high": 50,
+    "n_buckets": 10
+  },
+  "DEVTOOLS_FONTEDITOR_FONT_TYPE_DISPLAYED": {
+    "record_in_processes": ["main"],
+    "alert_emails": ["dev-developer-tools@lists.mozilla.org", "mbalfanz@mozilla.com"],
+    "expires_in_version": "66",
+    "bug_numbers": [1465424],
+    "description": "Indicates if the font editor displayed its UI for a non-variable font or a variable font",
+    "releaseChannelCollection": "opt-out",
+    "kind": "categorical",
+    "labels": ["variable", "nonvariable"]
+  },
   "BROWSER_IS_USER_DEFAULT": {
     "record_in_processes": ["main"],
     "expires_in_version": "never",
@@ -11488,7 +11505,7 @@
   },
   "FX_SANITIZE_TOTAL": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["mbonardo@mozilla.com", "jhofmann@mozilla.com"],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 30000,
@@ -11497,7 +11514,7 @@
   },
   "FX_SANITIZE_CACHE": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["mbonardo@mozilla.com", "jhofmann@mozilla.com"],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 30000,
@@ -11506,7 +11523,7 @@
   },
   "FX_SANITIZE_COOKIES_2": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["mbonardo@mozilla.com", "jhofmann@mozilla.com"],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 30000,
@@ -11515,7 +11532,7 @@
   },
   "FX_SANITIZE_HISTORY": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["mbonardo@mozilla.com", "jhofmann@mozilla.com"],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 30000,
@@ -11524,7 +11541,7 @@
   },
   "FX_SANITIZE_FORMDATA": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["mbonardo@mozilla.com", "jhofmann@mozilla.com"],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 30000,
@@ -11533,7 +11550,7 @@
   },
   "FX_SANITIZE_DOWNLOADS": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["mbonardo@mozilla.com", "jhofmann@mozilla.com"],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 30000,
@@ -11542,7 +11559,7 @@
   },
   "FX_SANITIZE_SESSIONS": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["mbonardo@mozilla.com", "jhofmann@mozilla.com"],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 30000,
@@ -11551,7 +11568,7 @@
   },
   "FX_SANITIZE_SITESETTINGS": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["mbonardo@mozilla.com", "jhofmann@mozilla.com"],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 30000,
@@ -11560,7 +11577,7 @@
   },
   "FX_SANITIZE_OPENWINDOWS": {
     "record_in_processes": ["main", "content"],
-    "alert_emails": ["firefox-dev@mozilla.org"],
+    "alert_emails": ["mbonardo@mozilla.com", "jhofmann@mozilla.com"],
     "expires_in_version": "never",
     "kind": "exponential",
     "high": 30000,
@@ -13841,7 +13858,7 @@
     "description": "Total number of http:// and https:// doc groups per tab group, including docgroups fully in bfcache. Collected at the point when the top level document of the tab group is unloaded."
   },
   "HIDDEN_VIEWPORT_OVERFLOW_TYPE": {
-    "record_in_processes": ["content"],
+    "record_in_processes": ["main", "content"],
     "alert_emails": ["xquan@mozilla.com", "botond@mozilla.com"],
     "bug_numbers": [1423013, 1423017],
     "expires_in_version": "65",

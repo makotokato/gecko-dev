@@ -90,6 +90,7 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.mozilla.mozstumbler.service.mainthread.SafeReceiver;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -146,7 +147,7 @@ public abstract class GeckoApp extends GeckoActivity
 
      * Originally, this was only used for the telemetry core ping logic. To avoid
      * having to write custom migration logic, we just keep the original pref key.
-     * Be aware of {@link org.mozilla.gecko.fxa.EnvironmentUtils.GECKO_PREFS_IS_FIRST_RUN}.
+     * Be aware of {@link org.mozilla.gecko.fxa.EnvironmentUtils#GECKO_PREFS_IS_FIRST_RUN}.
      */
     public static final String PREFS_IS_FIRST_RUN = "telemetry-isFirstRun";
 
@@ -985,9 +986,9 @@ public abstract class GeckoApp extends GeckoActivity
         // Tell Stumbler to register a local broadcast listener to listen for preference intents.
         // We do this via intents since we can't easily access Stumbler directly,
         // as it might be compiled outside of Fennec.
-        getApplicationContext().sendBroadcast(
-                new Intent(INTENT_REGISTER_STUMBLER_LISTENER)
-        );
+        final Intent stumblerIntent = new Intent(getApplicationContext(), SafeReceiver.class);
+        stumblerIntent.setAction(INTENT_REGISTER_STUMBLER_LISTENER);
+        getApplicationContext().sendBroadcast(stumblerIntent);
 
         // Did the OS locale change while we were backgrounded? If so,
         // we need to die so that Gecko will re-init add-ons that touch

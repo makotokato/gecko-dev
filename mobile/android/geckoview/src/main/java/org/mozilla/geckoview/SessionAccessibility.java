@@ -11,9 +11,7 @@ import org.mozilla.gecko.PrefsHelper;
 import org.mozilla.gecko.util.BundleEventListener;
 import org.mozilla.gecko.util.EventCallback;
 import org.mozilla.gecko.util.GeckoBundle;
-import org.mozilla.gecko.util.ThreadUtils;
 
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.Matrix;
 import android.graphics.Rect;
@@ -133,7 +131,6 @@ public class SessionAccessibility {
                             info.setSource(mView, virtualDescendantId);
                             info.setVisibleToUser(mView.isShown());
                             info.setPackageName(GeckoAppShell.getApplicationContext().getPackageName());
-                            info.setClassName(mView.getClass().getName());
                             info.setEnabled(true);
                             info.addAction(AccessibilityNodeInfo.ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY);
                             info.addAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY);
@@ -143,8 +140,7 @@ public class SessionAccessibility {
                             info.addAction(AccessibilityNodeInfo.ACTION_PREVIOUS_HTML_ELEMENT);
                             info.setMovementGranularities(AccessibilityNodeInfo.MOVEMENT_GRANULARITY_CHARACTER |
                                                           AccessibilityNodeInfo.MOVEMENT_GRANULARITY_WORD |
-                                                          AccessibilityNodeInfo.MOVEMENT_GRANULARITY_LINE |
-                                                          AccessibilityNodeInfo.MOVEMENT_GRANULARITY_PARAGRAPH);
+                                                          AccessibilityNodeInfo.MOVEMENT_GRANULARITY_LINE);
                             break;
                         }
                         return info;
@@ -224,11 +220,31 @@ public class SessionAccessibility {
                                 data.putInt("keyIndex", keyIndex);
                                 mSession.getEventDispatcher().dispatch("GeckoView:AccessibilityActivate", data);
                             } else if (granularity > 0) {
-                                data = new GeckoBundle(2);
+                                boolean extendSelection = arguments.getBoolean(AccessibilityNodeInfo.ACTION_ARGUMENT_EXTEND_SELECTION_BOOLEAN);
+                                data = new GeckoBundle(3);
                                 data.putString("direction", action == AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY ? "Next" : "Previous");
                                 data.putInt("granularity", granularity);
+                                data.putBoolean("select", extendSelection);
                                 mSession.getEventDispatcher().dispatch("GeckoView:AccessibilityByGranularity", data);
                             }
+                            return true;
+                        case AccessibilityNodeInfo.ACTION_SET_SELECTION:
+                            if (arguments == null) {
+                                return false;
+                            }
+                            int selectionStart = arguments.getInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT);
+                            int selectionEnd = arguments.getInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT);
+                            data = new GeckoBundle(2);
+                            data.putInt("start", selectionStart);
+                            data.putInt("end", selectionEnd);
+                            mSession.getEventDispatcher().dispatch("GeckoView:AccessibilitySetSelection", data);
+                            return true;
+                        case AccessibilityNodeInfo.ACTION_CUT:
+                        case AccessibilityNodeInfo.ACTION_COPY:
+                        case AccessibilityNodeInfo.ACTION_PASTE:
+                            data = new GeckoBundle(1);
+                            data.putInt("action", action);
+                            mSession.getEventDispatcher().dispatch("GeckoView:AccessibilityClipboard", data);
                             return true;
                         }
 
@@ -324,7 +340,6 @@ public class SessionAccessibility {
     private AccessibilityEvent obtainEvent(final int eventType, final int sourceId) {
         AccessibilityEvent event = AccessibilityEvent.obtain(eventType);
         event.setPackageName(GeckoAppShell.getApplicationContext().getPackageName());
-        event.setClassName(SessionAccessibility.class.getName());
         event.setSource(mView, sourceId);
 
         return event;
@@ -337,6 +352,8 @@ public class SessionAccessibility {
                 event.getText().add(textArray[i] != null ? textArray[i] : "");
         }
 
+        if (message.containsKey("className"))
+            event.setClassName(message.getString("className"));
         event.setContentDescription(message.getString("description", ""));
         event.setEnabled(message.getBoolean("enabled", true));
         event.setChecked(message.getBoolean("checked"));
@@ -362,9 +379,8 @@ public class SessionAccessibility {
         node.setPassword(message.getBoolean("password"));
         node.setFocusable(message.getBoolean("focusable"));
         node.setFocused(message.getBoolean("focused"));
-        if (Build.VERSION.SDK_INT >= 18) {
-          node.setEditable(message.getBoolean("editable"));
-        }
+
+        node.setClassName(message.getString("className", "android.view.View"));
 
         final String[] textArray = message.getStringArray("text");
         StringBuilder sb = new StringBuilder();
@@ -377,26 +393,42 @@ public class SessionAccessibility {
         }
         node.setContentDescription(message.getString("description", ""));
 
+        if (Build.VERSION.SDK_INT >= 18 && message.getBoolean("editable")) {
+            node.addAction(AccessibilityNodeInfo.ACTION_SET_SELECTION);
+            node.addAction(AccessibilityNodeInfo.ACTION_CUT);
+            node.addAction(AccessibilityNodeInfo.ACTION_COPY);
+            node.addAction(AccessibilityNodeInfo.ACTION_PASTE);
+            node.setEditable(true);
+        }
+
         if (message.getBoolean("clickable")) {
             node.setClickable(true);
             node.addAction(AccessibilityNodeInfo.ACTION_CLICK);
         }
 
+        if (Build.VERSION.SDK_INT >= 19 && message.containsKey("hint")) {
+            Bundle bundle = node.getExtras();
+            bundle.putCharSequence("AccessibilityNodeInfo.hint", message.getString("hint"));
+        }
+    }
+
+    private void updateBounds(final AccessibilityNodeInfo node, final GeckoBundle message) {
         final GeckoBundle bounds = message.getBundle("bounds");
-        if (bounds != null) {
-            Rect screenBounds = new Rect(bounds.getInt("left"), bounds.getInt("top"),
-                                         bounds.getInt("right"), bounds.getInt("bottom"));
-            node.setBoundsInScreen(screenBounds);
-
-            final Matrix matrix = new Matrix();
-            final float[] origin = new float[2];
-            mSession.getClientToScreenMatrix(matrix);
-            matrix.mapPoints(origin);
-
-            screenBounds.offset((int) -origin[0], (int) -origin[1]);
-            node.setBoundsInParent(screenBounds);
+        if (bounds == null) {
+            return;
         }
 
+        Rect screenBounds = new Rect(bounds.getInt("left"), bounds.getInt("top"),
+                                     bounds.getInt("right"), bounds.getInt("bottom"));
+        node.setBoundsInScreen(screenBounds);
+
+        final Matrix matrix = new Matrix();
+        final float[] origin = new float[2];
+        mSession.getClientToScreenMatrix(matrix);
+        matrix.mapPoints(origin);
+
+        screenBounds.offset((int) -origin[0], (int) -origin[1]);
+        node.setBoundsInParent(screenBounds);
     }
 
     private void sendAccessibilityEvent(final GeckoBundle message) {
@@ -435,6 +467,11 @@ public class SessionAccessibility {
             }
             mVirtualContentNode = AccessibilityNodeInfo.obtain(mView, eventSource);
             populateNodeInfoFromJSON(mVirtualContentNode, message);
+        }
+
+        if (mVirtualContentNode != null) {
+            // Bounds for the virtual content can be updated from any event.
+            updateBounds(mVirtualContentNode, message);
         }
 
         final AccessibilityEvent accessibilityEvent = obtainEvent(eventType, eventSource);

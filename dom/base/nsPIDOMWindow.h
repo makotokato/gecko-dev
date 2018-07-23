@@ -22,14 +22,16 @@
 #define DOM_WINDOW_FROZEN_TOPIC "dom-window-frozen"
 #define DOM_WINDOW_THAWED_TOPIC "dom-window-thawed"
 
+class nsDOMOfflineResourceList;
 class nsDOMWindowList;
 class nsGlobalWindowInner;
 class nsGlobalWindowOuter;
 class nsIArray;
+class nsIChannel;
 class nsIContent;
 class nsICSSDeclaration;
 class nsIDocShell;
-class nsIDocShellLoadInfo;
+class nsDocShellLoadInfo;
 class nsIDocument;
 class nsIIdleObserver;
 class nsIPrincipal;
@@ -45,7 +47,7 @@ typedef uint32_t SuspendTypes;
 
 namespace mozilla {
 class ThrottledEventQueue;
-class AutoplayRequest;
+class AutoplayPermissionManager;
 namespace dom {
 class AudioContext;
 class ClientInfo;
@@ -614,7 +616,7 @@ public:
 
   virtual mozilla::dom::Element* GetFrameElement() = 0;
 
-  virtual already_AddRefed<nsIDOMOfflineResourceList> GetApplicationCache() = 0;
+  virtual nsDOMOfflineResourceList* GetApplicationCache() = 0;
 
   virtual bool GetFullScreen() = 0;
 
@@ -625,9 +627,10 @@ public:
   virtual nsISerialEventTarget*
   EventTargetFor(mozilla::TaskCategory aCategory) const = 0;
 
-  // Returns the AutoplayRequest that documents in this window should use
-  // to request permission to autoplay.
-  already_AddRefed<mozilla::AutoplayRequest> GetAutoplayRequest();
+  // Returns the AutoplayPermissionManager that documents in this window should
+  // use to request permission to autoplay.
+  already_AddRefed<mozilla::AutoplayPermissionManager>
+  GetAutoplayPermissionManager();
 
 protected:
   void CreatePerformanceObjectIfNeeded();
@@ -715,7 +718,7 @@ protected:
   // If we're in the process of requesting permission for this window to
   // play audible media, or we've already been granted permission by the
   // user, this is non-null, and encapsulates the request.
-  RefPtr<mozilla::AutoplayRequest> mAutoplayRequest;
+  RefPtr<mozilla::AutoplayPermissionManager> mAutoplayPermissionManager;
 
   // The event dispatch code sets and unsets this while keeping
   // the event object alive.
@@ -1097,6 +1100,10 @@ public:
                         const nsAString& aPopupWindowName,
                         const nsAString& aPopupWindowFeatures) = 0;
 
+  virtual void
+  NotifyContentBlockingState(unsigned aState,
+                             nsIChannel* aChannel) = 0;
+
   // WebIDL-ish APIs
   void MarkUncollectableForCCGeneration(uint32_t aGeneration)
   {
@@ -1125,7 +1132,7 @@ public:
   //                will not affect any other window features.
   virtual nsresult Open(const nsAString& aUrl, const nsAString& aName,
                         const nsAString& aOptions,
-                        nsIDocShellLoadInfo* aLoadInfo,
+                        nsDocShellLoadInfo* aLoadInfo,
                         bool aForceNoOpener,
                         nsPIDOMWindowOuter **_retval) = 0;
   virtual nsresult OpenDialog(const nsAString& aUrl, const nsAString& aName,

@@ -115,7 +115,7 @@
 #include "nsSandboxFlags.h"
 #include "FrameLayerBuilder.h"
 #include "VRManagerChild.h"
-#include "nsICommandParams.h"
+#include "nsCommandParams.h"
 #include "nsISHistory.h"
 #include "nsQueryObject.h"
 #include "nsIHttpChannel.h"
@@ -123,7 +123,7 @@
 #include "nsString.h"
 #include "nsISupportsPrimitives.h"
 #include "mozilla/Telemetry.h"
-#include "nsIDocShellLoadInfo.h"
+#include "nsDocShellLoadInfo.h"
 
 #ifdef XP_WIN
 #include "mozilla/plugins/PluginWidgetChild.h"
@@ -411,6 +411,7 @@ TabChild::TabChild(nsIContentChild* aManager,
   , mHasValidInnerSize(false)
   , mDestroyed(false)
   , mUniqueId(aTabId)
+  , mHasSiblings(false)
   , mIsTransparent(false)
   , mIPCOpen(false)
   , mParentIsActive(false)
@@ -1000,7 +1001,7 @@ TabChild::ProvideWindow(mozIDOMWindowProxy* aParent,
                         bool aPositionSpecified, bool aSizeSpecified,
                         nsIURI* aURI, const nsAString& aName,
                         const nsACString& aFeatures, bool aForceNoOpener,
-                        nsIDocShellLoadInfo* aLoadInfo, bool* aWindowIsNew,
+                        nsDocShellLoadInfo* aLoadInfo, bool* aWindowIsNew,
                         mozIDOMWindowProxy** aReturn)
 {
     *aReturn = nullptr;
@@ -2202,11 +2203,8 @@ TabChild::RecvPasteTransferable(const IPCDataTransfer& aDataTransfer,
     return IPC_OK();
   }
 
-  nsCOMPtr<nsICommandParams> params =
-    do_CreateInstance("@mozilla.org/embedcomp/command-params;1", &rv);
-  NS_ENSURE_SUCCESS(rv, IPC_OK());
-
-  rv = params->SetISupportsValue("transferable", trans);
+  RefPtr<nsCommandParams> params = new nsCommandParams();
+  rv = params->SetISupports("transferable", trans);
   NS_ENSURE_SUCCESS(rv, IPC_OK());
 
   ourDocShell->DoCommandWithParams("cmd_pasteTransferable", params);
@@ -3012,12 +3010,6 @@ TabChild::SendRequestFocus(bool aCanFocus)
 }
 
 void
-TabChild::SendGetTabCount(uint32_t* tabCount)
-{
-  PBrowserChild::SendGetTabCount(tabCount);
-}
-
-void
 TabChild::EnableDisableCommands(const nsAString& aAction,
                                 nsTArray<nsCString>& aEnabledCommands,
                                 nsTArray<nsCString>& aDisabledCommands)
@@ -3500,6 +3492,20 @@ TabChild::TabGroup()
   return mTabGroup;
 }
 
+nsresult
+TabChild::GetHasSiblings(bool* aHasSiblings)
+{
+  *aHasSiblings = mHasSiblings;
+  return NS_OK;
+}
+
+nsresult
+TabChild::SetHasSiblings(bool aHasSiblings)
+{
+  mHasSiblings = aHasSiblings;
+  return NS_OK;
+}
+
 TabChildGlobal::TabChildGlobal(TabChild* aTabChild)
 : ContentFrameMessageManager(new nsFrameMessageManager(aTabChild)),
   mTabChild(aTabChild)
@@ -3593,6 +3599,15 @@ TabChildGlobal::GetTabEventTarget()
 {
   nsCOMPtr<nsIEventTarget> target = EventTargetFor(TaskCategory::Other);
   return target.forget();
+}
+
+uint64_t
+TabChildGlobal::ChromeOuterWindowID()
+{
+  if (!mTabChild) {
+    return 0;
+  }
+  return mTabChild->ChromeOuterWindowID();
 }
 
 nsIPrincipal*

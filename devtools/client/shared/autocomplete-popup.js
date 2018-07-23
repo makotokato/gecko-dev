@@ -76,7 +76,7 @@ function AutocompletePopup(toolboxDoc, options = {}) {
   }
   this._list.className = "devtools-autocomplete-listbox " + theme + "-theme";
 
-  this._tooltip.setContent(this._list);
+  this._tooltip.setContent(this._list, { height: Infinity });
 
   this.onClick = this.onClick.bind(this);
   this._list.addEventListener("click", this.onClick);
@@ -155,10 +155,9 @@ AutocompletePopup.prototype = {
    *        The position of the item to select.
    */
   selectItemAtIndex: function(index) {
-    if (typeof index !== "number") {
-      // If no index was provided, select the item closest to the input.
-      const isAboveInput = this.position === "top";
-      index = isAboveInput ? this.itemCount - 1 : 0;
+    if (!Number.isInteger(index)) {
+      // If no index was provided, select the first item.
+      index = 0;
     }
     this.selectedIndex = index;
   },

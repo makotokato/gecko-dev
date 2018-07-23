@@ -55,7 +55,6 @@ browser.jar:
         content/browser/browser-thumbnails.js         (content/browser-thumbnails.js)
         content/browser/browser-trackingprotection.js (content/browser-trackingprotection.js)
         content/browser/browser-webrender.js          (content/browser-webrender.js)
-        content/browser/browser-window.css            (content/browser-window.css)
         content/browser/tab-content.js                (content/tab-content.js)
         content/browser/content.js                    (content/content.js)
         content/browser/defaultthemes/1.header.jpg    (content/defaultthemes/1.header.jpg)
@@ -101,9 +100,11 @@ browser.jar:
         content/browser/webext-panels.js              (content/webext-panels.js)
 *       content/browser/webext-panels.xul             (content/webext-panels.xul)
         content/browser/nsContextMenu.js              (content/nsContextMenu.js)
+        content/browser/contentTheme.js               (content/contentTheme.js)
 #ifdef XP_MACOSX
 # XXX: We should exclude this one as well (bug 71895)
 *       content/browser/hiddenWindow.xul              (content/hiddenWindow.xul)
+        content/browser/nonbrowser-mac.js             (content/nonbrowser-mac.js)
 #endif
 #ifndef XP_MACOSX
 *       content/browser/webrtcIndicator.xul           (content/webrtcIndicator.xul)

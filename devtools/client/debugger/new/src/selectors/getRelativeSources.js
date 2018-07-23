@@ -9,27 +9,32 @@ var _selectors = require("../selectors/index");
 
 var _lodash = require("devtools/client/shared/vendor/lodash");
 
-var _source = require("../utils/source");
+var _sourcesTree = require("../utils/sources-tree/index");
 
 var _reselect = require("devtools/client/debugger/new/dist/vendors").vendored["reselect"];
 
-function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i] != null ? arguments[i] : {}; var ownKeys = Object.keys(source); if (typeof Object.getOwnPropertySymbols === 'function') { ownKeys = ownKeys.concat(Object.getOwnPropertySymbols(source).filter(function (sym) { return Object.getOwnPropertyDescriptor(source, sym).enumerable; })); } ownKeys.forEach(function (key) { _defineProperty(target, key, source[key]); }); } return target; }
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
+function getRelativeUrl(source, root) {
+  const {
+    group,
+    path
+  } = (0, _sourcesTree.getURL)(source);
 
-function _defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-
-function getRelativeUrl(url, root) {
   if (!root) {
-    return (0, _source.getSourcePath)(url);
+    return path;
   } // + 1 removes the leading "/"
 
 
+  const url = group + path;
   return url.slice(url.indexOf(root) + root.length + 1);
 }
 
 function formatSource(source, root) {
-  return _objectSpread({}, source, {
-    relativeUrl: getRelativeUrl(source.url, root)
-  });
+  return { ...source,
+    relativeUrl: getRelativeUrl(source, root)
+  };
 }
 
 function underRoot(source, root) {

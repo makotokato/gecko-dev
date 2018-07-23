@@ -28,9 +28,9 @@ add_task(async function test_nsNavHistory_UpdateFrecency() {
   await promise;
 });
 
-// nsNavHistory::invalidateFrecencies for particular pages
-add_task(async function test_nsNavHistory_invalidateFrecencies_somePages() {
-  let url = Services.io.newURI("http://test-nsNavHistory-invalidateFrecencies-somePages.com/");
+// History.jsm invalidateFrecencies()
+add_task(async function test_invalidateFrecencies() {
+  let url = Services.io.newURI("http://test-invalidateFrecencies.com/");
   // Bookmarking the URI is enough to add it to moz_places, and importantly, it
   // means that removeByFilter doesn't remove it from moz_places, so its
   // frecency is able to be changed.
@@ -44,19 +44,18 @@ add_task(async function test_nsNavHistory_invalidateFrecencies_somePages() {
   await promise;
 });
 
-// nsNavHistory::invalidateFrecencies for all pages
-add_task(async function test_nsNavHistory_invalidateFrecencies_allPages() {
+// History.jsm clear()
+add_task(async function test_clear() {
   await Promise.all([onManyFrecenciesChanged(), PlacesUtils.history.clear()]);
 });
 
-// nsNavHistory::DecayFrecency and nsNavHistory::FixInvalidFrecencies
-add_task(async function test_nsNavHistory_DecayFrecency_and_nsNavHistory_FixInvalidFrecencies() {
-  // FixInvalidFrecencies is at the end of a path that DecayFrecency is also on,
-  // so expect two notifications.  Trigger the path by making nsNavHistory
-  // observe the idle-daily notification.
+// nsNavHistory::FixAndDecayFrecency
+add_task(async function test_nsNavHistory_FixAndDecayFrecency() {
+  // Fix and decay frecencies by making nsNavHistory observe the idle-daily
+  // notification.
   PlacesUtils.history.QueryInterface(Ci.nsIObserver).
     observe(null, "idle-daily", "");
-  await Promise.all([onManyFrecenciesChanged(), onManyFrecenciesChanged()]);
+  await Promise.all([onManyFrecenciesChanged()]);
 });
 
 function onFrecencyChanged(expectedURI) {

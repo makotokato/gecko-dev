@@ -42,6 +42,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/net/HttpBaseChannel.h"
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/StaticPrefs.h"
 #include "mozilla/Unused.h"
 
 namespace mozilla {
@@ -52,14 +53,17 @@ namespace net {
 //
 static LazyLogModule gChannelClassifierLog("nsChannelClassifier");
 
-
 #undef LOG
-#define LOG(args)     MOZ_LOG(gChannelClassifierLog, LogLevel::Debug, args)
-#define LOG_ENABLED() MOZ_LOG_TEST(gChannelClassifierLog, LogLevel::Debug)
+#define LOG(args) MOZ_LOG(gChannelClassifierLog, LogLevel::Info, args)
+#define LOG_DEBUG(args) MOZ_LOG(gChannelClassifierLog, LogLevel::Debug, args)
+#define LOG_WARN(args) MOZ_LOG(gChannelClassifierLog, LogLevel::Warning, args)
+#define LOG_ENABLED() MOZ_LOG_TEST(gChannelClassifierLog, LogLevel::Info)
 
 #define URLCLASSIFIER_SKIP_HOSTNAMES       "urlclassifier.skipHostnames"
 #define URLCLASSIFIER_TRACKING_WHITELIST   "urlclassifier.trackingWhitelistTable"
 #define URLCLASSIFIER_TRACKING_TABLE       "urlclassifier.trackingTable"
+
+static const nsCString::size_type sMaxSpecLength = 128;
 
 // Put CachedPrefs in anonymous namespace to avoid any collision from outside of
 // this file.
@@ -91,7 +95,7 @@ private:
   CachedPrefs();
   ~CachedPrefs();
 
-  static void OnPrefsChange(const char* aPrefName, void* );
+  static void OnPrefsChange(const char* aPrefName, CachedPrefs*);
 
   // Whether channels should be annotated as being on the tracking protection
   // list.
@@ -116,24 +120,22 @@ StaticAutoPtr<CachedPrefs> CachedPrefs::sInstance;
 
 // static
 void
-CachedPrefs::OnPrefsChange(const char* aPref, void* aClosure)
+CachedPrefs::OnPrefsChange(const char* aPref, CachedPrefs* aPrefs)
 {
-  CachedPrefs* prefs = static_cast<CachedPrefs*> (aClosure);
-
   if (!strcmp(aPref, URLCLASSIFIER_SKIP_HOSTNAMES)) {
     nsCString skipHostnames;
     Preferences::GetCString(URLCLASSIFIER_SKIP_HOSTNAMES, skipHostnames);
     ToLowerCase(skipHostnames);
-    prefs->SetSkipHostnames(skipHostnames);
+    aPrefs->SetSkipHostnames(skipHostnames);
   } else if (!strcmp(aPref, URLCLASSIFIER_TRACKING_WHITELIST)) {
     nsCString trackingWhitelist;
     Preferences::GetCString(URLCLASSIFIER_TRACKING_WHITELIST,
                             trackingWhitelist);
-    prefs->SetTrackingWhiteList(trackingWhitelist);
+    aPrefs->SetTrackingWhiteList(trackingWhitelist);
   } else if (!strcmp(aPref, URLCLASSIFIER_TRACKING_TABLE)) {
     nsCString trackingBlacklist;
     Preferences::GetCString(URLCLASSIFIER_TRACKING_TABLE, trackingBlacklist);
-    prefs->SetTrackingBlackList(trackingBlacklist);
+    aPrefs->SetTrackingBlackList(trackingBlacklist);
   }
 }
 
@@ -235,6 +237,15 @@ LowerPriorityHelper(nsIChannel* aChannel)
   if (!isBlockingResource) {
     nsCOMPtr<nsISupportsPriority> p = do_QueryInterface(aChannel);
     if (p) {
+      if (LOG_ENABLED()) {
+        nsCOMPtr<nsIURI> uri;
+        aChannel->GetURI(getter_AddRefs(uri));
+        nsAutoCString spec;
+        uri->GetAsciiSpec(spec);
+        spec.Truncate(std::min(spec.Length(), sMaxSpecLength));
+        LOG(("Setting PRIORITY_LOWEST for channel[%p] (%s)",
+             aChannel, spec.get()));
+      }
       p->SetPriority(nsISupportsPriority::PRIORITY_LOWEST);
     }
   }
@@ -251,13 +262,13 @@ nsChannelClassifier::nsChannelClassifier(nsIChannel *aChannel)
     mTrackingProtectionEnabled(Nothing()),
     mTrackingAnnotationEnabled(Nothing())
 {
-  LOG(("nsChannelClassifier::nsChannelClassifier %p", this));
+  LOG_DEBUG(("nsChannelClassifier::nsChannelClassifier %p", this));
   MOZ_ASSERT(mChannel);
 }
 
 nsChannelClassifier::~nsChannelClassifier()
 {
-  LOG(("nsChannelClassifier::~nsChannelClassifier %p", this));
+  LOG_DEBUG(("nsChannelClassifier::~nsChannelClassifier %p", this));
 }
 
 bool
@@ -367,17 +378,12 @@ nsChannelClassifier::ShouldEnableTrackingProtectionInternal(
     if (!isThirdPartyWindow || !isThirdPartyChannel) {
       *result = false;
       if (LOG_ENABLED()) {
+        nsCString spec = chanURI->GetSpecOrDefault();
+        spec.Truncate(std::min(spec.Length(), sMaxSpecLength));
         LOG(("nsChannelClassifier[%p]: Skipping tracking protection checks "
              "for first party or top-level load channel[%p] with uri %s",
-             this, aChannel, chanURI->GetSpecOrDefault().get()));
+             this, aChannel, spec.get()));
       }
-      return NS_OK;
-    }
-
-    // Unlike full Tracking Protection, annotations don't block anything
-    // so we don't need to take into account add-ons or user exceptions.
-    if (aAnnotationsOnly) {
-      *result = true;
       return NS_OK;
     }
 
@@ -422,8 +428,12 @@ nsChannelClassifier::ShouldEnableTrackingProtectionInternal(
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (permissions == nsIPermissionManager::ALLOW_ACTION) {
-      LOG(("nsChannelClassifier[%p]: Allowlisting channel[%p] for %s", this,
-           aChannel, escaped.get()));
+      if (LOG_ENABLED()) {
+        nsCString chanSpec = chanURI->GetSpecOrDefault();
+        chanSpec.Truncate(std::min(chanSpec.Length(), sMaxSpecLength));
+        LOG(("nsChannelClassifier[%p]: User override on channel[%p] (%s) for %s",
+             this, aChannel, chanSpec.get(), escaped.get()));
+      }
       mIsAllowListed = true;
       *result = false;
     } else {
@@ -442,8 +452,12 @@ nsChannelClassifier::ShouldEnableTrackingProtectionInternal(
 
       if (exists) {
         mIsAllowListed = true;
-        LOG(("nsChannelClassifier[%p]: Allowlisting channel[%p] in PBM for %s",
-             this, aChannel, escaped.get()));
+        if (LOG_ENABLED()) {
+          nsCString chanSpec = chanURI->GetSpecOrDefault();
+          chanSpec.Truncate(std::min(chanSpec.Length(), sMaxSpecLength));
+          LOG(("nsChannelClassifier[%p]: User override (PBM) on channel[%p] (%s) for %s",
+               this, aChannel, chanSpec.get(), escaped.get()));
+        }
       }
 
       *result = !exists;
@@ -454,10 +468,13 @@ nsChannelClassifier::ShouldEnableTrackingProtectionInternal(
     // (page elements blocked) the state will be then updated.
     if (*result) {
       if (LOG_ENABLED()) {
+        nsCString chanSpec = chanURI->GetSpecOrDefault();
+        chanSpec.Truncate(std::min(chanSpec.Length(), sMaxSpecLength));
+        nsCString topWinSpec = topWinURI->GetSpecOrDefault();
+        topWinSpec.Truncate(std::min(topWinSpec.Length(), sMaxSpecLength));
         LOG(("nsChannelClassifier[%p]: Enabling tracking protection checks on "
-             "channel[%p] with uri %s for toplevel window %s", this, aChannel,
-             chanURI->GetSpecOrDefault().get(),
-             topWinURI->GetSpecOrDefault().get()));
+             "channel[%p] with uri %s for toplevel window uri %s", this,
+             aChannel, chanSpec.get(), topWinSpec.get()));
       }
       return NS_OK;
     }
@@ -631,9 +648,10 @@ nsChannelClassifier::StartInternal()
     if (LOG_ENABLED()) {
       nsCOMPtr<nsIURI> principalURI;
       principal->GetURI(getter_AddRefs(principalURI));
-      LOG(("nsChannelClassifier[%p]: Classifying principal %s on channel with "
-           "uri %s", this, principalURI->GetSpecOrDefault().get(),
-           uri->GetSpecOrDefault().get()));
+      nsCString spec = principalURI->GetSpecOrDefault();
+      spec.Truncate(std::min(spec.Length(), sMaxSpecLength));
+      LOG(("nsChannelClassifier[%p]: Classifying principal %s on channel[%p]",
+           this, spec.get(), mChannel.get()));
     }
     // The classify is running in parent process, no need to give a valid event
     // target
@@ -652,12 +670,12 @@ nsChannelClassifier::StartInternal()
             // Some channels (including nsJSChannel) fail on Suspend.  This
             // shouldn't be fatal, but will prevent malware from being
             // blocked on these channels.
-            LOG(("nsChannelClassifier[%p]: Couldn't suspend channel", this));
+            LOG_WARN(("nsChannelClassifier[%p]: Couldn't suspend channel", this));
             return rv;
         }
 
         mSuspendedChannel = true;
-        LOG(("nsChannelClassifier[%p]: suspended channel %p",
+        LOG_DEBUG(("nsChannelClassifier[%p]: suspended channel %p",
              this, mChannel.get()));
     } else {
         LOG(("nsChannelClassifier[%p]: not expecting callback", this));
@@ -713,6 +731,7 @@ nsChannelClassifier::MarkEntryClassified(nsresult status)
       mChannel->GetURI(getter_AddRefs(uri));
       nsAutoCString spec;
       uri->GetAsciiSpec(spec);
+      spec.Truncate(std::min(spec.Length(), sMaxSpecLength));
       LOG(("nsChannelClassifier::MarkEntryClassified[%s] %s",
            errorName.get(), spec.get()));
     }
@@ -774,33 +793,6 @@ nsChannelClassifier::HasBeenClassified(nsIChannel *aChannel)
     return tag.EqualsLiteral("1");
 }
 
-//static
-bool
-nsChannelClassifier::SameLoadingURI(nsIDocument *aDoc, nsIChannel *aChannel)
-{
-  nsCOMPtr<nsIURI> docURI = aDoc->GetDocumentURI();
-  nsCOMPtr<nsILoadInfo> channelLoadInfo = aChannel->GetLoadInfo();
-  if (!channelLoadInfo || !docURI) {
-    return false;
-  }
-
-  nsCOMPtr<nsIPrincipal> channelLoadingPrincipal = channelLoadInfo->LoadingPrincipal();
-  if (!channelLoadingPrincipal) {
-    // TYPE_DOCUMENT loads will not have a channelLoadingPrincipal. But top level
-    // loads should not be blocked by Tracking Protection, so we will return
-    // false
-    return false;
-  }
-  nsCOMPtr<nsIURI> channelLoadingURI;
-  channelLoadingPrincipal->GetURI(getter_AddRefs(channelLoadingURI));
-  if (!channelLoadingURI) {
-    return false;
-  }
-  bool equals = false;
-  nsresult rv = docURI->EqualsExceptRef(channelLoadingURI, &equals);
-  return NS_SUCCEEDED(rv) && equals;
-}
-
 // static
 nsresult
 nsChannelClassifier::SetBlockedContent(nsIChannel *channel,
@@ -843,33 +835,13 @@ nsChannelClassifier::SetBlockedContent(nsIChannel *channel,
   nsCOMPtr<nsIDocument> doc = docShell->GetDocument();
   NS_ENSURE_TRUE(doc, NS_OK);
 
-  // This event might come after the user has navigated to another page.
-  // To prevent showing the TrackingProtection UI on the wrong page, we need to
-  // check that the loading URI for the channel is the same as the URI currently
-  // loaded in the document.
-  if (!SameLoadingURI(doc, channel)) {
-    return NS_OK;
-  }
-
-  // Notify nsIWebProgressListeners of this security event.
-  // Can be used to change the UI state.
-  nsCOMPtr<nsISecurityEventSink> eventSink = do_QueryInterface(docShell, &rv);
-  NS_ENSURE_SUCCESS(rv, NS_OK);
-  uint32_t state = 0;
-  nsCOMPtr<nsISecureBrowserUI> securityUI;
-  docShell->GetSecurityUI(getter_AddRefs(securityUI));
-  if (!securityUI) {
-    return NS_OK;
-  }
-  securityUI->GetState(&state);
+  unsigned state;
   if (aErrorCode == NS_ERROR_TRACKING_URI) {
-    doc->SetHasTrackingContentBlocked(true);
-    state |= nsIWebProgressListener::STATE_BLOCKED_TRACKING_CONTENT;
+    state = nsIWebProgressListener::STATE_BLOCKED_TRACKING_CONTENT;
   } else {
-    state |= nsIWebProgressListener::STATE_BLOCKED_UNSAFE_CONTENT;
+    state = nsIWebProgressListener::STATE_BLOCKED_UNSAFE_CONTENT;
   }
-
-  eventSink->OnSecurityChange(channel, state);
+  pwin->NotifyContentBlockingState(state, channel);
 
   // Log a warning to the web console.
   nsCOMPtr<nsIURI> uri;
@@ -950,10 +922,19 @@ TrackingURICallback::OnClassifyComplete(nsresult aErrorCode,
 nsresult
 TrackingURICallback::OnBlacklistResult(nsresult aErrorCode)
 {
-  LOG(("TrackingURICallback[%p]::OnBlacklistResult aErrorCode=0x%" PRIx32,
-       mChannelClassifier.get(), static_cast<uint32_t>(aErrorCode)));
+  LOG_DEBUG(("TrackingURICallback[%p]::OnBlacklistResult aErrorCode=0x%" PRIx32,
+             mChannelClassifier.get(), static_cast<uint32_t>(aErrorCode)));
 
   if (NS_SUCCEEDED(aErrorCode)) {
+    if (LOG_ENABLED()) {
+      nsCOMPtr<nsIChannel> channel = mChannelClassifier->GetChannel();
+      nsCOMPtr<nsIURI> uri;
+      channel->GetURI(getter_AddRefs(uri));
+      nsCString spec = uri->GetSpecOrDefault();
+      spec.Truncate(std::min(spec.Length(), sMaxSpecLength));
+      LOG(("TrackingURICallback[%p]::OnBlacklistResult uri %s not found "
+           "in blacklist", mChannelClassifier.get(), spec.get()));
+    }
     mChannelCallback();
     return NS_OK;
   }
@@ -962,10 +943,11 @@ TrackingURICallback::OnBlacklistResult(nsresult aErrorCode)
     nsCOMPtr<nsIChannel> channel = mChannelClassifier->GetChannel();
     nsCOMPtr<nsIURI> uri;
     channel->GetURI(getter_AddRefs(uri));
-    LOG(("TrackingURICallback[%p]::OnBlacklistResult channel [%p] "
+    nsCString spec = uri->GetSpecOrDefault();
+    spec.Truncate(std::min(spec.Length(), sMaxSpecLength));
+    LOG(("TrackingURICallback[%p]::OnBlacklistResult channel[%p] "
          "uri=%s, is in blacklist. Start checking whitelist.",
-         mChannelClassifier.get(), channel.get(),
-         uri->GetSpecOrDefault().get()));
+         mChannelClassifier.get(), channel.get(), spec.get()));
   }
 
   nsCOMPtr<nsIURI> whitelistURI = mChannelClassifier->CreateWhiteListURI();
@@ -988,12 +970,20 @@ TrackingURICallback::OnBlacklistResult(nsresult aErrorCode)
 nsresult
 TrackingURICallback::OnWhitelistResult(nsresult aErrorCode)
 {
-  LOG(("TrackingURICallback[%p]::OnWhitelistResult aErrorCode=0x%" PRIx32,
-       mChannelClassifier.get(), static_cast<uint32_t>(aErrorCode)));
+  LOG_DEBUG(("TrackingURICallback[%p]::OnWhitelistResult aErrorCode=0x%" PRIx32,
+             mChannelClassifier.get(), static_cast<uint32_t>(aErrorCode)));
 
   if (NS_SUCCEEDED(aErrorCode)) {
-    LOG(("TrackingURICallback[%p]::OnWhitelistResult tracker found "
-         "in whitelist so we won't block it", mChannelClassifier.get()));
+    if (LOG_ENABLED()) {
+      nsCOMPtr<nsIChannel> channel = mChannelClassifier->GetChannel();
+      nsCOMPtr<nsIURI> uri;
+      channel->GetURI(getter_AddRefs(uri));
+      nsCString spec = uri->GetSpecOrDefault();
+      spec.Truncate(std::min(spec.Length(), sMaxSpecLength));
+      LOG(("TrackingURICallback[%p]::OnWhitelistResult uri %s found "
+           "in whitelist so we won't block it", mChannelClassifier.get(),
+           spec.get()));
+    }
     mChannelCallback();
     return NS_OK;
   }
@@ -1002,10 +992,11 @@ TrackingURICallback::OnWhitelistResult(nsresult aErrorCode)
     nsCOMPtr<nsIChannel> channel = mChannelClassifier->GetChannel();
     nsCOMPtr<nsIURI> uri;
     channel->GetURI(getter_AddRefs(uri));
+    nsCString spec = uri->GetSpecOrDefault();
+    spec.Truncate(std::min(spec.Length(), sMaxSpecLength));
     LOG(("TrackingURICallback[%p]::OnWhitelistResult "
-         "channel [%p] uri=%s, is not in whitelist",
-         mChannelClassifier.get(), channel.get(),
-         uri->GetSpecOrDefault().get()));
+         "channel[%p] uri=%s, should not be whitelisted",
+         mChannelClassifier.get(), channel.get(), spec.get()));
   }
 
   OnTrackerFound(aErrorCode);
@@ -1020,9 +1011,12 @@ TrackingURICallback::OnTrackerFound(nsresult aErrorCode)
   if (mChannelClassifier->ShouldEnableTrackingProtection()) {
     mChannelClassifier->SetBlockedContent(channel, aErrorCode,
                                           mList, mProvider, mFullHash);
+    LOG(("TrackingURICallback[%p]::OnTrackerFound, cancelling channel[%p]",
+         mChannelClassifier.get(), channel.get()));
     channel->Cancel(aErrorCode);
   } else {
-    MOZ_ASSERT(mChannelClassifier->ShouldEnableTrackingAnnotation());
+    MOZ_ASSERT(mChannelClassifier->ShouldEnableTrackingAnnotation() ||
+               StaticPrefs::privacy_restrict3rdpartystorage_enabled());
 
     // Even with TP disabled, we still want to show the user that there
     // are unblocked trackers on the site, so notify the UI that we loaded
@@ -1074,8 +1068,8 @@ nsChannelClassifier::CreateWhiteListURI() const
   NS_ENSURE_SUCCESS(rv, nullptr);
   nsAutoCString whitelistEntry = NS_LITERAL_CSTRING("http://") +
     pageHostname + NS_LITERAL_CSTRING("/?resource=") + resourceDomain;
-  LOG(("nsChannelClassifier[%p]: Looking for %s in the whitelist",
-       this, whitelistEntry.get()));
+  LOG(("nsChannelClassifier[%p]: Looking for %s in the whitelist (channel=%p)",
+       this, whitelistEntry.get(), mChannel.get()));
 
   nsCOMPtr<nsIURI> whitelistURI;
   rv = NS_NewURI(getter_AddRefs(whitelistURI), whitelistEntry);
@@ -1149,7 +1143,7 @@ nsChannelClassifier::OnClassifyComplete(nsresult aErrorCode,
 
   if (mSuspendedChannel) {
     nsAutoCString errorName;
-    if (LOG_ENABLED()) {
+    if (LOG_ENABLED() && NS_FAILED(aErrorCode)) {
       GetErrorName(aErrorCode, errorName);
       LOG(("nsChannelClassifier[%p]:OnClassifyComplete %s (suspended channel)",
            this, errorName.get()));
@@ -1160,9 +1154,11 @@ nsChannelClassifier::OnClassifyComplete(nsresult aErrorCode,
       if (LOG_ENABLED()) {
         nsCOMPtr<nsIURI> uri;
         mChannel->GetURI(getter_AddRefs(uri));
+        nsCString spec = uri->GetSpecOrDefault();
+        spec.Truncate(std::min(spec.Length(), sMaxSpecLength));
         LOG(("nsChannelClassifier[%p]: cancelling channel %p for %s "
              "with error code %s", this, mChannel.get(),
-              uri->GetSpecOrDefault().get(), errorName.get()));
+              spec.get(), errorName.get()));
       }
 
       // Channel will be cancelled (page element blocked) due to Safe Browsing.
@@ -1179,8 +1175,8 @@ nsChannelClassifier::OnClassifyComplete(nsresult aErrorCode,
 
       mChannel->Cancel(aErrorCode);
     }
-    LOG(("nsChannelClassifier[%p]: resuming channel %p from "
-         "OnClassifyComplete", this, mChannel.get()));
+    LOG_DEBUG(("nsChannelClassifier[%p]: resuming channel[%p] from "
+               "OnClassifyComplete", this, mChannel.get()));
     mChannel->Resume();
   }
 
@@ -1205,7 +1201,8 @@ nsChannelClassifier::CheckIsTrackerWithLocalTable(std::function<void()>&& aCallb
     return rv;
   }
 
-  if (!ShouldEnableTrackingProtection() && !ShouldEnableTrackingAnnotation()) {
+  if (!ShouldEnableTrackingProtection() && !ShouldEnableTrackingAnnotation() &&
+      !StaticPrefs::privacy_restrict3rdpartystorage_enabled()) {
     return NS_ERROR_FAILURE;
   }
 
@@ -1218,7 +1215,7 @@ nsChannelClassifier::CheckIsTrackerWithLocalTable(std::function<void()>&& aCallb
   nsCString trackingBlacklist =
     CachedPrefs::GetInstance()->GetTrackingBlackList();
   if (trackingBlacklist.IsEmpty()) {
-    LOG(("nsChannelClassifier[%p]:CheckIsTrackerWithLocalTable blacklist is empty",
+    LOG_WARN(("nsChannelClassifier[%p]: CheckIsTrackerWithLocalTable blacklist is empty",
          this));
     return NS_ERROR_FAILURE;
   }
@@ -1226,8 +1223,12 @@ nsChannelClassifier::CheckIsTrackerWithLocalTable(std::function<void()>&& aCallb
   nsCOMPtr<nsIURIClassifierCallback> callback =
     new TrackingURICallback(this, std::move(aCallback));
 
-  LOG(("nsChannelClassifier[%p]:CheckIsTrackerWithLocalTable for uri=%s\n",
-       this, uri->GetSpecOrDefault().get()));
+  if (LOG_ENABLED()) {
+    nsCString spec = uri->GetSpecOrDefault();
+    spec.Truncate(std::min(spec.Length(), sMaxSpecLength));
+    LOG(("nsChannelClassifier[%p]: Checking blacklist for uri=%s\n",
+         this, spec.get()));
+  }
   return uriClassifier->AsyncClassifyLocalWithTables(uri,
                                                      trackingBlacklist,
                                                      callback);

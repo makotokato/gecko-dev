@@ -25,14 +25,12 @@
 #include "nsGkAtoms.h"
 #include "nsStringFwd.h"
 #include "nsStyledElement.h"
-#include "nsIFrameLoaderOwner.h"
 #include "mozilla/dom/DOMRect.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/DOMString.h"
 #include "mozilla/dom/FromParser.h"
 
 class nsIDocument;
-class nsFrameLoader;
 class nsXULPrototypeDocument;
 
 class nsIObjectInputStream;
@@ -368,7 +366,6 @@ public:
                                 nsIContent* aBindingParent,
                                 bool aCompileEventHandlers) override;
     virtual void UnbindFromTree(bool aDeep, bool aNullParent) override;
-    virtual void RemoveChildNode(nsIContent* aKid, bool aNotify) override;
     virtual void DestroyContent() override;
 
 #ifdef DEBUG
@@ -397,8 +394,6 @@ public:
     virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
                            bool aPreallocateChildren) const override;
     virtual mozilla::EventStates IntrinsicState() const override;
-
-    void PresetOpenerWindow(mozIDOMWindowProxy* aWindow, ErrorResult& aRv);
 
     virtual void RecompileScriptEventListeners() override;
 
@@ -631,14 +626,6 @@ public:
                                const nsAString& aValue,
                                mozilla::ErrorResult& rv);
     // Style() inherited from nsStyledElement
-    already_AddRefed<nsFrameLoader> GetFrameLoader();
-    void InternalSetFrameLoader(nsFrameLoader* aNewFrameLoader);
-    void SwapFrameLoaders(mozilla::dom::HTMLIFrameElement& aOtherLoaderOwner,
-                          mozilla::ErrorResult& rv);
-    void SwapFrameLoaders(nsXULElement& aOtherLoaderOwner,
-                          mozilla::ErrorResult& rv);
-    void SwapFrameLoaders(nsIFrameLoaderOwner* aOtherLoaderOwner,
-                          mozilla::ErrorResult& rv);
 
     nsINode* GetScopeChainParent() const override
     {
@@ -656,12 +643,7 @@ protected:
     // Implementation methods
     nsresult EnsureContentsGenerated(void) const;
 
-    // Helper routine that crawls a parent chain looking for a tree element.
-    NS_IMETHOD GetParentTree(nsIDOMXULMultiSelectControlElement** aTreeElement);
-
     nsresult AddPopupListener(nsAtom* aName);
-
-    void LoadSrc();
 
     /**
      * The nearest enclosing content node with a binding

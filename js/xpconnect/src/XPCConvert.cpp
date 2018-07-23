@@ -584,6 +584,8 @@ XPCConvert::JSData2Native(void* d, HandleValue s,
             const char16_t* chars = JS_GetTwoByteExternalStringChars(str);
             ws->AssignLiteral(chars, length);
         } else {
+            // We don't bother checking for a dynamic-atom external string,
+            // because we'd just need to copy out of it anyway.
             if (!AssignJSString(cx, *ws, str))
                 return false;
         }
@@ -811,7 +813,7 @@ XPCConvert::JSData2Native(void* d, HandleValue s,
 
     case nsXPTType::T_PROMISE:
     {
-        nsIGlobalObject* glob = NativeGlobal(CurrentGlobalOrNull(cx));
+        nsIGlobalObject* glob = CurrentNativeGlobal(cx);
         if (!glob) {
             if (pErr) {
                 *pErr = NS_ERROR_UNEXPECTED;
@@ -1172,11 +1174,10 @@ JSErrorToXPCException(const char* toStringResult,
     }
 
     if (data) {
-        nsAutoCString formattedMsg;
-        data->ToString(formattedMsg);
-
+        // Pass nullptr for the message: ConstructException will get a message
+        // from the nsIScriptError.
         rv = XPCConvert::ConstructException(NS_ERROR_XPC_JAVASCRIPT_ERROR_WITH_DETAILS,
-                                            formattedMsg.get(), ifaceName,
+                                            nullptr, ifaceName,
                                             methodName,
                                             static_cast<nsIScriptError*>(data.get()),
                                             exceptn, nullptr, nullptr);

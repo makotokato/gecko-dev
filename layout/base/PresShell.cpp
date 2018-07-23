@@ -826,6 +826,7 @@ PresShell::PresShell()
   , mScaleToResolution(false)
   , mIsLastChromeOnlyEscapeKeyConsumed(false)
   , mHasReceivedPaintMessage(false)
+  , mIsLastKeyDownCanceled(false)
   , mHasHandledUserInput(false)
 #ifdef NIGHTLY_BUILD
   , mForceDispatchKeyPressEventsForNonPrintableKeys(false)
@@ -4254,6 +4255,8 @@ PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush)
     // construct frames for content right now that's still waiting to be
     // notified on,
     mDocument->FlushPendingNotifications(FlushType::ContentAndNotify);
+
+    mDocument->UpdateSVGUseElementShadowTrees();
 
     // Process pending restyles, since any flush of the presshell wants
     // up-to-date style data.
@@ -8573,7 +8576,7 @@ PresShell::SuppressDisplayport(bool aEnabled)
 {
   if (aEnabled) {
     mActiveSuppressDisplayport++;
-  } else {
+  } else if (mActiveSuppressDisplayport > 0) {
     bool isSuppressed = IsDisplayportSuppressed();
     mActiveSuppressDisplayport--;
     if (isSuppressed && !IsDisplayportSuppressed()) {
@@ -8583,8 +8586,6 @@ PresShell::SuppressDisplayport(bool aEnabled)
       }
     }
   }
-
-  MOZ_ASSERT(mActiveSuppressDisplayport >= 0);
 }
 
 static bool sDisplayPortSuppressionRespected = true;

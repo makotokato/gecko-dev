@@ -186,8 +186,12 @@ private:
   static const uint32_t kReadMax = 9999;
   static const uint32_t kWrite   = 10000;
 
-  mutable mozilla::Atomic<uint32_t> mState;
-  mutable mozilla::Atomic<uint32_t> mIsWritable;
+  mutable mozilla::Atomic<uint32_t,
+                          mozilla::SequentiallyConsistent,
+                          mozilla::recordreplay::Behavior::DontPreserve> mState;
+  mutable mozilla::Atomic<uint32_t,
+                          mozilla::SequentiallyConsistent,
+                          mozilla::recordreplay::Behavior::DontPreserve> mIsWritable;
 };
 #endif
 
@@ -325,7 +329,7 @@ public:
   //
   // If |entry| is non-null, |key| was found. If |entry| is null, key was not
   // found.
-  PLDHashEntryHdr* Search(const void* aKey);
+  PLDHashEntryHdr* Search(const void* aKey) const;
 
   // To add an entry identified by |key| to table, call:
   //
@@ -507,15 +511,15 @@ private:
 
   static const PLDHashNumber kCollisionFlag = 1;
 
-  static bool EntryIsFree(PLDHashEntryHdr* aEntry)
+  static bool EntryIsFree(const PLDHashEntryHdr* aEntry)
   {
     return aEntry->mKeyHash == 0;
   }
-  static bool EntryIsRemoved(PLDHashEntryHdr* aEntry)
+  static bool EntryIsRemoved(const PLDHashEntryHdr* aEntry)
   {
     return aEntry->mKeyHash == 1;
   }
-  static bool EntryIsLive(PLDHashEntryHdr* aEntry)
+  static bool EntryIsLive(const PLDHashEntryHdr* aEntry)
   {
     return aEntry->mKeyHash >= 2;
   }
@@ -529,11 +533,13 @@ private:
     aEntry->mKeyHash = 1;
   }
 
-  PLDHashNumber Hash1(PLDHashNumber aHash0);
-  void Hash2(PLDHashNumber aHash, uint32_t& aHash2Out, uint32_t& aSizeMaskOut);
+  PLDHashNumber Hash1(PLDHashNumber aHash0) const;
+  void Hash2(PLDHashNumber aHash,
+             uint32_t& aHash2Out, uint32_t& aSizeMaskOut) const;
 
-  static bool MatchEntryKeyhash(PLDHashEntryHdr* aEntry, PLDHashNumber aHash);
-  PLDHashEntryHdr* AddressEntry(uint32_t aIndex);
+  static bool MatchEntryKeyhash(const PLDHashEntryHdr* aEntry,
+                                const PLDHashNumber aHash);
+  PLDHashEntryHdr* AddressEntry(uint32_t aIndex) const;
 
   // We store mHashShift rather than sizeLog2 to optimize the collision-free
   // case in SearchTable.
@@ -542,15 +548,15 @@ private:
     return ((uint32_t)1 << (kHashBits - mHashShift));
   }
 
-  PLDHashNumber ComputeKeyHash(const void* aKey);
+  PLDHashNumber ComputeKeyHash(const void* aKey) const;
 
   enum SearchReason { ForSearchOrRemove, ForAdd };
 
   template <SearchReason Reason>
   PLDHashEntryHdr* NS_FASTCALL
-    SearchTable(const void* aKey, PLDHashNumber aKeyHash);
+    SearchTable(const void* aKey, PLDHashNumber aKeyHash) const;
 
-  PLDHashEntryHdr* FindFreeEntry(PLDHashNumber aKeyHash);
+  PLDHashEntryHdr* FindFreeEntry(PLDHashNumber aKeyHash) const;
 
   bool ChangeTable(int aDeltaLog2);
 

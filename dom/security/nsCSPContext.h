@@ -9,6 +9,7 @@
 
 #include "mozilla/dom/nsCSPUtils.h"
 #include "mozilla/dom/SecurityPolicyViolationEvent.h"
+#include "mozilla/StaticPrefs.h"
 #include "nsDataHashtable.h"
 #include "nsIChannel.h"
 #include "nsIChannelEventSink.h"
@@ -29,6 +30,12 @@
 class nsINetworkInterceptController;
 class nsIEventTarget;
 struct ConsoleMsgQueueElem;
+
+namespace mozilla {
+namespace dom {
+class Element;
+}
+}
 
 class nsCSPContext : public nsIContentSecurityPolicy
 {
@@ -83,6 +90,7 @@ class nsCSPContext : public nsIContentSecurityPolicy
      */
     nsresult GatherSecurityPolicyViolationEventData(
       nsIURI* aBlockedURI,
+      const nsACString& aBlockedString,
       nsIURI* aOriginalURI,
       nsAString& aViolatedDirective,
       uint32_t aViolatedPolicyIndex,
@@ -97,9 +105,20 @@ class nsCSPContext : public nsIContentSecurityPolicy
       uint32_t aViolatedPolicyIndex);
 
     nsresult FireViolationEvent(
+      mozilla::dom::Element* aTriggeringElement,
       const mozilla::dom::SecurityPolicyViolationEventInit& aViolationEventInit);
 
-    nsresult AsyncReportViolation(nsISupports* aBlockedContentSource,
+    enum BlockedContentSource
+    {
+      eUnknown,
+      eInline,
+      eEval,
+      eSelf,
+    };
+
+    nsresult AsyncReportViolation(mozilla::dom::Element* aTriggeringElement,
+                                  nsIURI* aBlockedURI,
+                                  BlockedContentSource aBlockedContentSource,
                                   nsIURI* aOriginalURI,
                                   const nsAString& aViolatedDirective,
                                   uint32_t aViolatedPolicyIndex,
@@ -120,12 +139,19 @@ class nsCSPContext : public nsIContentSecurityPolicy
       return mLoadingContext;
     }
 
+    static uint32_t ScriptSampleMaxLength()
+    {
+      return std::max(
+        mozilla::StaticPrefs::security_csp_reporting_script_sample_max_length(),
+        0);
+    }
+
   private:
     bool permitsInternal(CSPDirective aDir,
+                         mozilla::dom::Element* aTriggeringElement,
                          nsIURI* aContentLocation,
-                         nsIURI* aOriginalURI,
+                         nsIURI* aOriginalURIIfRedirect,
                          const nsAString& aNonce,
-                         bool aWasRedirected,
                          bool aIsPreload,
                          bool aSpecific,
                          bool aSendViolationReports,
@@ -134,21 +160,13 @@ class nsCSPContext : public nsIContentSecurityPolicy
 
     // helper to report inline script/style violations
     void reportInlineViolation(nsContentPolicyType aContentType,
+                               mozilla::dom::Element* aTriggeringElement,
                                const nsAString& aNonce,
                                const nsAString& aContent,
                                const nsAString& aViolatedDirective,
                                uint32_t aViolatedPolicyIndex,
                                uint32_t aLineNumber,
                                uint32_t aColumnNumber);
-
-    static int32_t sScriptSampleMaxLength;
-
-    static uint32_t ScriptSampleMaxLength()
-    {
-      return std::max(sScriptSampleMaxLength, 0);
-    }
-
-    static bool sViolationEventsEnabled;
 
     nsString                                   mReferrer;
     uint64_t                                   mInnerWindowID; // used for web console logging
@@ -161,6 +179,7 @@ class nsCSPContext : public nsIContentSecurityPolicy
     // to avoid memory leaks. Within the destructor of the principal we explicitly
     // set mLoadingPrincipal to null.
     nsIPrincipal*                              mLoadingPrincipal;
+    nsCOMPtr<nsICSPEventListener>              mEventListener;
 
     // helper members used to queue up web console messages till
     // the windowID becomes available. see flushConsoleMessages()

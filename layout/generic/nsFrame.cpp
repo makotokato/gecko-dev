@@ -108,6 +108,7 @@
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/ServoStyleSetInlines.h"
 #include "mozilla/css/ImageLoader.h"
+#include "mozilla/dom/TouchEvent.h"
 #include "mozilla/gfx/Tools.h"
 #include "mozilla/layers/WebRenderUserData.h"
 #include "nsPrintfCString.h"
@@ -5356,12 +5357,11 @@ nsIFrame::InlinePrefISizeData::ForceBreak(StyleClear aBreakType)
             // been cleared past
             floats_cur_left = 0,
             floats_cur_right = 0;
-    const WritingMode wm = mLineContainerWM;
 
     for (uint32_t i = 0, i_end = mFloats.Length(); i != i_end; ++i) {
       const FloatInfo& floatInfo = mFloats[i];
       const nsStyleDisplay* floatDisp = floatInfo.Frame()->StyleDisplay();
-      StyleClear breakType = floatDisp->PhysicalBreakType(wm);
+      StyleClear breakType = floatDisp->mBreakType;
       if (breakType == StyleClear::Left ||
           breakType == StyleClear::Right ||
           breakType == StyleClear::Both) {
@@ -5378,7 +5378,7 @@ nsIFrame::InlinePrefISizeData::ForceBreak(StyleClear aBreakType)
         }
       }
 
-      StyleFloat floatStyle = floatDisp->PhysicalFloats(wm);
+      StyleFloat floatStyle = floatDisp->mFloat;
       nscoord& floats_cur =
         floatStyle == StyleFloat::Left ? floats_cur_left : floats_cur_right;
       nscoord floatWidth = floatInfo.Width();
@@ -5413,7 +5413,7 @@ nsIFrame::InlinePrefISizeData::ForceBreak(StyleClear aBreakType)
       // no longer any floats we need to keep. See below.
       for (FloatInfo& floatInfo : Reversed(mFloats)) {
         const nsStyleDisplay* floatDisp = floatInfo.Frame()->StyleDisplay();
-        if (floatDisp->PhysicalFloats(wm) != clearFloatType) {
+        if (floatDisp->mFloat != clearFloatType) {
           newFloats.AppendElement(floatInfo);
         } else {
           // This is a float on the side that this break directly clears
@@ -5423,7 +5423,7 @@ nsIFrame::InlinePrefISizeData::ForceBreak(StyleClear aBreakType)
           // (earlier) floats on that side would be indirectly cleared
           // as well. Thus, we should break out of this loop and stop
           // considering earlier floats to be kept in mFloats.
-          StyleClear floatBreakType = floatDisp->PhysicalBreakType(wm);
+          StyleClear floatBreakType = floatDisp->mBreakType;
           if (floatBreakType != aBreakType &&
               floatBreakType != StyleClear::None) {
             break;
@@ -7152,6 +7152,16 @@ DoesLayerOrAncestorsHaveOutOfDateFrameMetrics(Layer* aLayer)
 bool
 nsIFrame::TryUpdateTransformOnly(Layer** aLayerResult)
 {
+  // If we move a transformed layer when we have a merged display
+  // list, then it can end up intersecting other items for which
+  // we don't have a defined ordering.
+  // We could allow this if the display list is in the canonical
+  // ordering (correctly sorted for all intersections), but we
+  // don't have a way to check that yet.
+  if (nsLayoutUtils::AreRetainedDisplayListsEnabled()) {
+    return false;
+  }
+
   Layer* layer = FrameLayerBuilder::GetDedicatedLayer(
     this, DisplayItemType::TYPE_TRANSFORM);
   if (!layer || !layer->HasUserData(LayerIsPrerenderedDataKey())) {
@@ -8135,8 +8145,7 @@ nsFrame::GetNextPrevLineFromeBlockFrame(nsPresContext* aPresContext,
                                     false, // aVisual
                                     aPos->mScrollViewStop,
                                     false, // aFollowOOFs
-                                    false, // aSkipPopupChecks
-                                    false  // aSkipShadow
+                                    false // aSkipPopupChecks
                                     );
       if (NS_FAILED(result))
         return result;
@@ -8233,8 +8242,7 @@ nsFrame::GetNextPrevLineFromeBlockFrame(nsPresContext* aPresContext,
                                       false, // aVisual
                                       aPos->mScrollViewStop,
                                       false, // aFollowOOFs
-                                      false, // aSkipPopupChecks
-                                      false  // aSkipShadow
+                                      false // aSkipPopupChecks
                                       );
       }
       while ( !found ){
@@ -9025,8 +9033,7 @@ nsIFrame::GetFrameFromDirection(nsDirection aDirection, bool aVisual,
                                   aVisual && presContext->BidiEnabled(),
                                   aScrollViewStop,
                                   true,  // aFollowOOFs
-                                  false, // aSkipPopupChecks
-                                  false  // aSkipShadow
+                                  false // aSkipPopupChecks
                                   );
     if (NS_FAILED(result))
       return result;
@@ -11257,54 +11264,60 @@ nsIFrame::GetCompositorHitTestInfo(nsDisplayListBuilder* aBuilder)
     }
   }
 
-  // Inherit the touch-action flags from the parent, if there is one. We do this
-  // because of how the touch-action on a frame combines the touch-action from
-  // ancestor DOM elements. Refer to the documentation in TouchActionHelper.cpp
-  // for details; this code is meant to be equivalent to that code, but woven
-  // into the top-down recursive display list building process.
-  CompositorHitTestInfo inheritedTouchAction = CompositorHitTestInfo::eInvisibleToHitTest;
-  if (nsDisplayCompositorHitTestInfo* parentInfo = aBuilder->GetCompositorHitTestInfo()) {
-    inheritedTouchAction = (parentInfo->HitTestInfo() & CompositorHitTestInfo::eTouchActionMask);
+  nsIDocShell* docShell = nullptr;
+  if (PresShell()->GetDocument()) {
+    docShell = PresShell()->GetDocument()->GetDocShell();
   }
-
-  nsIFrame* touchActionFrame = this;
-  if (nsIScrollableFrame* scrollFrame = nsLayoutUtils::GetScrollableFrameFor(this)) {
-    touchActionFrame = do_QueryFrame(scrollFrame);
-    // On scrollframes, stop inheriting the pan-x and pan-y flags; instead,
-    // reset them back to zero to allow panning on the scrollframe unless we
-    // encounter an element that disables it that's inside the scrollframe.
-    // This is equivalent to the |considerPanning| variable in
-    // TouchActionHelper.cpp, but for a top-down traversal.
-    CompositorHitTestInfo panMask = CompositorHitTestInfo::eTouchActionPanXDisabled
-                                  | CompositorHitTestInfo::eTouchActionPanYDisabled;
-    inheritedTouchAction &= ~panMask;
-  }
-
-  result |= inheritedTouchAction;
-
-  const uint32_t touchAction = nsLayoutUtils::GetTouchActionFromFrame(touchActionFrame);
-  // The CSS allows the syntax auto | none | [pan-x || pan-y] | manipulation
-  // so we can eliminate some combinations of things.
-  if (touchAction == NS_STYLE_TOUCH_ACTION_AUTO) {
-    // nothing to do
-  } else if (touchAction & NS_STYLE_TOUCH_ACTION_MANIPULATION) {
-    result |= CompositorHitTestInfo::eTouchActionDoubleTapZoomDisabled;
-  } else {
-    // This path handles the cases none | [pan-x || pan-y] and so both
-    // double-tap and pinch zoom are disabled in here.
-    result |= CompositorHitTestInfo::eTouchActionPinchZoomDisabled
-            | CompositorHitTestInfo::eTouchActionDoubleTapZoomDisabled;
-
-    if (!(touchAction & NS_STYLE_TOUCH_ACTION_PAN_X)) {
-      result |= CompositorHitTestInfo::eTouchActionPanXDisabled;
+  if (dom::TouchEvent::PrefEnabled(docShell)) {
+    // Inherit the touch-action flags from the parent, if there is one. We do this
+    // because of how the touch-action on a frame combines the touch-action from
+    // ancestor DOM elements. Refer to the documentation in TouchActionHelper.cpp
+    // for details; this code is meant to be equivalent to that code, but woven
+    // into the top-down recursive display list building process.
+    CompositorHitTestInfo inheritedTouchAction = CompositorHitTestInfo::eInvisibleToHitTest;
+    if (nsDisplayCompositorHitTestInfo* parentInfo = aBuilder->GetCompositorHitTestInfo()) {
+      inheritedTouchAction = (parentInfo->HitTestInfo() & CompositorHitTestInfo::eTouchActionMask);
     }
-    if (!(touchAction & NS_STYLE_TOUCH_ACTION_PAN_Y)) {
-      result |= CompositorHitTestInfo::eTouchActionPanYDisabled;
+
+    nsIFrame* touchActionFrame = this;
+    if (nsIScrollableFrame* scrollFrame = nsLayoutUtils::GetScrollableFrameFor(this)) {
+      touchActionFrame = do_QueryFrame(scrollFrame);
+      // On scrollframes, stop inheriting the pan-x and pan-y flags; instead,
+      // reset them back to zero to allow panning on the scrollframe unless we
+      // encounter an element that disables it that's inside the scrollframe.
+      // This is equivalent to the |considerPanning| variable in
+      // TouchActionHelper.cpp, but for a top-down traversal.
+      CompositorHitTestInfo panMask = CompositorHitTestInfo::eTouchActionPanXDisabled
+                                    | CompositorHitTestInfo::eTouchActionPanYDisabled;
+      inheritedTouchAction &= ~panMask;
     }
-    if (touchAction & NS_STYLE_TOUCH_ACTION_NONE) {
-      // all the touch-action disabling flags will already have been set above
-      MOZ_ASSERT((result & CompositorHitTestInfo::eTouchActionMask)
-               == CompositorHitTestInfo::eTouchActionMask);
+
+    result |= inheritedTouchAction;
+
+    const uint32_t touchAction = nsLayoutUtils::GetTouchActionFromFrame(touchActionFrame);
+    // The CSS allows the syntax auto | none | [pan-x || pan-y] | manipulation
+    // so we can eliminate some combinations of things.
+    if (touchAction == NS_STYLE_TOUCH_ACTION_AUTO) {
+      // nothing to do
+    } else if (touchAction & NS_STYLE_TOUCH_ACTION_MANIPULATION) {
+      result |= CompositorHitTestInfo::eTouchActionDoubleTapZoomDisabled;
+    } else {
+      // This path handles the cases none | [pan-x || pan-y] and so both
+      // double-tap and pinch zoom are disabled in here.
+      result |= CompositorHitTestInfo::eTouchActionPinchZoomDisabled
+              | CompositorHitTestInfo::eTouchActionDoubleTapZoomDisabled;
+
+      if (!(touchAction & NS_STYLE_TOUCH_ACTION_PAN_X)) {
+        result |= CompositorHitTestInfo::eTouchActionPanXDisabled;
+      }
+      if (!(touchAction & NS_STYLE_TOUCH_ACTION_PAN_Y)) {
+        result |= CompositorHitTestInfo::eTouchActionPanYDisabled;
+      }
+      if (touchAction & NS_STYLE_TOUCH_ACTION_NONE) {
+        // all the touch-action disabling flags will already have been set above
+        MOZ_ASSERT((result & CompositorHitTestInfo::eTouchActionMask)
+                 == CompositorHitTestInfo::eTouchActionMask);
+      }
     }
   }
 

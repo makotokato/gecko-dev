@@ -1518,8 +1518,7 @@ Navigator::HasUserMediaSupport(JSContext* /* unused */,
 already_AddRefed<nsPIDOMWindowInner>
 Navigator::GetWindowFromGlobal(JSObject* aGlobal)
 {
-  nsCOMPtr<nsPIDOMWindowInner> win =
-    do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(aGlobal));
+  nsCOMPtr<nsPIDOMWindowInner> win = xpc::WindowOrNull(aGlobal);
   return win.forget();
 }
 
@@ -1553,9 +1552,7 @@ Navigator::GetPlatform(nsAString& aPlatform, bool aUsePrefOverriddenValue)
 
   // Sorry for the #if platform ugliness, but Communicator is likewise
   // hardcoded and we are seeking backward compatibility here (bug 47080).
-#if defined(_WIN64)
-  aPlatform.AssignLiteral("Win64");
-#elif defined(WIN32)
+#if defined(WIN32)
   aPlatform.AssignLiteral("Win32");
 #elif defined(XP_MACOSX) && defined(__ppc__)
   aPlatform.AssignLiteral("MacPPC");

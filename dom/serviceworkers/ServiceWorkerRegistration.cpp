@@ -16,6 +16,7 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsISupportsPrimitives.h"
 #include "nsPIDOMWindow.h"
+#include "RemoteServiceWorkerRegistrationImpl.h"
 #include "ServiceWorkerRegistrationImpl.h"
 
 namespace mozilla {
@@ -76,7 +77,13 @@ ServiceWorkerRegistration::CreateForMainThread(nsPIDOMWindowInner* aWindow,
   MOZ_ASSERT(aWindow);
   MOZ_ASSERT(NS_IsMainThread());
 
-  RefPtr<Inner> inner = new ServiceWorkerRegistrationMainThread(aDescriptor);
+  RefPtr<Inner> inner;
+  if (ServiceWorkerParentInterceptEnabled()) {
+    inner = new RemoteServiceWorkerRegistrationImpl(aDescriptor);
+  } else {
+    inner = new ServiceWorkerRegistrationMainThread(aDescriptor);
+  }
+  NS_ENSURE_TRUE(inner, nullptr);
 
   RefPtr<ServiceWorkerRegistration> registration =
     new ServiceWorkerRegistration(aWindow->AsGlobal(), aDescriptor, inner);
@@ -93,8 +100,13 @@ ServiceWorkerRegistration::CreateForWorker(WorkerPrivate* aWorkerPrivate,
   MOZ_DIAGNOSTIC_ASSERT(aGlobal);
   aWorkerPrivate->AssertIsOnWorkerThread();
 
-  RefPtr<Inner> inner =
-    new ServiceWorkerRegistrationWorkerThread(aDescriptor);
+  RefPtr<Inner> inner;
+  if (ServiceWorkerParentInterceptEnabled()) {
+    inner = new RemoteServiceWorkerRegistrationImpl(aDescriptor);
+  } else {
+    inner = new ServiceWorkerRegistrationWorkerThread(aDescriptor);
+  }
+  NS_ENSURE_TRUE(inner, nullptr);
 
   RefPtr<ServiceWorkerRegistration> registration =
     new ServiceWorkerRegistration(aGlobal, aDescriptor, inner);
@@ -517,22 +529,25 @@ ServiceWorkerRegistration::UpdateStateInternal(const Maybe<ServiceWorkerDescript
   }
 
   if (aActive.isSome()) {
-    mActiveWorker = global->GetOrCreateServiceWorker(aActive.ref());
-    mActiveWorker->SetState(aActive.ref().State());
+    if ((mActiveWorker = global->GetOrCreateServiceWorker(aActive.ref()))) {
+      mActiveWorker->SetState(aActive.ref().State());
+    }
   } else {
     mActiveWorker = nullptr;
   }
 
   if (aWaiting.isSome()) {
-    mWaitingWorker = global->GetOrCreateServiceWorker(aWaiting.ref());
-    mWaitingWorker->SetState(aWaiting.ref().State());
+    if ((mWaitingWorker = global->GetOrCreateServiceWorker(aWaiting.ref()))) {
+      mWaitingWorker->SetState(aWaiting.ref().State());
+    }
   } else {
     mWaitingWorker = nullptr;
   }
 
   if (aInstalling.isSome()) {
-    mInstallingWorker = global->GetOrCreateServiceWorker(aInstalling.ref());
-    mInstallingWorker->SetState(aInstalling.ref().State());
+    if ((mInstallingWorker = global->GetOrCreateServiceWorker(aInstalling.ref()))) {
+      mInstallingWorker->SetState(aInstalling.ref().State());
+    }
   } else {
     mInstallingWorker = nullptr;
   }

@@ -6,6 +6,7 @@
 
 "use strict";
 
+const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 const EventEmitter = require("devtools/shared/event-emitter");
 const { getCurrentZoom } = require("devtools/shared/layout/utils");
 
@@ -80,7 +81,12 @@ Menu.prototype.popupWithZoom = function(x, y, toolbox) {
  */
 Menu.prototype.popup = function(screenX, screenY, toolbox) {
   const doc = toolbox.doc;
-  const popupset = doc.querySelector("popupset");
+
+  let popupset = doc.querySelector("popupset");
+  if (!popupset) {
+    popupset = doc.createElementNS(XUL_NS, "popupset");
+    doc.documentElement.appendChild(popupset);
+  }
   // See bug 1285229, on Windows, opening the same popup multiple times in a
   // row ends up duplicating the popup. The newly inserted popup doesn't
   // dismiss the old one. So remove any previously displayed popup before
@@ -90,7 +96,7 @@ Menu.prototype.popup = function(screenX, screenY, toolbox) {
     popup.hidePopup();
   }
 
-  popup = doc.createElement("menupopup");
+  popup = doc.createElementNS(XUL_NS, "menupopup");
   popup.setAttribute("menu-api", "true");
   popup.setAttribute("consumeoutsideclicks", "true");
 
@@ -125,59 +131,26 @@ Menu.prototype._createMenuItems = function(parent) {
     }
 
     if (item.submenu) {
-      const menupopup = doc.createElement("menupopup");
+      const menupopup = doc.createElementNS(XUL_NS, "menupopup");
       item.submenu._createMenuItems(menupopup);
 
-      const menu = doc.createElement("menu");
+      const menu = doc.createElementNS(XUL_NS, "menu");
       menu.appendChild(menupopup);
-      menu.setAttribute("label", item.label);
-      if (item.disabled) {
-        menu.setAttribute("disabled", "true");
-      }
-      if (item.accelerator) {
-        menu.setAttribute("acceltext", item.accelerator);
-      }
-      if (item.accesskey) {
-        menu.setAttribute("accesskey", item.accesskey);
-      }
-      if (item.id) {
-        menu.id = item.id;
-      }
+      applyItemAttributesToNode(item, menu);
       parent.appendChild(menu);
     } else if (item.type === "separator") {
-      const menusep = doc.createElement("menuseparator");
+      const menusep = doc.createElementNS(XUL_NS, "menuseparator");
       parent.appendChild(menusep);
     } else {
-      const menuitem = doc.createElement("menuitem");
-      menuitem.setAttribute("label", item.label);
+      const menuitem = doc.createElementNS(XUL_NS, "menuitem");
+      applyItemAttributesToNode(item, menuitem);
+
       menuitem.addEventListener("command", () => {
         item.click();
       });
       menuitem.addEventListener("DOMMenuItemActive", () => {
         item.hover();
       });
-
-      if (item.type === "checkbox") {
-        menuitem.setAttribute("type", "checkbox");
-      }
-      if (item.type === "radio") {
-        menuitem.setAttribute("type", "radio");
-      }
-      if (item.disabled) {
-        menuitem.setAttribute("disabled", "true");
-      }
-      if (item.checked) {
-        menuitem.setAttribute("checked", "true");
-      }
-      if (item.accelerator) {
-        menuitem.setAttribute("acceltext", item.accelerator);
-      }
-      if (item.accesskey) {
-        menuitem.setAttribute("accesskey", item.accesskey);
-      }
-      if (item.id) {
-        menuitem.id = item.id;
-      }
 
       parent.appendChild(menuitem);
     }
@@ -195,5 +168,34 @@ Menu.sendActionToFirstResponder = () => {
 Menu.buildFromTemplate = () => {
   throw Error("Not implemented");
 };
+
+function applyItemAttributesToNode(item, node) {
+  if (item.l10nID) {
+    node.setAttribute("data-l10n-id", item.l10nID);
+  } else {
+    node.setAttribute("label", item.label);
+    if (item.accelerator) {
+      node.setAttribute("acceltext", item.accelerator);
+    }
+    if (item.accesskey) {
+      node.setAttribute("accesskey", item.accesskey);
+    }
+  }
+  if (item.type === "checkbox") {
+    node.setAttribute("type", "checkbox");
+  }
+  if (item.type === "radio") {
+    node.setAttribute("type", "radio");
+  }
+  if (item.disabled) {
+    node.setAttribute("disabled", "true");
+  }
+  if (item.checked) {
+    node.setAttribute("checked", "true");
+  }
+  if (item.id) {
+    node.id = item.id;
+  }
+}
 
 module.exports = Menu;

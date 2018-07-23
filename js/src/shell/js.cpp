@@ -75,14 +75,14 @@
 #include "jit/InlinableNatives.h"
 #include "jit/Ion.h"
 #include "jit/JitcodeMap.h"
-#include "jit/OptimizationTracking.h"
+#include "jit/JitRealm.h"
+#include "jit/shared/CodeGenerator-shared.h"
 #include "js/Debug.h"
 #include "js/GCVector.h"
 #include "js/Initialization.h"
 #include "js/Printf.h"
 #include "js/StructuredClone.h"
 #include "js/SweepingAPI.h"
-#include "js/TrackedOptimizationInfo.h"
 #include "js/Wrapper.h"
 #include "perf/jsperf.h"
 #include "shell/jsoptparse.h"
@@ -479,7 +479,7 @@ struct MOZ_STACK_CLASS EnvironmentPreparer : public js::ScriptEnvironmentPrepare
     {
         js::SetScriptEnvironmentPreparer(cx, this);
     }
-    void invoke(JS::HandleObject scope, Closure& closure) override;
+    void invoke(JS::HandleObject global, Closure& closure) override;
 };
 
 // Shell state set once at startup.
@@ -796,12 +796,14 @@ SkipUTF8BOM(FILE* file)
 }
 
 void
-EnvironmentPreparer::invoke(HandleObject scope, Closure& closure)
+EnvironmentPreparer::invoke(HandleObject global, Closure& closure)
 {
+    MOZ_ASSERT(JS_IsGlobalObject(global));
+
     JSContext* cx = TlsContext.get();
     MOZ_ASSERT(!JS_IsExceptionPending(cx));
 
-    AutoRealm ar(cx, scope);
+    AutoRealm ar(cx, global);
     AutoReportException are(cx);
     if (!closure(cx))
         return;
@@ -1840,7 +1842,7 @@ Evaluate(JSContext* cx, unsigned argc, Value* vp)
     options.setIntroductionType("js shell evaluate")
            .setFileAndLine("@evaluate", 1);
 
-    global = JS_GetGlobalForObject(cx, &args.callee());
+    global = JS::CurrentGlobalOrNull(cx);
     MOZ_ASSERT(global);
 
     if (args.length() == 2) {
@@ -3318,7 +3320,8 @@ Clone(JSContext* cx, unsigned argc, Value* vp)
         if (!JS_ValueToObject(cx, args[1], &env))
             return false;
     } else {
-        env = js::GetGlobalForObjectCrossCompartment(&args.callee());
+        env = JS::CurrentGlobalOrNull(cx);
+        MOZ_ASSERT(env);
     }
 
     // Should it worry us that we might be getting with wrappers
@@ -7683,8 +7686,9 @@ PrintStackTrace(JSContext* cx, HandleValue exn)
     if (!stackObj)
         return true;
 
+    JSPrincipals* principals = exnObj->as<ErrorObject>().realm()->principals();
     RootedString stackStr(cx);
-    if (!BuildStackString(cx, stackObj, &stackStr, 2))
+    if (!BuildStackString(cx, principals, stackObj, &stackStr, 2))
         return false;
 
     UniqueChars stack(JS_EncodeStringToUTF8(cx, stackStr));

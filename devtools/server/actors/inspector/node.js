@@ -24,6 +24,7 @@ loader.lazyRequireGetter(this, "isNativeAnonymous", "devtools/shared/layout/util
 loader.lazyRequireGetter(this, "isShadowAnonymous", "devtools/shared/layout/utils", true);
 loader.lazyRequireGetter(this, "isShadowHost", "devtools/shared/layout/utils", true);
 loader.lazyRequireGetter(this, "isShadowRoot", "devtools/shared/layout/utils", true);
+loader.lazyRequireGetter(this, "getShadowRootMode", "devtools/shared/layout/utils", true);
 loader.lazyRequireGetter(this, "isXBLAnonymous", "devtools/shared/layout/utils", true);
 
 loader.lazyRequireGetter(this, "InspectorActorUtils", "devtools/server/actors/inspector/utils");
@@ -132,6 +133,7 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
       isXBLAnonymous: isXBLAnonymous(this.rawNode),
       isShadowAnonymous: isShadowAnonymous(this.rawNode),
       isShadowRoot: shadowRoot,
+      shadowRootMode: getShadowRootMode(this.rawNode),
       isShadowHost: isShadowHost(this.rawNode),
       isDirectShadowHostChild: isDirectShadowHostChild(this.rawNode),
       pseudoClassLocks: this.writePseudoClassLocks(),
@@ -672,6 +674,19 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
       current = current.parentNode;
     }
     return "rgba(255, 255, 255, 1)";
+  },
+
+  /**
+   * Returns an object with the width and height of the node's owner window.
+   *
+   * @return {Object}
+   */
+  getOwnerGlobalDimensions: function() {
+    const win = this.rawNode.ownerGlobal;
+    return {
+      innerWidth: win.innerWidth,
+      innerHeight: win.innerHeight,
+    };
   }
 });
 

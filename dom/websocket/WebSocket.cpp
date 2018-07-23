@@ -98,6 +98,7 @@ public:
   , mDisconnectingOrDisconnected(false)
   , mCloseEventWasClean(false)
   , mCloseEventCode(nsIWebSocketChannel::CLOSE_ABNORMAL)
+  , mPort(0)
   , mScriptLine(0)
   , mScriptColumn(0)
   , mInnerWindowID(0)
@@ -1397,7 +1398,7 @@ WebSocket::ConstructorCommon(const GlobalObject& aGlobal,
       new InitRunnable(workerPrivate, webSocketImpl, !!aTransportProvider, aUrl,
                        protocolArray, nsDependentCString(file.get()), lineno,
                        column);
-    runnable->Dispatch(Terminating, aRv);
+    runnable->Dispatch(Canceling, aRv);
     if (NS_WARN_IF(aRv.Failed())) {
       return nullptr;
     }
@@ -1500,7 +1501,7 @@ WebSocket::ConstructorCommon(const GlobalObject& aGlobal,
                "not yet implemented");
     RefPtr<AsyncOpenRunnable> runnable =
       new AsyncOpenRunnable(webSocket->mImpl);
-    runnable->Dispatch(Terminating, aRv);
+    runnable->Dispatch(Canceling, aRv);
     if (NS_WARN_IF(aRv.Failed())) {
       return nullptr;
     }
@@ -1723,7 +1724,8 @@ WebSocketImpl::Init(JSContext* aCx,
                         EmptyString(), // aScriptSample
                         0, // aLineNumber
                         0, // aColumnNumber
-                        nsIScriptError::warningFlag, "CSP",
+                        nsIScriptError::warningFlag,
+                        NS_LITERAL_CSTRING("upgradeInsecureRequest"),
                         mInnerWindowID,
                         mPrivateBrowsing);
   }

@@ -204,6 +204,7 @@ public:
   BulletRenderer(imgIContainer* image, const nsRect& dest)
     : mImage(image)
     , mDest(dest)
+    , mColor(NS_RGBA(0, 0, 0, 0))
     , mListStyleType(NS_STYLE_LIST_STYLE_NONE)
   {
     MOZ_ASSERT(IsImageType());
@@ -529,7 +530,7 @@ BulletRenderer::CreateWebRenderCommandsForPath(nsDisplayItem* aItem,
     case NS_STYLE_LIST_STYLE_DISC: {
       nsTArray<wr::ComplexClipRegion> clips;
       clips.AppendElement(wr::ToComplexClipRegion(
-        RoundedRect(ThebesRect(mPathRect.ToUnknownRect()),
+        RoundedRect(mPathRect.ToUnknownRect(),
                     RectCornerRadii(dest.size.width / 2.0))
       ));
       auto clipId = aBuilder.DefineClip(Nothing(), dest, &clips, nullptr);

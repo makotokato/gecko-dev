@@ -17,7 +17,7 @@
 #include "nsHistory.h"
 #include "nsDOMNavigationTiming.h"
 #include "nsIDOMStorageManager.h"
-#include "mozilla/dom/AutoplayRequest.h"
+#include "mozilla/AutoplayPermissionManager.h"
 #include "mozilla/dom/DOMJSProxyHandler.h"
 #include "mozilla/dom/DOMPrefs.h"
 #include "mozilla/dom/EventTarget.h"
@@ -48,6 +48,7 @@
 #include "nsIDocShellTreeOwner.h"
 #include "nsIDocumentLoader.h"
 #include "nsIInterfaceRequestorUtils.h"
+#include "nsIPermission.h"
 #include "nsIPermissionManager.h"
 #include "nsIScriptContext.h"
 #include "nsIScriptTimeoutHandler.h"
@@ -110,7 +111,6 @@
 #include "nsIDocShell.h"
 #include "nsIDocument.h"
 #include "Crypto.h"
-#include "nsIDOMOfflineResourceList.h"
 #include "nsDOMString.h"
 #include "nsIEmbeddingSiteWindow.h"
 #include "nsThreadUtils.h"
@@ -3133,7 +3133,7 @@ nsGlobalWindowInner::DeviceSensorsEnabled(JSContext* aCx, JSObject* aObj)
   return Preferences::GetBool("device.sensors.enabled");
 }
 
-nsIDOMOfflineResourceList*
+nsDOMOfflineResourceList*
 nsGlobalWindowInner::GetApplicationCache(ErrorResult& aError)
 {
   if (!mApplicationCache) {
@@ -3164,14 +3164,10 @@ nsGlobalWindowInner::GetApplicationCache(ErrorResult& aError)
   return mApplicationCache;
 }
 
-already_AddRefed<nsIDOMOfflineResourceList>
+nsDOMOfflineResourceList*
 nsGlobalWindowInner::GetApplicationCache()
 {
-  ErrorResult dummy;
-  nsCOMPtr<nsIDOMOfflineResourceList> applicationCache =
-    GetApplicationCache(dummy);
-  dummy.SuppressException();
-  return applicationCache.forget();
+  return GetApplicationCache(IgnoreErrors());
 }
 
 Crypto*
@@ -5194,17 +5190,8 @@ nsGlobalWindowInner::GetCaches(ErrorResult& aRv)
   if (!mCacheStorage) {
     bool forceTrustedOrigin =
       GetOuterWindow()->GetServiceWorkersTestingEnabled();
-
-    nsContentUtils::StorageAccess access =
-      nsContentUtils::StorageAllowedForWindow(this);
-
-    // We don't block the cache API when being told to only allow storage for the
-    // current session.
-    bool storageBlocked = access <= nsContentUtils::StorageAccess::ePrivateBrowsing;
-
     mCacheStorage = CacheStorage::CreateOnMainThread(cache::DEFAULT_NAMESPACE,
                                                      this, GetPrincipal(),
-                                                     storageBlocked,
                                                      forceTrustedOrigin, aRv);
   }
 
@@ -5894,8 +5881,7 @@ nsGlobalWindowInner::Observe(nsISupports* aSubject, const char* aTopic,
     // Instantiate the application object now. It observes update belonging to
     // this window's document and correctly updates the applicationCache object
     // state.
-    nsCOMPtr<nsIDOMOfflineResourceList> applicationCache = GetApplicationCache();
-    nsCOMPtr<nsIObserver> observer = do_QueryInterface(applicationCache);
+    nsCOMPtr<nsIObserver> observer = GetApplicationCache();
     if (observer)
       observer->Observe(aSubject, aTopic, aData);
 
@@ -6514,6 +6500,34 @@ nsGlobalWindowInner::GetParentInternal()
   }
   return outer->GetParentInternal();
 }
+
+nsIPrincipal*
+nsGlobalWindowInner::GetTopLevelStorageAreaPrincipal()
+{
+  nsPIDOMWindowOuter* outerWindow = GetParentInternal();
+  if (!outerWindow) {
+    // No outer window available!
+    return nullptr;
+  }
+
+  if (!outerWindow->IsTopLevelWindow()) {
+    return nullptr;
+  }
+
+  nsPIDOMWindowInner* innerWindow = outerWindow->GetCurrentInnerWindow();
+  if (NS_WARN_IF(!innerWindow)) {
+    return nullptr;
+  }
+
+  nsIPrincipal* parentPrincipal =
+    nsGlobalWindowInner::Cast(innerWindow)->GetPrincipal();
+  if (NS_WARN_IF(!parentPrincipal)) {
+    return nullptr;
+  }
+
+  return parentPrincipal;
+}
+
 
 //*****************************************************************************
 // nsGlobalWindowInner: Timeout Functions
@@ -8162,19 +8176,21 @@ GetTopLevelInnerWindow(nsPIDOMWindowInner* aWindow)
   return rootTreeItem->GetDocument()->GetInnerWindow();
 }
 
-already_AddRefed<mozilla::AutoplayRequest>
-nsPIDOMWindowInner::GetAutoplayRequest()
+already_AddRefed<mozilla::AutoplayPermissionManager>
+nsPIDOMWindowInner::GetAutoplayPermissionManager()
 {
-  // The AutoplayRequest is stored on the top level window.
+  // The AutoplayPermissionManager is stored on the top level window.
   nsPIDOMWindowInner* window = GetTopLevelInnerWindow(this);
   if (!window) {
     return nullptr;
   }
-  if (!window->mAutoplayRequest) {
-    window->mAutoplayRequest = AutoplayRequest::Create(nsGlobalWindowInner::Cast(window));
+  if (!window->mAutoplayPermissionManager) {
+    window->mAutoplayPermissionManager =
+      new AutoplayPermissionManager(nsGlobalWindowInner::Cast(window));
   }
-  RefPtr<mozilla::AutoplayRequest> request = window->mAutoplayRequest;
-  return request.forget();
+  RefPtr<mozilla::AutoplayPermissionManager> manager =
+    window->mAutoplayPermissionManager;
+  return manager.forget();
 }
 
 // XXX: Can we define this in a header instead of here?

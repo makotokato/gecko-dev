@@ -43,7 +43,7 @@
 #include "builtin/String.h"
 #include "builtin/Symbol.h"
 #ifdef ENABLE_SIMD
-# include "builtin/SIMD.h"
+# include "builtin/SIMDConstants.h"
 #endif
 #ifdef ENABLE_BINARYDATA
 # include "builtin/TypedObject.h"
@@ -57,6 +57,7 @@
 #include "gc/PublicIterators.h"
 #include "gc/WeakMap.h"
 #include "jit/JitCommon.h"
+#include "jit/JitSpewer.h"
 #include "js/CharacterEncoding.h"
 #include "js/Conversions.h"
 #include "js/Date.h"
@@ -598,7 +599,7 @@ JS::InitSelfHostedCode(JSContext* cx)
     if (!rt->initSelfHosting(cx))
         return false;
 
-    if (!rt->parentRuntime && !rt->transformToPermanentAtoms(cx))
+    if (!rt->parentRuntime && !rt->initMainAtomsTables(cx))
         return false;
 
     return true;
@@ -1210,14 +1211,6 @@ JS_IdToProtoKey(JSContext* cx, HandleId id)
     return static_cast<JSProtoKey>(stdnm - standard_class_names);
 }
 
-JS_PUBLIC_API(JSObject*)
-JS_GetGlobalForObject(JSContext* cx, JSObject* obj)
-{
-    AssertHeapIsIdle();
-    assertSameCompartment(cx, obj);
-    return &obj->deprecatedGlobal();
-}
-
 extern JS_PUBLIC_API(bool)
 JS_IsGlobalObject(JSObject* obj)
 {
@@ -1253,9 +1246,17 @@ JS::CurrentGlobalOrNull(JSContext* cx)
 {
     AssertHeapIsIdleOrIterating();
     CHECK_REQUEST(cx);
-    if (!cx->compartment())
+    if (!cx->realm())
         return nullptr;
     return cx->global();
+}
+
+JS_PUBLIC_API(JSObject*)
+JS::GetNonCCWObjectGlobal(JSObject* obj)
+{
+    AssertHeapIsIdle();
+    MOZ_DIAGNOSTIC_ASSERT(!IsCrossCompartmentWrapper(obj));
+    return &obj->nonCCWGlobal();
 }
 
 JS_PUBLIC_API(bool)
@@ -1291,7 +1292,7 @@ JS_malloc(JSContext* cx, size_t nbytes)
 {
     AssertHeapIsIdle();
     CHECK_REQUEST(cx);
-    return static_cast<void*>(cx->zone()->pod_malloc<uint8_t>(nbytes));
+    return static_cast<void*>(cx->maybe_pod_malloc<uint8_t>(nbytes));
 }
 
 JS_PUBLIC_API(void*)
@@ -1299,8 +1300,8 @@ JS_realloc(JSContext* cx, void* p, size_t oldBytes, size_t newBytes)
 {
     AssertHeapIsIdle();
     CHECK_REQUEST(cx);
-    return static_cast<void*>(cx->zone()->pod_realloc<uint8_t>(static_cast<uint8_t*>(p), oldBytes,
-                                                                newBytes));
+    return static_cast<void*>(cx->maybe_pod_realloc<uint8_t>(static_cast<uint8_t*>(p),
+                                                             oldBytes, newBytes));
 }
 
 JS_PUBLIC_API(void)
@@ -1914,7 +1915,7 @@ JS_NewObject(JSContext* cx, const JSClass* jsclasp)
     MOZ_ASSERT(clasp != &JSFunction::class_);
     MOZ_ASSERT(!(clasp->flags & JSCLASS_IS_GLOBAL));
 
-    return NewObjectWithClassProto(cx, clasp, nullptr);
+    return NewBuiltinClassInstance(cx, clasp);
 }
 
 JS_PUBLIC_API(JSObject*)
@@ -3091,7 +3092,7 @@ JS_DefineObject(JSContext* cx, HandleObject obj, const char* name, const JSClass
     if (!clasp)
         clasp = &PlainObject::class_;    /* default class is Object */
 
-    RootedObject nobj(cx, NewObjectWithClassProto(cx, clasp, nullptr));
+    RootedObject nobj(cx, NewBuiltinClassInstance(cx, clasp));
     if (!nobj)
         return nullptr;
 
@@ -5116,7 +5117,9 @@ JS_PUBLIC_API(void)
 JS::DumpPromiseAllocationSite(JSContext* cx, JS::HandleObject promise)
 {
     RootedObject stack(cx, promise->as<PromiseObject>().allocationSite());
-    UniqueChars stackStr(reinterpret_cast<char*>(BuildUTF8StackString(cx, stack).get()));
+    JSPrincipals* principals = cx->realm()->principals();
+    UniqueChars stackStr(
+        reinterpret_cast<char*>(BuildUTF8StackString(cx, principals, stack).get()));
     if (stackStr.get())
         fputs(stackStr.get(), stderr);
 }
@@ -5125,7 +5128,9 @@ JS_PUBLIC_API(void)
 JS::DumpPromiseResolutionSite(JSContext* cx, JS::HandleObject promise)
 {
     RootedObject stack(cx, promise->as<PromiseObject>().resolutionSite());
-    UniqueChars stackStr(reinterpret_cast<char*>(BuildUTF8StackString(cx, stack).get()));
+    JSPrincipals* principals = cx->realm()->principals();
+    UniqueChars stackStr(
+        reinterpret_cast<char*>(BuildUTF8StackString(cx, principals, stack).get()));
     if (stackStr.get())
         fputs(stackStr.get(), stderr);
 }

@@ -174,13 +174,9 @@ public:
   void GetProperties(nsTArray<AnimationPropertyDetails>& aProperties,
                      ErrorResult& aRv) const;
 
-  // aCallerType is not used in the getter so we supply a default value so that
-  // internal users don't need to specify this value.
-  IterationCompositeOperation IterationComposite(
-    CallerType aCallerType = CallerType::System) const;
+  IterationCompositeOperation IterationComposite() const;
   void SetIterationComposite(
-    const IterationCompositeOperation& aIterationComposite,
-    CallerType aCallerType);
+    const IterationCompositeOperation& aIterationComposite);
 
   CompositeOperation Composite() const;
   void SetComposite(const CompositeOperation& aComposite);
@@ -305,18 +301,12 @@ protected:
   static Maybe<OwningAnimationTarget>
   ConvertTarget(const Nullable<ElementOrCSSPseudoElement>& aTarget);
 
-  template<class KeyframeEffectType, class OptionsType>
-  static already_AddRefed<KeyframeEffectType>
+  template<class OptionsType>
+  static already_AddRefed<KeyframeEffect>
   ConstructKeyframeEffect(const GlobalObject& aGlobal,
                           const Nullable<ElementOrCSSPseudoElement>& aTarget,
                           JS::Handle<JSObject*> aKeyframes,
                           const OptionsType& aOptions,
-                          ErrorResult& aRv);
-
-  template<class KeyframeEffectType>
-  static already_AddRefed<KeyframeEffectType>
-  ConstructKeyframeEffect(const GlobalObject& aGlobal,
-                          KeyframeEffect& aSource,
                           ErrorResult& aRv);
 
   // Build properties by recalculating from |mKeyframes| using |aComputedStyle|

@@ -7,6 +7,7 @@
 #ifndef vm_Realm_h
 #define vm_Realm_h
 
+#include "mozilla/Atomics.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
@@ -17,12 +18,12 @@
 
 #include <stddef.h>
 
+#include "builtin/Array.h"
 #include "gc/Barrier.h"
 #include "gc/Zone.h"
 #include "js/UniquePtr.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/Compartment.h"
-#include "vm/GlobalObject.h"
 #include "vm/ReceiverGuard.h"
 #include "vm/RegExpShared.h"
 #include "vm/SavedStacks.h"
@@ -409,6 +410,7 @@ class JS::Realm : public JS::shadow::Realm
     js::DtoaCache dtoaCache;
     js::NewProxyCache newProxyCache;
     js::ArraySpeciesLookup arraySpeciesLookup;
+    js::PromiseLookup promiseLookup;
 
     js::PerformanceGroupHolder performanceMonitoring;
 
@@ -811,7 +813,8 @@ class JS::Realm : public JS::shadow::Realm
     // Initializes randomNumberGenerator if needed.
     mozilla::non_crypto::XorShift128PlusRNG& getOrCreateRandomNumberGenerator();
 
-    const void* addressOfRandomNumberGenerator() const {
+    const mozilla::non_crypto::XorShift128PlusRNG*
+    addressOfRandomNumberGenerator() const {
         return randomNumberGenerator_.ptr();
     }
 
@@ -916,18 +919,16 @@ class AutoRealm
     AutoRealm& operator=(const AutoRealm&) = delete;
 };
 
-class MOZ_RAII AutoAtomsZone
+class MOZ_RAII AutoAllocInAtomsZone
 {
     JSContext* const cx_;
     JS::Realm* const origin_;
-    const AutoLockForExclusiveAccess& lock_;
-
-    AutoAtomsZone(const AutoAtomsZone&) = delete;
-    AutoAtomsZone& operator=(const AutoAtomsZone&) = delete;
+    AutoAllocInAtomsZone(const AutoAllocInAtomsZone&) = delete;
+    AutoAllocInAtomsZone& operator=(const AutoAllocInAtomsZone&) = delete;
 
   public:
-    inline AutoAtomsZone(JSContext* cx, AutoLockForExclusiveAccess& lock);
-    inline ~AutoAtomsZone();
+    inline explicit AutoAllocInAtomsZone(JSContext* cx);
+    inline ~AutoAllocInAtomsZone();
 };
 
 // Enter a realm directly. Only use this where there's no target GC thing

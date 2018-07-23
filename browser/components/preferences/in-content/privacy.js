@@ -18,9 +18,6 @@ ChromeUtils.defineModuleGetter(this, "LoginHelper",
 ChromeUtils.defineModuleGetter(this, "SiteDataManager",
   "resource:///modules/SiteDataManager.jsm");
 
-XPCOMUtils.defineLazyPreferenceGetter(this, "trackingprotectionUiEnabled",
-                                      "privacy.trackingprotection.ui.enabled");
-
 ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 const PREF_UPLOAD_ENABLED = "datareporting.healthreport.uploadEnabled";
@@ -77,7 +74,8 @@ Preferences.addAll([
   { id: "privacy.donottrackheader.enabled", type: "bool" },
 
   // Media
-  { id: "media.autoplay.enabled", type: "bool" },
+  { id: "media.autoplay.default", type: "int" },
+  { id: "media.autoplay.enabled.ask-permission", type: "bool" },
   { id: "media.autoplay.enabled.user-gestures-needed", type: "bool" },
 
   // Popups
@@ -147,39 +145,14 @@ var gPrivacyPane = {
   _shouldPromptForRestart: true,
 
   /**
-   * Show the Tracking Protection UI depending on the
-   * privacy.trackingprotection.ui.enabled pref, and linkify its Learn More link
+   * Initialize the tracking protection prefs and linkify its Learn More link.
    */
   _initTrackingProtection() {
-    if (!trackingprotectionUiEnabled) {
-      return;
-    }
-
     let link = document.getElementById("trackingProtectionLearnMore");
     let url = Services.urlFormatter.formatURLPref("app.support.baseURL") + "tracking-protection";
     link.setAttribute("href", url);
 
     this.trackingProtectionReadPrefs();
-
-    document.getElementById("trackingProtectionExceptions").hidden = false;
-    document.getElementById("trackingProtectionBox").hidden = false;
-    document.getElementById("trackingProtectionPBMBox").hidden = true;
-  },
-
-  /**
-   * Linkify the Learn More link of the Private Browsing Mode Tracking
-   * Protection UI.
-   */
-  _initTrackingProtectionPBM() {
-    if (trackingprotectionUiEnabled) {
-      return;
-    }
-
-    let link = document.getElementById("trackingProtectionLearnMore");
-    let url = Services.urlFormatter.formatURLPref("app.support.baseURL") + "tracking-protection-pbm";
-    link.setAttribute("href", url);
-
-    this._updateTrackingProtectionUI();
   },
 
   /**
@@ -191,18 +164,12 @@ var gPrivacyPane = {
 
     function setInputsDisabledState(isControlled) {
       let disabled = isLocked || isControlled;
-      if (trackingprotectionUiEnabled) {
-        document.querySelectorAll("#trackingProtectionRadioGroup > radio")
-          .forEach((element) => {
-            element.disabled = disabled;
-          });
-        document.querySelector("#trackingProtectionDesc > label")
-          .disabled = disabled;
-      } else {
-        document.getElementById("trackingProtectionPBM").disabled = disabled;
-        document.getElementById("trackingProtectionPBMLabel")
-          .disabled = disabled;
-      }
+      document.querySelectorAll("#trackingProtectionRadioGroup > radio")
+        .forEach((element) => {
+          element.disabled = disabled;
+        });
+      document.querySelector("#trackingProtectionDesc > label")
+        .disabled = disabled;
     }
 
     if (isLocked) {
@@ -258,13 +225,11 @@ var gPrivacyPane = {
 
     this._updateSanitizeSettingsButton();
     this.initializeHistoryMode();
-    this.updateAutoplayMediaControls();
     this.updateAutoplayMediaControlsVisibility();
     this.updateHistoryModePane();
     this.updatePrivacyMicroControls();
     this.initAutoStartPrivateBrowsingReverter();
     this._initTrackingProtection();
-    this._initTrackingProtectionPBM();
     this._initTrackingProtectionExtensionControl();
     this._initAutocomplete();
 
@@ -276,8 +241,8 @@ var gPrivacyPane = {
       gPrivacyPane.trackingProtectionReadPrefs.bind(gPrivacyPane));
     Preferences.get("privacy.trackingprotection.pbmode.enabled").on("change",
       gPrivacyPane.trackingProtectionReadPrefs.bind(gPrivacyPane));
-    Preferences.get("media.autoplay.enabled").on("change",
-     gPrivacyPane.updateAutoplayMediaControls.bind(gPrivacyPane));
+    Preferences.get("media.autoplay.enabled.ask-permission").on("change",
+     gPrivacyPane.updateAutoplayMediaControlsVisibility.bind(gPrivacyPane));
     Preferences.get("media.autoplay.enabled.user-gestures-needed").on("change",
      gPrivacyPane.updateAutoplayMediaControlsVisibility.bind(gPrivacyPane));
     setEventListener("historyMode", "command", function() {
@@ -342,9 +307,11 @@ var gPrivacyPane = {
       gPrivacyPane.showMicrophoneExceptions);
     setEventListener("popupPolicyButton", "command",
       gPrivacyPane.showPopupExceptions);
-    setEventListener("autoplayMediaPolicy", "command",
+    setEventListener("autoplayMediaCheckbox", "command",
       gPrivacyPane.toggleAutoplayMedia);
     setEventListener("autoplayMediaPolicyButton", "command",
+      gPrivacyPane.showAutoplayMediaExceptions);
+    setEventListener("autoplayMediaPolicyComboboxButton", "command",
       gPrivacyPane.showAutoplayMediaExceptions);
     setEventListener("notificationsDoNotDisturb", "command",
       gPrivacyPane.toggleDoNotDisturbNotifications);
@@ -988,25 +955,34 @@ var gPrivacyPane = {
   // MEDIA
 
   /**
-   * media.autoplay.enabled works the opposite to most of the other preferences.
-   * The checkbox enabled sets the pref to false
+   * The checkbox enabled sets the pref to BLOCKED
    */
   toggleAutoplayMedia(event) {
-    Services.prefs.setBoolPref("media.autoplay.enabled", !event.target.checked);
-  },
-
-  updateAutoplayMediaControls() {
-    let autoPlayEnabled = Preferences.get("media.autoplay.enabled").value;
-    document.getElementById("autoplayMediaPolicy").checked = !autoPlayEnabled;
-    document.getElementById("autoplayMediaPolicyButton").disabled = autoPlayEnabled;
+    let blocked = event.target.checked ? Ci.nsIAutoplay.BLOCKED : Ci.nsIAutoplay.ALLOWED;
+    Services.prefs.setIntPref("media.autoplay.default", blocked);
   },
 
   /**
-   * Show the controls for the new media autoplay behaviour behind a pref for now
+   * If user-gestures-needed is false we do not show any UI for configuring autoplay,
+   * if user-gestures-needed is false and ask-permission is false we show a checkbox
+   * which only allows the user to block autoplay
+   * if user-gestures-needed and ask-permission are true we show a combobox that
+   * allows the user to block / allow or prompt for autoplay
+   * We will be performing a shield study to determine the behaviour to be
+   * shipped, at which point we can remove these pref switches.
+   * https://bugzilla.mozilla.org/show_bug.cgi?id=1475099
    */
   updateAutoplayMediaControlsVisibility() {
-    document.getElementById("autoplayMediaBox").hidden =
-      !Services.prefs.getBoolPref("media.autoplay.enabled.user-gestures-needed", false);
+    let askPermission =
+      Services.prefs.getBoolPref("media.autoplay.ask-permission", false);
+    let userGestures =
+        Services.prefs.getBoolPref("media.autoplay.enabled.user-gestures-needed", false);
+    // Hide the combobox if we don't let the user ask for permission.
+    document.getElementById("autoplayMediaComboboxWrapper").hidden =
+      !userGestures || !askPermission;
+    // If the user may ask for permission, hide the checkbox instead.
+    document.getElementById("autoplayMediaCheckboxWrapper").hidden =
+      !userGestures || askPermission;
   },
 
   /**
@@ -1015,7 +991,7 @@ var gPrivacyPane = {
    */
   showAutoplayMediaExceptions() {
     var params = {
-      blockVisible: false, sessionVisible: false, allowVisible: true,
+      blockVisible: true, sessionVisible: false, allowVisible: true,
       prefilledHost: "", permissionType: "autoplay-media"
     };
 

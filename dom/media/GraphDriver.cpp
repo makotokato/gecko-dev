@@ -179,7 +179,7 @@ ThreadedDriver::~ThreadedDriver()
   if (mThread) {
     nsCOMPtr<nsIRunnable> event =
       new MediaStreamGraphShutdownThreadRunnable(mThread.forget());
-    GraphImpl()->Dispatch(event.forget());
+    SystemGroup::Dispatch(TaskCategory::Other, event.forget());
   }
 }
 
@@ -194,7 +194,8 @@ public:
   {
     MOZ_ASSERT(!mDriver->ThreadRunning());
     LOG(LogLevel::Debug,
-        ("Starting a new system driver for graph %p", mDriver->mGraphImpl));
+        ("Starting a new system driver for graph %p",
+         mDriver->mGraphImpl.get()));
 
     RefPtr<GraphDriver> previousDriver;
     {
@@ -232,7 +233,8 @@ void
 ThreadedDriver::Start()
 {
   MOZ_ASSERT(!ThreadRunning());
-  LOG(LogLevel::Debug, ("Starting thread for a SystemClockDriver  %p", mGraphImpl));
+  LOG(LogLevel::Debug,
+      ("Starting thread for a SystemClockDriver  %p", mGraphImpl.get()));
   Unused << NS_WARN_IF(mThread);
   MOZ_ASSERT(!mThread); // Ensure we haven't already started it
 
@@ -595,7 +597,9 @@ bool IsMacbookOrMacbookAir()
         return true;
       }
     }
-    return false;
+    // Bug 1477200, we're temporarily capping the latency to 512 here to help
+    // with audio quality.
+    return true;
   }
 #endif
   return false;
@@ -803,7 +807,7 @@ AudioCallbackDriver::Revive()
   } else {
     LOG(LogLevel::Debug,
         ("Starting audio threads for MediaStreamGraph %p from a new thread.",
-         mGraphImpl));
+         mGraphImpl.get()));
     RefPtr<AsyncCubebTask> initEvent =
       new AsyncCubebTask(this, AsyncCubebOperation::INIT);
     initEvent->Dispatch();

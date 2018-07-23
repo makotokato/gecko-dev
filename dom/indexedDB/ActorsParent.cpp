@@ -3944,6 +3944,9 @@ UpgradeIndexDataValuesFunction::OnFunctionCall(mozIStorageValueArray* aArguments
   UniqueFreePtr<uint8_t> newIdv;
   uint32_t newIdvLength;
   rv = MakeCompressedIndexDataValues(oldIdv, newIdv, &newIdvLength);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
 
   std::pair<uint8_t*, int> data(newIdv.release(), newIdvLength);
 
@@ -25727,9 +25730,10 @@ NormalTransactionOp::SendSuccessResult()
     GetResponse(response, &responseSize);
 
     if (responseSize >= kMaxMessageSize) {
-      nsPrintfCString("The serialized value is too large"
-                      " (size=%zu bytes, max=%zu bytes).",
-                      responseSize, kMaxMessageSize);
+      nsPrintfCString warning("The serialized value is too large"
+                              " (size=%zu bytes, max=%zu bytes).",
+                              responseSize, kMaxMessageSize);
+      NS_WARNING(warning.get());
       return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
     }
 

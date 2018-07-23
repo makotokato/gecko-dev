@@ -584,7 +584,8 @@ public:
 
 
   WritingMode GetWritingMode() const { return mWM; }
-  uint8_t GetAlignSelf() const     { return mAlignSelf; }
+  uint8_t GetAlignSelf() const { return mAlignSelf; }
+  uint8_t GetAlignSelfFlags() const { return mAlignSelfFlags; }
 
   // Returns the flex factor (flex-grow or flex-shrink), depending on
   // 'aIsUsingFlexGrow'.
@@ -878,6 +879,7 @@ protected:
   uint8_t mAlignSelf; // My "align-self" computed value (with "auto"
                       // swapped out for parent"s "align-items" value,
                       // in our constructor).
+  uint8_t mAlignSelfFlags; // Flags for 'align-self' (safe/unsafe/legacy)
 };
 
 /**
@@ -1941,7 +1943,8 @@ FlexItem::FlexItem(ReflowInput& aFlexItemReflowInput,
       mAlignSelf = NS_STYLE_ALIGN_STRETCH;
     }
 
-    // XXX strip off the <overflow-position> bit until we implement that
+    // Store and strip off the <overflow-position> bits
+    mAlignSelfFlags = mAlignSelf & NS_STYLE_ALIGN_FLAG_BITS;
     mAlignSelf &= ~NS_STYLE_ALIGN_FLAG_BITS;
   }
 
@@ -2923,6 +2926,10 @@ MainAxisPositionTracker::
     mNumPackingSpacesRemaining(0),
     mJustifyContent(aJustifyContent)
 {
+  // Extract the flag portion of mJustifyContent and strip off the flag bits
+  uint8_t justifyContentFlags = mJustifyContent & NS_STYLE_JUSTIFY_FLAG_BITS;
+  mJustifyContent &= ~NS_STYLE_JUSTIFY_FLAG_BITS;
+
   // 'normal' behaves as 'stretch', and 'stretch' behaves as 'flex-start',
   // in the main axis
   // https://drafts.csswg.org/css-align-3/#propdef-justify-content
@@ -2930,9 +2937,6 @@ MainAxisPositionTracker::
       mJustifyContent == NS_STYLE_JUSTIFY_STRETCH) {
     mJustifyContent = NS_STYLE_JUSTIFY_FLEX_START;
   }
-
-  // XXX strip off the <overflow-position> bit until we implement that
-  mJustifyContent &= ~NS_STYLE_JUSTIFY_FLAG_BITS;
 
   // mPackingSpaceRemaining is initialized to the container's main size.  Now
   // we'll subtract out the main sizes of our flex items, so that it ends up
@@ -2949,6 +2953,11 @@ MainAxisPositionTracker::
   if (mPackingSpaceRemaining <= 0) {
     // No available packing space to use for resolving auto margins.
     mNumAutoMarginsInMainAxis = 0;
+    // If packing space is negative and <overflow-position> is set to 'safe'
+    // all justify options fall back to 'start'
+    if (justifyContentFlags & NS_STYLE_JUSTIFY_SAFE) {
+      mJustifyContent = NS_STYLE_JUSTIFY_START;
+    }
   }
 
   // If packing space is negative or we only have one item, 'space-between'
@@ -3104,13 +3113,14 @@ CrossAxisPositionTracker::
 {
   MOZ_ASSERT(aFirstLine, "null first line pointer");
 
+  // Extract and strip the flag bits from alignContent
+  uint8_t alignContentFlags = mAlignContent & NS_STYLE_ALIGN_FLAG_BITS;
+  mAlignContent &= ~NS_STYLE_ALIGN_FLAG_BITS;
+
   // 'normal' behaves as 'stretch'
   if (mAlignContent == NS_STYLE_ALIGN_NORMAL) {
     mAlignContent = NS_STYLE_ALIGN_STRETCH;
   }
-
-  // XXX strip of the <overflow-position> bit until we implement that
-  mAlignContent &= ~NS_STYLE_ALIGN_FLAG_BITS;
 
   const bool isSingleLine =
     NS_STYLE_FLEX_WRAP_NOWRAP == aReflowInput.mStylePosition->mFlexWrap;
@@ -3157,6 +3167,13 @@ CrossAxisPositionTracker::
   MOZ_ASSERT(numLines >= 1,
              "GenerateFlexLines should've produced at least 1 line");
   mPackingSpaceRemaining -= aCrossGapSize * (numLines - 1);
+
+  // If <overflow-position> is 'safe' and packing space is negative
+  // all align options fall back to 'start'
+  if ((alignContentFlags & NS_STYLE_ALIGN_SAFE) &&
+      mPackingSpaceRemaining < 0) {
+    mAlignContent = NS_STYLE_ALIGN_START;
+  }
 
   // If packing space is negative, 'space-between' and 'stretch' behave like
   // 'flex-start', and 'space-around' and 'space-evenly' behave like 'center'.
@@ -3516,6 +3533,14 @@ SingleLineCrossAxisPositionTracker::
     }
   }
 
+  // 'align-self' falls back to 'flex-start' if it is 'center'/'flex-end' and we
+  // have cross axis overflow
+  // XXX we should really be falling back to 'start' as of bug 1472843
+  if (aLine.GetLineCrossSize() < aItem.GetOuterCrossSize(mAxis) &&
+      (aItem.GetAlignSelfFlags() & NS_STYLE_ALIGN_SAFE)) {
+    alignSelf = NS_STYLE_ALIGN_FLEX_START;
+  }
+
   switch (alignSelf) {
     case NS_STYLE_ALIGN_SELF_START:
     case NS_STYLE_ALIGN_SELF_END:
@@ -3618,7 +3643,10 @@ FlexboxAxisTracker::FlexboxAxisTracker(
   const nsFlexContainerFrame* aFlexContainer,
   const WritingMode& aWM,
   AxisTrackerFlags aFlags)
-  : mWM(aWM),
+  : mMainAxis(eAxis_LR),
+    mWM(aWM),
+    mIsRowOriented(true),
+    mIsMainAxisReversed(false),
     mAreAxesInternallyReversed(false)
 {
   if (IsLegacyBox(aFlexContainer)) {
@@ -4055,6 +4083,12 @@ ResolveFlexContainerMainSize(const ReflowInput& aReflowInput,
     return std::min(aTentativeMainSize, largestLineOuterSize);
   }
 
+  // Column-oriented case, with size-containment:
+  // Behave as if we had no content and just use our MinBSize.
+  if (aReflowInput.mStyleDisplay->IsContainSize()) {
+    return aReflowInput.ComputedMinBSize();
+  }
+
   // Column-oriented case, with auto BSize:
   // Resolve auto BSize to the largest FlexLine length, clamped to our
   // computed min/max main-size properties.
@@ -4111,6 +4145,12 @@ nsFlexContainerFrame::ComputeCrossSize(const ReflowInput& aReflowInput,
       return aAvailableBSizeForContent;
     }
     return std::min(effectiveComputedBSize, aSumLineCrossSizes);
+  }
+
+  // Row-oriented case, with size-containment:
+  // Behave as if we had no content and just use our MinBSize.
+  if (aReflowInput.mStyleDisplay->IsContainSize()) {
+    return aReflowInput.ComputedMinBSize();
   }
 
   // Row-oriented case (cross axis is block axis), with auto BSize:
@@ -4615,9 +4655,11 @@ nsFlexContainerFrame::DoFlexLayout(nsPresContext*           aPresContext,
                     aMainGapSize,
                     placeholderKids, lines);
 
-  if (lines.getFirst()->IsEmpty() &&
-      !lines.getFirst()->getNext()) {
-    // We have no flex items, our parent should synthesize a baseline if needed.
+  if ((lines.getFirst()->IsEmpty() && !lines.getFirst()->getNext()) ||
+      aReflowInput.mStyleDisplay->IsContainSize()) {
+    // If have no flex items, or if we  are size contained and
+    // want to behave as if we have none, our parent
+    // should synthesize a baseline if needed.
     AddStateBits(NS_STATE_FLEX_SYNTHESIZE_BASELINE);
   } else {
     RemoveStateBits(NS_STATE_FLEX_SYNTHESIZE_BASELINE);
@@ -4714,6 +4756,8 @@ nsFlexContainerFrame::DoFlexLayout(nsPresContext*           aPresContext,
   // Cross Size Determination - Flexbox spec section 9.4
   // ===================================================
   // Calculate the hypothetical cross size of each item:
+
+  // 'sumLineCrossSizes' includes the size of all gaps between lines
   nscoord sumLineCrossSizes = 0;
   for (FlexLine* line = lines.getFirst(); line; line = line->getNext()) {
     for (FlexItem* item = line->GetFirstItem(); item; item = item->getNext()) {
@@ -4753,6 +4797,11 @@ nsFlexContainerFrame::DoFlexLayout(nsPresContext*           aPresContext,
     // Now that we've finished with this line's items, size the line itself:
     line->ComputeCrossSizeAndBaseline(aAxisTracker);
     sumLineCrossSizes += line->GetLineCrossSize();
+
+    // Add the cross axis gap space if this is not the last line
+    if (line->getNext()) {
+      sumLineCrossSizes += aCrossGapSize;
+    }
   }
 
   bool isCrossSizeDefinite;
@@ -5291,8 +5340,9 @@ nsFlexContainerFrame::GetMinISize(gfxContext* aRenderingContext)
 {
   DISPLAY_MIN_WIDTH(this, mCachedMinISize);
   if (mCachedMinISize == NS_INTRINSIC_WIDTH_UNKNOWN) {
-    mCachedMinISize = IntrinsicISize(aRenderingContext,
-                                     nsLayoutUtils::MIN_ISIZE);
+    mCachedMinISize = StyleDisplay()->IsContainSize()
+      ? 0
+      : IntrinsicISize(aRenderingContext, nsLayoutUtils::MIN_ISIZE);
   }
 
   return mCachedMinISize;
@@ -5303,8 +5353,9 @@ nsFlexContainerFrame::GetPrefISize(gfxContext* aRenderingContext)
 {
   DISPLAY_PREF_WIDTH(this, mCachedPrefISize);
   if (mCachedPrefISize == NS_INTRINSIC_WIDTH_UNKNOWN) {
-    mCachedPrefISize = IntrinsicISize(aRenderingContext,
-                                      nsLayoutUtils::PREF_ISIZE);
+    mCachedPrefISize = StyleDisplay()->IsContainSize()
+      ? 0
+      : IntrinsicISize(aRenderingContext, nsLayoutUtils::PREF_ISIZE);
   }
 
   return mCachedPrefISize;
