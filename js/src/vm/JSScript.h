@@ -29,6 +29,7 @@
 #include "vm/Scope.h"
 #include "vm/Shape.h"
 #include "vm/SharedImmutableStringsCache.h"
+#include "vm/Time.h"
 
 namespace JS {
 struct ScriptSourceInfo;
@@ -682,7 +683,7 @@ class ScriptSource
     // Inform `this` source that it has been fully parsed.
     void recordParseEnded() {
         MOZ_ASSERT(parseEnded_.IsNull());
-        parseEnded_ = mozilla::TimeStamp::Now();
+        parseEnded_ = ReallyNow();
     }
 };
 
@@ -2131,6 +2132,10 @@ class JSScript : public js::gc::TenuredCell
         void holdScript(JS::HandleFunction fun);
         void dropScript();
     };
+
+    // Return whether the record/replay execution progress counter
+    // (see RecordReplay.h) should be updated as this script runs.
+    inline bool trackRecordReplayProgress() const;
 };
 
 /* If this fails, add/remove padding within JSScript. */

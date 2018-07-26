@@ -23,6 +23,7 @@
 #include "mozilla/Services.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/intl/LocaleService.h"
+#include "mozilla/recordreplay/ParentIPC.h"
 
 #include "nsAppRunner.h"
 #include "mozilla/XREAppData.h"
@@ -104,6 +105,7 @@
 #include <math.h>
 #include "cairo/cairo-features.h"
 #include "mozilla/WindowsDllBlocklist.h"
+#include "mozilla/WinHeaderOnlyUtils.h"
 #include "mozilla/mscom/MainThreadRuntime.h"
 #include "mozilla/widget/AudioSession.h"
 
@@ -951,7 +953,7 @@ nsXULAppInfo::EnsureContentProcess()
     return NS_ERROR_NOT_AVAILABLE;
 
   RefPtr<ContentParent> unused = ContentParent::GetNewOrUsedBrowserProcess(
-    NS_LITERAL_STRING(DEFAULT_REMOTE_TYPE));
+    nullptr, NS_LITERAL_STRING(DEFAULT_REMOTE_TYPE));
   return NS_OK;
 }
 
@@ -1626,6 +1628,8 @@ DumpHelp()
   printf("  --headless         Run without a GUI.\n");
 #endif
 
+  printf("  --save-recordings  Save recordings for all content processes to a directory.\n");
+
   // this works, but only after the components have registered.  so if you drop in a new command line handler, --help
   // won't not until the second run.
   // out of the bug, because we ship a component.reg file, it works correctly.
@@ -1858,7 +1862,7 @@ static nsresult LaunchChild(nsINativeAppSupport* aNative,
   // Keep the current process around until the restarted process has created
   // its message queue, to avoid the launched process's windows being forced
   // into the background.
-  ::WaitForInputIdle(hProcess, kWaitForInputIdleTimeoutMS);
+  mozilla::WaitForInputIdle(hProcess);
   ::CloseHandle(hProcess);
 
 #else
@@ -4279,9 +4283,8 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
   // If we see .purgecaches, that means someone did a make.
   // Re-register components to catch potential changes.
   nsCOMPtr<nsIFile> flagFile;
-  rv = NS_ERROR_FILE_NOT_FOUND;
   if (mAppData->directory) {
-    rv = mAppData->directory->Clone(getter_AddRefs(flagFile));
+    Unused << mAppData->directory->Clone(getter_AddRefs(flagFile));
   }
   if (flagFile) {
     flagFile->AppendNative(FILE_INVALIDATE_CACHES);
@@ -5039,6 +5042,8 @@ XRE_InitCommandLine(int aArgc, char* aArgv[])
   delete[] canonArgs;
 #endif
 
+  recordreplay::parent::InitializeUIProcess(gArgc, gArgv);
+
   const char *path = nullptr;
   ArgResult ar = CheckArg("greomni", &path);
   if (ar == ARG_BAD) {
@@ -5155,7 +5160,7 @@ enum {
   // kE10sDisabledForAddons = 7, removed in bug 1406212
   kE10sForceDisabled = 8,
   // kE10sDisabledForXPAcceleration = 9, removed in bug 1296353
-  kE10sDisabledForOperatingSystem = 10,
+  // kE10sDisabledForOperatingSystem = 10, removed due to xp-eol
 };
 
 const char* kForceEnableE10sPref = "browser.tabs.remote.force-enable";
@@ -5185,12 +5190,6 @@ BrowserTabsRemoteAutostart()
   } else {
     status = kE10sDisabledByUser;
   }
-
-#if defined(__FreeBSD__)
-  // sendmsg() packet loss gotten worse, see bug 1475970
-  gBrowserTabsRemoteAutostart = false;
-  status = kE10sDisabledForOperatingSystem;
-#endif
 
   // Uber override pref for manual testing purposes
   if (Preferences::GetBool(kForceEnableE10sPref, false)) {

@@ -113,6 +113,16 @@ var gDevToolsBrowser = exports.gDevToolsBrowser = {
 
     // Enable DevTools connection screen, if the preference allows this.
     toggleMenuItem("menu_devtools_connect", devtoolsRemoteEnabled);
+
+    // Enable record/replay menu items?
+    try {
+      const recordReplayEnabled = Services.prefs.getBoolPref("devtools.recordreplay.enabled");
+      toggleMenuItem("menu_devtools_recordExecution", recordReplayEnabled);
+      toggleMenuItem("menu_devtools_saveRecording", recordReplayEnabled);
+      toggleMenuItem("menu_devtools_replayExecution", recordReplayEnabled);
+    } catch (e) {
+      // devtools.recordreplay.enabled only exists on certain platforms.
+    }
   },
 
   /**
@@ -525,8 +535,7 @@ var gDevToolsBrowser = exports.gDevToolsBrowser = {
 
       // Don't return from the interrupt handler until the debugger is brought
       // up; no reason to continue executing the slow script.
-      const utils = window.QueryInterface(Ci.nsIInterfaceRequestor)
-                         .getInterface(Ci.nsIDOMWindowUtils);
+      const utils = window.windowUtils;
       utils.enterModalState();
       Services.tm.spinEventLoopUntil(() => {
         return setupFinished;

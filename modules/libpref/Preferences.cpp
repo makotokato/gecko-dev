@@ -466,6 +466,7 @@ public:
     , mType(static_cast<uint32_t>(PrefType::None))
     , mIsSticky(false)
     , mIsLocked(false)
+    , mDefaultChanged(false)
     , mHasDefaultValue(false)
     , mHasUserValue(false)
     , mDefaultValue()
@@ -501,6 +502,8 @@ public:
   bool IsLocked() const { return mIsLocked; }
   void SetIsLocked(bool aValue) { mIsLocked = aValue; }
 
+  bool DefaultChanged() const { return mDefaultChanged; }
+
   bool IsSticky() const { return mIsSticky; }
 
   bool HasDefaultValue() const { return mHasDefaultValue; }
@@ -510,7 +513,11 @@ public:
   void AddToMap(SharedPrefMapBuilder& aMap)
   {
     aMap.Add(Name(),
-             { HasDefaultValue(), HasUserValue(), IsSticky(), IsLocked() },
+             { HasDefaultValue(),
+               HasUserValue(),
+               IsSticky(),
+               IsLocked(),
+               DefaultChanged() },
              HasDefaultValue() ? mDefaultValue.Get<T>() : T(),
              HasUserValue() ? mUserValue.Get<T>() : T());
   }
@@ -713,6 +720,9 @@ public:
       }
       if (!ValueMatches(PrefValueKind::Default, aType, aValue)) {
         mDefaultValue.Replace(mHasDefaultValue, Type(), aType, aValue);
+        if (mHasDefaultValue) {
+          mDefaultChanged = true;
+        }
         mHasDefaultValue = true;
         if (aIsSticky) {
           mIsSticky = true;
@@ -936,6 +946,7 @@ private:
   uint32_t mType : 2;
   uint32_t mIsSticky : 1;
   uint32_t mIsLocked : 1;
+  uint32_t mDefaultChanged : 1;
   uint32_t mHasDefaultValue : 1;
   uint32_t mHasUserValue : 1;
 
@@ -1008,6 +1019,7 @@ public:
     return match(Matcher());                                                   \
   }
 
+  FORWARD(bool, DefaultChanged)
   FORWARD(bool, IsLocked)
   FORWARD(bool, IsSticky)
   FORWARD(bool, HasDefaultValue)
@@ -1693,7 +1705,8 @@ static Result<Pref*, nsresult>
 pref_LookupForModify(const char* aPrefName,
                      const std::function<bool(const PrefWrapper&)>& aCheckFn)
 {
-  Maybe<PrefWrapper> wrapper = pref_Lookup(aPrefName, /* includeTypeNone */ true);
+  Maybe<PrefWrapper> wrapper =
+    pref_Lookup(aPrefName, /* includeTypeNone */ true);
   if (wrapper.isNothing()) {
     return Err(NS_ERROR_INVALID_ARG);
   }
@@ -1756,8 +1769,8 @@ pref_SetPref(const char* aPrefName,
   bool valueChanged = false;
   nsresult rv;
   if (aKind == PrefValueKind::Default) {
-    rv = pref->SetDefaultValue(
-      aType, aValue, aIsSticky, aIsLocked, &valueChanged);
+    rv =
+      pref->SetDefaultValue(aType, aValue, aIsSticky, aIsLocked, &valueChanged);
   } else {
     MOZ_ASSERT(!aIsLocked); // `locked` is disallowed in user pref files
     rv = pref->SetUserValue(aType, aValue, aFromInit, &valueChanged);
@@ -2895,6 +2908,8 @@ nsPrefBranch::DeleteBranch(const char* aStartingAt)
     nsDependentCString name(pref->Name());
     if (StringBeginsWith(name, branchName) || name.Equals(branchNameNoDot)) {
       iter.Remove();
+      // The saved callback pref may be invalid now.
+      gCallbackPref = nullptr;
     }
   }
 
@@ -4776,6 +4791,41 @@ pref_ReadPrefFromJar(nsZipArchive* aJarReader, const char* aName)
   return NS_OK;
 }
 
+// These preference getter wrappers allow us to look up the value for static
+// preferences based on their native types, rather than manually mapping them to
+// the appropriate Preferences::Get* functions.
+template<typename T>
+static T
+GetPref(const char* aName, T aDefaultValue);
+
+template<>
+bool MOZ_MAYBE_UNUSED
+GetPref<bool>(const char* aName, bool aDefaultValue)
+{
+  return Preferences::GetBool(aName, aDefaultValue);
+}
+
+template<>
+int32_t MOZ_MAYBE_UNUSED
+GetPref<int32_t>(const char* aName, int32_t aDefaultValue)
+{
+  return Preferences::GetInt(aName, aDefaultValue);
+}
+
+template<>
+uint32_t MOZ_MAYBE_UNUSED
+GetPref<uint32_t>(const char* aName, uint32_t aDefaultValue)
+{
+  return Preferences::GetInt(aName, aDefaultValue);
+}
+
+template<>
+float MOZ_MAYBE_UNUSED
+GetPref<float>(const char* aName, float aDefaultValue)
+{
+  return Preferences::GetFloat(aName, aDefaultValue);
+}
+
 // Initialize default preference JavaScript buffers from appropriate TEXT
 // resources.
 /* static */ Result<Ok, const char*>
@@ -4792,17 +4842,28 @@ Preferences::InitInitialObjects(bool aIsStartup)
     // don't need to add them to the DB. For static var caches, though, the
     // current preference values may differ from their static defaults. So we
     // still need to notify callbacks for each of our shared prefs which have
-    // user values.
-    //
-    // While it is technically also possible for the default values to have
-    // changed at runtime, and therefore not match the static defaults, we don't
-    // support that for static preferences in this configuration, and therefore
-    // ignore the possibility.
+    // user values, of whose default values have changed since they were
+    // initialized.
     for (auto& pref : gSharedMap->Iter()) {
-      if (pref.HasUserValue() || pref.IsLocked()) {
+      if (pref.HasUserValue() || pref.DefaultChanged()) {
         NotifyCallbacks(pref.Name(), PrefWrapper(pref));
       }
     }
+
+#ifdef DEBUG
+      // Check that all varcache preferences match their current values. This
+      // can currently fail if the default value of a static varcache preference
+      // is changed in a preference file or at runtime, rather than in
+      // StaticPrefList.h.
+
+#define PREF(name, cpp_type, value)
+#define VARCACHE_PREF(name, id, cpp_type, value)                               \
+  MOZ_ASSERT(GetPref<StripAtomic<cpp_type>>(name, value) == StaticPrefs::id(), \
+             "Incorrect cached value for " name);
+#include "mozilla/StaticPrefList.h"
+#undef PREF
+#undef VARCACHE_PREF
+#endif
 
     return Ok();
   }

@@ -2134,10 +2134,7 @@ nsWindow::OnExposeEvent(cairo_t *cr)
 
     bool shaped = false;
     if (eTransparencyTransparent == GetTransparencyMode()) {
-        GdkScreen *screen = gdk_window_get_screen(mGdkWindow);
-        if (gdk_screen_is_composited(screen) &&
-            gdk_window_get_visual(mGdkWindow) ==
-            gdk_screen_get_rgba_visual(screen)) {
+        if (IsComposited()) {
             // Remove possible shape mask from when window manger was not
             // previously compositing.
             static_cast<nsWindow*>(GetTopLevelWidget())->
@@ -2238,12 +2235,9 @@ nsWindow::OnExposeEvent(cairo_t *cr)
     bool painted = false;
     {
       if (GetLayerManager()->GetBackendType() == LayersBackend::LAYERS_BASIC) {
-        GdkScreen *screen = gdk_window_get_screen(mGdkWindow);
         if (GetTransparencyMode() == eTransparencyTransparent &&
             layerBuffering == BufferMode::BUFFER_NONE &&
-            gdk_screen_is_composited(screen) &&
-            gdk_window_get_visual(mGdkWindow) ==
-            gdk_screen_get_rgba_visual(screen)) {
+            IsComposited()) {
           // If our draw target is unbuffered and we use an alpha channel,
           // clear the image beforehand to ensure we don't get artifacts from a
           // reused SHM image. See bug 1258086.
@@ -3667,6 +3661,8 @@ nsWindow::Create(nsIWidget* aParent,
     nsWindow       *parentnsWindow = nullptr;
     GtkWidget      *eventWidget = nullptr;
     bool            drawToContainer = false;
+    bool            useAlphaVisual = (mWindowType == eWindowType_popup &&
+                                     aInitData->mSupportTranslucency);
 
     if (aParent) {
         parentnsWindow = static_cast<nsWindow*>(aParent);
@@ -3716,14 +3712,6 @@ nsWindow::Create(nsIWidget* aParent,
                 GTK_WINDOW_TOPLEVEL : GTK_WINDOW_POPUP;
         }
         mShell = gtk_window_new(type);
-
-        bool useAlphaVisual = (mWindowType == eWindowType_popup &&
-                               aInitData->mSupportTranslucency);
-
-        // mozilla.widget.use-argb-visuals is a hidden pref defaulting to false
-        // to allow experimentation
-        if (Preferences::GetBool("mozilla.widget.use-argb-visuals", false))
-            useAlphaVisual = true;
 
 #ifdef MOZ_X11
         // Ensure gfxPlatform is initialized, since that is what initializes
@@ -4142,8 +4130,10 @@ nsWindow::Create(nsIWidget* aParent,
       GdkVisual* gdkVisual = gdk_window_get_visual(mGdkWindow);
       mXVisual = gdk_x11_visual_get_xvisual(gdkVisual);
       mXDepth = gdk_visual_get_depth(gdkVisual);
+      bool shaped = useAlphaVisual && !IsComposited();
 
-      mSurfaceProvider.Initialize(mXDisplay, mXWindow, mXVisual, mXDepth);
+      mSurfaceProvider.Initialize(mXDisplay, mXWindow, mXVisual, mXDepth,
+                                  shaped);
     }
 #ifdef MOZ_WAYLAND
     else if (!mIsX11Display) {
@@ -6682,12 +6672,6 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
       return mLayerManager;
     }
 
-    if (!mLayerManager && !IsComposited() &&
-        eTransparencyTransparent == GetTransparencyMode())
-    {
-        mLayerManager = CreateBasicLayerManager();
-    }
-
     return nsBaseWidget::GetLayerManager(aShadowManager, aBackendHint, aPersistence);
 }
 
@@ -7206,6 +7190,7 @@ void nsWindow::GetCompositorWidgetInitData(mozilla::widget::CompositorWidgetInit
   *aInitData = mozilla::widget::GtkCompositorWidgetInitData(
                                 (mXWindow != X11None) ? mXWindow : (uintptr_t)nullptr,
                                 mXDisplay ? nsCString(XDisplayString(mXDisplay)) : nsCString(),
+                                mIsTransparent && !IsComposited(),
                                 GetClientSize());
 }
 
@@ -7217,7 +7202,7 @@ nsWindow::IsComposited() const
     return false;
   }
 
-  GdkScreen* gdkScreen = gdk_screen_get_default();
+  GdkScreen* gdkScreen = gdk_window_get_screen(mGdkWindow);
   return gdk_screen_is_composited(gdkScreen) &&
          (gdk_window_get_visual(mGdkWindow)
             == gdk_screen_get_rgba_visual(gdkScreen));

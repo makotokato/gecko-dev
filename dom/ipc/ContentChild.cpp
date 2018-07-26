@@ -77,6 +77,7 @@
 #include "mozilla/PerformanceUtils.h"
 #include "mozilla/plugins/PluginInstanceParent.h"
 #include "mozilla/plugins/PluginModuleParent.h"
+#include "mozilla/recordreplay/ParentIPC.h"
 #include "mozilla/widget/ScreenManager.h"
 #include "mozilla/widget/WidgetMessageUtils.h"
 #include "nsBaseDragService.h"
@@ -593,9 +594,7 @@ mozilla::ipc::IPCResult
 ContentChild::RecvSetXPCOMProcessAttributes(const XPCOMInitData& aXPCOMInit,
                                             const StructuredCloneData& aInitialData,
                                             nsTArray<LookAndFeelInt>&& aLookAndFeelIntCache,
-                                            nsTArray<SystemFontListEntry>&& aFontList,
-                                            const FileDescriptor& aSharedDataMapFile,
-                                            const uint32_t& aSharedDataMapSize)
+                                            nsTArray<SystemFontListEntry>&& aFontList)
 {
   if (!sShutdownCanary) {
     return IPC_OK();
@@ -606,9 +605,6 @@ ContentChild::RecvSetXPCOMProcessAttributes(const XPCOMInitData& aXPCOMInit,
   gfx::gfxVars::SetValuesForInitialize(aXPCOMInit.gfxNonDefaultVarUpdates());
   InitXPCOM(aXPCOMInit, aInitialData);
   InitGraphicsDeviceData(aXPCOMInit.contentDeviceData());
-
-  mSharedData = new SharedMap(ProcessGlobal::Get(), aSharedDataMapFile,
-                              aSharedDataMapSize);
 
   return IPC_OK();
 }
@@ -671,6 +667,12 @@ ContentChild::Init(MessageLoop* aIOLoop,
   nsresult rv = nsThreadManager::get().Init();
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return false;
+  }
+
+  // Middleman processes use a special channel for forwarding messages to
+  // their own children.
+  if (recordreplay::IsMiddleman()) {
+    SetMiddlemanIPCChannel(recordreplay::parent::ChannelToUIProcess());
   }
 
   if (!Open(aChannel, aParentPid, aIOLoop)) {
@@ -1245,8 +1247,12 @@ ContentChild::InitXPCOM(const XPCOMInitData& aXPCOMInit,
   RecvSetCaptivePortalState(aXPCOMInit.captivePortalState());
   RecvBidiKeyboardNotify(aXPCOMInit.isLangRTL(), aXPCOMInit.haveBidiKeyboards());
 
-  // Create the CPOW manager as soon as possible.
-  SendPJavaScriptConstructor();
+  // Create the CPOW manager as soon as possible. Middleman processes don't use
+  // CPOWs, because their recording child will also have a CPOW manager that
+  // communicates with the UI process.
+  if (!recordreplay::IsMiddleman()) {
+    SendPJavaScriptConstructor();
+  }
 
   if (aXPCOMInit.domainPolicy().active()) {
     nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
@@ -1798,7 +1804,11 @@ FirstIdle(void)
 {
   MOZ_ASSERT(gFirstIdleTask);
   gFirstIdleTask = nullptr;
-  ContentChild::GetSingleton()->SendFirstIdle();
+
+  // When recording or replaying, the middleman process will send this message instead.
+  if (!recordreplay::IsRecordingOrReplaying()) {
+    ContentChild::GetSingleton()->SendFirstIdle();
+  }
 }
 
 mozilla::jsipc::PJavaScriptChild *
@@ -2044,6 +2054,9 @@ ContentChild::GetCPOWManager()
 {
   if (PJavaScriptChild* c = LoneManagedOrNullAsserts(ManagedPJavaScriptChild())) {
     return CPOWManagerFor(c);
+  }
+  if (recordreplay::IsMiddleman()) {
+    return nullptr;
   }
   return CPOWManagerFor(SendPJavaScriptConstructor());
 }
@@ -2573,15 +2586,18 @@ ContentChild::RecvUpdateSharedData(const FileDescriptor& aMapFile,
                                    nsTArray<IPCBlob>&& aBlobs,
                                    nsTArray<nsCString>&& aChangedKeys)
 {
-  if (mSharedData) {
-    nsTArray<RefPtr<BlobImpl>> blobImpls(aBlobs.Length());
-    for (auto& ipcBlob : aBlobs) {
-      blobImpls.AppendElement(IPCBlobUtils::Deserialize(ipcBlob));
-    }
+  nsTArray<RefPtr<BlobImpl>> blobImpls(aBlobs.Length());
+  for (auto& ipcBlob : aBlobs) {
+    blobImpls.AppendElement(IPCBlobUtils::Deserialize(ipcBlob));
+  }
 
+  if (mSharedData) {
     mSharedData->Update(aMapFile, aMapSize,
                         std::move(blobImpls),
                         std::move(aChangedKeys));
+  } else {
+    mSharedData = new SharedMap(ProcessGlobal::Get(), aMapFile,
+                                aMapSize, std::move(blobImpls));
   }
 
   return IPC_OK();
@@ -3818,6 +3834,13 @@ mozilla::ipc::IPCResult
 ContentChild::RecvAddDynamicScalars(nsTArray<DynamicScalarDefinition>&& aDefs)
 {
   TelemetryIPC::AddDynamicScalarDefinitions(aDefs);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+ContentChild::RecvSaveRecording(const FileDescriptor& aFile)
+{
+  recordreplay::parent::SaveRecording(aFile);
   return IPC_OK();
 }
 

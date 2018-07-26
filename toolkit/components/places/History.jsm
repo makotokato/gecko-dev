@@ -37,6 +37,8 @@
  *     passed as argument to a function of this API will be ignored.
  *  - visits: (Array<VisitInfo>)
  *     All the visits for this page, if any.
+ *  - annotations: (Map)
+ *     A map containing key/value pairs of the annotations for this page, if any.
  *
  * See the documentation of individual methods to find out which properties
  * are required for `PageInfo` arguments or returned for `PageInfo` results.
@@ -123,6 +125,8 @@ var History = Object.freeze({
    *           By default, `visits` is undefined inside the returned `PageInfo`.
    *        - `includeMeta` (boolean) set this to true to fetch page meta fields,
    *           i.e. `description` and `preview_image_url`.
+   *        - `includeAnnotations` (boolean) set this to true to fetch any
+   *           annotations that are associated with the page.
    *
    * @return (Promise)
    *      A promise resolved once the operation is complete.
@@ -154,6 +158,11 @@ var History = Object.freeze({
     let hasIncludeMeta = "includeMeta" in options;
     if (hasIncludeMeta && typeof options.includeMeta !== "boolean") {
       throw new TypeError("includeMeta should be a boolean if exists");
+    }
+
+    let hasIncludeAnnotations = "includeAnnotations" in options;
+    if (hasIncludeAnnotations && typeof options.includeAnnotations !== "boolean") {
+      throw new TypeError("includeAnnotations should be a boolean if exists");
     }
 
     return PlacesUtils.promiseDBConnection()
@@ -792,19 +801,15 @@ var clear = async function(db) {
                               EXCEPT
                               SELECT icon_id FROM moz_icons_to_pages
                             )`);
+    await db.executeCached(`DELETE FROM moz_icons
+                            WHERE root = 1
+                              AND get_host_and_port(icon_url) NOT IN (SELECT host FROM moz_origins)
+                              AND fixup_url(get_host_and_port(icon_url)) NOT IN (SELECT host FROM moz_origins)`);
 
     // Expire annotations.
-    await db.execute(`DELETE FROM moz_items_annos WHERE expiration = :expire_session`,
-                     { expire_session: Ci.nsIAnnotationService.EXPIRE_SESSION });
-    await db.execute(`DELETE FROM moz_annos WHERE id in (
-                        SELECT a.id FROM moz_annos a
-                        LEFT JOIN moz_places h ON a.place_id = h.id
-                        WHERE h.id IS NULL
-                           OR expiration = :expire_session
-                           OR (expiration = :expire_with_history
-                               AND h.last_visit_date ISNULL)
-                      )`, { expire_session: Ci.nsIAnnotationService.EXPIRE_SESSION,
-                            expire_with_history: Ci.nsIAnnotationService.EXPIRE_WITH_HISTORY });
+    await db.execute(`DELETE FROM moz_annos WHERE NOT EXISTS (
+                        SELECT 1 FROM moz_places WHERE id = place_id
+                      )`);
 
     // Expire inputhistory.
     await db.execute(`DELETE FROM moz_inputhistory WHERE place_id IN (
@@ -885,6 +890,10 @@ var cleanupPages = async function(db, pages) {
                             EXCEPT
                             SELECT icon_id FROM moz_icons_to_pages
                           )`);
+  await db.executeCached(`DELETE FROM moz_icons
+                          WHERE root = 1
+                            AND get_host_and_port(icon_url) NOT IN (SELECT host FROM moz_origins)
+                            AND fixup_url(get_host_and_port(icon_url)) NOT IN (SELECT host FROM moz_origins)`);
 
   await db.execute(`DELETE FROM moz_annos
                     WHERE place_id IN ( ${ idsList } )`);
@@ -1001,6 +1010,7 @@ var fetch = async function(db, guidOrURL, options) {
                ${whereClauseFragment}
                ${visitOrderFragment}`;
   let pageInfo = null;
+  let placeId = null;
   await db.executeCached(
     query,
     params,
@@ -1013,6 +1023,7 @@ var fetch = async function(db, guidOrURL, options) {
           frecency: row.getResultByName("frecency"),
           title: row.getResultByName("title") || ""
         };
+        placeId = row.getResultByName("id");
       }
       if (options.includeMeta) {
         pageInfo.description = row.getResultByName("description") || "";
@@ -1031,6 +1042,19 @@ var fetch = async function(db, guidOrURL, options) {
         pageInfo.visits.push({ date, transition });
       }
     });
+
+  // Only try to get annotations if requested, and if there's an actual page found.
+  if (pageInfo && options.includeAnnotations) {
+    let rows = await db.executeCached(`
+      SELECT n.name, a.content FROM moz_anno_attributes n
+      JOIN moz_annos a ON n.id = a.anno_attribute_id
+      WHERE a.place_id = :placeId
+    `, {placeId});
+
+    pageInfo.annotations = new Map(rows.map(
+      row => [row.getResultByName("name"), row.getResultByName("content")]
+    ));
+  }
   return pageInfo;
 };
 

@@ -158,7 +158,9 @@ function fetchStylesheetFromNetworkMonitor(href, consoleActor) {
     return null;
   }
   const content = request._response.content;
-  if (request._discardResponseBody || request._truncated || !content) {
+  if (request._discardResponseBody || request._truncated || !content || !content.size) {
+    // Do not return the stylesheet text if there is no meaningful content or if it's
+    // still loading. Let the caller handle it by doing its own separate request.
     return null;
   }
 
@@ -321,8 +323,9 @@ var StyleSheetActor = protocol.ActorClassWithSpec(styleSheetSpec, {
    */
   get styleSheetIndex() {
     if (this._styleSheetIndex == -1) {
-      for (let i = 0; i < this.document.styleSheets.length; i++) {
-        if (this.document.styleSheets[i] == this.rawSheet) {
+      const styleSheets = InspectorUtils.getAllStyleSheets(this.document, true);
+      for (let i = 0; i < styleSheets.length; i++) {
+        if (styleSheets[i] == this.rawSheet) {
           this._styleSheetIndex = i;
           break;
         }

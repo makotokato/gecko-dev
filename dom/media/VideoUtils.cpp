@@ -256,7 +256,7 @@ already_AddRefed<SharedThreadPool> GetMediaThreadPool(MediaThreadType aType)
     }
   }
 
-  return already_AddRefed<SharedThreadPool>(pool.forget());
+  return pool.forget();
 }
 
 bool
@@ -713,6 +713,12 @@ IsVP9CodecString(const nsAString& aCodec)
          aCodec.EqualsLiteral("vp9.0") ||
          (StartsWith(NS_ConvertUTF16toUTF8(aCodec), "vp09") &&
           ExtractVPXCodecDetails(aCodec, profile, level, bitDepth));
+}
+
+bool
+IsAV1CodecString(const nsAString& aCodec)
+{
+  return aCodec.EqualsLiteral("av1"); // AV1
 }
 
 UniquePtr<TrackInfo>

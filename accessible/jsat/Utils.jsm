@@ -221,9 +221,7 @@ var Utils = { // jshint ignore:line
 
   getContentResolution: function _getContentResolution(aAccessible) {
     let res = { value: 1 };
-    aAccessible.document.window.QueryInterface(
-      Ci.nsIInterfaceRequestor).getInterface(
-      Ci.nsIDOMWindowUtils).getResolution(res);
+    aAccessible.document.window.windowUtils.getResolution(res);
     return res.value;
   },
 
@@ -385,14 +383,6 @@ var Utils = { // jshint ignore:line
 
     return parent.role === Roles.LISTITEM && parent.childCount > 1 &&
       aStaticText.indexInParent === 0;
-  },
-
-  isActivatableOnFingerUp: function isActivatableOnFingerUp(aAccessible) {
-    if (aAccessible.role === Roles.KEY) {
-      return true;
-    }
-    let quick_activate = this.getAttributes(aAccessible)["moz-quick-activate"];
-    return quick_activate && JSON.parse(quick_activate);
   }
 };
 

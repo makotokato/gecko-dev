@@ -149,6 +149,8 @@ VARCACHE_PREF(
 )
 #undef PREF_VALUE
 
+// NOTE: This preference is used in unit tests. If it is removed or its default
+// value changes, please update test_sharedMap_var_caches.js accordingly.
 VARCACHE_PREF(
   "dom.webcomponents.shadowdom.report_usage",
    dom_webcomponents_shadowdom_report_usage,
@@ -157,6 +159,8 @@ VARCACHE_PREF(
 
 // Whether we disable triggering mutation events for changes to style
 // attribute via CSSOM.
+// NOTE: This preference is used in unit tests. If it is removed or its default
+// value changes, please update test_sharedMap_var_caches.js accordingly.
 VARCACHE_PREF(
   "dom.mutation-events.cssom.disabled",
    dom_mutation_events_cssom_disabled,
@@ -186,17 +190,11 @@ VARCACHE_PREF(
 // Clear-Site-Data prefs
 //---------------------------------------------------------------------------
 
-#ifdef NIGHTLY_BUILD
-# define PREF_VALUE true
-#else
-# define PREF_VALUE false
-#endif
 VARCACHE_PREF(
   "dom.clearSiteData.enabled",
    dom_clearSiteData_enabled,
-  bool, PREF_VALUE
+  bool, true
 )
-#undef PREF_VALUE
 
 //---------------------------------------------------------------------------
 // Full-screen prefs
@@ -366,6 +364,20 @@ VARCACHE_PREF(
    layout_css_xul_display_values_content_enabled,
   bool, false
 )
+
+// Pref to control whether display: -moz-box and display: -moz-inline-box are
+// parsed in content pages.
+#ifdef EARLY_BETA_OR_EARLIER
+#define PREF_VALUE false
+#else
+#define PREF_VALUE true
+#endif
+VARCACHE_PREF(
+  "layout.css.xul-box-display-values.content.enabled",
+   layout_css_xul_box_display_values_content_enabled,
+  bool, PREF_VALUE
+)
+#undef PREF_VALUE
 
 // Is support for CSS "grid-template-{columns,rows}: subgrid X" enabled?
 VARCACHE_PREF(

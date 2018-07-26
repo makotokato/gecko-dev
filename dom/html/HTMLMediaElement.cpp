@@ -514,6 +514,13 @@ HTMLMediaElement::MediaLoadListener::OnStartRequest(nsIRequest* aRequest,
     return NS_BINDING_ABORTED;
   }
 
+  // Media element playback is not currently supported when recording or
+  // replaying. See bug 1304146.
+  if (recordreplay::IsRecordingOrReplaying()) {
+    mElement->ReportLoadError("Media elements not available when recording", nullptr, 0);
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   // The element is only needed until we've had a chance to call
   // InitializeDecoderForChannel. So make sure mElement is cleared here.
   RefPtr<HTMLMediaElement> element;
@@ -3057,6 +3064,7 @@ HTMLMediaElement::PauseIfShouldNotBePlaying()
   if (AutoplayPolicy::IsAllowedToPlay(*this) != nsIAutoplay::ALLOWED) {
     ErrorResult rv;
     Pause(rv);
+    OwnerDoc()->SetDocTreeHadPlayRevoked();
   }
 }
 
@@ -4004,6 +4012,21 @@ HTMLMediaElement::AudioChannelAgentDelayingPlayback()
   return mAudioChannelWrapper && mAudioChannelWrapper->IsPlaybackBlocked();
 }
 
+void
+HTMLMediaElement::ReportAutoplayTelemetry() const
+{
+  // If we're audible, and autoplaying...
+  if ((Volume() > 0.0 && !Muted()) &&
+      (!OwnerDoc()->HasBeenUserGestureActivated() || Autoplay())) {
+    OwnerDoc()->SetDocTreeHadAudibleMedia();
+    if (AutoplayPolicy::WouldBeAllowedToPlayIfAutoplayDisabled(*this)) {
+      ScalarAdd(Telemetry::ScalarID::MEDIA_AUTOPLAY_WOULD_BE_ALLOWED_COUNT, 1);
+    } else {
+      ScalarAdd(Telemetry::ScalarID::MEDIA_AUTOPLAY_WOULD_NOT_BE_ALLOWED_COUNT, 1);
+    }
+  }
+}
+
 already_AddRefed<Promise>
 HTMLMediaElement::Play(ErrorResult& aRv)
 {
@@ -4062,6 +4085,8 @@ HTMLMediaElement::Play(ErrorResult& aRv)
     }
     return promise.forget();
   }
+
+  ReportAutoplayTelemetry();
 
   const bool handlingUserInput = EventStateManager::IsHandlingUserInput();
   switch (AutoplayPolicy::IsAllowedToPlay(*this)) {
@@ -6221,6 +6246,7 @@ HTMLMediaElement::CheckAutoplayDataReady()
     return;
   }
 
+  ReportAutoplayTelemetry();
   switch (AutoplayPolicy::IsAllowedToPlay(*this)) {
     case nsIAutoplay::BLOCKED:
       return;
@@ -7346,28 +7372,25 @@ HTMLMediaElement::SetMediaKeys(mozilla::dom::MediaKeys* aMediaKeys,
 EventHandlerNonNull*
 HTMLMediaElement::GetOnencrypted()
 {
-  return EventTarget::GetEventHandler(nsGkAtoms::onencrypted, EmptyString());
+  return EventTarget::GetEventHandler(nsGkAtoms::onencrypted);
 }
 
 void
 HTMLMediaElement::SetOnencrypted(EventHandlerNonNull* aCallback)
 {
-  EventTarget::SetEventHandler(
-    nsGkAtoms::onencrypted, EmptyString(), aCallback);
+  EventTarget::SetEventHandler(nsGkAtoms::onencrypted, aCallback);
 }
 
 EventHandlerNonNull*
 HTMLMediaElement::GetOnwaitingforkey()
 {
-  return EventTarget::GetEventHandler(nsGkAtoms::onwaitingforkey,
-                                      EmptyString());
+  return EventTarget::GetEventHandler(nsGkAtoms::onwaitingforkey);
 }
 
 void
 HTMLMediaElement::SetOnwaitingforkey(EventHandlerNonNull* aCallback)
 {
-  EventTarget::SetEventHandler(
-    nsGkAtoms::onwaitingforkey, EmptyString(), aCallback);
+  EventTarget::SetEventHandler(nsGkAtoms::onwaitingforkey, aCallback);
 }
 
 void

@@ -180,7 +180,7 @@ var BrowserUtils = {
       y += win.mozInnerScreenY;
     }
 
-    let fullZoom = win.getInterface(Ci.nsIDOMWindowUtils).fullZoom;
+    let fullZoom = win.windowUtils.fullZoom;
     rect = {
       left: x * fullZoom,
       top: y * fullZoom,
@@ -371,7 +371,7 @@ var BrowserUtils = {
    */
   async setToolbarButtonHeightProperty(element) {
     let window = element.ownerGlobal;
-    let dwu = window.getInterface(Ci.nsIDOMWindowUtils);
+    let dwu = window.windowUtils;
     let toolbarItem = element;
     let urlBarContainer = element.closest("#urlbar-container");
     if (urlBarContainer) {
@@ -606,7 +606,10 @@ var BrowserUtils = {
       // Try to fetch a charset from History.
       try {
         // Will return an empty string if character-set is not found.
-        charset = await PlacesUtils.getCharsetForURI(this.makeURI(url));
+        let pageInfo = await PlacesUtils.history.fetch(url, {includeAnnotations: true});
+        if (pageInfo && pageInfo.annotations.has(PlacesUtils.CHARSET_ANNO)) {
+          charset = pageInfo.annotations.get(PlacesUtils.CHARSET_ANNO);
+        }
       } catch (ex) {
         // makeURI() throws if url is invalid.
         Cu.reportError(ex);

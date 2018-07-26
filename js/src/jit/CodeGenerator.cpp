@@ -61,6 +61,7 @@
 #include "jit/shared/Lowering-shared-inl.h"
 #include "jit/TemplateObject-inl.h"
 #include "vm/Interpreter-inl.h"
+#include "vm/JSScript-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -186,6 +187,11 @@ typedef bool (*IonUnaryArithICFn)(JSContext* cx, HandleScript outerScript, IonUn
                                     HandleValue val, MutableHandleValue res);
 static const VMFunction IonUnaryArithICInfo =
     FunctionInfo<IonUnaryArithICFn>(IonUnaryArithIC::update, "IonUnaryArithIC::update");
+
+typedef bool (*IonBinaryArithICFn)(JSContext* cx, HandleScript outerScript, IonBinaryArithIC* stub,
+                                    HandleValue lhs, HandleValue rhs, MutableHandleValue res);
+static const VMFunction IonBinaryArithICInfo =
+    FunctionInfo<IonBinaryArithICFn>(IonBinaryArithIC::update, "IonBinaryArithIC::update");
 
 void
 CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool)
@@ -375,6 +381,23 @@ CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool)
 
         StoreValueTo(unaryArithIC->output()).generate(this);
         restoreLiveIgnore(lir, StoreValueTo(unaryArithIC->output()).clobbered());
+
+        masm.jump(ool->rejoin());
+        return;
+      }
+      case CacheKind::BinaryArith: {
+        IonBinaryArithIC* binaryArithIC = ic->asBinaryArithIC();
+
+        saveLive(lir);
+
+        pushArg(binaryArithIC->rhs());
+        pushArg(binaryArithIC->lhs());
+        icInfo_[cacheInfoIndex].icOffsetForPush = pushArgWithPatch(ImmWord(-1));
+        pushArg(ImmGCPtr(gen->info().script()));
+        callVM(IonBinaryArithICInfo, lir);
+
+        StoreValueTo(binaryArithIC->output()).generate(this);
+        restoreLiveIgnore(lir, StoreValueTo(binaryArithIC->output()).clobbered());
 
         masm.jump(ool->rejoin());
         return;
@@ -2757,6 +2780,18 @@ CodeGenerator::emitSharedStub(ICStub::Kind kind, LInstruction* lir)
     masm.freeStack(sizeof(intptr_t));
 #endif
     markSafepointAt(callOffset, lir);
+}
+
+void
+CodeGenerator::visitBinaryCache(LBinaryCache* lir)
+{
+    LiveRegisterSet liveRegs = lir->safepoint()->liveRegs();
+    TypedOrValueRegister lhs = TypedOrValueRegister(ToValue(lir, LBinaryCache::LhsInput));
+    TypedOrValueRegister rhs = TypedOrValueRegister(ToValue(lir, LBinaryCache::RhsInput));
+    ValueOperand output = ToOutValue(lir);
+
+    IonBinaryArithIC ic(liveRegs, lhs, rhs, output);
+    addIC(lir, allocateIC(ic));
 }
 
 void
@@ -5198,7 +5233,6 @@ CodeGenerator::generateArgumentsChecks(bool assert)
         if (!types || types->unknown())
             continue;
 
-#ifndef JS_CODEGEN_ARM64
         // Calculate the offset on the stack of the argument.
         // (i - info.startArgSlot())    - Compute index of arg within arg vector.
         // ... * sizeof(Value)          - Scale by value size.
@@ -5208,16 +5242,9 @@ CodeGenerator::generateArgumentsChecks(bool assert)
 
         // guardObjectType will zero the stack pointer register on speculative
         // paths.
-        Register spectreRegToZero = masm.getStackPointer();
+        Register spectreRegToZero = AsRegister(masm.getStackPointer());
         masm.guardTypeSet(argAddr, types, BarrierKind::TypeSet, temp1, temp2,
                           spectreRegToZero, &miss);
-#else
-        // On ARM64, the stack pointer situation is more complicated. When we
-        // enable Ion, we should figure out how to mitigate Spectre there.
-        mozilla::Unused << temp1;
-        mozilla::Unused << temp2;
-        MOZ_CRASH("NYI");
-#endif
     }
 
     if (miss.used()) {
@@ -13014,6 +13041,9 @@ void
 CodeGenerator::visitInterruptCheck(LInterruptCheck* lir)
 {
     OutOfLineCode* ool = oolCallVM(InterruptCheckInfo, lir, ArgList(), StoreNothing());
+
+    if (lir->mir()->trackRecordReplayProgress())
+        masm.inc64(AbsoluteAddress(mozilla::recordreplay::ExecutionProgressCounter()));
 
     const void* interruptAddr = gen->runtime->addressOfInterruptBits();
     masm.branch32(Assembler::NotEqual, AbsoluteAddress(interruptAddr), Imm32(0), ool->entry());

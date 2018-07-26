@@ -14,7 +14,7 @@ ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
   let store = Services.xulStore;
   let getValue = attr =>
-    store.getValue("chrome://browser/content/browser.xul", "main-window", attr);
+    store.getValue(AppConstants.BROWSER_CHROME_URL, "main-window", attr);
   let width = getValue("width");
   let height = getValue("height");
 
@@ -33,9 +33,7 @@ ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
   // Hide the titlebar if the actual browser window will draw in it.
   if (Services.prefs.getBoolPref("browser.tabs.drawInTitlebar")) {
-    win.QueryInterface(Ci.nsIInterfaceRequestor)
-       .getInterface(Ci.nsIDOMWindowUtils)
-       .setChromeMargin(0, 2, 2, 2);
+    win.windowUtils.setChromeMargin(0, 2, 2, 2);
   }
 
   if (AppConstants.platform != "macosx") {
@@ -1790,7 +1788,7 @@ BrowserGlue.prototype = {
    * "collapsed" attribute, try to determine whether it's customized.
    */
   _maybeToggleBookmarkToolbarVisibility() {
-    const BROWSER_DOCURL = "chrome://browser/content/browser.xul";
+    const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
     const NUM_TOOLBAR_BOOKMARKS_TO_UNHIDE = 3;
     let xulStore = Services.xulStore;
 
@@ -1816,7 +1814,7 @@ BrowserGlue.prototype = {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
     const UI_VERSION = 69;
-    const BROWSER_DOCURL = "chrome://browser/content/browser.xul";
+    const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     let currentUIVersion;
     if (Services.prefs.prefHasUserValue("browser.migration.version")) {
@@ -1840,63 +1838,6 @@ BrowserGlue.prototype = {
       return;
 
     let xulStore = Services.xulStore;
-
-    if (currentUIVersion < 36) {
-      xulStore.removeValue("chrome://passwordmgr/content/passwordManager.xul",
-                           "passwordCol",
-                           "hidden");
-    }
-
-    if (currentUIVersion < 37) {
-      Services.prefs.clearUserPref("browser.sessionstore.restore_on_demand");
-    }
-
-    if (currentUIVersion < 38) {
-      LoginHelper.removeLegacySignonFiles();
-    }
-
-    if (currentUIVersion < 39) {
-      // Remove the 'defaultset' value for all the toolbars
-      let toolbars = ["nav-bar", "PersonalToolbar",
-                      "TabsToolbar", "toolbar-menubar"];
-      for (let toolbarId of toolbars) {
-        xulStore.removeValue(BROWSER_DOCURL, toolbarId, "defaultset");
-      }
-    }
-
-    if (currentUIVersion < 40) {
-      const kOldSafeBrowsingPref = "browser.safebrowsing.enabled";
-      // Default value is set to true, a user pref means that the pref was
-      // set to false.
-      if (Services.prefs.prefHasUserValue(kOldSafeBrowsingPref) &&
-          !Services.prefs.getBoolPref(kOldSafeBrowsingPref)) {
-        Services.prefs.setBoolPref("browser.safebrowsing.phishing.enabled",
-                                   false);
-        // Should just remove support for the pref entirely, even if it's
-        // only in about:config
-        Services.prefs.clearUserPref(kOldSafeBrowsingPref);
-      }
-    }
-
-    if (currentUIVersion < 41) {
-      const Preferences = ChromeUtils.import("resource://gre/modules/Preferences.jsm", {}).Preferences;
-      Preferences.resetBranch("loop.");
-    }
-
-    if (currentUIVersion < 42) {
-      let backupFile = Services.dirsvc.get("ProfD", Ci.nsIFile);
-      backupFile.append("tabgroups-session-backup.json");
-      OS.File.remove(backupFile.path, {ignoreAbsent: true}).catch(ex => Cu.reportError(ex));
-    }
-
-    if (currentUIVersion < 43) {
-      let currentTheme = Services.prefs.getCharPref("lightweightThemes.selectedThemeID", "");
-      if (currentTheme == "firefox-devedition@mozilla.org") {
-        let newTheme = Services.prefs.getCharPref("devtools.theme") == "dark" ?
-          "firefox-compact-dark@mozilla.org" : "firefox-compact-light@mozilla.org";
-        Services.prefs.setCharPref("lightweightThemes.selectedThemeID", newTheme);
-      }
-    }
 
     if (currentUIVersion < 44) {
       // Merge the various cosmetic animation prefs into one. If any were set to
@@ -2103,10 +2044,6 @@ BrowserGlue.prototype = {
         Services.prefs.clearUserPref(SELECTED_LOCALE_PREF);
         Services.prefs.clearUserPref(MATCHOS_LOCALE_PREF);
       }
-    }
-
-    if (currentUIVersion < 60) {
-      // This version is superseded by version 66.  See bug 1444965.
     }
 
     if (currentUIVersion < 61) {
@@ -2367,7 +2304,7 @@ BrowserGlue.prototype = {
     let urlString = Cc["@mozilla.org/supports-string;1"].createInstance(Ci.nsISupportsString);
     urlString.data = url;
     return new Promise(resolve => {
-      let win = Services.ww.openWindow(null, Services.prefs.getCharPref("browser.chromeURL"),
+      let win = Services.ww.openWindow(null, AppConstants.BROWSER_CHROME_URL,
                                        "_blank", "chrome,all,dialog=no", urlString);
       win.addEventListener("load", () => { resolve(win); }, {once: true});
     });

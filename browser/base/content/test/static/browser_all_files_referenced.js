@@ -132,7 +132,6 @@ var whitelist = [
   {file: "chrome://marionette/content/test_anonymous_content.xul"},
   {file: "chrome://marionette/content/test_dialog.properties"},
   {file: "chrome://marionette/content/test_dialog.xul"},
-  {file: "chrome://marionette/content/PerTestCoverageUtils.jsm"},
   // Bug 1348533
   {file: "chrome://mozapps/skin/downloads/buttons.png", platforms: ["macosx"]},
   {file: "chrome://mozapps/skin/downloads/downloadButtons.png", platforms: ["linux", "win"]},
@@ -201,6 +200,10 @@ if (!isDevtools) {
     whitelist.add("resource://services-sync/engines/" + module);
   }
 
+}
+
+if (AppConstants.MOZ_CODE_COVERAGE) {
+  whitelist.add("chrome://marionette/content/PerTestCoverageUtils.jsm");
 }
 
 const gInterestingCategories = new Set([
@@ -577,7 +580,7 @@ add_task(async function checkAllTheFiles() {
 
   if (isDevtools) {
     // chrome://devtools/skin/devtools-browser.css is included from browser.xul
-    gReferencesFromCode.set("chrome://browser/content/browser.xul", null);
+    gReferencesFromCode.set(AppConstants.BROWSER_CHROME_URL, null);
     // devtools' css is currently included from browser.css, see bug 1204810.
     gReferencesFromCode.set("chrome://browser/skin/browser.css", null);
   }

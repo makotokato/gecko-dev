@@ -124,6 +124,12 @@ var Bookmarks = Object.freeze({
   DEFAULT_INDEX: -1,
 
   /**
+   * Maximum length of a tag.
+   * Any tag above this length is rejected.
+   */
+  MAX_TAG_LENGTH: 100,
+
+  /**
    * Bookmark change source constants, passed as optional properties and
    * forwarded to observers. See nsINavBookmarksService.idl for an explanation.
    */
@@ -1357,6 +1363,34 @@ var Bookmarks = Object.freeze({
   // PlacesUtils.promiseBookmarksTree()
   fetchTree(guid = "", options = {}) {
     throw new Error("Not yet implemented");
+  },
+
+  /**
+   * Fetch all the existing tags, sorted alphabetically.
+   * @return {Promise} resolves to an array of objects representing tags, when
+   *         fetching is complete.
+   *         Each object looks like {
+   *           name: the name of the tag,
+   *           count: number of bookmarks with this tag
+   *         }
+   */
+  async fetchTags() {
+    // TODO: Once the tagging API is implemented in Bookmarks.jsm, we can cache
+    // the list of tags, instead of querying every time.
+    let db = await PlacesUtils.promiseDBConnection();
+    let rows = await db.executeCached(`
+      SELECT b.title AS name, count(*) AS count
+      FROM moz_bookmarks b
+      JOIN moz_bookmarks p ON b.parent = p.id
+      JOIN moz_bookmarks c ON c.parent = b.id
+      WHERE p.guid = :tagsGuid
+      GROUP BY name
+      ORDER BY name COLLATE nocase ASC 
+    `, { tagsGuid: this.tagsGuid });
+    return rows.map(r => ({
+      name: r.getResultByName("name"),
+      count: r.getResultByName("count")
+    }));
   },
 
   /**

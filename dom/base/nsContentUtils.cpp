@@ -2939,7 +2939,6 @@ nsContentUtils::GenerateStateKey(nsIContent* aContent,
       KeyAppendInt(control->ControlType(), aKey);
 
       // If in a form, add form name / index of form / index in form
-      int32_t index = -1;
       Element *formElement = control->GetFormElement();
       if (formElement) {
         if (IsAutocompleteOff(formElement)) {
@@ -2950,7 +2949,7 @@ nsContentUtils::GenerateStateKey(nsIContent* aContent,
         KeyAppendString(NS_LITERAL_CSTRING("f"), aKey);
 
         // Append the index of the form in the document
-        index = htmlForms->IndexOf(formElement, false);
+        int32_t index = htmlForms->IndexOf(formElement, false);
         if (index <= -1) {
           //
           // XXX HACK this uses some state that was dumped into the document
@@ -2991,7 +2990,7 @@ nsContentUtils::GenerateStateKey(nsIContent* aContent,
 
         // We have to flush sink notifications at this point to make
         // sure that htmlFormControls is up to date.
-        index = htmlFormControls->IndexOf(aContent, true);
+        int32_t index = htmlFormControls->IndexOf(aContent, true);
         if (index > -1) {
           KeyAppendInt(index, aKey);
           generatedUniqueKey = true;
@@ -4256,6 +4255,7 @@ nsContentUtils::IsEventAttributeName(nsAtom* aName, int32_t aType)
 EventMessage
 nsContentUtils::GetEventMessage(nsAtom* aName)
 {
+  MOZ_ASSERT(NS_IsMainThread(), "sAtomEventTable is not threadsafe");
   if (aName) {
     EventNameMapping mapping;
     if (sAtomEventTable->Get(aName, &mapping)) {
@@ -4282,6 +4282,7 @@ nsContentUtils::GetEventMessageAndAtom(const nsAString& aName,
                                        mozilla::EventClassID aEventClassID,
                                        EventMessage* aEventMessage)
 {
+  MOZ_ASSERT(NS_IsMainThread(), "Our hashtables are not threadsafe");
   EventNameMapping mapping;
   if (sStringEventTable->Get(aName, &mapping)) {
     *aEventMessage =
@@ -4323,6 +4324,8 @@ EventMessage
 nsContentUtils::GetEventMessageAndAtomForListener(const nsAString& aName,
                                                   nsAtom** aOnName)
 {
+  MOZ_ASSERT(NS_IsMainThread(), "Our hashtables are not threadsafe");
+
   // Because of SVG/SMIL sStringEventTable contains a subset of the event names
   // comparing to the sAtomEventTable. However, usually sStringEventTable
   // contains the information we need, so in order to reduce hashtable
@@ -6510,10 +6513,9 @@ nsContentUtils::WrapNative(JSContext *cx, nsISupports *native,
     MOZ_CRASH();
   }
 
-  nsresult rv = NS_OK;
   JS::Rooted<JSObject*> scope(cx, JS::CurrentGlobalOrNull(cx));
-  rv = sXPConnect->WrapNativeToJSVal(cx, scope, native, cache, aIID,
-                                     aAllowWrapping, vp);
+  nsresult rv = sXPConnect->WrapNativeToJSVal(cx, scope, native, cache, aIID,
+                                              aAllowWrapping, vp);
   return rv;
 }
 
@@ -6952,8 +6954,7 @@ nsContentUtils::FindInternalContentViewer(const nsACString& aType,
 
   nsCString contractID;
   nsresult rv = catMan->GetCategoryEntry("Gecko-Content-Viewers",
-                                         PromiseFlatCString(aType).get(),
-                                         getter_Copies(contractID));
+                                         aType, contractID);
   if (NS_SUCCEEDED(rv)) {
     docFactory = do_GetService(contractID.get());
     if (docFactory && aLoaderType) {

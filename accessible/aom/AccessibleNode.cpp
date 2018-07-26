@@ -43,7 +43,11 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(AccessibleNode)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(AccessibleNode)
 
 AccessibleNode::AccessibleNode(nsINode* aNode) :
+    mDoubleProperties(3),
+    mIntProperties(3),
+    mUIntProperties(6),
     mBooleanProperties(0),
+    mStringProperties(16),
     mDOMNode(aNode)
 {
   nsAccessibilityService* accService = GetOrCreateAccService();
@@ -74,7 +78,7 @@ AccessibleNode::GetParentObject() const
 }
 
 void
-AccessibleNode::GetRole(nsAString& aRole)
+AccessibleNode::GetComputedRole(nsAString& aRole)
 {
   if (mIntl) {
     nsAccessibilityService* accService = GetOrCreateAccService();

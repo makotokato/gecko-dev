@@ -227,7 +227,7 @@ pref("dom.keyboardevent.keypress.dispatch_non_printable_keys_only_system_group_i
 // if you need to limit under a directory, the path should end with "/" like
 // "example.com/foo/".  Note that this cannot limit port number for now.
 pref("dom.keyboardevent.keypress.hack.dispatch_non_printable_keys",
-     "docs.google.com,mail.google.com,hangouts.google.com,keep.google.com,inbox.google.com,*.etherpad.org/p/,etherpad.wikimedia.org/p/,board.net/p/,pad.riseup.net/p/,*.sandstorm.io,factor.cc/pad/,*.etherpad.fr/p/,piratenpad.de/p/,notes.typo3.org/p/,etherpad.net/p/,*.framapad.org/p/,pad.ouvaton.coop/,pad.systemli.org/p/,pad.lqdn.fr/p/,public.etherpad-mozilla.org/p/,*.cloudron.me/p/,pad.aquilenet.fr/p/,free.primarypad.com/p/,pad.ondesk.work/p/,demo.maadix.org/etherpad/pads/");
+     "*.etherpad.org/p/,etherpad.wikimedia.org/p/,board.net/p/,pad.riseup.net/p/,*.sandstorm.io,factor.cc/pad/,*.etherpad.fr/p/,piratenpad.de/p/,notes.typo3.org/p/,etherpad.net/p/,*.framapad.org/p/,pad.ouvaton.coop/,pad.systemli.org/p/,pad.lqdn.fr/p/,public.etherpad-mozilla.org/p/,*.cloudron.me/p/,pad.aquilenet.fr/p/,free.primarypad.com/p/,pad.ondesk.work/p/,demo.maadix.org/etherpad/pads/");
 #else
 pref("dom.keyboardevent.keypress.dispatch_non_printable_keys_only_system_group_in_content", false);
 #endif
@@ -604,6 +604,10 @@ pref("media.audioipc.pool_size", 2);
 pref("media.audioipc.stack_size", 262144);
 #else
 pref("media.cubeb.sandbox", false);
+#endif
+
+#ifdef MOZ_AV1
+pref("media.av1.enabled", false);
 #endif
 
 pref("media.webaudio.audiocontextoptions-samplerate.enabled", true);
@@ -1047,6 +1051,12 @@ pref("browser.dom.window.dump.enabled", true, sticky);
 
 // Controls whether EventEmitter module throws dump message on each emit
 pref("toolkit.dump.emit", false);
+
+// Enable recording/replaying executions.
+#if defined(XP_MACOSX) && defined(NIGHTLY_BUILD)
+pref("devtools.recordreplay.enabled", false);
+pref("devtools.recordreplay.enableRewinding", true);
+#endif
 
 // view source
 pref("view_source.syntax_highlight", true);
@@ -4947,8 +4957,7 @@ pref("extensions.webextensions.keepUuidOnUninstall", false);
 // Redirect basedomain used by identity api
 pref("extensions.webextensions.identity.redirectDomain", "extensions.allizom.org");
 pref("extensions.webextensions.restrictedDomains", "accounts-static.cdn.mozilla.net,accounts.firefox.com,addons.cdn.mozilla.net,addons.mozilla.org,api.accounts.firefox.com,content.cdn.mozilla.net,content.cdn.mozilla.net,discovery.addons.mozilla.org,input.mozilla.org,install.mozilla.org,oauth.accounts.firefox.com,profile.accounts.firefox.com,support.mozilla.org,sync.services.mozilla.com,testpilot.firefox.com");
-// Whether or not webextension themes are supported.
-pref("extensions.webextensions.themes.enabled", false);
+// Whether or not webextension icon theming is supported.
 pref("extensions.webextensions.themes.icons.enabled", false);
 pref("extensions.webextensions.remote", false);
 // Whether or not the moz-extension resource loads are remoted. For debugging
@@ -5837,3 +5846,9 @@ pref("general.document_open_conversion_depth_limit", 20);
 // If true, touchstart and touchmove listeners on window, document,
 // documentElement and document.body are passive by default.
 pref("dom.event.default_to_passive_touch_listeners", true);
+
+// Enable FastBlock?
+pref("browser.fastblock.enabled", false);
+// The timeout (ms) since navigation start, all tracker connections been made
+// after this timeout will be canceled.
+pref("browser.fastblock.timeout", 5000);

@@ -650,7 +650,7 @@ gfxPlatform::Init()
 
     gfxConfig::Init();
 
-    if (XRE_IsParentProcess()) {
+    if (XRE_IsParentProcess() || recordreplay::IsRecordingOrReplaying()) {
       GPUProcessManager::Initialize();
 
       if (Preferences::GetBool("media.wmf.skip-blacklist")) {
@@ -745,7 +745,7 @@ gfxPlatform::Init()
       gpu->LaunchGPUProcess();
     }
 
-    if (XRE_IsParentProcess()) {
+    if (XRE_IsParentProcess() || recordreplay::IsRecordingOrReplaying()) {
       if (gfxPlatform::ForceSoftwareVsync()) {
         gPlatform->mVsyncSource = (gPlatform)->gfxPlatform::CreateHardwareVsyncSource();
       } else {
@@ -1040,10 +1040,12 @@ gfxPlatform::InitLayersIPC()
   sLayersIPCIsUp = true;
 
   if (XRE_IsContentProcess()) {
-    if (gfxVars::UseOMTP()) {
+    if (gfxVars::UseOMTP() && !recordreplay::IsRecordingOrReplaying()) {
       layers::PaintThread::Start();
     }
-  } else if (XRE_IsParentProcess()) {
+  }
+
+  if (XRE_IsParentProcess() || recordreplay::IsRecordingOrReplaying()) {
     if (!gfxConfig::IsEnabled(Feature::GPU_PROCESS) && gfxVars::UseWebRender()) {
       wr::RenderThread::Start();
     }
@@ -1069,7 +1071,7 @@ gfxPlatform::ShutdownLayersIPC()
           layers::ImageBridgeChild::ShutDown();
         }
 
-        if (gfxVars::UseOMTP()) {
+        if (gfxVars::UseOMTP() && !recordreplay::IsRecordingOrReplaying()) {
           layers::PaintThread::Shutdown();
         }
     } else if (XRE_IsParentProcess()) {
@@ -2499,7 +2501,7 @@ gfxPlatform::InitCompositorAccelerationPrefs()
     feature.UserForceEnable("Force-enabled by pref");
   }
 
-  // Safe and headless modes override everything.
+  // Safe, headless, and record/replay modes override everything.
   if (InSafeMode()) {
     feature.ForceDisable(FeatureStatus::Blocked, "Acceleration blocked by safe-mode",
                          NS_LITERAL_CSTRING("FEATURE_FAILURE_COMP_SAFEMODE"));
@@ -2507,6 +2509,10 @@ gfxPlatform::InitCompositorAccelerationPrefs()
   if (IsHeadless()) {
     feature.ForceDisable(FeatureStatus::Blocked, "Acceleration blocked by headless mode",
                          NS_LITERAL_CSTRING("FEATURE_FAILURE_COMP_HEADLESSMODE"));
+  }
+  if (recordreplay::IsRecordingOrReplaying()) {
+    feature.ForceDisable(FeatureStatus::Blocked, "Acceleration blocked by recording/replaying",
+                         NS_LITERAL_CSTRING("FEATURE_FAILURE_COMP_RECORDREPLAY"));
   }
 }
 
@@ -2880,7 +2886,7 @@ gfxPlatform::IsInLayoutAsapMode()
 /* static */ bool
 gfxPlatform::ForceSoftwareVsync()
 {
-  return gfxPrefs::LayoutFrameRate() > 0;
+  return gfxPrefs::LayoutFrameRate() > 0 || recordreplay::IsRecordingOrReplaying();
 }
 
 /* static */ int

@@ -51,10 +51,6 @@ window._gBrowser = {
       messageManager.addMessageListener("DOMWindowClose", this);
       window.messageManager.addMessageListener("contextmenu", this);
       messageManager.addMessageListener("Browser:Init", this);
-
-      // If this window has remote tabs, switch to our tabpanels fork
-      // which does asynchronous tab switching.
-      this.tabpanels.classList.add("tabbrowser-tabpanels");
     } else {
       this._outerWindowIDBrowserMap.set(this.selectedBrowser.outerWindowID,
         this.selectedBrowser);
@@ -1303,8 +1299,7 @@ window._gBrowser = {
       return false;
     }
 
-    let dwu = window.QueryInterface(Ci.nsIInterfaceRequestor)
-                    .getInterface(Ci.nsIDOMWindowUtils);
+    let dwu = window.windowUtils;
     let isRTL = dwu.getDirectionFromText(aLabel) == Ci.nsIDOMWindowUtils.DIRECTION_RTL;
 
     aTab.setAttribute("label", aLabel);
@@ -1783,7 +1778,8 @@ window._gBrowser = {
   _createBrowser(aParams) {
     // Supported parameters:
     // userContextId, remote, remoteType, isPreloadBrowser,
-    // uriIsAboutBlank, sameProcessAsFrameLoader
+    // uriIsAboutBlank, sameProcessAsFrameLoader,
+    // recordExecution, replayExecution
 
     let b = document.createElementNS(this._XUL_NS, "browser");
     b.permanentKey = {};
@@ -1804,6 +1800,16 @@ window._gBrowser = {
     if (aParams.remoteType) {
       b.setAttribute("remoteType", aParams.remoteType);
       b.setAttribute("remote", "true");
+    }
+
+    let recordExecution = aParams && aParams.recordExecution;
+    if (recordExecution) {
+      b.setAttribute("recordExecution", recordExecution);
+    }
+
+    let replayExecution = aParams && aParams.replayExecution;
+    if (replayExecution) {
+      b.setAttribute("replayExecution", replayExecution);
     }
 
     if (aParams.openerWindow) {
@@ -2157,6 +2163,8 @@ window._gBrowser = {
     skipBackgroundNotify,
     triggeringPrincipal,
     userContextId,
+    recordExecution,
+    replayExecution,
   } = {}) {
     // if we're adding tabs, we're past interrupt mode, ditch the owner
     if (this.selectedTab.owner) {
@@ -2336,7 +2344,9 @@ window._gBrowser = {
       // icon for the tab would be set incorrectly (see bug 1195981).
       if (aURI == BROWSER_NEW_TAB_URL &&
           !userContextId &&
-          !PrivateBrowsingUtils.isWindowPrivate(window)) {
+          !PrivateBrowsingUtils.isWindowPrivate(window) &&
+          !recordExecution &&
+          !replayExecution) {
         b = this._getPreloadedBrowser();
         if (b) {
           usingPreloadedContent = true;
@@ -2353,6 +2363,8 @@ window._gBrowser = {
           openerWindow: opener,
           nextTabParentId,
           name,
+          recordExecution,
+          replayExecution,
         });
       }
 
@@ -2628,8 +2640,7 @@ window._gBrowser = {
     }
 
     var isLastTab = (this.tabs.length - this._removingTabs.length == 1);
-    let windowUtils = window.QueryInterface(Ci.nsIInterfaceRequestor)
-                            .getInterface(Ci.nsIDOMWindowUtils);
+    let windowUtils = window.windowUtils;
     // We have to sample the tab width now, since _beginRemoveTab might
     // end up modifying the DOM in such a way that aTab gets a new
     // frame created for it (for example, by updating the visually selected
@@ -2811,9 +2822,7 @@ window._gBrowser = {
     if (aTab.linkedPanel) {
       if (!aAdoptedByTab && !gMultiProcessBrowser) {
         // Prevent this tab from showing further dialogs, since we're closing it
-        var windowUtils = browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                                               .getInterface(Ci.nsIDOMWindowUtils);
-        windowUtils.disableDialogs();
+        browser.contentWindow.windowUtils.disableDialogs();
       }
 
       // Remove the tab's filter and progress listener.
@@ -3057,9 +3066,7 @@ window._gBrowser = {
     let [closeWindow] = aOtherTab._endRemoveArgs;
     if (closeWindow) {
       let win = aOtherTab.ownerGlobal;
-      let dwu = win.QueryInterface(Ci.nsIInterfaceRequestor)
-                   .getInterface(Ci.nsIDOMWindowUtils);
-      dwu.suppressAnimation(true);
+      win.windowUtils.suppressAnimation(true);
       // Only suppressing window animations isn't enough to avoid
       // an empty content area being painted.
       let baseWin = win.QueryInterface(Ci.nsIInterfaceRequestor)
@@ -3409,7 +3416,7 @@ window._gBrowser = {
     }
 
     // tell a new window to take the "dropped" tab
-    return window.openDialog(getBrowserURL(), "_blank", options, aTab);
+    return window.openDialog(AppConstants.BROWSER_CHROME_URL, "_blank", options, aTab);
   },
 
   /**
@@ -3422,7 +3429,7 @@ window._gBrowser = {
     if (contextTab.multiselected) {
       tabs = this.selectedTabs;
     } else {
-      tabs = [gBrowser.selectedTab];
+      tabs = [contextTab];
     }
 
     if (this.tabs.length == tabs.length) {
@@ -4129,9 +4136,7 @@ window._gBrowser = {
       this._uniquePanelIDCounter = 0;
     }
 
-    let outerID = window.QueryInterface(Ci.nsIInterfaceRequestor)
-                        .getInterface(Ci.nsIDOMWindowUtils)
-                        .outerWindowID;
+    let outerID = window.windowUtils.outerWindowID;
 
     // We want panel IDs to be globally unique, that's why we include the
     // window ID. We switched to a monotonic counter as Date.now() lead
@@ -4184,6 +4189,18 @@ window._gBrowser = {
   },
 
   _setupEventListeners() {
+    this.tabpanels.addEventListener("select", event => {
+      if (event.target == this.tabpanels) {
+        this.updateCurrentBrowser();
+      }
+    });
+
+    this.tabpanels.addEventListener("preselect", event => {
+      if (gMultiProcessBrowser) {
+        this._getSwitcher().requestTab(event.detail);
+      }
+    });
+
     this.addEventListener("DOMWindowClose", (event) => {
       if (!event.isTrusted)
         return;
@@ -4892,8 +4909,7 @@ var StatusPanel = {
       // panel's width once it has been painted, so we can do this
       // without flushing layout.
       this.panel.style.minWidth =
-        window.QueryInterface(Ci.nsIInterfaceRequestor)
-              .getInterface(Ci.nsIDOMWindowUtils)
+        window.windowUtils
               .getBoundsWithoutFlushing(this.panel).width + "px";
     } else {
       this.panel.style.minWidth = "";
