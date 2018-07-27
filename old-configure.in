@@ -885,13 +885,6 @@ case "$target" in
         fi
     else
         TARGET_COMPILER_ABI=msvc
-<<<<<<< HEAD
-        AR='lib'
-        AR_FLAGS='-NOLOGO -OUT:$@'
-=======
-        if test "$AS_BIN"; then
-            AS="$(basename "$AS_BIN")"
-        fi
         case "$LINKER" in
         *lld*)
             AR='llvm-lib'
@@ -902,7 +895,6 @@ case "$target" in
             AR_FLAGS='-NOLOGO -OUT:$@'
             ;;
         esac
->>>>>>> master
         AR_EXTRACT=
         RANLIB='echo not_ranlib'
         STRIP='echo not_strip'
