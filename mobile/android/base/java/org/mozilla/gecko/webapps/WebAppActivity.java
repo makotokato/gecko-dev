@@ -9,6 +9,7 @@ import android.annotation.TargetApi;
 import android.app.ActivityManager;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
@@ -115,6 +116,11 @@ public class WebAppActivity extends AppCompatActivity
             }
 
             @Override
+            public void onProgressChange(GeckoSession session, int progress) {
+
+            }
+
+            @Override
             public void onSecurityChange(GeckoSession session, SecurityInformation security) {
                 // We want to ignore the extraneous first about:blank load
                 if (mIsFirstLoad && security.origin.startsWith("moz-nullprincipal:")) {
@@ -170,6 +176,15 @@ public class WebAppActivity extends AppCompatActivity
         updateFromManifest();
 
         mGeckoSession.loadUri(mManifest.getStartUri().toString());
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+
+        if (mPromptService != null) {
+            mPromptService.changePromptOrientation(newConfig.orientation);
+        }
     }
 
     private void fallbackToFennec(String message) {

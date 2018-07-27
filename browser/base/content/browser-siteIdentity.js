@@ -347,12 +347,8 @@ var gIdentityHandler = {
     // Firstly, populate the state properties required to display the UI. See
     // the documentation of the individual properties for details.
     this.setURI(uri);
-    this._sslStatus = gBrowser.securityUI
-                              .QueryInterface(Ci.nsISSLStatusProvider)
-                              .SSLStatus;
-    if (this._sslStatus) {
-      this._sslStatus.QueryInterface(Ci.nsISSLStatus);
-    }
+    this._sslStatus = gBrowser.securityUI.secInfo &&
+                      gBrowser.securityUI.secInfo.SSLStatus;
 
     // Then, update the user interface with the available data.
     this.refreshIdentityBlock();
@@ -1027,7 +1023,7 @@ var gIdentityHandler = {
       let block = document.createElement("vbox");
       block.setAttribute("id", "identity-popup-popup-container");
       menulist.setAttribute("sizetopopup", "none");
-      menulist.setAttribute("class", "identity-popup-popup-menulist subviewkeynav");
+      menulist.setAttribute("class", "identity-popup-popup-menulist");
       menulist.setAttribute("id", "identity-popup-popup-menulist");
 
       for (let state of SitePermissions.getAvailableStates(aPermission.id)) {
@@ -1094,7 +1090,7 @@ var gIdentityHandler = {
     }
 
     let button = document.createElement("button");
-    button.setAttribute("class", "identity-popup-permission-remove-button subviewkeynav");
+    button.setAttribute("class", "identity-popup-permission-remove-button");
     let tooltiptext = gNavigatorBundle.getString("permissions.remove.tooltip");
     button.setAttribute("tooltiptext", tooltiptext);
     button.addEventListener("command", () => {
@@ -1150,7 +1146,7 @@ var gIdentityHandler = {
 
     let text = document.createElement("label");
     text.setAttribute("flex", "1");
-    text.setAttribute("class", "identity-popup-permission-label text-link subviewkeynav");
+    text.setAttribute("class", "identity-popup-permission-label text-link");
 
     let popupCount = gBrowser.selectedBrowser.blockedPopups.length;
     let messageBase = gNavigatorBundle.getString("popupShowBlockedPopupsIndicatorText");
