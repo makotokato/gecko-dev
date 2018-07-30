@@ -20,6 +20,7 @@
 #define wasm_types_h
 
 #include "mozilla/Alignment.h"
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/EnumeratedArray.h"
 #include "mozilla/HashFunctions.h"
@@ -75,6 +76,7 @@ typedef Rooted<WasmGlobalObject*> RootedWasmGlobalObject;
 
 namespace wasm {
 
+using mozilla::ArrayEqual;
 using mozilla::Atomic;
 using mozilla::DebugOnly;
 using mozilla::EnumeratedArray;
@@ -83,7 +85,6 @@ using mozilla::MallocSizeOf;
 using mozilla::Nothing;
 using mozilla::PodZero;
 using mozilla::PodCopy;
-using mozilla::PodEqual;
 using mozilla::Some;
 using mozilla::Unused;
 
@@ -2374,48 +2375,6 @@ class DebugFrame
     static const unsigned Alignment = 8;
     static void alignmentStaticAsserts();
 };
-
-# ifdef ENABLE_WASM_GC
-// A packed format for an argument to the Instance::postBarrier function.
-class PostBarrierArg
-{
-  public:
-    enum class Type {
-        Global = 0x0,
-        Last = Global
-    };
-
-  private:
-    uint32_t type_: 1;
-    uint32_t payload_: 31;
-
-    PostBarrierArg(uint32_t payload, Type type)
-      : type_(uint32_t(type)),
-        payload_(payload)
-    {
-        MOZ_ASSERT(payload < (UINT32_MAX >> 1));
-        MOZ_ASSERT(uint32_t(type) <= uint32_t(Type::Last));
-    }
-
-  public:
-    static PostBarrierArg Global(uint32_t globalIndex) {
-        return PostBarrierArg(globalIndex, Type::Global);
-    }
-
-    Type type() const {
-        MOZ_ASSERT(type_ <= uint32_t(Type::Last));
-        return Type(type_);
-    }
-    uint32_t globalIndex() const {
-        MOZ_ASSERT(type() == Type::Global);
-        return payload_;
-    }
-
-    uint32_t rawPayload() const {
-        return (payload_ << 1) | type_;
-    }
-};
-# endif
 
 } // namespace wasm
 } // namespace js

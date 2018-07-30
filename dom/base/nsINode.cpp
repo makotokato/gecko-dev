@@ -1296,7 +1296,7 @@ CheckForOutdatedParent(nsINode* aParent, nsINode* aNode, ErrorResult& aError)
 
     if (JS::GetNonCCWObjectGlobal(existingObj) !=
         global->GetGlobalJSObject()) {
-      JSAutoRealm ar(cx, existingObj);
+      JSAutoRealmAllowCCW ar(cx, existingObj);
       ReparentWrapper(cx, existingObj, aError);
     }
   }
@@ -1316,7 +1316,7 @@ ReparentWrappersInSubtree(nsIContent* aRoot)
   JS::Rooted<JSObject*> reflector(cx);
   for (nsIContent* cur = aRoot; cur; cur = cur->GetNextNode(aRoot)) {
     if ((reflector = cur->GetWrapper())) {
-      JSAutoRealm ar(cx, reflector);
+      JSAutoRealmAllowCCW ar(cx, reflector);
       ReparentWrapper(cx, reflector, rv);
       rv.WouldReportJSException();
       if (rv.Failed()) {
@@ -1658,6 +1658,93 @@ nsINode::GetLastElementChild() const
 
   return nullptr;
 }
+
+static
+bool MatchAttribute(Element* aElement,
+                    int32_t aNamespaceID,
+                    nsAtom* aAttrName,
+                    void* aData)
+{
+  MOZ_ASSERT(aElement, "Must have content node to work with!");
+  nsString* attrValue = static_cast<nsString*>(aData);
+  if (aNamespaceID != kNameSpaceID_Unknown &&
+      aNamespaceID != kNameSpaceID_Wildcard) {
+    return attrValue->EqualsLiteral("*") ?
+      aElement->HasAttr(aNamespaceID, aAttrName) :
+      aElement->AttrValueIs(aNamespaceID, aAttrName, *attrValue,
+                            eCaseMatters);
+  }
+
+  // Qualified name match. This takes more work.
+  uint32_t count = aElement->GetAttrCount();
+  for (uint32_t i = 0; i < count; ++i) {
+    const nsAttrName* name = aElement->GetAttrNameAt(i);
+    bool nameMatch;
+    if (name->IsAtom()) {
+      nameMatch = name->Atom() == aAttrName;
+    } else if (aNamespaceID == kNameSpaceID_Wildcard) {
+      nameMatch = name->NodeInfo()->Equals(aAttrName);
+    } else {
+      nameMatch = name->NodeInfo()->QualifiedNameEquals(aAttrName);
+    }
+
+    if (nameMatch) {
+      return attrValue->EqualsLiteral("*") ||
+        aElement->AttrValueIs(name->NamespaceID(), name->LocalName(),
+                              *attrValue, eCaseMatters);
+    }
+  }
+
+  return false;
+}
+
+already_AddRefed<nsIHTMLCollection>
+nsINode::GetElementsByAttribute(const nsAString& aAttribute,
+                                const nsAString& aValue)
+{
+  RefPtr<nsAtom> attrAtom(NS_Atomize(aAttribute));
+  nsAutoPtr<nsString> attrValue(new nsString(aValue));
+  RefPtr<nsContentList> list = new nsContentList(this,
+                                          MatchAttribute,
+                                          nsContentUtils::DestroyMatchString,
+                                          attrValue.forget(),
+                                          true,
+                                          attrAtom,
+                                          kNameSpaceID_Unknown);
+
+  return list.forget();
+}
+
+already_AddRefed<nsIHTMLCollection>
+nsINode::GetElementsByAttributeNS(const nsAString& aNamespaceURI,
+                                  const nsAString& aAttribute,
+                                  const nsAString& aValue,
+                                  ErrorResult& aRv)
+{
+  RefPtr<nsAtom> attrAtom(NS_Atomize(aAttribute));
+  nsAutoPtr<nsString> attrValue(new nsString(aValue));
+
+  int32_t nameSpaceId = kNameSpaceID_Wildcard;
+  if (!aNamespaceURI.EqualsLiteral("*")) {
+    nsresult rv =
+      nsContentUtils::NameSpaceManager()->RegisterNameSpace(aNamespaceURI,
+                                                            nameSpaceId);
+    if (NS_FAILED(rv)) {
+      aRv.Throw(rv);
+      return nullptr;
+    }
+  }
+
+  RefPtr<nsContentList> list = new nsContentList(this,
+                                          MatchAttribute,
+                                          nsContentUtils::DestroyMatchString,
+                                          attrValue.forget(),
+                                          true,
+                                          attrAtom,
+                                          nameSpaceId);
+  return list.forget();
+}
+
 
 void
 nsINode::Prepend(const Sequence<OwningNodeOrString>& aNodes,
@@ -2848,7 +2935,10 @@ nsINode::Localize(JSContext* aCx,
       aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
       return nullptr;
     }
-    domElements.AppendElement(domElement, fallible);
+    if (!domElements.AppendElement(domElement, fallible)) {
+      aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
+      return nullptr;
+    }
 
     domElement->GetNamespaceURI(element->mNamespaceURI);
     element->mLocalName = domElement->LocalName();

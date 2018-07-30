@@ -689,6 +689,8 @@ nsFrameLoader::AddTreeItemToTreeOwner(nsIDocShellTreeItem* aItem,
   // Now that we have our type set, add ourselves to the parent, as needed.
   if (aParentNode) {
     aParentNode->AddChild(aItem);
+  } else if (nsCOMPtr<nsIDocShell> childAsDocShell = do_QueryInterface(aItem)) {
+    childAsDocShell->AttachBrowsingContext(aParentNode);
   }
 
   bool retval = false;
@@ -1893,7 +1895,7 @@ nsFrameLoader::SetOwnerContent(Element* aContent)
 
   JS::RootedObject wrapper(jsapi.cx(), GetWrapper());
   if (wrapper) {
-    JSAutoRealm ar(jsapi.cx(), wrapper);
+    JSAutoRealmAllowCCW ar(jsapi.cx(), wrapper);
     IgnoredErrorResult rv;
     ReparentWrapper(jsapi.cx(), wrapper, rv);
     Unused << NS_WARN_IF(rv.Failed());

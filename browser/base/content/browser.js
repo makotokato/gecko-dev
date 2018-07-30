@@ -1376,6 +1376,9 @@ var gBrowserInit = {
       // make sure it has a docshell
       gBrowser.docShell;
 
+      // Remove the speculative focus from the urlbar to let the url be formatted.
+      gURLBar.removeAttribute("focused");
+
       try {
         gBrowser.swapBrowsersAndCloseOther(gBrowser.selectedTab, tabToAdopt);
       } catch (e) {
@@ -7077,12 +7080,7 @@ function BrowserOpenAddonsMgr(aView) {
     let browserWindow;
 
     var receivePong = function(aSubject, aTopic, aData) {
-      let browserWin = aSubject.QueryInterface(Ci.nsIInterfaceRequestor)
-                               .getInterface(Ci.nsIWebNavigation)
-                               .QueryInterface(Ci.nsIDocShellTreeItem)
-                               .rootTreeItem
-                               .QueryInterface(Ci.nsIInterfaceRequestor)
-                               .getInterface(Ci.nsIDOMWindow);
+      let browserWin = aSubject.docShell.rootTreeItem.domWindow;
       if (!emWindow || browserWin == window /* favor the current window */) {
         emWindow = aSubject;
         browserWindow = browserWin;

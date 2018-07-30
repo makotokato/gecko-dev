@@ -127,14 +127,13 @@ using namespace js::shell;
 
 using js::shell::RCFile;
 
+using mozilla::ArrayEqual;
 using mozilla::ArrayLength;
 using mozilla::Atomic;
 using mozilla::MakeScopeExit;
 using mozilla::Maybe;
 using mozilla::Nothing;
 using mozilla::NumberEqualsInt32;
-using mozilla::PodCopy;
-using mozilla::PodEqual;
 using mozilla::TimeDuration;
 using mozilla::TimeStamp;
 
@@ -737,7 +736,7 @@ ShellInterruptCallback(JSContext* cx)
     if (sc->haveInterruptFunc) {
         bool wasAlreadyThrowing = cx->isExceptionPending();
         JS::AutoSaveExceptionState savedExc(cx);
-        JSAutoRealm ar(cx, &sc->interruptFunc.toObject());
+        JSAutoRealmAllowCCW ar(cx, &sc->interruptFunc.toObject());
         RootedValue rval(cx);
 
         // Report any exceptions thrown by the JS interrupt callback, but do
@@ -1965,7 +1964,7 @@ Evaluate(JSContext* cx, unsigned argc, Value* vp)
     }
 
     {
-        JSAutoRealm ar(cx, global);
+        JSAutoRealmAllowCCW ar(cx, global);
         RootedScript script(cx);
 
         {
@@ -2034,7 +2033,7 @@ Evaluate(JSContext* cx, unsigned argc, Value* vp)
 
         if (!JS_ExecuteScript(cx, envChain, script, args.rval())) {
             if (catchTermination && !JS_IsExceptionPending(cx)) {
-                JSAutoRealm ar1(cx, callerGlobal);
+                JSAutoRealmAllowCCW ar1(cx, callerGlobal);
                 JSString* str = JS_NewStringCopyZ(cx, "terminated");
                 if (!str)
                     return false;
@@ -2074,7 +2073,7 @@ Evaluate(JSContext* cx, unsigned argc, Value* vp)
                 return false;
             }
 
-            if (!PodEqual(loadBuffer.begin(), saveBuffer.begin(), loadBuffer.length())) {
+            if (!ArrayEqual(loadBuffer.begin(), saveBuffer.begin(), loadBuffer.length())) {
                 JS_ReportErrorNumberASCII(cx, my_GetErrorMessage, nullptr,
                                           JSSMSG_CACHE_EQ_CONTENT_FAILED);
                 return false;
@@ -3052,7 +3051,7 @@ DisassembleToSprinter(JSContext* cx, unsigned argc, Value* vp, Sprinter* sprinte
         /* Without arguments, disassemble the current script. */
         RootedScript script(cx, GetTopScript(cx));
         if (script) {
-            JSAutoRealm ar(cx, script);
+            JSAutoRealmAllowCCW ar(cx, script);
             if (!Disassemble(cx, script, p.lines, sprinter))
                 return false;
             if (!SrcNotes(cx, script, sprinter))
@@ -3315,7 +3314,7 @@ Clone(JSContext* cx, unsigned argc, Value* vp)
 
     RootedObject funobj(cx);
     {
-        Maybe<JSAutoRealm> ar;
+        Maybe<JSAutoRealmAllowCCW> ar;
         RootedObject obj(cx, args[0].isPrimitive() ? nullptr : &args[0].toObject());
 
         if (obj && obj->is<CrossCompartmentWrapperObject>()) {
@@ -3468,7 +3467,7 @@ NewSandbox(JSContext* cx, bool lazy)
         return nullptr;
 
     {
-        JSAutoRealm ar(cx, obj);
+        JSAutoRealmAllowCCW ar(cx, obj);
         if (!lazy && !JS::InitRealmStandardClasses(cx))
             return nullptr;
 
@@ -3534,7 +3533,7 @@ EvalInContext(JSContext* cx, unsigned argc, Value* vp)
 
     DescribeScriptedCaller(cx, &filename, &lineno);
     {
-        Maybe<JSAutoRealm> ar;
+        Maybe<JSAutoRealmAllowCCW> ar;
         unsigned flags;
         JSObject* unwrapped = UncheckedUnwrap(sobj, true, &flags);
         if (flags & Wrapper::CROSS_COMPARTMENT) {
@@ -3645,7 +3644,7 @@ WorkerMain(WorkerInput* input)
         if (!global)
             break;
 
-        JSAutoRealm ar(cx, global);
+        JSAutoRealmAllowCCW ar(cx, global);
 
         JS::CompileOptions options(cx);
         options.setFileAndLine("<string>", 1)
@@ -5190,7 +5189,7 @@ DecompileThisScript(JSContext* cx, unsigned argc, Value* vp)
     }
 
     {
-        JSAutoRealm ar(cx, iter.script());
+        JSAutoRealmAllowCCW ar(cx, iter.script());
 
         RootedScript script(cx, iter.script());
         JSString* result = JS_DecompileScript(cx, script);
@@ -5582,7 +5581,7 @@ SingleStepCallback(void* arg, jit::Simulator* sim, void* pc)
     // Only append the stack if it differs from the last stack.
     if (sc->stacks.empty() ||
         sc->stacks.back().length() != stack.length() ||
-        !PodEqual(sc->stacks.back().begin(), stack.begin(), stack.length()))
+        !ArrayEqual(sc->stacks.back().begin(), stack.begin(), stack.length()))
     {
         if (!sc->stacks.append(std::move(stack)))
             oomUnsafe.crash("stacks.append");
@@ -7688,7 +7687,7 @@ PrintStackTrace(JSContext* cx, HandleValue exn)
     if (!exn.isObject())
         return false;
 
-    Maybe<JSAutoRealm> ar;
+    Maybe<JSAutoRealmAllowCCW> ar;
     RootedObject exnObj(cx, &exn.toObject());
     if (IsCrossCompartmentWrapper(exnObj)) {
         exnObj = UncheckedUnwrap(exnObj);
@@ -8393,7 +8392,7 @@ NewGlobalObject(JSContext* cx, JS::RealmOptions& options,
         return nullptr;
 
     {
-        JSAutoRealm ar(cx, glob);
+        JSAutoRealmAllowCCW ar(cx, glob);
 
 #ifndef LAZY_STANDARD_CLASSES
         if (!JS::InitRealmStandardClasses(cx))
@@ -8998,7 +8997,7 @@ Shell(JSContext* cx, OptionParser* op, char** envp)
     if (!glob)
         return 1;
 
-    JSAutoRealm ar(cx, glob);
+    JSAutoRealmAllowCCW ar(cx, glob);
 
     ShellContext* sc = GetShellContext(cx);
     int result = EXIT_SUCCESS;
