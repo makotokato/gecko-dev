@@ -109,7 +109,13 @@ else:
             asm.flags = ['$(DEFINES)', '$(LOCAL_INCLUDES)']
             SOURCES += ['!win64.asm']
     elif CONFIG['FFI_TARGET'] == 'AARCH64_WIN64':
-        ffi_srcs = ('ffi.c', 'win64.asm')
+        ffi_srcs = ['ffi.c']
+        GENERATED_FILES += ['win64.asm']
+        asm = GENERATED_FILES['win64.asm']
+        asm.inputs = ['/js/src/ctypes/libffi/src/aarch64/win64.S']
+        asm.script = 'preprocess_libffi_asm.py'
+        asm.flags = ['$(DEFINES)', '$(LOCAL_INCLUDES)']
+        SOURCES += ['!win64.asm']
     elif CONFIG['FFI_TARGET'] == 'X86_DARWIN':
         DEFINES['FFI_MMAP_EXEC_WRIT'] = True
         if CONFIG['CPU_ARCH'] == 'x86':

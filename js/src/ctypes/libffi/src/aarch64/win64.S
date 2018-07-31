@@ -31,6 +31,8 @@
 
   TEXTAREA
 
+#define ffi_call_SYSV_FS (8 * 4)
+
   ; extern unsigned
   ; ffi_call_SYSV (void (*)(struct call_context *context,
   ;                         unsigned char *,
@@ -41,10 +43,11 @@
   ;                         void (*fn)(void));
   NESTED_ENTRY ffi_call_SYSV
 
-  PROLOG_SAVE_REG_PAIR fp, lr, #-16
-  PROLOG_SAVE_REG_PAIR x23, x24, #-32
-  PROLOG_SAVE_REG_PAIR x21, x22, #-48
-  PROLOG_STACK_ALLOC #48
+  PROLOG_SAVE_REG_PAIR fp, lr, #-16!
+  PROLOG_STACK_ALLOC ffi_call_SYSV_FS
+
+  stp     x21, x22, [sp, #0]
+  stp     x23, x24, [sp, #16]
 
   mov     x21, x1
   mov     x22, x2
@@ -73,9 +76,9 @@
 
   ; Load the vector argument passing registers
   ldp     q0, q1, [x21, #256]
-  ldp     q2, q3, [x21, #256 + #32]
-  ldp     q4, q5, [x21, #256 + #64]
-  ldp     q6, q7, [x21, #256 + #96]
+  ldp     q2, q3, [x21, #(256 + 32)]
+  ldp     q4, q5, [x21, #(256 + 64)]
+  ldp     q6, q7, [x21, #(256 + 96)]
 
 ffi_call_non_vector
   ; Load the core argument passing registers.
@@ -102,25 +105,27 @@ ffi_call_non_vector
 
   ; Save the vector argument passing registers.
   stp     q0, q1, [x21, #256]
-  stp     q2, q3, [x21, #256 + #32]
-  stp     q4, q5, [x21, #256 + #64]
-  stp     q6, q7, [x21, #256 + #96]
+  stp     q2, q3, [x21, #(256 + 32)]
+  stp     q4, q5, [x21, #(256 + 64)]
+  stp     q6, q7, [x21, #(256 + 96)]
 
 ffi_call_finish
   ; All done, unwind our stack frame
+  ldp     x21, x22, [x29, # - ffi_call_SYSV_FS]
+  ldp     x23, x24, [x29, # - ffi_call_SYSV_FS + 16]
+
   EPILOG_STACK_RESTORE
-  EPILOG_RESTORE_REG_PAIR x21, x22, #-48
-  EPILOG_RESTORE_REG_PAIR x23, x24, #-32
-  EPILOG_RESTORE_REG_PAIR fp, lr, #-16
+  EPILOG_RESTORE_REG_PAIR fp, lr, #16!
   EPILOG_RETURN
   NESTED_END
 
 
   NESTED_ENTRY ffi_closure_SYSV
 
-  PROLOG_SAVE_REG_PAIR fp, lr, #-16
-  PROLOG_SAVE_REG_PAIR x21, x22, #-32
-  PROLOG_STACK_ALLOC #0x320
+  PROLOG_SAVE_REG_PAIR fp, lr, #-16!
+  PROLOG_STACK_ALLOC 0x320
+
+  stp     x21, x22, [fp, #-16]
   
   mov     x21, sp
   ; Preserve our struct trampoline_data
@@ -141,9 +146,9 @@ ffi_call_finish
 
   ; Save the argument passing vector registers.
   stp     q0, q1, [x21, #256]
-  stp     q2, q3, [x21, #256 + #32]
-  stp     q4, q5, [x21, #256 + #64]
-  stp     q6, q7, [x21, #256 + #96]
+  stp     q2, q3, [x21, #(256 + 32)]
+  stp     q4, q5, [x21, #(256 + 64)]
+  stp     q6, q7, [x21, #(256 + 96)]
 
 ffi_closure_non_vector
   ; Load &ffi_closure.
@@ -162,9 +167,9 @@ ffi_closure_non_vector
 
   ; Load the result passing vector register.
   ldp     q0, q1, [x21, #256]
-  ldp     q2, q3, [x21, #256 + #32]
-  ldp     q4, q5, [x21, #256 + #64]
-  ldp     q6, q7, [x21, #256 + #96]
+  ldp     q2, q3, [x21, #(256 + 32)]
+  ldp     q4, q5, [x21, #(256 + 64)]
+  ldp     q6, q7, [x21, #(256 + 96)]
 
 ffi_closure_finish
   ; Load the result passing core registers.
@@ -172,10 +177,12 @@ ffi_closure_finish
   ldp     x2, x3, [x21, #16]
   ldp     x4, x5, [x21, #32]
   ldp     x6, x7, [x21, #48]
+  ; Note nothing useful is returned in x8.
 
+  ; We are done, unwind our frame.
+  ldp     x21, x22, [x29,  #-16]
   EPILOG_STACK_RESTORE
-  EPILOG_RESTORE_REG_PAIR x21, x22, #-32
-  EPILOG_RESTORE_REG_PAIR fp, lr, #-16
+  EPILOG_RESTORE_REG_PAIR fp, lr, #16!
   EPILOG_RETURN
   NESTED_END
 
