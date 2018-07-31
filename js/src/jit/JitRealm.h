@@ -24,6 +24,9 @@
 #include "js/Value.h"
 #include "vm/Stack.h"
 
+#undef GetProp
+#undef SetProp
+
 namespace js {
 namespace jit {
 

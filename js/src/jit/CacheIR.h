@@ -16,6 +16,9 @@
 #include "jit/ICState.h"
 #include "jit/SharedIC.h"
 
+#undef GetProp
+#undef SetProp
+
 namespace js {
 namespace jit {
 

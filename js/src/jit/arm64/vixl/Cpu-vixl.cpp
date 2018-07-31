@@ -27,6 +27,8 @@
 #include "jit/arm64/vixl/Cpu-vixl.h"
 #include "jit/arm64/vixl/Utils-vixl.h"
 
+#include <windows.h>
+
 namespace vixl {
 
 // Initialise to smallest possible cache size.
