@@ -135,6 +135,17 @@ struct DisplayItemEntry {
 };
 
 /**
+ * Returns true if the given |aType| is an effect start marker.
+ */
+static bool
+IsEffectStartMarker(DisplayItemEntryType aType)
+{
+  return aType == DisplayItemEntryType::PUSH_OPACITY ||
+         aType == DisplayItemEntryType::PUSH_OPACITY_WITH_BG ||
+         aType == DisplayItemEntryType::PUSH_TRANSFORM;
+}
+
+/**
  * Returns true if the given |aType| is an effect end marker.
  */
 static bool
@@ -218,15 +229,7 @@ public:
     return DisplayItemEntry { next, DisplayItemEntryType::ITEM };
   }
 
-  nsDisplayItem* GetNext()
-  {
-    // This function is only supposed to be called if there are no markers set.
-    // Breaking this invariant can potentially break effect flattening and/or
-    // display item merging.
-    MOZ_ASSERT(mMarkers.empty());
-
-    return FlattenedDisplayItemIterator::GetNext();
-  }
+  nsDisplayItem* GetNext();
 
   bool HasNext() const
   {
@@ -1748,6 +1751,49 @@ protected:
   };
   CachedScrollMetadata mCachedScrollMetadata;
 };
+
+nsDisplayItem*
+FLBDisplayItemIterator::GetNext()
+{
+  // This function is only supposed to be called if there are no markers set.
+  // Breaking this invariant can potentially break effect flattening and/or
+  // display item merging.
+  MOZ_ASSERT(mMarkers.empty());
+
+  nsDisplayItem* next = mNext;
+
+  // Advance mNext to the following item
+  if (next) {
+    nsDisplayItem* peek = next->GetAbove();
+
+    // Peek ahead to the next item and see if it can be merged with the
+    // current item.
+    if (peek && next->CanMerge(peek)) {
+      // Create a list of consecutive items that can be merged together.
+      AutoTArray<nsDisplayItem*, 2> mergedItems { next, peek };
+      while ((peek = peek->GetAbove())) {
+        if (!next->CanMerge(peek)) {
+          break;
+        }
+
+        mergedItems.AppendElement(peek);
+      }
+
+      // We have items that can be merged together.
+      // Merge them into a temporary item and process that item immediately.
+      MOZ_ASSERT(mergedItems.Length() > 1);
+      next = mState->mBuilder->MergeItems(mergedItems);
+    }
+
+    // |mNext| is either the first item that could not be merged with |next|,
+    // or a nullptr.
+    mNext = peek;
+
+    ResolveFlattening();
+  }
+
+  return next;
+}
 
 bool
 FLBDisplayItemIterator::NextItemWantsInactiveLayer()
@@ -4576,6 +4622,8 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
     MOZ_ASSERT(item);
     DisplayItemType itemType = item->GetType();
 
+    const bool inEffect = InTransform() || InOpacity();
+
     if (itemType == DisplayItemType::TYPE_COMPOSITOR_HITTEST_INFO) {
       nsDisplayCompositorHitTestInfo* hitTestInfo =
         static_cast<nsDisplayCompositorHitTestInfo*>(item);
@@ -4584,38 +4632,12 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
         continue;
       }
 
-      if (InTransform() || InOpacity()) {
+      if (inEffect) {
         // If this item is inside a flattened effect, everything below is
         // unnecessary processing.
         MOZ_ASSERT(selectedLayer);
         selectedLayer->AccumulateHitTestInfo(this, hitTestInfo, transformNode);
         continue;
-      }
-    }
-
-    if (marker == DisplayItemEntryType::ITEM) {
-      // Peek ahead to the next item and see if it can be merged with the
-      // current item.
-      nsDisplayItem* peek = iter.PeekNext();
-      if (peek && item->CanMerge(peek)) {
-        // Create a list of consecutive items that can be merged together.
-        AutoTArray<nsDisplayItem*, 2> mergedItems { item };
-        while ((peek = iter.PeekNext())) {
-          if (!item->CanMerge(peek)) {
-            break;
-          }
-
-          mergedItems.AppendElement(peek);
-
-          // Move the iterator forward since we will merge this item.
-          iter.GetNext();
-        }
-
-        // We have items that can be merged together.
-        // Merge them into a temporary item and process that item immediately.
-        MOZ_ASSERT(mergedItems.Length() > 1);
-        item = mBuilder->MergeItems(mergedItems);
-        MOZ_ASSERT(item && itemType == item->GetType());
       }
     }
 
@@ -4649,7 +4671,7 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
     const ActiveScrolledRoot* itemASR = nullptr;
     const DisplayItemClipChain* layerClipChain = nullptr;
 
-    if (mManager->IsWidgetLayerManager() && !InTransform()) {
+    if (mManager->IsWidgetLayerManager() && !inEffect) {
       animatedGeometryRoot = item->GetAnimatedGeometryRoot();
       itemASR = item->GetActiveScrolledRoot();
       const DisplayItemClipChain* itemClipChain = item->GetClipChain();
@@ -4659,7 +4681,7 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
       } else {
         layerClipChain = itemClipChain;
       }
-    } else if (InTransform()) {
+    } else if (inEffect) {
       animatedGeometryRoot = containerAGR;
       itemASR = containerASR;
 
@@ -4670,6 +4692,16 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
       animatedGeometryRoot = mContainerAnimatedGeometryRoot;
       itemASR = mContainerASR;
       item->FuseClipChainUpTo(mBuilder, mContainerASR);
+    }
+
+    const DisplayItemClip& itemClip = item->GetClip();
+
+    if (inEffect && marker == DisplayItemEntryType::ITEM) {
+      MOZ_ASSERT(selectedLayer);
+      selectedLayer->Accumulate(this, item, nsIntRect(), nsRect(),
+                                itemClip, layerState, aList, marker,
+                                opacityIndices, transformNode);
+      continue;
     }
 
     if (animatedGeometryRoot == lastAnimatedGeometryRoot) {
@@ -4696,7 +4728,6 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
     }
 
     nsIntRect itemDrawRect = ScaleToOutsidePixels(itemContent, snap);
-    const DisplayItemClip& itemClip = item->GetClip();
     ParentLayerIntRect clipRect;
     if (itemClip.HasClip()) {
       const nsRect& itemClipRect = itemClip.GetClipRect();
@@ -4729,8 +4760,6 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
 
 #ifdef DEBUG
     nsRect bounds = itemContent;
-
-    const bool inEffect = InTransform() || InOpacity();
 
     if (itemType == DisplayItemType::TYPE_COMPOSITOR_HITTEST_INFO || inEffect) {
       bounds.SetEmpty();
@@ -6595,70 +6624,6 @@ FrameLayerBuilder::RecomputeVisibilityForItems(std::vector<AssignedDisplayItem>&
 }
 
 /**
- * Sets the clip chain and starts a new opacity group.
- */
-static void
-PushOpacity(gfxContext* aContext,
-            const nsRect& aPaintRect,
-            AssignedDisplayItem& aItem,
-            const int32_t aAUPDP)
-{
-  MOZ_ASSERT(aItem.mType == DisplayItemEntryType::PUSH_OPACITY ||
-             aItem.mType == DisplayItemEntryType::PUSH_OPACITY_WITH_BG);
-  MOZ_ASSERT(aItem.mItem->GetType() == DisplayItemType::TYPE_OPACITY);
-
-  aContext->Save();
-
-  DisplayItemClip clip;
-  clip.SetTo(aPaintRect);
-  clip.IntersectWith(aItem.mItem->GetClip());
-  clip.ApplyTo(aContext, aAUPDP);
-
-  nsDisplayOpacity* opacityItem = static_cast<nsDisplayOpacity*>(aItem.mItem);
-  const float opacity = opacityItem->GetOpacity();
-
-  if (aItem.mType == DisplayItemEntryType::PUSH_OPACITY_WITH_BG) {
-    aContext->PushGroupAndCopyBackground(gfxContentType::COLOR_ALPHA, opacity);
-  } else {
-    aContext->PushGroupForBlendBack(gfxContentType::COLOR_ALPHA, opacity);
-  }
-}
-
-static void
-PushTransform(gfxContext* aContext,
-              nsDisplayListBuilder* aBuilder,
-              AssignedDisplayItem& aItem,
-              const int32_t aAUPDP,
-              MatrixStack4x4& aMatrixStack,
-              const Matrix4x4Flagged& aBaseMatrix)
-{
-  MOZ_ASSERT(aItem.mType == DisplayItemEntryType::PUSH_TRANSFORM);
-  MOZ_ASSERT(aItem.mItem->GetType() == DisplayItemType::TYPE_TRANSFORM);
-
-  nsDisplayTransform* transform = static_cast<nsDisplayTransform*>(aItem.mItem);
-
-  if (transform->ShouldSkipTransform(aBuilder)) {
-    aMatrixStack.Push(Matrix4x4Flagged());
-  } else {
-    aMatrixStack.Push(transform->GetTransformForRendering());
-  }
-
-  gfx::Matrix4x4Flagged matrix = aMatrixStack.CurrentMatrix() * aBaseMatrix;
-  gfx::Matrix matrix2d;
-  DebugOnly<bool> ok = matrix.CanDraw2D(&matrix2d);
-  MOZ_ASSERT(ok);
-
-  aContext->Save();
-
-  const DisplayItemClip& itemClip = aItem.mItem->GetClip();
-  if (itemClip.HasClip()) {
-    itemClip.ApplyTo(aContext, aAUPDP);
-  }
-
-  aContext->SetMatrix(matrix2d);
-}
-
-/**
  * Tracks and caches the item clip.
  */
 struct ItemClipTracker {
@@ -6734,6 +6699,187 @@ private:
   DisplayItemClip mCurrentClip;
 };
 
+/**
+ * Tracks clips managed by |PushClip()| and |PopClip()|.
+ * If allowed by the caller, the top clip may be reused when a new clip that
+ * matches the previous one is pushed to the stack.
+ */
+struct ClipStack {
+  explicit ClipStack(gfxContext* aContext,
+                     const int32_t aAppUnitsPerDevPixel)
+    : mContext(aContext)
+    , mAppUnitsPerDevPixel(aAppUnitsPerDevPixel)
+    , mDeferredPopClip(false)
+  {}
+
+  ~ClipStack()
+  {
+    MOZ_ASSERT(!mDeferredPopClip);
+    MOZ_ASSERT(!HasClips());
+  }
+
+  /**
+   * Returns true if there are clips set.
+   */
+  bool HasClips() const
+  {
+    return mClips.Length() > 0;
+  }
+
+  /**
+   * Returns the clip at the top of the stack.
+   */
+  const DisplayItemClip& TopClip() const
+  {
+    MOZ_ASSERT(HasClips());
+    return mClips.LastElement();
+  }
+
+  /**
+   * Returns true if the top clip matches the given |aClip|.
+   */
+  bool TopClipMatches(const DisplayItemClip& aClip) {
+    return HasClips() && TopClip() == aClip;
+  }
+
+  /**
+   * Pops the current top clip. If |aDeferPopClip| is true, the top clip will
+   * not be popped before the next call to |PopClip(false)|.
+   * This allows the previously set clip to be reused during the next
+   * |PushClip()| call, if the new clip is identical with the top clip.
+   */
+  void PopClip(bool aDeferPopClip)
+  {
+    MOZ_ASSERT(HasClips());
+
+    if (aDeferPopClip) {
+      // Do not allow reusing clip with nested effects.
+      MOZ_ASSERT(!mDeferredPopClip);
+      mDeferredPopClip = true;
+      return;
+    }
+
+    if (TopClip().HasClip()) {
+      mContext->Restore();
+    }
+
+    mClips.RemoveLastElement();
+    mDeferredPopClip = false;
+  }
+
+  /**
+   * Pops the clip, if a call to |PopClip()| has been deferred.
+   */
+  void PopDeferredClip()
+  {
+    if (mDeferredPopClip) {
+      PopClip(false);
+    }
+  }
+
+  /**
+   * Pushes the given |aClip| to the stack.
+   */
+  void PushClip(const DisplayItemClip& aClip)
+  {
+    if (mDeferredPopClip && TopClipMatches(aClip)) {
+      // Reuse this clip. Defer the decision to reuse it again until the next
+      // call to PopClip().
+      mDeferredPopClip = false;
+      return;
+    }
+
+    PopDeferredClip();
+
+    mClips.AppendElement(aClip);
+
+    // Save the current state and apply new clip, if needed.
+    if (aClip.HasClip()) {
+      mContext->Save();
+      aClip.ApplyTo(mContext, mAppUnitsPerDevPixel);
+      mContext->NewPath();
+    }
+  }
+
+private:
+  gfxContext* mContext;
+  const int32_t mAppUnitsPerDevPixel;
+  AutoTArray<DisplayItemClip, 2> mClips;
+  bool mDeferredPopClip;
+};
+
+
+/**
+ * Returns a clip for the given |aItem|. If the clip can be simplified to not
+ * include rounded rects, |aOutClip| is used to store the simplified clip.
+ */
+static const DisplayItemClip*
+GetItemClip(const nsDisplayItem* aItem, DisplayItemClip& aOutClip)
+{
+  const DisplayItemClip& clip = aItem->GetClip();
+
+  if (!clip.HasClip()) {
+    return nullptr;
+  }
+
+  if (clip.GetRoundedRectCount() > 0 &&
+      !clip.IsRectClippedByRoundedCorner(aItem->GetPaintRect())) {
+    aOutClip.SetTo(clip.GetClipRect());
+    return &aOutClip;
+  }
+
+  return &clip;
+}
+
+/**
+ * Pushes a new opacity group for |aContext| based on |aItem|.
+ */
+static void
+PushOpacity(gfxContext* aContext,
+            AssignedDisplayItem& aItem)
+{
+  MOZ_ASSERT(aItem.mType == DisplayItemEntryType::PUSH_OPACITY ||
+             aItem.mType == DisplayItemEntryType::PUSH_OPACITY_WITH_BG);
+  MOZ_ASSERT(aItem.mItem->GetType() == DisplayItemType::TYPE_OPACITY);
+  nsDisplayOpacity* item = static_cast<nsDisplayOpacity*>(aItem.mItem);
+
+  const float opacity = item->GetOpacity();
+  if (aItem.mType == DisplayItemEntryType::PUSH_OPACITY_WITH_BG) {
+    aContext->PushGroupAndCopyBackground(gfxContentType::COLOR_ALPHA, opacity);
+  } else {
+    aContext->PushGroupForBlendBack(gfxContentType::COLOR_ALPHA, opacity);
+  }
+}
+
+/**
+ * Pushes the transformation matrix of |aItem| into |aMatrixStack| and sets the
+ * accumulated transform as the current transformation matrix for |aContext|.
+ */
+static void
+PushTransform(gfxContext* aContext,
+              AssignedDisplayItem& aItem,
+              nsDisplayListBuilder* aBuilder,
+              MatrixStack4x4& aMatrixStack,
+              const Matrix4x4Flagged& aBaseMatrix)
+{
+  MOZ_ASSERT(aItem.mType == DisplayItemEntryType::PUSH_TRANSFORM);
+  MOZ_ASSERT(aItem.mItem->GetType() == DisplayItemType::TYPE_TRANSFORM);
+
+  nsDisplayTransform* item = static_cast<nsDisplayTransform*>(aItem.mItem);
+  if (item->ShouldSkipTransform(aBuilder)) {
+    aMatrixStack.Push(Matrix4x4Flagged());
+  } else {
+    aMatrixStack.Push(item->GetTransformForRendering());
+  }
+
+  gfx::Matrix4x4Flagged matrix = aMatrixStack.CurrentMatrix() * aBaseMatrix;
+  gfx::Matrix matrix2d;
+  DebugOnly<bool> ok = matrix.CanDraw2D(&matrix2d);
+  MOZ_ASSERT(ok);
+
+  aContext->SetMatrix(matrix2d);
+}
+
 static void
 UpdateEffectTracking(int& aOpacityLevel,
                      int& aTransformLevel,
@@ -6758,25 +6904,6 @@ UpdateEffectTracking(int& aOpacityLevel,
   }
 
   MOZ_ASSERT(aOpacityLevel >= 0 && aTransformLevel >= 0);
-}
-
-static const DisplayItemClip*
-GetItemClip(const nsDisplayItem* aItem, DisplayItemClip& aOutClip)
-{
-  const DisplayItemClip& clip = aItem->GetClip();
-
-  if (!clip.HasClip()) {
-    return nullptr;
-  }
-
-  if (clip.GetRoundedRectCount() > 0 &&
-      !clip.IsRectClippedByRoundedCorner(aItem->GetPaintRect())) {
-    aOutClip = clip;
-    aOutClip.RemoveRoundedCorners();
-    return &aOutClip;
-  }
-
-  return &clip;
 }
 
 void
@@ -6807,9 +6934,22 @@ FrameLayerBuilder::PaintItems(std::vector<AssignedDisplayItem>& aItems,
   // when the effect display item does not intersect with the invalidated area.
   int emptyEffectLevel = 0;
 
-  // Stores the simplified version of the clip, if needed.
+  // Stores a simplified version of the item clip, if needed.
   DisplayItemClip temporaryClip;
+
+  // Two types of clips are used during PaintItems(): clips for items and clips
+  // for effects. Item clips are always the most recent clip set, and they are
+  // never nested. The previous item clip is reused, if the next item has the
+  // same clip. Item clips are removed when an effect starts or ends.
   ItemClipTracker itemClipTracker(aContext, appUnitsPerDevPixel);
+
+  // Since effects can be nested, the effect clips need to be nested as well.
+  // They are pushed for effect start marker, and popped for effect end marker.
+  // Effect clips are tracked by |effectClipStack|. If there are consecutive
+  // effects with the same clip, |effectClipStack| defers popping the clip for
+  // the first end marker, and tries to reuse the previously set clip, when
+  // processing the start marker for the next effect.
+  ClipStack effectClipStack(aContext, appUnitsPerDevPixel);
 
   MatrixStack4x4 matrixStack;
   const Matrix4x4Flagged base = Matrix4x4::From2D(aContext->CurrentMatrix());
@@ -6817,6 +6957,11 @@ FrameLayerBuilder::PaintItems(std::vector<AssignedDisplayItem>& aItems,
   for (uint32_t i = 0; i < aItems.size(); ++i) {
     AssignedDisplayItem& cdi = aItems[i];
     nsDisplayItem* item = cdi.mItem;
+
+    const auto NextItemStartsEffect = [&]() {
+      const uint32_t next = i + 1;
+      return next < aItems.size() && IsEffectStartMarker(aItems[next].mType);
+    };
 
     if (!item) {
       MOZ_ASSERT(cdi.mType == DisplayItemEntryType::ITEM);
@@ -6846,6 +6991,10 @@ FrameLayerBuilder::PaintItems(std::vector<AssignedDisplayItem>& aItems,
       // item had an empty paint rect. In the latter case, the items are skipped
       // until effect POP markers bring |emptyEffectLevel| back to 0.
       UpdateEffectTracking(emptyEffectLevel, emptyEffectLevel, cdi.mType);
+
+      // Sometimes the item that was going to reuse the previous clip is culled.
+      // Since |PushClip()| is never called for culled items, pop the clip now.
+      effectClipStack.PopDeferredClip();
       continue;
     }
 
@@ -6869,24 +7018,42 @@ FrameLayerBuilder::PaintItems(std::vector<AssignedDisplayItem>& aItems,
 
     if (cdi.mType == DisplayItemEntryType::PUSH_OPACITY ||
         cdi.mType == DisplayItemEntryType::PUSH_OPACITY_WITH_BG) {
-      PushOpacity(aContext, item->GetPaintRect(), cdi, appUnitsPerDevPixel);
+      // To avoid pushing large temporary surfaces, it is important to clip
+      // opacity group with both the paint rect and the actual opacity clip.
+      DisplayItemClip effectClip;
+      effectClip.SetTo(item->GetPaintRect());
+      effectClip.IntersectWith(item->GetClip());
+      effectClipStack.PushClip(effectClip);
+      PushOpacity(aContext, cdi);
     }
 
     if (cdi.mType == DisplayItemEntryType::POP_OPACITY) {
-      MOZ_ASSERT(item->GetType() == DisplayItemType::TYPE_OPACITY);
       MOZ_ASSERT(opacityLevel > 0);
       aContext->PopGroupAndBlend();
-      aContext->Restore();
     }
 
     if (cdi.mType == DisplayItemEntryType::PUSH_TRANSFORM) {
-      PushTransform(aContext, aBuilder, cdi, appUnitsPerDevPixel,
-                    matrixStack, base);
+      effectClipStack.PushClip(item->GetClip());
+      aContext->Save();
+      PushTransform(aContext, cdi, aBuilder, matrixStack, base);
     }
 
     if (cdi.mType == DisplayItemEntryType::POP_TRANSFORM) {
+      MOZ_ASSERT(transformLevel > 0);
       matrixStack.Pop();
       aContext->Restore();
+    }
+
+    if (IsEffectEndMarker(cdi.mType)) {
+      // Pop the clip for the effect.
+      MOZ_ASSERT(effectClipStack.HasClips());
+
+      // If the next item starts an effect, defer popping the current clip, and
+      // try to reuse it during the next call to |PushClip()|. Trying to reuse
+      // clips between nested effects would be difficult, for example due to
+      // possibly different coordinate system, so this optimization is limited
+      // to consecutive effects.
+      effectClipStack.PopClip(NextItemStartsEffect());
     }
 
     if (cdi.mType != DisplayItemEntryType::ITEM) {
