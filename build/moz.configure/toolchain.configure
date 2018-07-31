@@ -1763,7 +1763,13 @@ set_config('GNU_AS', gnu_as)
 add_old_configure_assignment('GNU_AS', gnu_as)
 
 # This only exists so directories using yasm can unset it.
-set_config('AS_DASH_C_FLAG', '-c')
+@depends(assembler)
+def as_dash_c_flag(assembler):
+    if 'armasm' in assembler:
+        return ' '
+    return '-c'
+
+set_config('AS_DASH_C_FLAG', as_dash_c_flag)
 
 
 # clang plugin handling
