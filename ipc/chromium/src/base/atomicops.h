@@ -141,20 +141,8 @@ Atomic64 Release_Load(volatile const Atomic64* ptr);
 // Include our platform specific implementation.
 #if defined(OS_WIN) && defined(ARCH_CPU_X86_FAMILY)
 #include "base/atomicops_internals_x86_msvc.h"
-#elif defined(OS_MACOSX) && defined(ARCH_CPU_X86_FAMILY)
-#include "base/atomicops_internals_x86_macosx.h"
-#elif defined(COMPILER_GCC) && defined(ARCH_CPU_X86_FAMILY)
-#include "base/atomicops_internals_x86_gcc.h"
-#elif defined(COMPILER_GCC) && defined(ARCH_CPU_ARMEL)
-#include "base/atomicops_internals_arm_gcc.h"
-#elif defined(COMPILER_GCC) && defined(ARCH_CPU_ARM64)
-#include "base/atomicops_internals_arm64_gcc.h"
-#elif defined(COMPILER_GCC) && defined(ARCH_CPU_MIPS)
-#include "base/atomicops_internals_mips_gcc.h"
-#elif defined(COMPILER_GCC) && defined(ARCH_CPU_PPC_FAMILY)
-#include "base/atomicops_internals_ppc_gcc.h"
 #else
-#include "base/atomicops_internals_mutex.h"
+#include "base/atomicops_internals_portable.h"
 #endif
 
 #endif  // BASE_ATOMICOPS_H_
