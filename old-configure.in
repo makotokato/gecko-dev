@@ -1101,6 +1101,7 @@ case "$target" in
         if test -n "$_WIN32_MSVC"; then
             DSO_LDOPTS="$DSO_LDOPTS -MACHINE:ARM64"
         fi
+        AC_DEFINE(_ARM64_)
         ;;
     *)
         AC_DEFINE(_CPU_ARCH_NOT_DEFINED)
