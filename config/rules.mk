@@ -784,7 +784,14 @@ ifdef ASFILES
 # a '-c' flag.
 $(ASOBJS):
 	$(REPORT_BUILD_VERBOSE)
+ifneq (,$(filter %armasm64.exe,$(AS)))
+	# for unwind information, it requries c preprocessor
+	$(CPP) $(_VPATH_SRCS) > $@.asm
+	$(AS) $(ASOUTOPTION)$@ $(ASFLAGS) $($(notdir $<)_FLAGS) $(AS_DASH_C_FLAG) $@.asm
+	$(RM) $@.asm
+else
 	$(AS) $(ASOUTOPTION)$@ $(ASFLAGS) $($(notdir $<)_FLAGS) $(AS_DASH_C_FLAG) $(_VPATH_SRCS)
+endif
 endif
 
 define syms_template

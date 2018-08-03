@@ -43,10 +43,10 @@
     STUBENTRY $functionname,$paramcount
     EXPORT |$functionname|
 
-    NESTED_ENTRY $functioname
+|$functionname| PROC
     mov         w17, $paramcount
     b           SharedStub
-    NESTED_END
+    ENDP
     MEND
 
     STUBENTRY ?Stub3@nsXPTCStubBase@@UEAA?AW4nsresult@@XZ, 3
