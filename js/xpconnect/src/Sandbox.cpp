@@ -195,7 +195,7 @@ SandboxImport(JSContext* cx, unsigned argc, Value* vp)
             funobj = XPCWrapper::UnsafeUnwrapSecurityWrapper(funobj);
         }
 
-        JSAutoRealmAllowCCW ar(cx, funobj);
+        JSAutoRealm ar(cx, funobj);
 
         RootedValue funval(cx, ObjectValue(*funobj));
         JSFunction* fun = JS_ValueToFunction(cx, funval);
@@ -1127,7 +1127,7 @@ xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp, nsISupports* prin
       AccessCheck::isChrome(sandbox) ? false : options.wantXrays;
 
     {
-        JSAutoRealmAllowCCW ar(cx, sandbox);
+        JSAutoRealm ar(cx, sandbox);
 
         // This creates a SandboxPrivate and passes ownership of it to |sandbox|.
         SandboxPrivate::Create(principal, sandbox);
@@ -1209,7 +1209,7 @@ xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp, nsISupports* prin
 
     xpc::SetSandboxMetadata(cx, sandbox, options.metadata);
 
-    JSAutoRealmAllowCCW ar(cx, sandbox);
+    JSAutoRealm ar(cx, sandbox);
     JS_FireOnNewGlobalObject(cx, sandbox);
 
     return NS_OK;
@@ -1844,13 +1844,14 @@ xpc::EvalInSandbox(JSContext* cx, HandleObject sandboxArg, const nsAString& sour
         // This is clearly Gecko-specific and not in any spec.
         mozilla::dom::AutoEntryScript aes(priv, "XPConnect sandbox evaluation");
         JSContext* sandcx = aes.cx();
-        JSAutoRealmAllowCCW ar(sandcx, sandbox);
+        JSAutoRealm ar(sandcx, sandbox);
 
         JS::CompileOptions options(sandcx);
         options.setFileAndLine(filenameBuf.get(), lineNo);
         MOZ_ASSERT(JS_IsGlobalObject(sandbox));
-        ok = JS::Evaluate(sandcx, options,
-                          PromiseFlatString(source).get(), source.Length(), &v);
+        JS::SourceBufferHolder buffer(PromiseFlatString(source).get(), source.Length(),
+                                      JS::SourceBufferHolder::NoOwnership);
+        ok = JS::Evaluate(sandcx, options, buffer, &v);
 
         // If the sandbox threw an exception, grab it off the context.
         if (aes.HasException()) {
@@ -1897,7 +1898,7 @@ xpc::GetSandboxMetadata(JSContext* cx, HandleObject sandbox, MutableHandleValue 
 
     RootedValue metadata(cx);
     {
-      JSAutoRealmAllowCCW ar(cx, sandbox);
+      JSAutoRealm ar(cx, sandbox);
       metadata = JS_GetReservedSlot(sandbox, XPCONNECT_SANDBOX_CLASS_METADATA_SLOT);
     }
 
@@ -1916,7 +1917,7 @@ xpc::SetSandboxMetadata(JSContext* cx, HandleObject sandbox, HandleValue metadat
 
     RootedValue metadata(cx);
 
-    JSAutoRealmAllowCCW ar(cx, sandbox);
+    JSAutoRealm ar(cx, sandbox);
     if (!JS_StructuredClone(cx, metadataArg, &metadata, nullptr, nullptr))
         return NS_ERROR_UNEXPECTED;
 

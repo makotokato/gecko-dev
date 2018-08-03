@@ -149,6 +149,8 @@ window._gBrowser = {
 
   _clearMultiSelectionLocked: false,
 
+  _clearMultiSelectionLockedOnce: false,
+
   /**
    * Tab close requests are ignored if the window is closing anyway,
    * e.g. when holding Ctrl+W.
@@ -454,22 +456,18 @@ window._gBrowser = {
 
   _setFindbarData() {
     // Ensure we know what the find bar key is in the content process:
-    let initialProcessData = Services.ppmm.initialProcessData;
-    if (!initialProcessData.findBarShortcutData) {
+    let {sharedData} = Services.ppmm;
+    if (!sharedData.has("Findbar:Shortcut")) {
       let keyEl = document.getElementById("key_find");
       let mods = keyEl.getAttribute("modifiers")
         .replace(/accel/i, AppConstants.platform == "macosx" ? "meta" : "control");
-      initialProcessData.findBarShortcutData = {
+      sharedData.set("Findbar:Shortcut", {
         key: keyEl.getAttribute("key"),
-        modifiers: {
-          shiftKey: mods.includes("shift"),
-          ctrlKey: mods.includes("control"),
-          altKey: mods.includes("alt"),
-          metaKey: mods.includes("meta"),
-        },
-      };
-      Services.ppmm.broadcastAsyncMessage("Findbar:ShortcutData",
-        initialProcessData.findBarShortcutData);
+        shiftKey: mods.includes("shift"),
+        ctrlKey: mods.includes("control"),
+        altKey: mods.includes("alt"),
+        metaKey: mods.includes("meta"),
+      });
     }
   },
 
@@ -658,10 +656,7 @@ window._gBrowser = {
     // directly from the content window to the browser without looping
     // over all browsers.
     if (!gMultiProcessBrowser) {
-      let browser = aWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                           .getInterface(Ci.nsIWebNavigation)
-                           .QueryInterface(Ci.nsIDocShell)
-                           .chromeEventHandler;
+      let browser = aWindow.docShell.chromeEventHandler;
       return this.getTabForBrowser(browser);
     }
 
@@ -2589,23 +2584,24 @@ window._gBrowser = {
   removeTabs(tabs) {
     let tabsWithBeforeUnload = [];
     let lastToClose;
-    let aParams = { animate: true };
+    let params = { animate: true };
     for (let tab of tabs) {
-      if (tab.selected)
+      if (tab.selected) {
         lastToClose = tab;
-      else if (this._hasBeforeUnload(tab))
+      } else if (this._hasBeforeUnload(tab)) {
         tabsWithBeforeUnload.push(tab);
-      else
-        this.removeTab(tab, aParams);
+      } else {
+        this.removeTab(tab, params);
+      }
     }
     for (let tab of tabsWithBeforeUnload) {
-      this.removeTab(tab, aParams);
+      this.removeTab(tab, params);
     }
 
     // Avoid changing the selected browser several times by removing it,
     // if appropriate, lastly.
     if (lastToClose) {
-      this.removeTab(lastToClose, aParams);
+      this.removeTab(lastToClose, params);
     }
   },
 
@@ -3067,11 +3063,7 @@ window._gBrowser = {
       win.windowUtils.suppressAnimation(true);
       // Only suppressing window animations isn't enough to avoid
       // an empty content area being painted.
-      let baseWin = win.QueryInterface(Ci.nsIInterfaceRequestor)
-                       .getInterface(Ci.nsIDocShell)
-                       .QueryInterface(Ci.nsIDocShellTreeItem)
-                       .treeOwner
-                       .QueryInterface(Ci.nsIBaseWindow);
+      let baseWin = win.docShell.treeOwner.QueryInterface(Ci.nsIBaseWindow);
       baseWin.visibility = false;
     }
 
@@ -3694,6 +3686,10 @@ window._gBrowser = {
 
   clearMultiSelectedTabs(updatePositionalAttributes) {
     if (this._clearMultiSelectionLocked) {
+      if (this._clearMultiSelectionLockedOnce) {
+        this._clearMultiSelectionLockedOnce = false;
+        this._clearMultiSelectionLocked = false;
+      }
       return;
     }
 
@@ -3710,6 +3706,11 @@ window._gBrowser = {
     if (updatePositionalAttributes) {
       this.tabContainer._setPositionalAttributes();
     }
+  },
+
+  lockClearMultiSelectionOnce() {
+    this._clearMultiSelectionLockedOnce = true;
+    this._clearMultiSelectionLocked = true;
   },
 
   /**
@@ -4429,6 +4430,16 @@ window._gBrowser = {
         hist.add(2 /* unblockByVisitingTab */ );
         tab.finishMediaBlockTimer();
       }
+    });
+
+    this.addEventListener("AudibleAutoplayMediaOccurred", (event) => {
+      let browser = event.originalTarget;
+      let tab = this.getTabForBrowser(browser);
+      if (!tab) {
+        return;
+      }
+
+      Services.obs.notifyObservers(tab, "AudibleAutoplayMediaOccurred");
     });
   },
 };

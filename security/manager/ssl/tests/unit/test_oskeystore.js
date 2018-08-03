@@ -15,8 +15,7 @@ const LABELS = ["mylabel1",
 async function delete_all_secrets() {
   let keystore = Cc["@mozilla.org/security/oskeystore;1"]
                    .getService(Ci.nsIOSKeyStore);
-  for (let i in LABELS) {
-    let label = LABELS[i];
+  for (let label of LABELS) {
     if (await keystore.asyncSecretAvailable(label)) {
       await keystore.asyncDeleteSecret(label);
       ok(!await keystore.asyncSecretAvailable(label), label + " should be deleted now.");
@@ -113,6 +112,10 @@ add_task(async function() {
   await delete_all_secrets();
   await encrypt_decrypt_test();
   await delete_all_secrets();
+
+  if (AppConstants.platform == "macosx" || AppConstants.platform == "win") {
+    ok(!keystore.isNSSKeyStore, "OS X and Windows should use the non-NSS implementation");
+  }
 
   if (keystore.isNSSKeyStore) {
     // If we use the NSS key store implementation test that everything works

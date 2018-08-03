@@ -390,12 +390,6 @@ js::UninlinedIsCrossCompartmentWrapper(const JSObject* obj)
 }
 
 JS_FRIEND_API(JSObject*)
-js::GetGlobalForObjectCrossCompartment(JSObject* obj)
-{
-    return &obj->deprecatedGlobal();
-}
-
-JS_FRIEND_API(JSObject*)
 js::GetPrototypeNoProxy(JSObject* obj)
 {
     MOZ_ASSERT(!obj->is<js::ProxyObject>());
@@ -880,7 +874,7 @@ FormatFrame(JSContext* cx, const FrameIter& iter, JS::UniqueChars&& inBuf, int n
     jsbytecode* pc = iter.pc();
 
     RootedObject envChain(cx, iter.environmentChain(cx));
-    JSAutoRealmAllowCCW ar(cx, envChain);
+    JSAutoRealm ar(cx, envChain);
 
     const char* filename = script->filename();
     unsigned lineno = PCToLineNumber(script, pc);

@@ -175,6 +175,8 @@ partial interface Document {
    * etc.
    */
   [Func="IsChromeOrXBL"] readonly attribute boolean mozSyntheticDocument;
+  [Throws, Func="IsChromeOrXBL"]
+  BoxObject? getBoxObjectFor(Element? element);
   /**
    * Returns the script element whose script is currently being processed.
    *
@@ -348,6 +350,9 @@ partial interface Document {
   Element? getBindingParent(Node node);
   [Throws, Func="IsChromeOrXBL", NeedsSubjectPrincipal]
   void loadBindingDocument(DOMString documentURL);
+  // Creates a new XUL element regardless of the document's default type.
+  [CEReactions, NewObject, Throws, Func="IsChromeOrXBL"]
+  Element createXULElement(DOMString localName, optional (ElementCreationOptions or DOMString) options);
 
   // Touch bits
   // XXXbz I can't find the sane spec for this stuff, so just cribbing

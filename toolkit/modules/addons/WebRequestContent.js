@@ -7,7 +7,6 @@
 
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 ChromeUtils.defineModuleGetter(this, "WebRequestCommon",
@@ -166,9 +165,7 @@ var ContentPolicy = {
         }
       }
 
-      let ir = window.QueryInterface(Ci.nsIInterfaceRequestor)
-                     .getInterface(Ci.nsIDocShell)
-                     .QueryInterface(Ci.nsIInterfaceRequestor);
+      let ir = window.docShell.QueryInterface(Ci.nsIInterfaceRequestor);
       try {
         // If e10s is disabled, this throws NS_NOINTERFACE for closed tabs.
         mm = ir.getInterface(Ci.nsIContentFrameMessageManager);

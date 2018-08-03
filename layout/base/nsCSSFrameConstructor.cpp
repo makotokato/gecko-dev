@@ -1876,8 +1876,7 @@ nsCSSFrameConstructor::CreateGeneratedContentItem(nsFrameConstructorState& aStat
     aOriginatingElement.HasFlag(NODE_IS_IN_SHADOW_TREE) ? nullptr : mDocument;
   rv = container->BindToTree(bindDocument,
                              &aOriginatingElement,
-                             &aOriginatingElement,
-                             true);
+                             &aOriginatingElement);
   if (NS_FAILED(rv)) {
     container->UnbindFromTree();
     return;
@@ -2410,12 +2409,12 @@ nsCSSFrameConstructor::ConstructDocElementFrame(Element*                 aDocEle
     GetRootFrame()->SetComputedStyleWithoutNotification(sc);
   }
 
-  // Make sure to call UpdateViewportScrollbarStylesOverride before
+  // Make sure to call UpdateViewportScrollStylesOverride before
   // SetUpDocElementContainingBlock, since it sets up our scrollbar state
   // properly.
   DebugOnly<nsIContent*> propagatedScrollFrom;
   if (nsPresContext* presContext = mPresShell->GetPresContext()) {
-    propagatedScrollFrom = presContext->UpdateViewportScrollbarStylesOverride();
+    propagatedScrollFrom = presContext->UpdateViewportScrollStylesOverride();
   }
 
   SetUpDocElementContainingBlock(aDocElement);
@@ -2676,6 +2675,8 @@ nsCSSFrameConstructor::ConstructDocElementFrame(Element*                 aDocEle
 nsIFrame*
 nsCSSFrameConstructor::ConstructRootFrame()
 {
+  AUTO_PROFILER_LABEL("nsCSSFrameConstructor::ConstructRootFrame", LAYOUT);
+  AUTO_PROFILER_TRACING("Frame Construction", "ConstructRootFrame");
   AUTO_LAYOUT_PHASE_ENTRY_POINT(mPresShell->GetPresContext(), FrameC);
 
   ServoStyleSet* styleSet = mPresShell->StyleSet();
@@ -4104,7 +4105,7 @@ nsCSSFrameConstructor::GetAnonymousContent(nsIContent* aParent,
     // are not in document.
     nsIDocument* bindDocument =
       aParent->HasFlag(NODE_IS_IN_SHADOW_TREE) ? nullptr : mDocument;
-    rv = content->BindToTree(bindDocument, aParent, aParent, true);
+    rv = content->BindToTree(bindDocument, aParent, aParent);
     // If the anonymous content creator requested that the content should be
     // editable, honor its request.
     // We need to set the flag on the whole subtree, because existing
@@ -4528,7 +4529,7 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay& aDisplay,
   if (aElement.IsHTMLElement(nsGkAtoms::body)) {
     if (nsPresContext* presContext = mPresShell->GetPresContext()) {
       propagatedScrollToViewport =
-        presContext->UpdateViewportScrollbarStylesOverride() == &aElement;
+        presContext->UpdateViewportScrollStylesOverride() == &aElement;
     }
   }
 
@@ -4564,7 +4565,7 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay& aDisplay,
       // scrollframe so that it paginates correctly, but we don't want to set
       // the bit on the block that tells it to clip at paint time.
       if (mPresShell->GetPresContext()->
-            ElementWouldPropagateScrollbarStyles(aElement)) {
+            ElementWouldPropagateScrollStyles(aElement)) {
         suppressScrollFrame = false;
       }
     }
@@ -6921,6 +6922,8 @@ nsCSSFrameConstructor::ContentAppended(nsIContent* aFirstNewContent,
   MOZ_ASSERT(aInsertionKind == InsertionKind::Sync ||
              !RestyleManager()->IsInStyleRefresh());
 
+  AUTO_PROFILER_LABEL("nsCSSFrameConstructor::ContentAppended", LAYOUT);
+  AUTO_PROFILER_TRACING("Frame Construction", "ContentAppended");
   AUTO_LAYOUT_PHASE_ENTRY_POINT(mPresShell->GetPresContext(), FrameC);
 
 #ifdef DEBUG
@@ -7228,6 +7231,8 @@ nsCSSFrameConstructor::ContentRangeInserted(nsIContent* aStartChild,
   MOZ_ASSERT(aInsertionKind == InsertionKind::Sync ||
              !RestyleManager()->IsInStyleRefresh());
 
+  AUTO_PROFILER_LABEL("nsCSSFrameConstructor::ContentRangeInserted", LAYOUT);
+  AUTO_PROFILER_TRACING("Frame Construction", "ContentRangeInserted");
   AUTO_LAYOUT_PHASE_ENTRY_POINT(mPresShell->GetPresContext(), FrameC);
 
   MOZ_ASSERT(aStartChild, "must always pass a child");
@@ -7506,7 +7511,7 @@ nsCSSFrameConstructor::ContentRangeInserted(nsIContent* aStartChild,
     // new nodes, and it has no frame, make a frame construction item for
     // it, because it might need a frame now.  No need to do this if our
     // parent type is not block, though, since WipeContainingBlock
-    // already handles that sitation.
+    // already handles that situation.
     AddTextItemIfNeeded(state, insertion, aStartChild->GetPreviousSibling(),
                         items);
   }
@@ -7528,7 +7533,7 @@ nsCSSFrameConstructor::ContentRangeInserted(nsIContent* aStartChild,
     // new nodes, and it has no frame, make a frame construction item for
     // it, because it might need a frame now.  No need to do this if our
     // parent type is not block, though, since WipeContainingBlock
-    // already handles that sitation.
+    // already handles that situation.
     AddTextItemIfNeeded(state, insertion, aEndChild, items);
   }
 
@@ -7670,6 +7675,8 @@ nsCSSFrameConstructor::ContentRemoved(nsIContent* aChild,
   MOZ_ASSERT(aChild);
   MOZ_ASSERT(!aChild->IsRootOfAnonymousSubtree() || !aOldNextSibling,
              "Anonymous roots don't have siblings");
+  AUTO_PROFILER_LABEL("nsCSSFrameConstructor::ContentRemoved", LAYOUT);
+  AUTO_PROFILER_TRACING("Frame Construction", "ContentRemoved");
   AUTO_LAYOUT_PHASE_ENTRY_POINT(mPresShell->GetPresContext(), FrameC);
   nsPresContext* presContext = mPresShell->GetPresContext();
   MOZ_ASSERT(presContext, "Our presShell should have a valid presContext");
@@ -7681,7 +7688,7 @@ nsCSSFrameConstructor::ContentRemoved(nsIContent* aChild,
   // <body> child of the root element.  So we can only be removing the stored
   // override element if the thing being removed is either the override element
   // itself or the root element (which can be a parent of the override element).
-  if (aChild == presContext->GetViewportScrollbarStylesOverrideElement() ||
+  if (aChild == presContext->GetViewportScrollStylesOverrideElement() ||
       (aChild->IsElement() && !aChild->GetParent())) {
     // We might be removing the element that we propagated viewport scrollbar
     // styles from.  Recompute those. (This clause covers two of the three
@@ -7693,7 +7700,7 @@ nsCSSFrameConstructor::ContentRemoved(nsIContent* aChild,
     // We don't handle the fullscreen case here, because it doesn't change the
     // scrollbar styles override element stored on the prescontext.)
     Element* newOverrideElement =
-      presContext->UpdateViewportScrollbarStylesOverride();
+      presContext->UpdateViewportScrollStylesOverride();
 
     // If aChild is the root, then we don't need to do any reframing of
     // newOverrideElement, because we're about to tear down the whole frame tree
@@ -8060,6 +8067,8 @@ void
 nsCSSFrameConstructor::CharacterDataChanged(nsIContent* aContent,
                                             const CharacterDataChangeInfo& aInfo)
 {
+  AUTO_PROFILER_LABEL("nsCSSFrameConstructor::CharacterDataChanged", LAYOUT);
+  AUTO_PROFILER_TRACING("Frame Construction", "CharacterDataChanged");
   AUTO_LAYOUT_PHASE_ENTRY_POINT(mPresShell->GetPresContext(), FrameC);
 
   if ((aContent->HasFlag(NS_CREATE_FRAME_IF_NON_WHITESPACE) &&

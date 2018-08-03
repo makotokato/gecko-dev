@@ -148,8 +148,16 @@ if CONFIG['MOZ_LIB_SECRET']:
     CXXFLAGS += CONFIG['MOZ_LIB_SECRET_CFLAGS']
 
 if CONFIG['OS_ARCH'] == 'Darwin':
+    UNIFIED_SOURCES += [
+        'KeychainSecret.cpp',
+    ]
     OS_LIBS += [
         '-framework Security'
+    ]
+
+if CONFIG['OS_ARCH'] == 'WINNT':
+    UNIFIED_SOURCES += [
+        'CredentialManagerSecret.cpp',
     ]
 
 IPDL_SOURCES += [
@@ -182,7 +190,7 @@ GENERATED_FILES = [
     'nsSTSPreloadList.h',
 ]
 dafsa_data = GENERATED_FILES['nsSTSPreloadList.h']
-dafsa_data.script = '../../../xpcom/ds/make_dafsa.py'
+dafsa_data.script = '../../../xpcom/ds/tools/make_dafsa.py'
 dafsa_data.inputs = ['nsSTSPreloadList.inc']
 
 if CONFIG['NSS_DISABLE_DBM']:

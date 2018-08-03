@@ -235,12 +235,10 @@ nsSVGElement::Init()
 
 nsresult
 nsSVGElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
-                         nsIContent* aBindingParent,
-                         bool aCompileEventHandlers)
+                         nsIContent* aBindingParent)
 {
   nsresult rv = nsSVGElementBase::BindToTree(aDocument, aParent,
-                                             aBindingParent,
-                                             aCompileEventHandlers);
+                                             aBindingParent);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!MayHaveStyle()) {
@@ -1192,8 +1190,7 @@ MappedAttrParser::ParseMappedAttrValue(nsAtom* aMappedAttrName,
 
   // Get the nsCSSPropertyID ID for our mapped attribute.
   nsCSSPropertyID propertyID =
-    nsCSSProps::LookupProperty(nsDependentAtomString(aMappedAttrName),
-                               CSSEnabledState::eForAllContent);
+    nsCSSProps::LookupProperty(nsDependentAtomString(aMappedAttrName));
   if (propertyID != eCSSProperty_UNKNOWN) {
     bool changed = false; // outparam for ParseProperty.
     NS_ConvertUTF16toUTF8 value(aMappedAttrValue);

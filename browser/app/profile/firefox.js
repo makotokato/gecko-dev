@@ -1165,7 +1165,6 @@ pref("services.sync.prefs.sync.lightweightThemes.selectedThemeID", true);
 pref("services.sync.prefs.sync.lightweightThemes.usedThemes", true);
 pref("services.sync.prefs.sync.network.cookie.cookieBehavior", true);
 pref("services.sync.prefs.sync.network.cookie.lifetimePolicy", true);
-pref("services.sync.prefs.sync.network.cookie.lifetime.days", true);
 pref("services.sync.prefs.sync.network.cookie.thirdparty.sessionOnly", true);
 pref("services.sync.prefs.sync.permissions.default.image", true);
 pref("services.sync.prefs.sync.pref.advanced.images.disable_button.view_image", true);
@@ -1476,6 +1475,13 @@ pref("browser.ping-centre.production.endpoint", "https://tiles.services.mozilla.
 
 // Enable GMP support in the addon manager.
 pref("media.gmp-provider.enabled", true);
+
+pref("browser.contentblocking.enabled", true);
+#ifdef NIGHTLY_BUILD
+pref("browser.contentblocking.ui.enabled", true);
+#else
+pref("browser.contentblocking.ui.enabled", false);
+#endif
 
 pref("privacy.trackingprotection.introCount", 0);
 pref("privacy.trackingprotection.introURL", "https://www.mozilla.org/%LOCALE%/firefox/%VERSION%/tracking-protection/start/");

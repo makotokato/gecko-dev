@@ -240,7 +240,11 @@ nsXPCWrappedJSClass::CallQueryInterfaceOnJSObject(JSContext* cx,
         return nullptr;
     }
 
-    if ((id = xpc_NewIDObject(cx, jsobj, aIID))) {
+    // AutoScriptEvaluate entered jsobj's realm.
+    js::AssertSameCompartment(cx, jsobj);
+    RootedObject scope(cx, JS::CurrentGlobalOrNull(cx));
+
+    if ((id = xpc_NewIDObject(cx, scope, aIID))) {
         // Throwing NS_NOINTERFACE is the prescribed way to fail QI from JS. It
         // is not an exception that is ever worth reporting, but we don't want
         // to eat all exceptions either.
@@ -448,7 +452,7 @@ nsCString
 GetFunctionName(JSContext* cx, HandleObject obj)
 {
     RootedObject inner(cx, js::UncheckedUnwrap(obj));
-    JSAutoRealmAllowCCW ar(cx, inner);
+    JSAutoRealm ar(cx, inner);
 
     RootedFunction fun(cx, JS_GetObjectFunction(inner));
     if (!fun) {
@@ -549,8 +553,7 @@ nsXPCWrappedJSClass::DelegatedQueryInterface(nsXPCWrappedJS* self,
     // though we have derived nativeGlobal from the JS global, because we know
     // there are cases where this can happen. See bug 1094953.
     RootedObject obj(RootingCx(), self->GetJSObject());
-    nsIGlobalObject* nativeGlobal =
-      NativeGlobal(JS::GetNonCCWObjectGlobal(js::UncheckedUnwrap(obj)));
+    nsIGlobalObject* nativeGlobal = NativeGlobal(js::UncheckedUnwrap(obj));
     NS_ENSURE_TRUE(nativeGlobal, NS_ERROR_FAILURE);
     NS_ENSURE_TRUE(nativeGlobal->GetGlobalJSObject(), NS_ERROR_FAILURE);
     AutoEntryScript aes(nativeGlobal, "XPCWrappedJS QueryInterface",
@@ -672,7 +675,7 @@ nsXPCWrappedJSClass::GetArraySizeFromParam(const nsXPTMethodInfo* method,
                                            nsXPTCMiniVariant* nativeParams,
                                            uint32_t* result) const
 {
-    if (type.Tag() != nsXPTType::T_ARRAY &&
+    if (type.Tag() != nsXPTType::T_LEGACY_ARRAY &&
         type.Tag() != nsXPTType::T_PSTRING_SIZE_IS &&
         type.Tag() != nsXPTType::T_PWSTRING_SIZE_IS) {
         *result = 0;
@@ -749,25 +752,27 @@ nsXPCWrappedJSClass::CleanupOutparams(const nsXPTMethodInfo* info,
         if (!param.IsOut())
             continue;
 
-        // Extract the array length so we can use it in CleanupValue.
-        uint32_t arrayLen = 0;
-        if (!GetArraySizeFromParam(info, param.Type(), nativeParams, &arrayLen))
-            continue;
-
         MOZ_ASSERT(param.IsIndirect(), "Outparams are always indirect");
 
-        // The inOutOnly flag is necessary because full outparams may contain
-        // uninitialized junk before the call is made, and we don't want to try
-        // to clean up uninitialized junk.
-        if (!inOutOnly || param.IsIn()) {
+        // Call 'CleanupValue' on parameters which we know to be initialized:
+        //  1. Complex parameters (initialized by caller)
+        //  2. 'inout' parameters (initialized by caller)
+        //  3. 'out' parameters when 'inOutOnly' is 'false' (initialized by us)
+        //
+        // We skip non-complex 'out' parameters before the call, as they may
+        // contain random junk.
+        if (param.Type().IsComplex() || param.IsIn() || !inOutOnly) {
+            uint32_t arrayLen = 0;
+            if (!GetArraySizeFromParam(info, param.Type(), nativeParams, &arrayLen))
+                continue;
+
             xpc::CleanupValue(param.Type(), nativeParams[i].val.p, arrayLen);
         }
 
-        // Even if we didn't call CleanupValue, null out any pointers. This is
-        // just to protect C++ callers which may read garbage if they forget to
-        // check the error value.
-        if (param.Type().HasPointerRepr()) {
-            *(void**)nativeParams[i].val.p = nullptr;
+        // Ensure our parameters are in a clean state. Complex values are always
+        // handled by CleanupValue, and others have a valid null representation.
+        if (!param.Type().IsComplex()) {
+            param.Type().ZeroValue(nativeParams[i].val.p);
         }
     }
 }
@@ -945,8 +950,7 @@ nsXPCWrappedJSClass::CallMethod(nsXPCWrappedJS* wrapper, uint16_t methodIndex,
     // AutoEntryScript. This is probably Gecko-specific at this point, and
     // definitely will be when we turn off XPConnect for the web.
     RootedObject obj(RootingCx(), wrapper->GetJSObject());
-    nsIGlobalObject* nativeGlobal =
-      NativeGlobal(JS::GetNonCCWObjectGlobal(js::UncheckedUnwrap(obj)));
+    nsIGlobalObject* nativeGlobal = NativeGlobal(js::UncheckedUnwrap(obj));
     AutoEntryScript aes(nativeGlobal, "XPCWrappedJS method call",
                         /* aIsMainThread = */ true);
     XPCCallContext ccx(aes.cx());

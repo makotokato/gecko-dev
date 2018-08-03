@@ -1936,6 +1936,12 @@ ContentParent::ShouldKeepProcessAlive() const
     return false;
   }
 
+  // Recording/replaying content parents cannot be reused and should not be
+  // kept alive.
+  if (this->IsRecordingOrReplaying()) {
+    return false;
+  }
+
   auto contentParents = sBrowserContentParents->Get(mRemoteType);
   if (!contentParents) {
     return false;
@@ -3163,7 +3169,7 @@ ContentParent::Observe(nsISupports* aSubject,
   }
   else if (!strcmp(aTopic, "intl:app-locales-changed")) {
     nsTArray<nsCString> appLocales;
-    LocaleService::GetInstance()->GetAppLocalesAsLangTags(appLocales);
+    LocaleService::GetInstance()->GetAppLocalesAsBCP47(appLocales);
     Unused << SendUpdateAppLocales(appLocales);
   }
   else if (!strcmp(aTopic, "intl:requested-locales-changed")) {

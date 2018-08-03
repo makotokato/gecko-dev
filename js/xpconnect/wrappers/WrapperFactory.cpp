@@ -73,7 +73,7 @@ WrapperFactory::CreateXrayWaiver(JSContext* cx, HandleObject obj)
     MOZ_ASSERT(!GetXrayWaiver(obj));
     XPCWrappedNativeScope* scope = ObjectScope(obj);
 
-    JSAutoRealmAllowCCW ar(cx, obj);
+    JSAutoRealm ar(cx, obj);
     JSObject* waiver = Wrapper::New(cx, obj, &XrayWaiver);
     if (!waiver)
         return nullptr;
@@ -228,7 +228,7 @@ WrapperFactory::PrepareForWrapping(JSContext* cx, HandleObject scope,
 
     XPCWrappedNative* wn = XPCWrappedNative::Get(obj);
 
-    JSAutoRealmAllowCCW ar(cx, obj);
+    JSAutoRealm ar(cx, obj);
     XPCCallContext ccx(cx, obj);
     RootedObject wrapScope(cx, scope);
 
@@ -673,7 +673,7 @@ TransplantObjectRetainingXrayExpandos(JSContext* cx, JS::HandleObject origobj,
 nsIGlobalObject*
 NativeGlobal(JSObject* obj)
 {
-    obj = js::GetGlobalForObjectCrossCompartment(obj);
+    obj = JS::GetNonCCWObjectGlobal(obj);
 
     // Every global needs to hold a native as its private or be a
     // WebIDL object with an nsISupports DOM object.

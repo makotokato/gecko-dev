@@ -1084,6 +1084,32 @@ var PlacesUtils = {
       }
     }
 
+    if (pageInfo.annotations) {
+      if (typeof pageInfo.annotations != "object" ||
+          pageInfo.annotations.constructor.name != "Map") {
+        throw new TypeError("annotations must be a Map");
+      }
+
+      if (pageInfo.annotations.size == 0) {
+        throw new TypeError("there must be at least one annotation");
+      }
+
+      for (let [key, value] of pageInfo.annotations.entries()) {
+        if (typeof key != "string") {
+          throw new TypeError("all annotation keys must be strings");
+        }
+        if (typeof value != "string" &&
+            typeof value != "number" &&
+            typeof value != "boolean" &&
+            value !== null &&
+            value !== undefined) {
+          throw new TypeError("all annotation values must be Boolean, Numbers or Strings");
+        }
+      }
+
+      info.annotations = pageInfo.annotations;
+    }
+
     if (!validateVisits) {
       return info;
     }
@@ -1456,31 +1482,6 @@ var PlacesUtils = {
     }
     let db = await gAsyncDBWrapperPromised;
     return db.executeBeforeShutdown(name, task);
-  },
-
-  /**
-   * Sets the character-set for a URI.
-   *
-   * @param {nsIURI} aURI
-   * @param {String} aCharset character-set value.
-   * @return {Promise}
-   */
-  setCharsetForURI: function PU_setCharsetForURI(aURI, aCharset) {
-    return new Promise(resolve => {
-      // Delaying to catch issues with asynchronous behavior while waiting
-      // to implement asynchronous annotations in bug 699844.
-      Services.tm.dispatchToMainThread(function() {
-        if (aCharset && aCharset.length > 0) {
-          PlacesUtils.annotations.setPageAnnotation(
-            aURI, PlacesUtils.CHARSET_ANNO, aCharset, 0,
-            Ci.nsIAnnotationService.EXPIRE_NEVER);
-        } else {
-          PlacesUtils.annotations.removePageAnnotation(
-            aURI, PlacesUtils.CHARSET_ANNO);
-        }
-        resolve();
-      });
-    });
   },
 
   /**

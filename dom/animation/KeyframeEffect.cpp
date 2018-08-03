@@ -818,7 +818,7 @@ void
 DumpAnimationProperties(nsTArray<AnimationProperty>& aAnimationProperties)
 {
   for (auto& p : aAnimationProperties) {
-    printf("%s\n", nsCSSProps::GetStringValue(p.mProperty).get());
+    printf("%s\n", nsCString(nsCSSProps::GetStringValue(p.mProperty)).get());
     for (auto& s : p.mSegments) {
       nsString fromValue, toValue;
       s.mFromValue.SerializeSpecifiedValue(p.mProperty, fromValue);
@@ -1346,7 +1346,7 @@ KeyframeEffect::CanThrottleOverflowChangesInScrollable(nsIFrame& aFrame) const
     return true;
   }
 
-  ScrollbarStyles ss = scrollable->GetScrollbarStyles();
+  ScrollStyles ss = scrollable->GetScrollStyles();
   if (ss.mVertical == NS_STYLE_OVERFLOW_HIDDEN &&
       ss.mHorizontal == NS_STYLE_OVERFLOW_HIDDEN &&
       scrollable->GetLogicalScrollPosition() == nsPoint(0, 0)) {

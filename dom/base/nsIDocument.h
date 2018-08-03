@@ -3139,6 +3139,10 @@ public:
                   const nsAString& aQualifiedName,
                   const mozilla::dom::ElementCreationOptionsOrString& aOptions,
                   mozilla::ErrorResult& rv);
+  already_AddRefed<Element>
+  CreateXULElement(const nsAString& aTagName,
+                   const mozilla::dom::ElementCreationOptionsOrString& aOptions,
+                   mozilla::ErrorResult& aRv);
   already_AddRefed<mozilla::dom::DocumentFragment>
     CreateDocumentFragment() const;
   already_AddRefed<nsTextNode> CreateTextNode(const nsAString& aData) const;
@@ -3434,6 +3438,10 @@ public:
   // Return true if NotifyUserGestureActivation() has been called on any
   // document in the document tree.
   bool HasBeenUserGestureActivated();
+
+  // This document is a WebExtension page, it might be a background page, a
+  // popup, a visible tab, a visible iframe ...e.t.c.
+  bool IsExtensionPage() const;
 
   bool HasScriptsBlockedBySandbox();
 

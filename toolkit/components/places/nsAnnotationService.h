@@ -85,8 +85,6 @@ private:
 protected:
   RefPtr<mozilla::places::Database> mDB;
 
-  nsCOMArray<nsIAnnotationObserver> mObservers;
-
   static nsAnnotationService* gAnnotationService;
 
   static const int kAnnoIndex_ID;
@@ -104,8 +102,7 @@ protected:
                               const nsACString& aName,
                               nsCOMPtr<mozIStorageStatement>& aStatement);
 
-  nsresult StartSetAnnotation(nsIURI* aURI,
-                              int64_t aItemId,
+  nsresult StartSetAnnotation(int64_t aItemId,
                               BookmarkData* aBookmark,
                               const nsACString& aName,
                               int32_t aFlags,
@@ -113,37 +110,32 @@ protected:
                               uint16_t aType,
                               nsCOMPtr<mozIStorageStatement>& aStatement);
 
-  nsresult SetAnnotationStringInternal(nsIURI* aURI,
-                                       int64_t aItemId,
+  nsresult SetAnnotationStringInternal(int64_t aItemId,
                                        BookmarkData* aBookmark,
                                        const nsACString& aName,
                                        const nsAString& aValue,
                                        int32_t aFlags,
                                        uint16_t aExpiration);
-  nsresult SetAnnotationInt32Internal(nsIURI* aURI,
-                                      int64_t aItemId,
+  nsresult SetAnnotationInt32Internal(int64_t aItemId,
                                       BookmarkData* aBookmark,
                                       const nsACString& aName,
                                       int32_t aValue,
                                       int32_t aFlags,
                                       uint16_t aExpiration);
-  nsresult SetAnnotationInt64Internal(nsIURI* aURI,
-                                      int64_t aItemId,
+  nsresult SetAnnotationInt64Internal(int64_t aItemId,
                                       BookmarkData* aBookmark,
                                       const nsACString& aName,
                                       int64_t aValue,
                                       int32_t aFlags,
                                       uint16_t aExpiration);
-  nsresult SetAnnotationDoubleInternal(nsIURI* aURI,
-                                       int64_t aItemId,
+  nsresult SetAnnotationDoubleInternal(int64_t aItemId,
                                        BookmarkData* aBookmark,
                                        const nsACString& aName,
                                        double aValue,
                                        int32_t aFlags,
                                        uint16_t aExpiration);
 
-  nsresult RemoveAnnotationInternal(nsIURI* aURI,
-                                    int64_t aItemId,
+  nsresult RemoveAnnotationInternal(int64_t aItemId,
                                     BookmarkData* aBookmark,
                                     const nsACString& aName);
 
@@ -155,7 +147,7 @@ protected:
 public:
   nsresult GetItemAnnotationNamesTArray(int64_t aItemId,
                                         nsTArray<nsCString>* _result);
-  nsresult RemoveItemAnnotationsWithoutNotifying(int64_t aItemId);
+  nsresult RemoveItemAnnotations(int64_t aItemId);
 };
 
 #endif /* nsAnnotationService_h___ */

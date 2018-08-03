@@ -290,12 +290,10 @@ var BrowserUtils = {
    *
    * @param elt
    *        The element that is focused
-   * @param win
-   *        The window that is focused
-   *
    */
-  shouldFastFind(elt, win) {
+  shouldFastFind(elt) {
     if (elt) {
+      let win = elt.ownerGlobal;
       if (elt instanceof win.HTMLInputElement && elt.mozIsTextField(false))
         return false;
 
@@ -559,12 +557,10 @@ var BrowserUtils = {
 
   // Iterates through every docshell in the window and calls PermitUnload.
   canCloseWindow(window) {
-    let docShell = window.QueryInterface(Ci.nsIInterfaceRequestor)
-                         .getInterface(Ci.nsIWebNavigation);
-    let node = docShell.QueryInterface(Ci.nsIDocShellTreeItem);
-    for (let i = 0; i < node.childCount; ++i) {
-      let docShell = node.getChildAt(i).QueryInterface(Ci.nsIDocShell);
-      let contentViewer = docShell.contentViewer;
+    let docShell = window.docShell;
+    for (let i = 0; i < docShell.childCount; ++i) {
+      let childShell = docShell.getChildAt(i).QueryInterface(Ci.nsIDocShell);
+      let contentViewer = childShell.contentViewer;
       if (contentViewer && !contentViewer.permitUnload()) {
         return false;
       }

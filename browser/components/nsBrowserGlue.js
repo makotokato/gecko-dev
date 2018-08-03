@@ -968,15 +968,6 @@ BrowserGlue.prototype = {
 
   // the first browser window has finished initializing
   _onFirstWindowLoaded: function BG__onFirstWindowLoaded(aWindow) {
-    // Set up listeners and, if PdfJs is enabled, register the PDF stream converter.
-    // We delay all of the parent's initialization other than stream converter
-    // registration, because it requires file IO from HandlerService.js
-    Services.ppmm.loadProcessScript("resource://pdf.js/pdfjschildbootstrap.js", true);
-    if (PdfJs.enabled) {
-      PdfJs.ensureRegistered();
-      Services.ppmm.loadProcessScript("resource://pdf.js/pdfjschildbootstrap-enabled.js", true);
-    }
-
     TabCrashHandler.init();
     if (AppConstants.MOZ_CRASHREPORTER) {
       PluginCrashReporter.init();
@@ -1811,7 +1802,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 71;
+    const UI_VERSION = 72;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     let currentUIVersion;
@@ -2140,6 +2131,12 @@ BrowserGlue.prototype = {
       for (let savedHandlerPref of savedContentHandlers) {
         Services.prefs.clearUserPref(savedHandlerPref);
       }
+    }
+
+    if (currentUIVersion < 72) {
+      // Migrate performance tool's recording interval value from msec to usec.
+      let pref = "devtools.performance.recording.interval";
+      Services.prefs.setIntPref(pref, Services.prefs.getIntPref(pref, 1) * 1000);
     }
 
     // Update the migration version.

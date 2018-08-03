@@ -19,6 +19,7 @@ import org.mozilla.geckoview.test.util.Callbacks
 import android.support.test.filters.MediumTest
 import android.support.test.runner.AndroidJUnit4
 import org.hamcrest.Matchers.*
+import org.junit.Assume.assumeThat
 import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,6 +28,54 @@ import org.junit.runner.RunWith
 @MediumTest
 @ReuseSession(false)
 class NavigationDelegateTest : BaseSessionTest() {
+
+    fun loadExpectError(testUri: String, expectedCategory: Int,
+                        expectedError: Int) {
+        sessionRule.session.loadUri(testUri);
+        sessionRule.waitForPageStop()
+
+        sessionRule.forCallbacksDuringWait(
+            object : Callbacks.ProgressDelegate, Callbacks.NavigationDelegate {
+            @AssertCalled(count = 1, order = [1])
+            override fun onLoadRequest(session: GeckoSession, uri: String,
+                                       where: Int, flags: Int): GeckoResult<Boolean>? {
+                assertThat("URI should be " + testUri, uri, equalTo(testUri))
+                return null
+            }
+
+            @AssertCalled(count = 1, order = [2])
+            override fun onLoadError(session: GeckoSession, uri: String,
+                                     category: Int, error: Int) {
+                assertThat("Error category should match", category,
+                           equalTo(expectedCategory))
+                assertThat("Error should match", error,
+                           equalTo(expectedError))
+            }
+
+            @AssertCalled(count = 1, order = [3])
+            override fun onPageStop(session: GeckoSession, success: Boolean) {
+                assertThat("Load should fail", success, equalTo(false))
+            }
+        })
+    }
+
+    @Test fun loadFileNotFound() {
+        loadExpectError("file:///test.mozilla",
+                        GeckoSession.NavigationDelegate.ERROR_CATEGORY_URI,
+                        GeckoSession.NavigationDelegate.ERROR_FILE_NOT_FOUND)
+    }
+
+    @Test fun loadUnknownHost() {
+        loadExpectError(INVALID_URI,
+                        GeckoSession.NavigationDelegate.ERROR_CATEGORY_URI,
+                        GeckoSession.NavigationDelegate.ERROR_UNKNOWN_HOST)
+    }
+
+    @Test fun loadBadPort() {
+        loadExpectError("http://localhost:1/",
+                        GeckoSession.NavigationDelegate.ERROR_CATEGORY_NETWORK,
+                        GeckoSession.NavigationDelegate.ERROR_PORT_BLOCKED)
+    }
 
     @Setting(key = Setting.Key.USE_TRACKING_PROTECTION, value = "true")
     @Test fun trackingProtectionBasic() {
@@ -96,21 +145,36 @@ class NavigationDelegateTest : BaseSessionTest() {
                    containsString(mobileSubStr))
     }
 
-    @Test fun telemetry() {
+    fun telemetryTest(process: String) {
         sessionRule.session.loadTestPath(HELLO_HTML_PATH)
         sessionRule.waitForPageStop()
 
         val telemetry = sessionRule.runtime.telemetry
         val result = sessionRule.waitForResult(telemetry.getSnapshots(true))
 
+        val snapshots = result?.get(process) as GeckoBundle
+
+        assertThat("Snapshots should not be null",
+                   snapshots, notNullValue())
+
         assertThat("Histograms should not be null",
-                   result?.get("histograms"), notNullValue())
+                   snapshots.get("histograms"), notNullValue())
         assertThat("Keyed histograms should not be null",
-                   result?.get("keyedHistograms"), notNullValue())
+                   snapshots.get("keyedHistograms"), notNullValue())
         assertThat("Scalars should not be null",
-                   result?.get("scalars"), notNullValue())
+                   snapshots.get("scalars"), notNullValue())
         assertThat("Keyed scalars should not be null",
-                   result?.get("keyedScalars"), notNullValue())
+                   snapshots.get("keyedScalars"), notNullValue())
+    }
+
+    @Test fun telemetryParent() {
+        telemetryTest("parent")
+    }
+
+
+    @Test fun telemetryContent() {
+        assumeThat(sessionRule.env.isMultiprocess, equalTo(true));
+        telemetryTest("content")
     }
 
     @Test fun load() {

@@ -113,9 +113,11 @@ export default class AddressForm extends PaymentStateSubscriberMixin(PaymentRequ
       return;
     }
 
+    let editing = !!addressPage.guid;
     this.cancelButton.textContent = this.dataset.cancelButtonLabel;
     this.backButton.textContent = this.dataset.backButtonLabel;
-    this.saveButton.textContent = this.dataset.saveButtonLabel;
+    this.saveButton.textContent = editing ? this.dataset.updateButtonLabel :
+                                            this.dataset.addButtonLabel;
     this.persistCheckbox.label = this.dataset.persistCheckboxLabel;
 
     this.backButton.hidden = page.onboardingWizard;
@@ -130,7 +132,6 @@ export default class AddressForm extends PaymentStateSubscriberMixin(PaymentRequ
     this.pageTitleHeading.textContent = addressPage.title;
     this.genericErrorText.textContent = page.error;
 
-    let editing = !!addressPage.guid;
     let addresses = paymentRequest.getAddresses(state);
 
     // If an address is selected we want to edit it.
@@ -142,9 +143,11 @@ export default class AddressForm extends PaymentStateSubscriberMixin(PaymentRequ
       // When editing an existing record, prevent changes to persistence
       this.persistCheckbox.hidden = true;
     } else {
-      // Adding a new record: default persistence to checked when in a not-private session
+      let defaults = PaymentDialogUtils.getDefaultPreferences();
+      // Adding a new record: default persistence to the pref value when in a not-private session
       this.persistCheckbox.hidden = false;
-      this.persistCheckbox.checked = !state.isPrivate;
+      this.persistCheckbox.checked = state.isPrivate ? false :
+                                                       defaults.saveAddressDefaultChecked;
     }
 
     this.formHandler.loadRecord(record);

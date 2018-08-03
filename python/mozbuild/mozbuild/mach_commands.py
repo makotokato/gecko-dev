@@ -1257,7 +1257,8 @@ class PackageFrontend(MachCommandBase):
         help='Skip all local caches to force re-fetching remote artifacts.',
         default=False)
     @CommandArgument('--from-build', metavar='BUILD', nargs='+',
-        help='Get toolchains resulting from the given build(s)')
+        help='Download toolchains resulting from the given build(s); '
+             'BUILD is a name of a toolchain task, e.g. linux64-clang')
     @CommandArgument('--tooltool-manifest', metavar='MANIFEST',
         help='Explicit tooltool manifest to process')
     @CommandArgument('--authentication-file', metavar='FILE',
@@ -1700,7 +1701,7 @@ class StaticAnalysis(MachCommandBase):
         cwd = self.topobjdir
         self._compilation_commands_path = self.topobjdir
         args = self._get_clang_tidy_command(
-            check=checks, header_filter=header_filter, sources=source, jobs=jobs, fix=fix)
+            checks=checks, header_filter=header_filter, sources=source, jobs=jobs, fix=fix)
 
         monitor = StaticAnalysisMonitor(self.topsrcdir, self.topobjdir, total)
 

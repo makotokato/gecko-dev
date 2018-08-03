@@ -7,6 +7,7 @@
 ChromeUtils.import("resource://gre/modules/AddonManager.jsm");
 ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 ChromeUtils.import("resource://gre/modules/DelayedInit.jsm");
+ChromeUtils.import("resource://gre/modules/L10nRegistry.jsm");
 ChromeUtils.import("resource://gre/modules/Messaging.jsm");
 ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -349,7 +350,7 @@ var BrowserApp = {
   deck: null,
 
   startup: function startup() {
-    window.QueryInterface(Ci.nsIDOMChromeWindow).browserDOMWindow = new nsBrowserAccess();
+    window.browserDOMWindow = new nsBrowserAccess();
     Services.obs.notifyObservers(this.browser, "BrowserChrome:Ready");
 
     this.deck = document.getElementById("browsers");
@@ -388,6 +389,11 @@ var BrowserApp = {
       "Session:Stop",
       "Telemetry:CustomTabsPing",
     ]);
+
+    // Initialize the default l10n resource sources for L10nRegistry.
+    let locales = Services.locale.getPackagedLocales();
+    const greSource = new FileSource("toolkit", locales, "resource://gre/localization/{locale}/");
+    L10nRegistry.registerSource(greSource);
 
     // Provide compatibility for add-ons like QuitNow that send "Browser:Quit"
     // as an observer notification.
@@ -1833,7 +1839,8 @@ var BrowserApp = {
 
       case "Session:Navigate": {
         let index = data.index;
-        let webNav = BrowserApp.selectedTab.window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIWebNavigation);
+        let webNav = BrowserApp.selectedTab.window.docShell
+                               .QueryInterface(Ci.nsIWebNavigation);
         let historySize = webNav.sessionHistory.count;
 
         if (index < 0) {
@@ -2216,7 +2223,8 @@ var BrowserApp = {
   // optionally selecting selIndex (if fromIndex <= selIndex <= toIndex)
   getHistory: function(data) {
     let action = data.action;
-    let webNav = BrowserApp.getTabForId(data.tabId).window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIWebNavigation);
+    let webNav = BrowserApp.getTabForId(data.tabId).window.docShell
+                           .QueryInterface(Ci.nsIWebNavigation);
     let historyIndex = webNav.sessionHistory.index;
     let historySize = webNav.sessionHistory.count;
     let canGoBack = webNav.canGoBack;
@@ -4496,7 +4504,7 @@ Tab.prototype = {
 
   onLocationChange: function(aWebProgress, aRequest, aLocationURI, aFlags) {
     let contentWin = aWebProgress.DOMWindow;
-    let webNav = contentWin.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIWebNavigation);
+    let webNav = contentWin.docShell.QueryInterface(Ci.nsIWebNavigation);
 
     // Browser webapps may load content inside iframes that can not reach across the app/frame boundary
     // i.e. even though the page is loaded in an iframe window.top != webapp

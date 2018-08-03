@@ -399,9 +399,8 @@ var PlacesCommandHook = {
 
       info.guid = await PlacesTransactions.NewBookmark(info).transact();
 
-      // Set the character-set
-      if (charset && !PrivateBrowsingUtils.isBrowserPrivate(browser)) {
-        PlacesUtils.setCharsetForURI(makeURI(url.href), charset);
+      if (charset) {
+        PlacesUIUtils.setCharsetForPage(url, charset, window).catch(Cu.reportError);
       }
     }
 
@@ -609,7 +608,8 @@ HistoryMenu.prototype = {
   },
 
   toggleHiddenTabs() {
-    if (gBrowser.visibleTabs.length < gBrowser.tabs.length) {
+    if (window.gBrowser &&
+        gBrowser.visibleTabs.length < gBrowser.tabs.length) {
       this.hiddenTabsMenu.removeAttribute("hidden");
     } else {
       this.hiddenTabsMenu.setAttribute("hidden", "true");

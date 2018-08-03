@@ -926,43 +926,33 @@ nsGlobalWindowInner::nsGlobalWindowInner(nsGlobalWindowOuter *aOuterWindow)
   // Initialize the PRCList (this).
   PR_INIT_CLIST(this);
 
-  if (aOuterWindow) {
-    // |this| is an inner window, add this inner window to the outer
-    // window list of inners.
-    PR_INSERT_AFTER(this, aOuterWindow);
+  // add this inner window to the outer window list of inners.
+  PR_INSERT_AFTER(this, aOuterWindow);
 
-    mTimeoutManager =
-      MakeUnique<mozilla::dom::TimeoutManager>(*nsGlobalWindowInner::Cast(AsInner()));
+  mTimeoutManager = MakeUnique<dom::TimeoutManager>(*this);
 
-    mObserver = new nsGlobalWindowObserver(this);
-    if (mObserver) {
-      nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
-      if (os) {
-        // Watch for online/offline status changes so we can fire events. Use
-        // a strong reference.
-        os->AddObserver(mObserver, NS_IOSERVICE_OFFLINE_STATUS_TOPIC,
-                        false);
+  mObserver = new nsGlobalWindowObserver(this);
+  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+  if (os) {
+    // Watch for online/offline status changes so we can fire events. Use
+    // a strong reference.
+    os->AddObserver(mObserver, NS_IOSERVICE_OFFLINE_STATUS_TOPIC,
+                    false);
 
-        os->AddObserver(mObserver, MEMORY_PRESSURE_OBSERVER_TOPIC, false);
+    os->AddObserver(mObserver, MEMORY_PRESSURE_OBSERVER_TOPIC, false);
 
-        if (aOuterWindow->IsTopLevelWindow()) {
-          os->AddObserver(mObserver, "clear-site-data-reload-needed", false);
-        }
-      }
-
-      Preferences::AddStrongObserver(mObserver, "intl.accept_languages");
-
-      // Watch for storage notifications so we can fire storage events.
-      RefPtr<StorageNotifierService> sns =
-        StorageNotifierService::GetOrCreate();
-      if (sns) {
-        sns->Register(mObserver);
-      }
+    if (aOuterWindow->IsTopLevelWindow()) {
+      os->AddObserver(mObserver, "clear-site-data-reload-needed", false);
     }
-  } else {
-    // |this| is an outer window. Outer windows start out frozen and
-    // remain frozen until they get an inner window.
-    MOZ_ASSERT(IsFrozen());
+  }
+
+  Preferences::AddStrongObserver(mObserver, "intl.accept_languages");
+
+  // Watch for storage notifications so we can fire storage events.
+  RefPtr<StorageNotifierService> sns =
+    StorageNotifierService::GetOrCreate();
+  if (sns) {
+    sns->Register(mObserver);
   }
 
   if (XRE_IsContentProcess()) {
@@ -2018,18 +2008,6 @@ nsGlobalWindowInner::DialogsAreBeingAbused()
   return false;
 }
 
-void
-nsGlobalWindowInner::DisableDialogs()
-{
-  FORWARD_TO_OUTER_VOID(DisableDialogs, ());
-}
-
-void
-nsGlobalWindowInner::EnableDialogs()
-{
-  FORWARD_TO_OUTER_VOID(EnableDialogs, ());
-}
-
 nsresult
 nsGlobalWindowInner::PostHandleEvent(EventChainPostVisitor& aVisitor)
 {
@@ -2063,6 +2041,7 @@ nsGlobalWindowInner::PostHandleEvent(EventChainPostVisitor& aVisitor)
     // forwards, navigating backwards, and on page reload.
     for (const auto& display : mVRDisplays) {
       if (display->IsPresenting()) {
+        display->StartVRNavigation();
         // Save this VR display ID to trigger vrdisplayactivate event
         // after the next load event.
         nsGlobalWindowOuter* outer = GetOuterWindowInternal();
@@ -2312,18 +2291,6 @@ nsPIDOMWindowInner::Resume()
 }
 
 void
-nsPIDOMWindowInner::Freeze()
-{
-  nsGlobalWindowInner::Cast(this)->Freeze();
-}
-
-void
-nsPIDOMWindowInner::Thaw()
-{
-  nsGlobalWindowInner::Cast(this)->Thaw();
-}
-
-void
 nsPIDOMWindowInner::SyncStateFromParentWindow()
 {
   nsGlobalWindowInner::Cast(this)->SyncStateFromParentWindow();
@@ -2345,12 +2312,6 @@ Maybe<ServiceWorkerDescriptor>
 nsPIDOMWindowInner::GetController() const
 {
   return nsGlobalWindowInner::Cast(this)->GetController();
-}
-
-RefPtr<mozilla::dom::ServiceWorker>
-nsPIDOMWindowInner::GetOrCreateServiceWorker(const mozilla::dom::ServiceWorkerDescriptor& aDescriptor)
-{
-  return nsGlobalWindowInner::Cast(this)->GetOrCreateServiceWorker(aDescriptor);
 }
 
 void
@@ -2749,16 +2710,6 @@ nsPIDOMWindowOuter*
 nsGlobalWindowInner::GetScriptableParent()
 {
   FORWARD_TO_OUTER(GetScriptableParent, (), nullptr);
-}
-
-/**
- * Behavies identically to GetScriptableParent extept that it returns null
- * if GetScriptableParent would return this window.
- */
-nsPIDOMWindowOuter*
-nsGlobalWindowInner::GetScriptableParentOrNull()
-{
-  FORWARD_TO_OUTER(GetScriptableParentOrNull, (), nullptr);
 }
 
 /**
@@ -3815,24 +3766,6 @@ nsGlobalWindowInner::Blur(ErrorResult& aError)
 }
 
 void
-nsGlobalWindowInner::Back(ErrorResult& aError)
-{
-  FORWARD_TO_OUTER_OR_THROW(BackOuter, (aError), aError, );
-}
-
-void
-nsGlobalWindowInner::Forward(ErrorResult& aError)
-{
-  FORWARD_TO_OUTER_OR_THROW(ForwardOuter, (aError), aError, );
-}
-
-void
-nsGlobalWindowInner::Home(nsIPrincipal& aSubjectPrincipal, ErrorResult& aError)
-{
-  FORWARD_TO_OUTER_OR_THROW(HomeOuter, (aSubjectPrincipal, aError), aError, );
-}
-
-void
 nsGlobalWindowInner::Stop(ErrorResult& aError)
 {
   FORWARD_TO_OUTER_OR_THROW(StopOuter, (aError), aError, );
@@ -3991,7 +3924,7 @@ nsGlobalWindowInner::ScrollTo(const CSSIntPoint& aScroll,
       scroll.y = maxpx;
     }
 
-    bool smoothScroll = sf->GetScrollbarStyles().IsSmoothScroll(aOptions.mBehavior);
+    bool smoothScroll = sf->GetScrollStyles().IsSmoothScroll(aOptions.mBehavior);
 
     sf->ScrollToCSSPixels(scroll, smoothScroll
                             ? nsIScrollableFrame::SMOOTH_MSD
@@ -4045,7 +3978,7 @@ nsGlobalWindowInner::ScrollByLines(int32_t numLines,
     // It seems like it would make more sense for ScrollByLines to use
     // SMOOTH mode, but tests seem to depend on the synchronous behaviour.
     // Perhaps Web content does too.
-    bool smoothScroll = sf->GetScrollbarStyles().IsSmoothScroll(aOptions.mBehavior);
+    bool smoothScroll = sf->GetScrollStyles().IsSmoothScroll(aOptions.mBehavior);
 
     sf->ScrollBy(nsIntPoint(0, numLines), nsIScrollableFrame::LINES,
                  smoothScroll
@@ -4064,7 +3997,7 @@ nsGlobalWindowInner::ScrollByPages(int32_t numPages,
     // It seems like it would make more sense for ScrollByPages to use
     // SMOOTH mode, but tests seem to depend on the synchronous behaviour.
     // Perhaps Web content does too.
-    bool smoothScroll = sf->GetScrollbarStyles().IsSmoothScroll(aOptions.mBehavior);
+    bool smoothScroll = sf->GetScrollStyles().IsSmoothScroll(aOptions.mBehavior);
 
     sf->ScrollBy(nsIntPoint(0, numPages), nsIScrollableFrame::PAGES,
                  smoothScroll
@@ -4190,12 +4123,6 @@ nsGlobalWindowInner::Close()
   FORWARD_TO_OUTER(Close, (), NS_ERROR_UNEXPECTED);
 }
 
-void
-nsGlobalWindowInner::ReallyCloseWindow()
-{
-  FORWARD_TO_OUTER_VOID(ReallyCloseWindow, ());
-}
-
 bool
 nsGlobalWindowInner::IsInModalState()
 {
@@ -4297,131 +4224,6 @@ Element*
 nsGlobalWindowInner::GetFrameElement()
 {
   return GetRealFrameElement(IgnoreErrors());
-}
-
-/* static */ bool
-nsGlobalWindowInner::TokenizeDialogOptions(nsAString& aToken,
-                                           nsAString::const_iterator& aIter,
-                                           nsAString::const_iterator aEnd)
-{
-  while (aIter != aEnd && nsCRT::IsAsciiSpace(*aIter)) {
-    ++aIter;
-  }
-
-  if (aIter == aEnd) {
-    return false;
-  }
-
-  if (*aIter == ';' || *aIter == ':' || *aIter == '=') {
-    aToken.Assign(*aIter);
-    ++aIter;
-    return true;
-  }
-
-  nsAString::const_iterator start = aIter;
-
-  // Skip characters until we find whitespace, ';', ':', or '='
-  while (aIter != aEnd && !nsCRT::IsAsciiSpace(*aIter) &&
-         *aIter != ';' &&
-         *aIter != ':' &&
-         *aIter != '=') {
-    ++aIter;
-  }
-
-  aToken.Assign(Substring(start, aIter));
-  return true;
-}
-
-// Helper for converting window.showModalDialog() options (list of ';'
-// separated name (:|=) value pairs) to a format that's parsable by
-// our normal window opening code.
-
-/* static */
-void
-nsGlobalWindowInner::ConvertDialogOptions(const nsAString& aOptions,
-                                          nsAString& aResult)
-{
-  nsAString::const_iterator end;
-  aOptions.EndReading(end);
-
-  nsAString::const_iterator iter;
-  aOptions.BeginReading(iter);
-
-  nsAutoString token;
-  nsAutoString name;
-  nsAutoString value;
-
-  while (true) {
-    if (!TokenizeDialogOptions(name, iter, end)) {
-      break;
-    }
-
-    // Invalid name.
-    if (name.EqualsLiteral("=") ||
-        name.EqualsLiteral(":") ||
-        name.EqualsLiteral(";")) {
-      break;
-    }
-
-    if (!TokenizeDialogOptions(token, iter, end)) {
-      break;
-    }
-
-    if (!token.EqualsLiteral(":") && !token.EqualsLiteral("=")) {
-      continue;
-    }
-
-    // We found name followed by ':' or '='. Look for a value.
-    if (!TokenizeDialogOptions(value, iter, end)) {
-      break;
-    }
-
-    if (name.LowerCaseEqualsLiteral("center")) {
-      if (value.LowerCaseEqualsLiteral("on")  ||
-          value.LowerCaseEqualsLiteral("yes") ||
-          value.LowerCaseEqualsLiteral("1")) {
-        aResult.AppendLiteral(",centerscreen=1");
-      }
-    } else if (name.LowerCaseEqualsLiteral("dialogwidth")) {
-      if (!value.IsEmpty()) {
-        aResult.AppendLiteral(",width=");
-        aResult.Append(value);
-      }
-    } else if (name.LowerCaseEqualsLiteral("dialogheight")) {
-      if (!value.IsEmpty()) {
-        aResult.AppendLiteral(",height=");
-        aResult.Append(value);
-      }
-    } else if (name.LowerCaseEqualsLiteral("dialogtop")) {
-      if (!value.IsEmpty()) {
-        aResult.AppendLiteral(",top=");
-        aResult.Append(value);
-      }
-    } else if (name.LowerCaseEqualsLiteral("dialogleft")) {
-      if (!value.IsEmpty()) {
-        aResult.AppendLiteral(",left=");
-        aResult.Append(value);
-      }
-    } else if (name.LowerCaseEqualsLiteral("resizable")) {
-      if (value.LowerCaseEqualsLiteral("on")  ||
-          value.LowerCaseEqualsLiteral("yes") ||
-          value.LowerCaseEqualsLiteral("1")) {
-        aResult.AppendLiteral(",resizable=1");
-      }
-    } else if (name.LowerCaseEqualsLiteral("scroll")) {
-      if (value.LowerCaseEqualsLiteral("off")  ||
-          value.LowerCaseEqualsLiteral("no") ||
-          value.LowerCaseEqualsLiteral("0")) {
-        aResult.AppendLiteral(",scrollbars=0");
-      }
-    }
-
-    if (iter == end ||
-        !TokenizeDialogOptions(token, iter, end) ||
-        !token.EqualsLiteral(";")) {
-      break;
-    }
-  }
 }
 
 void
@@ -4885,26 +4687,6 @@ nsGlobalWindowInner::DispatchSyncPopState()
   return err.StealNSResult();
 }
 
-// Find an nsICanvasFrame under aFrame.  Only search the principal
-// child lists.  aFrame must be non-null.
-static nsCanvasFrame*
-FindCanvasFrame(nsIFrame* aFrame)
-{
-    nsCanvasFrame* canvasFrame = do_QueryFrame(aFrame);
-    if (canvasFrame) {
-        return canvasFrame;
-    }
-
-    for (nsIFrame* kid : aFrame->PrincipalChildList()) {
-        canvasFrame = FindCanvasFrame(kid);
-        if (canvasFrame) {
-            return canvasFrame;
-        }
-    }
-
-    return nullptr;
-}
-
 //-------------------------------------------------------
 // Tells the HTMLFrame/CanvasFrame that is now has focus
 void
@@ -4926,26 +4708,19 @@ nsGlobalWindowInner::UpdateCanvasFocus(bool aFocusChanged, nsIContent* aNewConte
 
   Element *rootElement = mDoc->GetRootElement();
   if (rootElement) {
-      if ((mHasFocus || aFocusChanged) &&
-          (mFocusedElement == rootElement || aNewContent == rootElement)) {
-          nsIFrame* frame = rootElement->GetPrimaryFrame();
-          if (frame) {
-              frame = frame->GetParent();
-              nsCanvasFrame* canvasFrame = do_QueryFrame(frame);
-              if (canvasFrame) {
-                  canvasFrame->SetHasFocus(mHasFocus && rootElement == aNewContent);
-              }
-          }
+    if ((mHasFocus || aFocusChanged) &&
+        (mFocusedElement == rootElement || aNewContent == rootElement)) {
+      nsCanvasFrame* canvasFrame = presShell->GetCanvasFrame();
+      if (canvasFrame) {
+        canvasFrame->SetHasFocus(mHasFocus && rootElement == aNewContent);
       }
+    }
   } else {
-      // Look for the frame the hard way
-      nsIFrame* frame = presShell->GetRootFrame();
-      if (frame) {
-          nsCanvasFrame* canvasFrame = FindCanvasFrame(frame);
-          if (canvasFrame) {
-              canvasFrame->SetHasFocus(false);
-          }
-      }
+    // XXXbz I would expect that there is never a canvasFrame in this case...
+    nsCanvasFrame* canvasFrame = presShell->GetCanvasFrame();
+    if (canvasFrame) {
+      canvasFrame->SetHasFocus(false);
+    }
   }
 }
 
@@ -8081,6 +7856,10 @@ nsPIDOMWindowInner::MaybeCreateDoc()
 void
 nsGlobalWindowInner::PropagateClearSiteDataReload(const nsACString& aOrigin)
 {
+  if (!IsCurrentInnerWindow()) {
+    return;
+  }
+
   nsIPrincipal* principal = GetPrincipal();
   if (!principal) {
     return;

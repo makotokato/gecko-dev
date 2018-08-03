@@ -600,11 +600,9 @@ nsObjectLoadingContent::SetupDocShell(nsIURI* aRecursionCheckURI)
 nsresult
 nsObjectLoadingContent::BindToTree(nsIDocument* aDocument,
                                    nsIContent* aParent,
-                                   nsIContent* aBindingParent,
-                                   bool aCompileEventHandlers)
+                                   nsIContent* aBindingParent)
 {
-  nsImageLoadingContent::BindToTree(aDocument, aParent, aBindingParent,
-                                    aCompileEventHandlers);
+  nsImageLoadingContent::BindToTree(aDocument, aParent, aBindingParent);
 
   if (aDocument) {
     aDocument->AddPlugin(this);
@@ -3702,7 +3700,7 @@ nsObjectLoadingContent::TeardownProtoChain()
   MOZ_ASSERT(obj);
 
   JS::Rooted<JSObject*> proto(cx);
-  JSAutoRealmAllowCCW ar(cx, obj);
+  JSAutoRealm ar(cx, obj);
 
   // Loop over the DOM element's JS object prototype chain and remove
   // all JS objects of the class sNPObjectJSWrapperClass

@@ -1,6 +1,6 @@
 import pytest
 
-from tests.support.asserts import assert_success
+from tests.support.asserts import assert_error, assert_success
 
 
 def execute_script(session, script, args=None):
@@ -12,6 +12,16 @@ def execute_script(session, script, args=None):
         "POST", "/session/{session_id}/execute/sync".format(
             session_id=session.session_id),
         body)
+
+
+def test_no_browsing_context(session, closed_window):
+    response = execute_script(session, "return 1;")
+    assert_error(response, "no such window")
+
+
+def test_ending_comment(session):
+    response = execute_script(session, "return 1; // foo")
+    assert_success(response, 1)
 
 
 @pytest.mark.parametrize("dialog_type", ["alert", "confirm", "prompt"])

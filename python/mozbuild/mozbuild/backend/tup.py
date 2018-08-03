@@ -5,6 +5,7 @@
 from __future__ import absolute_import, unicode_literals
 
 import os
+import gzip
 import itertools
 import json
 import sys
@@ -12,6 +13,7 @@ import shutil
 
 import mozpack.path as mozpath
 from mozbuild import shellutil
+from mozbuild.analyze.graph import Graph
 from mozbuild.base import MozbuildObject
 from mozbuild.backend.base import PartialBackend, HybridBackend
 from mozbuild.backend.recursivemake import RecursiveMakeBackend
@@ -291,6 +293,8 @@ class TupBackend(CommonBackend):
         args = [self.environment.substs['TUP'], 'upd'] + what
         if self.environment.substs.get('MOZ_AUTOMATION'):
             args += ['--quiet']
+        else:
+            args += ['--debug-logging']
         if verbose:
             args += ['--verbose']
         if jobs > 0:
@@ -301,12 +305,14 @@ class TupBackend(CommonBackend):
                                   line_handler=output.on_line,
                                   ensure_exit_code=False,
                                   append_env=self._get_mozconfig_env(config))
-        # upload Tup db
-        if (not status and
-            self.environment.substs.get('MOZ_AUTOMATION') and self.environment.substs.get('UPLOAD_TUP_DB')):
+        if not status and self.environment.substs.get('MOZ_AUTOMATION'):
             src = mozpath.join(self.environment.topsrcdir, '.tup')
-            dst = mozpath.join(os.environ['UPLOAD_PATH'], 'tup_db')
-            shutil.make_archive(dst, 'zip', src)
+            dst = os.environ['UPLOAD_PATH']
+            if self.environment.substs.get('UPLOAD_TUP_DB'):
+                shutil.make_archive(mozpath.join(dst, 'tup_db'), 'zip', src)
+            g = Graph(mozpath.join(src, 'db'))
+            with gzip.open(mozpath.join(dst, 'cost_dict.gz'), 'wt') as outfile:
+                json.dump(g.get_cost_dict(), outfile)
         return status
 
     def _get_backend_file(self, relobjdir):
@@ -377,9 +383,9 @@ class TupBackend(CommonBackend):
             static_libs += rust_linked
 
         symbols_file = []
-        if shlib.symbols_file:
+        if (shlib.symbols_file and
+            backend_file.environment.substs.get('GCC_USE_GNU_LD')):
             inputs.append(shlib.symbols_file)
-            # TODO: Assumes GNU LD
             symbols_file = ['-Wl,--version-script,%s' % shlib.symbols_file]
 
         cmd = (
@@ -671,7 +677,7 @@ class TupBackend(CommonBackend):
         # Run 'tup init' if necessary.
         if not os.path.exists(mozpath.join(self.environment.topsrcdir, ".tup")):
             tup = self.environment.substs.get('TUP', 'tup')
-            self._cmd.run_process(cwd=self.environment.topsrcdir, log_name='tup', args=[tup, 'init'])
+            self._cmd.run_process(cwd=self.environment.topsrcdir, log_name='tup', args=[tup, 'init', '--no-sync'])
 
 
     def _get_cargo_flags(self, obj):
@@ -726,6 +732,13 @@ class TupBackend(CommonBackend):
             'RUSTFLAGS': '%s %s' % (' '.join(self.environment.substs['MOZ_RUST_DEFAULT_FLAGS']),
                                     ' '.join(self.environment.substs['RUSTFLAGS'])),
         })
+
+        if os.environ.get('MOZ_AUTOMATION'):
+            # Build scripts generally read environment variables that are set
+            # by cargo, however, some may rely on MOZ_AUTOMATION. We may need
+            # to audit for others as well.
+            env['MOZ_AUTOMATION'] = os.environ['MOZ_AUTOMATION']
+
         return env
 
     def _gen_cargo_rules(self, backend_file, build_plan, cargo_env):
@@ -932,9 +945,22 @@ class TupBackend(CommonBackend):
             if not path:
                 raise Exception("Cannot install to " + target)
 
+        js_shell = self.environment.substs.get('JS_SHELL_NAME')
+        if js_shell:
+            js_shell = '%s%s' % (js_shell,
+                                 self.environment.substs['BIN_SUFFIX'])
+
         for path, files in obj.files.walk():
             self._add_features(target, path)
             for f in files:
+
+                if (js_shell and isinstance(obj, ObjdirFiles) and
+                    f.endswith(js_shell)):
+                    # Skip this convenience install for now. Accessing
+                    # !/js/src/js when trying to find headers creates
+                    # an error for tup when !/js/src/js is also a target.
+                    continue
+
                 output_group = None
                 if any(mozpath.match(mozpath.basename(f), p)
                        for p in self._compile_env_files):

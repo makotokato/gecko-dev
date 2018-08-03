@@ -176,9 +176,11 @@
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIScrollable.h"
+#include "nsIStreamConverter.h"
 #include "nsIStreamConverterService.h"
 #include "nsIStringBundle.h"
 #include "nsIURI.h"
+#include "nsIURIWithSpecialOrigin.h"
 #include "nsIURL.h"
 #include "nsIWebNavigation.h"
 #include "nsIWindowMediator.h"
@@ -6344,9 +6346,22 @@ nsresult
 nsContentUtils::GetUTFOrigin(nsIURI* aURI, nsAString& aOrigin)
 {
   MOZ_ASSERT(aURI, "missing uri");
+  nsresult rv;
+
+#if defined(MOZ_THUNDERBIRD) || defined(MOZ_SUITE)
+  // Check if either URI has a special origin.
+  nsCOMPtr<nsIURIWithSpecialOrigin> uriWithSpecialOrigin = do_QueryInterface(aURI);
+  if (uriWithSpecialOrigin) {
+    nsCOMPtr<nsIURI> origin;
+    rv = uriWithSpecialOrigin->GetOrigin(getter_AddRefs(origin));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return GetUTFOrigin(origin, aOrigin);
+  }
+#endif
 
   bool isBlobURL = false;
-  nsresult rv = aURI->SchemeIs(BLOBURI_SCHEME, &isBlobURL);
+  rv = aURI->SchemeIs(BLOBURI_SCHEME, &isBlobURL);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // For Blob URI, the path is the URL of the owning page.
@@ -6922,14 +6937,9 @@ nsContentUtils::AllowXULXBLForPrincipal(nsIPrincipal* aPrincipal)
 bool
 nsContentUtils::IsPDFJSEnabled()
 {
-   nsCOMPtr<nsIStreamConverterService> convServ =
-     do_GetService("@mozilla.org/streamConverters;1");
-   nsresult rv = NS_ERROR_FAILURE;
-   bool canConvert = false;
-   if (convServ) {
-     rv = convServ->CanConvert("application/pdf", "text/html", &canConvert);
-   }
-   return NS_SUCCEEDED(rv) && canConvert;
+   nsCOMPtr<nsIStreamConverter> conv = do_CreateInstance(
+      "@mozilla.org/streamconv;1?from=application/pdf&to=text/html");
+   return conv;
 }
 
 already_AddRefed<nsIDocumentLoaderFactory>
@@ -7028,7 +7038,7 @@ nsContentUtils::IsPatternMatching(nsAString& aValue, nsAString& aPattern,
 
   // We can use the junk scope here, because we're just using it for
   // regexp evaluation, not actual script execution.
-  JSAutoRealmAllowCCW ar(cx, xpc::UnprivilegedJunkScope());
+  JSAutoRealm ar(cx, xpc::UnprivilegedJunkScope());
 
   // The pattern has to match the entire value.
   aPattern.InsertLiteral(u"^(?:", 0);

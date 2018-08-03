@@ -237,8 +237,7 @@ var gLastValidURLStr = "";
 var gInPrintPreviewMode = false;
 var gContextMenu = null; // nsContextMenu instance
 var gMultiProcessBrowser =
-  window.QueryInterface(Ci.nsIInterfaceRequestor)
-        .getInterface(Ci.nsIWebNavigation)
+  window.docShell
         .QueryInterface(Ci.nsILoadContext)
         .useRemoteTabs;
 
@@ -735,7 +734,7 @@ var gPopupBlockerObserver = {
           // one usable popup URI and thus we'll turn on the separator later.
           foundUsablePopupURI = true;
 
-          var menuitem = document.createElement("menuitem");
+          var menuitem = document.createXULElement("menuitem");
           var label = gNavigatorBundle.getFormattedString("popupShowPopupPrefix",
                                                           [popupURIspec]);
           menuitem.setAttribute("label", label);
@@ -1238,14 +1237,11 @@ var gBrowserInit = {
     delete window._gBrowser;
     gBrowser.init();
 
-    window.QueryInterface(Ci.nsIInterfaceRequestor)
-          .getInterface(Ci.nsIWebNavigation)
-          .QueryInterface(Ci.nsIDocShellTreeItem).treeOwner
+    window.docShell.treeOwner
           .QueryInterface(Ci.nsIInterfaceRequestor)
           .getInterface(Ci.nsIXULWindow)
           .XULBrowserWindow = window.XULBrowserWindow;
-    window.QueryInterface(Ci.nsIDOMChromeWindow).browserDOMWindow =
-      new nsBrowserAccess();
+    window.browserDOMWindow = new nsBrowserAccess();
     BrowserWindowTracker.track(window);
 
     let initBrowser = gBrowser.initialBrowser;
@@ -1323,9 +1319,7 @@ var gBrowserInit = {
     let mm = window.getGroupMessageManager("browsers");
     mm.loadFrameScript("chrome://browser/content/tab-content.js", true);
     mm.loadFrameScript("chrome://browser/content/content.js", true);
-    mm.loadFrameScript("chrome://browser/content/content-UITour.js", true);
     mm.loadFrameScript("chrome://global/content/content-HybridContentTelemetry.js", true);
-    mm.loadFrameScript("chrome://global/content/manifestMessages.js", true);
 
     window.messageManager.addMessageListener("Browser:LoadURI", RedirectLoad);
 
@@ -1936,13 +1930,11 @@ var gBrowserInit = {
     // Final window teardown, do this last.
     gBrowser.destroy();
     window.XULBrowserWindow = null;
-    window.QueryInterface(Ci.nsIInterfaceRequestor)
-          .getInterface(Ci.nsIWebNavigation)
-          .QueryInterface(Ci.nsIDocShellTreeItem).treeOwner
+    window.docShell.treeOwner
           .QueryInterface(Ci.nsIInterfaceRequestor)
           .getInterface(Ci.nsIXULWindow)
           .XULBrowserWindow = null;
-    window.QueryInterface(Ci.nsIDOMChromeWindow).browserDOMWindow = null;
+    window.browserDOMWindow = null;
   },
 };
 
@@ -2417,67 +2409,54 @@ function loadURI(uri, referrer, postData, allowThirdPartyFixup, referrerPolicy,
  * @resolves { url, postData, mayInheritPrincipal }. If it's not possible
  *           to discern a keyword or an alias, url will be the input string.
  */
-function getShortcutOrURIAndPostData(url, callback = null) {
-  if (callback) {
-    Deprecated.warning("Please use the Promise returned by " +
-                       "getShortcutOrURIAndPostData() instead of passing a " +
-                       "callback",
-                       "https://bugzilla.mozilla.org/show_bug.cgi?id=1100294");
-  }
-  return (async function() {
-    let mayInheritPrincipal = false;
-    let postData = null;
-    // Split on the first whitespace.
-    let [keyword, param = ""] = url.trim().split(/\s(.+)/, 2);
+async function getShortcutOrURIAndPostData(url) {
+  let mayInheritPrincipal = false;
+  let postData = null;
+  // Split on the first whitespace.
+  let [keyword, param = ""] = url.trim().split(/\s(.+)/, 2);
 
-    if (!keyword) {
-      return { url, postData, mayInheritPrincipal };
-    }
-
-    let engine = Services.search.getEngineByAlias(keyword);
-    if (engine) {
-      let submission = engine.getSubmission(param, null, "keyword");
-      return { url: submission.uri.spec,
-               postData: submission.postData,
-               mayInheritPrincipal };
-    }
-
-    // A corrupt Places database could make this throw, breaking navigation
-    // from the location bar.
-    let entry = null;
-    try {
-      entry = await PlacesUtils.keywords.fetch(keyword);
-    } catch (ex) {
-      Cu.reportError(`Unable to fetch Places keyword "${keyword}": ${ex}`);
-    }
-    if (!entry || !entry.url) {
-      // This is not a Places keyword.
-      return { url, postData, mayInheritPrincipal };
-    }
-
-    try {
-      [url, postData] =
-        await BrowserUtils.parseUrlAndPostData(entry.url.href,
-                                               entry.postData,
-                                               param);
-      if (postData) {
-        postData = getPostDataStream(postData);
-      }
-
-      // Since this URL came from a bookmark, it's safe to let it inherit the
-      // current document's principal.
-      mayInheritPrincipal = true;
-    } catch (ex) {
-      // It was not possible to bind the param, just use the original url value.
-    }
-
+  if (!keyword) {
     return { url, postData, mayInheritPrincipal };
-  })().then(data => {
-    if (callback) {
-      callback(data);
+  }
+
+  let engine = Services.search.getEngineByAlias(keyword);
+  if (engine) {
+    let submission = engine.getSubmission(param, null, "keyword");
+    return { url: submission.uri.spec,
+             postData: submission.postData,
+             mayInheritPrincipal };
+  }
+
+  // A corrupt Places database could make this throw, breaking navigation
+  // from the location bar.
+  let entry = null;
+  try {
+    entry = await PlacesUtils.keywords.fetch(keyword);
+  } catch (ex) {
+    Cu.reportError(`Unable to fetch Places keyword "${keyword}": ${ex}`);
+  }
+  if (!entry || !entry.url) {
+    // This is not a Places keyword.
+    return { url, postData, mayInheritPrincipal };
+  }
+
+  try {
+    [url, postData] =
+      await BrowserUtils.parseUrlAndPostData(entry.url.href,
+                                             entry.postData,
+                                             param);
+    if (postData) {
+      postData = getPostDataStream(postData);
     }
-    return data;
-  });
+
+    // Since this URL came from a bookmark, it's safe to let it inherit the
+    // current document's principal.
+    mayInheritPrincipal = true;
+  } catch (ex) {
+    // It was not possible to bind the param, just use the original url value.
+  }
+
+  return { url, postData, mayInheritPrincipal };
 }
 
 function getPostDataStream(aPostDataString,
@@ -2494,9 +2473,7 @@ function getPostDataStream(aPostDataString,
 }
 
 function getLoadContext() {
-  return window.QueryInterface(Ci.nsIInterfaceRequestor)
-               .getInterface(Ci.nsIWebNavigation)
-               .QueryInterface(Ci.nsILoadContext);
+  return window.docShell.QueryInterface(Ci.nsILoadContext);
 }
 
 function readFromClipboard() {
@@ -2566,9 +2543,7 @@ async function BrowserViewSourceOfDocument(aArgsOrDocument) {
     }
 
     let win = doc.defaultView;
-    let browser = win.getInterface(Ci.nsIWebNavigation)
-                     .QueryInterface(Ci.nsIDocShell)
-                     .chromeEventHandler;
+    let browser = win.docShell.chromeEventHandler;
     let outerWindowID = win.windowUtils.outerWindowID;
     let URL = browser.currentURI.spec;
     args = { browser, outerWindowID, URL };
@@ -2807,7 +2782,7 @@ function UpdateUrlbarSearchSplitterState() {
 
   if (ibefore) {
     if (!splitter) {
-      splitter = document.createElement("splitter");
+      splitter = document.createXULElement("splitter");
       splitter.id = "urlbar-search-splitter";
       splitter.setAttribute("resizebefore", "flex");
       splitter.setAttribute("resizeafter", "flex");
@@ -4191,7 +4166,7 @@ function FillHistoryMenu(aParent) {
       let uri = entry.url;
 
       let item = existingIndex < children.length ?
-                   children[existingIndex] : document.createElement("menuitem");
+                   children[existingIndex] : document.createXULElement("menuitem");
 
       item.setAttribute("uri", uri);
       item.setAttribute("label", entry.title || uri);
@@ -5551,7 +5526,7 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
       continue;
     }
 
-    let menuItem = document.createElement("menuitem");
+    let menuItem = document.createXULElement("menuitem");
     let hidingAttribute = toolbar.getAttribute("type") == "menubar" ?
                           "autohide" : "collapsed";
     menuItem.setAttribute("id", "toggle_" + toolbar.id);
@@ -5915,9 +5890,9 @@ function hrefAndLinkNodeForClickEvent(event) {
             aNode instanceof HTMLLinkElement);
   }
 
-  let node = event.target;
+  let node = event.composedTarget;
   while (node && !isHTMLLink(node)) {
-    node = node.parentNode;
+    node = node.flattenedTreeParentNode;
   }
 
   if (node)
@@ -5925,7 +5900,7 @@ function hrefAndLinkNodeForClickEvent(event) {
 
   // If there is no linkNode, try simple XLink.
   let href, baseURI;
-  node = event.target;
+  node = event.composedTarget;
   while (node && !href) {
     if (node.nodeType == Node.ELEMENT_NODE &&
         (node.localName == "a" ||
@@ -5938,7 +5913,7 @@ function hrefAndLinkNodeForClickEvent(event) {
         break;
       }
     }
-    node = node.parentNode;
+    node = node.flattenedTreeParentNode;
   }
 
   // In case of XLink, we don't return the node we got href from since
@@ -6225,8 +6200,9 @@ function BrowserSetForcedCharacterSet(aCharset) {
   if (aCharset) {
     gBrowser.selectedBrowser.characterSet = aCharset;
     // Save the forced character-set
-    if (!PrivateBrowsingUtils.isWindowPrivate(window))
-      PlacesUtils.setCharsetForURI(getWebNavigation().currentURI, aCharset);
+    PlacesUIUtils.setCharsetForPage(getWebNavigation().currentURI,
+                                    aCharset,
+                                    window).catch(Cu.reportError);
   }
   BrowserCharsetReload();
 }
@@ -6383,7 +6359,7 @@ var gPageStyleMenu = {
         lastWithSameTitle = currentStyleSheets[currentStyleSheet.title];
 
       if (!lastWithSameTitle) {
-        let menuItem = document.createElement("menuitem");
+        let menuItem = document.createXULElement("menuitem");
         menuItem.setAttribute("type", "radio");
         menuItem.setAttribute("label", currentStyleSheet.title);
         menuItem.setAttribute("data", currentStyleSheet.title);
@@ -8244,4 +8220,3 @@ var ConfirmationHint = {
     return this._message = document.getElementById("confirmation-hint-message");
   },
 };
-

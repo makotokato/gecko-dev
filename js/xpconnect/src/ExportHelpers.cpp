@@ -206,20 +206,13 @@ public:
  * function returns, |val| is set to the result of the clone.
  */
 bool
-StackScopedClone(JSContext* cx, StackScopedCloneOptions& options,
+StackScopedClone(JSContext* cx, StackScopedCloneOptions& options, HandleObject sourceScope,
                  MutableHandleValue val)
 {
     StackScopedCloneData data(cx, &options);
     {
-        // For parsing val we have to enter its realm.
-        // (unless it's a primitive)
-        Maybe<JSAutoRealmAllowCCW> ar;
-        if (val.isObject()) {
-            ar.emplace(cx, &val.toObject());
-        } else if (val.isString() && !JS_WrapValue(cx, val)) {
-            return false;
-        }
-
+        // For parsing val we have to enter (a realm in) its compartment.
+        JSAutoRealm ar(cx, sourceScope);
         if (!data.Write(cx, val))
             return false;
     }
@@ -300,7 +293,7 @@ FunctionForwarder(JSContext* cx, unsigned argc, Value* vp)
         // We manually implement the contents of CrossCompartmentWrapper::call
         // here, because certain function wrappers (notably content->nsEP) are
         // not callable.
-        JSAutoRealmAllowCCW ar(cx, unwrappedFun);
+        JSAutoRealm ar(cx, unwrappedFun);
         if (!CheckSameOriginArg(cx, options, thisVal) || !JS_WrapValue(cx, &thisVal))
             return false;
 
@@ -400,7 +393,7 @@ ExportFunction(JSContext* cx, HandleValue vfunction, HandleValue vscope, HandleV
     {
         // We need to operate in the target scope from here on, let's enter
         // its realm.
-        JSAutoRealmAllowCCW ar(cx, targetScope);
+        JSAutoRealm ar(cx, targetScope);
 
         // Unwrapping to see if we have a callable.
         funObj = UncheckedUnwrap(funObj);
@@ -483,7 +476,7 @@ CreateObjectIn(JSContext* cx, HandleValue vobj, CreateObjectInOptions& options,
 
     RootedObject obj(cx);
     {
-        JSAutoRealmAllowCCW ar(cx, scope);
+        JSAutoRealm ar(cx, scope);
         JS_MarkCrossZoneId(cx, options.defineAs);
 
         obj = JS_NewPlainObject(cx);

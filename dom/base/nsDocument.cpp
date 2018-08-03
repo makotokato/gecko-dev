@@ -5634,6 +5634,33 @@ nsIDocument::CreateElementNS(const nsAString& aNamespaceURI,
   return element.forget();
 }
 
+already_AddRefed<Element>
+nsIDocument::CreateXULElement(const nsAString& aTagName,
+                              const ElementCreationOptionsOrString& aOptions,
+                              ErrorResult& aRv)
+{
+  aRv = nsContentUtils::CheckQName(aTagName, false);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
+
+  const nsString* is = nullptr;
+  if (CustomElementRegistry::IsCustomElementEnabled(this) &&
+      aOptions.IsElementCreationOptions()) {
+    const ElementCreationOptions& options = aOptions.GetAsElementCreationOptions();
+    if (options.mIs.WasPassed()) {
+      is = &options.mIs.Value();
+    }
+  }
+
+  RefPtr<Element> elem = CreateElem(aTagName, nullptr, kNameSpaceID_XUL, is);
+  if (!elem) {
+    aRv.Throw(NS_ERROR_NOT_AVAILABLE);
+    return nullptr;
+  }
+  return elem.forget();
+}
+
 already_AddRefed<nsTextNode>
 nsIDocument::CreateEmptyTextNode() const
 {
@@ -6970,7 +6997,7 @@ nsIDocument::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv)
       // It's kind of irrelevant, given that we're passing aAllowWrapping =
       // false, and documents should always insist on being wrapped in an
       // canonical scope. But we try to pass something sane anyway.
-      JSAutoRealmAllowCCW ar(cx, GetScopeObject()->GetGlobalJSObject());
+      JSAutoRealm ar(cx, GetScopeObject()->GetGlobalJSObject());
       JS::Rooted<JS::Value> v(cx);
       rv = nsContentUtils::WrapNative(cx, this, this, &v,
                                       /* aAllowWrapping = */ false);
@@ -7264,7 +7291,7 @@ nsIDocument::UpdateViewportOverflowType(nscoord aScrolledWidth,
 #ifdef DEBUG
   MOZ_ASSERT(mPresShell);
   nsPresContext* pc = GetPresContext();
-  MOZ_ASSERT(pc->GetViewportScrollbarStylesOverride().mHorizontal ==
+  MOZ_ASSERT(pc->GetViewportScrollStylesOverride().mHorizontal ==
              NS_STYLE_OVERFLOW_HIDDEN,
              "Should only be called when viewport has overflow-x: hidden");
   MOZ_ASSERT(aScrolledWidth > aScrollportWidth,
@@ -9555,6 +9582,13 @@ nsIDocument::CreateStaticClone(nsIDocShell* aCloneContainer)
           }
         }
       }
+
+      // Font faces created with the JS API will not be reflected in the
+      // stylesheets and need to be copied over to the cloned document.
+      if (const FontFaceSet* set = GetFonts()) {
+        set->CopyNonRuleFacesTo(clonedDoc->Fonts());
+      }
+
     }
   }
   mCreatingStaticClone = false;
@@ -9615,7 +9649,7 @@ nsIDocument::GetStateObject(nsIVariant** aState)
     NS_ENSURE_TRUE(sgo, NS_ERROR_UNEXPECTED);
     JS::Rooted<JSObject*> global(cx, sgo->GetGlobalJSObject());
     NS_ENSURE_TRUE(global, NS_ERROR_UNEXPECTED);
-    JSAutoRealmAllowCCW ar(cx, global);
+    JSAutoRealm ar(cx, global);
 
     mStateObjectContainer->
       DeserializeToVariant(cx, getter_AddRefs(mStateObjectCached));
@@ -10662,7 +10696,7 @@ static void
 UpdateViewportScrollbarOverrideForFullscreen(nsIDocument* aDoc)
 {
   if (nsPresContext* presContext = aDoc->GetPresContext()) {
-    presContext->UpdateViewportScrollbarStylesOverride();
+    presContext->UpdateViewportScrollStylesOverride();
   }
 }
 
@@ -12487,9 +12521,19 @@ void
 nsIDocument::SetDocTreeHadAudibleMedia()
 {
   nsIDocument* topLevelDoc = GetTopLevelContentDocument();
-  if (topLevelDoc) {
-    topLevelDoc->mDocTreeHadAudibleMedia = true;
+  if (!topLevelDoc) {
+    return;
   }
+
+  if (!topLevelDoc->mDocTreeHadAudibleMedia) {
+    RefPtr<AsyncEventDispatcher> asyncDispatcher =
+      new AsyncEventDispatcher(topLevelDoc,
+                               NS_LITERAL_STRING("AudibleAutoplayMediaOccurred"),
+                               CanBubble::eYes,
+                               ChromeOnlyDispatch::eYes);
+    asyncDispatcher->PostDOMEvent();
+  }
+  topLevelDoc->mDocTreeHadAudibleMedia = true;
 }
 
 void
@@ -12592,6 +12636,13 @@ nsIDocument::HasBeenUserGestureActivated()
   }
 
   return mUserGestureActivated;
+}
+
+bool
+nsIDocument::IsExtensionPage() const
+{
+  return  Preferences::GetBool("media.autoplay.allow-extension-background-pages", true) &&
+          BasePrincipal::Cast(NodePrincipal())->AddonPolicy();
 }
 
 nsIDocument*

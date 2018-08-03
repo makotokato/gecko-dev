@@ -4,18 +4,23 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// See the comment at the top of mfbt/HashTable.h for a comparison between
+// PLDHashTable and mozilla::HashTable.
+
 #ifndef PLDHashTable_h
 #define PLDHashTable_h
 
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h" // for MOZ_ALWAYS_INLINE
 #include "mozilla/fallible.h"
+#include "mozilla/HashFunctions.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Move.h"
 #include "mozilla/Types.h"
 #include "nscore.h"
 
-typedef uint32_t PLDHashNumber;
+using PLDHashNumber = mozilla::HashNumber;
+static const uint32_t kPLDHashNumberBits = mozilla::kHashNumberBits;
 
 class PLDHashTable;
 struct PLDHashTableOps;
@@ -31,8 +36,8 @@ struct PLDHashTableOps;
 // structure, for single static initialization per hash table sub-type.
 //
 // Each hash table sub-type should make its entry type a subclass of
-// PLDHashEntryHdr. The mKeyHash member contains the result of multiplying the
-// hash code returned from the hashKey callback (see below) by kGoldenRatio,
+// PLDHashEntryHdr. The mKeyHash member contains the result of suitably
+// scrambling the hash code returned from the hashKey callback (see below),
 // then constraining the result to avoid the magic 0 and 1 values. The stored
 // mKeyHash value is table size invariant, and it is maintained automatically
 // -- users need never access it.
@@ -501,11 +506,6 @@ public:
   }
 
 private:
-  // Multiplicative hash uses an unsigned 32 bit integer and the golden ratio,
-  // expressed as a fixed-point 32-bit fraction.
-  static const uint32_t kHashBits = 32;
-  static const uint32_t kGoldenRatio = 0x9E3779B9U;
-
   static uint32_t HashShift(uint32_t aEntrySize, uint32_t aLength);
 
   static const PLDHashNumber kCollisionFlag = 1;
@@ -544,7 +544,7 @@ private:
   // case in SearchTable.
   uint32_t CapacityFromHashShift() const
   {
-    return ((uint32_t)1 << (kHashBits - mHashShift));
+    return ((uint32_t)1 << (kPLDHashNumberBits - mHashShift));
   }
 
   PLDHashNumber ComputeKeyHash(const void* aKey) const;

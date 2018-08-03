@@ -2074,15 +2074,15 @@ impl<'le> ::selectors::Element for GeckoElement<'le> {
 
     #[inline]
     fn is_root(&self) -> bool {
-        let parent_node = match self.as_node().parent_node() {
-            Some(parent_node) => parent_node,
-            None => return false,
-        };
-
-        if !parent_node.is_document() {
+        if self.as_node().get_bool_flag(nsINode_BooleanFlag::ParentIsContent) {
             return false;
         }
 
+        if !self.as_node().is_in_document() {
+            return false;
+        }
+
+        debug_assert!(self.as_node().parent_node().map_or(false, |p| p.is_document()));
         unsafe { bindings::Gecko_IsRootElement(self.0) }
     }
 
@@ -2267,7 +2267,7 @@ impl<'le> ::selectors::Element for GeckoElement<'le> {
         // match the proper pseudo-element, given how we rulehash the stuff
         // based on the pseudo.
         match self.implemented_pseudo_element() {
-            Some(ref pseudo) => *pseudo == pseudo_element.canonical(),
+            Some(ref pseudo) => *pseudo == *pseudo_element,
             None => false,
         }
     }

@@ -421,8 +421,14 @@ pref("media.navigator.audio.use_fec", true);
 pref("media.navigator.video.red_ulpfec_enabled", false);
 
 pref("media.peerconnection.dtmf.enabled", true);
+
+#ifdef NIGHTLY_BUILD
+pref("media.peerconnection.sdp.rust.enabled", true);
+pref("media.peerconnection.sdp.rust.compare", true);
+#else
 pref("media.peerconnection.sdp.rust.enabled", false);
 pref("media.peerconnection.sdp.rust.compare", false);
+#endif
 
 pref("media.webrtc.debug.trace_mask", 0);
 pref("media.webrtc.debug.multi_log", false);
@@ -575,12 +581,23 @@ pref("media.autoplay.block-webaudio", false);
 // By default, don't block muted media from playing automatically.
 pref("media.autoplay.allow-muted", true);
 
+// By default, don't block the media from extension background script.
+pref("media.autoplay.allow-extension-background-pages", true);
+
 // If "media.autoplay.default" is not ALLOWED, and this pref is true,
 // then audible media would only be allowed to autoplay after website has
 // been activated by specific user gestures, but non-audible
 // media won't be restricted.
 #ifdef NIGHTLY_BUILD
 pref("media.autoplay.enabled.user-gestures-needed", false);
+#endif
+
+// HTMLMediaElement.allowedToPlay should be exposed to web content when
+// block autoplay rides the trains to release. Until then, Nightly only.
+#ifdef NIGHTLY_BUILD
+pref("media.allowed-to-play.enabled", true);
+#else
+pref("media.allowed-to-play.enabled", false);
 #endif
 
 // The default number of decoded video frames that are enqueued in
@@ -636,6 +653,7 @@ pref("layers.geometry.d3d11.enabled", true);
 // APZ preferences. For documentation/details on what these prefs do, check
 // gfx/layers/apz/src/AsyncPanZoomController.cpp.
 pref("apz.allow_checkerboarding", true);
+pref("apz.allow_double_tap_zooming", true);
 pref("apz.allow_immediate_handoff", true);
 pref("apz.allow_zooming", false);
 pref("apz.android.chrome_fling_physics.enabled", true);
@@ -2237,9 +2255,14 @@ pref("network.cookie.thirdparty.nonsecureSessionOnly", false);
 pref("network.cookie.leave-secure-alone",   true);
 pref("network.cookie.same-site.enabled",    true); // Honor the SameSite cookie attribute
 pref("network.cookie.ipc.sync",             false);
-pref("network.cookie.lifetimePolicy",       0); // 0-accept, 2-acceptForSession, 3-acceptForNDays
-pref("network.cookie.prefsMigrated",        false);
-pref("network.cookie.lifetime.days",        90); // Ignored unless network.cookie.lifetimePolicy is 3.
+
+// Cookie lifetime policy. Possible values:
+// 0 - accept all cookies
+// 1 - deprecated. don't use it.
+// 2 - accept as session cookies
+// 3 - deprecated. don't use it.
+pref("network.cookie.lifetimePolicy",       0);
+
 // The interval in seconds to move the cookies in the child process.
 // Set to 0 to disable moving the cookies.
 pref("network.cookie.move.interval_sec",    10);
@@ -3272,9 +3295,6 @@ pref("browser.tabs.remote.separatePrivilegedContentProcess", false);
 // Enable the use of display-lists for SVG hit-testing and painting.
 pref("svg.display-lists.hit-testing.enabled", true);
 pref("svg.display-lists.painting.enabled", true);
-
-// Is support for the <marker orient="auto-start-reverse"> feature enabled?
-pref("svg.marker-improvements.enabled", true);
 
 // Is support for the new getBBox method from SVG 2 enabled?
 // See https://svgwg.org/svg2-draft/single-page.html#types-SVGBoundingBoxOptions
@@ -4832,7 +4852,7 @@ pref("layers.max-active", -1);
 // 0  -> full-tilt mode: Recomposite even if not transaction occured.
 pref("layers.offmainthreadcomposition.frame-rate", -1);
 
-#if defined(XP_MACOSX) || defined(MOZ_WIDGET_GTK)
+#if defined(XP_MACOSX)
 pref("layers.enable-tiles", true);
 #else
 pref("layers.enable-tiles", false);
@@ -5380,6 +5400,8 @@ pref("urlclassifier.downloadBlockTable", "goog-badbinurl-proto");
 pref("urlclassifier.passwordAllowTable", "goog-passwordwhite-proto");
 
 // Tables for tracking protection
+pref("urlclassifier.trackingAnnotationTable", "test-track-simple,base-track-digest256");
+pref("urlclassifier.trackingAnnotationWhitelistTable", "test-trackwhite-simple,mozstd-trackwhite-digest256");
 pref("urlclassifier.trackingTable", "test-track-simple,base-track-digest256");
 pref("urlclassifier.trackingWhitelistTable", "test-trackwhite-simple,mozstd-trackwhite-digest256");
 
@@ -5790,6 +5812,8 @@ pref("dom.timeout.max_consecutive_callbacks_ms", 4);
 // Use this preference to house "Payment Request API" during development
 pref("dom.payments.request.enabled", false);
 pref("dom.payments.loglevel", "Warn");
+pref("dom.payments.defaults.saveCreditCard", false);
+pref("dom.payments.defaults.saveAddress", true);
 
 #ifdef FUZZING
 pref("fuzzing.enabled", false);
@@ -5853,3 +5877,9 @@ pref("browser.fastblock.enabled", false);
 // The timeout (ms) since navigation start, all tracker connections been made
 // after this timeout will be canceled.
 pref("browser.fastblock.timeout", 5000);
+
+// Disables clipboard reads and writes by default.
+pref("dom.events.asyncClipboard", false);
+pref("dom.events.asyncClipboard.dataTransfer", false);
+// Should only be enabled in tests
+pref("dom.events.testing.asyncClipboard", false);

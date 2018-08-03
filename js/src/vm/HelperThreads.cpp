@@ -46,6 +46,16 @@ GlobalHelperThreadState* gHelperThreadState = nullptr;
 
 } // namespace js
 
+// These macros are identical in function to the same-named ones in
+// GeckoProfiler.h, but they are defined separately because SpiderMonkey can't
+// use GeckoProfiler.h.
+#define PROFILER_RAII_PASTE(id, line) id ## line
+#define PROFILER_RAII_EXPAND(id, line) PROFILER_RAII_PASTE(id, line)
+#define PROFILER_RAII PROFILER_RAII_EXPAND(raiiObject, __LINE__)
+#define AUTO_PROFILER_LABEL(label, category) \
+  HelperThread::AutoProfilerLabel PROFILER_RAII(this, label, __LINE__, \
+                                                js::ProfilingStackFrame::Category::category)
+
 bool
 js::CreateHelperThreadsState()
 {
@@ -482,22 +492,21 @@ ParseTask::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const
            errors.sizeOfExcludingThis(mallocSizeOf);
 }
 
-ScriptParseTask::ScriptParseTask(JSContext* cx, const char16_t* chars, size_t length,
+ScriptParseTask::ScriptParseTask(JSContext* cx, JS::SourceBufferHolder& srcBuf,
                                  JS::OffThreadCompileCallback callback, void* callbackData)
   : ParseTask(ParseTaskKind::Script, cx, callback, callbackData),
-    data(TwoByteChars(chars, length))
+    data(std::move(srcBuf))
 {}
 
 void
 ScriptParseTask::parse(JSContext* cx)
 {
-    SourceBufferHolder srcBuf(data.begin().get(), data.length(), SourceBufferHolder::NoOwnership);
     Rooted<ScriptSourceObject*> sourceObject(cx);
 
     ScopeKind scopeKind = options.nonSyntacticScope ? ScopeKind::NonSyntactic : ScopeKind::Global;
 
     JSScript* script = frontend::CompileGlobalScript(cx, alloc, scopeKind,
-                                                     options, srcBuf,
+                                                     options, data,
                                                      /* sourceObjectOut = */ &sourceObject.get());
     if (script)
         scripts.infallibleAppend(script);
@@ -505,19 +514,18 @@ ScriptParseTask::parse(JSContext* cx)
         sourceObjects.infallibleAppend(sourceObject);
 }
 
-ModuleParseTask::ModuleParseTask(JSContext* cx, const char16_t* chars, size_t length,
+ModuleParseTask::ModuleParseTask(JSContext* cx, JS::SourceBufferHolder& srcBuf,
                                  JS::OffThreadCompileCallback callback, void* callbackData)
   : ParseTask(ParseTaskKind::Module, cx, callback, callbackData),
-    data(TwoByteChars(chars, length))
+    data(std::move(srcBuf))
 {}
 
 void
 ModuleParseTask::parse(JSContext* cx)
 {
-    SourceBufferHolder srcBuf(data.begin().get(), data.length(), SourceBufferHolder::NoOwnership);
     Rooted<ScriptSourceObject*> sourceObject(cx);
 
-    ModuleObject* module = frontend::CompileModule(cx, options, srcBuf, alloc, &sourceObject.get());
+    ModuleObject* module = frontend::CompileModule(cx, options, data, alloc, &sourceObject.get());
     if (module) {
         scripts.infallibleAppend(module->script());
         if (sourceObject)
@@ -825,10 +833,10 @@ StartOffThreadParseTask(JSContext* cx, ParseTask* task, const ReadOnlyCompileOpt
 
 bool
 js::StartOffThreadParseScript(JSContext* cx, const ReadOnlyCompileOptions& options,
-                              const char16_t* chars, size_t length,
+                              JS::SourceBufferHolder& srcBuf,
                               JS::OffThreadCompileCallback callback, void* callbackData)
 {
-    auto task = cx->make_unique<ScriptParseTask>(cx, chars, length, callback, callbackData);
+    auto task = cx->make_unique<ScriptParseTask>(cx, srcBuf, callback, callbackData);
     if (!task || !StartOffThreadParseTask(cx, task.get(), options))
         return false;
 
@@ -838,10 +846,10 @@ js::StartOffThreadParseScript(JSContext* cx, const ReadOnlyCompileOptions& optio
 
 bool
 js::StartOffThreadParseModule(JSContext* cx, const ReadOnlyCompileOptions& options,
-                              const char16_t* chars, size_t length,
+                              JS::SourceBufferHolder& srcBuf,
                               JS::OffThreadCompileCallback callback, void* callbackData)
 {
-    auto task = cx->make_unique<ModuleParseTask>(cx, chars, length, callback, callbackData);
+    auto task = cx->make_unique<ModuleParseTask>(cx, srcBuf, callback, callbackData);
     if (!task || !StartOffThreadParseTask(cx, task.get(), options))
         return false;
 
@@ -1864,26 +1872,26 @@ HelperThread::destroy()
 void
 HelperThread::ensureRegisteredWithProfiler()
 {
-    if (registered || mozilla::recordreplay::IsRecordingOrReplaying())
+    if (profilingStack || mozilla::recordreplay::IsRecordingOrReplaying())
         return;
 
     JS::RegisterThreadCallback callback = HelperThreadState().registerThread;
     if (callback) {
-        callback("JS Helper", reinterpret_cast<void*>(GetNativeStackBase()));
-        registered = true;
+        profilingStack =
+            callback("JS Helper", reinterpret_cast<void*>(GetNativeStackBase()));
     }
 }
 
 void
 HelperThread::unregisterWithProfilerIfNeeded()
 {
-    if (!registered)
+    if (!profilingStack)
         return;
 
     JS::UnregisterThreadCallback callback = HelperThreadState().unregisterThread;
     if (callback) {
         callback();
-        registered = false;
+        profilingStack = nullptr;
     }
 }
 
@@ -2382,6 +2390,22 @@ const HelperThread::TaskSpec HelperThread::taskSpecs[] = {
     }
 };
 
+HelperThread::AutoProfilerLabel::AutoProfilerLabel(HelperThread* helperThread,
+                                                   const char* label,
+                                                   uint32_t line,
+                                                   ProfilingStackFrame::Category category)
+  : profilingStack(helperThread->profilingStack)
+{
+    if (profilingStack)
+        profilingStack->pushLabelFrame(label, nullptr, this, line, category);
+}
+
+HelperThread::AutoProfilerLabel::~AutoProfilerLabel()
+{
+    if (profilingStack)
+        profilingStack->pop();
+}
+
 void
 HelperThread::threadLoop()
 {
@@ -2412,6 +2436,7 @@ HelperThread::threadLoop()
 
         const TaskSpec* task = findHighestPriorityTask(lock);
         if (!task) {
+            AUTO_PROFILER_LABEL("HelperThread::threadLoop::wait", IDLE);
             if (mozilla::recordreplay::IsRecordingOrReplaying()) {
                 // Unlock the helper thread state lock before potentially
                 // blocking while the main thread waits for all threads to

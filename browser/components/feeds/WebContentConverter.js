@@ -308,28 +308,12 @@ WebContentConverterRegistrar.prototype = {
       browser.contentWindow == aContentWindow);
   },
 
-  /**
-   * See nsIFactory
-   */
-  createInstance(outer, iid) {
-    if (outer != null)
-      throw Cr.NS_ERROR_NO_AGGREGATION;
-    return this.QueryInterface(iid);
-  },
-
   classID: WCCR_CLASSID,
 
   /**
    * See nsISupports
    */
-  QueryInterface: ChromeUtils.generateQI(
-     [Ci.nsIWebContentHandlerRegistrar,
-      Ci.nsIFactory]),
-
-  _xpcom_categories: [{
-    category: "app-startup",
-    service: true
-  }]
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIWebContentHandlerRegistrar]),
 };
 
 function WebContentConverterRegistrarContent() {
@@ -339,9 +323,7 @@ WebContentConverterRegistrarContent.prototype = {
   registerProtocolHandler(aProtocol, aURIString, aTitle, aBrowserOrWindow) {
     aProtocol = (aProtocol || "").toLowerCase();
     // aBrowserOrWindow must be a window.
-    let messageManager = aBrowserOrWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                                         .getInterface(Ci.nsIWebNavigation)
-                                         .QueryInterface(Ci.nsIDocShell)
+    let messageManager = aBrowserOrWindow.docShell
                                          .QueryInterface(Ci.nsIInterfaceRequestor)
                                          .getInterface(Ci.nsITabChild)
                                          .messageManager;
@@ -355,23 +337,12 @@ WebContentConverterRegistrarContent.prototype = {
                                       title: aTitle });
   },
 
-  /**
-   * See nsIFactory
-   */
-  createInstance(outer, iid) {
-    if (outer != null)
-      throw Cr.NS_ERROR_NO_AGGREGATION;
-    return this.QueryInterface(iid);
-  },
-
   classID: WCCR_CLASSID,
 
   /**
    * See nsISupports
    */
-  QueryInterface: ChromeUtils.generateQI(
-                     [Ci.nsIWebContentHandlerRegistrar,
-                      Ci.nsIFactory])
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIWebContentHandlerRegistrar])
 };
 
 this.NSGetFactory =

@@ -21,6 +21,8 @@
 #include "vm/Debugger.h"
 #include "vm/Iteration.h"
 #include "vm/JSContext.h"
+#include "vm/JSObject.h"
+#include "vm/SelfHosting.h"
 
 #include "vm/Compartment-inl.h"
 #include "vm/Debugger-inl.h"
@@ -991,7 +993,7 @@ EnqueuePromiseReactionJob(JSContext* cx, HandleObject reactionObj,
     // unwrapping and then getting the global. This is very convoluted, but
     // much better than having to store the original global as a private value
     // because we couldn't wrap it to store it as a normal JS value.
-    RootedObject global(cx);
+    Rooted<GlobalObject*> global(cx);
     if (JSObject* objectFromIncumbentGlobal = reaction->getAndClearIncumbentGlobalObject()) {
         objectFromIncumbentGlobal = CheckedUnwrap(objectFromIncumbentGlobal);
         MOZ_ASSERT(objectFromIncumbentGlobal);
@@ -1724,7 +1726,7 @@ EnqueuePromiseResolveThenableJob(JSContext* cx, HandleValue promiseToResolve_,
     // compartment.
     RootedObject promise(cx, &promiseToResolve.toObject());
 
-    RootedObject incumbentGlobal(cx, cx->runtime()->getIncumbentGlobal(cx));
+    Rooted<GlobalObject*> incumbentGlobal(cx, cx->runtime()->getIncumbentGlobal(cx));
     return cx->runtime()->enqueuePromiseJob(cx, job, promise, incumbentGlobal);
 }
 
@@ -1752,7 +1754,7 @@ EnqueuePromiseResolveThenableBuiltinJob(JSContext* cx, HandleObject promiseToRes
     job->setExtendedSlot(BuiltinThenableJobSlot_Promise, ObjectValue(*promiseToResolve));
     job->setExtendedSlot(BuiltinThenableJobSlot_Thenable, ObjectValue(*thenable));
 
-    RootedObject incumbentGlobal(cx, cx->runtime()->getIncumbentGlobal(cx));
+    Rooted<GlobalObject*> incumbentGlobal(cx, cx->runtime()->getIncumbentGlobal(cx));
     return cx->runtime()->enqueuePromiseJob(cx, job, promiseToResolve, incumbentGlobal);
 }
 
@@ -4388,6 +4390,97 @@ js::PromiseLookup::isDefaultInstance(JSContext* cx, PromiseObject* promise,
 
     // The object uses the default properties from Promise.prototype.
     return hasDefaultProtoAndNoShadowedProperties(cx, promise);
+}
+
+// We can skip `await` with an already resolved value only if the current frame
+// is the topmost JS frame and the current job is the last job in the job queue.
+// This guarantees that any new job enqueued in the current turn will be
+// executed immediately after the current job.
+//
+// Currently we only support skipping jobs when the async function is resumed
+// at least once.
+static MOZ_MUST_USE bool
+IsTopMostAsyncFunctionCall(JSContext* cx)
+{
+    FrameIter iter(cx);
+
+    // The current frame should be the async function.
+    if (iter.done())
+        return false;
+    if (!iter.calleeTemplate())
+        return false;
+    MOZ_ASSERT(iter.calleeTemplate()->isAsync());
+
+    ++iter;
+
+    // The parent frame should be the `next` function of the generator that is
+    // internally called in AsyncFunctionResume.
+    if (iter.done())
+        return false;
+    if (!iter.calleeTemplate())
+        return false;
+
+    if (!IsSelfHostedFunctionWithName(iter.calleeTemplate(), cx->names().GeneratorNext))
+        return false;
+
+    ++iter;
+
+    // There should be no more frames.
+    if (iter.done())
+        return true;
+
+    return false;
+}
+
+MOZ_MUST_USE bool
+js::TrySkipAwait(JSContext* cx, HandleValue val, bool* canSkip, MutableHandleValue resolved)
+{
+    if (!cx->canSkipEnqueuingJobs) {
+        *canSkip = false;
+        return true;
+    }
+
+    if (!IsTopMostAsyncFunctionCall(cx)) {
+        *canSkip = false;
+        return true;
+    }
+
+    // Primitive values cannot be 'thenables', so we can trivially skip the
+    // await operation.
+    if (!val.isObject()) {
+        resolved.set(val);
+        *canSkip = true;
+        return true;
+    }
+
+    JSObject* obj = &val.toObject();
+    if (!obj->is<PromiseObject>()) {
+        *canSkip = false;
+        return true;
+    }
+
+    PromiseObject* promise = &obj->as<PromiseObject>();
+
+    if (promise->state() == JS::PromiseState::Pending) {
+        *canSkip = false;
+        return true;
+    }
+
+    PromiseLookup& promiseLookup = cx->realm()->promiseLookup;
+    if (!promiseLookup.isDefaultInstance(cx, promise)) {
+        *canSkip = false;
+        return true;
+    }
+
+    if (promise->state() == JS::PromiseState::Rejected) {
+        // We don't optimize rejected Promises for now.
+        *canSkip = false;
+        return true;
+    }
+
+    resolved.set(promise->value());
+    *canSkip = true;
+    return true;
 }
 
 OffThreadPromiseTask::OffThreadPromiseTask(JSContext* cx, Handle<PromiseObject*> promise)
