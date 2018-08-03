@@ -25,9 +25,10 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "jit/arm64/vixl/Cpu-vixl.h"
-#include "jit/arm64/vixl/Utils-vixl.h"
 
 #include <windows.h>
+
+#include "jit/arm64/vixl/Utils-vixl.h"
 
 namespace vixl {
 
