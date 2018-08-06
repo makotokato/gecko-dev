@@ -769,7 +769,7 @@ mediarecorder:
       - 1400757
     description: >
       The number of times a MediaRecorder has been started. Recorded when a MediaRecorder starts
-    expires: "64"
+    expires: "68"
     kind: uint
     notification_emails:
       - bvandyk@mozilla.com
@@ -1454,6 +1454,21 @@ telemetry:
     notification_emails:
       - jrediger@mozilla.com
       - telemetry-client-dev@mozilla.com
+    release_channel_collection: opt-out
+    record_in_processes:
+      - 'main'
+
+  os_shutting_down:
+    bug_numbers:
+      - 1480826
+    description: >
+      Records true if there is a signal that Firefox was quitting because
+      the OS was shutting down. Only available on Windows.
+    expires: "64"
+    kind: boolean
+    notification_emails:
+      - telemetry-client-dev@mozilla.com
+      - agashlin@mozilla.com
     release_channel_collection: opt-out
     record_in_processes:
       - 'main'

@@ -621,7 +621,7 @@ def vc_compiler_path(host, target, vs_major_version, env, vs_release_name):
         'x86': 'x86',
         'x86_64': 'x64',
         'arm': 'arm',
-        'aarch64': 'arm64',
+        'aarch64': 'arm64'
     }.get(target.cpu)
     if vc_target is None:
         return

@@ -679,7 +679,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
     void jump(TrampolinePtr code) {
         syncStackPtr();
         BufferOffset loc = b(-1, LabelDoc()); // The jump target will be patched by executableCopy().
-        addPendingJump(loc, ImmPtr(code.value), Relocation::HARDCODED);
+        addPendingJump(loc, ImmPtr(code.value), RelocationKind::HARDCODED);
     }
     void jump(RepatchLabel* label) {
         MOZ_CRASH("jump (repatchlabel)");
@@ -1233,7 +1233,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
     void branch(JitCode* target) {
         syncStackPtr();
         BufferOffset loc = b(-1, LabelDoc()); // The jump target will be patched by executableCopy().
-        addPendingJump(loc, ImmPtr(target->raw()), Relocation::JITCODE);
+        addPendingJump(loc, ImmPtr(target->raw()), RelocationKind::JITCODE);
     }
 
     CodeOffsetJump jumpWithPatch(RepatchLabel* label)
@@ -1899,7 +1899,7 @@ class MacroAssemblerCompat : public vixl::MacroAssembler
                 nop();
         }
 
-        addPendingJump(loadOffset, ImmPtr(target->raw()), Relocation::JITCODE);
+        addPendingJump(loadOffset, ImmPtr(target->raw()), RelocationKind::JITCODE);
         CodeOffset ret(offset.getOffset());
         return ret;
     }

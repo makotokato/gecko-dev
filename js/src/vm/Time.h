@@ -129,7 +129,7 @@ PRMJ_FormatTime(char* buf, int buflen, const char* fmt, const PRMJTime* tm,
 
 #define MOZ_HAVE_RDTSC 1
 
-#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
+#if defined(_WIN32) && (defined(_M_IX86) || defined(_M_AMD64))
 
 #include <intrin.h>
 static __inline uint64_t

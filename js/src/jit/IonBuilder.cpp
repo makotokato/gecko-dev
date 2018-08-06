@@ -9765,8 +9765,8 @@ AbortReasonOr<Ok>
 IonBuilder::jsop_getelem_super()
 {
     MDefinition* obj = current->pop();
-    MDefinition* receiver = current->pop();
     MDefinition* id = current->pop();
+    MDefinition* receiver = current->pop();
 
 #if defined(JS_CODEGEN_X86)
     if (instrumentedProfiling())
@@ -10574,7 +10574,8 @@ IonBuilder::getPropTryTypedObject(bool* emitted,
     TypedObjectPrediction fieldPrediction;
     size_t fieldOffset;
     size_t fieldIndex;
-    if (!typedObjectHasField(obj, name, &fieldOffset, &fieldPrediction, &fieldIndex))
+    bool fieldMutable;
+    if (!typedObjectHasField(obj, name, &fieldOffset, &fieldPrediction, &fieldIndex, &fieldMutable))
         return Ok();
 
     switch (fieldPrediction.kind()) {
@@ -11716,7 +11717,11 @@ IonBuilder::setPropTryTypedObject(bool* emitted, MDefinition* obj,
     TypedObjectPrediction fieldPrediction;
     size_t fieldOffset;
     size_t fieldIndex;
-    if (!typedObjectHasField(obj, name, &fieldOffset, &fieldPrediction, &fieldIndex))
+    bool fieldMutable;
+    if (!typedObjectHasField(obj, name, &fieldOffset, &fieldPrediction, &fieldIndex, &fieldMutable))
+        return Ok();
+
+    if (!fieldMutable)
         return Ok();
 
     switch (fieldPrediction.kind()) {
@@ -12257,8 +12262,10 @@ IonBuilder::jsop_setarg(uint32_t arg)
     if (info().argsObjAliasesFormals()) {
         if (needsPostBarrier(val))
             current->add(MPostWriteBarrier::New(alloc(), current->argumentsObject(), val));
-        current->add(MSetArgumentsObjectArg::New(alloc(), current->argumentsObject(),
-                                                 GET_ARGNO(pc), val));
+        auto* ins = MSetArgumentsObjectArg::New(alloc(), current->argumentsObject(),
+                                                GET_ARGNO(pc), val);
+        current->add(ins);
+        MOZ_TRY(resumeAfter(ins));
         return Ok();
     }
 
@@ -13484,7 +13491,8 @@ IonBuilder::typedObjectHasField(MDefinition* typedObj,
                                 PropertyName* name,
                                 size_t* fieldOffset,
                                 TypedObjectPrediction* fieldPrediction,
-                                size_t* fieldIndex)
+                                size_t* fieldIndex,
+                                bool* fieldMutable)
 {
     TypedObjectPrediction objPrediction = typedObjectPrediction(typedObj);
     if (objPrediction.isUseless()) {
@@ -13500,7 +13508,7 @@ IonBuilder::typedObjectHasField(MDefinition* typedObj,
 
     // Determine the type/offset of the field `name`, if any.
     if (!objPrediction.hasFieldNamed(NameToId(name), fieldOffset,
-                                     fieldPrediction, fieldIndex))
+                                     fieldPrediction, fieldIndex, fieldMutable))
     {
         trackOptimizationOutcome(TrackedOutcome::StructNoField);
         return false;
