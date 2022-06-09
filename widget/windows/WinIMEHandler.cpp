@@ -21,6 +21,7 @@
 #include "nsWindow.h"
 #include "WinUtils.h"
 #include "nsIWindowsRegKey.h"
+#include "OnScreenKeyboardManager.h"
 #include "WindowsUIUtils.h"
 
 #ifdef ACCESSIBILITY
@@ -1007,6 +1008,10 @@ bool IMEHandler::AutoInvokeOnScreenKeyboardInDesktopMode() {
 // Based on DisplayVirtualKeyboard() in Chromium's base/win/win_util.cc.
 // static
 void IMEHandler::ShowOnScreenKeyboard(nsWindow* aWindow) {
+  if (RefPtr<OnScreenKeyboardManager> osk = aWindow->GetOnScreenKeyboardManager()) {
+    osk->Show();
+    return;
+  }
 #ifdef NIGHTLY_BUILD
   if (FxRWindowManager::GetInstance()->IsFxRWindow(sFocusedWindow)) {
     OSKVRManager::ShowOnScreenKeyboard();
@@ -1025,6 +1030,10 @@ void IMEHandler::ShowOnScreenKeyboard(nsWindow* aWindow) {
 // Based on DismissVirtualKeyboard() in Chromium's base/win/win_util.cc.
 // static
 void IMEHandler::DismissOnScreenKeyboard(nsWindow* aWindow) {
+  if (RefPtr<OnScreenKeyboardManager> osk = aWindow->GetOnScreenKeyboardManager()) {
+    osk->Dismiss();
+    return;
+  }
   // Dismiss the virtual keyboard if it's open
   if (IsWin10AnniversaryUpdateOrLater()) {
     OSKInputPaneManager::DismissOnScreenKeyboard(aWindow->GetWindowHandle());

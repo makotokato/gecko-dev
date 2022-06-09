@@ -85,6 +85,7 @@ class TextEventDispatcher;
 class TextEventDispatcherListener;
 class CompositorWidget;
 class CompositorWidgetInitData;
+class OnScreenKeyboardManager;
 }  // namespace widget
 namespace wr {
 class DisplayListBuilder;
@@ -2114,6 +2115,11 @@ class nsIWidget : public nsISupports {
    */
   virtual void SetWindowButtonRect(WindowButtonType aButtonType,
                                    const LayoutDeviceIntRect& aClientRect) {}
+
+  virtual already_AddRefed<mozilla::widget::OnScreenKeyboard>
+  GetOnScreenKeyboardManager() {
+    return nullptr;
+  }
 
  protected:
   // keep the list of children.  We also keep track of our siblings.

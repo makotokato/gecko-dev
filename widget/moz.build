@@ -196,6 +196,7 @@ EXPORTS.mozilla.widget += [
     "NativeMenuSupport.h",
     "nsAutoRollup.h",
     "nsXPLookAndFeel.h",
+    "OnScreenKeyboardManager.h"
     "PuppetBidiKeyboard.h",
     "RemoteLookAndFeel.h",
     "Screen.h",
