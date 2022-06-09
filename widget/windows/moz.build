@@ -118,7 +118,7 @@ SOURCES += [
     "nsFilePicker.cpp",
     "nsSharePicker.cpp",
     "nsWidgetFactory.cpp",
-    "OSKInputPaneManager.cpp",
+    "OnScreenKeyboardManagerInputPane.cpp",
     "WinCompositorWidget.cpp",
     "WinContentSystemParameters.cpp",
     "WindowsSMTCProvider.cpp",

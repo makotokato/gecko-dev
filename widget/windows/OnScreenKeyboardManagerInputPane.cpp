@@ -6,23 +6,20 @@
 
 #define NTDDI_VERSION NTDDI_WIN10_RS1
 
-#include "OSKInputPaneManager.h"
+#include "OnScreenKeyboardManagerInputPane.h"
 #include "nsDebug.h"
 
-#ifndef __MINGW32__
-#  include <inputpaneinterop.h>
-#  include <windows.ui.viewmanagement.h>
-#  include <wrl.h>
+#include <inputpaneinterop.h>
+#include <windows.ui.viewmanagement.h>
+#include <wrl.h>
 
 using namespace ABI::Windows::UI::ViewManagement;
 using namespace Microsoft::WRL;
 using namespace Microsoft::WRL::Wrappers;
-#endif
 
 namespace mozilla {
 namespace widget {
 
-#ifndef __MINGW32__
 static ComPtr<IInputPane2> GetInputPane(HWND aHwnd) {
   ComPtr<IInputPaneInterop> inputPaneInterop;
   HRESULT hr = RoGetActivationFactory(
@@ -43,7 +40,6 @@ static ComPtr<IInputPane2> GetInputPane(HWND aHwnd) {
   return inputPane2;
 }
 
-#  ifdef DEBUG
 static bool IsInputPaneVisible(ComPtr<IInputPane2>& aInputPane2) {
   ComPtr<IInputPaneControl> inputPaneControl;
   aInputPane2.As(&inputPaneControl);
@@ -55,6 +51,7 @@ static bool IsInputPaneVisible(ComPtr<IInputPane2>& aInputPane2) {
   return visible;
 }
 
+#ifdef DEBUG
 static bool IsForegroundApp() {
   HWND foregroundWnd = ::GetForegroundWindow();
   if (!foregroundWnd) {
@@ -64,13 +61,10 @@ static bool IsForegroundApp() {
   ::GetWindowThreadProcessId(foregroundWnd, &pid);
   return pid == ::GetCurrentProcessId();
 }
-#  endif
 #endif
 
-// static
-void OSKInputPaneManager::ShowOnScreenKeyboard(HWND aWnd) {
-#ifndef __MINGW32__
-  ComPtr<IInputPane2> inputPane2 = GetInputPane(aWnd);
+void OnScreenKeyboardManagerInputPane::Show() {
+  ComPtr<IInputPane2> inputPane2 = GetInputPane(mWnd);
   if (!inputPane2) {
     return;
   }
@@ -79,13 +73,10 @@ void OSKInputPaneManager::ShowOnScreenKeyboard(HWND aWnd) {
   NS_WARNING_ASSERTION(
       result || !IsForegroundApp() || IsInputPaneVisible(inputPane2),
       "IInputPane2::TryShow is failure");
-#endif
 }
 
-// static
-void OSKInputPaneManager::DismissOnScreenKeyboard(HWND aWnd) {
-#ifndef __MINGW32__
-  ComPtr<IInputPane2> inputPane2 = GetInputPane(aWnd);
+void OnScreenKeyboardManagerInputPane::Dismiss() {
+  ComPtr<IInputPane2> inputPane2 = GetInputPane(mWnd);
   if (!inputPane2) {
     return;
   }
@@ -94,7 +85,14 @@ void OSKInputPaneManager::DismissOnScreenKeyboard(HWND aWnd) {
   NS_WARNING_ASSERTION(
       result || !IsForegroundApp() || !IsInputPaneVisible(inputPane2),
       "IInputPane2::TryHide is failure");
-#endif
+}
+
+void OnScreenKeyboardManagerInputPane::IsVisible() {
+  ComPtr<IInputPane2> inputPane2 = GetInputPane(mWnd);
+  if (!inputPane2) {
+    return false;
+  }
+  return IsInputPaneVisible(inputPane2);
 }
 
 }  // namespace widget

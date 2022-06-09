@@ -161,6 +161,7 @@
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPrefs_widget.h"
 #include "nsNativeAppSupportWin.h"
+#include "OnScreenKeyboardManagerInputPane."
 #include "OnScreenKeyboardManagerVR."
 
 #include "nsIGfxInfo.h"
@@ -9166,6 +9167,13 @@ nsWindow::GetOnScreenKeyboardManager() {
     return osk.forget();
   }
 #endif  // NIGHTLY_BUILD
+
+  if (IsWin10AnniversaryUpdateOrLater()) {
+    RefPtr<OnScreenKeyboardManager> osk =
+        new OnScreenKeyboardManagerInputPane(aWindow->GetWindowHandle());
+    return osk.forget();
+  }
+
   return nullptr;
 }
 

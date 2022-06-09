@@ -14,7 +14,6 @@
 
 #include "TSFTextStore.h"
 
-#include "OSKInputPaneManager.h"
 #include "OSKTabTipManager.h"
 #include "nsLookAndFeel.h"
 #include "nsWindow.h"
@@ -1007,11 +1006,6 @@ void IMEHandler::ShowOnScreenKeyboard(nsWindow* aWindow) {
     return;
   }
 
-  if (IsWin10AnniversaryUpdateOrLater()) {
-    OSKInputPaneManager::ShowOnScreenKeyboard(aWindow->GetWindowHandle());
-    return;
-  }
-
   OSKTabTipManager::ShowOnScreenKeyboard();
 }
 
@@ -1020,11 +1014,6 @@ void IMEHandler::ShowOnScreenKeyboard(nsWindow* aWindow) {
 void IMEHandler::DismissOnScreenKeyboard(nsWindow* aWindow) {
   if (RefPtr<OnScreenKeyboardManager> osk = aWindow->GetOnScreenKeyboardManager()) {
     osk->Dismiss();
-    return;
-  }
-  // Dismiss the virtual keyboard if it's open
-  if (IsWin10AnniversaryUpdateOrLater()) {
-    OSKInputPaneManager::DismissOnScreenKeyboard(aWindow->GetWindowHandle());
     return;
   }
 
