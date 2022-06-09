@@ -161,6 +161,7 @@
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPrefs_widget.h"
 #include "nsNativeAppSupportWin.h"
+#include "OnScreenKeyboardManagerVR."
 
 #include "nsIGfxInfo.h"
 #include "nsUXThemeConstants.h"
@@ -9155,6 +9156,17 @@ bool nsWindow::HandleAppCommandMsg(const MSG& aAppCommandMsg,
   bool consumed = nativeKey.HandleAppCommandMessage();
   *aRetValue = consumed ? 1 : 0;
   return consumed;
+}
+
+already_AddRefed<mozilla::widget::OnScreenKeyboardManager>
+nsWindow::GetOnScreenKeyboardManager() {
+#ifdef NIGHTLY_BUILD
+  if (FxRWindowManager::GetInstance()->IsFxRWindow(aWindow)) {
+    RefPtr<OnScreenKeyboardManager> osk = new OnScreenKeyboardManagerVR();
+    return osk.forget();
+  }
+#endif  // NIGHTLY_BUILD
+  return nullptr;
 }
 
 static nsSizeMode GetSizeModeForWindowFrame(HWND aWnd, bool aFullscreenMode) {

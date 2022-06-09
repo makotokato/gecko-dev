@@ -20,7 +20,7 @@ with Files("*IMMHandler*"):
 with Files("*KeyboardLayout*"):
     BUG_COMPONENT = ("Core", "DOM: UI Events & Focus Handling")
 
-with Files("OSK*"):
+with Files("OnScreenKeyboard*"):
     BUG_COMPONENT = ("Core", "DOM: UI Events & Focus Handling")
 
 with Files("*TSFTextStore*"):
@@ -88,7 +88,6 @@ UNIFIED_SOURCES += [
     "nsWindowTaskbarConcealer.cpp",
     "nsWinGesture.cpp",
     "OSKTabTipManager.cpp",
-    "OSKVRManager.cpp",
     "RemoteBackbuffer.cpp",
     "ScreenHelperWin.cpp",
     "SystemStatusBar.cpp",
@@ -153,6 +152,11 @@ if CONFIG["NS_PRINTING"]:
 if CONFIG["MOZ_ENABLE_SKIA_PDF"]:
     UNIFIED_SOURCES += [
         "WindowsEMF.cpp",
+    ]
+
+if CONFIG["NIGHTLY_BUILD"]:
+    UNIFIED_SOURCES += [
+        "OnScreenKeyboardManagerVR.cpp",
     ]
 
 XPCOM_MANIFESTS += [

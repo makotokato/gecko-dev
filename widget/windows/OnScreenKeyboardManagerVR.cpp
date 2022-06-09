@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "OSKVRManager.h"
+#include "OnScreenKeyboardManagerVR.h"
 
 #include "FxRWindowManager.h"
 #include "VRShMem.h"
@@ -14,21 +14,22 @@ namespace mozilla {
 namespace widget {
 
 // static
-void OSKVRManager::ShowOnScreenKeyboard() {
-#ifdef NIGHTLY_BUILD
+void OnScreenKeyboardManagerVR::Show() {
   mozilla::gfx::VRShMem shmem(nullptr, true /*aRequiresMutex*/);
   shmem.SendIMEState(FxRWindowManager::GetInstance()->GetWindowID(),
                      mozilla::gfx::VRFxEventState::FOCUS);
-#endif  // NIGHTLY_BUILD
 }
 
 // static
-void OSKVRManager::DismissOnScreenKeyboard() {
-#ifdef NIGHTLY_BUILD
+void OnScreenKeyboardManagerVR::Dismiss() {
   mozilla::gfx::VRShMem shmem(nullptr, true /*aRequiresMutex*/);
   shmem.SendIMEState(FxRWindowManager::GetInstance()->GetWindowID(),
                      mozilla::gfx::VRFxEventState::BLUR);
-#endif  // NIGHTLY_BUILD
+}
+
+void OnScreenKeyboardManagerVR::IsVisible() {
+  // Unknown
+  return false;
 }
 
 }  // namespace widget

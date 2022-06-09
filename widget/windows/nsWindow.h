@@ -286,6 +286,9 @@ class nsWindow final : public nsBaseWidget {
   uint32_t GetMaxTouchPoints() const override;
   void SetWindowClass(const nsAString& xulWinType) override;
 
+  already_AddRefed<mozilla::widget::OnScreenKeyboardManager>
+  GetOnScreenKeyboardManager() override;
+
   /**
    * Event helpers
    */

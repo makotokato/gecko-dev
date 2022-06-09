@@ -16,7 +16,6 @@
 
 #include "OSKInputPaneManager.h"
 #include "OSKTabTipManager.h"
-#include "OSKVRManager.h"
 #include "nsLookAndFeel.h"
 #include "nsWindow.h"
 #include "WinUtils.h"
@@ -767,11 +766,6 @@ void IMEHandler::MaybeShowOnScreenKeyboard(nsWindow* aWindow,
 
 // static
 void IMEHandler::MaybeDismissOnScreenKeyboard(nsWindow* aWindow, Sync aSync) {
-#ifdef NIGHTLY_BUILD
-  if (FxRWindowManager::GetInstance()->IsFxRWindow(aWindow)) {
-    OSKVRManager::DismissOnScreenKeyboard();
-  }
-#endif  // NIGHTLY_BUILD
   if (!IsWin8OrLater()) {
     return;
   }
@@ -1012,12 +1006,6 @@ void IMEHandler::ShowOnScreenKeyboard(nsWindow* aWindow) {
     osk->Show();
     return;
   }
-#ifdef NIGHTLY_BUILD
-  if (FxRWindowManager::GetInstance()->IsFxRWindow(sFocusedWindow)) {
-    OSKVRManager::ShowOnScreenKeyboard();
-    return;
-  }
-#endif  // NIGHTLY_BUILD
 
   if (IsWin10AnniversaryUpdateOrLater()) {
     OSKInputPaneManager::ShowOnScreenKeyboard(aWindow->GetWindowHandle());
