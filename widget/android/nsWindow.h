@@ -127,6 +127,8 @@ class nsWindow final : public nsBaseWidget {
 
   void DetachNatives();
 
+  void ShowOnScreenKeyboard(bool aShow);
+
   //
   // nsIWidget
   //
@@ -236,6 +238,9 @@ class nsWindow final : public nsBaseWidget {
 
   virtual mozilla::ScreenIntMargin GetSafeAreaInsets() const override;
   void UpdateSafeAreaInsets(const mozilla::ScreenIntMargin& aSafeAreaInsets);
+
+  virtual already_AddRefed<OnScreenKeyboardManager>
+  GetOnScreenKeyboardManager() override;
 
  protected:
   void BringToFront();

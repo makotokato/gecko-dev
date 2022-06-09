@@ -3103,3 +3103,22 @@ void nsWindow::SetCursor(const Cursor& aCursor) {
         });
   }
 }
+
+already_AddRefed<OnScreenKeyboardManager>
+nsWindow::GetOnScreenKeyboardManager() {
+  RefPtr<OnScreenKeyboardManager> osk = new OnScreenKeyboardManagerAndroid(this);
+  return osk.forget();
+}
+
+void nsWindow::ShowOnScreenKeyboard(bool aShow) {
+  nsWindow* top = FindTopLevel();
+  MOZ_ASSERT(top);
+
+  auto acc(top->mEditableSupport.Access());
+  if (!acc) {
+    // Non-GeckoView windows don't support IME operations.
+    return;
+  }
+
+  acc->ShowOnScreenKeyboard(aShow);
+}

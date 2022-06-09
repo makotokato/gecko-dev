@@ -245,6 +245,8 @@ class GeckoEditableSupport final
   // Transfer to a new parent.
   void TransferParent(jni::Object::Param aEditableParent);
 
+  void ShowOnScreenKeyboard(bool aShow);
+
   // Handle an Android KeyEvent.
   void OnKeyEvent(int32_t aAction, int32_t aKeyCode, int32_t aScanCode,
                   int32_t aMetaState, int32_t aKeyPressMetaState, int64_t aTime,

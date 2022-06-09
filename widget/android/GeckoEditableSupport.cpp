@@ -1645,5 +1645,18 @@ nsWindow* GeckoEditableSupport::GetNsWindow() const {
   return acc->GetNsWindow();
 }
 
+void GeckoEditableSupport::ShowOnScreenKeyboard(bool aShow) {
+  if (aShow) {
+    if (mInputContext.mIMEState.mEnabled == IMEEnabled::Disabled) {
+      mInputContext.mIMEState.mEnabled = IMEEnabled::Unknown;
+    }
+    NotifyIMEContext(mInputContext, InputAction());
+  } else {
+    mInputContext.mIMEState.mEnabled = IMEEnabled::Disabled;
+    NotifyIMEContext(mInputContext, InputAction());
+  }
+  mEditable->NotifyIME(EditableListener::NOTIFY_IME_OPEN_VKB);
+}
+
 }  // namespace widget
 }  // namespace mozilla
