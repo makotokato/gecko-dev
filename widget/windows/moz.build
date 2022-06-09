@@ -87,7 +87,7 @@ UNIFIED_SOURCES += [
     "nsWindowGfx.cpp",
     "nsWindowTaskbarConcealer.cpp",
     "nsWinGesture.cpp",
-    "OSKTabTipManager.cpp",
+    "OnScreenKeyboardManagerTabTip.cpp",
     "RemoteBackbuffer.cpp",
     "ScreenHelperWin.cpp",
     "SystemStatusBar.cpp",

@@ -162,6 +162,7 @@
 #include "mozilla/StaticPrefs_widget.h"
 #include "nsNativeAppSupportWin.h"
 #include "OnScreenKeyboardManagerInputPane."
+#include "OnScreenKeyboardManagerTabTip."
 #include "OnScreenKeyboardManagerVR."
 
 #include "nsIGfxInfo.h"
@@ -9174,7 +9175,8 @@ nsWindow::GetOnScreenKeyboardManager() {
     return osk.forget();
   }
 
-  return nullptr;
+  RefPtr<OnScreenKeyboardManager> osk = new OnScreenKeyboardManagerTapTip();
+  return osk.forget();
 }
 
 static nsSizeMode GetSizeModeForWindowFrame(HWND aWnd, bool aFullscreenMode) {

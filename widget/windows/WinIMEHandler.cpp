@@ -14,7 +14,6 @@
 
 #include "TSFTextStore.h"
 
-#include "OSKTabTipManager.h"
 #include "nsLookAndFeel.h"
 #include "nsWindow.h"
 #include "WinUtils.h"
@@ -1003,10 +1002,7 @@ bool IMEHandler::AutoInvokeOnScreenKeyboardInDesktopMode() {
 void IMEHandler::ShowOnScreenKeyboard(nsWindow* aWindow) {
   if (RefPtr<OnScreenKeyboardManager> osk = aWindow->GetOnScreenKeyboardManager()) {
     osk->Show();
-    return;
   }
-
-  OSKTabTipManager::ShowOnScreenKeyboard();
 }
 
 // Based on DismissVirtualKeyboard() in Chromium's base/win/win_util.cc.
@@ -1014,10 +1010,7 @@ void IMEHandler::ShowOnScreenKeyboard(nsWindow* aWindow) {
 void IMEHandler::DismissOnScreenKeyboard(nsWindow* aWindow) {
   if (RefPtr<OnScreenKeyboardManager> osk = aWindow->GetOnScreenKeyboardManager()) {
     osk->Dismiss();
-    return;
   }
-
-  OSKTabTipManager::DismissOnScreenKeyboard();
 }
 
 bool IMEHandler::MaybeCreateNativeCaret(nsWindow* aWindow) {

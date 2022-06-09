@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "OSKTabTipManager.h"
+#include "OnScreenKeyboardManagerTabTip.h"
 
 #include "mozilla/Preferences.h"
 #include "nsDebug.h"
@@ -29,8 +29,7 @@ static HWND GetOnScreenKeyboardWindow() {
   return nullptr;
 }
 
-// static
-void OSKTabTipManager::ShowOnScreenKeyboard() {
+void OnScreenKeyboardManagerTabTip::Show() {
   const char* kOskPathPrefName = "ui.osk.on_screen_keyboard_path";
 
   if (GetOnScreenKeyboardWindow()) {
@@ -101,12 +100,15 @@ void OSKTabTipManager::ShowOnScreenKeyboard() {
                 SW_SHOW);
 }
 
-// static
-void OSKTabTipManager::DismissOnScreenKeyboard() {
+void OnScreenKeyboardManagerTabTip::Dismiss() {
   HWND osk = GetOnScreenKeyboardWindow();
   if (osk) {
     ::PostMessage(osk, WM_SYSCOMMAND, SC_CLOSE, 0);
   }
+}
+
+bool OnScreenKeyboardManagerTabTip::IsVisible() {
+  return !!GetOnScreenKeyboardWindow();
 }
 
 }  // namespace widget
