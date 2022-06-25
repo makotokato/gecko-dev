@@ -36,6 +36,7 @@
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_font.h"
+#include "mozilla/StaticPrefs_image.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TimeStamp.h"
@@ -5377,6 +5378,9 @@ void PresShell::AddCanvasBackgroundColorItem(
 bool PresShell::IsTransparentContainerElement() const {
   nsPresContext* pc = GetPresContext();
   if (!pc->IsRootContentDocumentCrossProcess()) {
+    if (pc->IsChrome()) {
+      return true;
+    }
     // Frames are transparent except if their embedder color-scheme is
     // mismatched, in which case we use an opaque background to avoid
     // black-on-black or white-on-white text, see
@@ -5462,7 +5466,7 @@ PresShell::CanvasBackground PresShell::ComputeCanvasBackground() const {
     return {GetDefaultBackgroundColorToDraw(), false};
   }
 
-  ComputedStyle* bgStyle =
+  const ComputedStyle* bgStyle =
       nsCSSRendering::FindRootFrameBackground(rootStyleFrame);
   // XXX We should really be passing the canvasframe, not the root element
   // style frame but we don't have access to the canvasframe here. It isn't
@@ -6420,8 +6424,10 @@ void PresShell::PaintInternal(nsView* aViewToPaint, PaintInternalFlags aFlags) {
 
   // We force sync-decode for printing / print-preview (printing already does
   // this from nsPageSequenceFrame::PrintNextSheet).
+  // We also force sync-decoding via pref for reftests.
   if (aFlags & PaintInternalFlags::PaintSyncDecodeImages ||
-      mDocument->IsStaticDocument()) {
+      mDocument->IsStaticDocument() ||
+      StaticPrefs::image_decode_sync_enabled()) {
     flags |= PaintFrameFlags::SyncDecodeImages;
   }
   if (renderer->GetBackendType() == layers::LayersBackend::LAYERS_WR) {
@@ -6706,6 +6712,9 @@ void PresShell::RecordMouseLocation(WidgetGUIEvent* aEvent) {
       nsView* rootView = mViewManager->GetRootView();
       mMouseLocation = nsLayoutUtils::TranslateWidgetToView(
           mPresContext, aEvent->mWidget, aEvent->mRefPoint, rootView);
+      // TODO: instead, encapsulate `mMouseLocation` and
+      // `mLastOverWindowMouseLocation` in a struct.
+      mLastOverWindowMouseLocation = mMouseLocation;
       mMouseEventTargetGuid = InputAPZContext::GetTargetLayerGuid();
     } else {
       RelativeTo relativeTo{rootFrame};
@@ -6714,6 +6723,7 @@ void PresShell::RecordMouseLocation(WidgetGUIEvent* aEvent) {
       }
       mMouseLocation =
           nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, relativeTo);
+      mLastOverWindowMouseLocation = mMouseLocation;
       mMouseEventTargetGuid = InputAPZContext::GetTargetLayerGuid();
     }
     mMouseLocationWasSetBySynthesizedMouseEventForTests =

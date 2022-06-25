@@ -12,6 +12,33 @@ import { TopicsWidget } from "../TopicsWidget/TopicsWidget.jsx";
 import { FluentOrText } from "../../FluentOrText/FluentOrText.jsx";
 import { actionCreators as ac } from "common/Actions.jsm";
 import React from "react";
+const WIDGET_IDS = {
+  TOPICS: 1,
+};
+
+export function DSSubHeader(props) {
+  return (
+    <div className="section-top-bar ds-sub-header">
+      <h3 className="section-title-container">
+        <span className="section-title">{props.children}</span>
+      </h3>
+    </div>
+  );
+}
+
+export function GridContainer(props) {
+  const { header, className, children } = props;
+  return (
+    <>
+      {header && (
+        <DSSubHeader>
+          <FluentOrText message={header} />
+        </DSSubHeader>
+      )}
+      <div className={`ds-card-grid ${className}`}>{children}</div>
+    </>
+  );
+}
 
 export class CardGrid extends React.PureComponent {
   constructor(props) {
@@ -36,18 +63,6 @@ export class CardGrid extends React.PureComponent {
       loadMore &&
       data.recommendations.length > loadMoreThreshold &&
       !this.state.moreLoaded
-    );
-  }
-
-  renderDSSubHeader(title) {
-    return (
-      <div className="section-top-bar ds-sub-header">
-        <h3 className="section-title-container">
-          <span className="section-title">
-            <FluentOrText message={title} />
-          </span>
-        </h3>
-      </div>
     );
   }
 
@@ -81,6 +96,8 @@ export class CardGrid extends React.PureComponent {
 
     const recs = this.props.data.recommendations.slice(0, items);
     const cards = [];
+    let essentialReadsCards = [];
+    let editorsPicksCards = [];
 
     for (let index = 0; index < items; index++) {
       const rec = recs[index];
@@ -130,17 +147,6 @@ export class CardGrid extends React.PureComponent {
       );
     }
 
-    // If we have both header, inject the second one after the second row.
-    // For now this is English only.
-    if (essentialReadsHeader && editorsPicksHeader) {
-      // For 4 card row layouts, second row is 8 cards, and regular it is 6 cards.
-      if (fourCardLayout) {
-        cards.splice(8, 0, this.renderDSSubHeader("Editor’s Picks"));
-      } else {
-        cards.splice(6, 0, this.renderDSSubHeader("Editor’s Picks"));
-      }
-    }
-
     // Replace last card with "you are all caught up card"
     if (showLastCardMessage) {
       cards.splice(
@@ -152,6 +158,7 @@ export class CardGrid extends React.PureComponent {
 
     if (widgets?.positions?.length && widgets?.data?.length) {
       let positionIndex = 0;
+      const source = "CARDGRID_WIDGET";
 
       for (const widget of widgets.data) {
         let widgetComponent = null;
@@ -164,7 +171,14 @@ export class CardGrid extends React.PureComponent {
 
         switch (widget?.type) {
           case "TopicsWidget":
-            widgetComponent = <TopicsWidget />;
+            widgetComponent = (
+              <TopicsWidget
+                position={position.index}
+                dispatch={this.props.dispatch}
+                source={source}
+                id={WIDGET_IDS.TOPICS}
+              />
+            );
             break;
         }
 
@@ -175,6 +189,19 @@ export class CardGrid extends React.PureComponent {
           cards.splice(position.index, 1, widgetComponent);
         }
       }
+    }
+
+    // For now this is English only.
+    if (essentialReadsHeader && editorsPicksHeader) {
+      let spliceAt = 6;
+      // For 4 card row layouts, second row is 8 cards, and regular it is 6 cards.
+      if (fourCardLayout) {
+        spliceAt = 8;
+      }
+      // Put the first 2 rows into essentialReadsCards.
+      essentialReadsCards = [...cards.splice(0, spliceAt)];
+      // Put the rest into editorsPicksCards.
+      editorsPicksCards = [...cards.splice(0, cards.length)];
     }
 
     // Used for CSS overrides to default styling (eg: "hero")
@@ -195,12 +222,24 @@ export class CardGrid extends React.PureComponent {
       ? `ds-card-grid-hybrid-layout`
       : ``;
 
+    const className = `ds-card-grid-${this.props.border} ${variantClass} ${hybridLayoutClassName} ${hideCardBackgroundClass} ${fourCardLayoutClass} ${hideDescriptionsClassName} ${compactGridClassName}`;
+
     return (
-      <div
-        className={`ds-card-grid ds-card-grid-${this.props.border} ${variantClass} ${hybridLayoutClassName} ${hideCardBackgroundClass} ${fourCardLayoutClass} ${hideDescriptionsClassName} ${compactGridClassName}`}
-      >
-        {cards}
-      </div>
+      <>
+        {essentialReadsCards?.length > 0 && (
+          <GridContainer className={className}>
+            {essentialReadsCards}
+          </GridContainer>
+        )}
+        {editorsPicksCards?.length > 0 && (
+          <GridContainer className={className} header="Editor’s Picks">
+            {editorsPicksCards}
+          </GridContainer>
+        )}
+        {cards?.length > 0 && (
+          <GridContainer className={className}>{cards}</GridContainer>
+        )}
+      </>
     );
   }
 

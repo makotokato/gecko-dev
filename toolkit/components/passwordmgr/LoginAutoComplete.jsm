@@ -17,41 +17,13 @@ const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "AutoCompleteChild",
-  "resource://gre/actors/AutoCompleteChild.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "BrowserUtils",
-  "resource://gre/modules/BrowserUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "InsecurePasswordUtils",
-  "resource://gre/modules/InsecurePasswordUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "LoginFormFactory",
-  "resource://gre/modules/LoginFormFactory.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "LoginHelper",
-  "resource://gre/modules/LoginHelper.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "LoginManagerChild",
-  "resource://gre/modules/LoginManagerChild.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "NewPasswordModel",
-  "resource://gre/modules/NewPasswordModel.jsm"
-);
+XPCOMUtils.defineLazyModuleGetters(lazy, {
+  InsecurePasswordUtils: "resource://gre/modules/InsecurePasswordUtils.jsm",
+  LoginFormFactory: "resource://gre/modules/LoginFormFactory.jsm",
+  LoginHelper: "resource://gre/modules/LoginHelper.jsm",
+  LoginManagerChild: "resource://gre/modules/LoginManagerChild.jsm",
+  NewPasswordModel: "resource://gre/modules/NewPasswordModel.jsm",
+});
 XPCOMUtils.defineLazyServiceGetter(
   lazy,
   "formFillController",
@@ -685,13 +657,12 @@ class LoginAutoComplete {
         this.isProbablyANewPasswordField(inputElement);
     }
 
-    let messageData = {
+    const messageData = {
       actionOrigin,
       searchString,
       previousResult,
       forcePasswordGeneration,
       hasBeenTypePassword,
-      isSecure: lazy.InsecurePasswordUtils.isFormSecure(form),
       isProbablyANewPasswordField,
     };
 
@@ -701,7 +672,6 @@ class LoginAutoComplete {
 
     lazy.log.debug("LoginAutoComplete search:", {
       forcePasswordGeneration,
-      isSecure: messageData.isSecure,
       hasBeenTypePassword,
       isProbablyANewPasswordField,
       searchStringLength: searchString.length,

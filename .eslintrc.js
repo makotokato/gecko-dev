@@ -113,7 +113,6 @@ module.exports = {
         "import/no-unassigned-import": "error",
         "import/no-unresolved": "error",
         "import/no-useless-path-segments": "error",
-        "import/prefer-default-export": "error",
       },
     },
     {
@@ -560,6 +559,13 @@ module.exports = {
         "browser/components/pocket/**",
         "devtools/**",
       ],
+    },
+    {
+      // Turn off the osfile rule for osfile.
+      files: ["toolkit/components/osfile/**"],
+      rules: {
+        "mozilla/reject-osfile": "off",
+      },
     },
   ],
 };

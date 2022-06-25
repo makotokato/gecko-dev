@@ -11,6 +11,8 @@
 #include "nsIMIMEInfo.h"
 #include "nsIStringEnumerator.h"
 #include "nsReadableUtils.h"
+#include "nsMIMEInfoImpl.h"
+#include "nsMIMEInfoChild.h"
 
 using mozilla::dom::ContentChild;
 using mozilla::dom::HandlerInfo;
@@ -22,6 +24,21 @@ namespace dom {
 NS_IMPL_ISUPPORTS(ContentHandlerService, nsIHandlerService)
 
 ContentHandlerService::ContentHandlerService() {}
+
+/* static */ already_AddRefed<nsIHandlerService>
+ContentHandlerService::Create() {
+  if (XRE_IsContentProcess()) {
+    RefPtr service = new ContentHandlerService();
+    if (NS_SUCCEEDED(service->Init())) {
+      return service.forget();
+    }
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIHandlerService> service =
+      do_GetService("@mozilla.org/uriloader/handler-service-parent;1");
+  return service.forget();
+}
 
 nsresult ContentHandlerService::Init() {
   if (!XRE_IsContentProcess()) {
@@ -168,12 +185,12 @@ NS_IMETHODIMP ContentHandlerService::FillHandlerInfo(
 }
 
 NS_IMETHODIMP ContentHandlerService::GetMIMEInfoFromOS(
-    nsIHandlerInfo* aHandlerInfo, const nsACString& aMIMEType,
-    const nsACString& aExtension, bool* aFound) {
+    const nsACString& aMIMEType, const nsACString& aFileExt, bool* aFound,
+    nsIMIMEInfo** aMIMEInfo) {
   nsresult rv = NS_ERROR_FAILURE;
   HandlerInfo returnedInfo;
   if (!mHandlerServiceChild->SendGetMIMEInfoFromOS(nsCString(aMIMEType),
-                                                   nsCString(aExtension), &rv,
+                                                   nsCString(aFileExt), &rv,
                                                    &returnedInfo, aFound)) {
     return NS_ERROR_FAILURE;
   }
@@ -182,7 +199,10 @@ NS_IMETHODIMP ContentHandlerService::GetMIMEInfoFromOS(
     return rv;
   }
 
-  CopyHandlerInfoTonsIHandlerInfo(returnedInfo, aHandlerInfo);
+  RefPtr<nsChildProcessMIMEInfo> mimeInfo =
+      new nsChildProcessMIMEInfo(returnedInfo.type());
+  CopyHandlerInfoTonsIHandlerInfo(returnedInfo, mimeInfo);
+  mimeInfo.forget(aMIMEInfo);
   return NS_OK;
 }
 

@@ -7,11 +7,13 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { EventEmitter } = ChromeUtils.import(
+  "resource://gre/modules/EventEmitter.jsm"
+);
 
 const lazy = {};
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
-  EventEmitter: "resource://gre/modules/EventEmitter.jsm",
   DeferredTask: "resource://gre/modules/DeferredTask.jsm",
   FilterAdult: "resource://activity-stream/lib/FilterAdult.jsm",
   PlacesUIUtils: "resource:///modules/PlacesUIUtils.jsm",
@@ -75,7 +77,7 @@ XPCOMUtils.defineLazyGetter(lazy, "logConsole", function() {
  * This component is intentionally decoupled from where the context comes from
  * so it can be unit tested.
  */
-class SnapshotSelector extends lazy.EventEmitter {
+class SnapshotSelector extends EventEmitter {
   /**
    * All of the active selectors.
    */
@@ -274,7 +276,12 @@ class SnapshotSelector extends lazy.EventEmitter {
 
           lazy.logConsole.debug(
             `Found ${key} recommendations:`,
-            recommendations.map(r => r.snapshot.url)
+            recommendations.map(
+              r =>
+                `${r.snapshot.url} (score: ${r.score}${
+                  r.data ? ", data: " + JSON.stringify(r.data) : ""
+                })`
+            )
           );
 
           return { recommendations, weight };
@@ -302,14 +309,22 @@ class SnapshotSelector extends lazy.EventEmitter {
    * @param {string} [url]
    *  The url of the current context.
    * @param {number} [time]
-   *  The time, in milliseconds from the Unix epoch.
+   *  The time, in milliseconds since the Unix epoch.
    * @param {PageDataSchema.DATA_TYPE} [type]
    *  The type of snapshots for this selector.
+   * @param {number} [sessionStartTime]
+   *  The start time of the session, in milliseconds since the Unix epoch.
    * @param {string} [rebuildImmediately] (default: false)
    *  Whether to rebuild immediately instead of waiting some delay. Useful on
    *  startup.
    */
-  updateDetailsAndRebuild({ url, time, type, rebuildImmediately = false }) {
+  updateDetailsAndRebuild({
+    url,
+    time,
+    type,
+    sessionStartTime,
+    rebuildImmediately = false,
+  }) {
     let rebuild = false;
     if (url !== undefined) {
       url = lazy.Snapshots.stripFragments(url);
@@ -326,6 +341,14 @@ class SnapshotSelector extends lazy.EventEmitter {
       this.#context.type = type;
       rebuild = true;
     }
+    if (
+      sessionStartTime != undefined &&
+      sessionStartTime != this.#context.sessionStartTime
+    ) {
+      this.#context.sessionStartTime = sessionStartTime;
+      rebuild = true;
+    }
+
     if (rebuild) {
       if (rebuildImmediately) {
         this.#buildSnapshots();

@@ -1016,6 +1016,10 @@ void GetPropIRGenerator::attachMegamorphicNativeSlot(ObjOperandId objId,
                                                      jsid id) {
   MOZ_ASSERT(mode_ == ICState::Mode::Megamorphic);
 
+  // We don't support GetBoundName because environment objects have
+  // lookupProperty hooks and GetBoundName is usually not megamorphic.
+  MOZ_ASSERT(JSOp(*pc_) != JSOp::GetBoundName);
+
   if (cacheKind_ == CacheKind::GetProp ||
       cacheKind_ == CacheKind::GetPropSuper) {
     writer.megamorphicLoadSlotResult(objId, id.toAtom()->asPropertyName());
@@ -1044,7 +1048,8 @@ AttachDecision GetPropIRGenerator::tryAttachNative(HandleObject obj,
     case CanAttachReadSlot: {
       auto* nobj = &obj->as<NativeObject>();
 
-      if (mode_ == ICState::Mode::Megamorphic) {
+      if (mode_ == ICState::Mode::Megamorphic &&
+          JSOp(*pc_) != JSOp::GetBoundName) {
         attachMegamorphicNativeSlot(objId, id);
         return AttachDecision::Attach;
       }
@@ -1273,7 +1278,7 @@ AttachDecision GetPropIRGenerator::tryAttachCrossCompartmentWrapper(
 }
 
 static JSObject* NewWrapperWithObjectShape(JSContext* cx,
-                                           HandleNativeObject obj);
+                                           Handle<NativeObject*> obj);
 
 static bool GetXrayExpandoShapeWrapper(JSContext* cx, HandleObject xray,
                                        MutableHandleObject wrapper) {
@@ -1282,7 +1287,7 @@ static bool GetXrayExpandoShapeWrapper(JSContext* cx, HandleObject xray,
     NativeObject* holder = &v.toObject().as<NativeObject>();
     v = holder->getFixedSlot(GetXrayJitInfo()->holderExpandoSlot);
     if (v.isObject()) {
-      RootedNativeObject expando(
+      Rooted<NativeObject*> expando(
           cx, &UncheckedUnwrap(&v.toObject())->as<NativeObject>());
       wrapper.set(NewWrapperWithObjectShape(cx, expando));
       return wrapper != nullptr;
@@ -2721,7 +2726,7 @@ void SetPropIRGenerator::maybeEmitIdGuard(jsid id) {
 GetNameIRGenerator::GetNameIRGenerator(JSContext* cx, HandleScript script,
                                        jsbytecode* pc, ICState state,
                                        HandleObject env,
-                                       HandlePropertyName name)
+                                       Handle<PropertyName*> name)
     : IRGenerator(cx, script, pc, CacheKind::GetName, state),
       env_(env),
       name_(name) {}
@@ -3004,7 +3009,7 @@ void GetNameIRGenerator::trackAttached(const char* name) {
 BindNameIRGenerator::BindNameIRGenerator(JSContext* cx, HandleScript script,
                                          jsbytecode* pc, ICState state,
                                          HandleObject env,
-                                         HandlePropertyName name)
+                                         Handle<PropertyName*> name)
     : IRGenerator(cx, script, pc, CacheKind::BindName, state),
       env_(env),
       name_(name) {}
@@ -4715,7 +4720,8 @@ static PropertyFlags SetPropertyFlags(JSOp op, bool isFunctionPrototype) {
   return PropertyFlags::defaultDataPropFlags;
 }
 
-AttachDecision SetPropIRGenerator::tryAttachAddSlotStub(HandleShape oldShape) {
+AttachDecision SetPropIRGenerator::tryAttachAddSlotStub(
+    Handle<Shape*> oldShape) {
   ValOperandId objValId(writer.setInputOperandId(0));
   ValOperandId rhsValId;
   if (cacheKind_ == CacheKind::SetProp) {
@@ -5280,7 +5286,7 @@ AttachDecision OptimizeSpreadCallIRGenerator::tryAttachArguments() {
     return AttachDecision::NoAction;
   }
 
-  RootedShape shape(cx_, GlobalObject::getArrayShapeWithDefaultProto(cx_));
+  Rooted<Shape*> shape(cx_, GlobalObject::getArrayShapeWithDefaultProto(cx_));
   if (!shape) {
     cx_->recoverFromOutOfMemory();
     return AttachDecision::NoAction;
@@ -9763,7 +9769,7 @@ AttachDecision InlinableNativeIRGenerator::tryAttachStub() {
 // Remember the shape of the this object for any script being called as a
 // constructor, for later use during Ion compilation.
 ScriptedThisResult CallIRGenerator::getThisShapeForScripted(
-    HandleFunction calleeFunc, MutableHandleShape result) {
+    HandleFunction calleeFunc, MutableHandle<Shape*> result) {
   // Some constructors allocate their own |this| object.
   if (calleeFunc->constructorNeedsUninitializedThis()) {
     return ScriptedThisResult::UninitializedThis;
@@ -9826,7 +9832,7 @@ AttachDecision CallIRGenerator::tryAttachCallScripted(
     return AttachDecision::NoAction;
   }
 
-  RootedShape thisShape(cx_);
+  Rooted<Shape*> thisShape(cx_);
   if (isConstructing && isSpecialized) {
     switch (getThisShapeForScripted(calleeFunc, &thisShape)) {
       case ScriptedThisResult::PlainObjectShape:
@@ -10111,7 +10117,7 @@ static const JSClass shapeContainerClass = {"ShapeContainer",
 static const size_t SHAPE_CONTAINER_SLOT = 0;
 
 static JSObject* NewWrapperWithObjectShape(JSContext* cx,
-                                           HandleNativeObject obj) {
+                                           Handle<NativeObject*> obj) {
   MOZ_ASSERT(cx->compartment() != obj->compartment());
 
   RootedObject wrapper(cx);

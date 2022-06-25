@@ -10,6 +10,10 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
+const { Module } = ChromeUtils.import(
+  "chrome://remote/content/shared/messagehandler/Module.jsm"
+);
+
 const lazy = {};
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
@@ -18,11 +22,10 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   ConsoleListener:
     "chrome://remote/content/shared/listeners/ConsoleListener.jsm",
   isChromeFrame: "chrome://remote/content/shared/Stack.jsm",
-  Module: "chrome://remote/content/shared/messagehandler/Module.jsm",
   serialize: "chrome://remote/content/webdriver-bidi/RemoteValue.jsm",
 });
 
-class LogModule extends lazy.Module {
+class LogModule extends Module {
   #consoleAPIListener;
   #consoleMessageListener;
 
@@ -200,7 +203,7 @@ class LogModule extends lazy.Module {
    */
 
   _applySessionData(params) {
-    // TODO: Bug 1741861. Move this logic to a shared module or the an abstract
+    // TODO: Bug 1775231. Move this logic to a shared module or an abstract
     // class.
     const { category, added = [], removed = [] } = params;
     if (category === "event") {

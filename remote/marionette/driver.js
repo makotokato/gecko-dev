@@ -11,6 +11,10 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
+const { element } = ChromeUtils.import(
+  "chrome://remote/content/marionette/element.js"
+);
+
 const lazy = {};
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
@@ -20,8 +24,6 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   atom: "chrome://remote/content/marionette/atom.js",
   browser: "chrome://remote/content/marionette/browser.js",
   capture: "chrome://remote/content/marionette/capture.js",
-  clearActionInputState:
-    "chrome://remote/content/marionette/actors/MarionetteCommandsChild.jsm",
   clearElementIdCache:
     "chrome://remote/content/marionette/actors/MarionetteCommandsParent.jsm",
   Context: "chrome://remote/content/marionette/browser.js",
@@ -29,7 +31,6 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   DebounceCallback: "chrome://remote/content/marionette/sync.js",
   disableEventsActor:
     "chrome://remote/content/marionette/actors/MarionetteEventsParent.jsm",
-  element: "chrome://remote/content/marionette/element.js",
   enableEventsActor:
     "chrome://remote/content/marionette/actors/MarionetteEventsParent.jsm",
   error: "chrome://remote/content/shared/webdriver/Errors.jsm",
@@ -62,7 +63,7 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
     "chrome://remote/content/shared/Navigate.jsm",
   waitForObserverTopic: "chrome://remote/content/marionette/sync.js",
   WebDriverSession: "chrome://remote/content/shared/webdriver/Session.jsm",
-  WebElement: "chrome://remote/content/marionette/element.js",
+  WebReference: "chrome://remote/content/marionette/element.js",
   WebElementEventTarget: "chrome://remote/content/marionette/dom.js",
   windowManager: "chrome://remote/content/shared/WindowManager.jsm",
   WindowState: "chrome://remote/content/marionette/browser.js",
@@ -75,14 +76,14 @@ XPCOMUtils.defineLazyGetter(lazy, "logger", () =>
 const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
 const SUPPORTED_STRATEGIES = new Set([
-  lazy.element.Strategy.ClassName,
-  lazy.element.Strategy.Selector,
-  lazy.element.Strategy.ID,
-  lazy.element.Strategy.Name,
-  lazy.element.Strategy.LinkText,
-  lazy.element.Strategy.PartialLinkText,
-  lazy.element.Strategy.TagName,
-  lazy.element.Strategy.XPath,
+  element.Strategy.ClassName,
+  element.Strategy.Selector,
+  element.Strategy.ID,
+  element.Strategy.Name,
+  element.Strategy.LinkText,
+  element.Strategy.PartialLinkText,
+  element.Strategy.TagName,
+  element.Strategy.XPath,
 ]);
 
 // Timeout used to abort fullscreen, maximize, and minimize
@@ -614,7 +615,7 @@ GeckoDriver.prototype.getContext = function() {
  *
  * @param {string} script
  *     Script to evaluate as a function body.
- * @param {Array.<(string|boolean|number|object|WebElement)>} args
+ * @param {Array.<(string|boolean|number|object|WebReference)>} args
  *     Arguments exposed to the script in <code>arguments</code>.
  *     The array items must be serialisable to the WebDriver protocol.
  * @param {string=} sandbox
@@ -633,17 +634,22 @@ GeckoDriver.prototype.getContext = function() {
  * @param {number=} line
  *     Line in the client's program where this script is evaluated.
  *
- * @return {(string|boolean|number|object|WebElement)}
+ * @return {(string|boolean|number|object|WebReference)}
  *     Return value from the script, or null which signifies either the
  *     JavaScript notion of null or undefined.
  *
  * @throws {JavaScriptError}
  *     If an {@link Error} was thrown whilst evaluating the script.
+ * @throws {NoSuchElementError}
+ *     If an element that was passed as part of <var>args</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
  * @throws {ScriptTimeoutError}
  *     If the script was interrupted due to reaching the session's
  *     script timeout.
+ * @throws {StaleElementReferenceError}
+ *     If an element that was passed as part of <var>args</var> or that is
+ *     returned as result has gone stale.
  */
 GeckoDriver.prototype.executeScript = async function(cmd) {
   let { script, args } = cmd.parameters;
@@ -681,7 +687,7 @@ GeckoDriver.prototype.executeScript = async function(cmd) {
  *
  * @param {string} script
  *     Script to evaluate as a function body.
- * @param {Array.<(string|boolean|number|object|WebElement)>} args
+ * @param {Array.<(string|boolean|number|object|WebReference)>} args
  *     Arguments exposed to the script in <code>arguments</code>.
  *     The array items must be serialisable to the WebDriver protocol.
  * @param {string=} sandbox
@@ -700,17 +706,22 @@ GeckoDriver.prototype.executeScript = async function(cmd) {
  * @param {number=} line
  *     Line in the client's program where this script is evaluated.
  *
- * @return {(string|boolean|number|object|WebElement)}
+ * @return {(string|boolean|number|object|WebReference)}
  *     Return value from the script, or null which signifies either the
  *     JavaScript notion of null or undefined.
  *
  * @throws {JavaScriptError}
  *     If an Error was thrown whilst evaluating the script.
+ * @throws {NoSuchElementError}
+ *     If an element that was passed as part of <var>args</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
  * @throws {ScriptTimeoutError}
  *     If the script was interrupted due to reaching the session's
  *     script timeout.
+ * @throws {StaleElementReferenceError}
+ *     If an element that was passed as part of <var>args</var> or that is
+ *     returned as result has gone stale.
  */
 GeckoDriver.prototype.executeAsyncScript = async function(cmd) {
   let { script, args } = cmd.parameters;
@@ -1185,6 +1196,8 @@ GeckoDriver.prototype.setWindowRect = async function(cmd) {
  *     A boolean value which determines whether to focus
  *     the window. Defaults to true.
  *
+ * @throws {InvalidArgumentError}
+ *     If <var>handle</var> is not a string or <var>focus</var> not a boolean.
  * @throws {NoSuchWindowError}
  *     Top-level browsing context has been discarded.
  */
@@ -1318,8 +1331,12 @@ GeckoDriver.prototype.switchToParentFrame = async function() {
  *     The index of the frame to switch to.
  *     If both element and id are not defined, switch to top-level frame.
  *
+ * @throws {NoSuchElementError}
+ *     If element represented by reference <var>element</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>element</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1337,12 +1354,12 @@ GeckoDriver.prototype.switchToFrame = async function(cmd) {
   lazy.assert.open(this.getBrowsingContext({ top }));
   await this._handleUserPrompts();
 
-  // Bug 1495063: Elements should be passed as WebElement reference
+  // Bug 1495063: Elements should be passed as WebReference reference
   let byFrame;
   if (typeof el == "string") {
-    byFrame = lazy.WebElement.fromUUID(el, this.context);
+    byFrame = lazy.WebReference.fromUUID(el);
   } else if (el) {
-    byFrame = lazy.WebElement.fromJSON(el);
+    byFrame = lazy.WebReference.fromJSON(el);
   }
 
   const { browsingContext } = await this.getActor({ top }).switchToFrame(
@@ -1382,7 +1399,7 @@ GeckoDriver.prototype.singleTap = async function(cmd) {
   lazy.assert.open(this.getBrowsingContext());
 
   let { id, x, y } = cmd.parameters;
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   await this.getActor().singleTap(
     webEl,
@@ -1398,8 +1415,12 @@ GeckoDriver.prototype.singleTap = async function(cmd) {
  * @param {Array.<?>} actions
  *     Array of objects that each represent an action sequence.
  *
+ * @throws {NoSuchElementError}
+ *     If an element that is used as part of the action chain is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If an element that is used as part of the action chain has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  * @throws {UnsupportedOperationError}
@@ -1437,13 +1458,19 @@ GeckoDriver.prototype.releaseActions = async function() {
 /**
  * Find an element using the indicated search strategy.
  *
+ * @param {string=} element
+ *     Web element reference ID to the element that will be used as start node.
  * @param {string} using
  *     Indicates which search method to use.
  * @param {string} value
  *     Value the client is looking for.
  *
+ * @throws {NoSuchElementError}
+ *     If element represented by reference <var>element</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>element</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1461,7 +1488,7 @@ GeckoDriver.prototype.findElement = async function(cmd) {
 
   let startNode;
   if (typeof el != "undefined") {
-    startNode = lazy.WebElement.fromUUID(el, this.context);
+    startNode = lazy.WebReference.fromUUID(el);
   }
 
   let opts = {
@@ -1476,13 +1503,21 @@ GeckoDriver.prototype.findElement = async function(cmd) {
 /**
  * Find elements using the indicated search strategy.
  *
+ * @param {string=} element
+ *     Web element reference ID to the element that will be used as start node.
  * @param {string} using
  *     Indicates which search method to use.
  * @param {string} value
  *     Value the client is looking for.
  *
+ * @throws {NoSuchElementError}
+ *     If element represented by reference <var>element</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>element</var> has gone stale.
+ * @throws {UnexpectedAlertOpenError}
+ *     A modal dialog is open, blocking this operation.
  */
 GeckoDriver.prototype.findElements = async function(cmd) {
   const { element: el, using, value } = cmd.parameters;
@@ -1498,7 +1533,7 @@ GeckoDriver.prototype.findElements = async function(cmd) {
 
   let startNode;
   if (typeof el != "undefined") {
-    startNode = lazy.WebElement.fromUUID(el, this.context);
+    startNode = lazy.WebReference.fromUUID(el);
   }
 
   let opts = {
@@ -1526,6 +1561,8 @@ GeckoDriver.prototype.findElements = async function(cmd) {
  *     Element does not have a shadow root attached.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  * @throws {UnsupportedOperationError}
@@ -1541,7 +1578,7 @@ GeckoDriver.prototype.getShadowRoot = async function(cmd) {
     cmd.parameters.id,
     lazy.pprint`Expected "id" to be a string, got ${cmd.parameters.id}`
   );
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   return this.getActor().getShadowRoot(webEl);
 };
@@ -1549,7 +1586,7 @@ GeckoDriver.prototype.getShadowRoot = async function(cmd) {
 /**
  * Return the active element in the document.
  *
- * @return {WebElement}
+ * @return {WebReference}
  *     Active element of the current browsing context's document
  *     element, if the document element is non-null.
  *
@@ -1561,7 +1598,7 @@ GeckoDriver.prototype.getShadowRoot = async function(cmd) {
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  * @throws {UnsupportedOperationError}
- *     Not available in current context.
+ *     Not available in chrome context.
  */
 GeckoDriver.prototype.getActiveElement = async function() {
   lazy.assert.content(this.context);
@@ -1583,6 +1620,8 @@ GeckoDriver.prototype.getActiveElement = async function() {
  *     If element represented by reference <var>id</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1591,7 +1630,7 @@ GeckoDriver.prototype.clickElement = async function(cmd) {
   await this._handleUserPrompts();
 
   let id = lazy.assert.string(cmd.parameters.id);
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   const actor = this.getActor();
 
@@ -1631,6 +1670,8 @@ GeckoDriver.prototype.clickElement = async function(cmd) {
  *     If element represented by reference <var>id</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1640,7 +1681,7 @@ GeckoDriver.prototype.getElementAttribute = async function(cmd) {
 
   const id = lazy.assert.string(cmd.parameters.id);
   const name = lazy.assert.string(cmd.parameters.name);
-  const webEl = lazy.WebElement.fromUUID(id, this.context);
+  const webEl = lazy.WebReference.fromUUID(id);
 
   return this.getActor().getElementAttribute(webEl, name);
 };
@@ -1662,6 +1703,8 @@ GeckoDriver.prototype.getElementAttribute = async function(cmd) {
  *     If element represented by reference <var>id</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1671,7 +1714,7 @@ GeckoDriver.prototype.getElementProperty = async function(cmd) {
 
   const id = lazy.assert.string(cmd.parameters.id);
   const name = lazy.assert.string(cmd.parameters.name);
-  const webEl = lazy.WebElement.fromUUID(id, this.context);
+  const webEl = lazy.WebReference.fromUUID(id);
 
   return this.getActor().getElementProperty(webEl, name);
 };
@@ -1692,6 +1735,8 @@ GeckoDriver.prototype.getElementProperty = async function(cmd) {
  *     If element represented by reference <var>id</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1700,7 +1745,7 @@ GeckoDriver.prototype.getElementText = async function(cmd) {
   await this._handleUserPrompts();
 
   let id = lazy.assert.string(cmd.parameters.id);
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   return this.getActor().getElementText(webEl);
 };
@@ -1720,6 +1765,8 @@ GeckoDriver.prototype.getElementText = async function(cmd) {
  *     If element represented by reference <var>id</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1728,7 +1775,7 @@ GeckoDriver.prototype.getElementTagName = async function(cmd) {
   await this._handleUserPrompts();
 
   let id = lazy.assert.string(cmd.parameters.id);
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   return this.getActor().getElementTagName(webEl);
 };
@@ -1756,7 +1803,7 @@ GeckoDriver.prototype.isElementDisplayed = async function(cmd) {
   await this._handleUserPrompts();
 
   let id = lazy.assert.string(cmd.parameters.id);
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   return this.getActor().isElementDisplayed(
     webEl,
@@ -1781,6 +1828,8 @@ GeckoDriver.prototype.isElementDisplayed = async function(cmd) {
  *     If element represented by reference <var>id</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1790,7 +1839,7 @@ GeckoDriver.prototype.getElementValueOfCssProperty = async function(cmd) {
 
   let id = lazy.assert.string(cmd.parameters.id);
   let prop = lazy.assert.string(cmd.parameters.propertyName);
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   return this.getActor().getElementValueOfCssProperty(webEl, prop);
 };
@@ -1810,6 +1859,8 @@ GeckoDriver.prototype.getElementValueOfCssProperty = async function(cmd) {
  *     If element represented by reference <var>id</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1818,7 +1869,7 @@ GeckoDriver.prototype.isElementEnabled = async function(cmd) {
   await this._handleUserPrompts();
 
   let id = lazy.assert.string(cmd.parameters.id);
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   return this.getActor().isElementEnabled(
     webEl,
@@ -1849,7 +1900,7 @@ GeckoDriver.prototype.isElementSelected = async function(cmd) {
   await this._handleUserPrompts();
 
   let id = lazy.assert.string(cmd.parameters.id);
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   return this.getActor().isElementSelected(
     webEl,
@@ -1864,6 +1915,8 @@ GeckoDriver.prototype.isElementSelected = async function(cmd) {
  *     If element represented by reference <var>id</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1872,7 +1925,7 @@ GeckoDriver.prototype.getElementRect = async function(cmd) {
   await this._handleUserPrompts();
 
   let id = lazy.assert.string(cmd.parameters.id);
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   return this.getActor().getElementRect(webEl);
 };
@@ -1886,11 +1939,13 @@ GeckoDriver.prototype.getElementRect = async function(cmd) {
  *     Value to send to the element.
  *
  * @throws {InvalidArgumentError}
- *     If `id` or `text` are not strings.
+ *     If <var>id</var> or <var>text</var> are not strings.
  * @throws {NoSuchElementError}
- *     If element represented by reference `id` is unknown.
+ *     If element represented by reference <var>id</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1900,7 +1955,7 @@ GeckoDriver.prototype.sendKeysToElement = async function(cmd) {
 
   let id = lazy.assert.string(cmd.parameters.id);
   let text = lazy.assert.string(cmd.parameters.text);
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   return this.getActor().sendKeysToElement(
     webEl,
@@ -1921,6 +1976,8 @@ GeckoDriver.prototype.sendKeysToElement = async function(cmd) {
  *     If element represented by reference <var>id</var> is unknown.
  * @throws {NoSuchWindowError}
  *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  * @throws {UnexpectedAlertOpenError}
  *     A modal dialog is open, blocking this operation.
  */
@@ -1929,7 +1986,7 @@ GeckoDriver.prototype.clearElement = async function(cmd) {
   await this._handleUserPrompts();
 
   let id = lazy.assert.string(cmd.parameters.id);
-  let webEl = lazy.WebElement.fromUUID(id, this.context);
+  let webEl = lazy.WebReference.fromUUID(id);
 
   await this.getActor().clearElement(webEl);
 };
@@ -1938,7 +1995,7 @@ GeckoDriver.prototype.clearElement = async function(cmd) {
  * Add a single cookie to the cookie store associated with the active
  * document's address.
  *
- * @param {Map.<string, (string|number|boolean)> cookie
+ * @param {Map.<string, (string|number|boolean)>} cookie
  *     Cookie object.
  *
  * @throws {InvalidCookieDomainError}
@@ -2054,6 +2111,8 @@ GeckoDriver.prototype.deleteCookie = async function(cmd) {
  *
  * @throws {NoSuchWindowError}
  *     Top-level browsing context has been discarded.
+ * @throws {UnexpectedAlertOpenError}
+ *     A modal dialog is open, blocking this operation.
  */
 GeckoDriver.prototype.newWindow = async function(cmd) {
   lazy.assert.open(this.getBrowsingContext({ top: true }));
@@ -2213,7 +2272,6 @@ GeckoDriver.prototype.deleteSession = function() {
 
   Services.obs.removeObserver(this, "browser-delayed-startup-finished");
 
-  lazy.clearActionInputState();
   lazy.clearElementIdCache();
 
   // Always unregister actors after all other observers
@@ -2262,8 +2320,12 @@ GeckoDriver.prototype.deleteSession = function() {
  *     string.  If <var>hash</var> is true, hex digest of the SHA-256
  *     hash of the Base64 encoded string.
  *
+ * @throws {NoSuchElementError}
+ *     If element represented by reference <var>id</var> is unknown.
  * @throws {NoSuchWindowError}
- *     Top-level browsing context has been discarded.
+ *     Browsing context has been discarded.
+ * @throws {StaleElementReferenceError}
+ *     If element represented by reference <var>id</var> has gone stale.
  */
 GeckoDriver.prototype.takeScreenshot = async function(cmd) {
   lazy.assert.open(this.getBrowsingContext({ top: true }));
@@ -2275,7 +2337,7 @@ GeckoDriver.prototype.takeScreenshot = async function(cmd) {
   full = typeof full == "undefined" ? true : full;
   scroll = typeof scroll == "undefined" ? true : scroll;
 
-  let webEl = id ? lazy.WebElement.fromUUID(id, this.context) : null;
+  let webEl = id ? lazy.WebReference.fromUUID(id) : null;
 
   // Only consider full screenshot if no element has been specified
   full = webEl ? false : full;
@@ -2506,6 +2568,8 @@ GeckoDriver.prototype.fullscreenWindow = async function() {
  * Dismisses a currently displayed tab modal, or returns no such alert if
  * no modal is displayed.
  *
+ * @throws {NoSuchAlertError}
+ *     If there is no current user prompt.
  * @throws {NoSuchWindowError}
  *     Top-level browsing context has been discarded.
  */
@@ -2525,6 +2589,8 @@ GeckoDriver.prototype.dismissDialog = async function() {
  * Accepts a currently displayed tab modal, or returns no such alert if
  * no modal is displayed.
  *
+ * @throws {NoSuchAlertError}
+ *     If there is no current user prompt.
  * @throws {NoSuchWindowError}
  *     Top-level browsing context has been discarded.
  */
@@ -2544,6 +2610,8 @@ GeckoDriver.prototype.acceptDialog = async function() {
  * Returns the message shown in a currently displayed modal, or returns
  * a no such alert error if no modal is currently displayed.
  *
+ * @throws {NoSuchAlertError}
+ *     If there is no current user prompt.
  * @throws {NoSuchWindowError}
  *     Top-level browsing context has been discarded.
  */
@@ -2977,6 +3045,10 @@ GeckoDriver.prototype.teardownReftest = function() {
  *
  * @throws {NoSuchWindowError}
  *     Top-level browsing context has been discarded.
+ * @throws {UnexpectedAlertOpenError}
+ *     A modal dialog is open, blocking this operation.
+ * @throws {UnsupportedOperationError}
+ *     Not available in chrome context.
  */
 GeckoDriver.prototype.print = async function(cmd) {
   lazy.assert.content(this.context);

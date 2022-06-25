@@ -18,20 +18,11 @@ const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "LoginHelper",
-  "resource://gre/modules/LoginHelper.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "LoginStore",
-  "resource://gre/modules/LoginStore.jsm"
-);
-
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   FXA_PWDMGR_HOST: "resource://gre/modules/FxAccountsCommon.js",
   FXA_PWDMGR_REALM: "resource://gre/modules/FxAccountsCommon.js",
+  LoginHelper: "resource://gre/modules/LoginHelper.jsm",
+  LoginStore: "resource://gre/modules/LoginStore.jsm",
 });
 
 class LoginManagerStorage_json {
@@ -383,7 +374,7 @@ class LoginManagerStorage_json {
   getAllLogins() {
     this._store.ensureDataReady();
 
-    let [logins, ids] = this._searchLogins({});
+    let [logins] = this._searchLogins({});
 
     // decrypt entries for caller.
     logins = this._decryptLogins(logins);
@@ -402,7 +393,7 @@ class LoginManagerStorage_json {
   async getAllLoginsAsync() {
     this._store.ensureDataReady();
 
-    let [logins, ids] = this._searchLogins({});
+    let [logins] = this._searchLogins({});
     if (!logins.length) {
       return [];
     }
@@ -492,7 +483,7 @@ class LoginManagerStorage_json {
       }
     }
 
-    let [logins, ids] = this._searchLogins(realMatchData, options);
+    let [logins] = this._searchLogins(realMatchData, options);
 
     // Decrypt entries found for the caller.
     logins = this._decryptLogins(logins);
@@ -674,7 +665,7 @@ class LoginManagerStorage_json {
     this._store.ensureDataReady();
     this.log("Removing all logins");
 
-    let [allLogins, ids] = this._searchLogins({});
+    let [allLogins] = this._searchLogins({});
 
     let fxaKey = this._store.data.logins.find(
       login =>
@@ -710,7 +701,7 @@ class LoginManagerStorage_json {
         matchData[field] = loginData[field];
       }
     }
-    let [logins, ids] = this._searchLogins(matchData);
+    let [logins] = this._searchLogins(matchData);
 
     // Decrypt entries found for the caller.
     logins = this._decryptLogins(logins);
@@ -733,7 +724,7 @@ class LoginManagerStorage_json {
         matchData[field] = loginData[field];
       }
     }
-    let [logins, ids] = this._searchLogins(matchData);
+    let [logins] = this._searchLogins(matchData);
 
     this.log("_countLogins: counted logins:", logins.length);
     return logins.length;

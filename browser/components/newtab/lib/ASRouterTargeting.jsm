@@ -13,6 +13,12 @@ const { XPCOMUtils } = ChromeUtils.import(
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
+const { NewTabUtils } = ChromeUtils.import(
+  "resource://gre/modules/NewTabUtils.jsm"
+);
+const { ShellService } = ChromeUtils.import(
+  "resource:///modules/ShellService.jsm"
+);
 
 const lazy = {};
 
@@ -20,9 +26,7 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   ASRouterPreferences: "resource://activity-stream/lib/ASRouterPreferences.jsm",
   AddonManager: "resource://gre/modules/AddonManager.jsm",
   ClientEnvironment: "resource://normandy/lib/ClientEnvironment.jsm",
-  NewTabUtils: "resource://gre/modules/NewTabUtils.jsm",
   ProfileAge: "resource://gre/modules/ProfileAge.jsm",
-  ShellService: "resource:///modules/ShellService.jsm",
   TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.jsm",
   AttributionCode: "resource:///modules/AttributionCode.jsm",
   TargetingContext: "resource://messaging-system/targeting/Targeting.jsm",
@@ -116,7 +120,7 @@ XPCOMUtils.defineLazyServiceGetters(lazy, {
 
 const FXA_USERNAME_PREF = "services.sync.username";
 
-const { activityStreamProvider: asProvider } = lazy.NewTabUtils;
+const { activityStreamProvider: asProvider } = NewTabUtils;
 
 const FXA_ATTACHED_CLIENTS_UPDATE_INTERVAL = 4 * 60 * 60 * 1000; // Four hours
 const FRECENT_SITES_UPDATE_INTERVAL = 6 * 60 * 60 * 1000; // Six hours
@@ -129,8 +133,8 @@ const jexlEvaluationCache = new Map();
 
 /**
  * CachedTargetingGetter
- * @param property {string} Name of the method called on ActivityStreamProvider
- * @param options {{}?} Options object passsed to ActivityStreamProvider method
+ * @param property {string} Name of the method
+ * @param options {any=} Options passed to the method
  * @param updateInterval {number?} Update interval for query. Defaults to FRECENT_SITES_UPDATE_INTERVAL
  */
 function CachedTargetingGetter(
@@ -265,7 +269,13 @@ const QueryCache = {
       "doesAppNeedPin",
       null,
       FRECENT_SITES_UPDATE_INTERVAL,
-      lazy.ShellService
+      ShellService
+    ),
+    doesAppNeedPrivatePin: new CachedTargetingGetter(
+      "doesAppNeedPin",
+      true,
+      FRECENT_SITES_UPDATE_INTERVAL,
+      ShellService
     ),
   },
 };
@@ -477,7 +487,7 @@ const TargetingGetters = {
   },
   get isDefaultBrowser() {
     try {
-      return lazy.ShellService.isDefaultBrowser();
+      return ShellService.isDefaultBrowser();
     } catch (e) {}
     return null;
   },
@@ -498,7 +508,7 @@ const TargetingGetters = {
     return QueryCache.queries.RecentBookmarks.get();
   },
   get pinnedSites() {
-    return lazy.NewTabUtils.pinnedLinks.links.map(site =>
+    return NewTabUtils.pinnedLinks.links.map(site =>
       site
         ? {
             url: site.url,
@@ -673,6 +683,10 @@ const TargetingGetters = {
   get doesAppNeedPin() {
     return QueryCache.getters.doesAppNeedPin.get();
   },
+
+  get doesAppNeedPrivatePin() {
+    return QueryCache.getters.doesAppNeedPrivatePin.get();
+  },
 };
 
 const ASRouterTargeting = {
@@ -741,6 +755,11 @@ const ASRouterTargeting = {
    * @returns
    */
   async checkMessageTargeting(message, targetingContext, onError, shouldCache) {
+    lazy.ASRouterPreferences.console.debug(
+      "in checkMessageTargeting, arguments = ",
+      Array.from(arguments) // eslint-disable-line prefer-rest-params
+    );
+
     // If no targeting is specified,
     if (!message.targeting) {
       return true;
@@ -819,6 +838,10 @@ const ASRouterTargeting = {
     returnAll = false,
   }) {
     const sortedMessages = getSortedMessages(messages, { ordered });
+    lazy.ASRouterPreferences.console.debug(
+      "in findMatchingMessage, sortedMessages = ",
+      sortedMessages
+    );
     const matching = returnAll ? [] : null;
     const targetingContext = new lazy.TargetingContext(
       lazy.TargetingContext.combineContexts(

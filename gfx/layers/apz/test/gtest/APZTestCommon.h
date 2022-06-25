@@ -45,7 +45,7 @@ using ::testing::MockFunction;
 using ::testing::NiceMock;
 typedef mozilla::layers::GeckoContentController::TapType TapType;
 
-static TimeStamp GetStartupTime() {
+inline TimeStamp GetStartupTime() {
   static TimeStamp sStartupTime = TimeStamp::Now();
   return sStartupTime;
 }
@@ -154,6 +154,8 @@ class MockContentController : public GeckoContentController {
   MOCK_METHOD1(NotifyAsyncAutoscrollRejected,
                void(const ScrollableLayerGuid::ViewID&));
   MOCK_METHOD1(CancelAutoscroll, void(const ScrollableLayerGuid&));
+  MOCK_METHOD2(NotifyScaleGestureComplete,
+               void(const ScrollableLayerGuid&, float aScale));
 };
 
 class MockContentControllerDelayed : public MockContentController {
@@ -355,6 +357,15 @@ class TestAsyncPanZoomController : public AsyncPanZoomController {
   void AssertStateIsPanMomentum() {
     RecursiveMutexAutoLock lock(mRecursiveMutex);
     EXPECT_EQ(PAN_MOMENTUM, mState);
+  }
+
+  void SetAxisLocked(ScrollDirections aDirections, bool aLockValue) {
+    if (aDirections.contains(ScrollDirection::eVertical)) {
+      mY.SetAxisLocked(aLockValue);
+    }
+    if (aDirections.contains(ScrollDirection::eHorizontal)) {
+      mX.SetAxisLocked(aLockValue);
+    }
   }
 
   void AssertNotAxisLocked() const {

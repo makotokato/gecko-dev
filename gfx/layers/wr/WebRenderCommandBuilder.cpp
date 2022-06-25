@@ -59,9 +59,11 @@ static void GP(const char* fmt, ...) {
 }
 
 bool FitsInt32(const float aVal) {
-  const int64_t v = static_cast<int64_t>(aVal);
-  return std::numeric_limits<int32_t>::max() > v &&
-         v > std::numeric_limits<int32_t>::min();
+  // Although int32_t min and max can't be represented exactly with floats, the
+  // cast truncates towards zero which is what we want here.
+  const float min = static_cast<float>(std::numeric_limits<int32_t>::min());
+  const float max = static_cast<float>(std::numeric_limits<int32_t>::max());
+  return aVal > min && aVal < max;
 }
 
 // XXX: problems:
@@ -936,13 +938,9 @@ void Grouper::PaintContainerItem(DIGroup* aGroup, nsDisplayItem* aItem,
         if (aDirty) {
           // We don't currently support doing invalidation inside 3d transforms.
           // For now just paint it as a single item.
-          nsRect buildingRect = aItem->GetBuildingRect();
-          aItem->SetBuildingRect(aItem->GetClippedBounds(mDisplayListBuilder));
-
           aItem->AsPaintedDisplayItem()->Paint(mDisplayListBuilder, aContext);
           TakeExternalSurfaces(aRecorder, aData->mExternalSurfaces,
                                aRootManager, aResources);
-          aItem->SetBuildingRect(buildingRect);
         }
         aContext->GetDrawTarget()->FlushItem(aItemBounds);
       } else {
@@ -1012,9 +1010,6 @@ void Grouper::PaintContainerItem(DIGroup* aGroup, nsDisplayItem* aItem,
     case DisplayItemType::TYPE_MASK: {
       GP("Paint Mask\n");
       auto maskItem = static_cast<nsDisplayMasksAndClipPaths*>(aItem);
-      nsRect buildingRect = maskItem->GetBuildingRect();
-      maskItem->SetBuildingRect(
-          maskItem->GetClippedBounds(mDisplayListBuilder));
       if (maskItem->IsValidMask()) {
         maskItem->PaintWithContentsPaintCallback(
             mDisplayListBuilder, aContext, [&] {
@@ -1031,7 +1026,6 @@ void Grouper::PaintContainerItem(DIGroup* aGroup, nsDisplayItem* aItem,
                              aResources);
         aContext->GetDrawTarget()->FlushItem(aItemBounds);
       }
-      maskItem->SetBuildingRect(buildingRect);
       break;
     }
     case DisplayItemType::TYPE_FILTER: {
@@ -1047,12 +1041,10 @@ void Grouper::PaintContainerItem(DIGroup* aGroup, nsDisplayItem* aItem,
         nsRegion visible(aItem->GetClippedBounds(mDisplayListBuilder));
         nsRect buildingRect = aItem->GetBuildingRect();
         visible.And(visible, buildingRect);
-        aItem->SetBuildingRect(visible.GetBounds());
 
         filterItem->Paint(mDisplayListBuilder, aContext);
         TakeExternalSurfaces(aRecorder, aData->mExternalSurfaces, aRootManager,
                              aResources);
-        aItem->SetBuildingRect(buildingRect);
       }
       aContext->GetDrawTarget()->FlushItem(aItemBounds);
       break;
@@ -2422,11 +2414,7 @@ WebRenderCommandBuilder::GenerateFallbackData(
                            ? itemBounds
                            : aItem->GetClippedBounds(aDisplayListBuilder);
 
-  nsRegion visibleRegion(paintBounds);
   nsRect buildingRect = aItem->GetBuildingRect();
-  aItem->SetBuildingRect(paintBounds);
-  auto resetBuildingRect =
-      MakeScopeExit([&]() { aItem->SetBuildingRect(buildingRect); });
 
   const int32_t appUnitsPerDevPixel =
       aItem->Frame()->PresContext()->AppUnitsPerDevPixel();

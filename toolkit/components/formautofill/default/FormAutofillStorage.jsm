@@ -16,39 +16,24 @@ const { FormAutofill } = ChromeUtils.import(
   "resource://autofill/FormAutofill.jsm"
 );
 
-const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
-
 const {
   FormAutofillStorageBase,
   CreditCardsBase,
   AddressesBase,
 } = ChromeUtils.import("resource://autofill/FormAutofillStorageBase.jsm");
 
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
+
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "JSONFile",
-  "resource://gre/modules/JSONFile.jsm"
-);
-
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "OSKeyStore",
-  "resource://gre/modules/OSKeyStore.jsm"
-);
-
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "CreditCard",
-  "resource://gre/modules/CreditCard.jsm"
-);
-
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "FormAutofillUtils",
-  "resource://autofill/FormAutofillUtils.jsm"
-);
+XPCOMUtils.defineLazyModuleGetters(lazy, {
+  CreditCard: "resource://gre/modules/CreditCard.jsm",
+  FormAutofillUtils: "resource://autofill/FormAutofillUtils.jsm",
+  JSONFile: "resource://gre/modules/JSONFile.jsm",
+  OSKeyStore: "resource://gre/modules/OSKeyStore.jsm",
+});
 
 const PROFILE_JSON_FILE_NAME = "autofill-profiles.json";
 
@@ -296,5 +281,5 @@ class FormAutofillStorage extends FormAutofillStorageBase {
 
 // The singleton exposed by this module.
 const formAutofillStorage = new FormAutofillStorage(
-  OS.Path.join(OS.Constants.Path.profileDir, PROFILE_JSON_FILE_NAME)
+  PathUtils.join(PathUtils.profileDir, PROFILE_JSON_FILE_NAME)
 );

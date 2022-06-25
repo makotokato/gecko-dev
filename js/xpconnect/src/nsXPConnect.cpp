@@ -19,6 +19,7 @@
 #include "js/Object.h"             // JS::GetClass
 #include "js/ProfilingStack.h"
 #include "GeckoProfiler.h"
+#include "mozJSModuleLoader.h"
 #include "nsJSEnvironment.h"
 #include "nsThreadUtils.h"
 #include "nsDOMJSUtils.h"
@@ -31,6 +32,8 @@
 #include "mozilla/dom/DOMException.h"
 #include "mozilla/dom/Exceptions.h"
 #include "mozilla/dom/Promise.h"
+#include "mozilla/glean/bindings/Glean.h"
+#include "mozilla/glean/bindings/GleanPings.h"
 #include "mozilla/ScriptPreloader.h"
 
 #include "nsDOMMutationObserver.h"
@@ -88,7 +91,7 @@ void nsXPConnect::InitJSContext() {
   gSelf->mContext = xpccx;
   gSelf->mRuntime = xpccx->Runtime();
 
-  mozJSComponentLoader::InitStatics();
+  mozJSModuleLoader::InitStatics();
 
   // Initialize the script preloader cache.
   Unused << mozilla::ScriptPreloader::GetSingleton();
@@ -169,7 +172,7 @@ void nsXPConnect::ReleaseXPConnectSingleton() {
     NS_RELEASE2(xpc, cnt);
   }
 
-  mozJSComponentLoader::Shutdown();
+  mozJSModuleLoader::Shutdown();
 }
 
 // static
