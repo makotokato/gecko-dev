@@ -27,10 +27,10 @@ static constexpr Register ICStubReg{Registers::invalid_reg};
 static constexpr Register ExtractTemp0{Registers::invalid_reg};
 static constexpr Register ExtractTemp1{Registers::invalid_reg};
 
-static constexpr FloatRegister FloatReg0 = {FloatRegisters::invalid_reg};
-static constexpr FloatRegister FloatReg1 = {FloatRegisters::invalid_reg};
-static constexpr FloatRegister FloatReg2 = {FloatRegisters::invalid_reg};
-static constexpr FloatRegister FloatReg3 = {FloatRegisters::invalid_reg};
+static constexpr FloatRegister FloatReg0;
+static constexpr FloatRegister FloatReg1;
+static constexpr FloatRegister FloatReg2;
+static constexpr FloatRegister FloatReg3;
 
 }  // namespace jit
 }  // namespace js

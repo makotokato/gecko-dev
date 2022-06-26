@@ -384,6 +384,12 @@ static const unsigned PushedFP = 16;
 static const unsigned SetFP = 20;
 static const unsigned PoppedFP = 4;
 static const unsigned PoppedFPJitEntry = 0;
+#elif defined(JS_CODEGEN_RISCV64)
+static const unsigned PushedRetAddr = 0;
+static const unsigned PushedFP = 1;
+static const unsigned SetFP = 2;
+static const unsigned PoppedFP = 3;
+static const unsigned PoppedFPJitEntry = 4;
 #elif defined(JS_CODEGEN_NONE)
 // Synthetic values to satisfy asserts and avoid compiler warnings.
 static const unsigned PushedRetAddr = 0;

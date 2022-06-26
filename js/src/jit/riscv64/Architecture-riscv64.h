@@ -107,10 +107,10 @@ class Registers {
     static_assert(sizeof(SetType) == 4, "SetType must be 32 bits");
     return mozilla::CountPopulation32(x);
   }
-  static uint32_t FirstBit(SetType) {
+  static uint32_t FirstBit(SetType x) {
     return mozilla::CountTrailingZeroes32(x);
   }
-  static uint32_t LastBit(SetType) {
+  static uint32_t LastBit(SetType x) {
     return 31 - mozilla::CountLeadingZeroes32(x);
   }
 
@@ -239,14 +239,17 @@ class FloatRegisters {
     ft11 = 31,
     invalid_reg
   };
-  typedef FPRegisterID Code;
+
+  typedef uint8_t Code;
   typedef FPRegisterID Encoding;
+  typedef uint32_t SetType;
+
+  enum Kind : uint8_t { Double, Single };
+
   union RegisterContent {
     float s;
     double d;
   };
-
-  typedef uint32_t SetType;
 
   static const char* GetName(uint32_t code) {
     // clang-format off
@@ -264,16 +267,19 @@ class FloatRegisters {
     }
     return Names[code];
   }
-  static Code FromName(const char*) {
+  static Code FromName(const char* name) {
     for (size_t i = 0; i < Total; i++) {
-      if (strcmp(GetName(Code(i)), name) == 0) {
+      if (strcmp(GetName(i), name) == 0) {
         return Code(i);
       }
     }
+
     return Invalid;
   }
 
-  static const Code Invalid = invalid_reg;
+  static constexpr Encoding encoding(Code c) { return Encoding(c & 31); }
+
+  static const Encoding Invalid = invalid_reg;
   static const uint32_t Total = 32;
   static const uint32_t TotalPhys = 32;
   static const uint32_t Allocatable = 32;
@@ -283,7 +289,7 @@ class FloatRegisters {
   static const SetType VolatileMask =
       (1 << FloatRegisters::ft0) | (1 << FloatRegisters::ft1) |
       (1 << FloatRegisters::ft2) | (1 << FloatRegisters::ft3) |
-      (1 << FloastRegisters::ft4) | (1 << FloatRegisters::ft5) |
+      (1 << FloatRegisters::ft4) | (1 << FloatRegisters::ft5) |
       (1 << FloatRegisters::ft6) | (1 << FloatRegisters::ft7) |
       (1 << FloatRegisters::ft8) | (1 << FloatRegisters::ft9) |
       (1 << FloatRegisters::ft10) | (1 << FloatRegisters::ft11) |
@@ -307,31 +313,39 @@ class TypedRegisterSet;
 
 struct FloatRegister {
   typedef FloatRegisters Codes;
-  typedef Codes::Code Code;
+  typedef size_t Code;
   typedef Codes::Encoding Encoding;
   typedef Codes::SetType SetType;
+  typedef Codes::Kind Kind;
 
-  enum RegType { Single, Double };
+ private:
+  uint8_t encoding_;
+  uint8_t kind_;
+  bool invalid_;
 
-  Code code_ : 5;
-  uint32_t kind_ : 2;
-
-  FloatRegister(uint32_t r) : code_(r), kind_(Double) {}
-  FloatRegister(uint32_t r, RegType k) : code_(r), kind_(k) {}
+ public:
+  constexpr FloatRegister(Encoding encoding)
+      : encoding_(encoding), kind_(FloatRegisters::Double), invalid_(false) {}
+  constexpr FloatRegister(Encoding encoding, Kind kind)
+      : encoding_(encoding), kind_(kind), invalid_(false) {}
+  constexpr FloatRegister()
+      : encoding_(0), kind_(FloatRegisters::Double), invalid_(true) {}
 
   static uint32_t FirstBit(SetType) { MOZ_CRASH(); }
   static uint32_t LastBit(SetType) { MOZ_CRASH(); }
-  static FloatRegister FromCode(uint32_t) { MOZ_CRASH(); }
-  bool isSingle() const { return kind_ == Single; }
-  bool isDouble() const { return kind_ == Double; }
+  static FloatRegister FromCode(uint32_t i) {
+    return FloatRegister(FloatRegisters::encoding(i), FloatRegisters::Double);
+  }
+  bool isSingle() const { return kind_ == FloatRegisters::Single; }
+  bool isDouble() const { return kind_ == FloatRegisters::Double; }
   bool isSimd128() const { return false; }
-  bool isInvalid() const { MOZ_CRASH(); }
+  bool isInvalid() const { return invalid_; }
   FloatRegister asSingle() const { MOZ_CRASH(); }
   FloatRegister asDouble() const { MOZ_CRASH(); }
   FloatRegister asSimd128() const { MOZ_CRASH(); }
-  Code code() const { return code_; }
-  Encoding encoding() const { MOZ_CRASH(); }
-  const char* name() const { MOZ_CRASH(); }
+  Code code() const { MOZ_CRASH(); }
+  Encoding encoding() const { return Encoding(encoding_); }
+  const char* name() const { return FloatRegisters::GetName(code()); }
   bool volatile_() const { MOZ_CRASH(); }
   bool operator!=(FloatRegister) const { MOZ_CRASH(); }
   bool operator==(FloatRegister) const { MOZ_CRASH(); }
@@ -361,9 +375,15 @@ struct FloatRegister {
   static T ReduceSetForPush(T) {
     MOZ_CRASH();
   }
-  uint32_t getRegisterDumpOffsetInBytes() { MOZ_CRASH(); }
-  static uint32_t SetSize(SetType x) { MOZ_CRASH(); }
-  static Code FromName(const char* name) { MOZ_CRASH(); }
+  uint32_t getRegisterDumpOffsetInBytes() {
+    MOZ_CRASH();
+    return 0;
+  }
+  static uint32_t SetSize(SetType x) {
+    MOZ_CRASH();
+    return 0;
+  }
+  static Code FromName(const char* name) { return 0; }
 
   // This is used in static initializers, so produce a bogus value instead of
   // crashing.

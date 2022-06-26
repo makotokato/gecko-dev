@@ -7,31 +7,36 @@
 #ifndef jit_riscv64_MacroAssembler_riscv64_h
 #define jit_riscv64_MacroAssembler_riscv64_h
 
-#include <iterator>
-
-#include "jit/MoveResolver.h"
 #include "jit/riscv64/Assembler-riscv64.h"
-#include "wasm/WasmTypeDecls.h"
+#include "jit/MoveResolver.h"
+#include "wasm/WasmBuiltins.h"
 
 namespace js {
 namespace jit {
 
-class CompactBufferReader;
-
-class ScratchTagScope {
+class ScratchTagScope : public SecondScratchRegisterScope {
  public:
-  ScratchTagScope(MacroAssembler&, const ValueOperand) {}
-  operator Register() { MOZ_CRASH(); }
-  void release() { MOZ_CRASH(); }
-  void reacquire() { MOZ_CRASH(); }
+  ScratchTagScope(MacroAssembler& masm, const ValueOperand&)
+      : SecondScratchRegisterScope(masm) {}
 };
 
 class ScratchTagScopeRelease {
+  ScratchTagScope* ts_;
+
  public:
-  explicit ScratchTagScopeRelease(ScratchTagScope*) {}
+  explicit ScratchTagScopeRelease(ScratchTagScope* ts) : ts_(ts) {
+    ts_->release();
+  }
+
+  ~ScratchTagScopeRelease() { ts_->reacquire(); }
 };
 
 class MacroAssemblerRiscv64 : public Assembler {
+ protected:
+  // Perform a downcast. Should be removed by Bug 996602.
+  MacroAssembler& asMasm();
+  const MacroAssembler& asMasm() const;
+
  public:
   MacroAssemblerRiscv64() { MOZ_CRASH(); }
 
@@ -52,13 +57,6 @@ class MacroAssemblerRiscv64 : public Assembler {
 
   void assertNoGCThings() const { MOZ_CRASH(); }
 
-  static void TraceJumpRelocations(JSTracer*, JitCode*, CompactBufferReader&) {
-    MOZ_CRASH();
-  }
-  static void TraceDataRelocations(JSTracer*, JitCode*, CompactBufferReader&) {
-    MOZ_CRASH();
-  }
-
   static bool SupportsFloatingPoint() { return false; }
   static bool SupportsUnalignedAccesses() { return false; }
   static bool SupportsFastUnalignedFPAccesses() { return false; }
@@ -69,7 +67,7 @@ class MacroAssemblerRiscv64 : public Assembler {
   void copyPreBarrierTable(uint8_t*) { MOZ_CRASH(); }
   void processCodeLabels(uint8_t*) { MOZ_CRASH(); }
 
-  void flushBuffer() { m_buffer.flushPool(); }
+  void flushBuffer() {}
 
   template <typename T>
   void bind(T) {

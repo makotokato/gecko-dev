@@ -96,8 +96,8 @@
 //   }
 //   ////}}} check_macroassembler_style
 
-#define ALL_ARCH mips32, mips64, arm, arm64, x86, x64, loong64
-#define ALL_SHARED_ARCH arm, arm64, loong64, x86_shared, mips_shared
+#define ALL_ARCH mips32, mips64, arm, arm64, x86, x64, loong64, riscv64
+#define ALL_SHARED_ARCH arm, arm64, loong64, riscv64, x86_shared, mips_shared
 
 // * How this macro works:
 //
@@ -144,6 +144,7 @@
 #define DEFINED_ON_mips64
 #define DEFINED_ON_mips_shared
 #define DEFINED_ON_loong64
+#define DEFINED_ON_riscv64
 #define DEFINED_ON_none
 
 // Specialize for each architecture.
@@ -176,6 +177,9 @@
 #elif defined(JS_CODEGEN_LOONG64)
 #  undef DEFINED_ON_loong64
 #  define DEFINED_ON_loong64 define
+#elif defined(JS_CODEGEN_RISCV64)
+#  undef DEFINED_ON_riscv64
+#  define DEFINED_ON_riscv64 define
 #elif defined(JS_CODEGEN_NONE)
 #  undef DEFINED_ON_none
 #  define DEFINED_ON_none crash

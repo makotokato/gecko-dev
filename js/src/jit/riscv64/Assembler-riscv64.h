@@ -7,32 +7,45 @@
 #ifndef jit_riscv64_Assembler_riscv64_h
 #define jit_riscv64_Assembler_riscv64_h
 
-#include "mozilla/Assertions.h"
+#include "mozilla/Sprintf.h"
+#include <iterator>
 
-#include <stdint.h>
-
+#include "jit/CompactBuffer.h"
+#include "jit/JitCode.h"
+#include "jit/JitSpewer.h"
 #include "jit/Registers.h"
 #include "jit/RegisterSets.h"
 #include "jit/riscv64/Architecture-riscv64.h"
 #include "jit/shared/Assembler-shared.h"
+#include "jit/shared/Disassembler-shared.h"
+#include "jit/shared/IonAssemblerBuffer.h"
+#include "wasm/WasmTypeDecls.h"
 
 namespace js {
 namespace jit {
 
 class MacroAssembler;
 
+static constexpr Register t0{Registers::t0};
+static constexpr Register t1{Registers::t1};
+static constexpr Register t2{Registers::t2};
+static constexpr Register t3{Registers::t3};
+static constexpr Register t4{Registers::t4};
+static constexpr Register t5{Registers::t5};
+static constexpr Register t6{Registers::t6};
+
 static constexpr Register StackPointer{Registers::sp};
 static constexpr Register FramePointer{Registers::fp};
 static constexpr Register ReturnReg{Registers::a0};
-static constexpr FloatRegister InvalidFloatReg = {FloatRegisters::invalid_reg};
-static constexpr FloatRegister ReturnFloat32Reg = {FloatRegisters::fa0, Single};
-static constexpr FloatRegister ReturnDoubleReg = {FloatRegisters::fa0, Double};
+static constexpr FloatRegister InvalidFloatReg;
+static constexpr FloatRegister ReturnFloat32Reg{FloatRegisters::fa0,
+                                                FloatRegisters::Single};
+static constexpr FloatRegister ReturnDoubleReg{FloatRegisters::fa0,
+                                               FloatRegisters::Double};
 static constexpr FloatRegister ReturnSimd128Reg = InvalidFloatReg;
 static constexpr FloatRegister ScratchSimd128Reg = InvalidFloatReg;
-static constexpr FloatRegister ScratchFloat32Reg_ =
-    FloatRegister(FloatRegisters::ft0, FloatRegisters::Single);
-static constexpr FloatRegister ScratchDoubleReg_ = {FloatResgisters::ft0,
-                                                    FloatRegisters::Double};
+static constexpr FloatRegister ScratchFloat32Reg_ = InvalidFloatReg;
+static constexpr FloatRegister ScratchDoubleReg_ = InvalidFloatReg;
 
 struct ScratchFloat32Scope : AutoFloatRegisterScope {
   explicit ScratchFloat32Scope(MacroAssembler& masm)
@@ -47,17 +60,14 @@ struct ScratchDoubleScope : AutoFloatRegisterScope {
 static constexpr Register OsrFrameReg{Registers::invalid_reg};
 static constexpr Register PreBarrierReg{Registers::invalid_reg};
 static constexpr Register InterpreterPCReg{Registers::invalid_reg};
-static constexpr Register CallTempReg0{Registers::t0};
-static constexpr Register CallTempReg1{Registers::t1};
-static constexpr Register CallTempReg2{Registers::t2};
-static constexpr Register CallTempReg3{Registers::t3};
-static constexpr Register CallTempReg4{Registers::t4};
-static constexpr Register CallTempReg5{Registers::t5};
-static constexpr Register CallTempReg6{Registers::t6};
+static constexpr Register CallTempReg0 = t0;
+static constexpr Register CallTempReg1 = t1;
+static constexpr Register CallTempReg2 = t2;
+static constexpr Register CallTempReg3 = t3;
+static constexpr Register CallTempReg4 = t4;
+static constexpr Register CallTempReg5 = t5;
 static constexpr Register InvalidReg{Registers::invalid_reg};
-static constexpr Register CallTempNonArgRegs[] = {
-    Registers::t0, Registers::t1, Registers::t2, Registers::t3,
-    Registers::t4, Registers::t5, Registers::t6};
+static constexpr Register CallTempNonArgRegs[] = {t0, t1, t2, t3, t4, t5, t6};
 static const uint32_t NumCallTempNonArgRegs = std::size(CallTempNonArgRegs);
 
 static constexpr Register IntArgReg0{Registers::a0};
@@ -85,7 +95,7 @@ static constexpr Register JSReturnReg_Data{Registers::a2};
 static constexpr Register JSReturnReg{Registers::a2};
 
 static constexpr ValueOperand ValueOperand(JSReturnReg);
-static constexpr Register64 ReturnReg64(a0);
+static constexpr Register64 ReturnReg64(ReturnReg);
 
 static constexpr Register ABINonArgReg0{Registers::s0};
 static constexpr Register ABINonArgReg1{Registers::s1};
@@ -96,7 +106,7 @@ static constexpr Register ABINonArgReturnReg1{Registers::s1};
 static constexpr Register ABINonVolatileReg{Registers::fp};
 static constexpr Register ABINonArgReturnVolatileReg{Registers::ra};
 
-static constexpr FloatRegister ABINonArgDoubleReg = {FloatRegisters::fs0, Double};
+static constexpr FloatRegister ABINonArgDoubleReg = InvalidFloatReg;
 
 static constexpr Register WasmTableCallScratchReg0{Registers::invalid_reg};
 static constexpr Register WasmTableCallScratchReg1{Registers::invalid_reg};
@@ -227,7 +237,7 @@ class Operand {
  public:
   enum Kind { REG };
 
- private
+ private:
   Kind kind_ : 4;
   uint32_t reg_ : 5;
   int32_t offset_;
