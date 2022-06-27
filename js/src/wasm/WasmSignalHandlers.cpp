@@ -405,18 +405,15 @@ struct macos_aarch64_context {
 #    define PC_sig(p) R32_sig(p)
 #    define SP_sig(p) R01_sig(p)
 #    define FP_sig(p) R01_sig(p)
-<<<<<<< HEAD
-#  elif defined(__riscv) && __riscv_xlen == 64
-#    define PC_sig(p) EPC_sig(p)
-#    define SP_sig(p) X02_sig(p)
-#    define FP_sig(p) X08_sig(p)
-=======
 #  elif defined(__loongarch__)
 #    define PC_sig(p) EPC_sig(p)
 #    define FP_sig(p) RFP_sig(p)
 #    define SP_sig(p) RSP_sig(p)
 #    define LR_sig(p) RRA_sig(p)
->>>>>>> master
+#  elif defined(__riscv) && __riscv_xlen == 64
+#    define PC_sig(p) EPC_sig(p)
+#    define SP_sig(p) X02_sig(p)
+#    define FP_sig(p) X08_sig(p)
 #  endif
 
 static void SetContextPC(CONTEXT* context, uint8_t* pc) {

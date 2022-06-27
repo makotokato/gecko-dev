@@ -14,9 +14,11 @@
 namespace js {
 namespace jit {
 
+static constexpr ValueOperand JSReturnOperand{JSReturnReg};
+
 class ScratchTagScope : public SecondScratchRegisterScope {
  public:
-  ScratchTagScope(MacroAssembler& masm, const ValueOperand&)
+  ScratchTagScope(MacroAssembler& masm, const js::jit::ValueOperand&)
       : SecondScratchRegisterScope(masm) {}
 };
 
@@ -82,10 +84,7 @@ class MacroAssemblerRiscv64 : public Assembler {
     MOZ_CRASH();
   }
   void writeCodePointer(CodeLabel* label) {
-    MOZ_ASSERT(hasCreator());
-    m_buffer.ensureSpace(sizeof(uintptr_t));
-    BufferOffset off = m_buffer.putInt64Unchecked(-1);
-    label->patchAt()->bind(off.getOffset());
+    MOZ_CRASH();
   }
   void haltingAlign(size_t) { MOZ_CRASH(); }
   void nopAlign(size_t) { MOZ_CRASH(); }
@@ -429,7 +428,6 @@ class MacroAssemblerRiscv64 : public Assembler {
   void convertUInt32ToFloat32(Register, FloatRegister) { MOZ_CRASH(); }
   void incrementInt32Value(Address) { MOZ_CRASH(); }
   void ensureDouble(ValueOperand, FloatRegister, Label*) { MOZ_CRASH(); }
-  void handleFailureWithHandlerTail(Label*) { MOZ_CRASH(); }
 
   void buildFakeExitFrame(Register, uint32_t*) { MOZ_CRASH(); }
   bool buildOOLFakeExitFrame(void*) { MOZ_CRASH(); }
@@ -439,6 +437,9 @@ class MacroAssemblerRiscv64 : public Assembler {
   Address ToPayload(Address) { MOZ_CRASH(); }
 
   Register getStackPointer() const { MOZ_CRASH(); }
+
+  void handleFailureWithHandlerTail(Label* profilerExitTail,
+                                    Label* bailoutTail) { MOZ_CRASH(); }
 
   // Instrumentation for entering and leaving the profiler.
   void profilerEnterFrame(Register, Register) { MOZ_CRASH(); }

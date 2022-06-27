@@ -9,4 +9,10 @@
 
 #include "jit/riscv64/MacroAssembler-riscv64.h"
 
+namespace js {
+namespace jit {
+
+}  // namespace jit
+}  // namespace js
+
 #endif

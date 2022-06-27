@@ -13,8 +13,6 @@
 #include "jit/CompactBuffer.h"
 #include "jit/JitCode.h"
 #include "jit/JitSpewer.h"
-#include "jit/Registers.h"
-#include "jit/RegisterSets.h"
 #include "jit/riscv64/Architecture-riscv64.h"
 #include "jit/shared/Assembler-shared.h"
 #include "jit/shared/Disassembler-shared.h"
@@ -33,6 +31,8 @@ static constexpr Register t3{Registers::t3};
 static constexpr Register t4{Registers::t4};
 static constexpr Register t5{Registers::t5};
 static constexpr Register t6{Registers::t6};
+static constexpr Register s0{Registers::s0};
+static constexpr Register s4{Registers::s4};
 
 static constexpr Register StackPointer{Registers::sp};
 static constexpr Register FramePointer{Registers::fp};
@@ -46,6 +46,19 @@ static constexpr FloatRegister ReturnSimd128Reg = InvalidFloatReg;
 static constexpr FloatRegister ScratchSimd128Reg = InvalidFloatReg;
 static constexpr FloatRegister ScratchFloat32Reg_ = InvalidFloatReg;
 static constexpr FloatRegister ScratchDoubleReg_ = InvalidFloatReg;
+
+static constexpr Register ScratchRegister = t6;
+
+// Helper class for ScratchRegister usage. Asserts that only one piece
+// of code thinks it has exclusive ownership of the scratch register.
+struct ScratchRegisterScope : public AutoRegisterScope {
+  explicit ScratchRegisterScope(MacroAssembler& masm)
+      : AutoRegisterScope(masm, ScratchRegister) {}
+};
+
+struct SecondScratchRegisterScope : public AutoRegisterScope {
+  explicit SecondScratchRegisterScope(MacroAssembler& masm);
+};
 
 struct ScratchFloat32Scope : AutoFloatRegisterScope {
   explicit ScratchFloat32Scope(MacroAssembler& masm)
@@ -94,7 +107,6 @@ static constexpr Register JSReturnReg_Type{Registers::a3};
 static constexpr Register JSReturnReg_Data{Registers::a2};
 static constexpr Register JSReturnReg{Registers::a2};
 
-static constexpr ValueOperand ValueOperand(JSReturnReg);
 static constexpr Register64 ReturnReg64(ReturnReg);
 
 static constexpr Register ABINonArgReg0{Registers::s0};
@@ -107,6 +119,11 @@ static constexpr Register ABINonVolatileReg{Registers::fp};
 static constexpr Register ABINonArgReturnVolatileReg{Registers::ra};
 
 static constexpr FloatRegister ABINonArgDoubleReg = InvalidFloatReg;
+
+// Instance pointer argument register for WebAssembly functions. This must not
+// alias any other register used for passing function arguments or return
+// values. Preserved by WebAssembly functions.
+static constexpr Register InstanceReg = s4;
 
 static constexpr Register WasmTableCallScratchReg0{Registers::invalid_reg};
 static constexpr Register WasmTableCallScratchReg1{Registers::invalid_reg};
@@ -183,6 +200,11 @@ class Assembler : public AssemblerShared {
 
   static DoubleCondition InvertCondition(DoubleCondition) { MOZ_CRASH(); }
 
+  static void TraceJumpRelocations(JSTracer* trc, JitCode* code,
+                                   CompactBufferReader& reader);
+  static void TraceDataRelocations(JSTracer* trc, JitCode* code,
+                                   CompactBufferReader& reader);
+
   template <typename T, typename S>
   static void PatchDataWithValueCheck(CodeLocationLabel, T, S) {
     MOZ_CRASH();
@@ -254,6 +276,9 @@ class Operand {
 
   Kind kind() const { return kind_; }
 };
+
+static const uint32_t NumIntArgRegs = 8;
+static const uint32_t NumFloatArgRegs = 8;
 
 class ABIArgGenerator {
  public:

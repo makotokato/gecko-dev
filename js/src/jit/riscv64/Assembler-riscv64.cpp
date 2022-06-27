@@ -21,19 +21,24 @@ ABIArg ABIArgGenerator::next(MIRType type) {
         stackOffset_ += sizeof(uintptr_t);
         break;
       }
-      current_ = ABIArg(IntArgRegs[intRegIndex_++]);
+      current_ = ABIArg(Register::FromCode(intRegIndex_));
+      intRegIndex_++;
       break;
 
+    case MIRType::Float32:
     case MIRType::Double:
       if (floatRegIndex_ == NumFloatArgRegs) {
         current_ = ABIArg(stackOffset_);
         stackOffset_ += sizeof(double);
         break;
       }
-      current_ = ABIArg(FloatArgReg[floatRegIndex_++]);
+      current_ = ABIArg(FloatRegister(FloatRegisters::Encoding(floatRegIndex_),
+                                      type == MIRType::Double
+                                          ? FloatRegisters::Double
+                                          : FloatRegisters::Single));
+      floatRegIndex_++;
       break;
 
-    case MIRType::Float32:
     case MIRType::Simd128:
     default:
       MOZ_CRASH("Unexpected argument type");
