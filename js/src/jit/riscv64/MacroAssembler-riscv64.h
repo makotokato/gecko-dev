@@ -7,8 +7,8 @@
 #ifndef jit_riscv64_MacroAssembler_riscv64_h
 #define jit_riscv64_MacroAssembler_riscv64_h
 
-#include "jit/riscv64/Assembler-riscv64.h"
 #include "jit/MoveResolver.h"
+#include "jit/riscv64/Assembler-riscv64.h"
 #include "wasm/WasmBuiltins.h"
 
 namespace js {

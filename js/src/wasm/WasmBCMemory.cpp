@@ -1391,7 +1391,6 @@ static void Deallocate(BaseCompiler* bc, AtomicOp op, RegI64 rv, RegI64 temp) {
   bc->freeI64(temp);
 }
 
-<<<<<<< HEAD
 #elif defined(JS_CODEGEN_RISCV64)
 
 static void PopAndAllocate(BaseCompiler* bc, AtomicOp op, RegI64* rd,
@@ -1403,12 +1402,7 @@ static void Perform(BaseCompiler* bc, const MemoryAccessDesc& access,
 
 static void Deallocate(BaseCompiler* bc, AtomicOp op, RegI64 rv, RegI64 temp) {}
 
-#elif defined(JS_CODEGEN_NONE)
-||||||| 199c1f0890ee
-#elif defined(JS_CODEGEN_NONE)
-=======
 #elif defined(JS_CODEGEN_NONE) || defined(JS_CODEGEN_WASM32)
->>>>>>> master
 
 static void PopAndAllocate(BaseCompiler*, AtomicOp, RegI64*, RegI64*, RegI64*) {
 }
