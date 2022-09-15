@@ -919,10 +919,12 @@ static bool IsPopupWidget(nsIWidget* aWidget) {
 
 PresShell* nsView::GetPresShell() { return GetViewManager()->GetPresShell(); }
 
-bool nsView::WindowMoved(nsIWidget* aWidget, int32_t x, int32_t y) {
+bool nsView::WindowMoved(nsIWidget* aWidget, int32_t x, int32_t y,
+                         ByMoveToRect aByMoveToRect) {
   nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
   if (pm && IsPopupWidget(aWidget)) {
-    pm->PopupMoved(mFrame, nsIntPoint(x, y));
+    pm->PopupMoved(mFrame, nsIntPoint(x, y),
+                   aByMoveToRect == ByMoveToRect::Yes);
     return true;
   }
 
@@ -1083,13 +1085,12 @@ void nsView::DidCompositeWindow(mozilla::layers::TransactionId aTransactionId,
   }
 
   nsIDocShell* docShell = context->GetDocShell();
-  RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
 
-  if (timelines && timelines->HasConsumer(docShell)) {
-    timelines->AddMarkerForDocShell(
+  if (TimelineConsumers::HasConsumer(docShell)) {
+    TimelineConsumers::AddMarkerForDocShell(
         docShell, MakeUnique<CompositeTimelineMarker>(
                       aCompositeStart, MarkerTracingType::START));
-    timelines->AddMarkerForDocShell(
+    TimelineConsumers::AddMarkerForDocShell(
         docShell, MakeUnique<CompositeTimelineMarker>(aCompositeEnd,
                                                       MarkerTracingType::END));
   }

@@ -97,10 +97,11 @@ void DequantLane(Vec<D> scaled_dequant_x, Vec<D> scaled_dequant_y,
                  size_t k, Vec<D> x_cc_mul, Vec<D> b_cc_mul,
                  const float* JXL_RESTRICT biases, ACPtr qblock[3],
                  float* JXL_RESTRICT block) {
-  const auto x_mul = Load(d, dequant_matrices + k) * scaled_dequant_x;
-  const auto y_mul = Load(d, dequant_matrices + size + k) * scaled_dequant_y;
+  const auto x_mul = Mul(Load(d, dequant_matrices + k), scaled_dequant_x);
+  const auto y_mul =
+      Mul(Load(d, dequant_matrices + size + k), scaled_dequant_y);
   const auto b_mul =
-      Load(d, dequant_matrices + 2 * size + k) * scaled_dequant_b;
+      Mul(Load(d, dequant_matrices + 2 * size + k), scaled_dequant_b);
 
   Vec<DI> quantized_x_int;
   Vec<DI> quantized_y_int;
@@ -117,11 +118,11 @@ void DequantLane(Vec<D> scaled_dequant_x, Vec<D> scaled_dequant_y,
   }
 
   const auto dequant_x_cc =
-      AdjustQuantBias(di, 0, quantized_x_int, biases) * x_mul;
+      Mul(AdjustQuantBias(di, 0, quantized_x_int, biases), x_mul);
   const auto dequant_y =
-      AdjustQuantBias(di, 1, quantized_y_int, biases) * y_mul;
+      Mul(AdjustQuantBias(di, 1, quantized_y_int, biases), y_mul);
   const auto dequant_b_cc =
-      AdjustQuantBias(di, 2, quantized_b_int, biases) * b_mul;
+      Mul(AdjustQuantBias(di, 2, quantized_b_int, biases), b_mul);
 
   const auto dequant_x = MulAdd(x_cc_mul, dequant_y, dequant_x_cc);
   const auto dequant_b = MulAdd(b_cc_mul, dequant_y, dequant_b_cc);
@@ -241,8 +242,10 @@ Status DecodeGroupImpl(GetBlock* JXL_RESTRICT get_block,
     r[i] =
         Rect(block_rect.x0() >> hshift[i], block_rect.y0() >> vshift[i],
              block_rect.xsize() >> hshift[i], block_rect.ysize() >> vshift[i]);
-    JXL_ASSERT(r[i].IsInside({0, 0, dec_state->shared->dc->Plane(i).xsize(),
-                              dec_state->shared->dc->Plane(i).ysize()}));
+    if (!r[i].IsInside({0, 0, dec_state->shared->dc->Plane(i).xsize(),
+                        dec_state->shared->dc->Plane(i).ysize()})) {
+      return JXL_FAILURE("Frame dimensions are too big for the image.");
+    }
   }
 
   for (size_t by = 0; by < ysize_blocks; ++by) {
@@ -383,11 +386,11 @@ Status DecodeGroupImpl(GetBlock* JXL_RESTRICT get_block,
                 auto in = Load(di, transposed_dct + i);
                 auto in_y = Load(di, transposed_dct_y + i);
                 auto qt = Load(di, scaled_qtable + c * size + i);
-                auto coeff_scale =
-                    ShiftRight<kCFLFixedPointPrecision>(qt * scale + round);
+                auto coeff_scale = ShiftRight<kCFLFixedPointPrecision>(
+                    Add(Mul(qt, scale), round));
                 auto cfl_factor = ShiftRight<kCFLFixedPointPrecision>(
-                    in_y * coeff_scale + round);
-                StoreU(DemoteTo(di16, in + cfl_factor), di16, jpeg_pos + i);
+                    Add(Mul(in_y, coeff_scale), round));
+                StoreU(DemoteTo(di16, Add(in, cfl_factor)), di16, jpeg_pos + i);
               }
             }
             jpeg_pos[0] =

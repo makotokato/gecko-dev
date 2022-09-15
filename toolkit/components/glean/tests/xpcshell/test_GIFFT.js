@@ -92,6 +92,32 @@ add_task(function test_gifft_memory_dist() {
   Telemetry.getHistogramById("TELEMETRY_TEST_LINEAR").clear();
   Assert.equal(24, data.sum, "Histogram's in `memory_unit` units");
   Assert.equal(2, data.values["1"], "Both samples in a low bucket");
+
+  // MemoryDistribution's Accumulate method to takes
+  // a platform specific type (size_t).
+  // Glean's, however, is i64, and, glean_memory_dist is uint64_t
+  // What happens when we give accumulate dubious values?
+  // This may occur on some uncommon platforms.
+  // Note: there are issues in JS with numbers above 2**53
+  Glean.testOnlyIpc.aMemoryDist.accumulate(36893488147419103232);
+  let dubiousValue = Object.entries(
+    Glean.testOnlyIpc.aMemoryDist.testGetValue().values
+  )[0][1];
+  Assert.equal(
+    dubiousValue,
+    1,
+    "Greater than 64-Byte number did not accumulate correctly"
+  );
+
+  // Values lower than the out-of-range value are not clamped
+  // resulting in an exception being thrown from the glean side
+  // when the value exceeds the glean maximum allowed value
+  Glean.testOnlyIpc.aMemoryDist.accumulate(Math.pow(2, 31));
+  Assert.throws(
+    () => Glean.testOnlyIpc.aMemoryDist.testGetValue(),
+    /NS_ERROR_LOSS_OF_SIGNIFICANT_DATA/,
+    "Did not accumulate correctly"
+  );
 });
 
 add_task(function test_gifft_custom_dist() {
@@ -141,7 +167,8 @@ add_task(async function test_gifft_timing_dist() {
   const EPSILON = 40000;
 
   // Variance in timing makes getting the sum impossible to know.
-  Assert.greater(data.sum, 15 * NANOS_IN_MILLIS - EPSILON);
+  // 10 and 5 input value can be trunacted to 4. + 9. >= 13. from cast
+  Assert.greater(data.sum, 13 * NANOS_IN_MILLIS - EPSILON);
 
   // No guarantees from timers means no guarantees on buckets.
   // But we can guarantee it's only two samples.
@@ -155,7 +182,8 @@ add_task(async function test_gifft_timing_dist() {
   );
 
   data = Telemetry.getHistogramById("TELEMETRY_TEST_EXPONENTIAL").snapshot();
-  Assert.greaterOrEqual(data.sum, 15, "Histogram's in milliseconds");
+  // Suffers from same cast truncation issue of 9.... and 4.... values
+  Assert.greaterOrEqual(data.sum, 13, "Histogram's in milliseconds");
   Assert.equal(
     2,
     Object.entries(data.values).reduce(
@@ -313,9 +341,10 @@ add_task(async function test_gifft_labeled_boolean() {
     Glean.testOnly.mirrorsForLabeledBools.__other__.testGetValue()
   );
   Glean.testOnly.mirrorsForLabeledBools.InvalidLabel.set(true);
-  Assert.equal(
-    true,
-    Glean.testOnly.mirrorsForLabeledBools.__other__.testGetValue()
+  Assert.throws(
+    () => Glean.testOnly.mirrorsForLabeledBools.__other__.testGetValue(),
+    /NS_ERROR_LOSS_OF_SIGNIFICANT_DATA/,
+    "Should throw because of a recording error."
   );
 
   // In Telemetry there is no invalid label

@@ -2,17 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// If we're in a subdialog, then this is a spotlight modal
+// If we're in a subdialog, then this is a spotlight modal.
+// Otherwise, this is about:welcome or a Feature Callout
+// in another "about" page and we should return the current page.
 const page = document.querySelector(":root[dialogroot=true]")
   ? "spotlight"
-  : "about:welcome";
+  : document.location.href;
 
 export const AboutWelcomeUtils = {
   handleUserAction(action) {
     window.AWSendToParent("SPECIAL_ACTION", action);
   },
   sendImpressionTelemetry(messageId, context) {
-    window.AWSendEventTelemetry({
+    window.AWSendEventTelemetry?.({
       event: "IMPRESSION",
       event_context: {
         ...context,
@@ -30,7 +32,7 @@ export const AboutWelcomeUtils = {
       },
       message_id: messageId,
     };
-    window.AWSendEventTelemetry(ping);
+    window.AWSendEventTelemetry?.(ping);
   },
   async fetchFlowParams(metricsFlowUri) {
     let flowParams;

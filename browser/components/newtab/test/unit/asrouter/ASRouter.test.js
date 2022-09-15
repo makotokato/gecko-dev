@@ -223,9 +223,10 @@ describe("ASRouter", () => {
     };
     let fakeNimbusFeatures = [
       "cfr",
-      "moments-page",
       "infobar",
       "spotlight",
+      "moments-page",
+      "pbNewtab",
     ].reduce((features, featureId) => {
       features[featureId] = {
         getAllVariables: sandbox.stub().returns(null),
@@ -1736,11 +1737,11 @@ describe("ASRouter", () => {
 
   describe("#reachEvent", () => {
     let experimentAPIStub;
-    let messageGroups = ["cfr", "moments-page", "infobar", "spotlight"];
+    let featureIds = ["cfr", "moments-page", "infobar", "spotlight"];
     beforeEach(() => {
       let getExperimentMetaDataStub = sandbox.stub();
       let getAllBranchesStub = sandbox.stub();
-      messageGroups.forEach(feature => {
+      featureIds.forEach(feature => {
         global.NimbusFeatures[feature].getAllVariables.returns({
           id: `message-${feature}`,
         });
@@ -1770,15 +1771,15 @@ describe("ASRouter", () => {
       // This should match the `providers.messaging-experiments`
       let response = await MessageLoaderUtils.loadMessagesForProvider({
         type: "remote-experiments",
-        messageGroups,
+        featureIds,
       });
 
       // 1 message for reach 1 for expose
       assert.property(response, "messages");
-      assert.lengthOf(response.messages, messageGroups.length * 2);
+      assert.lengthOf(response.messages, featureIds.length * 2);
       assert.lengthOf(
         response.messages.filter(m => m.forReachEvent),
-        messageGroups.length
+        featureIds.length
       );
     });
   });
@@ -2056,29 +2057,6 @@ describe("ASRouter", () => {
   });
 
   describe("impressions", () => {
-    describe("frequency normalisation", () => {
-      beforeEach(async () => {
-        const messages = [
-          { frequency: { custom: [{ period: "daily", cap: 10 }] } },
-        ];
-        const provider = {
-          id: "foo",
-          frequency: { custom: [{ period: "daily", cap: 100 }] },
-          messages,
-          enabled: true,
-        };
-        await createRouterAndInit([provider]);
-      });
-      it("period aliases in provider frequency caps should be normalised", () => {
-        const [provider] = Router.state.providers;
-        assert.equal(provider.frequency.custom[0].period, "daily");
-      });
-      it("period aliases in message frequency caps should be normalised", async () => {
-        const [message] = Router.state.messages;
-        assert.equal(message.frequency.custom[0].period, "daily");
-      });
-    });
-
     describe("#isBelowFrequencyCaps", () => {
       it("should call #_isBelowItemFrequencyCap for the message and for the provider with the correct impressions and arguments", async () => {
         sinon.spy(Router, "_isBelowItemFrequencyCap");
@@ -2621,7 +2599,7 @@ describe("ASRouter", () => {
     it("should fetch messages from the ExperimentAPI", async () => {
       const args = {
         type: "remote-experiments",
-        messageGroups: ["spotlight"],
+        featureIds: ["spotlight"],
       };
 
       await MessageLoaderUtils.loadMessagesForProvider(args);
@@ -2635,7 +2613,7 @@ describe("ASRouter", () => {
     it("should handle the case of no experiments in the ExperimentAPI", async () => {
       const args = {
         type: "remote-experiments",
-        messageGroups: ["infobar"],
+        featureIds: ["infobar"],
       };
 
       global.ExperimentAPI.getExperiment.returns(null);
@@ -2647,7 +2625,7 @@ describe("ASRouter", () => {
     it("should normally load ExperimentAPI messages", async () => {
       const args = {
         type: "remote-experiments",
-        messageGroups: ["infobar"],
+        featureIds: ["infobar"],
       };
       const enrollment = {
         branch: {
@@ -2683,7 +2661,7 @@ describe("ASRouter", () => {
     it("should skip disabled features and not load the messages", async () => {
       const args = {
         type: "remote-experiments",
-        messageGroups: ["cfr"],
+        featureIds: ["cfr"],
       };
 
       global.NimbusFeatures.cfr.getAllVariables.returns(null);
@@ -2695,7 +2673,7 @@ describe("ASRouter", () => {
     it("should fetch branches with trigger", async () => {
       const args = {
         type: "remote-experiments",
-        messageGroups: ["cfr"],
+        featureIds: ["cfr"],
       };
       const enrollment = {
         slug: "exp01",
@@ -2750,7 +2728,7 @@ describe("ASRouter", () => {
     it("should fetch branches with trigger even if enrolled branch is disabled", async () => {
       const args = {
         type: "remote-experiments",
-        messageGroups: ["cfr"],
+        featureIds: ["cfr"],
       };
       const enrollment = {
         slug: "exp01",
@@ -2763,7 +2741,7 @@ describe("ASRouter", () => {
         },
       };
 
-      // Nedds to match the `messageGroups` value to return an enrollment
+      // Nedds to match the `featureIds` value to return an enrollment
       // for that feature
       global.NimbusFeatures.cfr.getAllVariables.returns(
         enrollment.branch.cfr.value

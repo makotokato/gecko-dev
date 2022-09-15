@@ -102,6 +102,8 @@ extern JS_PUBLIC_API bool MaybeFreezeCtorAndPrototype(JSContext* cx,
  */
 
 extern JS_PUBLIC_API JSObject* GetRealmObjectPrototype(JSContext* cx);
+extern JS_PUBLIC_API JS::Handle<JSObject*> GetRealmObjectPrototypeHandle(
+    JSContext* cx);
 
 extern JS_PUBLIC_API JSObject* GetRealmFunctionPrototype(JSContext* cx);
 
@@ -110,6 +112,8 @@ extern JS_PUBLIC_API JSObject* GetRealmArrayPrototype(JSContext* cx);
 extern JS_PUBLIC_API JSObject* GetRealmErrorPrototype(JSContext* cx);
 
 extern JS_PUBLIC_API JSObject* GetRealmIteratorPrototype(JSContext* cx);
+
+extern JS_PUBLIC_API JSObject* GetRealmAsyncIteratorPrototype(JSContext* cx);
 
 // Returns an object that represents the realm, that can be referred from
 // other realm/compartment.

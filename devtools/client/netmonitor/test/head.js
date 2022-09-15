@@ -287,6 +287,10 @@ function startNetworkEventUpdateObserver(panelWin) {
       finishedQueue[key] = finishedQueue[key] ? finishedQueue[key] - 1 : -1;
     })
   );
+
+  panelWin.api.on("clear-network-resources", () => {
+    finishedQueue = {};
+  });
 }
 
 async function waitForAllNetworkUpdateEvents() {
@@ -338,12 +342,6 @@ function initNetMonitor(
     startNetworkEventUpdateObserver(monitor.panelWin);
 
     if (!enableCache) {
-      const panel = monitor.panelWin;
-      const { store, windowRequire } = panel;
-      const Actions = windowRequire(
-        "devtools/client/netmonitor/src/actions/index"
-      );
-
       info("Disabling cache and reloading page.");
 
       const requestsDone = waitForNetworkEvents(monitor, requestCount, {
@@ -352,8 +350,7 @@ function initNetMonitor(
       const markersDone = waitForTimelineMarkers(monitor);
       await toggleCache(toolbox, true);
       await Promise.all([requestsDone, markersDone]);
-      info("Clearing requests in the UI.");
-      store.dispatch(Actions.clearRequests());
+      await clearNetworkEvents(monitor);
     }
 
     return { tab, monitor, toolbox };
@@ -376,6 +373,21 @@ function restartNetMonitor(monitor, { requestCount }) {
 
     return initNetMonitor(url, { requestCount });
   })();
+}
+
+/**
+ * Clears the network requests in the UI
+ * @param {Object} monitor
+ *         The netmonitor instance used for retrieving a context menu element.
+ */
+async function clearNetworkEvents(monitor) {
+  const { store, windowRequire } = monitor.panelWin;
+  const Actions = windowRequire("devtools/client/netmonitor/src/actions/index");
+
+  await waitForAllNetworkUpdateEvents();
+
+  info("Clearing the network requests in the UI");
+  store.dispatch(Actions.clearRequests());
 }
 
 function teardown(monitor) {
@@ -428,6 +440,15 @@ function waitForNetworkEvents(monitor, getRequests, options = {}) {
       eventTimings++;
       maybeResolve(EVENTS.RECEIVED_EVENT_TIMINGS, response.from);
     }
+
+    function onClearNetworkResources() {
+      // Reset all counters.
+      networkEvent = 0;
+      nonBlockedNetworkEvent = 0;
+      payloadReady = 0;
+      eventTimings = 0;
+    }
+
     function maybeResolve(event, actor) {
       const { document } = monitor.panelWin;
       // Wait until networkEvent, payloadReady and event timings finish for each request.
@@ -475,6 +496,7 @@ function waitForNetworkEvents(monitor, getRequests, options = {}) {
         panel.api.off(TEST_EVENTS.NETWORK_EVENT, onNetworkEvent);
         panel.api.off(EVENTS.PAYLOAD_READY, onPayloadReady);
         panel.api.off(EVENTS.RECEIVED_EVENT_TIMINGS, onEventTimings);
+        panel.api.off("clear-network-resources", onClearNetworkResources);
         executeSoon(resolve);
       }
     }
@@ -482,6 +504,7 @@ function waitForNetworkEvents(monitor, getRequests, options = {}) {
     panel.api.on(TEST_EVENTS.NETWORK_EVENT, onNetworkEvent);
     panel.api.on(EVENTS.PAYLOAD_READY, onPayloadReady);
     panel.api.on(EVENTS.RECEIVED_EVENT_TIMINGS, onEventTimings);
+    panel.api.on("clear-network-resources", onClearNetworkResources);
   });
 }
 
@@ -772,7 +795,7 @@ function testFilterButtons(monitor, filterType) {
   const buttons = [
     ...doc.querySelectorAll(".requests-list-filter-buttons button"),
   ];
-  ok(buttons.length > 0, "More than zero filter buttons were found");
+  ok(!!buttons.length, "More than zero filter buttons were found");
 
   // Only target should be checked.
   const checkStatus = buttons.map(button => (button == target ? 1 : 0));
@@ -1211,10 +1234,36 @@ function validateRequests(requests, monitor) {
 /**
  * Retrieve the context menu element corresponding to the provided id, for the provided
  * netmonitor instance.
+ * @param {Object} monitor
+ *        The network monnitor object
+ * @param {String} id
+ *        The id of the context menu item
  */
 function getContextMenuItem(monitor, id) {
   const Menu = require("devtools/client/framework/menu");
   return Menu.getMenuElementById(id, monitor.panelWin.document);
+}
+
+/*
+ * Selects and clicks the context menu item, it should
+ * also wait for the popup to close.
+ * @param {Object} monitor
+ *        The network monnitor object
+ * @param {String} id
+ *        The id of the context menu item
+ */
+async function selectContextMenuItem(monitor, id) {
+  const contextMenuItem = getContextMenuItem(monitor, id);
+  contextMenuItem.click();
+
+  // Hide and wait for hiding of the context menu
+  const onHidden = new Promise(resolve =>
+    contextMenuItem.parentElement.addEventListener("popuphidden", resolve, {
+      once: true,
+    })
+  );
+  contextMenuItem.parentElement.hidePopup();
+  await onHidden;
 }
 
 /**

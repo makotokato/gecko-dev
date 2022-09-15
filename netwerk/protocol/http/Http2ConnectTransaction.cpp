@@ -218,7 +218,8 @@ Http2ConnectTransaction::Http2ConnectTransaction(
     trans->RequestHead()->Exit();
   }
   DebugOnly<nsresult> rv = nsHttpConnection::MakeConnectString(
-      trans, mRequestHead, mConnectString, mIsWebsocket);
+      trans, mRequestHead, mConnectString, mIsWebsocket,
+      mCaps & NS_HTTP_USE_RFP);
   MOZ_ASSERT(NS_SUCCEEDED(rv));
   mDrivingTransaction = trans;
 }
@@ -300,7 +301,7 @@ bool Http2ConnectTransaction::MapStreamToHttpConnection(
     mDrivingTransaction->SetH2WSTransaction(this);
   } else {
     mTunneledConn->SetupSecondaryTLS(this);
-    mTunneledConn->SetInSpdyTunnel(true);
+    mTunneledConn->SetInSpdyTunnel();
   }
 
   // make the originating transaction stick to the tunneled conn
@@ -1180,7 +1181,7 @@ FWD_TS_PTR(GetPeerAddr, mozilla::net::NetAddr);
 FWD_TS_PTR(GetSelfAddr, mozilla::net::NetAddr);
 FWD_TS_ADDREF(GetScriptablePeerAddr, nsINetAddr);
 FWD_TS_ADDREF(GetScriptableSelfAddr, nsINetAddr);
-FWD_TS_ADDREF(GetSecurityInfo, nsISupports);
+FWD_TS_ADDREF(GetTlsSocketControl, nsISSLSocketControl);
 FWD_TS_PTR(IsAlive, bool);
 FWD_TS_PTR(GetConnectionFlags, uint32_t);
 FWD_TS(SetConnectionFlags, uint32_t);

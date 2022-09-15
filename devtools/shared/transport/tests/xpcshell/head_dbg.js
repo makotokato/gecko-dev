@@ -14,8 +14,6 @@ const { require } = ChromeUtils.import(
 );
 const { NetUtil } = require("resource://gre/modules/NetUtil.jsm");
 
-const Services = require("Services");
-
 // We do not want to log packets by default, because in some tests,
 // we can be sending large amounts of data. The test harness has
 // trouble dealing with logging all the data, and we end up with
@@ -49,7 +47,7 @@ function scriptErrorLogLevel(message) {
 // into the ether.
 var errorCount = 0;
 var listener = {
-  observe: function(message) {
+  observe(message) {
     errorCount++;
     let string = "";
     try {
@@ -126,7 +124,7 @@ function writeTestTempFile(fileName, content) {
     do {
       const numWritten = stream.write(content, content.length);
       content = content.slice(numWritten);
-    } while (content.length > 0);
+    } while (content.length);
   } finally {
     stream.close();
   }

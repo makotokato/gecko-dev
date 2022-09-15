@@ -111,13 +111,12 @@ enum class SymbolicAddress;
 class ExitReason {
  public:
   enum class Fixed : uint32_t {
-    None,             // default state, the pc is in wasm code
-    FakeInterpEntry,  // slow-path entry call from C++ WasmCall()
-    ImportJit,        // fast-path call directly into JIT code
-    ImportInterp,     // slow-path call into C++ Invoke()
-    BuiltinNative,    // fast-path call directly into native C++ code
-    Trap,             // call to trap handler
-    DebugTrap         // call to debug trap handler
+    None,           // default state, the pc is in wasm code
+    ImportJit,      // fast-path call directly into JIT code
+    ImportInterp,   // slow-path call into C++ Invoke()
+    BuiltinNative,  // fast-path call directly into native C++ code
+    Trap,           // call to trap handler
+    DebugTrap       // call to debug trap handler
   };
 
  private:
@@ -151,9 +150,6 @@ class ExitReason {
   bool isNative() const {
     return !isFixed() || fixed() == Fixed::BuiltinNative;
   }
-  bool isInterpEntry() const {
-    return isFixed() && fixed() == Fixed::FakeInterpEntry;
-  }
 
   uint32_t encode() const { return payload_; }
   Fixed fixed() const {
@@ -174,6 +170,8 @@ class ProfilingFrameIterator {
   uint8_t* callerFP_;
   void* callerPC_;
   void* stackAddress_;
+  // See JS::ProfilingFrameIterator::endStackAddress_ comment.
+  void* endStackAddress_ = nullptr;
   uint8_t* unwoundJitCallerFP_;
   ExitReason exitReason_;
 
@@ -196,7 +194,11 @@ class ProfilingFrameIterator {
                          const RegisterState& state);
 
   void operator++();
-  bool done() const { return !codeRange_ && exitReason_.isNone(); }
+
+  bool done() const {
+    MOZ_ASSERT_IF(!exitReason_.isNone(), codeRange_);
+    return !codeRange_;
+  }
 
   void* stackAddress() const {
     MOZ_ASSERT(!done());
@@ -207,6 +209,8 @@ class ProfilingFrameIterator {
     return unwoundJitCallerFP_;
   }
   const char* label() const;
+
+  void* endStackAddress() const { return endStackAddress_; }
 };
 
 // Prologue/epilogue code generation

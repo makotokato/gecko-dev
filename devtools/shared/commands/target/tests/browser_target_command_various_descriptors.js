@@ -9,9 +9,12 @@ const TEST_URL = "https://example.org/document-builder.sjs?html=org";
 const SECOND_TEST_URL = "https://example.com/document-builder.sjs?html=org";
 const CHROME_WORKER_URL = CHROME_URL_ROOT + "test_worker.js";
 
+const DESCRIPTOR_TYPES = require("devtools/client/fronts/descriptors/descriptor-types");
+
 add_task(async function() {
   // Enabled fission prefs
   await pushPref("devtools.browsertoolbox.fission", true);
+  await pushPref("devtools.browsertoolbox.scope", "everything");
   // Disable the preloaded process as it gets created lazily and may interfere
   // with process count assertions
   await pushPref("dom.ipc.processPrelaunch.enabled", false);
@@ -31,6 +34,12 @@ async function testParentProcess() {
 
   const commands = await CommandsFactory.forMainProcess();
   const { descriptorFront } = commands;
+
+  is(
+    descriptorFront.descriptorType,
+    DESCRIPTOR_TYPES.PROCESS,
+    "The descriptor type is correct"
+  );
   is(
     descriptorFront.isParentProcessDescriptor,
     true,
@@ -71,6 +80,11 @@ async function testLocalTab() {
   const tab = await addTab(TEST_URL);
   const commands = await CommandsFactory.forTab(tab);
   const { descriptorFront } = commands;
+  is(
+    descriptorFront.descriptorType,
+    DESCRIPTOR_TYPES.TAB,
+    "The descriptor type is correct"
+  );
   is(
     descriptorFront.isTabDescriptor,
     true,
@@ -113,6 +127,11 @@ async function testRemoteTab() {
     browserId: tab.linkedBrowser.browserId,
   });
   const { descriptorFront } = commands;
+  is(
+    descriptorFront.descriptorType,
+    DESCRIPTOR_TYPES.TAB,
+    "The descriptor type is correct"
+  );
   is(
     descriptorFront.isTabDescriptor,
     true,
@@ -177,6 +196,11 @@ async function testWebExtension() {
   const commands = await CommandsFactory.forAddon(extension.id);
   const { descriptorFront } = commands;
   is(
+    descriptorFront.descriptorType,
+    DESCRIPTOR_TYPES.EXTENSION,
+    "The descriptor type is correct"
+  );
+  is(
     descriptorFront.isWebExtensionDescriptor,
     true,
     "Descriptor front isWebExtensionDescriptor is correct"
@@ -216,6 +240,11 @@ async function testContentProcess() {
 
   const commands = await CommandsFactory.forProcess(osPid);
   const { descriptorFront } = commands;
+  is(
+    descriptorFront.descriptorType,
+    DESCRIPTOR_TYPES.PROCESS,
+    "The descriptor type is correct"
+  );
   is(
     descriptorFront.isProcessDescriptor,
     true,
@@ -274,6 +303,11 @@ async function testWorker() {
 
   const commands = await CommandsFactory.forWorker(workerId);
   const { descriptorFront } = commands;
+  is(
+    descriptorFront.descriptorType,
+    DESCRIPTOR_TYPES.WORKER,
+    "The descriptor type is correct"
+  );
   is(
     descriptorFront.isWorkerDescriptor,
     true,

@@ -1,5 +1,4 @@
 var { OS, require } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { makeFakeAppDir } = ChromeUtils.import(
   "resource://testing-common/AppData.jsm"
 );
@@ -162,7 +161,7 @@ async function handleMinidump(callback) {
   let extra = JSON.parse(decoder.decode(data));
 
   if (callback) {
-    await callback(minidump, extra, extrafile);
+    await callback(minidump, extra, extrafile, memoryfile);
   }
 
   cleanup();

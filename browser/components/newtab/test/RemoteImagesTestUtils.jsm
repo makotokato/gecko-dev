@@ -8,7 +8,9 @@ const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 const { RemoteImages, REMOTE_IMAGES_PATH } = ChromeUtils.import(
   "resource://activity-stream/lib/RemoteImages.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+
+// This pref is used to override the Remote Settings server URL in tests.
+// See SERVER_URL in services/settings/Utils.jsm for more details.
 const RS_SERVER_PREF = "services.settings.server";
 
 class RemoteSettingsRecord {
@@ -125,6 +127,8 @@ class RemoteSettingsServer {
     this.buckets = new RemoteSettingsRoot();
     this.attachments = new Map();
 
+    this._originalServerlURL = null;
+
     this.server.registerPathHandler("/v1/", (request, response) => {
       response.setHeader("Content-Type", "application/json; charset=UTF-8");
       response.setStatusLine(null, 200, "OK");
@@ -185,12 +189,19 @@ class RemoteSettingsServer {
 
   start() {
     this.server.start(-1);
+
+    this._originalServerlURL = Services.prefs.getCharPref(RS_SERVER_PREF);
     Services.prefs.setCharPref(RS_SERVER_PREF, `${this.baseURL}v1`);
   }
 
   async stop() {
     await new Promise(resolve => this.server.stop(resolve));
-    Services.prefs.clearUserPref(RS_SERVER_PREF);
+
+    // If we use clearUserPref, then we will reset to the default branch value
+    // (i.e., the *real* RS server) which will cause test failures due to trying
+    // to access an outside URL.
+    Services.prefs.setCharPref(RS_SERVER_PREF, this._originalServerlURL);
+    this._originalServerlURL = null;
   }
 
   get baseURL() {
@@ -308,7 +319,7 @@ const RemoteImagesTestUtils = {
         recordId: imageInfo.recordId,
         hash: imageInfo.hash,
         mimetype: imageInfo.mimetype,
-        lastLoaded: lastLoaded ?? Date.UTC(),
+        lastLoaded: lastLoaded ?? Date.now(),
       },
     };
   },

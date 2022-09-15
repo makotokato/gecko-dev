@@ -94,6 +94,7 @@ struct WrHitResult {
   layers::ScrollableLayerGuid::ViewID mScrollId;
   gfx::CompositorHitTestInfo mHitInfo;
   SideBits mSideBits;
+  Maybe<uint64_t> mAnimationId;
 };
 
 class TransactionBuilder final {
@@ -265,7 +266,7 @@ class WebRenderAPI final {
   void SetInt(wr::IntParameter, int32_t value);
 
   void SetClearColor(const gfx::DeviceColor& aColor);
-  void SetProfilerUI(const nsCString& aUIString);
+  void SetProfilerUI(const nsACString& aUIString);
 
   void Pause();
   bool Resume();
@@ -290,7 +291,7 @@ class WebRenderAPI final {
 
   void Capture();
 
-  void StartCaptureSequence(const nsCString& aPath, uint32_t aFlags);
+  void StartCaptureSequence(const nsACString& aPath, uint32_t aFlags);
   void StopCaptureSequence();
 
   void BeginRecording(const TimeStamp& aRecordingStart,
@@ -492,7 +493,8 @@ class DisplayListBuilder final {
   void PushHitTest(const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
                    bool aIsBackfaceVisible,
                    const layers::ScrollableLayerGuid::ViewID& aScrollId,
-                   gfx::CompositorHitTestInfo aHitInfo, SideBits aSideBits);
+                   const gfx::CompositorHitTestInfo& aHitInfo,
+                   SideBits aSideBits);
   void PushClearRect(const wr::LayoutRect& aBounds);
 
   void PushBackdropFilter(const wr::LayoutRect& aBounds,

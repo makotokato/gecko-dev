@@ -19,6 +19,7 @@
 #include "mozilla/WeakPtr.h"
 #include "nsCOMPtr.h"
 #include "nsCycleCollectionParticipant.h"
+#include "nsGkAtoms.h"
 #include "nsISupports.h"
 #include "nsWrapperCache.h"
 
@@ -50,9 +51,15 @@ class WebAccessibleResource final : public nsISupports {
   }
 
   bool SourceMayAccessPath(const URLInfo& aURI, const nsAString& aPath) {
-    return mWebAccessiblePaths.Matches(aPath) && mMatches &&
-           mMatches->Matches(aURI);
+    return mWebAccessiblePaths.Matches(aPath) &&
+           (IsHostMatch(aURI) || IsExtensionMatch(aURI));
   }
+
+  bool IsHostMatch(const URLInfo& aURI) {
+    return mMatches && mMatches->Matches(aURI);
+  }
+
+  bool IsExtensionMatch(const URLInfo& aURI);
 
  protected:
   virtual ~WebAccessibleResource() = default;
@@ -60,6 +67,7 @@ class WebAccessibleResource final : public nsISupports {
  private:
   MatchGlobSet mWebAccessiblePaths;
   RefPtr<MatchPatternSet> mMatches;
+  RefPtr<AtomSet> mExtensionIDs;
 };
 
 class WebExtensionPolicy final : public nsISupports,
@@ -67,7 +75,7 @@ class WebExtensionPolicy final : public nsISupports,
                                  public SupportsWeakPtr {
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(WebExtensionPolicy)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(WebExtensionPolicy)
 
   using ScriptArray = nsTArray<RefPtr<WebExtensionContentScript>>;
 
@@ -116,17 +124,7 @@ class WebExtensionPolicy final : public nsISupports,
     return false;
   }
 
-  bool SourceMayAccessPath(const URLInfo& aURI, const nsAString& aPath) const {
-    if (mManifestVersion < 3) {
-      return IsWebAccessiblePath(aPath);
-    }
-    for (const auto& resource : mWebAccessibleResources) {
-      if (resource->SourceMayAccessPath(aURI, aPath)) {
-        return true;
-      }
-    }
-    return false;
-  }
+  bool SourceMayAccessPath(const URLInfo& aURI, const nsAString& aPath) const;
 
   bool HasPermission(const nsAtom* aPermission) const {
     return mPermissions->Contains(aPermission);
@@ -145,6 +143,11 @@ class WebExtensionPolicy final : public nsISupports,
 
   const nsString& Name() const { return mName; }
   void GetName(nsAString& aName) const { aName = mName; }
+
+  nsAtom* Type() const { return mType; }
+  void GetType(nsAString& aType) const {
+    aType = nsDependentAtomString(mType);
+  };
 
   uint32_t ManifestVersion() const { return mManifestVersion; }
 
@@ -180,7 +183,8 @@ class WebExtensionPolicy final : public nsISupports,
 
   bool CanAccessWindow(const dom::WindowProxyHolder& aWindow) const;
 
-  void GetReadyPromise(JSContext* aCx, JS::MutableHandleObject aResult) const;
+  void GetReadyPromise(JSContext* aCx,
+                       JS::MutableHandle<JSObject*> aResult) const;
   dom::Promise* ReadyPromise() const { return mReadyPromise; }
 
   void GetBackgroundWorker(nsString& aScriptURL) const {
@@ -218,7 +222,7 @@ class WebExtensionPolicy final : public nsISupports,
   nsISupports* GetParentObject() const { return mParent; }
 
   virtual JSObject* WrapObject(JSContext* aCx,
-                               JS::HandleObject aGivenProto) override;
+                               JS::Handle<JSObject*> aGivenProto) override;
 
  protected:
   virtual ~WebExtensionPolicy() = default;
@@ -238,6 +242,7 @@ class WebExtensionPolicy final : public nsISupports,
   nsCOMPtr<nsIURI> mBaseURI;
 
   nsString mName;
+  RefPtr<nsAtom> mType;
   uint32_t mManifestVersion = 2;
   nsString mExtensionPageCSP;
   nsString mBaseCSP;

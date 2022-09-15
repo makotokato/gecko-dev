@@ -11,8 +11,6 @@ function debug(s) {
   dump("-*- NotificationDB component: " + s + "\n");
 }
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 const NOTIFICATION_STORE_DIR = PathUtils.profileDir;
 const NOTIFICATION_STORE_PATH = PathUtils.join(
   NOTIFICATION_STORE_DIR,
@@ -97,7 +95,7 @@ var NotificationDB = {
     var promise = IOUtils.readUTF8(NOTIFICATION_STORE_PATH);
     return promise.then(
       data => {
-        if (data.length > 0) {
+        if (data.length) {
           // Preprocessing phase intends to cleanly separate any migration-related
           // tasks.
           this.notifications = this.filterNonAppNotifications(JSON.parse(data));

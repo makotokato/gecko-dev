@@ -19,7 +19,6 @@
 #include "builtin/intl/LanguageTag.h"
 #include "builtin/intl/SharedIntlData.h"
 #include "gc/GCContext.h"
-#include "js/CharacterEncoding.h"
 #include "js/PropertySpec.h"
 #include "js/StableStringChars.h"
 #include "js/TypeDecls.h"
@@ -30,6 +29,7 @@
 #include "vm/StringType.h"
 #include "vm/WellKnownAtom.h"  // js_*_str
 
+#include "vm/GeckoProfiler-inl.h"
 #include "vm/JSObject-inl.h"
 
 using namespace js;
@@ -38,7 +38,6 @@ using JS::AutoStableStringChars;
 
 using js::intl::ReportInternalError;
 using js::intl::SharedIntlData;
-using js::intl::StringsAreEqual;
 
 const JSClassOps CollatorObject::classOps_ = {
     nullptr,                   // addProperty
@@ -99,6 +98,8 @@ const ClassSpec CollatorObject::classSpec_ = {
  * ES2017 Intl draft rev 94045d234762ad107a3d09bb6f7381a65f1a2f9b
  */
 static bool Collator(JSContext* cx, const CallArgs& args) {
+  AutoJSConstructorProfilerEntry pseudoFrame(cx, "Intl.Collator");
+
   // Step 1 (Handled by OrdinaryCreateFromConstructor fallback code).
 
   // Steps 2-5 (Inlined 9.1.14, OrdinaryCreateFromConstructor).
@@ -186,8 +187,9 @@ bool js::intl_availableCollations(JSContext* cx, unsigned argc, Value* vp) {
     // "The values 'standard' and 'search' must not be used as elements in
     // any [[sortLocaleData]][locale].co and [[searchLocaleData]][locale].co
     // array."
-    if (StringsAreEqual(collation.data(), "standard") ||
-        StringsAreEqual(collation.data(), "search")) {
+    static constexpr auto standard = mozilla::MakeStringSpan("standard");
+    static constexpr auto search = mozilla::MakeStringSpan("search");
+    if (collation == standard || collation == search) {
       continue;
     }
 

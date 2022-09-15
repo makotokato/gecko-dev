@@ -1,32 +1,22 @@
-/* eslint-env mozilla/frame-script */
+ChromeUtils.defineESModuleGetters(this, {
+  SearchTestUtils: "resource://testing-common/SearchTestUtils.sys.mjs",
+});
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   FormHistory: "resource://gre/modules/FormHistory.jsm",
-  SearchTestUtils: "resource://testing-common/SearchTestUtils.jsm",
 });
 
 SearchTestUtils.init(this);
 
-function getSecurityInfo(securityInfoAsString) {
-  const serhelper = Cc[
-    "@mozilla.org/network/serialization-helper;1"
-  ].getService(Ci.nsISerializationHelper);
-  let securityInfo = serhelper.deserializeObject(securityInfoAsString);
-  securityInfo.QueryInterface(Ci.nsITransportSecurityInfo);
-  return securityInfo;
-}
-
-function getCertChain(securityInfoAsString) {
+function getCertChainAsString(certBase64Array) {
   let certChain = "";
-  let securityInfo = getSecurityInfo(securityInfoAsString);
-  for (let cert of securityInfo.failedCertChain) {
+  for (let cert of certBase64Array) {
     certChain += getPEMString(cert);
   }
   return certChain;
 }
 
-function getPEMString(cert) {
-  var derb64 = cert.getBase64DERString();
+function getPEMString(derb64) {
   // Wrap the Base64 string into lines of 64 characters,
   // with CRLF line breaks (as specified in RFC 1421).
   var wrapped = derb64.replace(/(\S{64}(?!$))/g, "$1\r\n");

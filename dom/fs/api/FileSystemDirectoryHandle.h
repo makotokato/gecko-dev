@@ -7,7 +7,9 @@
 #ifndef DOM_FS_FILESYSTEMDIRECTORYHANDLE_H_
 #define DOM_FS_FILESYSTEMDIRECTORYHANDLE_H_
 
+#include "mozilla/dom/FileSystemDirectoryIterator.h"
 #include "mozilla/dom/FileSystemHandle.h"
+#include "mozilla/dom/IterableIterator.h"
 
 namespace mozilla {
 
@@ -22,6 +24,17 @@ struct FileSystemRemoveOptions;
 
 class FileSystemDirectoryHandle final : public FileSystemHandle {
  public:
+  using iterator_t = AsyncIterableIterator<FileSystemDirectoryHandle>;
+
+  FileSystemDirectoryHandle(nsIGlobalObject* aGlobal,
+                            RefPtr<FileSystemManager>& aManager,
+                            const fs::FileSystemEntryMetadata& aMetadata,
+                            fs::FileSystemRequestHandler* aRequestHandler);
+
+  FileSystemDirectoryHandle(nsIGlobalObject* aGlobal,
+                            RefPtr<FileSystemManager>& aManager,
+                            const fs::FileSystemEntryMetadata& aMetadata);
+
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(FileSystemDirectoryHandle,
                                            FileSystemHandle)
@@ -31,13 +44,15 @@ class FileSystemDirectoryHandle final : public FileSystemHandle {
                        JS::Handle<JSObject*> aGivenProto) override;
 
   // WebIDL Interface
-  FileSystemHandleKind Kind() override;
+  FileSystemHandleKind Kind() const override;
 
-  [[nodiscard]] already_AddRefed<FileSystemDirectoryIterator> Entries();
+  void InitAsyncIterator(iterator_t* aIterator, ErrorResult& aError);
 
-  [[nodiscard]] already_AddRefed<FileSystemDirectoryIterator> Keys();
+  void DestroyAsyncIterator(iterator_t* aIterator);
 
-  [[nodiscard]] already_AddRefed<FileSystemDirectoryIterator> Values();
+  [[nodiscard]] already_AddRefed<Promise> GetNextPromise(JSContext* aCx,
+                                                         iterator_t* aIterator,
+                                                         ErrorResult& aError);
 
   already_AddRefed<Promise> GetFileHandle(
       const nsAString& aName, const FileSystemGetFileOptions& aOptions,
@@ -53,6 +68,11 @@ class FileSystemDirectoryHandle final : public FileSystemHandle {
 
   already_AddRefed<Promise> Resolve(FileSystemHandle& aPossibleDescendant,
                                     ErrorResult& aError);
+
+  // [Serializable]
+  static already_AddRefed<FileSystemDirectoryHandle> ReadStructuredClone(
+      JSContext* aCx, nsIGlobalObject* aGlobal,
+      JSStructuredCloneReader* aReader);
 
  private:
   ~FileSystemDirectoryHandle() = default;

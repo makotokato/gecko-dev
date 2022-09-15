@@ -49,7 +49,12 @@ var DEBUG = false; // non-const *only* so tweakable in server tests
 /** True if debugging output should be timestamped. */
 var DEBUG_TIMESTAMP = false; // non-const so tweakable in server tests
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+// httpd.js is loaded by Android hostutils that's not up to date.
+// Fallback to Services.jsm if `Services` global variable isn't yet available.
+const Services =
+  globalThis.Services ||
+  ChromeUtils.import("resource://gre/modules/Services.jsm").Services;
+
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -213,6 +218,11 @@ const ServerSocketIPv6 = CC(
   "nsIServerSocket",
   "initIPv6"
 );
+const ServerSocketDualStack = CC(
+  "@mozilla.org/network/server-socket;1",
+  "nsIServerSocket",
+  "initDualStack"
+);
 const ScriptableInputStream = CC(
   "@mozilla.org/scriptableinputstream;1",
   "nsIScriptableInputStream",
@@ -350,7 +360,7 @@ function printObj(o, showMembers) {
   var s = "******************************\n";
   s += "o = {\n";
   for (var i in o) {
-    if (typeof i != "string" || showMembers || (i.length > 0 && i[0] != "_")) {
+    if (typeof i != "string" || showMembers || (!!i.length && i[0] != "_")) {
       s += "      " + i + ": " + o[i] + ",\n";
     }
   }
@@ -523,7 +533,11 @@ nsHttpServer.prototype = {
     this._start(port, "[::1]");
   },
 
-  _start(port, host) {
+  start_dualStack(port) {
+    this._start(port, "[::1]", true);
+  },
+
+  _start(port, host, dualStack) {
     if (this._socket) {
       throw Components.Exception("", Cr.NS_ERROR_ALREADY_INITIALIZED);
     }
@@ -567,7 +581,9 @@ nsHttpServer.prototype = {
       var socket;
       for (var i = 100; i; i--) {
         var temp = null;
-        if (this._host.includes(":")) {
+        if (dualStack) {
+          temp = new ServerSocketDualStack(this._port, maxConnections);
+        } else if (this._host.includes(":")) {
           temp = new ServerSocketIPv6(
             this._port,
             loopback, // true = localhost, false = everybody
@@ -608,7 +624,7 @@ nsHttpServer.prototype = {
 
       socket.asyncListen(this);
       this._port = socket.port;
-      this._identity._initialize(socket.port, host, true);
+      this._identity._initialize(socket.port, host, true, dualStack);
       this._socket = socket;
       dumpn(
         ">>> listening on port " +
@@ -1170,7 +1186,7 @@ ServerIdentity.prototype = {
    * Initializes the primary name for the corresponding server, based on the
    * provided port number.
    */
-  _initialize(port, host, addSecondaryDefault) {
+  _initialize(port, host, addSecondaryDefault, dualStack) {
     this._host = host;
     if (this._primaryPort !== -1) {
       this.add("http", host, port);
@@ -1183,6 +1199,9 @@ ServerIdentity.prototype = {
     if (addSecondaryDefault && host != "127.0.0.1") {
       if (host.includes(":")) {
         this.add("http", "[::1]", port);
+        if (dualStack) {
+          this.add("http", "127.0.0.1", port);
+        }
       } else {
         this.add("http", "127.0.0.1", port);
       }
@@ -2084,7 +2103,7 @@ LineData.prototype = {
       // But if our data ends in a CR, we have to back up one, because
       // the first byte in the next packet might be an LF and if we
       // start looking at data.length we won't find it.
-      if (data.length > 0 && data[data.length - 1] === CR) {
+      if (data.length && data[data.length - 1] === CR) {
         --this._start;
       }
 
@@ -2501,7 +2520,7 @@ ServerHandler.prototype = {
               longestPrefix = prefix;
             }
           }
-          if (longestPrefix.length > 0) {
+          if (longestPrefix.length) {
             dumpn("calling prefix override for " + longestPrefix);
             this._overridePrefixes[longestPrefix](request, response);
           } else {
@@ -2605,7 +2624,7 @@ ServerHandler.prototype = {
   // see nsIHttpServer.registerPathHandler
   //
   registerPathHandler(path, handler) {
-    if (path.length == 0) {
+    if (!path.length) {
       throw Components.Exception(
         "Handler path cannot be empty",
         Cr.NS_ERROR_INVALID_ARG
@@ -3223,7 +3242,7 @@ ServerHandler.prototype = {
         //     redirect here instead
         if (
           tmp == path.substring(1) &&
-          tmp.length != 0 &&
+          !!tmp.length &&
           tmp.charAt(tmp.length - 1) != "/"
         ) {
           file = null;
@@ -4694,9 +4713,9 @@ WriteThroughCopier.prototype = {
     var pendingData = this._pendingData;
 
     NS_ASSERT(bytesConsumed > 0);
-    NS_ASSERT(pendingData.length > 0, "no pending data somehow?");
+    NS_ASSERT(!!pendingData.length, "no pending data somehow?");
     NS_ASSERT(
-      pendingData[pendingData.length - 1].length > 0,
+      !!pendingData[pendingData.length - 1].length,
       "buffered zero bytes of data?"
     );
 
@@ -4771,7 +4790,7 @@ WriteThroughCopier.prototype = {
       return;
     }
 
-    NS_ASSERT(pendingData[0].length > 0, "queued up an empty quantum?");
+    NS_ASSERT(!!pendingData[0].length, "queued up an empty quantum?");
 
     //
     // Write out the first pending quantum of data.  The possible errors here
@@ -4806,11 +4825,11 @@ WriteThroughCopier.prototype = {
     } catch (e) {
       if (wouldBlock(e)) {
         NS_ASSERT(
-          pendingData.length > 0,
+          !!pendingData.length,
           "stream-blocking exception with no data to write?"
         );
         NS_ASSERT(
-          pendingData[0].length > 0,
+          !!pendingData[0].length,
           "stream-blocking exception with empty quantum?"
         );
         this._waitToWriteData();
@@ -4830,7 +4849,7 @@ WriteThroughCopier.prototype = {
     // The day is ours!  Quantum written, now let's see if we have more data
     // still to write.
     try {
-      if (pendingData.length > 0) {
+      if (pendingData.length) {
         this._waitToWriteData();
         return;
       }
@@ -5011,8 +5030,8 @@ WriteThroughCopier.prototype = {
     dumpn("*** _waitToWriteData");
 
     var pendingData = this._pendingData;
-    NS_ASSERT(pendingData.length > 0, "no pending data to write?");
-    NS_ASSERT(pendingData[0].length > 0, "buffered an empty write?");
+    NS_ASSERT(!!pendingData.length, "no pending data to write?");
+    NS_ASSERT(!!pendingData[0].length, "buffered an empty write?");
 
     this._sink.asyncWait(
       this,

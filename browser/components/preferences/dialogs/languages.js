@@ -5,8 +5,6 @@
 
 /* import-globals-from /toolkit/content/preferencesBindings.js */
 
-var { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 document
   .getElementById("LanguagesDialog")
   .addEventListener("dialoghelp", window.top.openPrefsHelp);
@@ -266,7 +264,12 @@ var gLanguagesDialog = {
       if (localeCode == this._availableLanguagesList[i].code) {
         return this._availableLanguagesList[i].name;
       }
+      // Try resolving the locale code without region code
+      if (localeCode.split("-")[0] == this._availableLanguagesList[i].code) {
+        return this._availableLanguagesList[i].name;
+      }
     }
+
     return "";
   },
 

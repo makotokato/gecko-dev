@@ -26,7 +26,6 @@ const { worker } = ChromeUtils.import(
 
 const { NetUtil } = require("resource://gre/modules/NetUtil.jsm");
 
-const Services = require("Services");
 // Always log packets when running tests. runxpcshelltests.py will throw
 // the output away anyway, unless you give it the --verbose flag.
 Services.prefs.setBoolPref("devtools.debugger.log", false);
@@ -308,7 +307,7 @@ function scriptErrorLogLevel(message) {
 // into the ether.
 var errorCount = 0;
 var listener = {
-  observe: function(message) {
+  observe(message) {
     try {
       let string;
       errorCount++;
@@ -519,7 +518,7 @@ function writeFile(fileName, content) {
     do {
       const numWritten = stream.write(content, content.length);
       content = content.slice(numWritten);
-    } while (content.length > 0);
+    } while (content.length);
   } finally {
     stream.close();
   }

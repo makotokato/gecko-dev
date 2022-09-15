@@ -5,10 +5,7 @@
 job-defaults:
     suite:
         category: web-platform-tests
-    worker-type:
-        by-test-platform:
-            linux.*: t-linux-xlarge-gcp
-            default: default
+    instance-size: xlarge
     max-run-time:
         by-test-platform:
             android-em-7.0-x86_64/debug: 7200
@@ -42,6 +39,12 @@ web-platform-tests:
     tier:
         by-test-platform:
             android-em-7.0-x86_64-qr/debug-isolated-process: 3
+            android-em-7.*:
+                by-variant:
+                    webrender-sw: 3
+                    no-fission: default
+                    webrender-sw+no-fission: default
+                    default: 3
             default: default
     chunks:
         by-test-platform:
@@ -74,6 +77,7 @@ web-platform-tests:
                     (linux1804|windows10)-32.*/.*: []
                     linux.*64-qr/debug: built-projects
                     windows10-64-2004-qr/debug: built-projects
+                    android-em-7.0-x86_64-qr/debug: []
                     default: []
             webrender-sw+no-fission:
                 by-test-platform:
@@ -90,6 +94,9 @@ web-platform-tests:
                     default: []
             default:
                 by-test-platform:
+                    android-em-7.0-x86_64-qr/debug-isolated-process: ['mozilla-central']
+                    android-em-7.0-x86_64-qr/debug: ['mozilla-central']
+                    android-em-7.0-x86_64-shippable-qr: ['mozilla-central']
                     android.*: []
                     .*-tsan-qr/opt: ['trunk']
                     default: built-projects
@@ -243,6 +250,7 @@ web-platform-tests-wdspec:
                     default: []
             webrender-sw:
                 by-test-platform:
+                    android-em-7.0-x86_64-qr/debug: []
                     (linux1804|windows10)-32.*/.*: []
                     linux.*64-qr/debug: built-projects
                     windows10-64-2004-qr/debug: built-projects
@@ -313,6 +321,7 @@ web-platform-tests-crashtest:
         by-variant:
             webrender-sw:
                 by-test-platform:
+                    android-em-7.0-x86_64-qr/debug: built-projects
                     (linux1804|windows10)-32.*/.*: []
                     linux.*64-qr/debug: built-projects
                     macosx101.*64-qr/debug: built-projects
@@ -334,6 +343,7 @@ web-platform-tests-crashtest:
             default:
                 by-test-platform:
                     android.*: []
+                    android-em-7.0-x86_64-qr/debug: built-projects
                     default: built-projects
     tier: default
 

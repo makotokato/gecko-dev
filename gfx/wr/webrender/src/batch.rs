@@ -708,7 +708,6 @@ impl AlphaBatchBuilder {
             BlendMode::Alpha |
             BlendMode::PremultipliedAlpha |
             BlendMode::PremultipliedDestOut |
-            BlendMode::SubpixelConstantTextColor(..) |
             BlendMode::SubpixelWithBgColor |
             BlendMode::SubpixelDualSource |
             BlendMode::Advanced(_) |
@@ -850,6 +849,16 @@ impl BatchBuilder {
             }
         };
 
+        // If this primitive is a backdrop, that means that it is known to cover
+        // the entire picture cache background. In that case, the renderer will
+        // use the backdrop color as a clear color, and so we can drop this
+        // primitive and any prior primitives from the batch lists for this
+        // picture cache slice.
+        if vis_flags.contains(PrimitiveVisibilityFlags::IS_BACKDROP) {
+            self.clear_batches();
+            return;
+        }
+
         let transform_id = transforms
             .get_id(
                 prim_spatial_node_index,
@@ -863,16 +872,6 @@ impl BatchBuilder {
         let transform_kind = transform_id.transform_kind();
         let prim_info = &prim_instance.vis;
         let bounding_rect = &prim_info.clip_chain.pic_coverage_rect;
-
-        // If this primitive is a backdrop, that means that it is known to cover
-        // the entire picture cache background. In that case, the renderer will
-        // use the backdrop color as a clear color, and so we can drop this
-        // primitive and any prior primitives from the batch lists for this
-        // picture cache slice.
-        if vis_flags.contains(PrimitiveVisibilityFlags::IS_BACKDROP) {
-            self.clear_batches();
-            return;
-        }
 
         let z_id = z_generator.next();
 
@@ -917,7 +916,7 @@ impl BatchBuilder {
 
                 let prim_header = PrimitiveHeader {
                     local_rect: prim_rect,
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: prim_cache_address,
                     transform_id,
                 };
@@ -984,7 +983,7 @@ impl BatchBuilder {
 
                 let prim_header = PrimitiveHeader {
                     local_rect: prim_rect,
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: prim_cache_address,
                     transform_id,
                 };
@@ -1048,7 +1047,7 @@ impl BatchBuilder {
                         min: prim_rect.min - run.reference_frame_relative_offset,
                         max: run.snapped_reference_frame_relative_offset.to_point(),
                     },
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: prim_cache_address,
                     transform_id,
                 };
@@ -1103,15 +1102,11 @@ impl BatchBuilder {
                                         BlendMode::SubpixelWithBgColor,
                                         ShaderColorMode::FromRenderPassMode,
                                     )
-                                } else if ctx.use_dual_source_blending {
+                                } else {
+                                    debug_assert!(ctx.use_dual_source_blending);
                                     (
                                         BlendMode::SubpixelDualSource,
                                         ShaderColorMode::SubpixelDualSource,
-                                    )
-                                } else {
-                                    (
-                                        BlendMode::SubpixelConstantTextColor(run.used_font.color.into()),
-                                        ShaderColorMode::SubpixelConstantTextColor,
                                     )
                                 }
                             }
@@ -1320,7 +1315,7 @@ impl BatchBuilder {
 
                 let prim_header = PrimitiveHeader {
                     local_rect: prim_rect,
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: prim_cache_address,
                     transform_id,
                 };
@@ -1362,7 +1357,7 @@ impl BatchBuilder {
                         let brush_flags = brush_flags | BrushFlags::PERSPECTIVE_INTERPOLATION;
 
                         let surface = &ctx.surfaces[raster_config.surface_index.0];
-                        let mut local_clip_rect = prim_info.combined_local_clip_rect;
+                        let mut local_clip_rect = prim_info.clip_chain.local_clip_rect;
 
                         // If we are drawing with snapping enabled, form a simple transform that just applies
                         // the scale / translation from the raster transform. Otherwise, in edge cases where the
@@ -1391,7 +1386,7 @@ impl BatchBuilder {
                             let transform = ScaleOffset::new(sx, sy, tx, ty);
 
                             let raster_clip_rect = map_local_to_raster
-                                .map(&prim_info.combined_local_clip_rect)
+                                .map(&prim_info.clip_chain.local_clip_rect)
                                 .unwrap();
                             local_clip_rect = transform.unmap_rect(&raster_clip_rect);
 
@@ -1926,7 +1921,7 @@ impl BatchBuilder {
 
                                         let prim_header = PrimitiveHeader {
                                             local_rect: prim_rect,
-                                            local_clip_rect: prim_info.combined_local_clip_rect,
+                                            local_clip_rect: prim_info.clip_chain.local_clip_rect,
                                             specific_prim_address: GpuCacheAddress::INVALID,
                                             transform_id: transforms
                                                 .get_id(
@@ -2130,7 +2125,7 @@ impl BatchBuilder {
 
                 let prim_header = PrimitiveHeader {
                     local_rect: prim_rect,
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: prim_cache_address,
                     transform_id,
                 };
@@ -2200,7 +2195,7 @@ impl BatchBuilder {
 
                 let prim_header = PrimitiveHeader {
                     local_rect: prim_rect,
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: prim_cache_address,
                     transform_id,
                 };
@@ -2305,7 +2300,7 @@ impl BatchBuilder {
 
                 let prim_header = PrimitiveHeader {
                     local_rect: prim_rect,
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: prim_cache_address,
                     transform_id,
                 };
@@ -2394,7 +2389,7 @@ impl BatchBuilder {
 
                     let prim_header = PrimitiveHeader {
                         local_rect: prim_rect,
-                        local_clip_rect: prim_info.combined_local_clip_rect,
+                        local_clip_rect: prim_info.clip_chain.local_clip_rect,
                         specific_prim_address: prim_cache_address,
                         transform_id,
                     };
@@ -2493,7 +2488,7 @@ impl BatchBuilder {
 
                 let mut prim_header = PrimitiveHeader {
                     local_rect: prim_rect,
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: GpuCacheAddress::INVALID,
                     transform_id,
                 };
@@ -2598,7 +2593,7 @@ impl BatchBuilder {
 
                 let prim_header = PrimitiveHeader {
                     local_rect: prim_rect,
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: gpu_cache.get_address(&common_data.gpu_cache_handle),
                     transform_id,
                 };
@@ -2715,7 +2710,7 @@ impl BatchBuilder {
 
                 let prim_header = PrimitiveHeader {
                     local_rect: prim_rect,
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: gpu_cache.get_address(&common_data.gpu_cache_handle),
                     transform_id,
                 };
@@ -2834,7 +2829,7 @@ impl BatchBuilder {
 
                 let prim_header = PrimitiveHeader {
                     local_rect: prim_rect,
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: gpu_cache.get_address(&common_data.gpu_cache_handle),
                     transform_id,
                 };
@@ -2943,7 +2938,7 @@ impl BatchBuilder {
 
                 let prim_header = PrimitiveHeader {
                     local_rect: prim_rect,
-                    local_clip_rect: prim_info.combined_local_clip_rect,
+                    local_clip_rect: prim_info.clip_chain.local_clip_rect,
                     specific_prim_address: prim_cache_address,
                     transform_id,
                 };

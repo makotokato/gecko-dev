@@ -11,20 +11,19 @@
 #ifndef gc_GC_h
 #define gc_GC_h
 
-#include "gc/AllocKind.h"
 #include "gc/GCEnum.h"
 #include "js/GCAPI.h"
 #include "js/HeapAPI.h"
 #include "js/RealmIterators.h"
-#include "js/RealmOptions.h"
 #include "js/TraceKind.h"
 
 class JSTracer;
 
-namespace js {
+namespace JS {
+class RealmOptions;
+}
 
-class FatInlineAtom;
-class NormalAtom;
+namespace js {
 
 class Nursery;
 
@@ -32,7 +31,6 @@ namespace gc {
 
 class Arena;
 class TenuredChunk;
-struct Cell;
 
 } /* namespace gc */
 
@@ -60,6 +58,8 @@ struct Cell;
   _("highFrequencyLargeHeapGrowth", JSGC_HIGH_FREQUENCY_LARGE_HEAP_GROWTH, \
     true)                                                                  \
   _("lowFrequencyHeapGrowth", JSGC_LOW_FREQUENCY_HEAP_GROWTH, true)        \
+  _("balancedHeapLimitsEnabled", JSGC_BALANCED_HEAP_LIMITS_ENABLED, true)  \
+  _("heapGrowthFactor", JSGC_HEAP_GROWTH_FACTOR, true)                     \
   _("allocationThreshold", JSGC_ALLOCATION_THRESHOLD, true)                \
   _("smallHeapIncrementalLimit", JSGC_SMALL_HEAP_INCREMENTAL_LIMIT, true)  \
   _("largeHeapIncrementalLimit", JSGC_LARGE_HEAP_INCREMENTAL_LIMIT, true)  \

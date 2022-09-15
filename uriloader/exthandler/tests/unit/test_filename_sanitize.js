@@ -53,7 +53,7 @@ add_task(async function validate_filename_method() {
   );
   Assert.equal(
     checkFilename("簡単".repeat(56) + ".png", 0),
-    "簡単".repeat(41) + "簡.png"
+    "簡単".repeat(40) + "簡.png"
   );
   Assert.equal(checkFilename("café.png", 0), "café.png");
   Assert.equal(
@@ -62,7 +62,7 @@ add_task(async function validate_filename_method() {
   );
   Assert.equal(
     checkFilename("café".repeat(51) + ".png", 0),
-    "café".repeat(50) + "c.png"
+    "café".repeat(50) + ".png"
   );
 
   Assert.equal(
@@ -75,7 +75,7 @@ add_task(async function validate_filename_method() {
   );
   Assert.equal(
     checkFilename("\u{100001}\u{100002}".repeat(32) + ".png", 0),
-    "\u{100001}\u{100002}".repeat(31) + ".png"
+    "\u{100001}\u{100002}".repeat(30) + "\u{100001}.png"
   );
 
   Assert.equal(
@@ -131,5 +131,94 @@ add_task(async function validate_filename_method() {
   Assert.equal(
     checkFilename(repeatStr + "seventh.png", 0),
     repeatStr + "sev.png"
+  );
+
+  let ext = ".fairlyLongExtension";
+  Assert.equal(
+    checkFilename(repeatStr + ext, mimeService.VALIDATE_SANITIZE_ONLY),
+    repeatStr.substring(0, 255 - ext.length) + ext
+  );
+
+  ext = "lo%?ng/invalid? ch\\ars";
+  Assert.equal(
+    checkFilename(repeatStr + ext, mimeService.VALIDATE_SANITIZE_ONLY),
+    repeatStr + "lo% ng_"
+  );
+
+  ext = ".long/invalid%? ch\\ars";
+  Assert.equal(
+    checkFilename(repeatStr + ext, mimeService.VALIDATE_SANITIZE_ONLY),
+    repeatStr.substring(0, 234) + ".long_invalid% ch_ars"
+  );
+
+  Assert.equal(
+    checkFilename("test_ﾃｽﾄ_T\x83E\\S\x83T.png", 0),
+    "test_ﾃｽﾄ_T E_S T.png"
+  );
+  Assert.equal(
+    checkFilename("test_ﾃｽﾄ_T\x83E\\S\x83T.pﾃ\x83ng", 0),
+    "test_ﾃｽﾄ_T E_S T.png"
+  );
+
+  // Now check some media types
+  Assert.equal(
+    mimeService.validateFileNameForSaving("video.ogg", "video/ogg", 0),
+    "video.ogg",
+    "video.ogg"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("video.ogv", "video/ogg", 0),
+    "video.ogv",
+    "video.ogv"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("video.ogt", "video/ogg", 0),
+    "video.ogv",
+    "video.ogt"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving("audio.mp3", "audio/mpeg", 0),
+    "audio.mp3",
+    "audio.mp3"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("audio.mpega", "audio/mpeg", 0),
+    "audio.mpega",
+    "audio.mpega"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("audio.mp2", "audio/mpeg", 0),
+    "audio.mp2",
+    "audio.mp2"
+  );
+
+  let expected = "audio.mp3";
+  if (AppConstants.platform == "linux") {
+    expected = "audio.mpga";
+  } else if (AppConstants.platform == "android") {
+    expected = "audio.mp4";
+  }
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving("audio.mp4", "audio/mpeg", 0),
+    expected,
+    "audio.mp4"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving("sound.m4a", "audio/mp4", 0),
+    "sound.m4a",
+    "sound.m4a"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("sound.m4b", "audio/mp4", 0),
+    AppConstants.platform == "android" ? "sound.m4a" : "sound.m4b",
+    "sound.m4b"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("sound.m4c", "audio/mp4", 0),
+    AppConstants.platform == "macosx" ? "sound.mp4" : "sound.m4a",
+    "sound.mpc"
   );
 });

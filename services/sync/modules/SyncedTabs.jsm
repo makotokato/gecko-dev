@@ -6,9 +6,8 @@
 
 var EXPORTED_SYMBOLS = ["SyncedTabs"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const { Log } = ChromeUtils.import("resource://gre/modules/Log.jsm");
 const { Weave } = ChromeUtils.import("resource://services-sync/main.js");
@@ -151,9 +150,22 @@ let SyncedTabsInternal = {
 
     // If Sync isn't configured don't try and sync, else we will get reports
     // of a login failure.
-    if (Weave.Status.checkSetup() == Weave.CLIENT_NOT_CONFIGURED) {
+    if (Weave.Status.checkSetup() === Weave.CLIENT_NOT_CONFIGURED) {
       lazy.log.info(
         "Sync client is not configured, so not attempting a tab sync"
+      );
+      return false;
+    }
+    // If Sync can't log in we also don't try.
+    if (
+      !(
+        Weave.Status.login === Weave.STATUS_OK ||
+        Weave.Status.login === Weave.LOGIN_SUCCEEDED
+      )
+    ) {
+      lazy.log.info(
+        "Can't sync tabs due to the login status",
+        Weave.Status.login
       );
       return false;
     }
@@ -273,10 +285,10 @@ var SyncedTabs = {
     // most recent tab for that client (ie, it is important the tabs for
     // each client are already sorted.)
     clients.sort((a, b) => {
-      if (a.tabs.length == 0) {
+      if (!a.tabs.length) {
         return 1; // b comes first.
       }
-      if (b.tabs.length == 0) {
+      if (!b.tabs.length) {
         return -1; // a comes first.
       }
       return b.tabs[0].lastUsed - a.tabs[0].lastUsed;
@@ -292,5 +304,20 @@ var SyncedTabs = {
       null,
       extraOptions
     );
+  },
+
+  async getRecentTabs(maxCount) {
+    let tabs = [];
+    let clients = await this.getTabClients();
+
+    for (let client of clients) {
+      for (let tab of client.tabs) {
+        tab.device = client.name;
+        tab.deviceType = client.clientType;
+      }
+      tabs = [...tabs, ...client.tabs.reverse()];
+    }
+    tabs = tabs.sort((a, b) => b.lastUsed - a.lastUsed).slice(0, maxCount);
+    return tabs;
   },
 };

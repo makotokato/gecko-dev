@@ -794,6 +794,19 @@ void TRR::HandleDecodeError(nsresult aStatusCode) {
   }
 }
 
+bool TRR::HasUsableResponse() {
+  if (mType == TRRTYPE_A || mType == TRRTYPE_AAAA) {
+    return !mDNS.mAddresses.IsEmpty();
+  }
+  if (mType == TRRTYPE_TXT) {
+    return mResult.is<TypeRecordTxt>();
+  }
+  if (mType == TRRTYPE_HTTPSSVC) {
+    return mResult.is<TypeRecordHTTPSSVC>();
+  }
+  return false;
+}
+
 nsresult TRR::FollowCname(nsIChannel* aChannel) {
   nsresult rv = NS_OK;
   nsAutoCString cname;
@@ -819,8 +832,18 @@ nsresult TRR::FollowCname(nsIChannel* aChannel) {
 
   // restore mCname as DohDecode() change it
   mCname = cname;
-  if (NS_SUCCEEDED(rv) && !mDNS.mAddresses.IsEmpty()) {
+  if (NS_SUCCEEDED(rv) && HasUsableResponse()) {
     ReturnData(aChannel);
+    return NS_OK;
+  }
+
+  bool ra = mPacket && mPacket->RecursionAvailable().unwrapOr(false);
+  LOG(("ra = %d", ra));
+  if (rv == NS_ERROR_UNKNOWN_HOST && ra) {
+    // If recursion is available, but no addresses have been returned,
+    // we can just return a failure here.
+    LOG(("TRR::FollowCname not sending another request as RA flag is set."));
+    FailData(NS_ERROR_UNKNOWN_HOST);
     return NS_OK;
   }
 
@@ -844,6 +867,10 @@ nsresult TRR::FollowCname(nsIChannel* aChannel) {
 nsresult TRR::On200Response(nsIChannel* aChannel) {
   // decode body and create an AddrInfo struct for the response
   nsClassHashtable<nsCStringHashKey, DOHresp> additionalRecords;
+  RefPtr<TypeHostRecord> typeRec = do_QueryObject(mRec);
+  if (typeRec && typeRec->mOriginHost) {
+    GetOrCreateDNSPacket()->SetOriginHost(typeRec->mOriginHost);
+  }
   nsresult rv = GetOrCreateDNSPacket()->Decode(
       mHost, mType, mCname, StaticPrefs::network_trr_allow_rfc1918(), mDNS,
       mResult, additionalRecords, mTTL);

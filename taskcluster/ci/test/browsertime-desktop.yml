@@ -33,7 +33,6 @@ job-defaults:
                 default:
                     - raptor/linux_config.py
         extra-options:
-            - --browsertime
             - --conditioned-profile=settled
 
 browsertime-tp6:
@@ -46,19 +45,22 @@ browsertime-tp6:
                 chromium:
                     - .*shippable.*
                 default: []
-        max-run-time: 4000
+        max-run-time:
+            by-subtest:
+                imgur: 4800
+                default: 4000
         mozharness:
             extra-options:
                 by-test-platform:
                     windows10-64.*shippable.*-qr.*:
                         - --chimera
-                        - --browsertime
                         - --browsertime-no-ffwindowrecorder
                         - --conditioned-profile=settled
+                        - --extra-profiler-run
                     default:
                         - --chimera
-                        - --browsertime
                         - --conditioned-profile=settled
+                        - --extra-profiler-run
         run-on-projects:
             by-subtest:
                 netflix:  # Bug 1756212 - Disable temporarily due to perma on mac
@@ -130,13 +132,13 @@ browsertime-responsiveness:
             by-test-platform:
                 windows10-.*:
                     - --cold
-                    - --browsertime
                     - --browsertime-no-ffwindowrecorder
                     - --conditioned-profile=settled
+                    - --extra-profiler-run
                 default:
                     - --cold
-                    - --browsertime
                     - --conditioned-profile=settled
+                    - --extra-profiler-run
     run-on-projects:
         by-app:
             firefox:
@@ -152,8 +154,56 @@ browsertime-responsiveness:
 
 browsertime-tp6-essential:
     <<: *tp6-defaults
+    <<: &tp6-essential-defaults
+        mozharness:
+            extra-options:
+                by-test-platform:
+                    windows10-64.*shippable.*-qr.*:
+                        - --chimera
+                        - --browsertime-no-ffwindowrecorder
+                        - --conditioned-profile=settled
+                        - --collect-perfstats
+                        - --extra-profiler-run
+                    default:
+                        - --chimera
+                        - --conditioned-profile=settled
+                        - --extra-profiler-run
+        raptor:
+            apps: [firefox, chrome, chromium]
+            test: tp6
+            run-visual-metrics: true
+            subtests:
+                - amazon
+                - [bing-search, bing]
+                - cnn
+                - fandom
+                - [google-slides, gslides]
+                - instagram
+                - twitter
+                - wikipedia
+                - yahoo-mail
+        run-on-projects:
+            by-app:
+                firefox:
+                    by-test-platform:
+                        windows.*-32.*: []
+                        macosx1100.*shippable.*: [mozilla-central, mozilla-beta]
+                        .*64.*shippable-qr/.*: [trunk, mozilla-beta, mozilla-release]
+                        default: []
+                default: []
+        tier:
+            by-test-platform:
+                linux1804-64-clang-trunk-qr/opt: 2
+                default:
+                    by-app:
+                        firefox: 1
+                        default: 3
+
+browsertime-tp6-bytecode:
+    <<: *tp6-defaults
+    <<: *tp6-essential-defaults
     raptor:
-        apps: [firefox, chrome, chromium]
+        apps: [firefox]
         test: tp6
         run-visual-metrics: true
         subtests:
@@ -166,39 +216,59 @@ browsertime-tp6-essential:
             - twitter
             - wikipedia
             - yahoo-mail
-    run-on-projects:
-        by-app:
-            firefox:
-                by-test-platform:
-                    windows.*-32.*: []
-                    macosx1100.*shippable.*: [mozilla-central, mozilla-beta]
-                    .*64.*shippable-qr/.*: [trunk, mozilla-beta, mozilla-release]
-                    default: []
-            default: []
+    mozharness:
+        extra-options:
+            by-test-platform:
+                windows10-64.*shippable.*-qr.*:
+                    - --chimera
+                    - --browsertime
+                    - --browsertime-no-ffwindowrecorder
+                    - --conditioned-profile=settled
+                    - --test-bytecode-cache
+                    - --extra-profiler-run
+                default:
+                    - --chimera
+                    - --browsertime
+                    - --conditioned-profile=settled
+                    - --test-bytecode-cache
+                    - --extra-profiler-run
     tier:
-        by-test-platform:
-            linux1804-64-clang-trunk-qr/opt: 2
-            default:
-                by-app:
-                    firefox: 1
-                    default: 3
+        by-app:
+            firefox: 2
+            default: 3
+    treeherder-symbol: Btime-cache(tp6)
 
 browsertime-benchmark:
     description: Raptor (browsertime) Benchmark tests
     raptor:
         apps: [firefox, chrome, chromium]
         subtests:
-            - ares6
-            - [assorted-dom, dom]
-            - [jetstream2, js2]
-            - [matrix-react-bench, mrb]
-            - [motionmark-animometer, mm-a]
-            - [motionmark-htmlsuite, mm-h]
-            - [speedometer, sp]
-            - [stylebench, sb]
-            - [sunspider, ss]
-            - [unity-webgl, ugl]
-            - [webaudio, wa]
+            by-app:
+                firefox:
+                    - ares6
+                    - [assorted-dom, dom]
+                    - [jetstream2, js2]
+                    - [matrix-react-bench, mrb]
+                    - [motionmark-animometer, mm-a]
+                    - [motionmark-htmlsuite, mm-h]
+                    - [speedometer, sp]
+                    - [stylebench, sb]
+                    - [sunspider, ss]
+                    - [twitch-animation, tw-a]
+                    - [unity-webgl, ugl]
+                    - [webaudio, wa]
+                default:
+                    - ares6
+                    - [assorted-dom, dom]
+                    - [jetstream2, js2]
+                    - [matrix-react-bench, mrb]
+                    - [motionmark-animometer, mm-a]
+                    - [motionmark-htmlsuite, mm-h]
+                    - [speedometer, sp]
+                    - [stylebench, sb]
+                    - [sunspider, ss]
+                    - [unity-webgl, ugl]
+                    - [webaudio, wa]
     treeherder-symbol: Btime()
     tier:
         by-app:
@@ -238,6 +308,7 @@ browsertime-benchmark:
                     default: []
     max-run-time:
         by-subtest:
+            ares6: 1500
             assorted-dom:
                 by-test-platform:
                     .*-qr/.*: 2100
@@ -252,7 +323,11 @@ browsertime-benchmark:
             - assorted-dom
             - jetstream2
             - matrix-react-bench
+            - twitch-animation
             - unity-webgl
+    mozharness:
+        extra-options:
+            - --extra-profiler-run
 
 browsertime-benchmark-wasm:
     description: Raptor (browsertime) WASM benchmarks
@@ -288,6 +363,9 @@ browsertime-benchmark-wasm:
     fetches:
         fetch:
             - wasm-misc
+    mozharness:
+        extra-options:
+            - --extra-profiler-run
 
 browsertime-youtube-playback:
     description: Browsertime YouTube Playback on Firefox
@@ -332,6 +410,7 @@ browsertime-tp6-live:
             - --browser-cycles=15
             - --chimera
             - --live-sites
+            - --extra-profiler-run
     raptor:
         apps: [firefox, chrome, chromium]
         test: tp6
@@ -381,6 +460,7 @@ browsertime-tp6-live-sheriffed:
             - --browser-cycles=5
             - --chimera
             - --live-sites
+            - --extra-profiler-run
     run-on-projects:
         by-test-platform:
             (linux|windows10-64|macos)(?!.*shippable).*: []
@@ -419,6 +499,7 @@ browsertime-custom:
     mozharness:
         extra-options:
             - --chimera
+            - --extra-profiler-run
     run-on-projects:
         by-test-platform:
             windows.*-32.*: []
@@ -437,6 +518,7 @@ browsertime-first-install:
     mozharness:
         extra-options:
             - --chimera
+            - --extra-profiler-run
     run-on-projects:
         by-test-platform:
             windows.*-32.*: []

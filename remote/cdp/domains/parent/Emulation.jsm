@@ -6,8 +6,8 @@
 
 var EXPORTED_SYMBOLS = ["Emulation"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const { Domain } = ChromeUtils.import(
@@ -154,7 +154,7 @@ class Emulation extends Domain {
 
     const { browsingContext } = this.session.target;
 
-    if (userAgent.length == 0) {
+    if (!userAgent.length) {
       browsingContext.customUserAgent = null;
     } else if (this._isValidHTTPRequestHeaderValue(userAgent)) {
       browsingContext.customUserAgent = userAgent;

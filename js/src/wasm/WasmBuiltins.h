@@ -119,7 +119,6 @@ enum class SymbolicAddress {
   TableSize,
   RefFunc,
   RefTest,
-  RttSub,
   PreBarrierFiltering,
   PostBarrier,
   PostBarrierPrecise,
@@ -128,7 +127,9 @@ enum class SymbolicAddress {
   ExceptionNew,
   ThrowException,
   ArrayNew,
-  InlineTypedObjectClass,
+  ArrayNewData,
+  ArrayNewElem,
+  ArrayCopy,
 #define DECL_INTRINSIC_SA(op, export, sa_name, abitype, entry, idx) sa_name,
   FOR_EACH_INTRINSIC(DECL_INTRINSIC_SA)
 #undef DECL_INTRINSIC_SA
@@ -249,8 +250,10 @@ extern const SymbolicAddressSignature SASigStructNew;
 extern const SymbolicAddressSignature SASigExceptionNew;
 extern const SymbolicAddressSignature SASigThrowException;
 extern const SymbolicAddressSignature SASigArrayNew;
+extern const SymbolicAddressSignature SASigArrayNewData;
+extern const SymbolicAddressSignature SASigArrayNewElem;
+extern const SymbolicAddressSignature SASigArrayCopy;
 extern const SymbolicAddressSignature SASigRefTest;
-extern const SymbolicAddressSignature SASigRttSub;
 #define EXT_INTR_SA_DECL(op, export, sa_name, abitype, entry, idx) \
   extern const SymbolicAddressSignature SASig##sa_name;
 FOR_EACH_INTRINSIC(EXT_INTR_SA_DECL)

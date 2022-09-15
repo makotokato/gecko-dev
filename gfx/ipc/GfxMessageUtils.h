@@ -715,6 +715,12 @@ struct ParamTraits<mozilla::gfx::YUVRangedColorSpace>
           mozilla::gfx::YUVRangedColorSpace::_Last> {};
 
 template <>
+struct ParamTraits<mozilla::gfx::ColorSpace2>
+    : public ContiguousEnumSerializerInclusive<
+          mozilla::gfx::ColorSpace2, mozilla::gfx::ColorSpace2::_First,
+          mozilla::gfx::ColorSpace2::_Last> {};
+
+template <>
 struct ParamTraits<mozilla::StereoMode>
     : public ContiguousEnumSerializer<mozilla::StereoMode,
                                       mozilla::StereoMode::MONO,
@@ -1197,8 +1203,7 @@ struct IPDLParamTraits<gfx::PaintFragment> {
                     paramType&& aParam) {
     Shmem shmem;
     if (aParam.mSize.IsEmpty() ||
-        !aActor->AllocShmem(aParam.mRecording.mLen, SharedMemory::TYPE_BASIC,
-                            &shmem)) {
+        !aActor->AllocShmem(aParam.mRecording.mLen, &shmem)) {
       WriteParam(aWriter, gfx::IntSize(0, 0));
       return;
     }

@@ -709,6 +709,9 @@ nsresult nsLookAndFeel::PerThemeData::GetColor(ColorID aID,
     case ColorID::MozMenuhover:
       aColor = mMenuHover;
       break;
+    case ColorID::MozMenuhoverdisabled:
+      aColor = NS_TRANSPARENT;
+      break;
     case ColorID::MozMenuhovertext:
       aColor = mMenuHoverText;
       break;
@@ -1094,8 +1097,11 @@ bool nsLookAndFeel::PerThemeData::GetFont(FontID aID, nsString& aFontName,
       break;
   }
 
-  // Convert gdk pixels to CSS pixels.
-  aFontStyle.size /= gfxPlatformGtk::GetFontScaleFactor();
+  // Convert GDK pixels to CSS pixels.
+  // When "layout.css.devPixelsPerPx" > 0, this is not a direct conversion.
+  // The difference produces a scaling of system fonts in proportion with
+  // other scaling from the change in CSS pixel sizes.
+  aFontStyle.size /= LookAndFeel::GetTextScaleFactor();
   return true;
 }
 

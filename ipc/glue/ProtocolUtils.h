@@ -198,9 +198,8 @@ class IProtocol : public HasResultCodes {
   IProtocol* Lookup(int32_t aId);
   void Unregister(int32_t aId);
 
-  Shmem::SharedMemory* CreateSharedMemory(size_t aSize,
-                                          SharedMemory::SharedMemoryType aType,
-                                          bool aUnsafe, int32_t* aId);
+  Shmem::SharedMemory* CreateSharedMemory(size_t aSize, bool aUnsafe,
+                                          int32_t* aId);
   Shmem::SharedMemory* LookupSharedMemory(int32_t aId);
   bool IsTrackingSharedMemory(Shmem::SharedMemory* aSegment);
   bool DestroySharedMemory(Shmem& aShmem);
@@ -243,11 +242,8 @@ class IProtocol : public HasResultCodes {
                                    UniquePtr<Message>& aReply) = 0;
   virtual Result OnCallReceived(const Message& aMessage,
                                 UniquePtr<Message>& aReply) = 0;
-  bool AllocShmem(size_t aSize, Shmem::SharedMemory::SharedMemoryType aType,
-                  Shmem* aOutMem);
-  bool AllocUnsafeShmem(size_t aSize,
-                        Shmem::SharedMemory::SharedMemoryType aType,
-                        Shmem* aOutMem);
+  bool AllocShmem(size_t aSize, Shmem* aOutMem);
+  bool AllocUnsafeShmem(size_t aSize, Shmem* aOutMem);
   bool DeallocShmem(Shmem& aMem);
 
   void FatalError(const char* const aErrorMsg) const;
@@ -279,11 +275,12 @@ class IProtocol : public HasResultCodes {
                    UniquePtr<IPC::Message>* aReply);
   template <typename Value>
   void ChannelSend(UniquePtr<IPC::Message> aMsg,
+                   IPC::Message::msgid_t aReplyMsgId,
                    ResolveCallback<Value>&& aResolve,
                    RejectCallback&& aReject) {
     if (CanSend()) {
-      GetIPCChannel()->Send(std::move(aMsg), this, std::move(aResolve),
-                            std::move(aReject));
+      GetIPCChannel()->Send(std::move(aMsg), Id(), aReplyMsgId,
+                            std::move(aResolve), std::move(aReject));
     } else {
       WarnMessageDiscarded(aMsg.get());
       aReject(ResponseRejectReason::SendError);
@@ -368,6 +365,8 @@ class IPCResult {
   bool mSuccess;
 };
 
+class UntypedEndpoint;
+
 template <class PFooSide>
 class Endpoint;
 
@@ -401,9 +400,8 @@ class IToplevelProtocol : public IProtocol {
   IProtocol* Lookup(int32_t aId);
   void Unregister(int32_t aId);
 
-  Shmem::SharedMemory* CreateSharedMemory(size_t aSize,
-                                          SharedMemory::SharedMemoryType aType,
-                                          bool aUnsafe, int32_t* aId);
+  Shmem::SharedMemory* CreateSharedMemory(size_t aSize, bool aUnsafe,
+                                          int32_t* aId);
   Shmem::SharedMemory* LookupSharedMemory(int32_t aId);
   bool IsTrackingSharedMemory(Shmem::SharedMemory* aSegment);
   bool DestroySharedMemory(Shmem& aShmem);
@@ -417,7 +415,8 @@ class IToplevelProtocol : public IProtocol {
   virtual void OnChannelError() = 0;
   virtual void ProcessingError(Result aError, const char* aMsgName) {}
 
-  bool Open(ScopedPort aPort, base::ProcessId aOtherPid,
+  bool Open(ScopedPort aPort, const nsID& aMessageChannelId,
+            base::ProcessId aOtherPid,
             nsISerialEventTarget* aEventTarget = nullptr);
 
   bool Open(IToplevelProtocol* aTarget, nsISerialEventTarget* aEventTarget,
@@ -509,25 +508,19 @@ class IToplevelProtocol : public IProtocol {
 
 class IShmemAllocator {
  public:
-  virtual bool AllocShmem(size_t aSize,
-                          mozilla::ipc::SharedMemory::SharedMemoryType aShmType,
-                          mozilla::ipc::Shmem* aShmem) = 0;
-  virtual bool AllocUnsafeShmem(
-      size_t aSize, mozilla::ipc::SharedMemory::SharedMemoryType aShmType,
-      mozilla::ipc::Shmem* aShmem) = 0;
+  virtual bool AllocShmem(size_t aSize, mozilla::ipc::Shmem* aShmem) = 0;
+  virtual bool AllocUnsafeShmem(size_t aSize, mozilla::ipc::Shmem* aShmem) = 0;
   virtual bool DeallocShmem(mozilla::ipc::Shmem& aShmem) = 0;
 };
 
 #define FORWARD_SHMEM_ALLOCATOR_TO(aImplClass)                             \
-  virtual bool AllocShmem(                                                 \
-      size_t aSize, mozilla::ipc::SharedMemory::SharedMemoryType aShmType, \
-      mozilla::ipc::Shmem* aShmem) override {                              \
-    return aImplClass::AllocShmem(aSize, aShmType, aShmem);                \
+  virtual bool AllocShmem(size_t aSize, mozilla::ipc::Shmem* aShmem)       \
+      override {                                                           \
+    return aImplClass::AllocShmem(aSize, aShmem);                          \
   }                                                                        \
-  virtual bool AllocUnsafeShmem(                                           \
-      size_t aSize, mozilla::ipc::SharedMemory::SharedMemoryType aShmType, \
-      mozilla::ipc::Shmem* aShmem) override {                              \
-    return aImplClass::AllocUnsafeShmem(aSize, aShmType, aShmem);          \
+  virtual bool AllocUnsafeShmem(size_t aSize, mozilla::ipc::Shmem* aShmem) \
+      override {                                                           \
+    return aImplClass::AllocUnsafeShmem(aSize, aShmem);                    \
   }                                                                        \
   virtual bool DeallocShmem(mozilla::ipc::Shmem& aShmem) override {        \
     return aImplClass::DeallocShmem(aShmem);                               \

@@ -9,26 +9,18 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/PodOperations.h"
 
-#include "gc/GCContext.h"
 #include "gc/HashUtil.h"
-#include "gc/Policy.h"
-#include "gc/PublicIterators.h"
 #include "js/friend/WindowProxy.h"  // js::IsWindow
 #include "js/HashTable.h"
 #include "js/UniquePtr.h"
-#include "util/Text.h"
-#include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
 #include "vm/ShapeZone.h"
 #include "vm/Watchtower.h"
 
 #include "gc/Zone-inl.h"
-#include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
-#include "vm/ObjectFlags-inl.h"
-#include "vm/Realm-inl.h"
 
 using namespace js;
 
@@ -297,7 +289,7 @@ bool NativeObject::addProperty(JSContext* cx, Handle<NativeObject*> obj,
   }
 
   if (Shape* shape = LookupShapeForAdd(obj->shape(), id, flags, slot)) {
-    return obj->setShapeAndUpdateSlotsForNewSlot(cx, shape, *slot);
+    return obj->setShapeAndAddNewSlot(cx, shape, *slot);
   }
 
   if (obj->inDictionaryMode()) {
@@ -344,7 +336,7 @@ bool NativeObject::addProperty(JSContext* cx, Handle<NativeObject*> obj,
   }
 
   Shape* oldShape = obj->shape();
-  if (!obj->setShapeAndUpdateSlotsForNewSlot(cx, newShape, *slot)) {
+  if (!obj->setShapeAndAddNewSlot(cx, newShape, *slot)) {
     return false;
   }
 
@@ -522,7 +514,7 @@ bool NativeObject::changeProperty(JSContext* cx, Handle<NativeObject*> obj,
       Rooted<SharedPropMap*> sharedMap(cx, map->asShared());
       SharedPropMap::getPrevious(&sharedMap, &mapLength);
 
-      if (oldProp.hasSlot()) {
+      if (MOZ_LIKELY(oldProp.hasSlot())) {
         *slotOut = oldProp.slot();
         if (!SharedPropMap::addPropertyWithKnownSlot(cx, clasp, &sharedMap,
                                                      &mapLength, id, flags,
@@ -542,7 +534,13 @@ bool NativeObject::changeProperty(JSContext* cx, Handle<NativeObject*> obj,
       if (!newShape) {
         return false;
       }
-      return obj->setShapeAndUpdateSlots(cx, newShape);
+
+      if (MOZ_LIKELY(oldProp.hasSlot())) {
+        MOZ_ASSERT(obj->shape()->slotSpan() == newShape->slotSpan());
+        obj->setShape(newShape);
+        return true;
+      }
+      return obj->setShapeAndAddNewSlot(cx, newShape, *slotOut);
     }
 
     // Changing a non-last property. Switch to dictionary mode and relookup
@@ -667,6 +665,68 @@ bool NativeObject::changeCustomDataPropAttributes(JSContext* cx,
   return true;
 }
 
+void NativeObject::maybeFreeDictionaryPropSlots(JSContext* cx,
+                                                DictionaryPropMap* map,
+                                                uint32_t mapLength) {
+  // We can free all non-reserved slots if there are no properties left. We also
+  // handle the case where there's a single slotless property, to support arrays
+  // (array.length is a custom data property).
+
+  MOZ_ASSERT(shape()->dictionaryPropMap() == map);
+  MOZ_ASSERT(shape()->propMapLength() == mapLength);
+
+  if (mapLength > 1 || map->previous()) {
+    return;
+  }
+  if (mapLength == 1 && map->getPropertyInfo(0).hasSlot()) {
+    return;
+  }
+
+  uint32_t oldSpan = dictionaryModeSlotSpan();
+  uint32_t newSpan = JSCLASS_RESERVED_SLOTS(getClass());
+  if (oldSpan == newSpan) {
+    return;
+  }
+
+  MOZ_ASSERT(newSpan < oldSpan);
+
+  // Trigger write barriers on the old slots before reallocating.
+  prepareSlotRangeForOverwrite(newSpan, oldSpan);
+  invalidateSlotRange(newSpan, oldSpan);
+
+  uint32_t oldCapacity = numDynamicSlots();
+  uint32_t newCapacity =
+      calculateDynamicSlots(numFixedSlots(), newSpan, getClass());
+  if (newCapacity < oldCapacity) {
+    shrinkSlots(cx, oldCapacity, newCapacity);
+  }
+
+  setDictionaryModeSlotSpan(newSpan);
+  map->setFreeList(SHAPE_INVALID_SLOT);
+}
+
+void NativeObject::setShapeAndRemoveLastSlot(JSContext* cx, Shape* newShape,
+                                             uint32_t slot) {
+  MOZ_ASSERT(!inDictionaryMode());
+  MOZ_ASSERT(!newShape->isDictionary());
+  MOZ_ASSERT(newShape->slotSpan() == slot);
+
+  uint32_t numFixed = newShape->numFixedSlots();
+  if (slot < numFixed) {
+    setFixedSlot(slot, UndefinedValue());
+  } else {
+    setDynamicSlot(numFixed, slot, UndefinedValue());
+    uint32_t oldCapacity = numDynamicSlots();
+    uint32_t newCapacity = calculateDynamicSlots(numFixed, slot, getClass());
+    MOZ_ASSERT(newCapacity <= oldCapacity);
+    if (newCapacity < oldCapacity) {
+      shrinkSlots(cx, oldCapacity, newCapacity);
+    }
+  }
+
+  setShape(newShape);
+}
+
 /* static */
 bool NativeObject::removeProperty(JSContext* cx, Handle<NativeObject*> obj,
                                   HandleId id) {
@@ -730,10 +790,17 @@ bool NativeObject::removeProperty(JSContext* cx, Handle<NativeObject*> obj,
         return false;
       }
 
-      if (prop.hasSlot()) {
+      if (MOZ_LIKELY(prop.hasSlot())) {
+        if (MOZ_LIKELY(prop.slot() == newShape->slotSpan())) {
+          obj->setShapeAndRemoveLastSlot(cx, newShape, prop.slot());
+          return true;
+        }
+        // Uncommon case: the property is stored in a reserved slot.
+        // See NativeObject::addPropertyInReservedSlot.
+        MOZ_ASSERT(prop.slot() < JSCLASS_RESERVED_SLOTS(obj->getClass()));
         obj->setSlot(prop.slot(), UndefinedValue());
       }
-      MOZ_ALWAYS_TRUE(obj->setShapeAndUpdateSlots(cx, newShape));
+      obj->setShape(newShape);
       return true;
     }
 
@@ -773,6 +840,15 @@ bool NativeObject::removeProperty(JSContext* cx, Handle<NativeObject*> obj,
 
   obj->shape()->updateNewDictionaryShape(obj->shape()->objectFlags(), dictMap,
                                          mapLength);
+
+  // If we just deleted the last property, consider shrinking the slots. We only
+  // do this if there are a lot of slots, to avoid allocating/freeing dynamic
+  // slots repeatedly.
+  static constexpr size_t MinSlotSpanForFree = 64;
+  if (obj->dictionaryModeSlotSpan() >= MinSlotSpanForFree) {
+    obj->maybeFreeDictionaryPropSlots(cx, dictMap, mapLength);
+  }
+
   return true;
 }
 
@@ -800,6 +876,9 @@ bool NativeObject::densifySparseElements(JSContext* cx,
   objectFlags.clearFlag(ObjectFlag::Indexed);
 
   obj->shape()->updateNewDictionaryShape(objectFlags, map, mapLength);
+
+  obj->maybeFreeDictionaryPropSlots(cx, map, mapLength);
+
   return true;
 }
 
@@ -994,11 +1073,10 @@ BaseShape* BaseShape::get(JSContext* cx, const JSClass* clasp, JS::Realm* realm,
     return *p;
   }
 
-  BaseShape* nbase = Allocate<BaseShape>(cx);
+  BaseShape* nbase = cx->newCell<BaseShape>(clasp, realm, proto);
   if (!nbase) {
     return nullptr;
   }
-  new (nbase) BaseShape(clasp, realm, proto);
 
   if (!p.add(cx, table, Lookup(clasp, realm, proto), nbase)) {
     return nullptr;
@@ -1010,26 +1088,15 @@ BaseShape* BaseShape::get(JSContext* cx, const JSClass* clasp, JS::Realm* realm,
 Shape* SharedShape::new_(JSContext* cx, Handle<BaseShape*> base,
                          ObjectFlags objectFlags, uint32_t nfixed,
                          Handle<SharedPropMap*> map, uint32_t mapLength) {
-  Shape* shape = Allocate<Shape>(cx);
-  if (!shape) {
-    return nullptr;
-  }
-
-  new (shape) SharedShape(base, objectFlags, nfixed, map, mapLength);
-  return shape;
+  return cx->newCell<Shape>(base, objectFlags, nfixed, map, mapLength, false);
 }
 
 Shape* DictionaryShape::new_(JSContext* cx, Handle<BaseShape*> base,
                              ObjectFlags objectFlags, uint32_t nfixed,
                              Handle<DictionaryPropMap*> map,
                              uint32_t mapLength) {
-  Shape* shape = Allocate<Shape>(cx);
-  if (!shape) {
-    return nullptr;
-  }
-
-  new (shape) DictionaryShape(base, objectFlags, nfixed, map, mapLength);
-  return shape;
+  return cx->newCell<DictionaryShape>(base, objectFlags, nfixed, map,
+                                      mapLength);
 }
 
 MOZ_ALWAYS_INLINE HashNumber ShapeForAddHasher::hash(const Lookup& l) {

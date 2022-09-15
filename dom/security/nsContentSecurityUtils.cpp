@@ -602,7 +602,7 @@ bool nsContentSecurityUtils::IsEvalAllowed(JSContext* cx,
       "resource://testing-common/content-task.js"_ns,
 
       // Tracked by Bug 1584605
-      "resource:///modules/translation/cld-worker.js"_ns,
+      "resource://gre/modules/translation/cld-worker.js"_ns,
 
       // require.js implements a script loader for workers. It uses eval
       // to load the script; but injection is only possible in situations
@@ -610,6 +610,11 @@ bool nsContentSecurityUtils::IsEvalAllowed(JSContext* cx,
       // it is okay to allow eval() as it adds no additional attack surface.
       // Bug 1584564 tracks requiring safe usage of require.js
       "resource://gre/modules/workers/require.js"_ns,
+
+      // The profiler's symbolication code uses a wasm module to extract symbols
+      // from the binary files result of local builds.
+      // See bug 1777479
+      "resource://devtools/client/performance-new/symbolication.jsm.js"_ns,
 
       // The Browser Toolbox/Console
       "debugger"_ns,
@@ -1122,26 +1127,26 @@ void nsContentSecurityUtils::AssertAboutPageHasCSP(Document* aDocument) {
     nsAutoString parsedPolicyStr;
     for (uint32_t i = 0; i < policyCount; ++i) {
       csp->GetPolicyString(i, parsedPolicyStr);
-      if (parsedPolicyStr.Find("default-src") >= 0) {
+      if (parsedPolicyStr.Find(u"default-src") >= 0) {
         foundDefaultSrc = true;
       }
-      if (parsedPolicyStr.Find("object-src 'none'") >= 0) {
+      if (parsedPolicyStr.Find(u"object-src 'none'") >= 0) {
         foundObjectSrc = true;
       }
-      if (parsedPolicyStr.Find("'unsafe-eval'") >= 0) {
+      if (parsedPolicyStr.Find(u"'unsafe-eval'") >= 0) {
         foundUnsafeEval = true;
       }
-      if (parsedPolicyStr.Find("'unsafe-inline'") >= 0) {
+      if (parsedPolicyStr.Find(u"'unsafe-inline'") >= 0) {
         foundUnsafeInline = true;
       }
-      if (parsedPolicyStr.Find("script-src") >= 0) {
+      if (parsedPolicyStr.Find(u"script-src") >= 0) {
         foundScriptSrc = true;
       }
-      if (parsedPolicyStr.Find("worker-src") >= 0) {
+      if (parsedPolicyStr.Find(u"worker-src") >= 0) {
         foundWorkerSrc = true;
       }
-      if (parsedPolicyStr.Find("http:") >= 0 ||
-          parsedPolicyStr.Find("https:") >= 0) {
+      if (parsedPolicyStr.Find(u"http:") >= 0 ||
+          parsedPolicyStr.Find(u"https:") >= 0) {
         foundWebScheme = true;
       }
     }

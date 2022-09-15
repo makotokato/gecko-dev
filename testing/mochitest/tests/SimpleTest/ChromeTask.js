@@ -6,15 +6,11 @@
 
 "use strict";
 
-/* eslint-env mozilla/frame-script */
-
 function ChromeTask_ChromeScript() {
+  /* eslint-env mozilla/chrome-script */
+
   "use strict";
 
-  // eslint-disable-next-line no-unused-vars
-  const { Services } = ChromeUtils.import(
-    "resource://gre/modules/Services.jsm"
-  );
   const { Assert: AssertCls } = ChromeUtils.import(
     "resource://testing-common/Assert.jsm"
   );

@@ -4,7 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const { Actor, ActorClassWithSpec } = require("devtools/shared/protocol");
 const { accessibilitySpec } = require("devtools/shared/specs/accessibility");
 
@@ -43,7 +42,7 @@ const AccessibilityActor = ActorClassWithSpec(accessibilitySpec, {
     this.targetActor = targetActor;
   },
 
-  getTraits: function() {
+  getTraits() {
     // The traits are used to know if accessibility actors support particular
     // API on the server side.
     return {

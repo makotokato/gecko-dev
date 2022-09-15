@@ -15,6 +15,7 @@
 #include "GLScreenBuffer.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "mozilla/Attributes.h"
+#include "mozilla/Atomics.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
@@ -92,11 +93,13 @@ class VRLayerChild;
 namespace gl {
 class GLScreenBuffer;
 class MozFramebuffer;
+class SharedSurface;
 class Texture;
 }  // namespace gl
 
 namespace layers {
 class CompositableHost;
+class RemoteTextureOwnerClient;
 class SurfaceDescriptor;
 }  // namespace layers
 
@@ -258,11 +261,10 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
     LruPosition& operator=(LruPosition&&) = delete;
 
    public:
-    void AssignLocked(WebGLContext& aContext,
-                      const StaticMutexAutoLock& aProofOfLock);
-
+    void AssignLocked(WebGLContext& aContext) MOZ_REQUIRES(sLruMutex);
     void Reset();
-    void ResetLocked(const StaticMutexAutoLock& aProofOfLock);
+    void ResetLocked() MOZ_REQUIRES(sLruMutex);
+    bool IsInsertedLocked() const MOZ_REQUIRES(sLruMutex);
 
     LruPosition();
     explicit LruPosition(WebGLContext&);
@@ -270,9 +272,9 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
     ~LruPosition() { Reset(); }
   };
 
-  mutable LruPosition mLruPosition GUARDED_BY(sLruMutex);
+  mutable LruPosition mLruPosition MOZ_GUARDED_BY(sLruMutex);
 
-  void BumpLruLocked(const StaticMutexAutoLock& aProofOfLock);
+  void BumpLruLocked() MOZ_REQUIRES(sLruMutex);
 
  public:
   void BumpLru();
@@ -300,6 +302,9 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   Maybe<webgl::Limits> mLimits;
 
   bool mIsContextLost = false;
+  Atomic<bool> mPendingContextLoss;
+  webgl::ContextLossReason mPendingContextLossReason =
+      webgl::ContextLossReason::None;
   const uint32_t mMaxPerfWarnings;
   mutable uint64_t mNumPerfWarnings = 0;
   const uint32_t mMaxAcceptableFBStatusInvals;
@@ -490,7 +495,9 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   // the back buffer may be invalidated by this swap with the front buffer,
   // unless overriden by explicitly setting the preserveDrawingBuffer option,
   // which may incur a further copy to preserve the back buffer.
-  void Present(WebGLFramebuffer*, layers::TextureType, const bool webvr);
+  void Present(
+      WebGLFramebuffer*, layers::TextureType, const bool webvr,
+      const webgl::SwapChainOptions& options = webgl::SwapChainOptions());
   // CopyToSwapChain forces a copy from the supplied framebuffer into the back
   // buffer before swapping the front and back buffers of the swap chain for
   // compositing. The formats of the framebuffer and the swap chain buffers
@@ -509,7 +516,17 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   // appropriately.
   void EndOfFrame();
   RefPtr<gfx::DataSourceSurface> GetFrontBufferSnapshot();
-  Maybe<uvec2> FrontBufferSnapshotInto(Maybe<Range<uint8_t>>);
+  Maybe<uvec2> FrontBufferSnapshotInto(
+      const Maybe<Range<uint8_t>> dest,
+      const Maybe<size_t> destStride = Nothing());
+  Maybe<uvec2> FrontBufferSnapshotInto(
+      const std::shared_ptr<gl::SharedSurface>& front,
+      const Maybe<Range<uint8_t>> dest,
+      const Maybe<size_t> destStride = Nothing());
+  Maybe<uvec2> SnapshotInto(GLuint srcFb, const gfx::IntSize& size,
+                            const Range<uint8_t>& dest,
+                            const Maybe<size_t> destStride = Nothing());
+  gl::SwapChain* GetSwapChain(WebGLFramebuffer*, const bool webvr);
   Maybe<layers::SurfaceDescriptor> GetFrontBuffer(WebGLFramebuffer*,
                                                   const bool webvr);
 
@@ -517,6 +534,7 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
 
   void RunContextLossTimer();
   void CheckForContextLoss();
+  void HandlePendingContextLoss();
 
   bool TryToRestoreContext();
 
@@ -532,7 +550,13 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   void GetContextAttributes(dom::Nullable<dom::WebGLContextAttributes>& retval);
 
   // This is the entrypoint. Don't test against it directly.
-  bool IsContextLost() const { return mIsContextLost; }
+  bool IsContextLost() const {
+    auto* self = const_cast<WebGLContext*>(this);
+    if (self->mPendingContextLoss.exchange(false)) {
+      self->HandlePendingContextLoss();
+    }
+    return mIsContextLost;
+  }
 
   // -
 
@@ -730,7 +754,7 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
 
  private:
   static StaticMutex sLruMutex;
-  static std::list<WebGLContext*> sLru GUARDED_BY(sLruMutex);
+  static std::list<WebGLContext*> sLru MOZ_GUARDED_BY(sLruMutex);
 
   // State tracking slots
   bool mDitherEnabled = true;
@@ -868,7 +892,8 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   // PROTECTED
  protected:
   WebGLVertexAttrib0Status WhatDoesVertexAttrib0Need() const;
-  bool DoFakeVertexAttrib0(uint64_t vertexCount);
+  bool DoFakeVertexAttrib0(uint64_t fakeVertexCount,
+                           WebGLVertexAttrib0Status whatDoesAttrib0Need);
   void UndoFakeVertexAttrib0();
 
   bool mResetLayer = true;
@@ -1105,8 +1130,8 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   ////
 
  private:
-  void LoseContextLruLocked(webgl::ContextLossReason reason,
-                            const StaticMutexAutoLock& aProofOfLock);
+  void LoseContextLruLocked(webgl::ContextLossReason reason)
+      MOZ_REQUIRES(sLruMutex);
 
  public:
   void LoseContext(
@@ -1211,7 +1236,10 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   bool mDriverDepthTest = false;
   bool mDriverStencilTest = false;
 
+  bool mNeedsLegacyVertexAttrib0Handling = false;
+  bool mMaybeNeedsLegacyVertexAttrib0Handling = false;
   bool mNeedsIndexValidation = false;
+  bool mBug_DrawArraysInstancedUserAttribFetchAffectedByFirst = false;
 
   const bool mAllowFBInvalidation;
 
@@ -1227,6 +1255,12 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
 
   gl::SwapChain mSwapChain;
   gl::SwapChain mWebVRSwapChain;
+
+  RefPtr<layers::RemoteTextureOwnerClient> mRemoteTextureOwner;
+
+  bool PushRemoteTexture(WebGLFramebuffer*, gl::SwapChain&,
+                         std::shared_ptr<gl::SharedSurface>,
+                         const webgl::SwapChainOptions& options);
 
   // --
 
@@ -1301,9 +1335,6 @@ template <typename V, typename M>
 V RoundUpToMultipleOf(const V& value, const M& multiple) {
   return ((value + multiple - 1) / multiple) * multiple;
 }
-
-const char* GetEnumName(GLenum val, const char* defaultRet = "<unknown>");
-std::string EnumString(GLenum val);
 
 class ScopedFBRebinder final {
  private:

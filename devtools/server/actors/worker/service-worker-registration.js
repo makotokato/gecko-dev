@@ -4,9 +4,7 @@
 
 "use strict";
 
-const ChromeUtils = require("ChromeUtils");
-const Services = require("Services");
-const { XPCOMUtils } = require("resource://gre/modules/XPCOMUtils.jsm");
+const { XPCOMUtils } = require("resource://gre/modules/XPCOMUtils.sys.mjs");
 const protocol = require("devtools/shared/protocol");
 const {
   serviceWorkerRegistrationSpec,
@@ -154,8 +152,8 @@ const ServiceWorkerRegistrationActor = protocol.ActorClassWithSpec(
     unregister() {
       const { principal, scope } = this._registration;
       const unregisterCallback = {
-        unregisterSucceeded: function() {},
-        unregisterFailed: function() {
+        unregisterSucceeded() {},
+        unregisterFailed() {
           console.error("Failed to unregister the service worker for " + scope);
         },
         QueryInterface: ChromeUtils.generateQI([

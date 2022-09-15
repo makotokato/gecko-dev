@@ -13,11 +13,38 @@ exclude: true
 
 ⚠️  breaking change and deprecation notices
 
+## v106
+- Added [`SelectionActionDelegate.onShowClipboardPermissionRequest`][106.1],
+  [`SelectionActionDelegate.onDismissClipboardPermissionRequest`][106.2],
+  [`BasicSelectionActionDelegate.onShowClipboardPermissionRequest`][106.3],
+  [`BasicSelectionActionDelegate.onDismissCancelClipboardPermissionRequest`][106.4] and
+  [`SelectionActionDelegate.ClipboardPermission`][106.5] to handle permission
+  request for reading clipboard data by [`clipboard.readText`][106.6].
+  ([bug 1776829]({{bugzilla}}1776829))
+
+[106.1]: {{javadoc_uri}}/GeckoSession.SelectionActionDelegate.html#onShowClipboardPermissionRequest(org.mozilla.geckoview.GeckoSession,org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ClipboardPermission)
+[106.2]: {{javadoc_uri}}/GeckoSession.SelectionActionDelegate.html#onDismissClipboardPermissionRequest(org.mozilla.geckoview.GeckoSession)
+[106.3]: {{javadoc_uri}}/BasicSelectionActionDelegate.html#onShowClipboardPermissionRequest(org.mozilla.geckoview.GeckoSession,org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ClipboardPermission)
+[106.4]: {{javadoc_uri}}/BasicSelectionActionDelegate.html#onDismissClipboardPermission(org.mozilla.geckoview.GeckoSession)
+[106.5]: {{javadoc_uri}}/GeckoSession.SelectionActionDelegate.ClipboardPermission.html
+[106.6]: https://developer.mozilla.org/en-US/docs/Web/API/Clipboard/readText
+
+## v104
+- Removed deprecated Autofill.Delegate `onAutofill`, Autofill.Node `fillViewStructure`, `getFocused`, `getId`, `getValue`, `getVisible`, Autofill.NodeData `Autofill.Notify`, Autofill.Session `surfaceChanged`.
+  ([bug 1781180]({{bugzilla}}1781180))
+- Removed deprecated `GeckoDisplay.surfaceChanged` functions [[1]][101.4] [[2]][101.5]
+- Removed deprecated [`GeckoSession.autofill`][102.18].
+  ([bug 1781180]({{bugzilla}}1781180))
+- Removed deprecated [`onLocationChange(2)`][102.3]
+  ([bug 1781180]({{bugzilla}}1781180))
+
 ## v103
 - Added [`GeckoSession.saveAsPdf`][103.1] that returns a `GeckoResult<InputStream>` that contains a PDF of the current session's page.
 - Added missing `@Deprecated` tag for `setPermission`, see deprecation note in [v90](#v90).
+- ⚠️ Deprecated [`cookieLifetime`][103.2], this feature is not available anymore.
 
 [103.1]: {{javadoc_uri}}/GeckoSession.html#saveAsPdf()
+[103.2]: {{javadoc_uri}}/ContentBlocking.Settings.Builder.html#cookieLifetime(int)
 
 ## v102
 - Added [`DateTimePrompt.stepValue`][102.1] to export [`step`][102.2] attribute of input element.
@@ -1213,4 +1240,4 @@ to allow adding gecko profiler markers.
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport(android.content.Context,android.os.Bundle,java.lang.String)
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: d1b66534eb86e596b7acea2ccdc5a61707e9111a
+[api-version]: 5dd4f92b49dec51709788671173c5a03b303287b

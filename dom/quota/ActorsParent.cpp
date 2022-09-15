@@ -70,11 +70,11 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Unused.h"
 #include "mozilla/Variant.h"
+#include "mozilla/dom/FileSystemQuotaClient.h"
 #include "mozilla/dom/FlippedOnce.h"
 #include "mozilla/dom/LocalStorageCommon.h"
 #include "mozilla/dom/StorageActivityService.h"
 #include "mozilla/dom/StorageDBUpdater.h"
-#include "mozilla/dom/StorageTypeBinding.h"
 #include "mozilla/dom/cache/QuotaClient.h"
 #include "mozilla/dom/indexedDB/ActorsParent.h"
 #include "mozilla/dom/ipc/IdType.h"
@@ -214,6 +214,8 @@ using mozilla::net::MozURL;
 // of illegal characters so we use its FILE_ILLEGAL_CHARACTERS and
 // FILE_PATH_SEPARATOR.
 const char QuotaManager::kReplaceChars[] = CONTROL_CHARACTERS "/:*?\"<>|\\";
+const char16_t QuotaManager::kReplaceChars16[] =
+    u"" CONTROL_CHARACTERS "/:*?\"<>|\\";
 
 namespace {
 
@@ -261,18 +263,6 @@ const int32_t kStorageVersion =
 // See comments above about why these are a thing.
 const int32_t kHackyPreDowngradeStorageVersion = int32_t((3 << 16) + 0);
 const int32_t kHackyPostDowngradeStorageVersion = int32_t((2 << 16) + 1);
-
-static_assert(static_cast<uint32_t>(StorageType::Persistent) ==
-                  static_cast<uint32_t>(PERSISTENCE_TYPE_PERSISTENT),
-              "Enum values should match.");
-
-static_assert(static_cast<uint32_t>(StorageType::Temporary) ==
-                  static_cast<uint32_t>(PERSISTENCE_TYPE_TEMPORARY),
-              "Enum values should match.");
-
-static_assert(static_cast<uint32_t>(StorageType::Default) ==
-                  static_cast<uint32_t>(PERSISTENCE_TYPE_DEFAULT),
-              "Enum values should match.");
 
 const char kChromeOrigin[] = "chrome";
 const char kAboutHomeOriginPrefix[] = "moz-safe-about:home";
@@ -740,6 +730,8 @@ class QuotaManager::Observer final : public nsIObserver {
  public:
   static nsresult Initialize();
 
+  static nsIObserver* GetInstance();
+
   static void ShutdownCompleted();
 
  private:
@@ -1056,7 +1048,7 @@ class OriginOperationBase : public BackgroundThreadObject, public Runnable {
   }
 
  protected:
-  explicit OriginOperationBase(nsIEventTarget* aOwningThread,
+  explicit OriginOperationBase(nsISerialEventTarget* aOwningThread,
                                const char* aRunnableName)
       : BackgroundThreadObject(aOwningThread),
         Runnable(aRunnableName),
@@ -1105,7 +1097,11 @@ class OriginOperationBase : public BackgroundThreadObject, public Runnable {
 
   virtual void Open() = 0;
 
+#ifdef DEBUG
+  virtual nsresult DirectoryOpen();
+#else
   nsresult DirectoryOpen();
+#endif
 
   virtual nsresult DoDirectoryWork(QuotaManager& aQuotaManager) = 0;
 
@@ -1125,7 +1121,7 @@ class FinalizeOriginEvictionOp : public OriginOperationBase {
   nsTArray<RefPtr<OriginDirectoryLock>> mLocks;
 
  public:
-  FinalizeOriginEvictionOp(nsIEventTarget* aBackgroundThread,
+  FinalizeOriginEvictionOp(nsISerialEventTarget* aBackgroundThread,
                            nsTArray<RefPtr<OriginDirectoryLock>>&& aLocks)
       : OriginOperationBase(aBackgroundThread,
                             "dom::quota::FinalizeOriginEvictionOp"),
@@ -1151,11 +1147,10 @@ class NormalOriginOperationBase
     : public OriginOperationBase,
       public OpenDirectoryListener,
       public SupportsCheckedUnsafePtr<CheckIf<DiagnosticAssertEnabled>> {
-  RefPtr<DirectoryLock> mDirectoryLock;
-
  protected:
-  Nullable<PersistenceType> mPersistenceType;
   OriginScope mOriginScope;
+  RefPtr<DirectoryLock> mDirectoryLock;
+  Nullable<PersistenceType> mPersistenceType;
   Nullable<Client::Type> mClientType;
   mozilla::Atomic<bool> mCanceled;
   const bool mExclusive;
@@ -1171,9 +1166,9 @@ class NormalOriginOperationBase
   NormalOriginOperationBase(const char* aRunnableName,
                             const Nullable<PersistenceType>& aPersistenceType,
                             const OriginScope& aOriginScope, bool aExclusive)
-      : OriginOperationBase(GetCurrentEventTarget(), aRunnableName),
-        mPersistenceType(aPersistenceType),
+      : OriginOperationBase(GetCurrentSerialEventTarget(), aRunnableName),
         mOriginScope(aOriginScope),
+        mPersistenceType(aPersistenceType),
         mExclusive(aExclusive) {
     AssertIsOnOwningThread();
   }
@@ -1220,6 +1215,36 @@ class SaveOriginAccessTimeOp : public NormalOriginOperationBase {
   virtual nsresult DoDirectoryWork(QuotaManager& aQuotaManager) override;
 
   virtual void SendResults() override;
+};
+
+class ShutdownStorageOp : public NormalOriginOperationBase {
+  MozPromiseHolder<BoolPromise> mPromiseHolder;
+
+ public:
+  ShutdownStorageOp()
+      : NormalOriginOperationBase("dom::quota::ShutdownStorageOp",
+                                  Nullable<PersistenceType>(),
+                                  OriginScope::FromNull(),
+                                  /* aExclusive */ true) {
+    AssertIsOnOwningThread();
+  }
+
+  RefPtr<BoolPromise> OnResults() {
+    AssertIsOnOwningThread();
+
+    return mPromiseHolder.Ensure(__func__);
+  }
+
+ private:
+  ~ShutdownStorageOp() = default;
+
+#ifdef DEBUG
+  nsresult DirectoryOpen() override;
+#endif
+
+  nsresult DoDirectoryWork(QuotaManager& aQuotaManager) override;
+
+  void SendResults() override;
 };
 
 /*******************************************************************************
@@ -1912,11 +1937,12 @@ Result<bool, nsresult> MaybeUpdateLastAccessTimeForOrigin(
 }  // namespace
 
 BackgroundThreadObject::BackgroundThreadObject()
-    : mOwningThread(GetCurrentEventTarget()) {
+    : mOwningThread(GetCurrentSerialEventTarget()) {
   AssertIsOnOwningThread();
 }
 
-BackgroundThreadObject::BackgroundThreadObject(nsIEventTarget* aOwningThread)
+BackgroundThreadObject::BackgroundThreadObject(
+    nsISerialEventTarget* aOwningThread)
     : mOwningThread(aOwningThread) {}
 
 #ifdef DEBUG
@@ -1931,7 +1957,7 @@ void BackgroundThreadObject::AssertIsOnOwningThread() const {
 
 #endif  // DEBUG
 
-nsIEventTarget* BackgroundThreadObject::OwningThread() const {
+nsISerialEventTarget* BackgroundThreadObject::OwningThread() const {
   MOZ_ASSERT(mOwningThread);
   return mOwningThread;
 }
@@ -1972,7 +1998,8 @@ void ReportInternalError(const char* aFile, uint32_t aLine, const char* aStr) {
   nsContentUtils::LogSimpleConsoleError(
       NS_ConvertUTF8toUTF16(
           nsPrintfCString("Quota %s: %s:%" PRIu32, aStr, aFile, aLine)),
-      "quota", false /* Quota Manager is not active in private browsing mode */,
+      "quota"_ns,
+      false /* Quota Manager is not active in private browsing mode */,
       true /* Quota Manager runs always in a chrome context */);
 }
 
@@ -2773,6 +2800,13 @@ nsresult QuotaManager::Observer::Initialize() {
 }
 
 // static
+nsIObserver* QuotaManager::Observer::GetInstance() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  return sInstance;
+}
+
+// static
 void QuotaManager::Observer::ShutdownCompleted() {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(sInstance);
@@ -3291,7 +3325,8 @@ QuotaManager::QuotaManager(const nsAString& aBasePath,
       mTemporaryStorageUsage(0),
       mNextDirectoryLockId(0),
       mTemporaryStorageInitialized(false),
-      mCacheUsable(false) {
+      mCacheUsable(false),
+      mShuttingDownStorage(false) {
   AssertIsOnOwningThread();
   MOZ_ASSERT(!gInstance);
 }
@@ -3355,6 +3390,13 @@ QuotaManager* QuotaManager::Get() {
 }
 
 // static
+nsIObserver* QuotaManager::GetObserver() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  return Observer::GetInstance();
+}
+
+// static
 bool QuotaManager::IsShuttingDown() { return gShutdown; }
 
 // static
@@ -3373,6 +3415,15 @@ void QuotaManager::ShutdownInstance() {
   MOZ_ASSERT(runnable);
 
   MOZ_ALWAYS_SUCCEEDS(NS_DispatchToMainThread(runnable.forget()));
+}
+
+// static
+void QuotaManager::Reset() {
+  AssertIsOnBackgroundThread();
+  MOZ_ASSERT(!gInstance);
+  MOZ_ASSERT(gShutdown);
+
+  gShutdown = false;
 }
 
 // static
@@ -3689,7 +3740,8 @@ nsresult QuotaManager::Init() {
                     "QuotaManager IO"));
 
   static_assert(Client::IDB == 0 && Client::DOMCACHE == 1 && Client::SDB == 2 &&
-                    Client::LS == 3 && Client::TYPE_MAX == 4,
+                    Client::FILESYSTEM == 3 && Client::LS == 4 &&
+                    Client::TYPE_MAX == 5,
                 "Fix the registration!");
 
   // Register clients.
@@ -3697,6 +3749,7 @@ nsresult QuotaManager::Init() {
   clients.AppendElement(indexedDB::CreateQuotaClient());
   clients.AppendElement(cache::CreateQuotaClient());
   clients.AppendElement(simpledb::CreateQuotaClient());
+  clients.AppendElement(fs::CreateQuotaClient());
   if (NextGenLocalStorageEnabled()) {
     clients.AppendElement(localstorage::CreateQuotaClient());
   } else {
@@ -3708,11 +3761,12 @@ nsresult QuotaManager::Init() {
   MOZ_ASSERT(mClients->Capacity() == Client::TYPE_MAX,
              "Should be using an auto array with correct capacity!");
 
-  mAllClientTypes.init(ClientTypesArray{Client::Type::IDB,
-                                        Client::Type::DOMCACHE,
-                                        Client::Type::SDB, Client::Type::LS});
-  mAllClientTypesExceptLS.init(ClientTypesArray{
-      Client::Type::IDB, Client::Type::DOMCACHE, Client::Type::SDB});
+  mAllClientTypes.init(ClientTypesArray{
+      Client::Type::IDB, Client::Type::DOMCACHE, Client::Type::SDB,
+      Client::Type::FILESYSTEM, Client::Type::LS});
+  mAllClientTypesExceptLS.init(
+      ClientTypesArray{Client::Type::IDB, Client::Type::DOMCACHE,
+                       Client::Type::SDB, Client::Type::FILESYSTEM});
 
   return NS_OK;
 }
@@ -3940,18 +3994,6 @@ void QuotaManager::Shutdown() {
 
   auto shutdownAndJoinIOThread = [this]() {
     RecordQuotaManagerShutdownStep("shutdownAndJoinIOThread"_ns);
-    // NB: It's very important that runnable is destroyed on this thread
-    // (i.e. after we join the IO thread) because we can't release the
-    // QuotaManager on the IO thread. This should probably use
-    // NewNonOwningRunnableMethod ...
-    RefPtr<Runnable> runnable =
-        NewRunnableMethod("dom::quota::QuotaManager::ShutdownStorage", this,
-                          &QuotaManager::ShutdownStorage);
-    MOZ_ASSERT(runnable);
-
-    // Give clients a chance to cleanup IO thread only objects.
-    QM_WARNONLY_TRY(
-        QM_TO_RESULT((*mIOThread)->Dispatch(runnable, NS_DISPATCH_NORMAL)));
 
     // Make sure to join with our IO thread.
     QM_WARNONLY_TRY(QM_TO_RESULT((*mIOThread)->Shutdown()));
@@ -3968,6 +4010,15 @@ void QuotaManager::Shutdown() {
   ScopedLogExtraInfo scope{ScopedLogExtraInfo::kTagContext,
                            "dom::quota::QuotaManager::Shutdown"_ns};
 
+  // This must be called before `flagShutdownStarted`, it would fail otherwise.
+  // `ShutdownStorageOp` needs to acquire an exclusive directory lock over
+  // entire <profile>/storage which will abort any existing operations and wait
+  // for all existing directory locks to be released. So the shutdown operation
+  // will effectively run after all existing operations.
+  // We don't need to use the returned promise here because `ShutdownStorage`
+  // registers `ShudownStorageOp` in `gNormalOriginOps`.
+  ShutdownStorage();
+
   flagShutdownStarted();
 
   startCrashBrowserTimer();
@@ -3976,6 +4027,12 @@ void QuotaManager::Shutdown() {
   // maintenance work.
   // This could be done as part of QuotaClient::AbortAllOperations.
   StopIdleMaintenance();
+
+  // XXX In theory, we could simplify the code below (and also the `Client`
+  // interface) by removing the `initiateShutdownWorkThreads` and
+  // `isAllClientsShutdownComplete` calls because it should be sufficient
+  // to rely on `ShutdownStorage` to abort all existing operations and to
+  // wait for all existing directory locks to be released as well.
 
   const bool needsToWait =
       initiateShutdownWorkThreads() || static_cast<bool>(gNormalOriginOps);
@@ -6476,7 +6533,36 @@ nsresult QuotaManager::EnsureTemporaryStorageIsInitialized() {
       "dom::quota::FirstInitializationAttempt::TemporaryStorage"_ns, innerFunc);
 }
 
-void QuotaManager::ShutdownStorage() {
+RefPtr<BoolPromise> QuotaManager::ShutdownStorage() {
+  if (!mShuttingDownStorage) {
+    mShuttingDownStorage = true;
+
+    auto shutdownStorageOp = MakeRefPtr<ShutdownStorageOp>();
+
+    RegisterNormalOriginOp(*shutdownStorageOp);
+
+    shutdownStorageOp->RunImmediately();
+
+    shutdownStorageOp->OnResults()->Then(
+        GetCurrentSerialEventTarget(), __func__,
+        [self = RefPtr<QuotaManager>(this)](bool aResolveValue) {
+          self->mShuttingDownStorage = false;
+
+          self->mShutdownStoragePromiseHolder.ResolveIfExists(aResolveValue,
+                                                              __func__);
+        },
+        [self = RefPtr<QuotaManager>(this)](nsresult aRejectValue) {
+          self->mShuttingDownStorage = false;
+
+          self->mShutdownStoragePromiseHolder.RejectIfExists(aRejectValue,
+                                                             __func__);
+        });
+  }
+
+  return mShutdownStoragePromiseHolder.Ensure(__func__);
+}
+
+void QuotaManager::ShutdownStorageInternal() {
   AssertIsOnIOThread();
 
   if (mStorageConnection) {
@@ -7951,6 +8037,38 @@ void SaveOriginAccessTimeOp::SendResults() {
 #endif
 }
 
+#ifdef DEBUG
+nsresult ShutdownStorageOp::DirectoryOpen() {
+  AssertIsOnBackgroundThread();
+  MOZ_ASSERT(mDirectoryLock);
+  mDirectoryLock->AssertIsAcquiredExclusively();
+
+  return NormalOriginOperationBase::DirectoryOpen();
+}
+#endif
+
+nsresult ShutdownStorageOp::DoDirectoryWork(QuotaManager& aQuotaManager) {
+  AssertIsOnIOThread();
+
+  AUTO_PROFILER_LABEL("ShutdownStorageOp::DoDirectoryWork", OTHER);
+
+  aQuotaManager.ShutdownStorageInternal();
+
+  return NS_OK;
+}
+
+void ShutdownStorageOp::SendResults() {
+#ifdef DEBUG
+  NoteActorDestroyed();
+#endif
+
+  if (NS_SUCCEEDED(mResultCode)) {
+    mPromiseHolder.ResolveIfExists(true, __func__);
+  } else {
+    mPromiseHolder.RejectIfExists(mResultCode, __func__);
+  }
+}
+
 NS_IMETHODIMP
 StoragePressureRunnable::Run() {
   MOZ_ASSERT(NS_IsMainThread());
@@ -9302,7 +9420,7 @@ nsresult ResetOrClearOp::DoDirectoryWork(QuotaManager& aQuotaManager) {
     aQuotaManager.RemoveQuota();
   }
 
-  aQuotaManager.ShutdownStorage();
+  aQuotaManager.ShutdownStorageInternal();
 
   if (mClear) {
     DeleteStorageFile(aQuotaManager);

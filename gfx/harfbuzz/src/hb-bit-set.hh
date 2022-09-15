@@ -56,7 +56,7 @@ struct hb_bit_set_t
   {
     successful = true;
     population = 0;
-    last_page_lookup = 0;
+    last_page_lookup.set_relaxed (0);
     page_map.init ();
     pages.init ();
   }
@@ -78,7 +78,7 @@ struct hb_bit_set_t
 
   bool successful = true; /* Allocations successful */
   mutable unsigned int population = 0;
-  mutable unsigned int last_page_lookup = 0;
+  mutable hb_atomic_int_t last_page_lookup = 0;
   hb_sorted_vector_t<page_map_t> page_map;
   hb_vector_t<page_t> pages;
 
@@ -465,12 +465,10 @@ struct hb_bit_set_t
   }
   public:
 
-  template <typename Op>
-  void process (const Op& op, const hb_bit_set_t &other)
+  void process_ (hb_bit_page_t::vector_t (*op) (const hb_bit_page_t::vector_t &, const hb_bit_page_t::vector_t &),
+		 bool passthru_left, bool passthru_right,
+		 const hb_bit_set_t &other)
   {
-    const bool passthru_left = op (1, 0);
-    const bool passthru_right = op (0, 1);
-
     if (unlikely (!successful)) return;
 
     dirty ();
@@ -590,6 +588,15 @@ struct hb_bit_set_t
     assert (!count);
     resize (newCount);
   }
+  template <typename Op>
+  static hb_bit_page_t::vector_t
+  op_ (const hb_bit_page_t::vector_t &a, const hb_bit_page_t::vector_t &b)
+  { return Op{} (a, b); }
+  template <typename Op>
+  void process (const Op& op, const hb_bit_set_t &other)
+  {
+    process_ (op_<Op>, op (1, 0), op (0, 1), other);
+  }
 
   void union_ (const hb_bit_set_t &other) { process (hb_bitwise_or, other); }
   void intersect (const hb_bit_set_t &other) { process (hb_bitwise_and, other); }
@@ -607,7 +614,7 @@ struct hb_bit_set_t
 
     const auto* page_map_array = page_map.arrayZ;
     unsigned int major = get_major (*codepoint);
-    unsigned int i = last_page_lookup;
+    unsigned int i = last_page_lookup.get_relaxed ();
 
     if (unlikely (i >= page_map.length || page_map_array[i].major != major))
     {
@@ -625,7 +632,7 @@ struct hb_bit_set_t
       if (pages_array[current.index].next (codepoint))
       {
         *codepoint += current.major * page_t::PAGE_BITS;
-        last_page_lookup = i;
+        last_page_lookup.set_relaxed (i);
         return true;
       }
       i++;
@@ -638,11 +645,11 @@ struct hb_bit_set_t
       if (m != INVALID)
       {
 	*codepoint = current.major * page_t::PAGE_BITS + m;
-        last_page_lookup = i;
+        last_page_lookup.set_relaxed (i);
 	return true;
       }
     }
-    last_page_lookup = 0;
+    last_page_lookup.set_relaxed (0);
     *codepoint = INVALID;
     return false;
   }
@@ -725,7 +732,7 @@ struct hb_bit_set_t
     {
       const auto* page_map_array = page_map.arrayZ;
       unsigned int major = get_major (codepoint);
-      unsigned int i = last_page_lookup;
+      unsigned int i = last_page_lookup.get_relaxed ();
       if (unlikely (i >= page_map.length || page_map_array[i].major != major))
       {
 	page_map.bfind (major, &i, HB_NOT_FOUND_STORE_CLOSEST);
@@ -766,7 +773,7 @@ struct hb_bit_set_t
     {
       const auto* page_map_array = page_map.arrayZ;
       unsigned int major = get_major (codepoint);
-      unsigned int i = last_page_lookup;
+      unsigned int i = last_page_lookup.get_relaxed ();
       if (unlikely (i >= page_map.length || page_map_array[i].major != major))
       {
         page_map.bfind(major, &i, HB_NOT_FOUND_STORE_CLOSEST);
@@ -893,15 +900,15 @@ struct hb_bit_set_t
     /* The extra page_map length is necessary; can't just rely on vector here,
      * since the next check would be tricked because a null page also has
      * major==0, which we can't distinguish from an actualy major==0 page... */
-    if (likely (last_page_lookup < page_map.length))
+    unsigned i = last_page_lookup.get_relaxed ();
+    if (likely (i < page_map.length))
     {
-      auto &cached_page = page_map.arrayZ[last_page_lookup];
+      auto &cached_page = page_map.arrayZ[i];
       if (cached_page.major == major)
 	return &pages[cached_page.index];
     }
 
     page_map_t map = {major, pages.length};
-    unsigned int i;
     if (!page_map.bfind (map, &i, HB_NOT_FOUND_STORE_CLOSEST))
     {
       if (!insert)
@@ -917,7 +924,7 @@ struct hb_bit_set_t
       page_map[i] = map;
     }
 
-    last_page_lookup = i;
+    last_page_lookup.set_relaxed (i);
     return &pages[page_map[i].index];
   }
   const page_t *page_for (hb_codepoint_t g) const
@@ -927,19 +934,19 @@ struct hb_bit_set_t
     /* The extra page_map length is necessary; can't just rely on vector here,
      * since the next check would be tricked because a null page also has
      * major==0, which we can't distinguish from an actualy major==0 page... */
-    if (likely (last_page_lookup < page_map.length))
+    unsigned i = last_page_lookup.get_relaxed ();
+    if (likely (i < page_map.length))
     {
-      auto &cached_page = page_map.arrayZ[last_page_lookup];
+      auto &cached_page = page_map.arrayZ[i];
       if (cached_page.major == major)
 	return &pages[cached_page.index];
     }
 
     page_map_t key = {major};
-    unsigned int i;
     if (!page_map.bfind (key, &i))
       return nullptr;
 
-    last_page_lookup = i;
+    last_page_lookup.set_relaxed (i);
     return &pages[page_map[i].index];
   }
   page_t &page_at (unsigned int i) { return pages[page_map[i].index]; }

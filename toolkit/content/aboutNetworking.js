@@ -4,7 +4,6 @@
 
 "use strict";
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const FileUtils = ChromeUtils.import("resource://gre/modules/FileUtils.jsm")
   .FileUtils;
 const gEnv = Cc["@mozilla.org/process/environment;1"].getService(
@@ -379,6 +378,11 @@ function updateLogModules() {
         activeLogModules.push("sync");
       }
     } catch (e) {}
+    try {
+      if (Services.prefs.getBoolPref("logging.config.profilerstacks")) {
+        activeLogModules.push("profilerstacks");
+      }
+    } catch (e) {}
 
     let children = Services.prefs.getBranch("logging.").getChildList("");
 
@@ -445,6 +449,8 @@ function setLogModules() {
       // XXX: append is not yet supported.
     } else if (module == "sync") {
       Services.prefs.setBoolPref("logging.config.sync", true);
+    } else if (module == "profilerstacks") {
+      Services.prefs.setBoolPref("logging.config.profilerstacks", true);
     } else {
       let lastColon = module.lastIndexOf(":");
       let key = module.slice(0, lastColon);

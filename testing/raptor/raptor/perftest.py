@@ -82,6 +82,7 @@ class Perftest(object):
         gecko_profile_extra_threads=None,
         gecko_profile_threads=None,
         gecko_profile_features=None,
+        extra_profiler_run=False,
         symbols_path=None,
         host=None,
         power_test=False,
@@ -98,6 +99,7 @@ class Perftest(object):
         device_name=None,
         disable_perf_tuning=False,
         conditioned_profile=None,
+        test_bytecode_cache=False,
         chimera=False,
         extra_prefs={},
         environment={},
@@ -129,6 +131,7 @@ class Perftest(object):
             "gecko_profile_extra_threads": gecko_profile_extra_threads,
             "gecko_profile_threads": gecko_profile_threads,
             "gecko_profile_features": gecko_profile_features,
+            "extra_profiler_run": extra_profiler_run,
             "symbols_path": symbols_path,
             "host": host,
             "power_test": power_test,
@@ -143,6 +146,7 @@ class Perftest(object):
             "fission": fission,
             "disable_perf_tuning": disable_perf_tuning,
             "conditioned_profile": conditioned_profile,
+            "test_bytecode_cache": test_bytecode_cache,
             "chimera": chimera,
             "extra_prefs": extra_prefs,
             "environment": environment,
@@ -454,8 +458,11 @@ class Perftest(object):
         pass
 
     def run_tests(self, tests, test_names):
+        tests_to_run = tests
+        if self.results_handler.existing_results:
+            tests_to_run = []
         try:
-            for test in tests:
+            for test in tests_to_run:
                 try:
                     self.run_test(test, timeout=int(test.get("page_timeout")))
                 except RuntimeError as e:
@@ -490,8 +497,11 @@ class Perftest(object):
         self.config["page_count"] = self.page_count
         res = self.results_handler.summarize_and_output(self.config, tests, test_names)
 
-        # gecko profiling symbolication
-        if self.config["gecko_profile"]:
+        # Gecko profiling symbolication
+        # We enable the gecko profiler either when the profiler is enabled with
+        # gecko_profile flag form the command line or when an extra profiler-enabled
+        # run is added with extra_profiler_run flag.
+        if self.config["gecko_profile"] or self.config.get("extra_profiler_run"):
             self.gecko_profiler.symbolicate()
             # clean up the temp gecko profiling folders
             LOG.info("cleaning up after gecko profiling")

@@ -276,6 +276,10 @@ class ChromeUtils {
   static void GetFormAutofillConfidences(
       GlobalObject& aGlobal, const Sequence<OwningNonNull<Element>>& aElements,
       nsTArray<FormAutofillConfidences>& aResults, ErrorResult& aRv);
+
+  static bool IsDarkBackground(GlobalObject&, Element&);
+
+  static double DateNow(GlobalObject&);
 };
 
 }  // namespace dom

@@ -13,9 +13,8 @@
  * they would also miss them.
  */
 
-const { Cu, Cc, Ci } = require("chrome");
+const { Cu, Cc, Ci, Services } = require("chrome");
 const jsmScope = require("resource://devtools/shared/loader/Loader.jsm");
-const { Services } = require("resource://gre/modules/Services.jsm");
 
 const systemPrincipal = Services.scriptSecurityManager.getSystemPrincipal();
 
@@ -64,12 +63,14 @@ const debuggerSandbox = (exports.internalSandbox = Cu.Sandbox(systemPrincipal, {
     "Event",
     "FileReader",
     "FormData",
+    "Headers",
     "indexedDB",
     "InspectorUtils",
     "Node",
     "TextDecoder",
     "TextEncoder",
     "URL",
+    "URLSearchParams",
     "Window",
     "XMLHttpRequest",
   ],
@@ -89,12 +90,14 @@ const {
   Event,
   FileReader,
   FormData,
+  Headers,
   indexedDB,
   InspectorUtils,
   Node,
   TextDecoder,
   TextEncoder,
   URL,
+  URLSearchParams,
   Window,
   XMLHttpRequest,
 } = debuggerSandbox;
@@ -112,7 +115,7 @@ const {
  */
 function defineLazyGetter(object, name, lambda) {
   Object.defineProperty(object, name, {
-    get: function() {
+    get() {
       // Redefine this accessor property as a data property.
       // Delete it first, to rule out "too much recursion" in case object is
       // a proxy whose defineProperty handler might unwittingly trigger this
@@ -214,7 +217,6 @@ function lazyRequireGetter(obj, properties, module, destructure) {
 
 // List of pseudo modules exposed to all devtools modules.
 exports.modules = {
-  ChromeUtils,
   DebuggerNotificationObserver,
   HeapSnapshot,
   InspectorUtils,
@@ -222,7 +224,6 @@ exports.modules = {
   // and so are never frozen, even if the browser loader module which
   // pull it is destroyed. See bug 1402779.
   Promise,
-  Services: Object.create(Services),
   TelemetryStopwatch,
 };
 
@@ -259,6 +260,7 @@ exports.globals = {
   Blob,
   btoa,
   CanonicalBrowsingContext,
+  ChromeUtils,
   BrowsingContext,
   WebExtensionPolicy,
   WindowGlobalParent,
@@ -277,6 +279,7 @@ exports.globals = {
   Element,
   FileReader,
   FormData,
+  Headers,
   IOUtils,
   isWorker: false,
   L10nRegistry,
@@ -284,7 +287,7 @@ exports.globals = {
     lazyGetter: defineLazyGetter,
     lazyImporter: defineLazyModuleGetter,
     lazyServiceGetter: defineLazyServiceGetter,
-    lazyRequireGetter: lazyRequireGetter,
+    lazyRequireGetter,
     // Defined by Loader.jsm
     id: null,
   },
@@ -292,10 +295,12 @@ exports.globals = {
   Node,
   PathUtils,
   reportError: Cu.reportError,
+  Services: Object.create(Services),
   StructuredCloneHolder,
   TextDecoder,
   TextEncoder,
   URL,
+  URLSearchParams,
   Window,
   XMLHttpRequest,
 };
@@ -308,7 +313,7 @@ const globals = {};
 function lazyGlobal(name, getter) {
   defineLazyGetter(globals, name, getter);
   Object.defineProperty(exports.globals, name, {
-    get: function() {
+    get() {
       return globals[name];
     },
     configurable: true,

@@ -211,12 +211,12 @@ class Tabbar extends Component {
 
     const tabs = this.state.tabs.slice();
     tabs[index] = Object.assign({}, tabs[index], {
-      isVisible: isVisible,
+      isVisible,
     });
 
     this.setState(
       Object.assign({}, this.state, {
-        tabs: tabs,
+        tabs,
       })
     );
   }
@@ -241,7 +241,7 @@ class Tabbar extends Component {
       () => {
         // Select the next active tab and force the select event handler to initialize
         // the panel if needed.
-        if (tabs.length > 0 && this.props.onSelect) {
+        if (tabs.length && this.props.onSelect) {
           this.props.onSelect(this.getTabId(activeTab));
         }
       }

@@ -4,12 +4,11 @@
 "use strict";
 
 const { Assert } = ChromeUtils.import("resource://testing-common/Assert.jsm");
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { BrowserTestUtils } = ChromeUtils.import(
   "resource://testing-common/BrowserTestUtils.jsm"
 );
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -85,10 +84,15 @@ async function showBrowserAction(window, extensionId) {
     return;
   }
 
+  let navbar = window.document.getElementById("nav-bar");
   if (group.areaType == lazy.CustomizableUI.TYPE_TOOLBAR) {
-    Assert.ok(!widget.overflowed, "Expect widget not to be overflowed");
+    Assert.equal(
+      widget.overflowed,
+      navbar.hasAttribute("overflowing"),
+      "Expect widget overflow state to match toolbar"
+    );
   } else if (group.areaType == lazy.CustomizableUI.TYPE_MENU_PANEL) {
-    await window.document.getElementById("nav-bar").overflowable.show();
+    await navbar.overflowable.show();
   }
 }
 

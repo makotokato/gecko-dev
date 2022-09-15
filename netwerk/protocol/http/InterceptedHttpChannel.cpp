@@ -280,11 +280,10 @@ nsresult InterceptedHttpChannel::RedirectForResponseURL(
   ExtContentPolicyType contentPolicyType =
       redirectLoadInfo->GetExternalContentPolicyType();
 
-  rv = newChannel->Init(
-      aResponseURI, mCaps, static_cast<nsProxyInfo*>(mProxyInfo.get()),
-      mProxyResolveFlags, mProxyURI, mChannelId, contentPolicyType);
-
-  newChannel->SetLoadInfo(redirectLoadInfo);
+  rv = newChannel->Init(aResponseURI, mCaps,
+                        static_cast<nsProxyInfo*>(mProxyInfo.get()),
+                        mProxyResolveFlags, mProxyURI, mChannelId,
+                        contentPolicyType, redirectLoadInfo);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Normally we don't propagate the LoadInfo's service worker tainting
@@ -488,6 +487,21 @@ InterceptedHttpChannel::CreateForSynthesis(
   ref->mBodyCallback = aBodyCallback;
 
   return ref.forget();
+}
+
+NS_IMETHODIMP InterceptedHttpChannel::SetCanceledReason(
+    const nsACString& aReason) {
+  return SetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP InterceptedHttpChannel::GetCanceledReason(nsACString& aReason) {
+  return GetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::CancelWithReason(nsresult aStatus,
+                                         const nsACString& aReason) {
+  return CancelWithReasonImpl(aStatus, aReason);
 }
 
 NS_IMETHODIMP
@@ -1191,7 +1205,7 @@ InterceptedHttpChannel::GetCacheEntryId(uint64_t* aCacheEntryId) {
 }
 
 NS_IMETHODIMP
-InterceptedHttpChannel::GetCacheTokenFetchCount(int32_t* _retval) {
+InterceptedHttpChannel::GetCacheTokenFetchCount(uint32_t* _retval) {
   NS_ENSURE_ARG_POINTER(_retval);
 
   if (mSynthesizedCacheInfo) {

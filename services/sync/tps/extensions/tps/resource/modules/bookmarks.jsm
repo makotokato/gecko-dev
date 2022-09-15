@@ -15,16 +15,15 @@ var EXPORTED_SYMBOLS = [
   "DumpBookmarks",
 ];
 
-const { PlacesBackups } = ChromeUtils.import(
-  "resource://gre/modules/PlacesBackups.jsm"
+const { PlacesBackups } = ChromeUtils.importESModule(
+  "resource://gre/modules/PlacesBackups.sys.mjs"
 );
-const { PlacesSyncUtils } = ChromeUtils.import(
-  "resource://gre/modules/PlacesSyncUtils.jsm"
+const { PlacesSyncUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/PlacesSyncUtils.sys.mjs"
 );
-const { PlacesUtils } = ChromeUtils.import(
-  "resource://gre/modules/PlacesUtils.jsm"
+const { PlacesUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/PlacesUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { Logger } = ChromeUtils.import("resource://tps/logger.jsm");
 
 async function DumpBookmarks() {
@@ -475,7 +474,7 @@ Bookmark.prototype = {
     if (tags != null) {
       let URI = Services.io.newURI(this.props.uri);
       PlacesUtils.tagging.untagURI(URI, null);
-      if (tags.length > 0) {
+      if (tags.length) {
         PlacesUtils.tagging.tagURI(URI, tags);
       }
     }

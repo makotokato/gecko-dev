@@ -285,7 +285,7 @@ interface GPUBuffer {
     ArrayBuffer getMappedRange(optional GPUSize64 offset = 0, optional GPUSize64 size);
     [Throws]
     void unmap();
-
+    [Throws]
     void destroy();
 };
 GPUBuffer includes GPUObjectBase;
@@ -627,9 +627,8 @@ interface GPUCompilationMessage {
 [Pref="dom.webgpu.enabled",
  Exposed=(Window,DedicatedWorker)]
 interface GPUCompilationInfo {
-    //TODO:
-    //[Cached, Frozen, Pure]
-    //readonly attribute sequence<GPUCompilationMessage> messages;
+    [Cached, Frozen, Pure]
+    readonly attribute sequence<GPUCompilationMessage> messages;
 };
 
 // ShaderModule
@@ -643,8 +642,8 @@ dictionary GPUShaderModuleDescriptor : GPUObjectDescriptorBase {
 [Pref="dom.webgpu.enabled",
  Exposed=(Window,DedicatedWorker)]
 interface GPUShaderModule {
-    //TODO:
-    //Promise<GPUCompilationInfo> compilationInfo();
+    [Throws]
+    Promise<GPUCompilationInfo> compilationInfo();
 };
 GPUShaderModule includes GPUObjectBase;
 
@@ -929,11 +928,22 @@ dictionary GPUImageCopyBuffer : GPUImageDataLayout {
     required GPUBuffer buffer;
 };
 
+dictionary GPUImageCopyExternalImage {
+    required (ImageBitmap or HTMLCanvasElement or OffscreenCanvas) source;
+    GPUOrigin2D origin = {};
+    boolean flipY = false;
+};
+
 dictionary GPUImageCopyTexture {
     required GPUTexture texture;
     GPUIntegerCoordinate mipLevel = 0;
     GPUOrigin3D origin;
     GPUTextureAspect aspect = "all";
+};
+
+dictionary GPUImageCopyTextureTagged : GPUImageCopyTexture {
+    //GPUPredefinedColorSpace colorSpace = "srgb"; //TODO
+    boolean premultipliedAlpha = false;
 };
 
 dictionary GPUImageBitmapCopyView {
@@ -1166,6 +1176,12 @@ interface GPUQueue {
       BufferSource data,
       GPUImageDataLayout dataLayout,
       GPUExtent3D size);
+
+    [Throws]
+    void copyExternalImageToTexture(
+      GPUImageCopyExternalImage source,
+      GPUImageCopyTextureTagged destination,
+      GPUExtent3D copySize);
 };
 GPUQueue includes GPUObjectBase;
 

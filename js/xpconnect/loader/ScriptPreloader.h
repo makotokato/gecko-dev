@@ -137,7 +137,7 @@ class ScriptPreloader : public nsIObserver,
   bool Active() const { return mCacheInitialized && !mStartupFinished; }
 
  private:
-  Result<Ok, nsresult> InitCacheInternal(JS::HandleObject scope = nullptr);
+  Result<Ok, nsresult> InitCacheInternal(JS::Handle<JSObject*> scope = nullptr);
   already_AddRefed<JS::Stencil> GetCachedStencilInternal(
       JSContext* cx, const JS::DecodeOptions& options, const nsCString& path);
 
@@ -423,7 +423,7 @@ class ScriptPreloader : public nsIObserver,
   Result<Ok, nsresult> OpenCache();
 
   // Writes a new cache file to disk. Must not be called on the main thread.
-  Result<Ok, nsresult> WriteCache() REQUIRES(mSaveMonitor);
+  Result<Ok, nsresult> WriteCache() MOZ_REQUIRES(mSaveMonitor);
 
   void StartCacheWrite();
 
@@ -452,7 +452,7 @@ class ScriptPreloader : public nsIObserver,
   already_AddRefed<JS::Stencil> WaitForCachedStencil(
       JSContext* cx, const JS::DecodeOptions& options, CachedStencil* script);
 
-  void DecodeNextBatch(size_t chunkSize, JS::HandleObject scope = nullptr);
+  void DecodeNextBatch(size_t chunkSize, JS::Handle<JSObject*> scope = nullptr);
 
   static void OffThreadDecodeCallback(JS::OffThreadToken* token, void* context);
   void FinishOffThreadDecode(JS::OffThreadToken* token);
@@ -488,7 +488,7 @@ class ScriptPreloader : public nsIObserver,
   bool mSaveComplete = false;
   bool mDataPrepared = false;
   // May only be changed on the main thread, while `mSaveMonitor` is held.
-  bool mCacheInvalidated GUARDED_BY(mSaveMonitor) = false;
+  bool mCacheInvalidated MOZ_GUARDED_BY(mSaveMonitor) = false;
 
   // The list of scripts that we read from the initial startup cache file,
   // but have yet to initiate a decode task for.
@@ -504,11 +504,11 @@ class ScriptPreloader : public nsIObserver,
 
   // True if a runnable has been dispatched to the main thread to finish an
   // off-thread decode operation. Access only while 'mMonitor' is held.
-  bool mFinishDecodeRunnablePending GUARDED_BY(mMonitor) = false;
+  bool mFinishDecodeRunnablePending MOZ_GUARDED_BY(mMonitor) = false;
 
   // True is main-thread is blocked and we should notify with Monitor. Access
   // only while `mMonitor` is held.
-  bool mWaitingForDecode GUARDED_BY(mMonitor) = false;
+  bool mWaitingForDecode MOZ_GUARDED_BY(mMonitor) = false;
 
   // The process type of the current process.
   static ProcessType sProcessType;
@@ -534,7 +534,7 @@ class ScriptPreloader : public nsIObserver,
   AutoMemMap* mCacheData;
 
   Monitor mMonitor;
-  MonitorSingleWriter mSaveMonitor ACQUIRED_BEFORE(mMonitor);
+  MonitorSingleWriter mSaveMonitor MOZ_ACQUIRED_BEFORE(mMonitor);
 };
 
 }  // namespace mozilla

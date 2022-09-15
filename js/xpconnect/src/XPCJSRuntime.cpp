@@ -57,7 +57,7 @@
 #include "js/SliceBudget.h"
 #include "js/UbiNode.h"
 #include "js/UbiNodeUtils.h"
-#include "js/friend/UsageStatistics.h"  // JS_TELEMETRY_*, JS_SetAccumulateTelemetryCallback
+#include "js/friend/UsageStatistics.h"  // JSMetric, JS_SetAccumulateTelemetryCallback
 #include "js/friend/WindowProxy.h"  // js::SetWindowProxyClass
 #include "js/friend/XrayJitInfo.h"  // JS::SetXrayJitInfo
 #include "mozilla/dom/AbortSignalBinding.h"
@@ -103,6 +103,7 @@ const char* const XPCJSRuntime::mStrings[] = {
     "Ci",               // IDX_CI
     "Cr",               // IDX_CR
     "Cu",               // IDX_CU
+    "Services",         // IDX_SERVICES
     "wrappedJSObject",  // IDX_WRAPPED_JSOBJECT
     "prototype",        // IDX_PROTOTYPE
     "eval",             // IDX_EVAL
@@ -131,6 +132,7 @@ const char* const XPCJSRuntime::mStrings[] = {
     "fetch",            // IDX_FETCH
     "crypto",           // IDX_CRYPTO
     "indexedDB",        // IDX_INDEXEDDB
+    "structuredClone",  // IDX_STRUCTUREDCLONE
 };
 
 /***************************************************************************/
@@ -716,32 +718,11 @@ void XPCJSRuntime::TraceNativeBlackRoots(JSTracer* trc) {
 
 void XPCJSRuntime::TraceAdditionalNativeGrayRoots(JSTracer* trc) {
   XPCWrappedNativeScope::TraceWrappedNativesInAllScopes(this, trc);
-
-  for (XPCRootSetElem* e = mVariantRoots; e; e = e->GetNextRoot()) {
-    static_cast<XPCTraceableVariant*>(e)->TraceJS(trc);
-  }
-
-  for (XPCRootSetElem* e = mWrappedJSRoots; e; e = e->GetNextRoot()) {
-    static_cast<nsXPCWrappedJS*>(e)->TraceJS(trc);
-  }
 }
 
 void XPCJSRuntime::TraverseAdditionalNativeRoots(
     nsCycleCollectionNoteRootCallback& cb) {
   XPCWrappedNativeScope::SuspectAllWrappers(cb);
-
-  for (XPCRootSetElem* e = mVariantRoots; e; e = e->GetNextRoot()) {
-    XPCTraceableVariant* v = static_cast<XPCTraceableVariant*>(e);
-    cb.NoteXPCOMRoot(
-        v,
-        XPCTraceableVariant::NS_CYCLE_COLLECTION_INNERCLASS::GetParticipant());
-  }
-
-  for (XPCRootSetElem* e = mWrappedJSRoots; e; e = e->GetNextRoot()) {
-    cb.NoteXPCOMRoot(
-        ToSupports(static_cast<nsXPCWrappedJS*>(e)),
-        nsXPCWrappedJS::NS_CYCLE_COLLECTION_INNERCLASS::GetParticipant());
-  }
 }
 
 void XPCJSRuntime::UnmarkSkippableJSHolders() {
@@ -1098,14 +1079,6 @@ size_t CompartmentPrivate::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) {
 }
 
 /***************************************************************************/
-
-void XPCJSRuntime::SystemIsBeingShutDown() {
-  // We don't want to track wrapped JS roots after this point since we're
-  // making them !IsValid anyway through SystemIsBeingShutDown.
-  while (mWrappedJSRoots) {
-    mWrappedJSRoots->RemoveFromRootSet();
-  }
-}
 
 void XPCJSRuntime::Shutdown(JSContext* cx) {
   // This destructor runs before ~CycleCollectedJSContext, which does the actual
@@ -1949,10 +1922,6 @@ void ReportJSRuntimeExplicitTreeStats(const JS::RuntimeStats& rtStats,
                 rtStats.runtime.scriptData,
                 "The table holding script data shared in the runtime.");
 
-  RREPORT_BYTES(rtPath + "runtime/tracelogger"_ns, KIND_HEAP,
-                rtStats.runtime.tracelogger,
-                "The memory used for the tracelogger (per-runtime).");
-
   nsCString nonNotablePath =
       rtPath +
       nsPrintfCString(
@@ -2533,12 +2502,6 @@ void JSReporter::CollectReports(WindowPaths* windowPaths,
   REPORT_BYTES("explicit/xpconnect/js-module-loader"_ns, KIND_HEAP,
                jsModuleLoaderSize, "XPConnect's JS module loader.");
 
-  // Report tracelogger (global).
-
-  REPORT_BYTES(
-      "explicit/js-non-window/tracelogger"_ns, KIND_HEAP, gStats.tracelogger,
-      "The memory used for the tracelogger, including the graph and events.");
-
   // Report HelperThreadState.
 
   REPORT_BYTES("explicit/js-non-window/helper-thread/heap-other"_ns, KIND_HEAP,
@@ -2585,130 +2548,21 @@ static nsresult JSSizeOfTab(JSObject* objArg, size_t* jsObjectsSize,
 
 }  // namespace xpc
 
-static void AccumulateTelemetryCallback(int id, uint32_t sample,
-                                        const char* key) {
+static void AccumulateTelemetryCallback(JSMetric id, uint32_t sample) {
+  // clang-format off
   switch (id) {
-    case JS_TELEMETRY_GC_REASON:
-      Telemetry::Accumulate(Telemetry::GC_REASON_2, sample);
+#define CASE_ACCUMULATE(NAME, _)                      \
+    case JSMetric::NAME:                              \
+      Telemetry::Accumulate(Telemetry::NAME, sample); \
       break;
-    case JS_TELEMETRY_GC_IS_ZONE_GC:
-      Telemetry::Accumulate(Telemetry::GC_IS_COMPARTMENTAL, sample);
-      break;
-    case JS_TELEMETRY_GC_MS:
-      Telemetry::Accumulate(Telemetry::GC_MS, sample);
-      break;
-    case JS_TELEMETRY_GC_BUDGET_MS_2:
-      Telemetry::Accumulate(Telemetry::GC_BUDGET_MS_2, sample);
-      break;
-    case JS_TELEMETRY_GC_BUDGET_WAS_INCREASED:
-      Telemetry::Accumulate(Telemetry::GC_BUDGET_WAS_INCREASED, sample);
-      break;
-    case JS_TELEMETRY_GC_SLICE_WAS_LONG:
-      Telemetry::Accumulate(Telemetry::GC_SLICE_WAS_LONG, sample);
-      break;
-    case JS_TELEMETRY_GC_BUDGET_OVERRUN:
-      Telemetry::Accumulate(Telemetry::GC_BUDGET_OVERRUN, sample);
-      break;
-    case JS_TELEMETRY_GC_ANIMATION_MS:
-      Telemetry::Accumulate(Telemetry::GC_ANIMATION_MS, sample);
-      break;
-    case JS_TELEMETRY_GC_MAX_PAUSE_MS_2:
-      Telemetry::Accumulate(Telemetry::GC_MAX_PAUSE_MS_2, sample);
-      break;
-    case JS_TELEMETRY_GC_PREPARE_MS:
-      Telemetry::Accumulate(Telemetry::GC_PREPARE_MS, sample);
-      break;
-    case JS_TELEMETRY_GC_MARK_MS:
-      Telemetry::Accumulate(Telemetry::GC_MARK_MS, sample);
-      break;
-    case JS_TELEMETRY_GC_SWEEP_MS:
-      Telemetry::Accumulate(Telemetry::GC_SWEEP_MS, sample);
-      break;
-    case JS_TELEMETRY_GC_COMPACT_MS:
-      Telemetry::Accumulate(Telemetry::GC_COMPACT_MS, sample);
-      break;
-    case JS_TELEMETRY_GC_MARK_ROOTS_US:
-      Telemetry::Accumulate(Telemetry::GC_MARK_ROOTS_US, sample);
-      break;
-    case JS_TELEMETRY_GC_MARK_GRAY_MS_2:
-      Telemetry::Accumulate(Telemetry::GC_MARK_GRAY_MS_2, sample);
-      break;
-    case JS_TELEMETRY_GC_MARK_WEAK_MS:
-      Telemetry::Accumulate(Telemetry::GC_MARK_WEAK_MS, sample);
-      break;
-    case JS_TELEMETRY_GC_SLICE_MS:
-      Telemetry::Accumulate(Telemetry::GC_SLICE_MS, sample);
-      break;
-    case JS_TELEMETRY_GC_SLOW_PHASE:
-      Telemetry::Accumulate(Telemetry::GC_SLOW_PHASE, sample);
-      break;
-    case JS_TELEMETRY_GC_SLOW_TASK:
-      Telemetry::Accumulate(Telemetry::GC_SLOW_TASK, sample);
-      break;
-    case JS_TELEMETRY_GC_MMU_50:
-      Telemetry::Accumulate(Telemetry::GC_MMU_50, sample);
-      break;
-    case JS_TELEMETRY_GC_RESET:
-      Telemetry::Accumulate(Telemetry::GC_RESET, sample);
-      break;
-    case JS_TELEMETRY_GC_RESET_REASON:
-      Telemetry::Accumulate(Telemetry::GC_RESET_REASON, sample);
-      break;
-    case JS_TELEMETRY_GC_NON_INCREMENTAL:
-      Telemetry::Accumulate(Telemetry::GC_NON_INCREMENTAL, sample);
-      break;
-    case JS_TELEMETRY_GC_NON_INCREMENTAL_REASON:
-      Telemetry::Accumulate(Telemetry::GC_NON_INCREMENTAL_REASON, sample);
-      break;
-    case JS_TELEMETRY_GC_MINOR_REASON:
-      Telemetry::Accumulate(Telemetry::GC_MINOR_REASON, sample);
-      break;
-    case JS_TELEMETRY_GC_MINOR_REASON_LONG:
-      Telemetry::Accumulate(Telemetry::GC_MINOR_REASON_LONG, sample);
-      break;
-    case JS_TELEMETRY_GC_MINOR_US:
-      Telemetry::Accumulate(Telemetry::GC_MINOR_US, sample);
-      break;
-    case JS_TELEMETRY_GC_NURSERY_BYTES:
-      Telemetry::Accumulate(Telemetry::GC_NURSERY_BYTES_2, sample);
-      break;
-    case JS_TELEMETRY_GC_PRETENURE_COUNT_2:
-      Telemetry::Accumulate(Telemetry::GC_PRETENURE_COUNT_2, sample);
-      break;
-    case JS_TELEMETRY_GC_NURSERY_PROMOTION_RATE:
-      Telemetry::Accumulate(Telemetry::GC_NURSERY_PROMOTION_RATE, sample);
-      break;
-    case JS_TELEMETRY_GC_TENURED_SURVIVAL_RATE:
-      Telemetry::Accumulate(Telemetry::GC_TENURED_SURVIVAL_RATE, sample);
-      break;
-    case JS_TELEMETRY_GC_MARK_RATE_2:
-      Telemetry::Accumulate(Telemetry::GC_MARK_RATE_2, sample);
-      break;
-    case JS_TELEMETRY_GC_TIME_BETWEEN_S:
-      Telemetry::Accumulate(Telemetry::GC_TIME_BETWEEN_S, sample);
-      break;
-    case JS_TELEMETRY_GC_TIME_BETWEEN_SLICES_MS:
-      Telemetry::Accumulate(Telemetry::GC_TIME_BETWEEN_SLICES_MS, sample);
-      break;
-    case JS_TELEMETRY_GC_SLICE_COUNT:
-      Telemetry::Accumulate(Telemetry::GC_SLICE_COUNT, sample);
-      break;
-    case JS_TELEMETRY_GC_EFFECTIVENESS:
-      Telemetry::Accumulate(Telemetry::GC_EFFECTIVENESS, sample);
-      break;
-    case JS_TELEMETRY_DESERIALIZE_BYTES:
-      Telemetry::Accumulate(Telemetry::DESERIALIZE_BYTES, sample);
-      break;
-    case JS_TELEMETRY_DESERIALIZE_ITEMS:
-      Telemetry::Accumulate(Telemetry::DESERIALIZE_ITEMS, sample);
-      break;
-    case JS_TELEMETRY_DESERIALIZE_US:
-      Telemetry::Accumulate(Telemetry::DESERIALIZE_US, sample);
-      break;
+
+    FOR_EACH_JS_METRIC(CASE_ACCUMULATE)
+#undef CASE_ACCUMULATE
+
     default:
-      // Some telemetry only exists in the JS Shell, and are not reported here.
-      break;
+      MOZ_CRASH("Bad metric id");
   }
+  // clang-format on
 }
 
 static void SetUseCounterCallback(JSObject* obj, JSUseCounter counter) {
@@ -2914,8 +2768,6 @@ XPCJSRuntime::XPCJSRuntime(JSContext* aCx)
       mGCIsRunning(false),
       mNativesToReleaseArray(),
       mDoingFinalization(false),
-      mVariantRoots(nullptr),
-      mWrappedJSRoots(nullptr),
       mAsyncSnowWhiteFreer(new AsyncFreeSnowWhite()) {
   MOZ_COUNT_CTOR_INHERITED(XPCJSRuntime, CycleCollectedJSRuntime);
 }
@@ -3171,34 +3023,6 @@ void XPCJSRuntime::DebugDump(int16_t depth) {
 }
 
 /***************************************************************************/
-
-void XPCRootSetElem::AddToRootSet(XPCRootSetElem** listHead) {
-  MOZ_ASSERT(!mSelfp, "Must be not linked");
-
-  mSelfp = listHead;
-  mNext = *listHead;
-  if (mNext) {
-    MOZ_ASSERT(mNext->mSelfp == listHead, "Must be list start");
-    mNext->mSelfp = &mNext;
-  }
-  *listHead = this;
-}
-
-void XPCRootSetElem::RemoveFromRootSet() {
-  JS::NotifyGCRootsRemoved(XPCJSContext::Get()->Context());
-
-  MOZ_ASSERT(mSelfp, "Must be linked");
-
-  MOZ_ASSERT(*mSelfp == this, "Link invariant");
-  *mSelfp = mNext;
-  if (mNext) {
-    mNext->mSelfp = mSelfp;
-  }
-#ifdef DEBUG
-  mSelfp = nullptr;
-  mNext = nullptr;
-#endif
-}
 
 void XPCJSRuntime::AddGCCallback(xpcGCCallback cb) {
   MOZ_ASSERT(cb, "null callback");

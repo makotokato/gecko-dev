@@ -34,6 +34,7 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/ServoStyleSetInlines.h"
+#include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPrefs_mathml.h"
 #include "mozilla/Unused.h"
@@ -259,35 +260,26 @@ nsIFrame* NS_NewImageFrameForGeneratedContentIndex(PresShell*, ComputedStyle*);
 nsIFrame* NS_NewImageFrameForListStyleImage(PresShell*, ComputedStyle*);
 
 // Returns true if aFrame is an anonymous flex/grid item.
-static inline bool IsAnonymousFlexOrGridItem(const nsIFrame* aFrame) {
-  auto pseudoType = aFrame->Style()->GetPseudoType();
-  return pseudoType == PseudoStyleType::anonymousFlexItem ||
-         pseudoType == PseudoStyleType::anonymousGridItem;
+static inline bool IsAnonymousItem(const nsIFrame* aFrame) {
+  return aFrame->Style()->GetPseudoType() == PseudoStyleType::anonymousItem;
 }
 
-// Returns true IFF the given nsIFrame is a nsFlexContainerFrame and
-// represents a -webkit-{inline-}box or -moz-{inline-}box container.
-static inline bool IsFlexContainerForLegacyBox(const nsIFrame* aFrame) {
+// Returns true IFF the given nsIFrame is a nsFlexContainerFrame and represents
+// a -webkit-{inline-}box container.
+static inline bool IsFlexContainerForLegacyWebKitBox(const nsIFrame* aFrame) {
   return aFrame->IsFlexContainerFrame() &&
-         aFrame->HasAnyStateBits(NS_STATE_FLEX_IS_EMULATING_LEGACY_BOX);
+         aFrame->HasAnyStateBits(NS_STATE_FLEX_IS_EMULATING_LEGACY_WEBKIT_BOX);
 }
 
 #if DEBUG
 static void AssertAnonymousFlexOrGridItemParent(const nsIFrame* aChild,
                                                 const nsIFrame* aParent) {
-  MOZ_ASSERT(IsAnonymousFlexOrGridItem(aChild),
-             "expected an anonymous flex or grid item child frame");
+  MOZ_ASSERT(IsAnonymousItem(aChild), "expected an anonymous item child frame");
   MOZ_ASSERT(aParent, "expected a parent frame");
-  auto pseudoType = aChild->Style()->GetPseudoType();
-  if (pseudoType == PseudoStyleType::anonymousFlexItem) {
-    MOZ_ASSERT(aParent->IsFlexContainerFrame(),
-               "anonymous flex items should only exist as children "
-               "of flex container frames");
-  } else {
-    MOZ_ASSERT(aParent->IsGridContainerFrame(),
-               "anonymous grid items should only exist as children "
-               "of grid container frames");
-  }
+  MOZ_ASSERT(aParent->IsFlexContainerFrame() ||
+                 aParent->IsGridContainerFrame() || aParent->IsXULBoxFrame(),
+             "anonymous items should only exist as children of "
+             "flex/grid/-moz-box container frames");
 }
 #else
 #  define AssertAnonymousFlexOrGridItemParent(x, y) PR_BEGIN_MACRO PR_END_MACRO
@@ -380,22 +372,6 @@ static bool ShouldSuppressColumnSpanDescendants(nsIFrame* aFrame) {
   }
 
   return false;
-}
-
-/**
- * If any children require a block parent, return the first such child.
- * Otherwise return null.
- */
-static nsIContent* AnyKidsNeedBlockParent(nsIFrame* aFrameList) {
-  for (nsIFrame* k = aFrameList; k; k = k->GetNextSibling()) {
-    // Line participants, such as text and inline frames, can't be
-    // directly inside a XUL box; they must be wrapped in an
-    // intermediate block.
-    if (k->IsFrameOfType(nsIFrame::eLineParticipant)) {
-      return k->GetContent();
-    }
-  }
-  return nullptr;
 }
 
 // Reparent a frame into a wrapper frame that is a child of its old parent.
@@ -1423,6 +1399,10 @@ static void EnsureAutoPageName(nsFrameConstructorState& aState,
   // When building the entire document, this should only happen for the
   // root, which will mean the loop will immediately end. Either way, this will
   // only happen once for each time the frame constructor is run.
+  if (aState.mAutoPageNameValue) {
+    return;
+  }
+
   for (const nsContainerFrame* frame = aFrame; frame;
        frame = frame->GetParent()) {
     const StylePageName& pageName = frame->StylePage()->mPage;
@@ -1436,25 +1416,22 @@ static void EnsureAutoPageName(nsFrameConstructorState& aState,
 }
 
 nsCSSFrameConstructor::AutoFrameConstructionPageName::
-    AutoFrameConstructionPageName(nsCSSFrameConstructor& aFCtor,
-                                  nsFrameConstructorState& aState,
-                                  FrameConstructionItemList& aItems,
+    AutoFrameConstructionPageName(nsFrameConstructorState& aState,
                                   nsIFrame* const aFrame)
-    : mFCtor(aFCtor),
-      mState(aState),
-      mItems(aItems),
-      mFrame(aFrame),
-      mNameToRestore(nullptr) {
-  if (!(aState.mPresContext->IsPaginated() &&
-        StaticPrefs::layout_css_named_pages_enabled())) {
+    : mState(aState), mNameToRestore(nullptr) {
+  if (!aState.mPresContext->IsPaginated() ||
+      !StaticPrefs::layout_css_named_pages_enabled()) {
+    MOZ_ASSERT(!aState.mAutoPageNameValue,
+               "Page name should not have been set");
     return;
   }
+
   EnsureAutoPageName(aState, aFrame->GetParent());
   mNameToRestore = aState.mAutoPageNameValue;
 
   MOZ_ASSERT(mNameToRestore,
              "Page name should have been found by EnsureAutoPageName");
-  MaybeApplyPageName(mState, aFrame->StylePage()->mPage);
+  MaybeApplyPageName(aState, aFrame->StylePage()->mPage);
   // Ensure that the PageValuesProperty field has been created.
   // Before layout.css.named_pages.enabled is prefed on by default, we should
   // investigate making this property optional, and have a missing property
@@ -1473,26 +1450,10 @@ nsCSSFrameConstructor::AutoFrameConstructionPageName::
 
 nsCSSFrameConstructor::AutoFrameConstructionPageName::
     ~AutoFrameConstructionPageName() {
-  if (!(mState.mPresContext->IsPaginated() &&
-        StaticPrefs::layout_css_named_pages_enabled())) {
-    return;
-  }
-  nsIFrame::PageValues* const pageValues =
-      mFrame->GetProperty(nsIFrame::PageValuesProperty());
-  MOZ_ASSERT(!!pageValues->mStartPageValue == !!pageValues->mEndPageValue,
-             "Both or neither of the child page names should have been set.");
-  if (!pageValues->mStartPageValue && !mItems.IsEmpty()) {
-    pageValues->mStartPageValue = mState.mAutoPageNameValue;
-    pageValues->mEndPageValue = mState.mAutoPageNameValue;
-  }
-  if (const nsIFrame* const prevSibling = mFrame->GetPrevSibling()) {
-    if (const nsIFrame::PageValues* const prevPageValues =
-            prevSibling->GetProperty(nsIFrame::PageValuesProperty())) {
-      if (prevPageValues->mEndPageValue != pageValues->mStartPageValue) {
-        mFCtor.PrependPageBreakItem(mFrame->GetContent(), mItems);
-      }
-    }
-  }
+  // This isn't actually useful when not in paginated layout or when
+  // layout.css.named-pages.enabled is false, but it's very likely cheaper to
+  // unconditionally write this pointer than to test for paginated layout and
+  // the value of the pref and then branch on the result.
   mState.mAutoPageNameValue = mNameToRestore;
 }
 
@@ -1693,7 +1654,7 @@ already_AddRefed<nsIContent> nsCSSFrameConstructor::CreateGeneratedContent(
       // localized text we have.
       // XXX what if the 'alt' attribute is added later, how will we
       // detect that and do the right thing here?
-      if (aOriginatingElement.HasAttr(kNameSpaceID_None, nsGkAtoms::alt)) {
+      if (aOriginatingElement.HasAttr(nsGkAtoms::alt)) {
         nsCOMPtr<nsIContent> content;
         NS_NewAttributeContent(mDocument->NodeInfoManager(), kNameSpaceID_None,
                                nsGkAtoms::alt, getter_AddRefs(content));
@@ -1701,7 +1662,7 @@ already_AddRefed<nsIContent> nsCSSFrameConstructor::CreateGeneratedContent(
       }
 
       if (aOriginatingElement.IsHTMLElement(nsGkAtoms::input)) {
-        if (aOriginatingElement.HasAttr(kNameSpaceID_None, nsGkAtoms::value)) {
+        if (aOriginatingElement.HasAttr(nsGkAtoms::value)) {
           nsCOMPtr<nsIContent> content;
           NS_NewAttributeContent(mDocument->NodeInfoManager(),
                                  kNameSpaceID_None, nsGkAtoms::value,
@@ -2497,8 +2458,8 @@ nsIFrame* nsCSSFrameConstructor::ConstructDocElementFrame(
   } else if (display->mDisplay == StyleDisplay::Flex ||
              display->mDisplay == StyleDisplay::WebkitBox ||
              display->mDisplay == StyleDisplay::Grid ||
-             (StaticPrefs::layout_css_emulate_moz_box_with_flex() &&
-              display->mDisplay == StyleDisplay::MozBox)) {
+             (display->mDisplay == StyleDisplay::MozBox &&
+              computedStyle->StyleVisibility()->EmulateMozBoxWithFlex())) {
     auto func = display->mDisplay == StyleDisplay::Grid
                     ? NS_NewGridContainerFrame
                     : NS_NewFlexContainerFrame;
@@ -2871,9 +2832,9 @@ void nsCSSFrameConstructor::ConstructAnonymousContentForCanvas(
   }
 
   AutoFrameConstructionItemList itemsToConstruct(this);
+  AutoFrameConstructionPageName pageNameTracker(aState, aFrame);
   AddFCItemsForAnonymousContent(aState, aFrame, anonymousItems,
-                                itemsToConstruct);
-
+                                itemsToConstruct, pageNameTracker);
   ConstructFramesFromItemList(aState, itemsToConstruct, aFrame,
                               /* aParentIsWrapperAnonBox = */ false,
                               aFrameList);
@@ -3057,8 +3018,9 @@ nsIFrame* nsCSSFrameConstructor::ConstructSelectFrame(
 
     // The other piece of NAC can take the normal path.
     AutoFrameConstructionItemList fcItems(this);
+    AutoFrameConstructionPageName pageNameTracker(aState, comboboxFrame);
     AddFCItemsForAnonymousContent(aState, comboboxFrame, newAnonymousItems,
-                                  fcItems);
+                                  fcItems, pageNameTracker);
     ConstructFramesFromItemList(aState, fcItems, comboboxFrame,
                                 /* aParentIsWrapperAnonBox = */ false,
                                 childList);
@@ -3528,7 +3490,9 @@ nsCSSFrameConstructor::FindGeneratedImageData(const Element& aElement,
 const nsCSSFrameConstructor::FrameConstructionData*
 nsCSSFrameConstructor::FindImgData(const Element& aElement,
                                    ComputedStyle& aStyle) {
-  if (!nsImageFrame::ShouldCreateImageFrameFor(aElement, aStyle)) {
+  if (nsImageFrame::ImageFrameTypeFor(aElement, aStyle) !=
+      nsImageFrame::ImageFrameType::ForElementRequest) {
+    // content: url gets handled by the generic code-path.
     return nullptr;
   }
 
@@ -3540,7 +3504,8 @@ nsCSSFrameConstructor::FindImgData(const Element& aElement,
 const nsCSSFrameConstructor::FrameConstructionData*
 nsCSSFrameConstructor::FindImgControlData(const Element& aElement,
                                           ComputedStyle& aStyle) {
-  if (!nsImageFrame::ShouldCreateImageFrameFor(aElement, aStyle)) {
+  if (nsImageFrame::ImageFrameTypeFor(aElement, aStyle) !=
+      nsImageFrame::ImageFrameType::ForElementRequest) {
     return nullptr;
   }
 
@@ -3624,6 +3589,14 @@ nsCSSFrameConstructor::FindInputData(const Element& aElement,
                        ArrayLength(sInputData));
 }
 
+static nsIFrame* NS_NewSubDocumentOrImageFrame(mozilla::PresShell* aPresShell,
+                                               mozilla::ComputedStyle* aStyle) {
+  return StaticPrefs::
+                 browser_opaqueResponseBlocking_syntheticBrowsingContext_AtStartup()
+             ? NS_NewSubDocumentFrame(aPresShell, aStyle)
+             : NS_NewImageFrame(aPresShell, aStyle);
+}
+
 /* static */
 const nsCSSFrameConstructor::FrameConstructionData*
 nsCSSFrameConstructor::FindObjectData(const Element& aElement,
@@ -3654,7 +3627,8 @@ nsCSSFrameConstructor::FindObjectData(const Element& aElement,
                         NS_NewEmptyFrame),
       SIMPLE_INT_CREATE(nsIObjectLoadingContent::TYPE_FALLBACK,
                         ToCreationFunc(NS_NewBlockFrame)),
-      SIMPLE_INT_CREATE(nsIObjectLoadingContent::TYPE_IMAGE, NS_NewImageFrame),
+      SIMPLE_INT_CREATE(nsIObjectLoadingContent::TYPE_IMAGE,
+                        NS_NewSubDocumentOrImageFrame),
       SIMPLE_INT_CREATE(nsIObjectLoadingContent::TYPE_DOCUMENT,
                         NS_NewSubDocumentFrame),
       // Fake plugin handlers load as documents
@@ -3876,8 +3850,6 @@ void nsCSSFrameConstructor::ConstructFrameFromItemInternal(
       aState.MaybePushFloatContainingBlock(newFrameAsContainer, floatSaveState);
 
       if (bits & FCDATA_USE_CHILD_ITEMS) {
-        AutoFrameConstructionPageName pageName(*this, aState, aItem.mChildItems,
-                                               newFrame);
         ConstructFramesFromItemList(
             aState, aItem.mChildItems, newFrameAsContainer,
             bits & FCDATA_IS_WRAPPER_ANON_BOX, childList);
@@ -4252,16 +4224,25 @@ already_AddRefed<ComputedStyle> nsCSSFrameConstructor::BeginBuildingScrollFrame(
 
   nsFrameList anonymousList;
 
-  RefPtr<ComputedStyle> contentStyle = aContentStyle;
-
   if (!gfxScrollFrame) {
+    const bool useXULScrollFrame = [&] {
+      const auto& disp = *aContentStyle->StyleDisplay();
+      if (disp.DisplayOutside() == StyleDisplayOutside::XUL) {
+        // XXX Should this be emulated?
+        return true;
+      }
+      if (disp.DisplayInside() == StyleDisplayInside::MozBox) {
+        return !aContentStyle->StyleVisibility()->EmulateMozBoxWithFlex();
+      }
+      return false;
+    }();
     // Build a XULScrollFrame when the child is a box, otherwise an
     // HTMLScrollFrame
-    const nsStyleDisplay* displayStyle = aContentStyle->StyleDisplay();
-    if (displayStyle->IsXULDisplayStyle()) {
-      gfxScrollFrame = NS_NewXULScrollFrame(mPresShell, contentStyle, aIsRoot);
+    if (useXULScrollFrame) {
+      gfxScrollFrame = NS_NewXULScrollFrame(mPresShell, aContentStyle, aIsRoot);
     } else {
-      gfxScrollFrame = NS_NewHTMLScrollFrame(mPresShell, contentStyle, aIsRoot);
+      gfxScrollFrame =
+          NS_NewHTMLScrollFrame(mPresShell, aContentStyle, aIsRoot);
     }
 
     InitAndRestoreFrame(aState, aContent, aParentFrame, gfxScrollFrame);
@@ -4284,7 +4265,9 @@ already_AddRefed<ComputedStyle> nsCSSFrameConstructor::BeginBuildingScrollFrame(
     aState.MaybePushFloatContainingBlock(gfxScrollFrame, floatSaveState);
 
     AutoFrameConstructionItemList items(this);
-    AddFCItemsForAnonymousContent(aState, gfxScrollFrame, scrollNAC, items);
+    AutoFrameConstructionPageName pageNameTracker(aState, gfxScrollFrame);
+    AddFCItemsForAnonymousContent(aState, gfxScrollFrame, scrollNAC, items,
+                                  pageNameTracker);
     ConstructFramesFromItemList(aState, items, gfxScrollFrame,
                                 /* aParentIsWrapperAnonBox = */ false,
                                 anonymousList);
@@ -4297,7 +4280,7 @@ already_AddRefed<ComputedStyle> nsCSSFrameConstructor::BeginBuildingScrollFrame(
   ServoStyleSet* styleSet = mPresShell->StyleSet();
   RefPtr<ComputedStyle> scrolledChildStyle =
       styleSet->ResolveInheritingAnonymousBoxStyle(aScrolledPseudo,
-                                                   contentStyle);
+                                                   aContentStyle);
 
   gfxScrollFrame->SetInitialChildList(kPrincipalList, anonymousList);
 
@@ -4365,6 +4348,7 @@ void nsCSSFrameConstructor::BuildScrollFrame(nsFrameConstructorState& aState,
 
 const nsCSSFrameConstructor::FrameConstructionData*
 nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay& aDisplay,
+                                       const StyleMozBoxLayout aMozBoxLayout,
                                        const Element& aElement) {
   static_assert(eParentTypeCount < (1 << (32 - FCDATA_PARENT_TYPE_OFFSET)),
                 "Check eParentTypeCount should not overflow");
@@ -4373,7 +4357,8 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay& aDisplay,
   // block-level.
   NS_ASSERTION(
       !(aDisplay.IsFloatingStyle() || aDisplay.IsAbsolutelyPositionedStyle()) ||
-          aDisplay.IsBlockOutsideStyle() || aDisplay.IsXULDisplayStyle(),
+          aDisplay.IsBlockOutsideStyle() ||
+          aDisplay.DisplayOutside() == StyleDisplayOutside::XUL,
       "Style system did not apply CSS2.1 section 9.7 fixups");
 
   // If this is "body", try propagating its scroll style to the viewport
@@ -4515,7 +4500,7 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay& aDisplay,
       // fall through (except for scrollcorners which have to be XUL becuase
       // their parent reflows them with BoxReflow() which means they have to get
       // actual-XUL frames).
-      if (!StaticPrefs::layout_css_emulate_moz_box_with_flex() ||
+      if (aMozBoxLayout == StyleMozBoxLayout::Legacy ||
           aElement.IsXULElement(nsGkAtoms::scrollcorner)) {
         static constexpr FrameConstructionData data =
             SCROLLABLE_ABSPOS_CONTAINER_XUL_FCDATA(NS_NewBoxFrame);
@@ -4800,6 +4785,19 @@ nsCSSFrameConstructor::FindMathMLData(const Element& aElement,
     return &sInlineMathData;
   }
 
+  if (!StaticPrefs::
+          mathml_legacy_maction_and_semantics_implementations_disabled()) {
+    static constexpr FrameConstructionDataByTag sMactionAndSemanticsData[] = {
+        SIMPLE_MATHML_CREATE(maction_, NS_NewMathMLmactionFrame),
+        SIMPLE_MATHML_CREATE(semantics_, NS_NewMathMLsemanticsFrame)};
+    const FrameConstructionData* data =
+        FindDataByTag(aElement, aStyle, sMactionAndSemanticsData,
+                      ArrayLength(sMactionAndSemanticsData));
+    if (data) {
+      return data;
+    }
+  }
+
   static constexpr FrameConstructionDataByTag sMathMLData[] = {
       SIMPLE_MATHML_CREATE(annotation_, NS_NewMathMLTokenFrame),
       SIMPLE_MATHML_CREATE(annotation_xml_, NS_NewMathMLmrowFrame),
@@ -4825,11 +4823,11 @@ nsCSSFrameConstructor::FindMathMLData(const Element& aElement,
       SIMPLE_MATHML_CREATE(mstyle_, NS_NewMathMLmrowFrame),
       SIMPLE_MATHML_CREATE(msqrt_, NS_NewMathMLmsqrtFrame),
       SIMPLE_MATHML_CREATE(mroot_, NS_NewMathMLmrootFrame),
-      SIMPLE_MATHML_CREATE(maction_, NS_NewMathMLmactionFrame),
+      SIMPLE_MATHML_CREATE(maction_, NS_NewMathMLmrowFrame),
       SIMPLE_MATHML_CREATE(mrow_, NS_NewMathMLmrowFrame),
       SIMPLE_MATHML_CREATE(merror_, NS_NewMathMLmrowFrame),
       SIMPLE_MATHML_CREATE(menclose_, NS_NewMathMLmencloseFrame),
-      SIMPLE_MATHML_CREATE(semantics_, NS_NewMathMLsemanticsFrame)};
+      SIMPLE_MATHML_CREATE(semantics_, NS_NewMathMLmrowFrame)};
 
   return FindDataByTag(aElement, aStyle, sMathMLData, ArrayLength(sMathMLData));
 }
@@ -5349,12 +5347,14 @@ nsCSSFrameConstructor::FindElementData(const Element& aElement,
 
   // Check for 'content: <image-url>' on the element (which makes us ignore
   // 'display' values other than 'none' or 'contents').
-  if (nsImageFrame::ShouldCreateImageFrameForContent(aElement, aStyle)) {
+  if (nsImageFrame::ShouldCreateImageFrameForContentProperty(aElement,
+                                                             aStyle)) {
     static constexpr FrameConstructionData sImgData(
         NS_NewImageFrameForContentProperty);
     return &sImgData;
   }
 
+  const auto boxLayout = aStyle.StyleVisibility()->mMozBoxLayout;
   const bool shouldBlockify = aFlags.contains(ItemFlag::IsForRenderedLegend) ||
                               aFlags.contains(ItemFlag::IsForOutsideMarker);
   if (shouldBlockify && !aStyle.StyleDisplay()->IsBlockOutsideStyle()) {
@@ -5364,11 +5364,11 @@ nsCSSFrameConstructor::FindElementData(const Element& aElement,
     uint16_t rawDisplayValue =
         Servo_ComputedValues_BlockifiedDisplay(&aStyle, isRootElement);
     display.mDisplay = StyleDisplay(rawDisplayValue);
-    return FindDisplayData(display, aElement);
+    return FindDisplayData(display, boxLayout, aElement);
   }
 
   const auto& display = *aStyle.StyleDisplay();
-  return FindDisplayData(display, aElement);
+  return FindDisplayData(display, boxLayout, aElement);
 }
 
 const nsCSSFrameConstructor::FrameConstructionData*
@@ -5502,62 +5502,12 @@ void nsCSSFrameConstructor::AddFrameConstructionItemsInternal(
     return;
   }
 
-  if (aState.mPresContext->IsPaginated() &&
-      StaticPrefs::layout_css_named_pages_enabled()) {
-    // TODO: This is slightly incorrect! See Bug 1764437
-    // We should be waiting all of our descendent frames to be constructed.
-    //
-    // Alternatively, we could propagate this back up the frame tree after
-    // constructing this frame's first child, inspecting the parent frames and
-    // rewriting their first child page-name.
-    const StylePageName& pageName = aComputedStyle->StylePage()->mPage;
-    const nsAtom* pageNameAtom;
-    if (pageName.IsPageName()) {
-      pageNameAtom = pageName.AsPageName().AsAtom();
-    } else {
-      // Resolve auto against the parent frame's used page name.
-      MOZ_ASSERT(pageName.IsAuto(), "Impossible page name");
-      pageNameAtom = aState.mAutoPageNameValue;
-    }
-
-    // Check if we are the first child of our parent. If so, propagate this
-    // child's page name up the frame tree for every frame while our ancestor
-    // is the first child of its parent.
-    //
-    // TODO: Bug 1766685
-    // We should consider if this frame can create a class A page break or not,
-    // and only propagate the page property if it can. Otherwise, the page
-    // property should be ignored in our computed style.
-    nsIFrame::PageValues* const framePageValues =
-        aParentFrame->GetProperty(nsIFrame::PageValuesProperty());
-    MOZ_ASSERT(framePageValues,
-               "child box page names should have been created by "
-               "AutoFrameConstructionPageName");
-    if (!framePageValues->mStartPageValue) {
-      framePageValues->mStartPageValue = pageNameAtom;
-      // Propagate the start page value back up the frame tree.
-      // If the frame already has mStartPageValue set, then we are not a
-      // descendant of the frame's first child.
-      for (nsContainerFrame* frame = aParentFrame->GetParent(); frame;
-           frame = frame->GetParent()) {
-        nsIFrame::PageValues* const parentPageValues =
-            frame->GetProperty(nsIFrame::PageValuesProperty());
-        if (!parentPageValues || parentPageValues->mStartPageValue) {
-          break;
-        }
-        parentPageValues->mStartPageValue = pageNameAtom;
-      }
-    }
-    framePageValues->mEndPageValue = pageNameAtom;
-  }
-
   const bool canHavePageBreak =
       aFlags.contains(ItemFlag::AllowPageBreak) &&
       aState.mPresContext->IsPaginated() &&
       !display.IsAbsolutelyPositionedStyle() &&
       !(aParentFrame && aParentFrame->IsGridContainerFrame()) &&
       !(bits & FCDATA_IS_TABLE_PART) && !(bits & FCDATA_IS_SVG_TEXT);
-
   if (canHavePageBreak && display.BreakBefore()) {
     AppendPageBreakItem(aContent, aItems);
   }
@@ -5653,17 +5603,6 @@ void nsCSSFrameConstructor::AddFrameConstructionItemsInternal(
     aItems.InlineItemAdded();
   } else if (item->mIsBlock) {
     aItems.BlockItemAdded();
-  }
-
-  // Our item should be treated as a line participant if we have the relevant
-  // bit and are going to be in-flow.  Note that this really only matters if
-  // our ancestor is a box or some such, so the fact that we might have an
-  // inline ancestor that might become a containing block is not relevant here.
-  if ((bits & FCDATA_IS_LINE_PARTICIPANT) &&
-      ((bits & FCDATA_DISALLOW_OUT_OF_FLOW) ||
-       !aState.GetGeometricParent(display, nullptr))) {
-    item->mIsLineParticipant = true;
-    aItems.LineParticipantItemAdded();
   }
 }
 
@@ -7656,23 +7595,6 @@ bool nsCSSFrameConstructor::ContentRemoved(nsIContent* aChild,
       return true;
     }
 
-    // Undo XUL wrapping if it's no longer needed.
-    // (If we're in the XUL block-wrapping situation, parentFrame is the
-    // wrapper frame.)
-    nsIFrame* grandparentFrame = parentFrame->GetParent();
-    if (grandparentFrame && grandparentFrame->IsXULBoxFrame() &&
-        grandparentFrame->HasAnyStateBits(NS_STATE_BOX_WRAPS_KIDS_IN_BLOCK) &&
-        // check if this frame is the only one needing wrapping
-        aChild == AnyKidsNeedBlockParent(
-                      parentFrame->PrincipalChildList().FirstChild()) &&
-        !AnyKidsNeedBlockParent(childFrame->GetNextSibling())) {
-      LAYOUT_PHASE_TEMP_EXIT();
-      RecreateFramesForContent(grandparentFrame->GetContent(),
-                               InsertionKind::Async);
-      LAYOUT_PHASE_TEMP_REENTER();
-      return true;
-    }
-
 #ifdef ACCESSIBILITY
     if (aFlags != REMOVE_FOR_RECONSTRUCTION) {
       if (nsAccessibilityService* accService =
@@ -7979,25 +7901,27 @@ void nsCSSFrameConstructor::WillDestroyFrameTree() {
 
 // XXXbz I'd really like this method to go away. Once we have inline-block and
 // I can just use that for sized broken images, that can happen, maybe.
-void nsCSSFrameConstructor::GetAlternateTextFor(Element* aElement, nsAtom* aTag,
+//
+// NOTE(emilio): This needs to match MozAltContent handling.
+void nsCSSFrameConstructor::GetAlternateTextFor(const Element& aElement,
                                                 nsAString& aAltText) {
   // The "alt" attribute specifies alternate text that is rendered
   // when the image can not be displayed.
-  if (aElement->GetAttr(kNameSpaceID_None, nsGkAtoms::alt, aAltText)) {
+  if (aElement.GetAttr(nsGkAtoms::alt, aAltText)) {
     return;
   }
 
-  if (nsGkAtoms::input == aTag) {
-    // If there's no "alt" attribute, and aContent is an input element, then use
-    // the value of the "value" attribute
-    if (aElement->GetAttr(kNameSpaceID_None, nsGkAtoms::value, aAltText)) {
+  if (aElement.IsHTMLElement(nsGkAtoms::input)) {
+    // If there's no "alt" attribute, and aElement is an input element, then use
+    // the value of the "value" attribute.
+    if (aElement.GetAttr(nsGkAtoms::value, aAltText)) {
       return;
     }
 
     // If there's no "value" attribute either, then use the localized string for
     // "Submit" as the alternate text.
     nsContentUtils::GetMaybeLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
-                                            "Submit", aElement->OwnerDoc(),
+                                            "Submit", aElement.OwnerDoc(),
                                             aAltText);
   }
 }
@@ -8555,7 +8479,7 @@ bool nsCSSFrameConstructor::MaybeRecreateContainerForFrameRemoval(
   // we're only interested in anonymous flex items here, and those can never
   // be adjacent to whitespace, since they absorb contiguous runs of inline
   // non-replaced content (including whitespace).
-  if (nextSibling && IsAnonymousFlexOrGridItem(nextSibling)) {
+  if (nextSibling && IsAnonymousItem(nextSibling)) {
     AssertAnonymousFlexOrGridItemParent(nextSibling, parent);
     TRACE("Anon flex or grid item next sibling");
     // Recreate frames for the flex container (the removed frame's parent)
@@ -8566,7 +8490,7 @@ bool nsCSSFrameConstructor::MaybeRecreateContainerForFrameRemoval(
   // Might need to reconstruct things if the removed frame's nextSibling is
   // null and its parent is an anonymous flex item. (This might be the last
   // remaining child of that anonymous flex item, which can then go away.)
-  if (!nextSibling && IsAnonymousFlexOrGridItem(parent)) {
+  if (!nextSibling && IsAnonymousItem(parent)) {
     AssertAnonymousFlexOrGridItemParent(parent, parent->GetParent());
     TRACE("Anon flex or grid item parent");
     // Recreate frames for the flex container (the removed frame's grandparent)
@@ -8874,15 +8798,22 @@ const nsCSSFrameConstructor::PseudoParentData
 void nsCSSFrameConstructor::CreateNeededAnonFlexOrGridItems(
     nsFrameConstructorState& aState, FrameConstructionItemList& aItems,
     nsIFrame* aParentFrame) {
-  if (aItems.IsEmpty() || !aParentFrame->IsFlexOrGridContainer()) {
+  if (aItems.IsEmpty()) {
     return;
   }
 
-  const bool isLegacyBox = IsFlexContainerForLegacyBox(aParentFrame);
+  if (!aParentFrame->IsFlexOrGridContainer() &&
+      !aParentFrame->IsXULBoxFrame()) {
+    return;
+  }
+
+  const bool isLegacyWebKitBox =
+      IsFlexContainerForLegacyWebKitBox(aParentFrame);
   FCItemIterator iter(aItems);
   do {
     // Advance iter past children that don't want to be wrapped
-    if (iter.SkipItemsThatDontNeedAnonFlexOrGridItem(aState, isLegacyBox)) {
+    if (iter.SkipItemsThatDontNeedAnonFlexOrGridItem(aState,
+                                                     isLegacyWebKitBox)) {
       // Hit the end of the items without finding any remaining children that
       // need to be wrapped. We're finished!
       return;
@@ -8905,7 +8836,7 @@ void nsCSSFrameConstructor::CreateNeededAnonFlexOrGridItems(
       bool hitEnd = afterWhitespaceIter.SkipWhitespace(aState);
       bool nextChildNeedsAnonItem =
           !hitEnd && afterWhitespaceIter.item().NeedsAnonFlexOrGridItem(
-                         aState, isLegacyBox);
+                         aState, isLegacyWebKitBox);
 
       if (!nextChildNeedsAnonItem) {
         // There's nothing after the whitespace that we need to wrap, so we
@@ -8919,7 +8850,7 @@ void nsCSSFrameConstructor::CreateNeededAnonFlexOrGridItems(
         // we jump back to the beginning of the loop to skip over that child
         // (and anything else non-wrappable after it)
         MOZ_ASSERT(!iter.IsDone() && !iter.item().NeedsAnonFlexOrGridItem(
-                                         aState, isLegacyBox),
+                                         aState, isLegacyWebKitBox),
                    "hitEnd and/or nextChildNeedsAnonItem lied");
         continue;
       }
@@ -8929,21 +8860,17 @@ void nsCSSFrameConstructor::CreateNeededAnonFlexOrGridItems(
     // anonymous flex/grid item. Now we see how many children after it also want
     // to be wrapped in an anonymous flex/grid item.
     FCItemIterator endIter(iter);  // iterator to find the end of the group
-    endIter.SkipItemsThatNeedAnonFlexOrGridItem(aState, isLegacyBox);
+    endIter.SkipItemsThatNeedAnonFlexOrGridItem(aState, isLegacyWebKitBox);
 
     NS_ASSERTION(iter != endIter,
                  "Should've had at least one wrappable child to seek past");
 
     // Now, we create the anonymous flex or grid item to contain the children
     // between |iter| and |endIter|.
-    auto pseudoType = aParentFrame->IsFlexContainerFrame()
-                          ? PseudoStyleType::anonymousFlexItem
-                          : PseudoStyleType::anonymousGridItem;
-    ComputedStyle* parentStyle = aParentFrame->Style();
     nsIContent* parentContent = aParentFrame->GetContent();
     RefPtr<ComputedStyle> wrapperStyle =
-        mPresShell->StyleSet()->ResolveInheritingAnonymousBoxStyle(pseudoType,
-                                                                   parentStyle);
+        mPresShell->StyleSet()->ResolveInheritingAnonymousBoxStyle(
+            PseudoStyleType::anonymousItem, aParentFrame->Style());
 
     static constexpr FrameConstructionData sBlockFormattingContextFCData(
         ToCreationFunc(NS_NewBlockFormattingContext),
@@ -9443,10 +9370,6 @@ void nsCSSFrameConstructor::WrapItemsInPseudoParent(
   newItem->mIsAllInline = disp->IsInlineOutsideStyle();
 
   bool isRuby = disp->IsRubyDisplayType();
-  // All types of ruby frames need a block frame to provide line layout,
-  // hence they are always line participant.
-  newItem->mIsLineParticipant = isRuby;
-
   if (!isRuby) {
     // Table pseudo frames always induce line boundaries around their
     // contents.
@@ -9507,7 +9430,8 @@ void nsCSSFrameConstructor::CreateNeededPseudoSiblings(
  */
 static bool FrameWantsToBeInAnonymousItem(const nsIFrame* aContainerFrame,
                                           const nsIFrame* aFrame) {
-  MOZ_ASSERT(aContainerFrame->IsFlexOrGridContainer());
+  MOZ_ASSERT(aContainerFrame->IsFlexOrGridContainer() ||
+             aContainerFrame->IsXULBoxFrame());
 
   // Any line-participant frames (e.g. text) definitely want to be wrapped in
   // an anonymous flex/grid item.
@@ -9515,9 +9439,9 @@ static bool FrameWantsToBeInAnonymousItem(const nsIFrame* aContainerFrame,
     return true;
   }
 
-  // If the container is a -webkit-{inline-}box or -moz-{inline-}box container,
-  // then placeholders also need to be wrapped, for compatibility.
-  if (IsFlexContainerForLegacyBox(aContainerFrame) &&
+  // If the container is a -webkit-{inline-}box container, then placeholders
+  // also need to be wrapped, for compatibility.
+  if (IsFlexContainerForLegacyWebKitBox(aContainerFrame) &&
       aFrame->IsPlaceholderFrame()) {
     return true;
   }
@@ -9529,7 +9453,8 @@ static bool FrameWantsToBeInAnonymousItem(const nsIFrame* aContainerFrame,
 static void VerifyGridFlexContainerChildren(nsIFrame* aParentFrame,
                                             const nsFrameList& aChildren) {
 #ifdef DEBUG
-  if (!aParentFrame->IsFlexOrGridContainer()) {
+  if (!aParentFrame->IsFlexOrGridContainer() &&
+      !aParentFrame->IsXULBoxFrame()) {
     return;
   }
 
@@ -9537,7 +9462,7 @@ static void VerifyGridFlexContainerChildren(nsIFrame* aParentFrame,
   for (const nsIFrame* child : aChildren) {
     MOZ_ASSERT(!FrameWantsToBeInAnonymousItem(aParentFrame, child),
                "frame wants to be inside an anonymous item, but it isn't");
-    if (IsAnonymousFlexOrGridItem(child)) {
+    if (IsAnonymousItem(child)) {
       AssertAnonymousFlexOrGridItemParent(child, aParentFrame);
       MOZ_ASSERT(!prevChildWasAnonItem, "two anon items in a row");
       nsIFrame* firstWrappedChild = child->PrincipalChildList().FirstChild();
@@ -9625,6 +9550,89 @@ inline void nsCSSFrameConstructor::ConstructFramesFromItemList(
 
   VerifyGridFlexContainerChildren(aParentFrame, aFrameList);
 
+  // Calculate and propagate page-name values for each frame in the frame list.
+  // This will be affected by https://bugzilla.mozilla.org/1782597
+  if (aState.mPresContext->IsPaginated() &&
+      StaticPrefs::layout_css_named_pages_enabled() &&
+      aParentFrame->IsBlockFrameOrSubclass()) {
+    // Set the start/end page values while iterating the frame list, to walk
+    // up the frame tree only once after iterating the frame list.
+    // This also avoids extra property lookups on these frames.
+    const nsAtom* startPageValue = nullptr;
+    const nsAtom* endPageValue = nullptr;
+    for (nsIFrame* f : aFrameList) {
+      // Resolve auto against the parent frame's used page name, which has been
+      // determined and set on aState.mAutoPageNameValue. If this item is not
+      // block-level then we use the value that auto resolves to.
+      //
+      // This is to achieve the propagation behavior described in the spec:
+      //
+      // "A start page value and end page value is determined for each box as
+      //  the value (if any) propagated from its first or last child box
+      //  (respectively), else the used value on the box itself."
+      //
+      // "A child propagates its own start or end page value if and only if the
+      //  page property applies to it."
+      //
+      // The page property only applies to "boxes that create class A break
+      // points". When taken together, this means that non block-level children
+      // do not propagate start/end page values, and instead we use "the used
+      // value on the box itself", the "box itself" being aParentFrame. This
+      // value has been determined and saved as aState.mAutoPageNameValue
+      //
+      // https://www.w3.org/TR/css-page-3/#using-named-pages
+      // https://www.w3.org/TR/css-break-3/#btw-blocks
+      const StylePageName& pageName = f->StylePage()->mPage;
+      const nsAtom* const pageNameAtom =
+          (pageName.IsPageName() && f->IsBlockOutside())
+              ? pageName.AsPageName().AsAtom()
+              : aState.mAutoPageNameValue;
+      nsIFrame::PageValues* pageValues =
+          f->GetProperty(nsIFrame::PageValuesProperty());
+      if (!pageValues) {
+        pageValues = new nsIFrame::PageValues();
+        f->AddProperty(nsIFrame::PageValuesProperty(), pageValues);
+      }
+      MOZ_ASSERT(!pageValues->mStartPageValue == !pageValues->mEndPageValue,
+                 "Both or neither mStartPageValue and mEndPageValue should "
+                 "have been set");
+      if (!pageValues->mStartPageValue) {
+        pageValues->mStartPageValue = pageNameAtom;
+        pageValues->mEndPageValue = pageNameAtom;
+      }
+      if (!startPageValue) {
+        startPageValue = pageValues->mStartPageValue;
+      }
+      endPageValue = pageValues->mEndPageValue;
+    }
+    MOZ_ASSERT(!startPageValue == !endPageValue,
+               "Should have set both or neither page values");
+    if (startPageValue) {
+      // TODO: This is slightly incorrect! See Bug 1764437
+      // We should be waiting all of our descendent frames to be constructed.
+      //
+      // Alternatively, we could propagate this back up the frame tree after
+      // constructing this frame's first child, inspecting the parent frames
+      // and rewriting their first child page-name.
+      for (nsContainerFrame* frame = aParentFrame;
+           frame && frame->IsBlockFrameOrSubclass();
+           frame = frame->GetParent()) {
+        nsIFrame::PageValues* const parentPageValues =
+            frame->GetProperty(nsIFrame::PageValuesProperty());
+        // Propagate the start page value back up the frame tree.
+        // If the frame already has mStartPageValue set, then we are not a
+        // descendant of the frame's first child.
+        if (!parentPageValues) {
+          break;
+        }
+        if (!parentPageValues->mStartPageValue) {
+          parentPageValues->mStartPageValue = startPageValue;
+        }
+        parentPageValues->mEndPageValue = endPageValue;
+      }
+    }
+  }
+
   if (aParentIsWrapperAnonBox) {
     for (nsIFrame* f : aFrameList) {
       f->SetParentIsWrapperAnonBox();
@@ -9635,9 +9643,8 @@ inline void nsCSSFrameConstructor::ConstructFramesFromItemList(
 void nsCSSFrameConstructor::AddFCItemsForAnonymousContent(
     nsFrameConstructorState& aState, nsContainerFrame* aFrame,
     const nsTArray<nsIAnonymousContentCreator::ContentInfo>& aAnonymousItems,
-    FrameConstructionItemList& aItemsToConstruct, ItemFlags aExtraFlags) {
-  AutoFrameConstructionPageName pageName(*this, aState, aItemsToConstruct,
-                                         aFrame);
+    FrameConstructionItemList& aItemsToConstruct,
+    const AutoFrameConstructionPageName&) {
   for (const auto& info : aAnonymousItems) {
     nsIContent* content = info.mContent;
     // Gecko-styled nodes should have no pending restyle flags.
@@ -9655,11 +9662,9 @@ void nsCSSFrameConstructor::AddFCItemsForAnonymousContent(
 
     RefPtr<ComputedStyle> computedStyle = ResolveComputedStyle(content);
 
-    ItemFlags flags = aExtraFlags;
-    flags += ItemFlag::AllowPageBreak;
-
     AddFrameConstructionItemsInternal(aState, content, aFrame, true,
-                                      computedStyle, flags, aItemsToConstruct);
+                                      computedStyle, {ItemFlag::AllowPageBreak},
+                                      aItemsToConstruct);
   }
 }
 
@@ -9698,8 +9703,7 @@ void nsCSSFrameConstructor::ProcessChildren(
   }
 
   AutoFrameConstructionItemList itemsToConstruct(this);
-  AutoFrameConstructionPageName pageName(*this, aState, itemsToConstruct,
-                                         aFrame);
+  AutoFrameConstructionPageName pageNameTracker(aState, aFrame);
 
   // If we have first-letter or first-line style then frames can get
   // moved around so don't set these flags.
@@ -9720,7 +9724,7 @@ void nsCSSFrameConstructor::ProcessChildren(
   }
 #endif
   AddFCItemsForAnonymousContent(aState, aFrame, anonymousItems,
-                                itemsToConstruct);
+                                itemsToConstruct, pageNameTracker);
 
   nsBlockFrame* listItem = nullptr;
   bool isOutsideMarker = false;
@@ -9830,44 +9834,6 @@ void nsCSSFrameConstructor::ProcessChildren(
   }
   if (haveFirstLineStyle) {
     WrapFramesInFirstLineFrame(aState, aContent, aFrame, nullptr, aFrameList);
-  }
-
-  // We might end up with first-line frames that change
-  // AnyKidsNeedBlockParent() without changing itemsToConstruct, but that
-  // should never happen for cases whan aFrame->IsXULBoxFrame().
-  NS_ASSERTION(!haveFirstLineStyle || !aFrame->IsXULBoxFrame(),
-               "Shouldn't have first-line style if we're a box");
-  NS_ASSERTION(
-      !aFrame->IsXULBoxFrame() ||
-          itemsToConstruct.AnyItemsNeedBlockParent() ==
-              (AnyKidsNeedBlockParent(aFrameList.FirstChild()) != nullptr),
-      "Something went awry in our block parent calculations");
-
-  if (aFrame->IsXULBoxFrame() && itemsToConstruct.AnyItemsNeedBlockParent()) {
-    // XXXbz we could do this on the FrameConstructionItemList level,
-    // no?  And if we cared we could look through the item list
-    // instead of groveling through the framelist here..
-    RefPtr<ComputedStyle> blockSC =
-        mPresShell->StyleSet()->ResolveInheritingAnonymousBoxStyle(
-            PseudoStyleType::mozXULAnonymousBlock, aFrame->Style());
-    nsBlockFrame* blockFrame = NS_NewBlockFrame(mPresShell, blockSC);
-    // We might, in theory, want to set NS_BLOCK_FLOAT_MGR and
-    // NS_BLOCK_MARGIN_ROOT, but I think it's a bad idea given that
-    // a real block placed here wouldn't get those set on it.
-
-    InitAndRestoreFrame(aState, aContent, aFrame, blockFrame, false);
-
-    NS_ASSERTION(!blockFrame->HasView(), "need to do view reparenting");
-    ReparentFrames(this, blockFrame, aFrameList, false);
-
-    blockFrame->SetInitialChildList(kPrincipalList, aFrameList);
-    NS_ASSERTION(aFrameList.IsEmpty(), "How did that happen?");
-    aFrameList.Clear();
-    aFrameList.AppendFrame(nullptr, blockFrame);
-
-    aFrame->AddStateBits(NS_STATE_BOX_WRAPS_KIDS_IN_BLOCK);
-    MOZ_ASSERT(!aFrame->IsLeaf(), "Why do we have an nsLeafBoxFrame here?");
-    aFrame->AddStateBits(NS_FRAME_OWNS_ANON_BOXES);
   }
 }
 
@@ -10257,8 +10223,9 @@ void nsCSSFrameConstructor::WrapFramesInFirstLetterFrame(
   while (frame) {
     nsIFrame* nextFrame = frame->GetNextSibling();
 
-    // Skip all ::markers.
-    if (frame->Style()->GetPseudoType() == PseudoStyleType::marker) {
+    // Skip all ::markers and placeholders.
+    if (frame->Style()->GetPseudoType() == PseudoStyleType::marker ||
+        frame->IsPlaceholderFrame()) {
       prevFrame = frame;
       frame = nextFrame;
       continue;
@@ -11352,9 +11319,10 @@ bool nsCSSFrameConstructor::WipeContainingBlock(
   // special situations.
 
   if (aFrame->GetContent() == mDocument->GetRootElement()) {
-    // If we insert a content that becomes the canonical body element, and its
-    // used WritingMode is different from the root element's used WritingMode,
-    // we need to reframe the root element so that the root element's frames has
+    // Situation #1 is when we insert content that becomes the canonical body
+    // element, and its used WritingMode is different from the root element's
+    // used WritingMode.
+    // We need to reframe the root element so that the root element's frames has
     // the correct writing-mode propagated from body element. (See
     // nsCSSFrameConstructor::ConstructDocElementFrame.)
     //
@@ -11374,31 +11342,19 @@ bool nsCSSFrameConstructor::WipeContainingBlock(
     }
   }
 
-  // Situation #1 is a XUL frame that contains frames that are required
-  // to be wrapped in blocks.
-  if (aFrame->IsXULBoxFrame() &&
-      !aFrame->HasAnyStateBits(NS_STATE_BOX_WRAPS_KIDS_IN_BLOCK) &&
-      aItems.AnyItemsNeedBlockParent()) {
-    TRACE("XUL with block-wrapped kids");
-    RecreateFramesForContent(aFrame->GetContent(), InsertionKind::Async);
-    return true;
-  }
-
   nsIFrame* nextSibling = ::GetInsertNextSibling(aFrame, aPrevSibling);
 
-  // Situation #2 is a flex or grid container frame into which we're inserting
-  // new inline non-replaced children, adjacent to an existing anonymous
-  // flex or grid item.
-  LayoutFrameType frameType = aFrame->Type();
-  if (frameType == LayoutFrameType::FlexContainer ||
-      frameType == LayoutFrameType::GridContainer) {
+  // Situation #2 is a flex / grid / XUL box container frame into which we're
+  // inserting new inline non-replaced children, adjacent to an existing
+  // anonymous flex or grid item.
+  if (aFrame->IsFlexOrGridContainer() || aFrame->IsXULBoxFrame()) {
     FCItemIterator iter(aItems);
 
     // Check if we're adding to-be-wrapped content right *after* an existing
     // anonymous flex or grid item (which would need to absorb this content).
-    const bool isLegacyBox = IsFlexContainerForLegacyBox(aFrame);
-    if (aPrevSibling && IsAnonymousFlexOrGridItem(aPrevSibling) &&
-        iter.item().NeedsAnonFlexOrGridItem(aState, isLegacyBox)) {
+    const bool isLegacyWebKitBox = IsFlexContainerForLegacyWebKitBox(aFrame);
+    if (aPrevSibling && IsAnonymousItem(aPrevSibling) &&
+        iter.item().NeedsAnonFlexOrGridItem(aState, isLegacyWebKitBox)) {
       TRACE("Inserting inline after anon flex or grid item");
       RecreateFramesForContent(aFrame->GetContent(), InsertionKind::Async);
       return true;
@@ -11406,11 +11362,11 @@ bool nsCSSFrameConstructor::WipeContainingBlock(
 
     // Check if we're adding to-be-wrapped content right *before* an existing
     // anonymous flex or grid item (which would need to absorb this content).
-    if (nextSibling && IsAnonymousFlexOrGridItem(nextSibling)) {
+    if (nextSibling && IsAnonymousItem(nextSibling)) {
       // Jump to the last entry in the list
       iter.SetToEnd();
       iter.Prev();
-      if (iter.item().NeedsAnonFlexOrGridItem(aState, isLegacyBox)) {
+      if (iter.item().NeedsAnonFlexOrGridItem(aState, isLegacyWebKitBox)) {
         TRACE("Inserting inline before anon flex or grid item");
         RecreateFramesForContent(aFrame->GetContent(), InsertionKind::Async);
         return true;
@@ -11420,7 +11376,7 @@ bool nsCSSFrameConstructor::WipeContainingBlock(
 
   // Situation #3 is an anonymous flex or grid item that's getting new children
   // who don't want to be wrapped.
-  if (IsAnonymousFlexOrGridItem(aFrame)) {
+  if (IsAnonymousItem(aFrame)) {
     AssertAnonymousFlexOrGridItemParent(aFrame, aFrame->GetParent());
 
     // We need to push a null float containing block to be sure that
@@ -11436,8 +11392,9 @@ bool nsCSSFrameConstructor::WipeContainingBlock(
     // Skip over things that _do_ need an anonymous flex item, because
     // they're perfectly happy to go here -- they won't cause a reframe.
     nsIFrame* containerFrame = aFrame->GetParent();
-    const bool isLegacyBox = IsFlexContainerForLegacyBox(containerFrame);
-    if (!iter.SkipItemsThatNeedAnonFlexOrGridItem(aState, isLegacyBox)) {
+    const bool isLegacyWebKitBox =
+        IsFlexContainerForLegacyWebKitBox(containerFrame);
+    if (!iter.SkipItemsThatNeedAnonFlexOrGridItem(aState, isLegacyWebKitBox)) {
       // We hit something that _doesn't_ need an anonymous flex item!
       // Rebuild the flex container to bust it out.
       TRACE("Inserting non-inlines inside anon flex or grid item");
@@ -11834,9 +11791,6 @@ void nsCSSFrameConstructor::FrameConstructionItemList::AdjustCountsForItem(
   if (aItem->mIsBlock) {
     mBlockCount += aDelta;
   }
-  if (aItem->mIsLineParticipant) {
-    mLineParticipantCount += aDelta;
-  }
   mDesiredParentCounts[aItem->DesiredParentType()] += aDelta;
 }
 
@@ -11867,17 +11821,16 @@ inline bool nsCSSFrameConstructor::FrameConstructionItemList::Iterator::
   return false;
 }
 
-// Note: we implement -webkit-{inline-}box (and optionally -moz-{inline-}box)
-// using nsFlexContainerFrame, but we use different rules for what gets wrapped
-// in an anonymous flex item.
+// Note: we implement -webkit-{inline-}box using nsFlexContainerFrame, but we
+// use different rules for what gets wrapped in an anonymous flex item.
 bool nsCSSFrameConstructor::FrameConstructionItem::NeedsAnonFlexOrGridItem(
-    const nsFrameConstructorState& aState, bool aIsLegacyBox) {
+    const nsFrameConstructorState& aState, bool aIsLegacyWebKitBox) {
   if (mFCData->mBits & FCDATA_IS_LINE_PARTICIPANT) {
     // This will be an inline non-replaced box.
     return true;
   }
 
-  if (aIsLegacyBox) {
+  if (aIsLegacyWebKitBox) {
     if (mComputedStyle->StyleDisplay()->IsInlineOutsideStyle()) {
       // In an emulated legacy box, all inline-level content gets wrapped in an
       // anonymous flex item.
@@ -11901,9 +11854,9 @@ bool nsCSSFrameConstructor::FrameConstructionItem::NeedsAnonFlexOrGridItem(
 
 inline bool nsCSSFrameConstructor::FrameConstructionItemList::Iterator::
     SkipItemsThatNeedAnonFlexOrGridItem(const nsFrameConstructorState& aState,
-                                        bool aIsLegacyBox) {
+                                        bool aIsLegacyWebKitBox) {
   MOZ_ASSERT(!IsDone(), "Shouldn't be done yet");
-  while (item().NeedsAnonFlexOrGridItem(aState, aIsLegacyBox)) {
+  while (item().NeedsAnonFlexOrGridItem(aState, aIsLegacyWebKitBox)) {
     Next();
     if (IsDone()) {
       return true;
@@ -11914,9 +11867,9 @@ inline bool nsCSSFrameConstructor::FrameConstructionItemList::Iterator::
 
 inline bool nsCSSFrameConstructor::FrameConstructionItemList::Iterator::
     SkipItemsThatDontNeedAnonFlexOrGridItem(
-        const nsFrameConstructorState& aState, bool aIsLegacyBox) {
+        const nsFrameConstructorState& aState, bool aIsLegacyWebKitBox) {
   MOZ_ASSERT(!IsDone(), "Shouldn't be done yet");
-  while (!(item().NeedsAnonFlexOrGridItem(aState, aIsLegacyBox))) {
+  while (!(item().NeedsAnonFlexOrGridItem(aState, aIsLegacyWebKitBox))) {
     Next();
     if (IsDone()) {
       return true;
@@ -11987,7 +11940,6 @@ void nsCSSFrameConstructor::FrameConstructionItemList::Iterator::
   // Copy over the various counters
   aTargetList.mInlineCount = mList.mInlineCount;
   aTargetList.mBlockCount = mList.mBlockCount;
-  aTargetList.mLineParticipantCount = mList.mLineParticipantCount;
   aTargetList.mItemCount = mList.mItemCount;
   memcpy(aTargetList.mDesiredParentCounts, mList.mDesiredParentCounts,
          sizeof(aTargetList.mDesiredParentCounts));

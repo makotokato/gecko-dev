@@ -61,10 +61,9 @@ var EXPORTED_SYMBOLS = ["PermissionUI"];
  * imported, subclassed, and have prompt() called directly, without
  * the caller having called into createPermissionPrompt.
  */
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const lazy = {};
 ChromeUtils.defineModuleGetter(
   lazy,
@@ -163,6 +162,14 @@ var PermissionPromptPrototype = {
    */
   get usePermissionManager() {
     return true;
+  },
+
+  /**
+   * Indicates what URI should be used as the scope when using temporary
+   * permissions. If undefined, it defaults to the browser.currentURI.
+   */
+  get temporaryPermissionURI() {
+    return undefined;
   },
 
   /**
@@ -375,7 +382,8 @@ var PermissionPromptPrototype = {
       let { state } = lazy.SitePermissions.getForPrincipal(
         this.principal,
         this.permissionKey,
-        this.browser
+        this.browser,
+        this.temporaryPermissionURI
       );
 
       if (state == lazy.SitePermissions.BLOCK) {
@@ -406,7 +414,8 @@ var PermissionPromptPrototype = {
       let { state } = lazy.SitePermissions.getForPrincipal(
         null,
         this.permissionKey,
-        this.browser
+        this.browser,
+        this.temporaryPermissionURI
       );
 
       if (state == lazy.SitePermissions.BLOCK) {
@@ -469,7 +478,9 @@ var PermissionPromptPrototype = {
                 this.permissionKey,
                 promptAction.action,
                 lazy.SitePermissions.SCOPE_TEMPORARY,
-                this.browser
+                this.browser,
+                undefined,
+                this.temporaryPermissionURI
               );
             }
 
@@ -490,7 +501,9 @@ var PermissionPromptPrototype = {
                 this.permissionKey,
                 promptAction.action,
                 lazy.SitePermissions.SCOPE_TEMPORARY,
-                this.browser
+                this.browser,
+                undefined,
+                this.temporaryPermissionURI
               );
             }
           }
@@ -1253,6 +1266,18 @@ PermissionUI.MIDIPermissionPrompt = MIDIPermissionPrompt;
 
 function StorageAccessPermissionPrompt(request) {
   this.request = request;
+  this.siteOption = null;
+
+  let types = this.request.types.QueryInterface(Ci.nsIArray);
+  let perm = types.queryElementAt(0, Ci.nsIContentPermissionType);
+  let options = perm.options.QueryInterface(Ci.nsIArray);
+  // If we have an option, we are in a call from requestStorageAccessUnderSite
+  // which means that the embedding principal is not the current top-level.
+  // Instead we have to grab the Site string out of the option and use that
+  // in the UI.
+  if (options.length) {
+    this.siteOption = options.queryElementAt(0, Ci.nsISupportsString).data;
+  }
 }
 
 StorageAccessPermissionPrompt.prototype = {
@@ -1269,6 +1294,13 @@ StorageAccessPermissionPrompt.prototype = {
   get permissionKey() {
     // Make sure this name is unique per each third-party tracker
     return `3rdPartyStorage${lazy.SitePermissions.PERM_KEY_DELIMITER}${this.principal.origin}`;
+  },
+
+  get temporaryPermissionURI() {
+    if (this.siteOption) {
+      return Services.io.newURI(this.siteOption);
+    }
+    return undefined;
   },
 
   prettifyHostPort(hostport) {
@@ -1306,9 +1338,15 @@ StorageAccessPermissionPrompt.prototype = {
   },
 
   get message() {
+    let embeddingHost = this.topLevelPrincipal.host;
+
+    if (this.siteOption) {
+      embeddingHost = this.siteOption.split("://").at(-1);
+    }
+
     return lazy.gBrowserBundle.formatStringFromName("storageAccess4.message", [
       this.prettifyHostPort(this.principal.hostPort),
-      this.prettifyHostPort(this.topLevelPrincipal.hostPort),
+      this.prettifyHostPort(embeddingHost),
     ]);
   },
 

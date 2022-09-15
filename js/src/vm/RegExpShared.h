@@ -17,7 +17,7 @@
 #include "mozilla/MemoryReporting.h"
 
 #include "gc/Barrier.h"
-#include "gc/Marking.h"
+#include "gc/Policy.h"
 #include "gc/ZoneAllocator.h"
 #include "irregexp/RegExpTypes.h"
 #include "jit/JitCode.h"
@@ -27,7 +27,6 @@
 #include "js/UbiNode.h"
 #include "js/Vector.h"
 #include "vm/ArrayObject.h"
-#include "vm/JSAtom.h"
 
 namespace js {
 
@@ -70,6 +69,8 @@ inline bool IsNativeRegExpEnabled() {
  */
 class RegExpShared
     : public gc::CellWithTenuredGCPointer<gc::TenuredCell, JSAtom> {
+  friend class js::gc::CellAllocator;
+
  public:
   enum class Kind { Unparsed, Atom, RegExp };
   enum class CodeKind { Bytecode, Jitcode, Any };
@@ -172,8 +173,10 @@ class RegExpShared
   // Use the regular expression engine for this regexp.
   void useRegExpMatch(size_t parenCount);
 
-  static bool initializeNamedCaptures(JSContext* cx, HandleRegExpShared re,
-                                      Handle<NativeObject*> namedCaptures);
+  static void InitializeNamedCaptures(JSContext* cx, HandleRegExpShared re,
+                                      uint32_t numNamedCaptures,
+                                      Handle<PlainObject*> templateObject,
+                                      uint32_t* captureIndices);
   PlainObject* getGroupsTemplate() { return groupsTemplate_; }
 
   void tierUpTick();

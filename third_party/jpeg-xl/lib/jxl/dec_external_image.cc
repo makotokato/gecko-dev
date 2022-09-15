@@ -32,6 +32,10 @@ HWY_BEFORE_NAMESPACE();
 namespace jxl {
 namespace HWY_NAMESPACE {
 
+// These templates are not found via ADL.
+using hwy::HWY_NAMESPACE::Clamp;
+using hwy::HWY_NAMESPACE::NearestInt;
+
 // TODO(jon): check if this can be replaced by a FloatToU16 function
 void FloatToU32(const float* in, uint32_t* out, size_t num, float mul,
                 size_t bits_per_sample) {
@@ -50,7 +54,7 @@ void FloatToU32(const float* in, uint32_t* out, size_t num, float mul,
     auto v = Load(d, in + x);
     // Clamp turns NaN to 'min'.
     v = Clamp(v, Zero(d), one);
-    auto i = NearestInt(v * scale);
+    auto i = NearestInt(Mul(v, scale));
     Store(BitCast(du, i), du, out + x);
   }
 
@@ -451,14 +455,15 @@ Status ConvertToExternal(const jxl::ImageBundle& ib, size_t bits_per_sample,
                          JxlEndianness endianness, size_t stride,
                          jxl::ThreadPool* pool, void* out_image,
                          size_t out_size, const PixelCallback& out_callback,
-                         jxl::Orientation undo_orientation) {
+                         jxl::Orientation undo_orientation,
+                         bool unpremul_alpha) {
   bool want_alpha = num_channels == 2 || num_channels == 4;
   size_t color_channels = num_channels <= 2 ? 1 : 3;
 
   const Image3F* color = &ib.color();
   // Undo premultiplied alpha.
   Image3F unpremul;
-  if (ib.AlphaIsPremultiplied() && ib.HasAlpha()) {
+  if (ib.AlphaIsPremultiplied() && ib.HasAlpha() && unpremul_alpha) {
     unpremul = Image3F(color->xsize(), color->ysize());
     CopyImageTo(*color, &unpremul);
     for (size_t y = 0; y < unpremul.ysize(); y++) {

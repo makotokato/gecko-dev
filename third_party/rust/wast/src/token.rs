@@ -38,6 +38,11 @@ impl Span {
         }
         (text.lines().count(), 0)
     }
+
+    /// Returns the byte offset of this span.
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
 }
 
 /// An identifier in a WebAssembly module, prefixed by `$` in the textual
@@ -376,7 +381,7 @@ macro_rules! float {
         name: $parse:ident,
     })*) => ($(
         /// A parsed floating-point type
-        #[derive(Debug)]
+        #[derive(Debug, Copy, Clone)]
         pub struct $name {
             /// The raw bits that this floating point number represents.
             pub bits: $int,

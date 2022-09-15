@@ -39,6 +39,8 @@ LAllocation LIRGeneratorARM64::useByteOpRegisterOrNonDoubleConstant(
   return useRegisterOrNonDoubleConstant(mir);
 }
 
+LDefinition LIRGeneratorARM64::tempByteOpRegister() { return temp(); }
+
 LDefinition LIRGeneratorARM64::tempToUnbox() { return temp(); }
 
 void LIRGenerator::visitBox(MBox* box) {
@@ -1085,6 +1087,8 @@ bool MWasmTernarySimd128::specializeBitselectConstantMaskAsShuffle(
   return false;
 }
 bool MWasmTernarySimd128::canRelaxBitselect() { return false; }
+
+bool MWasmBinarySimd128::canPmaddubsw() { return false; }
 #endif
 
 bool MWasmBinarySimd128::specializeForConstantRhs() {

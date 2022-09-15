@@ -5,13 +5,13 @@
 Transform the repackage signing task into an actual task description.
 """
 
+from taskgraph.transforms.base import TransformSequence
+from voluptuous import Optional
 
 from gecko_taskgraph.loader.single_dep import schema
-from gecko_taskgraph.transforms.base import TransformSequence
 from gecko_taskgraph.util.attributes import copy_attributes_from_dependent_job
 from gecko_taskgraph.util.scriptworker import get_signing_cert_scope_per_platform
 from gecko_taskgraph.transforms.task import task_description_schema
-from voluptuous import Optional
 
 repackage_signing_description_schema = schema.extend(
     {
@@ -99,7 +99,7 @@ def make_signing_description(config, jobs):
             worker_type = worker_type_alias_map[worker_type]
 
             task["worker-type"] = worker_type_alias_map[task["worker-type"]]
-            task["worker"]["mac-behavior"] = "mac_geckodriver"
+            task["worker"]["mac-behavior"] = "mac_notarize_geckodriver"
 
         yield task
 

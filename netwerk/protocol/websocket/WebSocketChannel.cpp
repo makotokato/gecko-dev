@@ -36,7 +36,9 @@
 #include "nsIProtocolHandler.h"
 #include "nsIRandomGenerator.h"
 #include "nsISocketTransport.h"
+#include "nsISSLSocketControl.h"
 #include "nsThreadUtils.h"
+#include "nsITransportSecurityInfo.h"
 #include "nsINetworkLinkService.h"
 #include "nsIObserverService.h"
 #include "nsCharSeparatedTokenizer.h"
@@ -553,7 +555,7 @@ class nsWSAdmissionManager {
 
   FailDelayManager mFailures;
 
-  static nsWSAdmissionManager* sManager GUARDED_BY(sLock);
+  static nsWSAdmissionManager* sManager MOZ_GUARDED_BY(sLock);
   static StaticMutex sLock;
 };
 
@@ -1226,6 +1228,7 @@ WebSocketChannel::~WebSocketChannel() {
   mListenerMT = nullptr;
 
   NS_ReleaseOnMainThread("WebSocketChannel::mLoadGroup", mLoadGroup.forget());
+  NS_ReleaseOnMainThread("WebSocketChannel::mLoadInfo", mLoadInfo.forget());
   NS_ReleaseOnMainThread("WebSocketChannel::mService", mService.forget());
   nsCOMPtr<nsIEventTarget> target;
   {
@@ -3263,12 +3266,12 @@ WebSocketChannel::Notify(nsITimer* timer) {
     }
 
     AbortSession(NS_ERROR_NET_TIMEOUT_EXTERNAL);
-    PUSH_IGNORE_THREAD_SAFETY
+    MOZ_PUSH_IGNORE_THREAD_SAFETY
     // mReconnectDelayTimer is only modified on MainThread, we can read it
     // without a lock, but ONLY if we're on MainThread!   And if we're not
     // on MainThread, it can't be mReconnectDelayTimer
   } else if (NS_IsMainThread() && timer == mReconnectDelayTimer) {
-    POP_THREAD_SAFETY
+    MOZ_POP_THREAD_SAFETY
     MOZ_ASSERT(mConnecting == CONNECTING_DELAYED,
                "woke up from delay w/o being delayed?");
 
@@ -3322,20 +3325,31 @@ WebSocketChannel::GetName(nsACString& aName) {
 // nsIWebSocketChannel
 
 NS_IMETHODIMP
-WebSocketChannel::GetSecurityInfo(nsISupports** aSecurityInfo) {
+WebSocketChannel::GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) {
   LOG(("WebSocketChannel::GetSecurityInfo() %p\n", this));
   MOZ_ASSERT(NS_IsMainThread(), "not main thread");
 
+  *aSecurityInfo = nullptr;
+
   if (mConnection) {
-    if (NS_FAILED(mConnection->GetSecurityInfo(aSecurityInfo))) {
-      *aSecurityInfo = nullptr;
+    nsresult rv = mConnection->GetSecurityInfo(aSecurityInfo);
+    if (NS_FAILED(rv)) {
+      return rv;
     }
     return NS_OK;
   }
 
   if (mTransport) {
-    if (NS_FAILED(mTransport->GetSecurityInfo(aSecurityInfo))) {
-      *aSecurityInfo = nullptr;
+    nsCOMPtr<nsISSLSocketControl> tlsSocketControl;
+    nsresult rv =
+        mTransport->GetTlsSocketControl(getter_AddRefs(tlsSocketControl));
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+    nsCOMPtr<nsITransportSecurityInfo> securityInfo(
+        do_QueryInterface(tlsSocketControl));
+    if (securityInfo) {
+      securityInfo.forget(aSecurityInfo);
     }
   }
   return NS_OK;
@@ -3343,7 +3357,7 @@ WebSocketChannel::GetSecurityInfo(nsISupports** aSecurityInfo) {
 
 NS_IMETHODIMP
 WebSocketChannel::AsyncOpen(nsIURI* aURI, const nsACString& aOrigin,
-                            JS::HandleValue aOriginAttributes,
+                            JS::Handle<JS::Value> aOriginAttributes,
                             uint64_t aInnerWindowID,
                             nsIWebSocketListener* aListener,
                             nsISupports* aContext, JSContext* aCx) {
@@ -3718,7 +3732,8 @@ WebSocketChannel::OnTransportAvailable(nsISocketTransport* aTransport,
   return OnTransportAvailableInternal();
 }
 
-nsresult WebSocketChannel::OnWebSocketConnectionAvailable(
+NS_IMETHODIMP
+WebSocketChannel::OnWebSocketConnectionAvailable(
     WebSocketConnectionBase* aConnection) {
   if (!NS_IsMainThread()) {
     RefPtr<WebSocketChannel> self = this;

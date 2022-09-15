@@ -996,6 +996,7 @@ impl FontMetricsProvider for GeckoFontMetricsProvider {
         context: &crate::values::computed::Context,
         base_size: FontBaseSize,
         orientation: FontMetricsOrientation,
+        retrieve_math_scales: bool,
     ) -> FontMetrics {
         let pc = match context.device().pres_context() {
             Some(pc) => pc,
@@ -1030,6 +1031,7 @@ impl FontMetricsProvider for GeckoFontMetricsProvider {
                 size,
                 // we don't use the user font set in a media query
                 !context.in_media_query,
+                retrieve_math_scales,
             )
         };
         FontMetrics {
@@ -1050,6 +1052,16 @@ impl FontMetricsProvider for GeckoFontMetricsProvider {
                 None
             },
             ascent: gecko_metrics.mAscent,
+            script_percent_scale_down: if gecko_metrics.mScriptPercentScaleDown > 0. {
+                Some(gecko_metrics.mScriptPercentScaleDown)
+            } else {
+                None
+            },
+            script_script_percent_scale_down: if gecko_metrics.mScriptScriptPercentScaleDown > 0. {
+                Some(gecko_metrics.mScriptScriptPercentScaleDown)
+            } else {
+                None
+            },
         }
     }
 }
@@ -1650,6 +1662,12 @@ impl<'le> TElement for GeckoElement<'le> {
 
         let after_change_ui_style = after_change_style.get_ui();
         let existing_transitions = self.css_transitions_info();
+
+        if after_change_style.get_box().clone_display().is_none() {
+            // We need to cancel existing transitions.
+            return !existing_transitions.is_empty();
+        }
+
         let mut transitions_to_keep = LonghandIdSet::new();
         for transition_property in after_change_style.transition_properties() {
             let physical_longhand = transition_property

@@ -78,10 +78,6 @@ int32_t CompareCompatVersions(const nsACString& aOldCompatVersion,
 nsresult NS_CreateNativeAppSupport(nsINativeAppSupport** aResult);
 already_AddRefed<nsINativeAppSupport> NS_GetNativeAppSupport();
 
-nsresult NS_NewToolkitProfileService(nsIToolkitProfileService** aResult);
-
-nsresult NS_NewToolkitProfileFactory(nsIFactory** aResult);
-
 /**
  * Try to acquire exclusive access to the specified profile directory.
  *
@@ -142,8 +138,6 @@ BOOL WinLaunchChild(const wchar_t* exePath, int argc, char** argv,
 namespace mozilla {
 namespace startup {
 Result<nsCOMPtr<nsIFile>, nsresult> GetIncompleteStartupFile(nsIFile* aProfLD);
-
-extern GeckoProcessType sChildProcessType;
 
 void IncreaseDescriptorLimits();
 }  // namespace startup

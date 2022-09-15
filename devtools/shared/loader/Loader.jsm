@@ -8,7 +8,6 @@
  * Manages the base loader (base-loader.js) instance used to load the developer tools.
  */
 
-var { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var { Loader, Require, resolveURI, unload } = ChromeUtils.import(
   "resource://devtools/shared/loader/base-loader.js"
 );
@@ -193,7 +192,7 @@ DevToolsLoader.prototype = {
     return {};
   },
 
-  destroy: function(reason = "shutdown") {
+  destroy(reason = "shutdown") {
     unload(this.loader, reason);
     delete this.loader;
   },
@@ -202,7 +201,7 @@ DevToolsLoader.prototype = {
    * Return true if |id| refers to something requiring help from a
    * loader plugin.
    */
-  isLoaderPluginId: function(id) {
+  isLoaderPluginId(id) {
     return id.startsWith("raw!");
   },
 };
@@ -216,7 +215,7 @@ var loader = new DevToolsLoader({
    * B2G.  It is not the default case for desktop Firefox because we offer the
    * Browser Toolbox for chrome debugging there, which uses its own, separate
    * loader instance.
-   * @see devtools/client/framework/browser-toolbox/Launcher.jsm
+   * @see devtools/client/framework/browser-toolbox/Launcher.sys.mjs
    */
   invisibleToDebugger: Services.appinfo.name !== "Firefox",
 });

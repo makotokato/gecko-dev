@@ -4,7 +4,6 @@
 
 "use strict";
 const { Ci, Cr } = require("chrome");
-const Services = require("Services");
 
 const {
   wildcardToRegExp,
@@ -317,11 +316,11 @@ exports.fetchRequestHeadersAndCookies = function(
 
   // Copy the request header data.
   channel.visitRequestHeaders({
-    visitHeader: function(name, value) {
+    visitHeader(name, value) {
       if (name == "Cookie") {
         cookieHeader = value;
       }
-      headers.push({ name: name, value: value });
+      headers.push({ name, value });
     },
   });
 

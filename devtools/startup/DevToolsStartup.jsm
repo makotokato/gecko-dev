@@ -31,10 +31,9 @@ const DEVTOOLS_F12_DISABLED_PREF = "devtools.experiment.f12.shortcut_disabled";
 
 const DEVTOOLS_POLICY_DISABLED_PREF = "devtools.policy.disabled";
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -345,11 +344,11 @@ DevToolsStartup.prototype = {
    */
   profilerRecordingButtonCreated: false,
 
-  isDisabledByPolicy: function() {
+  isDisabledByPolicy() {
     return Services.prefs.getBoolPref(DEVTOOLS_POLICY_DISABLED_PREF, false);
   },
 
-  handle: function(cmdLine) {
+  handle(cmdLine) {
     const flags = this.readCommandLineFlags(cmdLine);
 
     // handle() can be called after browser startup (e.g. opening links from other apps).
@@ -479,6 +478,7 @@ DevToolsStartup.prototype = {
         this.sendEntryPointTelemetry("CommandLine");
       }
     }
+    this.setSlowScriptDebugHandler();
   },
 
   /**
@@ -535,7 +535,7 @@ DevToolsStartup.prototype = {
     const subviewId = "PanelUI-developer-tools-view";
 
     const item = {
-      id: id,
+      id,
       type: "view",
       viewId: panelviewId,
       shortcutId: "key_toggleToolbox",
@@ -829,7 +829,7 @@ DevToolsStartup.prototype = {
     return k;
   },
 
-  initDevTools: function(reason, key = "") {
+  initDevTools(reason, key = "") {
     // In the case of the --jsconsole and --jsdebugger command line parameters
     // there is no browser window yet so we don't send any telemetry yet.
     if (reason !== "CommandLine") {
@@ -846,7 +846,7 @@ DevToolsStartup.prototype = {
     return require;
   },
 
-  handleConsoleFlag: function(cmdLine) {
+  handleConsoleFlag(cmdLine) {
     const window = Services.wm.getMostRecentWindow("devtools:webconsole");
     if (!window) {
       const require = this.initDevTools("CommandLine");
@@ -865,7 +865,7 @@ DevToolsStartup.prototype = {
   },
 
   // Open the toolbox on the selected tab once the browser starts up.
-  handleDevToolsFlag: async function(window) {
+  async handleDevToolsFlag(window) {
     const require = this.initDevTools("CommandLine");
     const { gDevTools } = require("devtools/client/framework/devtools");
     await gDevTools.showToolboxForTab(window.gBrowser.selectedTab);
@@ -894,7 +894,7 @@ DevToolsStartup.prototype = {
     return remoteDebuggingEnabled;
   },
 
-  handleDebuggerFlag: function(cmdLine, binaryPath) {
+  handleDebuggerFlag(cmdLine, binaryPath) {
     if (!this._isRemoteDebuggingEnabled()) {
       return;
     }
@@ -909,8 +909,8 @@ DevToolsStartup.prototype = {
       Services.obs.addObserver(observe, "devtools-thread-ready");
     }
 
-    const { BrowserToolboxLauncher } = ChromeUtils.import(
-      "resource://devtools/client/framework/browser-toolbox/Launcher.jsm"
+    const { BrowserToolboxLauncher } = ChromeUtils.importESModule(
+      "resource://devtools/client/framework/browser-toolbox/Launcher.sys.mjs"
     );
     const env = Cc["@mozilla.org/process/environment;1"].getService(
       Ci.nsIEnvironment
@@ -919,7 +919,15 @@ DevToolsStartup.prototype = {
     // See comment within BrowserToolboxLauncher.
     // Setting it as an environment variable helps it being reused if we restart the browser via CmdOrCtrl+R
     env.set("MOZ_BROWSER_TOOLBOX_BINARY", binaryPath);
-    BrowserToolboxLauncher.init();
+
+    const browserToolboxLauncherConfig = {};
+
+    // If user passed the --jsdebugger in mochitests, we want to enable the
+    // multiprocess Browser Toolbox (by default it's parent process only)
+    if (Services.prefs.getBoolPref("devtools.testing", false)) {
+      browserToolboxLauncherConfig.forceMultiprocess = true;
+    }
+    BrowserToolboxLauncher.init(browserToolboxLauncherConfig);
 
     if (pauseOnStartup) {
       // Spin the event loop until the debugger connects.
@@ -953,7 +961,7 @@ DevToolsStartup.prototype = {
    * --start-debugger-server ws:
    *   Start the WebSocket server on the default port (taken from d.d.remote-port)
    */
-  handleDevToolsServerFlag: function(cmdLine, portOrPath) {
+  handleDevToolsServerFlag(cmdLine, portOrPath) {
     if (!this._isRemoteDebuggingEnabled()) {
       return;
     }
@@ -1094,6 +1102,92 @@ DevToolsStartup.prototype = {
     this.recorded = true;
   },
 
+  /**
+   * Hook the debugger tool to the "Debug Script" button of the slow script dialog.
+   */
+  setSlowScriptDebugHandler() {
+    const debugService = Cc["@mozilla.org/dom/slow-script-debug;1"].getService(
+      Ci.nsISlowScriptDebug
+    );
+
+    debugService.activationHandler = window => {
+      const chromeWindow = window.browsingContext.topChromeWindow;
+
+      let setupFinished = false;
+      this.slowScriptDebugHandler(chromeWindow.gBrowser.selectedTab).then(
+        () => {
+          setupFinished = true;
+        }
+      );
+
+      // Don't return from the interrupt handler until the debugger is brought
+      // up; no reason to continue executing the slow script.
+      const utils = window.windowUtils;
+      utils.enterModalState();
+      Services.tm.spinEventLoopUntil(
+        "devtools-browser.js:debugService.activationHandler",
+        () => {
+          return setupFinished;
+        }
+      );
+      utils.leaveModalState();
+    };
+
+    debugService.remoteActivationHandler = async (browser, callback) => {
+      try {
+        // Force selecting the freezing tab
+        const chromeWindow = browser.ownerGlobal;
+        const tab = chromeWindow.gBrowser.getTabForBrowser(browser);
+        chromeWindow.gBrowser.selectedTab = tab;
+
+        await this.slowScriptDebugHandler(tab);
+      } catch (e) {
+        console.error(e);
+      }
+      callback.finishDebuggerStartup();
+    };
+  },
+
+  /**
+   * Called by setSlowScriptDebugHandler, when a tab freeze because of a slow running script
+   */
+  async slowScriptDebugHandler(tab) {
+    const require = this.initDevTools("SlowScript");
+    const { gDevTools } = require("devtools/client/framework/devtools");
+    const toolbox = await gDevTools.showToolboxForTab(tab, {
+      toolId: "jsdebugger",
+    });
+    const threadFront = toolbox.threadFront;
+
+    // Break in place, which means resuming the debuggee thread and pausing
+    // right before the next step happens.
+    switch (threadFront.state) {
+      case "paused":
+        // When the debugger is already paused.
+        threadFront.resumeThenPause();
+        break;
+      case "attached":
+        // When the debugger is already open.
+        const onPaused = threadFront.once("paused");
+        threadFront.interrupt();
+        await onPaused;
+        threadFront.resumeThenPause();
+        break;
+      case "resuming":
+        // The debugger is newly opened.
+        const onResumed = threadFront.once("resumed");
+        await threadFront.interrupt();
+        await onResumed;
+        threadFront.resumeThenPause();
+        break;
+      default:
+        throw Error(
+          "invalid thread front state in slow script debug handler: " +
+            threadFront.state
+        );
+    }
+  },
+
   // Used by tests and the toolbox to register the same key shortcuts in toolboxes loaded
   // in a window window.
   get KeyShortcuts() {
@@ -1129,7 +1223,7 @@ DevToolsStartup.prototype = {
 const JsonView = {
   initialized: false,
 
-  initialize: function() {
+  initialize() {
     // Prevent loading the frame script multiple times if we call this more than once.
     if (this.initialized) {
       return;
@@ -1148,7 +1242,7 @@ const JsonView = {
    * Save JSON to a file needs to be implemented here
    * in the parent process.
    */
-  onSave: function(message) {
+  onSave(message) {
     const browser = message.target;
     const chrome = browser.ownerGlobal;
     if (message.data === null) {

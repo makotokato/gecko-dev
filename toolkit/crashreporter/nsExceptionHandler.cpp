@@ -20,6 +20,7 @@
 #include "mozilla/Unused.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Printf.h"
+#include "mozilla/RuntimeExceptionModule.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticMutex.h"
@@ -53,14 +54,6 @@
 #  include "mozilla/WindowsDllBlocklist.h"
 #  include "mozilla/WindowsVersion.h"
 #  include "psapi.h"  // For PERFORMANCE_INFORMATION and K32GetPerformanceInfo()
-#  if defined(__MINGW32__) || defined(__MINGW64__)
-// Add missing constants and types for mingw builds
-#    define HREPORT HANDLE
-#    define PWER_SUBMIT_RESULT WER_SUBMIT_RESULT*
-#    define WER_MAX_PREFERRED_MODULES_BUFFER (256)
-#    define WER_FAULT_REPORTING_DISABLE_SNAPSHOT_HANG (256)
-#  endif               // defined(__MINGW32__) || defined(__MINGW64__)
-#  include "werapi.h"  // For WerRegisterRuntimeExceptionModule()
 #elif defined(XP_MACOSX)
 #  include "breakpad-client/mac/crash_generation/client_info.h"
 #  include "breakpad-client/mac/crash_generation/crash_generation_server.h"
@@ -1211,10 +1204,14 @@ static bool LaunchProgram(const XP_CHAR* aProgramPath,
   STARTUPINFO si = {};
   si.cb = sizeof(si);
 
-  // If CreateProcess() fails don't do anything
-  if (CreateProcess(nullptr, (LPWSTR)cmdLine, nullptr, nullptr, FALSE,
-                    NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW, nullptr, nullptr,
-                    &si, &pi)) {
+  // If CreateProcess() fails don't do anything.
+  if (CreateProcess(
+          /* lpApplicationName */ nullptr, (LPWSTR)cmdLine,
+          /* lpProcessAttributes */ nullptr, /* lpThreadAttributes */ nullptr,
+          /* bInheritHandles */ FALSE,
+          NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB,
+          /* lpEnvironment */ nullptr, /* lpCurrentDirectory */ nullptr, &si,
+          &pi)) {
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
   }
@@ -1397,10 +1394,6 @@ static void WriteAnnotationsForMainProcessCrash(PlatformWriter& pw,
 
   if (gTexturesSize) {
     writer.Write(Annotation::TextureUsage, gTexturesSize);
-  }
-
-  if (!memoryReportPath.empty()) {
-    writer.Write(Annotation::ContainsMemoryReport, "1");
   }
 
 #ifdef MOZ_PHC
@@ -1935,53 +1928,6 @@ static void TeardownAnnotationFacilities() {
   notesField = nullptr;
 }
 
-#ifdef XP_WIN
-
-struct InProcessWindowsErrorReportingData {
-  uint32_t mProcessType;
-  size_t* mOOMAllocationSizePtr;
-};
-
-static InProcessWindowsErrorReportingData gInProcessWerData = {};
-
-bool GetRuntimeExceptionModulePath(wchar_t* aPath, const size_t aLength) {
-  const wchar_t* kModuleName = L"mozwer.dll";
-  DWORD res = GetModuleFileName(nullptr, aPath, aLength);
-  if ((res > 0) && (res != aLength)) {
-    wchar_t* last_backslash = wcsrchr(aPath, L'\\');
-    if (last_backslash) {
-      *(last_backslash + 1) = L'\0';
-      if (wcscat_s(aPath, aLength, kModuleName) == 0) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-#endif  // XP_WIN
-
-static void RegisterRuntimeExceptionModule(
-    GeckoProcessType aProcessType =
-        GeckoProcessType::GeckoProcessType_Default) {
-#ifdef XP_WIN
-  gInProcessWerData.mProcessType = aProcessType;
-  gInProcessWerData.mOOMAllocationSizePtr = &gOOMAllocationSize;
-  const size_t kPathLength = MAX_PATH + 1;
-  wchar_t path[kPathLength] = {};
-  if (GetRuntimeExceptionModulePath(path, kPathLength)) {
-    Unused << WerRegisterRuntimeExceptionModule(path, &gInProcessWerData);
-
-    DWORD dwFlags = 0;
-    if (WerGetFlags(GetCurrentProcess(), &dwFlags) == S_OK) {
-      Unused << WerSetFlags(dwFlags |
-                            WER_FAULT_REPORTING_DISABLE_SNAPSHOT_HANG);
-    }
-  }
-#endif  // XP_WIN
-}
-
 nsresult SetExceptionHandler(nsIFile* aXREDirectory, bool force /*=false*/) {
   if (gExceptionHandler) return NS_ERROR_ALREADY_INITIALIZED;
 
@@ -2454,6 +2400,18 @@ nsresult AnnotateCrashReport(Annotation key, const nsACString& data) {
   return NS_OK;
 }
 
+nsresult AppendToCrashReportAnnotation(Annotation key, const nsACString& data) {
+  if (!GetEnabled()) return NS_ERROR_NOT_INITIALIZED;
+
+  MutexAutoLock lock(*crashReporterAPILock);
+  nsAutoCString newString(crashReporterAPIData_Table[key]);
+  newString.Append(" - "_ns);
+  newString.Append(data);
+  crashReporterAPIData_Table[key] = newString;
+
+  return NS_OK;
+}
+
 nsresult RemoveCrashReportAnnotation(Annotation key) {
   return AnnotateCrashReport(key, ""_ns);
 }
@@ -2518,10 +2476,6 @@ static void AddCommonAnnotations(AnnotationTable& aAnnotations) {
   nsAutoCString uptimeStr;
   uptimeStr.AppendFloat(uptimeTS);
   aAnnotations[Annotation::UptimeTS] = uptimeStr;
-
-  if (!memoryReportPath.empty()) {
-    aAnnotations[Annotation::ContainsMemoryReport] = "1"_ns;
-  }
 }
 
 nsresult SetGarbageCollecting(bool collecting) {
@@ -3088,24 +3042,39 @@ static bool GetMinidumpLimboDir(nsIFile** dir) {
   }
 }
 
-void DeleteMinidumpFilesForID(const nsAString& id) {
+void DeleteMinidumpFilesForID(const nsAString& aId,
+                              const Maybe<nsString>& aAdditionalMinidump) {
   nsCOMPtr<nsIFile> minidumpFile;
-  if (GetMinidumpForID(id, getter_AddRefs(minidumpFile))) {
+  if (GetMinidumpForID(aId, getter_AddRefs(minidumpFile))) {
     minidumpFile->Remove(false);
   }
 
   nsCOMPtr<nsIFile> extraFile;
-  if (GetExtraFileForID(id, getter_AddRefs(extraFile))) {
+  if (GetExtraFileForID(aId, getter_AddRefs(extraFile))) {
     extraFile->Remove(false);
+  }
+
+  if (aAdditionalMinidump && GetMinidumpForID(aId, getter_AddRefs(minidumpFile),
+                                              aAdditionalMinidump)) {
+    minidumpFile->Remove(false);
   }
 }
 
-bool GetMinidumpForID(const nsAString& id, nsIFile** minidump) {
+bool GetMinidumpForID(const nsAString& id, nsIFile** minidump,
+                      const Maybe<nsString>& aAdditionalMinidump) {
   if (!GetMinidumpLimboDir(minidump)) {
     return false;
   }
 
-  (*minidump)->Append(id + u".dmp"_ns);
+  nsAutoString fileName(id);
+
+  if (aAdditionalMinidump) {
+    fileName.Append('-');
+    fileName.Append(*aAdditionalMinidump);
+  }
+
+  fileName.Append(u".dmp"_ns);
+  (*minidump)->Append(fileName);
 
   bool exists;
   if (NS_FAILED((*minidump)->Exists(&exists)) || !exists) {
@@ -3285,7 +3254,7 @@ static void MaybeAnnotateDumperError(const ClientInfo& aClientInfo,
 
 static void OnChildProcessDumpRequested(
     void* aContext, const ClientInfo& aClientInfo,
-    const xpstring& aFilePath) NO_THREAD_SAFETY_ANALYSIS {
+    const xpstring& aFilePath) MOZ_NO_THREAD_SAFETY_ANALYSIS {
   nsCOMPtr<nsIFile> minidump;
 
   // Hold the mutex until the current dump request is complete, to
@@ -3330,8 +3299,9 @@ static void OnChildProcessDumpRequested(
   }
 }
 
-static void OnChildProcessDumpWritten(
-    void* aContext, const ClientInfo& aClientInfo) NO_THREAD_SAFETY_ANALYSIS {
+static void OnChildProcessDumpWritten(void* aContext,
+                                      const ClientInfo& aClientInfo)
+    MOZ_NO_THREAD_SAFETY_ANALYSIS {
   ProcessId pid = aClientInfo.pid();
   ChildProcessData* pd = pidToMinidump->GetEntry(pid);
   MOZ_ASSERT(pd);
@@ -3553,7 +3523,7 @@ bool CreateNotificationPipeForChild(int* childCrashFd, int* childCrashRemapFd) {
 bool SetRemoteExceptionHandler(const char* aCrashPipe,
                                FileHandle aCrashTimeAnnotationFile) {
   MOZ_ASSERT(!gExceptionHandler, "crash client already init'd");
-  RegisterRuntimeExceptionModule(XRE_GetProcessType());
+  RegisterRuntimeExceptionModule();
   InitializeAnnotationFacilities();
 
 #if defined(XP_WIN)
@@ -3619,8 +3589,8 @@ bool TakeMinidumpForChild(uint32_t childPid, nsIFile** dump,
   if (!pd) return false;
 
   NS_IF_ADDREF(*dump = pd->minidump);
-  // Only Flash process minidumps don't have annotations. Once we get rid of
-  // the Flash processes this check will become redundant.
+  // Only plugin process minidumps taken using the injector don't have
+  // annotations.
   if (!pd->minidumpOnly) {
     aAnnotations = *(pd->annotations);
   }

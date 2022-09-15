@@ -69,6 +69,13 @@ CheckedInt32 StructLayout::addField(FieldType type) {
   uint32_t fieldSize = type.size();
   uint32_t fieldAlignment = type.alignmentInStruct();
 
+  // We have to ensure that `offset` is chosen so that no field crosses the
+  // inline/outline boundary.  The assertions here ensure that.  See comment
+  // on `class StructLayout` for background.
+  MOZ_ASSERT(fieldSize >= 1 && fieldSize <= 16);
+  MOZ_ASSERT((fieldSize & (fieldSize - 1)) == 0);  // is a power of 2
+  MOZ_ASSERT(fieldAlignment == fieldSize);         // is naturally aligned
+
   // Alignment of the struct is the max of the alignment of its fields.
   structAlignment = std::max(structAlignment, fieldAlignment);
 
@@ -84,6 +91,8 @@ CheckedInt32 StructLayout::addField(FieldType type) {
     return sizeSoFar;
   }
 
+  // The following should hold if the three assertions above hold.
+  MOZ_ASSERT(offset / 16 == (offset + fieldSize - 1) / 16);
   return offset;
 }
 
@@ -309,6 +318,12 @@ TypeResult TypeContext::isRefSubtypeOf(RefType subType, RefType superType,
       return TypeResult::True;
     }
 
+    // The ref T <: funcref when T = func-type rule
+    if (subType.isTypeIndex() && types_[subType.typeIndex()].isFuncType() &&
+        superType.isFunc()) {
+      return TypeResult::True;
+    }
+
     // Type-index references can be subtypes
     if (subType.isTypeIndex() && superType.isTypeIndex()) {
       return isTypeIndexSubtypeOf(subType.typeIndex(), superType.typeIndex(),
@@ -459,8 +474,6 @@ static bool IsImmediateType(ValType vt) {
           return false;
       }
       break;
-    case ValType::Rtt:
-      return false;
   }
   MOZ_CRASH("bad ValType");
 }
@@ -489,8 +502,6 @@ static unsigned EncodeImmediateType(ValType vt) {
         case RefType::TypeIndex:
           break;
       }
-      break;
-    case ValType::Rtt:
       break;
   }
   MOZ_CRASH("bad ValType");

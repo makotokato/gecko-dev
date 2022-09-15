@@ -88,14 +88,12 @@
 const EXPORTED_SYMBOLS = ["FormHistory"];
 let FormHistory;
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
 
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(lazy, "OS", "resource://gre/modules/osfile.jsm");
 ChromeUtils.defineModuleGetter(
   lazy,
   "Sqlite",
@@ -786,7 +784,7 @@ var DB = {
 
   /** String representing where the FormHistory database is on the filesystem */
   get path() {
-    return lazy.OS.Path.join(lazy.OS.Constants.Path.profileDir, DB_FILENAME);
+    return PathUtils.join(PathUtils.profileDir, DB_FILENAME);
   },
 
   /**
@@ -981,12 +979,13 @@ var DB = {
       await conn.close();
     }
     let backupFile = this.path + ".corrupt";
-    let { file, path: uniquePath } = await lazy.OS.File.openUnique(backupFile, {
-      humanReadable: true,
-    });
-    await file.close();
-    await lazy.OS.File.copy(this.path, uniquePath);
-    await lazy.OS.File.remove(this.path);
+    let uniquePath = await IOUtils.createUniqueFile(
+      PathUtils.parent(backupFile),
+      PathUtils.filename(backupFile),
+      0o600
+    );
+    await IOUtils.copy(this.path, uniquePath);
+    await IOUtils.remove(this.path);
     log("Completed DB cleanup.");
   },
 

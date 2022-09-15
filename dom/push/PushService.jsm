@@ -7,12 +7,11 @@
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { clearTimeout, setTimeout } = ChromeUtils.import(
   "resource://gre/modules/Timer.jsm"
 );
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 var PushServiceWebSocket, PushServiceHttp2;
@@ -1183,7 +1182,7 @@ var PushService = {
     lazy.console.debug("register()", aPageRecord);
 
     let keyPromise;
-    if (aPageRecord.appServerKey && aPageRecord.appServerKey.length != 0) {
+    if (aPageRecord.appServerKey && aPageRecord.appServerKey.length) {
       let keyView = new Uint8Array(aPageRecord.appServerKey);
       keyPromise = lazy.PushCrypto.validateAppServerKey(keyView).catch(
         error => {

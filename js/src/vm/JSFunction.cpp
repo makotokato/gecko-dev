@@ -13,10 +13,8 @@
 #include "mozilla/CheckedInt.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Range.h"
-#include "mozilla/Utf8.h"
 
 #include <algorithm>
-#include <iterator>
 #include <string.h>
 
 #include "jsapi.h"
@@ -24,31 +22,26 @@
 
 #include "builtin/Array.h"
 #include "builtin/BigInt.h"
-#include "builtin/Eval.h"
 #include "builtin/Object.h"
-#include "builtin/SelfHostingDefines.h"
 #include "builtin/Symbol.h"
 #include "frontend/BytecodeCompilation.h"
 #include "frontend/BytecodeCompiler.h"
-#include "gc/Marking.h"
-#include "gc/Policy.h"
 #include "jit/Ion.h"
-#include "js/CallAndConstruct.h"  // JS::IsCallable
 #include "js/CallNonGenericMethod.h"
 #include "js/CompilationAndEvaluation.h"
 #include "js/CompileOptions.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "js/PropertySpec.h"
-#include "js/Proxy.h"
 #include "js/SourceText.h"
 #include "js/StableStringChars.h"
 #include "js/Wrapper.h"
+#include "util/DifferentialTesting.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
-#include "vm/AsyncFunction.h"
-#include "vm/AsyncIteration.h"
 #include "vm/BooleanObject.h"
+#include "vm/Compartment.h"
+#include "vm/ErrorContext.h"           // MainThreadErrorContext
 #include "vm/FunctionFlags.h"          // js::FunctionFlags
 #include "vm/GeneratorAndAsyncKind.h"  // js::GeneratorKind, js::FunctionAsyncKind
 #include "vm/GlobalObject.h"
@@ -61,28 +54,22 @@
 #include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/SelfHosting.h"
 #include "vm/Shape.h"
-#include "vm/SharedImmutableStringsCache.h"
 #include "vm/StringObject.h"
 #include "vm/WellKnownAtom.h"  // js_*_str
-#include "vm/WrapperObject.h"
 #include "wasm/AsmJS.h"
 #ifdef ENABLE_RECORD_TUPLE
 #  include "vm/RecordType.h"
 #  include "vm/TupleType.h"
 #endif
 
-#include "debugger/DebugAPI-inl.h"
-#include "vm/FrameIter-inl.h"  // js::FrameIter::unaliasedForEachActual
 #include "vm/Interpreter-inl.h"
 #include "vm/JSScript-inl.h"
-#include "vm/Stack-inl.h"
 
 using namespace js;
 
 using mozilla::CheckedInt;
 using mozilla::Maybe;
 using mozilla::Some;
-using mozilla::Utf8Unit;
 
 using JS::AutoStableStringChars;
 using JS::CompileOptions;
@@ -95,7 +82,7 @@ static bool fun_enumerate(JSContext* cx, HandleObject obj) {
   RootedId id(cx);
   bool found;
 
-  if (!obj->isBoundFunction() && !obj->as<JSFunction>().isArrow()) {
+  if (obj->as<JSFunction>().needsPrototypeProperty()) {
     id = NameToId(cx->names().prototype);
     if (!HasOwnProperty(cx, obj, id, &found)) {
       return false;
@@ -603,7 +590,7 @@ bool JS::OrdinaryHasInstance(JSContext* cx, HandleObject objArg, HandleValue v,
   }
 
   /* Step 2. */
-  if (obj->is<JSFunction>() && obj->isBoundFunction()) {
+  if (obj->is<JSFunction>() && obj->as<JSFunction>().isBoundFunction()) {
     /* Steps 2a-b. */
     AutoCheckRecursionLimit recursion(cx);
     if (!recursion.check(cx)) {
@@ -660,6 +647,16 @@ inline void JSFunction::trace(JSTracer* trc) {
         HeapSlot& slot = getFixedSlotRef(NativeJitInfoOrInterpretedScriptSlot);
         slot.unbarrieredSet(JS::PrivateValue(script));
       }
+    }
+  }
+  // wasm/asm.js exported functions need to keep WasmInstantObject alive,
+  // access it via WASM_INSTANCE_SLOT extended slot.
+  if (isAsmJSNative() || isWasm()) {
+    const Value& v = getExtendedSlot(FunctionExtended::WASM_INSTANCE_SLOT);
+    if (!v.isUndefined()) {
+      js::wasm::Instance* instance =
+          static_cast<js::wasm::Instance*>(v.toPrivate());
+      instance->trace(trc);
     }
   }
 }
@@ -968,7 +965,7 @@ bool js::fun_call(JSContext* cx, unsigned argc, Value* vp) {
     iargs[i].set(args[i + 1]);
   }
 
-  return Call(cx, func, args.get(0), iargs, args.rval());
+  return Call(cx, func, args.get(0), iargs, args.rval(), CallReason::FunCall);
 }
 
 // ES5 15.3.4.3
@@ -1020,7 +1017,7 @@ bool js::fun_apply(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   // Step 9.
-  return Call(cx, fval, args[0], args2, args.rval());
+  return Call(cx, fval, args[0], args2, args.rval(), CallReason::FunCall);
 }
 
 static const JSFunctionSpec function_methods[] = {
@@ -1409,7 +1406,9 @@ bool JSFunction::delazifyLazilyInterpretedFunction(JSContext* cx,
   }
 
   // Finally, compile the script if it really doesn't exist.
-  if (!frontend::DelazifyCanonicalScriptedFunction(cx, fun)) {
+  MainThreadErrorContext ec(cx);
+  if (!frontend::DelazifyCanonicalScriptedFunction(
+          cx, &ec, cx->stackLimitForCurrentPrincipal(), fun)) {
     // The frontend shouldn't fail after linking the function and the
     // non-lazy script together.
     MOZ_ASSERT(fun->baseScript() == lazy);
@@ -1592,9 +1591,10 @@ static bool CreateDynamicFunction(JSContext* cx, const CallArgs& args,
 
   // Remember the position of ")".
   Maybe<uint32_t> parameterListEnd = Some(uint32_t(sb.length()));
-  MOZ_ASSERT(FunctionConstructorMedialSigils[0] == ')');
+  static_assert(FunctionConstructorMedialSigils[0] == ')');
 
-  if (!sb.append(FunctionConstructorMedialSigils)) {
+  if (!sb.append(FunctionConstructorMedialSigils.data(),
+                 FunctionConstructorMedialSigils.length())) {
     return false;
   }
 
@@ -1606,7 +1606,8 @@ static bool CreateDynamicFunction(JSContext* cx, const CallArgs& args,
     }
   }
 
-  if (!sb.append(FunctionConstructorFinalBrace)) {
+  if (!sb.append(FunctionConstructorFinalBrace.data(),
+                 FunctionConstructorFinalBrace.length())) {
     return false;
   }
 
@@ -1928,8 +1929,9 @@ bool js::GetFunctionPrototype(JSContext* cx, js::GeneratorKind generatorKind,
   return !!proto;
 }
 
-bool js::CanReuseScriptForClone(JS::Realm* realm, HandleFunction fun,
-                                HandleObject newEnclosingEnv) {
+#ifdef DEBUG
+static bool CanReuseScriptForClone(JS::Realm* realm, HandleFunction fun,
+                                   HandleObject newEnclosingEnv) {
   MOZ_ASSERT(fun->isInterpreted());
 
   if (realm != fun->realm()) {
@@ -1956,6 +1958,7 @@ bool js::CanReuseScriptForClone(JS::Realm* realm, HandleFunction fun,
   return script->hasNonSyntacticScope() ||
          script->enclosingScope()->hasOnChain(ScopeKind::NonSyntactic);
 }
+#endif
 
 static inline JSFunction* NewFunctionClone(JSContext* cx, HandleFunction fun,
                                            HandleObject proto) {

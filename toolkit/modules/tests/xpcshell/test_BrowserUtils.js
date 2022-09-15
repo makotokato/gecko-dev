@@ -9,8 +9,8 @@ const { BrowserUtils } = ChromeUtils.import(
   "resource://gre/modules/BrowserUtils.jsm"
 );
 
-const { EnterprisePolicyTesting } = ChromeUtils.import(
-  "resource://testing-common/EnterprisePolicyTesting.jsm"
+const { EnterprisePolicyTesting } = ChromeUtils.importESModule(
+  "resource://testing-common/EnterprisePolicyTesting.sys.mjs"
 );
 
 const { Region } = ChromeUtils.import("resource://gre/modules/Region.jsm");
@@ -185,6 +185,29 @@ add_task(async function test_shouldShowFocusPromo() {
   Assert.ok(!BrowserUtils.shouldShowPromo(BrowserUtils.PromoType.FOCUS));
 
   Preferences.resetBranch("browser.promo.focus");
+});
+
+add_task(async function test_shouldShowPinPromo() {
+  Preferences.set("browser.promo.pin.enabled", true);
+  // Show pin promo type by default when promo is enabled
+  Assert.ok(BrowserUtils.shouldShowPromo(BrowserUtils.PromoType.PIN));
+
+  // Don't show when there is an enterprise policy active
+  if (AppConstants.platform !== "android") {
+    // Services.policies isn't shipped on Android
+    await setupEnterprisePolicy();
+
+    Assert.ok(!BrowserUtils.shouldShowPromo(BrowserUtils.PromoType.PIN));
+
+    // revert policy changes made earlier
+    await EnterprisePolicyTesting.setupPolicyEngineWithJson("");
+  }
+
+  // Don't show when promo disabled by pref
+  Preferences.set("browser.promo.pin.enabled", false);
+  Assert.ok(!BrowserUtils.shouldShowPromo(BrowserUtils.PromoType.PIN));
+
+  Preferences.resetBranch("browser.promo.pin");
 });
 
 add_task(function test_isShareableURL() {

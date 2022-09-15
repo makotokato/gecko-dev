@@ -8,16 +8,13 @@ Transform the repackage task into an actual task description.
 
 import copy
 
+from taskgraph.transforms.base import TransformSequence
 from taskgraph.util.taskcluster import get_artifact_prefix
+from taskgraph.util.schema import optionally_keyed_by, resolve_keyed_by
 from voluptuous import Required, Optional, Extra
 
 from gecko_taskgraph.loader.single_dep import schema
-from gecko_taskgraph.transforms.base import TransformSequence
 from gecko_taskgraph.util.attributes import copy_attributes_from_dependent_job
-from gecko_taskgraph.util.schema import (
-    optionally_keyed_by,
-    resolve_keyed_by,
-)
 from gecko_taskgraph.util.platforms import archive_format, architecture
 from gecko_taskgraph.util.workertypes import worker_type_implementation
 from gecko_taskgraph.transforms.job import job_description_schema
@@ -255,8 +252,8 @@ def copy_in_useful_magic(config, jobs):
 
 @transforms.add
 def handle_keyed_by(config, jobs):
-    """Resolve fields that can be keyed by platform, etc, but not `msix.*` fields that can be keyed by
-    `package-format`.  Such fields are handled specially below.
+    """Resolve fields that can be keyed by platform, etc, but not `msix.*` fields
+    that can be keyed by `package-format`.  Such fields are handled specially below.
     """
     fields = [
         "mozharness.config",
@@ -478,7 +475,7 @@ def make_job_description(config, jobs):
 
         worker["artifacts"] = _generate_task_output_files(
             dep_job,
-            worker_type_implementation(config.graph_config, worker_type),
+            worker_type_implementation(config.graph_config, config.params, worker_type),
             repackage_config=repackage_config,
             locale=locale,
         )

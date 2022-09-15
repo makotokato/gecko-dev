@@ -268,7 +268,7 @@ DOMException* IDBRequest::GetError(ErrorResult& aRv) {
   return mError;
 }
 
-NS_IMPL_CYCLE_COLLECTION_MULTI_ZONE_JSHOLDER_CLASS(IDBRequest)
+NS_IMPL_CYCLE_COLLECTION_CLASS(IDBRequest)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(IDBRequest,
                                                   DOMEventTargetHelper)
@@ -335,7 +335,7 @@ RefPtr<IDBOpenDBRequest> IDBOpenDBRequest::Create(
   aFactory->AssertIsOnOwningThread();
   MOZ_ASSERT(aGlobal);
 
-  bool fileHandleDisabled = !IndexedDatabaseManager::IsFileHandleEnabled();
+  bool fileHandleDisabled = !StaticPrefs::dom_fileHandle_enabled();
 
   RefPtr<IDBOpenDBRequest> request =
       new IDBOpenDBRequest(std::move(aFactory), aGlobal, fileHandleDisabled);
@@ -438,16 +438,6 @@ NS_INTERFACE_MAP_END_INHERITING(IDBRequest)
 
 NS_IMPL_ADDREF_INHERITED(IDBOpenDBRequest, IDBRequest)
 NS_IMPL_RELEASE_INHERITED(IDBOpenDBRequest, IDBRequest)
-
-nsresult IDBOpenDBRequest::PostHandleEvent(EventChainPostVisitor& aVisitor) {
-  nsresult rv =
-      IndexedDatabaseManager::CommonPostHandleEvent(aVisitor, *mFactory);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-
-  return NS_OK;
-}
 
 JSObject* IDBOpenDBRequest::WrapObject(JSContext* aCx,
                                        JS::Handle<JSObject*> aGivenProto) {

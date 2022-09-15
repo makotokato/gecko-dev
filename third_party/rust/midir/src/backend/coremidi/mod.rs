@@ -337,12 +337,7 @@ impl MidiOutputConnection {
     }
     
     pub fn send(&mut self, message: &[u8]) -> Result<(), SendError> {
-        let send_time = if cfg!(feature = "coremidi_send_timestamped") {
-            unsafe { external::AudioGetCurrentHostTime() }
-        } else {
-            0
-        };
-        let packets = PacketBuffer::new(send_time, message);
+        let packets = PacketBuffer::new(0, message);
         match self.details {
             OutputConnectionDetails::Explicit(ref port, ref dest) => {
                 port.send(&dest, &packets).map_err(|_| SendError::Other("error sending MIDI message to port"))

@@ -298,19 +298,20 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
     nsRect dest = nsLayoutUtils::ComputeObjectDestRect(
         area, intrinsicSize, intrinsicRatio, f->StylePosition());
 
-    gfxRect destGFXRect = presContext->AppUnitsToGfxUnits(dest);
-
-    // Transform the canvas into the right place
-    gfxPoint p = destGFXRect.TopLeft();
-    Matrix transform = Matrix::Translation(p.x, p.y);
-    transform.PreScale(destGFXRect.Width() / canvasSizeInPx.width,
-                       destGFXRect.Height() / canvasSizeInPx.height);
     gfxContextMatrixAutoSaveRestore saveMatrix(aCtx);
 
-    aCtx->SetMatrix(
-        gfxUtils::SnapTransformTranslation(aCtx->CurrentMatrix(), nullptr));
-
     if (RefPtr<layers::Image> image = canvas->GetAsImage()) {
+      gfxRect destGFXRect = presContext->AppUnitsToGfxUnits(dest);
+
+      // Transform the canvas into the right place
+      gfxPoint p = destGFXRect.TopLeft();
+      Matrix transform = Matrix::Translation(p.x, p.y);
+      transform.PreScale(destGFXRect.Width() / canvasSizeInPx.width,
+                         destGFXRect.Height() / canvasSizeInPx.height);
+
+      aCtx->SetMatrix(
+          gfxUtils::SnapTransformTranslation(aCtx->CurrentMatrix(), nullptr));
+
       RefPtr<gfx::SourceSurface> surface = image->GetAsSourceSurface();
       if (!surface || !surface->IsValid()) {
         return;
@@ -338,23 +339,28 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
     }
     renderer->FirePreTransactionCallback();
     const auto snapshot = renderer->BorrowSnapshot();
-    if (!snapshot) return;
+    if (!snapshot) {
+      return;
+    }
     const auto& surface = snapshot->mSurf;
-
-    transform = gfxUtils::SnapTransform(
-        transform, gfxRect(0, 0, canvasSizeInPx.width, canvasSizeInPx.height),
-        nullptr);
+    DrawTarget& dt = *aCtx->GetDrawTarget();
+    gfx::Rect destRect =
+        NSRectToSnappedRect(dest, presContext->AppUnitsPerDevPixel(), dt);
 
     if (!renderer->YIsDown()) {
-      // y-flip
-      transform.PreTranslate(0.0f, canvasSizeInPx.height).PreScale(1.0f, -1.0f);
+      // Calculate y-coord that is as far below the bottom of destGFXRect as
+      // the origin was above the top, then reflect about that.
+      float y = destRect.Y() + destRect.YMost();
+      Matrix transform = Matrix::Translation(0.0f, y).PreScale(1.0f, -1.0f);
+      aCtx->Multiply(transform);
     }
-    aCtx->Multiply(transform);
 
-    aCtx->GetDrawTarget()->FillRect(
-        Rect(0, 0, canvasSizeInPx.width, canvasSizeInPx.height),
-        SurfacePattern(surface, ExtendMode::CLAMP, Matrix(),
-                       nsLayoutUtils::GetSamplingFilterForFrame(f)));
+    const auto& srcRect = surface->GetRect();
+    dt.DrawSurface(
+        surface, destRect,
+        Rect(float(srcRect.X()), float(srcRect.Y()), float(srcRect.Width()),
+             float(srcRect.Height())),
+        DrawSurfaceOptions(nsLayoutUtils::GetSamplingFilterForFrame(f)));
 
     renderer->FireDidTransactionCallback();
     renderer->ResetDirty();
@@ -401,11 +407,11 @@ nsIntSize nsHTMLCanvasFrame::GetCanvasSize() const {
 nscoord nsHTMLCanvasFrame::GetMinISize(gfxContext* aRenderingContext) {
   // XXX The caller doesn't account for constraints of the height,
   // min-height, and max-height properties.
-  bool vertical = GetWritingMode().IsVertical();
   nscoord result;
-  if (StyleDisplay()->GetContainSizeAxes().mIContained) {
-    result = 0;
+  if (Maybe<nscoord> containISize = ContainIntrinsicISize()) {
+    result = *containISize;
   } else {
+    bool vertical = GetWritingMode().IsVertical();
     result = nsPresContext::CSSPixelsToAppUnits(
         vertical ? GetCanvasSize().height : GetCanvasSize().width);
   }
@@ -417,11 +423,11 @@ nscoord nsHTMLCanvasFrame::GetMinISize(gfxContext* aRenderingContext) {
 nscoord nsHTMLCanvasFrame::GetPrefISize(gfxContext* aRenderingContext) {
   // XXX The caller doesn't account for constraints of the height,
   // min-height, and max-height properties.
-  bool vertical = GetWritingMode().IsVertical();
   nscoord result;
-  if (StyleDisplay()->GetContainSizeAxes().mIContained) {
-    result = 0;
+  if (Maybe<nscoord> containISize = ContainIntrinsicISize()) {
+    result = *containISize;
   } else {
+    bool vertical = GetWritingMode().IsVertical();
     result = nsPresContext::CSSPixelsToAppUnits(
         vertical ? GetCanvasSize().height : GetCanvasSize().width);
   }
@@ -432,11 +438,10 @@ nscoord nsHTMLCanvasFrame::GetPrefISize(gfxContext* aRenderingContext) {
 /* virtual */
 IntrinsicSize nsHTMLCanvasFrame::GetIntrinsicSize() {
   const auto containAxes = StyleDisplay()->GetContainSizeAxes();
-  if (containAxes.IsBoth()) {
-    return IntrinsicSize(0, 0);
-  }
-  return containAxes.ContainIntrinsicSize(
-      IntrinsicSizeFromCanvasSize(GetCanvasSize()), GetWritingMode());
+  IntrinsicSize size = containAxes.IsBoth()
+                           ? IntrinsicSize(0, 0)
+                           : IntrinsicSizeFromCanvasSize(GetCanvasSize());
+  return containAxes.ContainIntrinsicSize(size, *this);
 }
 
 /* virtual */
@@ -500,7 +505,6 @@ void nsHTMLCanvasFrame::Reflow(nsPresContext* aPresContext,
   NS_FRAME_TRACE(NS_FRAME_TRACE_CALLS,
                  ("exit nsHTMLCanvasFrame::Reflow: size=%d,%d",
                   aMetrics.ISize(wm), aMetrics.BSize(wm)));
-  NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aMetrics);
 }
 
 bool nsHTMLCanvasFrame::UpdateWebRenderCanvasData(

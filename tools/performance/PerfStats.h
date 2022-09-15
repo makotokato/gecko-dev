@@ -36,7 +36,7 @@
 #define FOR_EACH_PERFSTATS_METRIC(MACRO) \
   MACRO(DisplayListBuilding)             \
   MACRO(Rasterizing)                     \
-  MACRO(LayerBuilding)                   \
+  MACRO(WrDisplayListBuilding)           \
   MACRO(LayerTransactions)               \
   MACRO(Compositing)                     \
   MACRO(Reflowing)                       \
@@ -47,9 +47,17 @@
   MACRO(JSBC_Compression)                \
   MACRO(JSBC_Decompression)              \
   MACRO(JSBC_IO_Read)                    \
-  MACRO(JSBC_IO_Write)
+  MACRO(JSBC_IO_Write)                   \
+  MACRO(MinorGC)                         \
+  MACRO(MajorGC)                         \
+  MACRO(NonIdleMajorGC)
 
 namespace mozilla {
+
+namespace dom {
+// Forward declaration.
+class ContentParent;
+}  // namespace dom
 
 class PerfStats {
  public:
@@ -103,6 +111,7 @@ class PerfStats {
   };
 
   static void SetCollectionMask(MetricMask aMask);
+  static MetricMask GetCollectionMask();
 
   static RefPtr<PerfStatsPromise> CollectPerfStatsJSON() {
     return GetSingleton()->CollectPerfStatsJSONInternal();
@@ -110,6 +119,11 @@ class PerfStats {
 
   static nsCString CollectLocalPerfStatsJSON() {
     return GetSingleton()->CollectLocalPerfStatsJSONInternal();
+  }
+
+  static void StorePerfStats(dom::ContentParent* aParent,
+                             const nsACString& aPerfStats) {
+    GetSingleton()->StorePerfStatsInternal(aParent, aPerfStats);
   }
 
  private:
@@ -120,6 +134,9 @@ class PerfStats {
   static void RecordMeasurementCounterInternal(Metric aMetric,
                                                uint64_t aIncrementAmount);
 
+  void ResetCollection();
+  void StorePerfStatsInternal(dom::ContentParent* aParent,
+                              const nsACString& aPerfStats);
   RefPtr<PerfStatsPromise> CollectPerfStatsJSONInternal();
   nsCString CollectLocalPerfStatsJSONInternal();
 
@@ -129,6 +146,7 @@ class PerfStats {
   TimeStamp mRecordedStarts[static_cast<size_t>(Metric::Max)];
   double mRecordedTimes[static_cast<size_t>(Metric::Max)];
   uint32_t mRecordedCounts[static_cast<size_t>(Metric::Max)];
+  nsTArray<nsCString> mStoredPerfStats;
 };
 
 static_assert(1 << (static_cast<uint64_t>(PerfStats::Metric::Max) - 1) <=

@@ -4,26 +4,10 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
-from mozboot.base import BaseBootstrapper
+from mozboot.base import BaseBootstrapper, MERCURIAL_INSTALL_PROMPT
 from mozboot.linux_common import LinuxBootstrapper
 
 import sys
-
-MERCURIAL_INSTALL_PROMPT = """
-Mercurial releases a new version every 3 months and your distro's package
-may become out of date. This may cause incompatibility with some
-Mercurial extensions that rely on new Mercurial features. As a result,
-you may not have an optimal version control experience.
-
-To have the best Mercurial experience possible, we recommend installing
-Mercurial via the "pip" Python packaging utility. This will likely result
-in files being placed in /usr/local/bin and /usr/local/lib.
-
-How would you like to continue?
-  1. Install a modern Mercurial via pip [default]
-  2. Install a legacy Mercurial via apt
-  3. Do not install Mercurial
-Your choice: """
 
 
 class DebianBootstrapper(LinuxBootstrapper, BaseBootstrapper):
@@ -64,13 +48,18 @@ class DebianBootstrapper(LinuxBootstrapper, BaseBootstrapper):
         BaseBootstrapper.__init__(self, **kwargs)
 
         self.distro = distro
-        self.version = int(version)
+        self.version = version
         self.dist_id = dist_id
         self.codename = codename
 
         self.packages = list(self.COMMON_PACKAGES)
 
-        if self.version >= 11:
+        try:
+            version_number = int(version)
+        except ValueError:
+            version_number = None
+
+        if (version_number and (version_number >= 11)) or version == "unstable":
             self.packages += ["watchman"]
 
     def suggest_install_distutils(self):

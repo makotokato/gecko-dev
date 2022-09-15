@@ -5,13 +5,23 @@
 #ifndef DOM_MEDIA_IPC_MFMEDIAENGINEPARENT_H_
 #define DOM_MEDIA_IPC_MFMEDIAENGINEPARENT_H_
 
+#include <Mfidl.h>
+#include <winnt.h>
+#include <wrl.h>
+
 #include "MediaInfo.h"
+#include "MFMediaEngineExtra.h"
+#include "MFMediaEngineNotify.h"
+#include "MFMediaEngineUtils.h"
+#include "MFMediaSource.h"
 #include "PlatformDecoderModule.h"
 #include "mozilla/PMFMediaEngineParent.h"
 
 namespace mozilla {
 
-class MFMediaEngineStream;
+class MFMediaEngineExtension;
+class MFMediaEngineStreamWrapper;
+class MFMediaSource;
 class RemoteDecoderManagerParent;
 
 /**
@@ -25,14 +35,15 @@ class RemoteDecoderManagerParent;
 class MFMediaEngineParent final : public PMFMediaEngineParent {
  public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MFMediaEngineParent);
-  explicit MFMediaEngineParent(RemoteDecoderManagerParent* aManager);
+  MFMediaEngineParent(RemoteDecoderManagerParent* aManager,
+                      nsISerialEventTarget* aManagerThread);
 
   using TrackType = TrackInfo::TrackType;
 
   static MFMediaEngineParent* GetMediaEngineById(uint64_t aId);
 
-  MFMediaEngineStream* GetMediaEngineStream(TrackType aType,
-                                            const CreateDecoderParams& aParam);
+  MFMediaEngineStreamWrapper* GetMediaEngineStream(
+      TrackType aType, const CreateDecoderParams& aParam);
 
   uint64_t Id() const { return mMediaEngineId; }
 
@@ -54,7 +65,23 @@ class MFMediaEngineParent final : public PMFMediaEngineParent {
  private:
   ~MFMediaEngineParent();
 
+  void CreateMediaEngine();
+
+  void InitializeVirtualVideoWindow();
+  void InitializeDXGIDeviceManager();
+
   void AssertOnManagerThread() const;
+
+  void HandleMediaEngineEvent(MFMediaEngineEventWrapper aEvent);
+  void HandleRequestSample(const SampleRequest& aRequest);
+
+  void NotifyError(MF_MEDIA_ENGINE_ERR aError, HRESULT aResult = 0);
+
+  void DestroyEngineIfExists(const Maybe<MediaResult>& aError = Nothing());
+
+  void EnsureDcompSurfaceHandle();
+
+  void UpdateStatisticsData();
 
   // This generates unique id for each MFMediaEngineParent instance, and it
   // would be increased monotonically.
@@ -68,6 +95,40 @@ class MFMediaEngineParent final : public PMFMediaEngineParent {
   RefPtr<MFMediaEngineParent> mIPDLSelfRef;
 
   const RefPtr<RemoteDecoderManagerParent> mManager;
+  const RefPtr<nsISerialEventTarget> mManagerThread;
+
+  // Required classes for working with the media engine.
+  Microsoft::WRL::ComPtr<IMFMediaEngine> mMediaEngine;
+  Microsoft::WRL::ComPtr<MFMediaEngineNotify> mMediaEngineNotify;
+  Microsoft::WRL::ComPtr<MFMediaEngineExtension> mMediaEngineExtension;
+  Microsoft::WRL::ComPtr<MFMediaSource> mMediaSource;
+
+  MediaEventListener mMediaEngineEventListener;
+  MediaEventListener mRequestSampleListener;
+  bool mIsCreatedMediaEngine = false;
+
+  // A fake window handle passed to MF-based rendering pipeline for OPM.
+  HWND mVirtualVideoWindow = nullptr;
+
+  Microsoft::WRL::ComPtr<IMFDXGIDeviceManager> mDXGIDeviceManager;
+
+  // These will be always zero for audio playback.
+  DWORD mDisplayWidth = 0;
+  DWORD mDisplayHeight = 0;
+
+  // When it's true, the media engine will output decoded video frames to a
+  // shareable dcomp surface.
+  bool mIsEnableDcompMode = false;
+
+  float mPlaybackRate = 1.0;
+
+  // When flush happens inside the media engine, it will reset the statistic
+  // data. Therefore, whenever the statistic data gets reset, we will use
+  // `mCurrentPlaybackStatisticData` to track new data and store previous data
+  // to `mPrevPlaybackStatisticData`. The sum of these two data is the total
+  // statistic data for playback.
+  StatisticData mCurrentPlaybackStatisticData;
+  StatisticData mPrevPlaybackStatisticData;
 };
 
 }  // namespace mozilla

@@ -30,8 +30,6 @@ using mozilla::gfx::DataSourceSurface;
 using mozilla::gfx::SourceSurface;
 using mozilla::LogLevel;
 
-extern mozilla::LazyLogModule sCocoaLog;
-
 mozilla::StaticRefPtr<nsITransferable> nsClipboard::sSelectionCache;
 
 @implementation UTIHelper
@@ -96,8 +94,6 @@ nsClipboard::SetNativeClipboardData(int32_t aWhichClipboard) {
   if ((aWhichClipboard != kGlobalClipboard && aWhichClipboard != kFindClipboard) || !mTransferable)
     return NS_ERROR_FAILURE;
 
-  mIgnoreEmptyNotification = true;
-
   NSDictionary* pasteboardOutputDict = PasteboardDictFromTransferable(mTransferable);
   if (!pasteboardOutputDict) return NS_ERROR_FAILURE;
 
@@ -145,8 +141,6 @@ nsClipboard::SetNativeClipboardData(int32_t aWhichClipboard) {
 
   mCachedClipboard = aWhichClipboard;
   mChangeCount = [cocoaPasteboard changeCount];
-
-  mIgnoreEmptyNotification = false;
 
   return NS_OK;
 
@@ -362,6 +356,12 @@ nsClipboard::HasDataMatchingFlavors(const nsTArray<nsCString>& aFlavorList, int3
                                     bool* outResult) {
   NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
+  CLIPBOARD_LOG("%s: clipboard=%i", __FUNCTION__, aWhichClipboard);
+  CLIPBOARD_LOG("    Asking for content:\n");
+  for (auto& flavor : aFlavorList) {
+    CLIPBOARD_LOG("        MIME %s\n", flavor.get());
+  }
+
   *outResult = false;
 
   if (aWhichClipboard != kGlobalClipboard) return NS_OK;
@@ -371,11 +371,19 @@ nsClipboard::HasDataMatchingFlavors(const nsTArray<nsCString>& aFlavorList, int3
     nsTArray<nsCString> flavors;
     nsresult rv = mTransferable->FlavorsTransferableCanImport(flavors);
     if (NS_SUCCEEDED(rv)) {
+      if (CLIPBOARD_LOG_ENABLED()) {
+        CLIPBOARD_LOG("    Cached transferable types (nums %zu)\n", flavors.Length());
+        for (uint32_t j = 0; j < flavors.Length(); j++) {
+          CLIPBOARD_LOG("        MIME %s\n", flavors[j].get());
+        }
+      }
+
       for (uint32_t j = 0; j < flavors.Length(); j++) {
         const nsCString& transferableFlavorStr = flavors[j];
 
         for (uint32_t k = 0; k < aFlavorList.Length(); k++) {
           if (transferableFlavorStr.Equals(aFlavorList[k])) {
+            CLIPBOARD_LOG("    has %s\n", aFlavorList[k].get());
             *outResult = true;
             return NS_OK;
           }
@@ -386,12 +394,27 @@ nsClipboard::HasDataMatchingFlavors(const nsTArray<nsCString>& aFlavorList, int3
 
   NSPasteboard* generalPBoard = [NSPasteboard generalPasteboard];
 
+  if (CLIPBOARD_LOG_ENABLED()) {
+    NSArray* types = [generalPBoard types];
+    uint32_t count = [types count];
+    CLIPBOARD_LOG("    Pasteboard types (nums %d)\n", count);
+    for (uint32_t i = 0; i < count; i++) {
+      NSPasteboardType type = [types objectAtIndex:i];
+      if (!type) {
+        CLIPBOARD_LOG("        failed to get MIME\n");
+        continue;
+      }
+      CLIPBOARD_LOG("        MIME %s\n", [type UTF8String]);
+    }
+  }
+
   for (auto& mimeType : aFlavorList) {
     NSString* pboardType = nil;
     if (nsClipboard::IsStringType(mimeType, &pboardType)) {
       NSString* availableType =
           [generalPBoard availableTypeFromArray:[NSArray arrayWithObject:pboardType]];
       if (availableType && [availableType isEqualToString:pboardType]) {
+        CLIPBOARD_LOG("    has %s\n", mimeType.get());
         *outResult = true;
         break;
       }
@@ -400,6 +423,7 @@ nsClipboard::HasDataMatchingFlavors(const nsTArray<nsCString>& aFlavorList, int3
           availableTypeFromArray:
               [NSArray arrayWithObject:[UTIHelper stringFromPboardType:kMozCustomTypesPboardType]]];
       if (availableType) {
+        CLIPBOARD_LOG("    has %s\n", mimeType.get());
         *outResult = true;
         break;
       }
@@ -410,10 +434,15 @@ nsClipboard::HasDataMatchingFlavors(const nsTArray<nsCString>& aFlavorList, int3
               [NSArray arrayWithObjects:[UTIHelper stringFromPboardType:NSPasteboardTypeTIFF],
                                         [UTIHelper stringFromPboardType:NSPasteboardTypePNG], nil]];
       if (availableType) {
+        CLIPBOARD_LOG("    has %s\n", mimeType.get());
         *outResult = true;
         break;
       }
     }
+  }
+
+  if (CLIPBOARD_LOG_ENABLED() && !(*outResult)) {
+    CLIPBOARD_LOG("    no targets at clipboard (bad match)\n");
   }
 
   return NS_OK;
@@ -469,8 +498,7 @@ NSDictionary* nsClipboard::PasteboardDictFromTransferable(nsITransferable* aTran
   for (uint32_t i = 0; i < flavors.Length(); i++) {
     nsCString& flavorStr = flavors[i];
 
-    MOZ_LOG(sCocoaLog, LogLevel::Info,
-            ("writing out clipboard data of type %s (%d)\n", flavorStr.get(), i));
+    CLIPBOARD_LOG("writing out clipboard data of type %s (%d)\n", flavorStr.get(), i);
 
     NSString* pboardType = nil;
     if (nsClipboard::IsStringType(flavorStr, &pboardType)) {

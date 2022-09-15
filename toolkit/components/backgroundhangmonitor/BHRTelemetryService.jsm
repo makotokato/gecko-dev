@@ -4,11 +4,8 @@
 
 "use strict";
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(lazy, "OS", "resource://gre/modules/osfile.jsm");
 ChromeUtils.defineModuleGetter(
   lazy,
   "TelemetryController",
@@ -117,12 +114,9 @@ BHRTelemetryService.prototype = Object.freeze({
 
   submit() {
     if (this.clearPermahangFile) {
-      lazy.OS.File.remove(
-        lazy.OS.Path.join(
-          lazy.OS.Constants.Path.profileDir,
-          "last_permahang.bin"
-        ),
-        { ignoreAbsent: true }
+      // NB: This is async but it is called from an Observer callback.
+      IOUtils.remove(
+        PathUtils.join(PathUtils.profileDir, "last_permahang.bin")
       );
     }
 

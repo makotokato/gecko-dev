@@ -83,7 +83,9 @@ async function testManyReloads({ tab, monitor, toolbox }) {
     toolbox,
     reloadTwice: true,
   });
-  is(har.log.entries.length, 2, "There must be two requests");
+  // In most cases, we will have two requests, but sometimes,
+  // the first one might be missing as we couldn't fetch any lazy data for it.
+  ok(har.log.entries.length >= 1, "There must be at least one request");
   info(
     "Assert the first navigation request which has been cancelled by the second reload"
   );
@@ -112,6 +114,8 @@ async function testClearedRequests({ tab, monitor, toolbox }) {
     encodeURIComponent(
       `iframe<script>fetch("/document-builder.sjs?html=iframe-request")</script>`
     );
+
+  await waitForAllNetworkUpdateEvents();
   await navigateTo(topDocumentURL);
 
   info("Create an iframe doing a request and remove the iframe.");
@@ -130,6 +134,7 @@ async function testClearedRequests({ tab, monitor, toolbox }) {
   // before removing the iframe so that the netmonitor is able to fetch
   // all lazy data without throwing
   await onNetworkEvents;
+  await waitForAllNetworkUpdateEvents();
 
   info("Remove the iframe so that lazy request data are freed");
   await SpecialPowers.spawn(tab.linkedBrowser, [], async function() {

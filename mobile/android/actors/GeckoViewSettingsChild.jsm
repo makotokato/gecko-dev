@@ -6,17 +6,11 @@ const { GeckoViewActorChild } = ChromeUtils.import(
   "resource://gre/modules/GeckoViewActorChild.jsm"
 );
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 const EXPORTED_SYMBOLS = ["GeckoViewSettingsChild"];
-
-// This needs to match GeckoSessionSettings.java
-const VIEWPORT_MODE_MOBILE = 0;
-const VIEWPORT_MODE_DESKTOP = 1;
 
 // Handles GeckoView content settings
 class GeckoViewSettingsChild extends GeckoViewActorChild {
@@ -28,21 +22,12 @@ class GeckoViewSettingsChild extends GeckoViewActorChild {
       case "SettingsUpdate": {
         const settings = message.data;
 
-        this.viewportMode = settings.viewportMode;
         if (settings.isPopup) {
           // Allow web extensions to close their own action popups (bz1612363)
           this.contentWindow.windowUtils.allowScriptsToClose();
         }
       }
     }
-  }
-
-  set viewportMode(aMode) {
-    const { windowUtils } = this.contentWindow;
-    if (aMode === windowUtils.desktopModeViewport) {
-      return;
-    }
-    windowUtils.desktopModeViewport = aMode === VIEWPORT_MODE_DESKTOP;
   }
 }
 

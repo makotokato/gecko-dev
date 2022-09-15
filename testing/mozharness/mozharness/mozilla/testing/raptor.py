@@ -171,7 +171,7 @@ class Raptor(
             {
                 "dest": "browsertime",
                 "action": "store_true",
-                "default": False,
+                "default": True,
                 "help": argparse.SUPPRESS,
             },
         ],
@@ -318,6 +318,15 @@ class Raptor(
                 },
             ],
             [
+                ["--extra-profiler-run"],
+                {
+                    "dest": "extra_profiler_run",
+                    "action": "store_true",
+                    "default": False,
+                    "help": "Run the tests again with profiler enabled after the main run.",
+                },
+            ],
+            [
                 ["--page-cycles"],
                 {
                     "dest": "page_cycles",
@@ -440,6 +449,21 @@ class Raptor(
                 },
             ],
             [
+                ["--test-bytecode-cache"],
+                {
+                    "dest": "test_bytecode_cache",
+                    "action": "store_true",
+                    "default": False,
+                    "help": (
+                        "If set, the pageload test will set the preference "
+                        "`dom.script_loader.bytecode_cache.strategy=-1` and wait 20 seconds "
+                        "after the first cold pageload to populate the bytecode cache before "
+                        "running a warm pageload test. Only available if `--chimera` "
+                        "is also provided."
+                    ),
+                },
+            ],
+            [
                 ["--chimera"],
                 {
                     "dest": "chimera",
@@ -552,6 +576,30 @@ class Raptor(
                     ),
                 },
             ],
+            [
+                ["--webext"],
+                {
+                    "action": "store_true",
+                    "dest": "webext",
+                    "default": False,
+                    "help": (
+                        "Whether to use webextension to execute pageload tests "
+                        "(WebExtension is being deprecated).",
+                    ),
+                },
+            ],
+            [
+                ["--collect-perfstats"],
+                {
+                    "action": "store_true",
+                    "dest": "collect_perfstats",
+                    "default": False,
+                    "help": (
+                        "If set, the test will collect perfstats in addition to "
+                        "the regular metrics it gathers."
+                    ),
+                },
+            ],
         ]
         + testing_config_options
         + copy.deepcopy(code_coverage_config_options)
@@ -647,6 +695,7 @@ class Raptor(
         self.gecko_profile_entries = self.config.get("gecko_profile_entries")
         self.gecko_profile_threads = self.config.get("gecko_profile_threads")
         self.gecko_profile_features = self.config.get("gecko_profile_features")
+        self.extra_profiler_run = self.config.get("extra_profiler_run")
         self.test_packages_url = self.config.get("test_packages_url")
         self.test_url_params = self.config.get("test_url_params")
         self.host = self.config.get("host")
@@ -704,6 +753,9 @@ class Raptor(
                 gecko_results.extend(
                     ["--gecko-profile-threads", self.gecko_profile_threads]
                 )
+        else:
+            if self.extra_profiler_run:
+                gecko_results.append("--extra-profiler-run")
         return gecko_results
 
     def query_abs_dirs(self):
@@ -951,21 +1003,28 @@ class Raptor(
             options.extend(
                 ["--browser-cycles={}".format(self.config.get("browser_cycles"))]
             )
+        if self.config.get("test_bytecode_cache", False):
+            options.extend(["--test-bytecode-cache"])
+        if self.config.get("collect_perfstats", False):
+            options.extend(["--collect-perfstats"])
 
-        for (arg,), details in Raptor.browsertime_options:
-            # Allow overriding defaults on the `./mach raptor-test ...` command-line
-            value = self.config.get(details["dest"])
-            if value is None or value != getattr(self, details["dest"], None):
-                # Check for modifications done to the instance variables
-                value = getattr(self, details["dest"], None)
-            if value and arg not in self.config.get("raptor_cmd_line_args", []):
-                if isinstance(value, string_types):
-                    options.extend([arg, os.path.expandvars(value)])
-                elif isinstance(value, (tuple, list)):
-                    for val in value:
-                        options.extend([arg, val])
-                else:
-                    options.extend([arg])
+        if self.config.get("webext", False):
+            options.extend(["--webext"])
+        else:
+            for (arg,), details in Raptor.browsertime_options:
+                # Allow overriding defaults on the `./mach raptor-test ...` command-line
+                value = self.config.get(details["dest"])
+                if value is None or value != getattr(self, details["dest"], None):
+                    # Check for modifications done to the instance variables
+                    value = getattr(self, details["dest"], None)
+                if value and arg not in self.config.get("raptor_cmd_line_args", []):
+                    if isinstance(value, string_types):
+                        options.extend([arg, os.path.expandvars(value)])
+                    elif isinstance(value, (tuple, list)):
+                        for val in value:
+                            options.extend([arg, val])
+                    else:
+                        options.extend([arg])
 
         for key, value in kw_options.items():
             options.extend(["--%s" % key, value])

@@ -63,10 +63,10 @@ namespace js {
 class ArrayBufferObject;
 class ArrayBufferObjectMaybeShared;
 class JSStringBuilder;
-class SharedArrayRawBuffer;
 class TypedArrayObject;
 class WasmFunctionScope;
 class WasmInstanceScope;
+class WasmSharedArrayRawBuffer;
 
 namespace wasm {
 
@@ -102,7 +102,6 @@ bool HasSupport(JSContext* cx);
 
 bool BaselineAvailable(JSContext* cx);
 bool IonAvailable(JSContext* cx);
-bool CraneliftAvailable(JSContext* cx);
 
 // Test all three.
 
@@ -130,8 +129,6 @@ bool BaselineDisabledByFeatures(JSContext* cx, bool* isDisabled,
                                 JSStringBuilder* reason = nullptr);
 bool IonDisabledByFeatures(JSContext* cx, bool* isDisabled,
                            JSStringBuilder* reason = nullptr);
-bool CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
-                                 JSStringBuilder* reason = nullptr);
 
 // Predicates for feature availability.
 //
@@ -153,11 +150,11 @@ bool ThreadsAvailable(JSContext* cx);
 JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE, WASM_FEATURE)
 #undef WASM_FEATURE
 
+// SIMD operations.
+bool SimdAvailable(JSContext* cx);
+
 // Privileged content that can access experimental intrinsics
 bool IsSimdPrivilegedContext(JSContext* cx);
-
-// Very experimental SIMD operations.
-bool SimdWormholeAvailable(JSContext* cx);
 
 #if defined(ENABLE_WASM_SIMD) && defined(DEBUG)
 // Report the result of a Simd simplification to the testing infrastructure.
@@ -172,7 +169,7 @@ bool ExceptionsAvailable(JSContext* cx);
 // and links the module's imports with the given import object.
 
 [[nodiscard]] bool Eval(JSContext* cx, Handle<TypedArrayObject*> code,
-                        HandleObject importObj, HandleValue maybeOptions,
+                        HandleObject importObj,
                         MutableHandle<WasmInstanceObject*> instanceObj);
 
 // Extracts the various imports from the given import object into the given
@@ -430,7 +427,7 @@ class WasmMemoryObject : public NativeObject {
   size_t boundsCheckLimit() const;
 
   // If isShared() is true then obtain the underlying buffer object.
-  SharedArrayRawBuffer* sharedArrayRawBuffer() const;
+  WasmSharedArrayRawBuffer* sharedArrayRawBuffer() const;
 
   bool addMovingGrowObserver(JSContext* cx, WasmInstanceObject* instance);
   static uint64_t grow(Handle<WasmMemoryObject*> memory, uint64_t delta,

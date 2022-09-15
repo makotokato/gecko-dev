@@ -417,13 +417,6 @@ const featureDescriptions = [
     disabledReason: "This feature is only available on Android.",
   },
   {
-    name: "Native Leaf Stack",
-    value: "leaf",
-    title:
-      "Record the native memory address of the leaf-most stack. This could be " +
-      "useful on platforms that do not support stack walking.",
-  },
-  {
     name: "No Periodic Sampling",
     value: "nostacksampling",
     title: "Disable interval-based stack sampling",
@@ -535,6 +528,14 @@ const featureDescriptions = [
       "Record how much CPU has been used between samples by each process. " +
       "To see graphs: When viewing the profile, open the JS console and run: " +
       "experimental.enableProcessCPUTracks()",
+    experimental: true,
+  },
+  {
+    name: "Power Use",
+    value: "power",
+    title:
+      "Record the value of every energy meter available on the system with " +
+      "each sample. Only available on Windows 11 and Apple Silicon.",
     experimental: true,
   },
 ];

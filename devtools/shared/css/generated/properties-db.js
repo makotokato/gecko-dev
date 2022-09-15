@@ -348,6 +348,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -385,6 +386,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -498,6 +500,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -535,6 +538,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -1887,6 +1891,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -2431,6 +2436,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -2472,6 +2478,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -2499,6 +2506,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -2732,6 +2740,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "COLOR",
       "auto",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -2910,6 +2919,8 @@ exports.CSS_PROPERTIES = {
       "inline-size",
       "min-inline-size",
       "max-inline-size",
+      "contain-intrinsic-block-size",
+      "contain-intrinsic-inline-size",
       "background-color",
       "background-image",
       "background-position-x",
@@ -3172,6 +3183,8 @@ exports.CSS_PROPERTIES = {
       "column-gap",
       "row-gap",
       "aspect-ratio",
+      "contain-intrinsic-width",
+      "contain-intrinsic-height",
       "vector-effect",
       "stop-color",
       "stop-opacity",
@@ -3220,6 +3233,7 @@ exports.CSS_PROPERTIES = {
       "animation-direction",
       "animation-play-state",
       "animation-fill-mode",
+      "animation-composition",
       "animation-delay",
       "animation-timeline",
       "scroll-timeline-name",
@@ -3283,6 +3297,23 @@ exports.CSS_PROPERTIES = {
       "step-end",
       "step-start",
       "steps",
+      "unset"
+    ]
+  },
+  "animation-composition": {
+    "isInherited": false,
+    "subproperties": [
+      "animation-composition"
+    ],
+    "supports": [],
+    "values": [
+      "accumulate",
+      "add",
+      "inherit",
+      "initial",
+      "replace",
+      "revert",
+      "revert-layer",
       "unset"
     ]
   },
@@ -3635,6 +3666,7 @@ exports.CSS_PROPERTIES = {
       "border-box",
       "bottom",
       "center",
+      "color-mix",
       "conic-gradient",
       "contain",
       "content-box",
@@ -3750,6 +3782,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -3953,6 +3986,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -3995,6 +4029,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -4033,6 +4068,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -4059,6 +4095,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -4096,6 +4133,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -4163,6 +4201,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -4200,6 +4239,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -4310,6 +4350,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -4347,6 +4388,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -4459,6 +4501,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -4660,6 +4703,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -4698,6 +4742,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -4724,6 +4769,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -4761,6 +4807,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -4828,6 +4875,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -4865,6 +4913,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -4975,6 +5024,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -5012,6 +5062,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -5096,6 +5147,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -5133,6 +5185,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -5269,6 +5322,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -5306,6 +5360,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -5450,6 +5505,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -5571,6 +5627,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "COLOR",
       "auto",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -5675,6 +5732,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -5815,6 +5873,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -5852,6 +5911,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -6258,6 +6318,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "context-fill",
       "context-stroke",
       "currentColor",
@@ -6490,6 +6551,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -7741,6 +7803,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -8926,6 +8989,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "COLOR",
       "auto",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -8963,6 +9027,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -10268,6 +10333,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "COLOR",
       "auto",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -10443,6 +10509,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -10481,6 +10548,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "context-fill",
       "context-stroke",
       "currentColor",
@@ -10734,6 +10802,7 @@ exports.CSS_PROPERTIES = {
       "-moz-none",
       "auto",
       "blink",
+      "color-mix",
       "currentColor",
       "dashed",
       "dotted",
@@ -10768,6 +10837,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -10866,6 +10936,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "COLOR",
       "circle",
+      "color-mix",
       "currentColor",
       "dot",
       "double-circle",
@@ -10897,6 +10968,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -11046,6 +11118,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color-mix",
       "currentColor",
       "hsl",
       "hsla",
@@ -11653,10 +11726,6 @@ exports.PSEUDO_ELEMENTS = [
  */
 exports.PREFERENCES = [
   [
-    "aspect-ratio",
-    "layout.css.aspect-ratio.enabled"
-  ],
-  [
     "container-type",
     "layout.css.container-queries.enabled"
   ],
@@ -11705,10 +11774,6 @@ exports.PREFERENCES = [
     "layout.css.scrollbar-gutter.enabled"
   ],
   [
-    "-webkit-line-clamp",
-    "layout.css.webkit-line-clamp.enabled"
-  ],
-  [
     "overflow-clip-box-block",
     "layout.css.overflow-clip-box.enabled"
   ],
@@ -11747,6 +11812,10 @@ exports.PREFERENCES = [
   [
     "align-tracks",
     "layout.css.grid-template-masonry-value.enabled"
+  ],
+  [
+    "animation-composition",
+    "layout.css.animation-composition.enabled"
   ],
   [
     "animation-timeline",
@@ -11821,6 +11890,22 @@ exports.PREFERENCES = [
     "layout.css.individual-transform.enabled"
   ],
   [
+    "contain-intrinsic-block-size",
+    "layout.css.contain-intrinsic-size.enabled"
+  ],
+  [
+    "contain-intrinsic-height",
+    "layout.css.contain-intrinsic-size.enabled"
+  ],
+  [
+    "contain-intrinsic-inline-size",
+    "layout.css.contain-intrinsic-size.enabled"
+  ],
+  [
+    "contain-intrinsic-width",
+    "layout.css.contain-intrinsic-size.enabled"
+  ],
+  [
     "offset-distance",
     "layout.css.motion-path.enabled"
   ],
@@ -11843,6 +11928,10 @@ exports.PREFERENCES = [
   [
     "zoom",
     "layout.css.zoom-transform-hack.enabled"
+  ],
+  [
+    "contain-intrinsic-size",
+    "layout.css.contain-intrinsic-size.enabled"
   ],
   [
     "scroll-timeline",

@@ -96,7 +96,7 @@ namespace mozilla {
 struct SizeComputationInput {
  public:
   // The frame being reflowed.
-  nsIFrame* mFrame;
+  nsIFrame* const mFrame;
 
   // Rendering context to use for measurement.
   gfxContext* mRenderingContext;
@@ -211,11 +211,9 @@ struct SizeComputationInput {
  protected:
   void InitOffsets(mozilla::WritingMode aCBWM, nscoord aPercentBasis,
                    mozilla::LayoutFrameType aFrameType,
-                   mozilla::ComputeSizeFlags aFlags = {},
-                   const mozilla::Maybe<mozilla::LogicalMargin>& aBorder =
-                       mozilla::Nothing(),
-                   const mozilla::Maybe<mozilla::LogicalMargin>& aPadding =
-                       mozilla::Nothing(),
+                   mozilla::ComputeSizeFlags aFlags,
+                   const mozilla::Maybe<mozilla::LogicalMargin>& aBorder,
+                   const mozilla::Maybe<mozilla::LogicalMargin>& aPadding,
                    const nsStyleDisplay* aDisplay = nullptr);
 
   /*
@@ -327,8 +325,19 @@ struct ReflowInput : public SizeComputationInput {
     return mComputedMaxSize.BSize(mWritingMode);
   }
 
-  nscoord& AvailableISize() { return mAvailableSize.ISize(mWritingMode); }
-  nscoord& AvailableBSize() { return mAvailableSize.BSize(mWritingMode); }
+  // WARNING: In general, adjusting available inline-size or block-size is not
+  // safe because ReflowInput has members whose values depend on the available
+  // size passing through the constructor. For example,
+  // CalculateBlockSideMargins() is called during initialization, and uses
+  // AvailableSize(). Make sure your use case doesn't lead to stale member
+  // values in ReflowInput!
+  void SetAvailableISize(nscoord aAvailableISize) {
+    mAvailableSize.ISize(mWritingMode) = aAvailableISize;
+  }
+  void SetAvailableBSize(nscoord aAvailableBSize) {
+    mAvailableSize.BSize(mWritingMode) = aAvailableBSize;
+  }
+
   nscoord& ComputedISize() { return mComputedSize.ISize(mWritingMode); }
   nscoord& ComputedBSize() { return mComputedSize.BSize(mWritingMode); }
   nscoord& ComputedMinISize() { return mComputedMinSize.ISize(mWritingMode); }
@@ -404,12 +413,9 @@ struct ReflowInput : public SizeComputationInput {
 
   // Cached pointers to the various style structs used during initialization.
   const nsStyleDisplay* mStyleDisplay = nullptr;
-  const nsStyleVisibility* mStyleVisibility = nullptr;
   const nsStylePosition* mStylePosition = nullptr;
   const nsStyleBorder* mStyleBorder = nullptr;
   const nsStyleMargin* mStyleMargin = nullptr;
-  const nsStylePadding* mStylePadding = nullptr;
-  const nsStyleText* mStyleText = nullptr;
 
   enum class BreakType : uint8_t {
     Auto,
@@ -528,20 +534,6 @@ struct ReflowInput : public SizeComputationInput {
     // with when we set & react to these bits.
     bool mIOffsetsNeedCSSAlign : 1;
     bool mBOffsetsNeedCSSAlign : 1;
-
-    // Are we somewhere inside an element with -webkit-line-clamp set?
-    // This flag is inherited into descendant ReflowInputs, but we don't bother
-    // resetting it to false when crossing over into a block descendant that
-    // -webkit-line-clamp skips over (such as a BFC).
-    bool mInsideLineClamp : 1;
-
-    // Is this a flex item, and should we add or remove a -webkit-line-clamp
-    // ellipsis on a descendant line?  It's possible for this flag to be true
-    // when mInsideLineClamp is false if we previously had a numeric
-    // -webkit-line-clamp value, but now have 'none' and we need to find the
-    // line with the ellipsis flag and clear it.
-    // This flag is not inherited into descendant ReflowInputs.
-    bool mApplyLineClamp : 1;
 
     // Is this frame or one of its ancestors being reflowed in a different
     // continuation than the one in which it was previously reflowed?  In
@@ -826,14 +818,7 @@ struct ReflowInput : public SizeComputationInput {
   // These methods don't apply min/max computed block-sizes to the value passed
   // in.
   void SetComputedBSize(nscoord aComputedBSize);
-  void SetComputedBSizeWithoutResettingResizeFlags(nscoord aComputedBSize) {
-    // Viewport frames reset the computed block size on a copy of their reflow
-    // input when reflowing fixed-pos kids.  In that case we actually don't
-    // want to mess with the resize flags, because comparing the frame's rect
-    // to the munged computed isize is pointless.
-    MOZ_ASSERT(aComputedBSize >= 0, "Invalid computed block-size!");
-    ComputedBSize() = aComputedBSize;
-  }
+  void SetComputedBSizeWithoutResettingResizeFlags(nscoord aComputedBSize);
 
   bool WillReflowAgainForClearance() const {
     return mDiscoveredClearance && *mDiscoveredClearance;
@@ -869,21 +854,10 @@ struct ReflowInput : public SizeComputationInput {
                                        const nsMargin& aComputedOffsets,
                                        nsPoint* aPosition);
 
-  void ApplyRelativePositioning(nsPoint* aPosition) const {
-    ApplyRelativePositioning(mFrame, ComputedPhysicalOffsets(), aPosition);
-  }
-
   static void ApplyRelativePositioning(
       nsIFrame* aFrame, mozilla::WritingMode aWritingMode,
       const mozilla::LogicalMargin& aComputedOffsets,
       mozilla::LogicalPoint* aPosition, const nsSize& aContainerSize);
-
-  void ApplyRelativePositioning(mozilla::LogicalPoint* aPosition,
-                                const nsSize& aContainerSize) const {
-    ApplyRelativePositioning(mFrame, mWritingMode,
-                             ComputedLogicalOffsets(mWritingMode), aPosition,
-                             aContainerSize);
-  }
 
   // Resolve any block-axis 'auto' margins (if any) for an absolutely positioned
   // frame. aMargin and aOffsets are both outparams (though we only touch

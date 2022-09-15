@@ -109,6 +109,9 @@ UNIFIED_SOURCES += [
     "Http2Push.cpp",
     "Http2Session.cpp",
     "Http2Stream.cpp",
+    "Http2StreamBase.cpp",
+    "Http2StreamTunnel.cpp",
+    "Http2StreamWebSocket.cpp",
     "Http3Session.cpp",
     "Http3Stream.cpp",
     "HttpAuthUtils.cpp",
@@ -127,6 +130,7 @@ UNIFIED_SOURCES += [
     "HttpTransactionChild.cpp",
     "HttpTransactionParent.cpp",
     "InterceptedHttpChannel.cpp",
+    "MockHttpAuth.cpp",
     "NetworkMarker.cpp",
     "nsCORSListenerProxy.cpp",
     "nsHttp.cpp",
@@ -153,10 +157,9 @@ UNIFIED_SOURCES += [
     "PendingTransactionInfo.cpp",
     "PendingTransactionQueue.cpp",
     "QuicSocketControl.cpp",
-    "SocketWrapper.cpp",
     "SpeculativeTransaction.cpp",
-    "TLSFilterTransaction.cpp",
     "TlsHandshaker.cpp",
+    "TLSTransportLayer.cpp",
     "TRRServiceChannel.cpp",
 ]
 
@@ -209,11 +212,5 @@ EXTRA_JS_MODULES += [
 XPCOM_MANIFESTS += [
     "components.conf",
 ]
-
-if CONFIG["OS_TARGET"] == "Darwin":
-    if not CONFIG["HOST_MAJOR_VERSION"]:
-        DEFINES["HAS_CONNECTX"] = True
-    elif CONFIG["HOST_MAJOR_VERSION"] >= "15":
-        DEFINES["HAS_CONNECTX"] = True
 
 include("/tools/fuzzing/libfuzzer-config.mozbuild")

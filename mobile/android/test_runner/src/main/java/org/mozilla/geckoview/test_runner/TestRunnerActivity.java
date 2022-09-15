@@ -75,7 +75,8 @@ public class TestRunnerActivity extends Activity {
 
     public void attach(final GeckoSession session) {
       sessionDisplay = session.acquireDisplay();
-      sessionDisplay.surfaceChanged(surface, width, height);
+      sessionDisplay.surfaceChanged(
+          new GeckoDisplay.SurfaceInfo.Builder(surface).size(width, height).build());
     }
 
     public void release(final GeckoSession session) {
@@ -481,6 +482,14 @@ public class TestRunnerActivity extends Activity {
     mView = new GeckoView(this);
     mView.setSession(mSession);
     setContentView(mView);
+    sRuntime.setServiceWorkerDelegate(
+        new GeckoRuntime.ServiceWorkerDelegate() {
+          @NonNull
+          @Override
+          public GeckoResult<GeckoSession> onOpenWindow(@NonNull String url) {
+            return mNavigationDelegate.onNewSession(mSession, url);
+          }
+        });
   }
 
   private final TestApiImpl mTestApiImpl = new TestApiImpl();

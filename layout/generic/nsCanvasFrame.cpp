@@ -27,6 +27,7 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/StaticPrefs_browser.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/dom/AnonymousContent.h"
 #include "mozilla/layers/StackingContextHelper.h"
 #include "mozilla/layers/RenderRootStateManager.h"
@@ -888,10 +889,9 @@ void nsCanvasFrame::Reflow(nsPresContext* aPresContext,
                                  aStatus);
 
   NS_FRAME_TRACE_REFLOW_OUT("nsCanvasFrame::Reflow", aStatus);
-  NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aDesiredSize);
 }
 
-nsresult nsCanvasFrame::GetContentForEvent(WidgetEvent* aEvent,
+nsresult nsCanvasFrame::GetContentForEvent(const WidgetEvent* aEvent,
                                            nsIContent** aContent) {
   NS_ENSURE_ARG_POINTER(aContent);
   nsresult rv = nsIFrame::GetContentForEvent(aEvent, aContent);

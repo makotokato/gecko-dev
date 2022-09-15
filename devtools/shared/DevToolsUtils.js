@@ -9,12 +9,13 @@
 /* General utilities used throughout devtools. */
 
 var { Ci, Cc, Cu, components } = require("chrome");
-var Services = require("Services");
 var flags = require("devtools/shared/flags");
 var {
   getStack,
   callFunctionWithAsyncStack,
 } = require("devtools/shared/platform/stack");
+
+loader.lazyRequireGetter(this, "OS", "resource://gre/modules/osfile.jsm", true);
 
 loader.lazyRequireGetter(
   this,
@@ -133,13 +134,13 @@ exports.waitForTime = function(delay) {
 exports.defineLazyPrototypeGetter = function(object, key, callback) {
   Object.defineProperty(object, key, {
     configurable: true,
-    get: function() {
+    get() {
       const value = callback.call(this);
 
       Object.defineProperty(this, key, {
         configurable: true,
         writable: true,
-        value: value,
+        value,
       });
 
       return value;
@@ -407,7 +408,7 @@ exports.dumpv = function(msg) {
  */
 exports.defineLazyGetter = function(object, name, lambda) {
   Object.defineProperty(object, name, {
-    get: function() {
+    get() {
       delete object[name];
       object[name] = lambda.apply(object);
       return object[name];
@@ -665,12 +666,14 @@ function mainThreadFetch(
           ex.name === "NS_BASE_STREAM_CLOSED" &&
           uri instanceof Ci.nsIFileURL
         ) {
-          // Empty files cause NS_BASE_STREAM_CLOSED exception. Use IOUtils to
+          // Empty files cause NS_BASE_STREAM_CLOSED exception. Use OS.File to
           // differentiate between empty files and other errors (bug 1170864).
           // This can be removed when bug 982654 is fixed.
 
           uri.QueryInterface(Ci.nsIFileURL);
-          const result = IOUtils.read(uri.file.path).then(bytes => {
+          // Bug 1779574: IOUtils is not available in non-parent processes.
+          // eslint-disable-next-line mozilla/reject-osfile
+          const result = OS.File.read(uri.file.path).then(bytes => {
             // Convert the bytearray to a String.
             const decoder = new TextDecoder();
             const content = decoder.decode(bytes);
@@ -725,8 +728,8 @@ function newChannelForURL(
   }
   const channelOptions = {
     contentPolicyType: policy,
-    securityFlags: securityFlags,
-    uri: uri,
+    securityFlags,
+    uri,
   };
 
   // Ensure that we have some contentPolicyType type set if one was
@@ -874,7 +877,7 @@ exports.showSaveFileDialog = function(
   }
 
   fp.init(parentWindow, null, fp.modeSave);
-  if (Array.isArray(filters) && filters.length > 0) {
+  if (Array.isArray(filters) && filters.length) {
     for (const { pattern, label } of filters) {
       fp.appendFilter(label, pattern);
     }

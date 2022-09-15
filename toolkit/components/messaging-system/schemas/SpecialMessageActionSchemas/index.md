@@ -21,6 +21,12 @@ For snippets, you should add the action type in `button_action` and any addition
 
 Opens the applications menu.
 
+### `OPEN_FIREFOX_VIEW`
+
+* args: (none)
+
+Opens the Firefox View pseudo-tab.
+
 ### `OPEN_PRIVATE_BROWSER_WINDOW`
 
 * args: (none)
@@ -255,3 +261,64 @@ additional privacy section in about:preferences.
 ### `SHOW_SPOTLIGHT`
 
 Action for opening a spotlight tab or window modal using the content passed to the dialog.
+
+### `BLOCK_MESSAGE`
+
+Disable a message by adding to an indexedDb list of blocked messages
+
+* args: `string` id of the message
+
+### `SET_PREF`
+
+Action for setting various browser prefs
+
+Prefs that can be changed with this action are:
+
+- `browser.dataFeatureRecommendations.enabled`
+- `browser.privateWindowSeparation.enabled`
+- `browser.startup.homepage`
+
+* args:
+```ts
+{
+  pref: {
+    name: string;
+    value: string | boolean | number;
+  }
+}
+```
+
+### `MULTI_ACTION`
+
+Action for running multiple actions. Actions should be included in an array of actions.
+
+* args:
+```ts
+{
+  actions: Array<UserAction>
+}
+```
+
+* example:
+```json
+{
+  "button_action": "MULTI_ACTION",
+  "button_action_args": {
+    "actions": [
+      {
+        "type": "OPEN_URL",
+        "args": "https://www.example.com"
+      },
+      {
+        "type": "OPEN_AWESOME_BAR"
+      }
+    ]
+  }
+}
+```
+
+### `CLICK_ELEMENT`
+
+* args: `string` A CSS selector for the HTML element to be clicked
+
+Selects an element in the current Window's document and triggers a click action

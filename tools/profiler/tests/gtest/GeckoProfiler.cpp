@@ -1252,6 +1252,46 @@ TEST(BaseProfiler, BlocksRingBuffer)
 
 // Common JSON checks.
 
+// Check that the given JSON string include no JSON whitespace characters
+// (excluding those in property names and strings).
+void JSONWhitespaceCheck(const char* aOutput) {
+  ASSERT_NE(aOutput, nullptr);
+
+  enum class State { Data, String, StringEscaped };
+  State state = State::Data;
+  size_t length = 0;
+  size_t whitespaces = 0;
+  for (const char* p = aOutput; *p != '\0'; ++p) {
+    ++length;
+    const char c = *p;
+
+    switch (state) {
+      case State::Data:
+        if (c == '\n' || c == '\r' || c == ' ' || c == '\t') {
+          ++whitespaces;
+        } else if (c == '"') {
+          state = State::String;
+        }
+        break;
+
+      case State::String:
+        if (c == '"') {
+          state = State::Data;
+        } else if (c == '\\') {
+          state = State::StringEscaped;
+        }
+        break;
+
+      case State::StringEscaped:
+        state = State::String;
+        break;
+    }
+  }
+
+  EXPECT_EQ(whitespaces, 0u);
+  EXPECT_GT(length, 0u);
+}
+
 // Does the GETTER return a non-null TYPE? (Non-critical)
 #  define EXPECT_HAS_JSON(GETTER, TYPE)              \
     do {                                             \
@@ -1378,6 +1418,9 @@ static void JSONRootCheck(const Json::Value& aRoot,
   GET_JSON(meta, aRoot["meta"], Object);
   EXPECT_HAS_JSON(meta["version"], UInt);
   EXPECT_HAS_JSON(meta["startTime"], Double);
+  EXPECT_HAS_JSON(meta["profilingStartTime"], Double);
+  EXPECT_HAS_JSON(meta["contentEarliestTime"], Double);
+  EXPECT_HAS_JSON(meta["profilingEndTime"], Double);
 
   EXPECT_HAS_JSON(aRoot["pages"], Array);
 
@@ -1502,6 +1545,22 @@ static void JSONRootCheck(const Json::Value& aRoot,
       JSONRootCheck(process, aWithMainThread);
     }
   }
+
+  GET_JSON(profilingLog, aRoot["profilingLog"], Object);
+  EXPECT_EQ(profilingLog.size(), 1u);
+  for (auto it = profilingLog.begin(); it != profilingLog.end(); ++it) {
+    // The key should be a pid.
+    const auto key = it.name();
+    for (const auto letter : key) {
+      EXPECT_GE(letter, '0');
+      EXPECT_LE(letter, '9');
+    }
+    // And the value should be an object.
+    GET_JSON(logForPid, profilingLog[key], Object);
+    // Its content is not defined, but we expect at least these:
+    EXPECT_HAS_JSON(logForPid["profilingLogBegin_TSms"], Double);
+    EXPECT_HAS_JSON(logForPid["profilingLogEnd_TSms"], Double);
+  }
 }
 
 // Check that various expected top properties are in the JSON, and then call the
@@ -1510,6 +1569,8 @@ template <typename JSONCheckFunction>
 void JSONOutputCheck(const char* aOutput,
                      JSONCheckFunction&& aJSONCheckFunction) {
   ASSERT_NE(aOutput, nullptr);
+
+  JSONWhitespaceCheck(aOutput);
 
   // Extract JSON.
   Json::Value parsedRoot;
@@ -1598,6 +1659,7 @@ TEST(GeckoProfiler, FeaturesAndParams)
     uint32_t features = ProfilerFeature::JS;
     const char* filters[] = {"GeckoMain", "Compositor"};
 
+#  define PROFILER_DEFAULT_DURATION 20 /* seconds, for tests only */
     profiler_start(PROFILER_DEFAULT_ENTRIES, PROFILER_DEFAULT_INTERVAL,
                    features, filters, MOZ_ARRAY_LENGTH(filters), 100,
                    Some(PROFILER_DEFAULT_DURATION));
@@ -1766,7 +1828,7 @@ TEST(GeckoProfiler, EnsureStarted)
     // Call profiler_ensure_started with a different feature set than the one
     // it's currently running with. This is supposed to stop and restart the
     // profiler, thereby discarding the buffer contents.
-    uint32_t differentFeatures = features | ProfilerFeature::Leaf;
+    uint32_t differentFeatures = features | ProfilerFeature::CPUUtilization;
     profiler_ensure_started(PROFILER_DEFAULT_ENTRIES, PROFILER_DEFAULT_INTERVAL,
                             differentFeatures, filters,
                             MOZ_ARRAY_LENGTH(filters), 0);
@@ -2683,10 +2745,12 @@ TEST(GeckoProfiler, Markers)
       "MediaSample", geckoprofiler::category::OTHER, {},
       geckoprofiler::markers::MediaSampleMarker{}, 123, 456));
 
-  SpliceableChunkedJSONWriter w;
+  SpliceableChunkedJSONWriter w{FailureLatchInfallibleSource::Singleton()};
   w.Start();
   EXPECT_TRUE(::profiler_stream_json_for_this_process(w));
   w.End();
+
+  EXPECT_FALSE(w.Failed());
 
   UniquePtr<char[]> profile = w.ChunkedWriteFunc().CopyData();
   ASSERT_TRUE(!!profile.get());
@@ -3458,11 +3522,12 @@ TEST(GeckoProfiler, Markers)
                  filters, MOZ_ARRAY_LENGTH(filters), 0);
 
   // This last marker shouldn't get streamed.
-  SpliceableChunkedJSONWriter w2;
+  SpliceableChunkedJSONWriter w2{FailureLatchInfallibleSource::Singleton()};
   w2.Start();
   EXPECT_TRUE(::profiler_stream_json_for_this_process(w2));
   w2.End();
-  UniquePtr<char[]> profile2 = w.ChunkedWriteFunc().CopyData();
+  EXPECT_FALSE(w2.Failed());
+  UniquePtr<char[]> profile2 = w2.ChunkedWriteFunc().CopyData();
   ASSERT_TRUE(!!profile2.get());
   EXPECT_TRUE(
       std::string_view(profile2.get()).find("marker after profiler_stop") ==
@@ -3493,8 +3558,9 @@ TEST(GeckoProfiler, Counters)
   };
 
   int64_t testCounters[] = {10, 7, -17};
-  NumberAndCount expectedTestCounters[] = {{1u, 10}, {0u, 0},   {1u, 7},
-                                           {0u, 0},  {1u, -17}, {0u, 0}};
+  NumberAndCount expectedTestCounters[] = {{1u, 10}, {0u, 0}, {1u, 7},
+                                           {0u, 0},  {0u, 0}, {1u, -17},
+                                           {0u, 0},  {0u, 0}};
   constexpr size_t expectedTestCountersCount =
       MOZ_ARRAY_LENGTH(expectedTestCounters);
 
@@ -3680,8 +3746,28 @@ TEST(GeckoProfiler, StreamJSONForThisProcess)
   uint32_t features = ProfilerFeature::StackWalk;
   const char* filters[] = {"GeckoMain"};
 
-  SpliceableChunkedJSONWriter w;
+  SpliceableChunkedJSONWriter w{FailureLatchInfallibleSource::Singleton()};
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().Fallible());
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().Failed());
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().GetFailure());
+  MOZ_RELEASE_ASSERT(&w.ChunkedWriteFunc().SourceFailureLatch() ==
+                     &mozilla::FailureLatchInfallibleSource::Singleton());
+  MOZ_RELEASE_ASSERT(
+      &std::as_const(w.ChunkedWriteFunc()).SourceFailureLatch() ==
+      &mozilla::FailureLatchInfallibleSource::Singleton());
+  MOZ_RELEASE_ASSERT(!w.Fallible());
+  MOZ_RELEASE_ASSERT(!w.Failed());
+  MOZ_RELEASE_ASSERT(!w.GetFailure());
+  MOZ_RELEASE_ASSERT(&w.SourceFailureLatch() ==
+                     &mozilla::FailureLatchInfallibleSource::Singleton());
+  MOZ_RELEASE_ASSERT(&std::as_const(w).SourceFailureLatch() ==
+                     &mozilla::FailureLatchInfallibleSource::Singleton());
+
   ASSERT_TRUE(!::profiler_stream_json_for_this_process(w));
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().Failed());
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().GetFailure());
+  MOZ_RELEASE_ASSERT(!w.Failed());
+  MOZ_RELEASE_ASSERT(!w.GetFailure());
 
   profiler_start(PROFILER_DEFAULT_ENTRIES, PROFILER_DEFAULT_INTERVAL, features,
                  filters, MOZ_ARRAY_LENGTH(filters), 0);
@@ -3689,6 +3775,11 @@ TEST(GeckoProfiler, StreamJSONForThisProcess)
   w.Start();
   ASSERT_TRUE(::profiler_stream_json_for_this_process(w));
   w.End();
+
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().Failed());
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().GetFailure());
+  MOZ_RELEASE_ASSERT(!w.Failed());
+  MOZ_RELEASE_ASSERT(!w.GetFailure());
 
   UniquePtr<char[]> profile = w.ChunkedWriteFunc().CopyData();
 
@@ -3717,8 +3808,28 @@ TEST(GeckoProfiler, StreamJSONForThisProcessThreaded)
   uint32_t features = ProfilerFeature::StackWalk;
   const char* filters[] = {"GeckoMain"};
 
-  SpliceableChunkedJSONWriter w;
+  SpliceableChunkedJSONWriter w{FailureLatchInfallibleSource::Singleton()};
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().Fallible());
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().Failed());
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().GetFailure());
+  MOZ_RELEASE_ASSERT(&w.ChunkedWriteFunc().SourceFailureLatch() ==
+                     &mozilla::FailureLatchInfallibleSource::Singleton());
+  MOZ_RELEASE_ASSERT(
+      &std::as_const(w.ChunkedWriteFunc()).SourceFailureLatch() ==
+      &mozilla::FailureLatchInfallibleSource::Singleton());
+  MOZ_RELEASE_ASSERT(!w.Fallible());
+  MOZ_RELEASE_ASSERT(!w.Failed());
+  MOZ_RELEASE_ASSERT(!w.GetFailure());
+  MOZ_RELEASE_ASSERT(&w.SourceFailureLatch() ==
+                     &mozilla::FailureLatchInfallibleSource::Singleton());
+  MOZ_RELEASE_ASSERT(&std::as_const(w).SourceFailureLatch() ==
+                     &mozilla::FailureLatchInfallibleSource::Singleton());
+
   ASSERT_TRUE(!::profiler_stream_json_for_this_process(w));
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().Failed());
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().GetFailure());
+  MOZ_RELEASE_ASSERT(!w.Failed());
+  MOZ_RELEASE_ASSERT(!w.GetFailure());
 
   // Start the profiler on the main thread.
   profiler_start(PROFILER_DEFAULT_ENTRIES, PROFILER_DEFAULT_INTERVAL, features,
@@ -3738,6 +3849,11 @@ TEST(GeckoProfiler, StreamJSONForThisProcessThreaded)
             w.End();
           }),
       NS_DISPATCH_SYNC);
+
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().Failed());
+  MOZ_RELEASE_ASSERT(!w.ChunkedWriteFunc().GetFailure());
+  MOZ_RELEASE_ASSERT(!w.Failed());
+  MOZ_RELEASE_ASSERT(!w.GetFailure());
 
   UniquePtr<char[]> profile = w.ChunkedWriteFunc().CopyData();
 
@@ -3837,7 +3953,7 @@ void DoSuspendAndSample(ProfilerThreadId aTidToSample,
       NS_NewRunnableFunction(
           "GeckoProfiler_SuspendAndSample_Test::TestBody",
           [&]() {
-            uint32_t features = ProfilerFeature::Leaf;
+            uint32_t features = ProfilerFeature::CPUUtilization;
             GTestStackCollector collector;
             profiler_suspend_and_sample_thread(aTidToSample, features,
                                                collector,
@@ -4764,6 +4880,72 @@ TEST(GeckoProfiler, AllThreads)
       }
     });
   }
+}
+
+TEST(GeckoProfiler, FailureHandling)
+{
+  profiler_init_main_thread_id();
+  ASSERT_TRUE(profiler_is_main_thread())
+  << "This test assumes it runs on the main thread";
+
+  uint32_t features = ProfilerFeature::StackWalk;
+  const char* filters[] = {"GeckoMain"};
+  profiler_start(PROFILER_DEFAULT_ENTRIES, PROFILER_DEFAULT_INTERVAL, features,
+                 filters, MOZ_ARRAY_LENGTH(filters), 0);
+
+  ASSERT_EQ(WaitForSamplingState(), SamplingState::SamplingCompleted);
+
+  // User-defined marker type that generates a failure when streaming JSON.
+  struct GtestFailingMarker {
+    static constexpr Span<const char> MarkerTypeName() {
+      return MakeStringSpan("markers-gtest-failing");
+    }
+    static void StreamJSONMarkerData(
+        mozilla::baseprofiler::SpliceableJSONWriter& aWriter) {
+      aWriter.SetFailure("boom!");
+    }
+    static mozilla::MarkerSchema MarkerTypeDisplay() {
+      return mozilla::MarkerSchema::SpecialFrontendLocation{};
+    }
+  };
+  EXPECT_TRUE(profiler_add_marker("Gtest failing marker",
+                                  geckoprofiler::category::OTHER, {},
+                                  GtestFailingMarker{}));
+
+  ASSERT_EQ(WaitForSamplingState(), SamplingState::SamplingCompleted);
+  profiler_pause();
+
+  FailureLatchSource failureLatch;
+  SpliceableChunkedJSONWriter w{failureLatch};
+  EXPECT_FALSE(w.Failed());
+  ASSERT_FALSE(w.GetFailure());
+
+  w.Start();
+  EXPECT_FALSE(w.Failed());
+  ASSERT_FALSE(w.GetFailure());
+
+  // The marker will cause a failure during this function call.
+  EXPECT_FALSE(::profiler_stream_json_for_this_process(w));
+  EXPECT_TRUE(w.Failed());
+  ASSERT_TRUE(w.GetFailure());
+  EXPECT_EQ(strcmp(w.GetFailure(), "boom!"), 0);
+
+  // Already failed, check that we don't crash or reset the failure.
+  EXPECT_FALSE(::profiler_stream_json_for_this_process(w));
+  EXPECT_TRUE(w.Failed());
+  ASSERT_TRUE(w.GetFailure());
+  EXPECT_EQ(strcmp(w.GetFailure(), "boom!"), 0);
+
+  w.End();
+
+  profiler_stop();
+
+  EXPECT_TRUE(w.Failed());
+  ASSERT_TRUE(w.GetFailure());
+  EXPECT_EQ(strcmp(w.GetFailure(), "boom!"), 0);
+
+  UniquePtr<char[]> profile = w.ChunkedWriteFunc().CopyData();
+  ASSERT_EQ(profile.get(), nullptr);
 }
 
 #endif  // MOZ_GECKO_PROFILER

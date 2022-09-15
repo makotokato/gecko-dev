@@ -1,5 +1,5 @@
-commit 2e7cdfbe18eae4309677033673bb4b5ac6b1de40
-Author: legendecas <legendecas@gmail.com>
-Date:   Mon May 2 22:56:46 2022 +0800
+commit 746197355c1705b7d4463fc75c29433c0ce2fd0d
+Author: Kevin Gibbons <bakkot@gmail.com>
+Date:   Tue Sep 6 04:21:50 2022 -0700
 
-    Fix generator clean fail on .DS_Store
+    Implement changes for "avoid mostly-redundant `await` in async `yield*`" (#3619)

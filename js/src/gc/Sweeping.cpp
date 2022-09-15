@@ -18,6 +18,7 @@
 
 #include "mozilla/Maybe.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/TimeStamp.h"
 
 #include "builtin/FinalizationRegistryObject.h"
 #include "builtin/WeakRefObject.h"
@@ -35,21 +36,23 @@
 #include "jit/JitRuntime.h"
 #include "jit/JitZone.h"
 #include "proxy/DeadObjectProxy.h"
+#include "vm/BigIntType.h"
 #include "vm/HelperThreads.h"
 #include "vm/JSContext.h"
-#include "vm/TraceLogging.h"
+#include "vm/Time.h"
 #include "vm/WrapperObject.h"
 
 #include "gc/PrivateIterators-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSObject-inl.h"
-#include "vm/JSScript-inl.h"
 #include "vm/PropMap-inl.h"
-#include "vm/Stack-inl.h"
+#include "vm/Shape-inl.h"
 #include "vm/StringType-inl.h"
 
 using namespace js;
 using namespace js::gc;
+
+using mozilla::TimeStamp;
 
 struct js::gc::FinalizePhase {
   gcstats::PhaseKind statsPhase;
@@ -134,12 +137,12 @@ inline size_t Arena::finalize(JS::GCContext* gcx, AllocKind thingKind,
   }
 
   if constexpr (std::is_same_v<T, JSObject>) {
-    if (isNewlyCreated) {
+    if (isNewlyCreated_) {
       zone->pretenuring.updateCellCountsInNewlyCreatedArenas(
           nmarked + nfinalized, nmarked);
     }
   }
-  isNewlyCreated = 0;
+  isNewlyCreated_ = 0;
 
   if (thingKind == AllocKind::STRING ||
       thingKind == AllocKind::FAT_INLINE_STRING) {
@@ -189,10 +192,18 @@ static inline bool FinalizeTypedArenas(JS::GCContext* gcx, ArenaList& src,
 
   size_t thingSize = Arena::thingSize(thingKind);
   size_t thingsPerArena = Arena::thingsPerArena(thingKind);
+  size_t markCount = 0;
+
+  auto updateMarkCount = mozilla::MakeScopeExit([&] {
+    GCRuntime* gc = &gcx->runtimeFromAnyThread()->gc;
+    gc->stats().addCount(gcstats::COUNT_CELLS_MARKED, markCount);
+  });
 
   while (Arena* arena = src.takeFirstArena()) {
     size_t nmarked = arena->finalize<T>(gcx, thingKind, thingSize);
     size_t nfree = thingsPerArena - nmarked;
+
+    markCount += nmarked;
 
     if (nmarked) {
       dest.insertAt(arena, nfree);
@@ -329,6 +340,8 @@ void GCRuntime::sweepBackgroundThings(ZoneList& zones) {
     Zone* zone = zones.removeFront();
     MOZ_ASSERT(zone->isGCFinished());
 
+    TimeStamp startTime = ReallyNow();
+
     Arena* emptyArenas = zone->arenas.takeSweptEmptyArenas();
 
     // We must finalize thing kinds in the order specified by
@@ -359,6 +372,10 @@ void GCRuntime::sweepBackgroundThings(ZoneList& zones) {
         releaseArena(arena, lock);
       }
     }
+
+    // Record time spent sweeping this zone.
+    TimeStamp endTime = ReallyNow();
+    zone->perZoneGCTime += endTime - startTime;
   }
 }
 
@@ -380,16 +397,16 @@ void GCRuntime::assertBackgroundSweepingFinished() {
 #endif
 }
 
-void GCRuntime::queueZonesAndStartBackgroundSweep(ZoneList& zones) {
+void GCRuntime::queueZonesAndStartBackgroundSweep(ZoneList&& zones) {
   {
     AutoLockHelperThreadState lock;
     MOZ_ASSERT(!requestSliceAfterBackgroundTask);
-    backgroundSweepZones.ref().transferFrom(zones);
-    if (sweepOnBackgroundThread) {
+    backgroundSweepZones.ref().appendList(std::move(zones));
+    if (useBackgroundThreads) {
       sweepTask.startOrRunIfIdle(lock);
     }
   }
-  if (!sweepOnBackgroundThread) {
+  if (!useBackgroundThreads) {
     sweepTask.join();
     sweepTask.runFromMainThread();
   }
@@ -399,16 +416,13 @@ BackgroundSweepTask::BackgroundSweepTask(GCRuntime* gc)
     : GCParallelTask(gc, gcstats::PhaseKind::SWEEP, GCUse::Finalizing) {}
 
 void BackgroundSweepTask::run(AutoLockHelperThreadState& lock) {
-  AutoTraceLog logSweeping(TraceLoggerForCurrentThread(),
-                           TraceLogger_GCSweeping);
-
   gc->sweepFromBackgroundThread(lock);
 }
 
 void GCRuntime::sweepFromBackgroundThread(AutoLockHelperThreadState& lock) {
   do {
     ZoneList zones;
-    zones.transferFrom(backgroundSweepZones.ref());
+    zones.appendList(std::move(backgroundSweepZones.ref()));
 
     AutoUnlockHelperThreadState unlock(lock);
     sweepBackgroundThings(zones);
@@ -439,8 +453,6 @@ BackgroundFreeTask::BackgroundFreeTask(GCRuntime* gc)
 }
 
 void BackgroundFreeTask::run(AutoLockHelperThreadState& lock) {
-  AutoTraceLog logFreeing(TraceLoggerForCurrentThread(), TraceLogger_GCFree);
-
   gc->freeFromBackgroundThread(lock);
 }
 
@@ -628,6 +640,8 @@ bool Compartment::findSweepGroupEdges() {
 }
 
 bool Zone::findSweepGroupEdges(Zone* atomsZone) {
+  MOZ_ASSERT_IF(this != atomsZone, !isAtomsZone());
+
 #ifdef DEBUG
   if (FinalizationObservers* observers = finalizationObservers()) {
     observers->checkTables();
@@ -683,7 +697,7 @@ static bool AddEdgesForMarkQueue(GCMarker& marker) {
 
 bool GCRuntime::findSweepGroupEdges() {
   for (GCZonesIter zone(this); !zone.done(); zone.next()) {
-    if (!zone->findSweepGroupEdges(atomsZone)) {
+    if (!zone->findSweepGroupEdges(atomsZone())) {
       return false;
     }
   }
@@ -756,7 +770,7 @@ void GCRuntime::getNextSweepGroup() {
   }
 
   for (Zone* zone = currentSweepGroup; zone; zone = zone->nextNodeInGroup()) {
-    MOZ_ASSERT(zone->isGCMarkingBlackOnly());
+    MOZ_ASSERT(zone->gcState() == zone->initialMarkingState());
     MOZ_ASSERT(!zone->isQueuedForBackgroundSweep());
   }
 
@@ -766,7 +780,7 @@ void GCRuntime::getNextSweepGroup() {
     // Abort collection of subsequent sweep groups.
     for (SweepGroupZonesIter zone(this); !zone.done(); zone.next()) {
       MOZ_ASSERT(!zone->gcNextGraphComponent);
-      zone->changeGCState(Zone::MarkBlackOnly, Zone::NoGC);
+      zone->changeGCState(zone->initialMarkingState(), Zone::NoGC);
       zone->arenas.unmarkPreMarkedFreeCells();
       zone->arenas.mergeArenasFromCollectingLists();
       zone->clearGCSliceThresholds();
@@ -1064,7 +1078,7 @@ IncrementalProgress GCRuntime::beginMarkingSweepGroup(JS::GCContext* gcx,
   // will be marked through, as they are not marked with
   // TraceCrossCompartmentEdge.
   for (SweepGroupZonesIter zone(this); !zone.done(); zone.next()) {
-    zone->changeGCState(Zone::MarkBlackOnly, Zone::MarkBlackAndGray);
+    zone->changeGCState(zone->initialMarkingState(), Zone::MarkBlackAndGray);
   }
 
   AutoSetMarkColor setColorGray(marker, MarkColor::Gray);
@@ -1608,23 +1622,19 @@ IncrementalProgress GCRuntime::endSweepingSweepGroup(JS::GCContext* gcx,
   }
 
   /*
-   * Start background thread to sweep zones if required, sweeping the atoms
-   * zone last if present.
+   * Start background thread to sweep zones if required, sweeping any atoms
+   * zones last if present.
    */
-  bool sweepAtomsZone = false;
   ZoneList zones;
   for (SweepGroupZonesIter zone(this); !zone.done(); zone.next()) {
     if (zone->isAtomsZone()) {
-      sweepAtomsZone = true;
-    } else {
       zones.append(zone);
+    } else {
+      zones.prepend(zone);
     }
   }
-  if (sweepAtomsZone) {
-    zones.append(atomsZone);
-  }
 
-  queueZonesAndStartBackgroundSweep(zones);
+  queueZonesAndStartBackgroundSweep(std::move(zones));
 
   return Finished;
 }
@@ -1780,7 +1790,7 @@ void GCRuntime::startSweepingAtomsTable() {
 
 IncrementalProgress GCRuntime::sweepAtomsTable(JS::GCContext* gcx,
                                                SliceBudget& budget) {
-  if (!atomsZone->isGCSweeping()) {
+  if (!atomsZone()->isGCSweeping()) {
     return Finished;
   }
 
@@ -2295,17 +2305,13 @@ void GCRuntime::endSweepPhase(bool destroyingRuntime) {
 
   gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::SWEEP);
 
-  MOZ_ASSERT_IF(destroyingRuntime, !sweepOnBackgroundThread);
+  MOZ_ASSERT_IF(destroyingRuntime, !useBackgroundThreads);
 
   {
     gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::DESTROY);
 
-    /*
-     * Sweep script filenames after sweeping functions in the generic loop
-     * above. In this way when a scripted function's finalizer destroys the
-     * script and calls rt->destroyScriptHook, the hook can still access the
-     * script's filename. See bug 323267.
-     */
+    // Sweep shared script bytecode now all zones have been swept and finalizers
+    // for BaseScripts have released their references.
     SweepScriptData(rt);
   }
 
@@ -2330,7 +2336,7 @@ void GCRuntime::endSweepPhase(bool destroyingRuntime) {
 #ifdef DEBUG
   for (ZonesIter zone(this, WithAtoms); !zone.done(); zone.next()) {
     for (auto i : AllAllocKinds()) {
-      MOZ_ASSERT_IF(!IsBackgroundFinalized(i) || !sweepOnBackgroundThread,
+      MOZ_ASSERT_IF(!IsBackgroundFinalized(i) || !useBackgroundThreads,
                     zone->arenas.collectingArenaList(i).isEmpty());
     }
   }

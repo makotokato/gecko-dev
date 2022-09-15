@@ -9,24 +9,9 @@
   user-select: text;
 }
 
-body {
-  font-size: 1.25em;
-}
-
-@media (-moz-platform: macos) {
-  body {
-    font-size: 1.36em;
-  }
-}
-
-@media (-moz-platform: linux) {
-  body {
-    font-size: 1.11em;
-  }
-}
-
 #preferences-root {
   text-rendering: optimizeLegibility;
+  -moz-box-layout: flex;
 }
 
 @media not print {
@@ -361,6 +346,12 @@ checkbox {
   visibility: hidden;
 }
 
+/* Work around bug 560067 - animated images in visibility: hidden
+ * still eat CPU. */
+#updateDeck > *:not(.selected) > .update-throbber {
+  display: none;
+}
+
 #updateDeck > hbox > button {
   margin-block: 0;
   margin-inline-end: 0;
@@ -390,6 +381,11 @@ checkbox {
 
 #handlersView > richlistitem {
   min-height: 30px;
+}
+
+#handlersViewHeader > treecol,
+#handlersView > richlistitem > hbox {
+  width: 50%;
 }
 
 #handlersView .actionsMenu {
@@ -634,16 +630,28 @@ richlistitem[selected] .actionsMenu:focus-visible {
 }
 
 .dialogTitleBar {
-  margin-top: 0;
-  padding: 6px 4px;
+  padding: .4em .2em;
   border-bottom: 1px solid var(--in-content-border-color);
 }
 
 .dialogTitle {
-  font-size: .9em;
   font-weight: 600;
   text-align: center;
   user-select: none;
+}
+
+.fxaPairDeviceIcon {
+  background-image: url("chrome://browser/content/logos/fxa-logo.svg");
+  background-position: center center;
+  background-repeat: no-repeat;
+  position: relative;
+  height: 80px;
+  padding-top: 42px;
+  margin-top: -40px;
+}
+
+.fxaPairDeviceIcon .close-icon {
+  margin-top: 10px;
 }
 
 .close-icon {

@@ -485,6 +485,7 @@ class Longhand(Property):
                 "JustifyItems",
                 "JustifySelf",
                 "LineBreak",
+                "LineClamp",
                 "MasonryAutoFlow",
                 "MozForceBrokenImageIcon",
                 "text::MozControlCharacterVisibility",
@@ -502,7 +503,6 @@ class Longhand(Property):
                 "OverflowWrap",
                 "OverscrollBehavior",
                 "Percentage",
-                "PositiveIntegerOrNone",
                 "PrintColorAdjust",
                 "Resize",
                 "RubyPosition",
@@ -606,6 +606,7 @@ class Alias(object):
         self.gecko_pref = gecko_pref
         self.transitionable = original.transitionable
         self.rule_types_allowed = original.rule_types_allowed
+        self.flags = original.flags
 
     @staticmethod
     def type():

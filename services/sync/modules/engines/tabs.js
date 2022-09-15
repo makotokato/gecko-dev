@@ -7,13 +7,9 @@ var EXPORTED_SYMBOLS = ["TabEngine", "TabSetRecord"];
 const TABS_TTL = 31622400; // 366 days (1 leap year).
 const TAB_ENTRIES_LIMIT = 5; // How many URLs to include in tab history.
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { TabStateFlusher } = ChromeUtils.import(
-  "resource:///modules/sessionstore/TabStateFlusher.jsm"
-);
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { Log } = ChromeUtils.import("resource://gre/modules/Log.jsm");
 const { Store, SyncEngine, Tracker } = ChromeUtils.import(
   "resource://services-sync/engines.js"
@@ -46,14 +42,9 @@ ChromeUtils.defineModuleGetter(
   "PrivateBrowsingUtils",
   "resource://gre/modules/PrivateBrowsingUtils.jsm"
 );
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "SessionStore",
-  "resource:///modules/sessionstore/SessionStore.jsm"
-);
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
 });
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
@@ -69,6 +60,13 @@ XPCOMUtils.defineLazyPreferenceGetter(
   val => {
     return new Set(val.split("|"));
   }
+);
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "SYNC_AFTER_DELAY_MS",
+  "services.sync.syncedTabs.syncDelayAfterTabChange",
+  0
 );
 
 function TabSetRecord(collection, id) {
@@ -293,12 +291,9 @@ TabStore.prototype = {
     return win.closed || lazy.PrivateBrowsingUtils.isWindowPrivate(win);
   },
 
-  getTabState(tab) {
-    return JSON.parse(lazy.SessionStore.getTabState(tab));
-  },
-
   async getAllTabs(filter) {
     let allTabs = [];
+    let iconPromises = [];
 
     for (let win of this.getWindowEnumerator()) {
       if (this.shouldSkipWindow(win)) {
@@ -306,75 +301,54 @@ TabStore.prototype = {
       }
 
       for (let tab of win.gBrowser.tabs) {
-        let tabState = this.getTabState(tab);
-
-        // Make sure there are history entries to look at.
-        if (!tabState || !tabState.entries.length) {
-          // If we detected a tab but no entries we should
-          // flush the window so SessionState properly updates
-          await TabStateFlusher.flushWindow(win);
-          tabState = this.getTabState(tab);
-
-          // We failed to get entries even after a flush
-          // safe to skip this tab
-          if (!tabState || !tabState.entries.length) {
-            continue;
-          }
+        // Note that we used to sync "tab history" (ie, the "back button") state,
+        // but in practice this hasn't been used - only the current URI is of
+        // interest to clients.
+        // We stopped recording this in bug 1783991.
+        if (!tab?.linkedBrowser) {
+          continue;
         }
-
         let acceptable = !filter
           ? url => url
           : url =>
               url &&
               !lazy.TABS_FILTERED_SCHEMES.has(Services.io.extractScheme(url));
 
-        let entries = tabState.entries;
-        let index = tabState.index;
-        let current = entries[index - 1];
-
+        let url = tab.linkedBrowser.currentURI?.spec;
         // We ignore the tab completely if the current entry url is
         // not acceptable (we need something accurate to open).
-        if (!acceptable(current.url)) {
+        if (!acceptable(url)) {
           continue;
         }
 
-        if (current.url.length > URI_LENGTH_MAX) {
+        if (url.length > URI_LENGTH_MAX) {
           this._log.trace("Skipping over-long URL.");
           continue;
         }
 
-        // The element at `index` is the current page. Previous URLs were
-        // previously visited URLs; subsequent URLs are in the 'forward' stack,
-        // which we can't represent in Sync, so we truncate here.
-        let candidates =
-          entries.length == index ? entries : entries.slice(0, index);
-
-        let urls = candidates
-          .map(entry => entry.url)
-          .filter(acceptable)
-          .reverse(); // Because Sync puts current at index 0, and history after.
-
-        // Truncate if necessary.
-        if (urls.length > TAB_ENTRIES_LIMIT) {
-          urls.length = TAB_ENTRIES_LIMIT;
-        }
-
-        // tabState has .image, but it's a large data: url. So we ask the favicon service for the url.
-        let icon = "";
-        try {
-          let iconData = await lazy.PlacesUtils.promiseFaviconData(urls[0]);
-          icon = iconData.uri.spec;
-        } catch (ex) {
-          this._log.trace(`Failed to fetch favicon for ${urls[0]}`, ex);
-        }
-        allTabs.push({
-          title: current.title || "",
-          urlHistory: urls,
-          icon,
-          lastUsed: Math.floor((tabState.lastAccessed || 0) / 1000),
-        });
+        let thisTab = {
+          title: tab.linkedBrowser.contentTitle || "",
+          urlHistory: [url],
+          icon: "",
+          lastUsed: Math.floor((tab.lastAccessed || 0) / 1000),
+        };
+        allTabs.push(thisTab);
+        // Use the favicon service for the icon url - we can wait for the promises at the end.
+        let iconPromise = lazy.PlacesUtils.promiseFaviconData(url)
+          .then(iconData => {
+            thisTab.icon = iconData.uri.spec;
+          })
+          .catch(ex => {
+            this._log.trace(
+              `Failed to fetch favicon for ${url}`,
+              thisTab.urlHistory[0]
+            );
+          });
+        iconPromises.push(iconPromise);
       }
     }
+
+    await Promise.allSettled(iconPromises);
 
     return allTabs;
   },
@@ -574,28 +548,34 @@ TabTracker.prototype = {
       return;
     }
 
-    // Synced tabs do not sync certain urls, we should ignore scheduling a sync
-    // if we have navigate to one of those urls
-    if (lazy.TABS_FILTERED_SCHEMES.has(locationURI.scheme)) {
-      return;
-    }
-
+    // We can't filter out tabs that we don't sync here, because we might be
+    // navigating from a tab that we *did* sync to one we do not, and that
+    // tab we *did* sync should no longer be synced.
     this.callScheduleSync();
   },
 
   callScheduleSync(scoreIncrement) {
     this.modified = true;
     let { scheduler } = this.engine.service;
-    const delayInMs = lazy.NimbusFeatures.syncAfterTabChange.getVariable(
-      "syncDelayAfterTabChange"
+    let delayInMs = lazy.SYNC_AFTER_DELAY_MS;
+
+    // We have this check to determine if the experiment is enabled and wants
+    // to override the default values (whether to lengthen the delay or disable completely)
+    const override = lazy.NimbusFeatures.syncAfterTabChange.getVariable(
+      "syncDelayAfterTabChangeOverride"
     );
+    if (override) {
+      delayInMs = lazy.NimbusFeatures.syncAfterTabChange.getVariable(
+        "syncDelayAfterTabChange"
+      );
+    }
 
     // If we are part of the experiment don't use score here
     // and instead schedule a sync once we detect a tab change
-    // to ensure the server always has the most up to date tabs
+    // to ensure the server always has the most up to date tabs]
     if (
       delayInMs > 0 &&
-      scheduler.numClients > 1 // Don't constantly schedule syncs for single client users
+      scheduler.numClients > 1 // Only schedule quick syncs for single client users
     ) {
       if (this.tabsQuickWriteTimer) {
         this._log.debug(

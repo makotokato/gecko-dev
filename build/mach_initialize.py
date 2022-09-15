@@ -333,7 +333,13 @@ def initialize(topsrcdir):
         "data-review": MachCommandReference(
             "toolkit/components/glean/build_scripts/mach_commands.py"
         ),
+        "perf-data-review": MachCommandReference(
+            "toolkit/components/glean/build_scripts/mach_commands.py"
+        ),
         "update-glean-tags": MachCommandReference(
+            "toolkit/components/glean/build_scripts/mach_commands.py"
+        ),
+        "update-glean": MachCommandReference(
             "toolkit/components/glean/build_scripts/mach_commands.py"
         ),
         "browsertime": MachCommandReference("tools/browsertime/mach_commands.py"),
@@ -354,6 +360,14 @@ def initialize(topsrcdir):
         "import-pr": MachCommandReference("tools/vcs/mach_commands.py"),
         "test-interventions": MachCommandReference(
             "testing/webcompat/mach_commands.py"
+        ),
+        "esmify": MachCommandReference("tools/esmify/mach_commands.py"),
+        "xpcshell": MachCommandReference("js/xpconnect/mach_commands.py"),
+        "uniffi": MachCommandReference(
+            "toolkit/components/uniffi-bindgen-gecko-js/mach_commands.py"
+        ),
+        "storybook": MachCommandReference(
+            "browser/components/storybook/mach_commands.py"
         ),
     }
 

@@ -9,9 +9,8 @@ var EXPORTED_SYMBOLS = ["GeckoViewProgress"];
 const { GeckoViewModule } = ChromeUtils.import(
   "resource://gre/modules/GeckoViewModule.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -157,7 +156,6 @@ var IdentityHandler = {
         uri.port,
         {},
         cert,
-        {},
         {}
       );
 

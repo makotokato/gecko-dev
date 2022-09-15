@@ -9,6 +9,7 @@
 #include "GLContext.h"
 #include "GLScreenBuffer.h"
 #include "mozilla/layers/CompositorBridgeChild.h"
+#include "mozilla/StaticPrefs_webgl.h"
 #include "SharedSurfaceGL.h"
 #include "WebRenderBridgeChild.h"
 
@@ -42,17 +43,46 @@ bool WebRenderCanvasRendererAsync::CreateCompositable() {
     mCanvasClient = new CanvasClient(GetForwarder(), compositableFlags);
     mCanvasClient->Connect();
   }
+  return true;
+}
 
-  if (!mPipelineId) {
-    // Alloc async image pipeline id.
-    mPipelineId = Some(
-        mManager->WrBridge()->GetCompositorBridgeChild()->GetNextPipelineId());
-    mManager->AddPipelineIdForCompositable(
-        mPipelineId.ref(), mCanvasClient->GetIPCHandle(),
-        CompositableHandleOwner::WebRenderBridge);
+void WebRenderCanvasRendererAsync::EnsurePipeline(bool aIsAsync) {
+  MOZ_ASSERT(mCanvasClient);
+  if (!mCanvasClient) {
+    return;
   }
 
-  return true;
+  if (StaticPrefs::webgl_out_of_process_async_present_force_sync()) {
+    // pref webgl.out-of-process.async-present.force-sync = true forces async
+    // present to wait for a sync, even while using remote textures.
+    aIsAsync = false;
+  } else {
+    // When image pipeline is updated in empty transaction, display list still
+    // refers to deleted image pipeline. See Bug 1782044.
+    // XXX address image pipeline update problem in empty transaction.
+    MOZ_ASSERT_UNREACHABLE("unexpected to be called");
+  }
+
+  if (mPipelineId && mIsAsync != aIsAsync) {
+    mManager->RemovePipelineIdForCompositable(mPipelineId.ref());
+    mPipelineId.reset();
+  }
+
+  if (mPipelineId) {
+    return;
+  }
+
+  if (mIsAsync != aIsAsync) {
+    GetForwarder()->EnableAsyncCompositable(mCanvasClient, aIsAsync);
+    mIsAsync = aIsAsync;
+  }
+
+  // Alloc async image pipeline id.
+  mPipelineId = Some(
+      mManager->WrBridge()->GetCompositorBridgeChild()->GetNextPipelineId());
+  mManager->AddPipelineIdForCompositable(
+      mPipelineId.ref(), mCanvasClient->GetIPCHandle(),
+      CompositableHandleOwner::WebRenderBridge);
 }
 
 void WebRenderCanvasRendererAsync::ClearCachedResources() {

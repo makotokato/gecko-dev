@@ -10,7 +10,10 @@
 
 #include "mozilla/ScopeExit.h"
 #include "mozilla/layers/AsyncImagePipelineManager.h"
+#include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/CompositorVsyncScheduler.h"  // for CompositorVsyncScheduler
+#include "mozilla/layers/RemoteTextureHostWrapper.h"
+#include "mozilla/layers/RemoteTextureMap.h"
 #include "mozilla/layers/WebRenderBridgeParent.h"
 #include "mozilla/layers/WebRenderTextureHost.h"
 #include "nsAString.h"
@@ -31,12 +34,25 @@ WebRenderImageHost::WebRenderImageHost(const TextureInfo& aTextureInfo)
       ImageComposite(),
       mCurrentAsyncImageManager(nullptr) {}
 
-WebRenderImageHost::~WebRenderImageHost() { MOZ_ASSERT(mWrBridges.empty()); }
+WebRenderImageHost::~WebRenderImageHost() {
+  MOZ_ASSERT(!mRemoteTextureHost);
+  MOZ_ASSERT(mWrBridges.empty());
+}
+
+void WebRenderImageHost::OnReleased() {
+  if (mRemoteTextureHost) {
+    mRemoteTextureHost = nullptr;
+  }
+}
 
 void WebRenderImageHost::UseTextureHost(
     const nsTArray<TimedTexture>& aTextures) {
   CompositableHost::UseTextureHost(aTextures);
   MOZ_ASSERT(aTextures.Length() >= 1);
+
+  if (mRemoteTextureHost) {
+    mRemoteTextureHost = nullptr;
+  }
 
   nsTArray<TimedImage> newImages;
 
@@ -95,6 +111,33 @@ void WebRenderImageHost::UseTextureHost(
   }
 }
 
+void WebRenderImageHost::UseRemoteTexture(const RemoteTextureId aTextureId,
+                                          const RemoteTextureOwnerId aOwnerId,
+                                          const base::ProcessId aForPid,
+                                          const gfx::IntSize aSize,
+                                          const TextureFlags aFlags) {
+  RefPtr<TextureHost> texture =
+      RemoteTextureMap::Get()->GetOrCreateRemoteTextureHostWrapper(
+          aTextureId, aOwnerId, aForPid, aSize, aFlags);
+  mRemoteTextureHost = texture;
+  if (mRemoteTextureHost) {
+    mRemoteTextureHost->AsRemoteTextureHostWrapper()
+        ->CheckIsReadyForRendering();
+  }
+
+  SetCurrentTextureHost(mRemoteTextureHost);
+
+  if (GetAsyncRef()) {
+    for (const auto& it : mWrBridges) {
+      RefPtr<WebRenderBridgeParent> wrBridge = it.second->WrBridge();
+      if (wrBridge && wrBridge->CompositorScheduler()) {
+        wrBridge->CompositorScheduler()->ScheduleComposition(
+            wr::RenderReasons::ASYNC_IMAGE);
+      }
+    }
+  }
+}
+
 void WebRenderImageHost::CleanupResources() {
   ClearImages();
   SetCurrentTextureHost(nullptr);
@@ -135,6 +178,10 @@ void WebRenderImageHost::AppendImageCompositeNotification(
 
 TextureHost* WebRenderImageHost::GetAsTextureHostForComposite(
     AsyncImagePipelineManager* aAsyncImageManager) {
+  if (mRemoteTextureHost) {
+    return mCurrentTextureHost;
+  }
+
   mCurrentAsyncImageManager = aAsyncImageManager;
   const auto onExit =
       mozilla::MakeScopeExit([&]() { mCurrentAsyncImageManager = nullptr; });

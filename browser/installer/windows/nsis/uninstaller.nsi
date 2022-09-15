@@ -416,6 +416,15 @@ Section "Uninstall"
   DetailPrint $(STATUS_UNINSTALL_MAIN)
   SetDetailsPrint none
 
+  ; Some system cleanup is most easily handled when XPCOM functionality is
+  ; available - e.g. removing notifications from Window's Action Center. We
+  ; handle this in the `uninstall` background task.
+  ;
+  ; Return value is saved to an unused variable to prevent the the error flag
+  ; from being set.
+  Var /GLOBAL UnusedExecCatchReturn
+  ExecWait '"$INSTDIR\${FileMainEXE}" --backgroundtask uninstall' $UnusedExecCatchReturn
+
   ; Delete the app exe to prevent launching the app while we are uninstalling.
   ClearErrors
   ${DeleteFile} "$INSTDIR\${FileMainEXE}"
@@ -607,6 +616,42 @@ Section "Uninstall"
   DeleteRegValue HKCU ${MOZ_LAUNCHER_SUBKEY} "$INSTDIR\${FileMainEXE}|Telemetry"
 !endif
 
+  ; Remove Toast Notification registration.
+  ${If} ${AtLeastWin10}
+    ; Find any GUID used for this installation.
+    ClearErrors
+    ReadRegStr $0 HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+
+    DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+    DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "DisplayName"
+    DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "IconUri"
+    DeleteRegKey HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID"
+    ${If} "$0" != ""
+      DeleteRegValue HKLM "Software\Classes\AppID\$0" "DllSurrogate"
+      DeleteRegKey HKLM "Software\Classes\AppID\$0"
+      DeleteRegValue HKLM "Software\Classes\CLSID\$0" "AppID"
+      DeleteRegValue HKLM "Software\Classes\CLSID\$0\InProcServer32" ""
+      DeleteRegKey HKLM "Software\Classes\CLSID\$0\InProcServer32"
+      DeleteRegKey HKLM "Software\Classes\CLSID\$0"
+    ${EndIf}
+
+    ClearErrors
+    ReadRegStr $0 HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+
+    DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+    DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "DisplayName"
+    DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "IconUri"
+    DeleteRegKey HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID"
+    ${If} "$0" != ""
+      DeleteRegValue HKCU "Software\Classes\AppID\$0" "DllSurrogate"
+      DeleteRegKey HKCU "Software\Classes\AppID\$0"
+      DeleteRegValue HKCU "Software\Classes\CLSID\$0" "AppID"
+      DeleteRegValue HKCU "Software\Classes\CLSID\$0\InProcServer32" ""
+      DeleteRegKey HKCU "Software\Classes\CLSID\$0\InProcServer32"
+      DeleteRegKey HKCU "Software\Classes\CLSID\$0"
+    ${EndIf}
+  ${EndIf}
+
   ; Uninstall the default browser agent scheduled task and all other scheduled
   ; tasks registered by Firefox.
   ; This also removes the registry entries that the WDBA creates.
@@ -636,8 +681,8 @@ Section "Uninstall"
   ${If} ${FileExists} "$INSTDIR\installation_telemetry.json"
     Delete /REBOOTOK "$INSTDIR\installation_telemetry.json"
   ${EndIf}
-  ${If} ${FileExists} "$INSTDIR\postSigningData.json"
-    Delete /REBOOTOK "$INSTDIR\postSigningData.json"
+  ${If} ${FileExists} "$INSTDIR\postSigningData"
+    Delete /REBOOTOK "$INSTDIR\postSigningData"
   ${EndIf}
 
   ; Explicitly remove empty webapprt dir in case it exists (bug 757978).

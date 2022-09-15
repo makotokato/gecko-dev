@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use inherent::inherent;
+use std::sync::Arc;
 
 use super::{CommonMetricData, MetricId};
-
 use crate::ipc::need_ipc;
 
 /// A string metric.
@@ -39,7 +39,7 @@ use crate::ipc::need_ipc;
 /// ```
 #[derive(Clone)]
 pub enum StringMetric {
-    Parent(glean::private::StringMetric),
+    Parent(Arc<glean::private::StringMetric>),
     Child(StringMetricIpc),
 }
 #[derive(Clone, Debug)]
@@ -51,7 +51,7 @@ impl StringMetric {
         if need_ipc() {
             StringMetric::Child(StringMetricIpc)
         } else {
-            StringMetric::Parent(glean::private::StringMetric::new(meta))
+            StringMetric::Parent(Arc::new(glean::private::StringMetric::new(meta)))
         }
     }
 
@@ -123,14 +123,9 @@ impl glean::traits::String for StringMetric {
     /// # Returns
     ///
     /// The number of errors reported.
-    pub fn test_get_num_recorded_errors<'a, S: Into<Option<&'a str>>>(
-        &self,
-        error: glean::ErrorType,
-        ping_name: S,
-    ) -> i32 {
-        let ping_name = ping_name.into().map(|s| s.to_string());
+    pub fn test_get_num_recorded_errors(&self, error: glean::ErrorType) -> i32 {
         match self {
-            StringMetric::Parent(p) => p.test_get_num_recorded_errors(error, ping_name),
+            StringMetric::Parent(p) => p.test_get_num_recorded_errors(error),
             StringMetric::Child(_) => panic!(
                 "Cannot get the number of recorded errors for string metric in non-parent process!"
             ),

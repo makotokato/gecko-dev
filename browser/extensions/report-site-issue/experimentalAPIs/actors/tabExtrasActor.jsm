@@ -5,10 +5,6 @@
 
 "use strict";
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
-Cu.importGlobalProperties(["structuredClone"]);
-
 var EXPORTED_SYMBOLS = ["ReportSiteIssueHelperChild"];
 
 const PREVIEW_MAX_ITEMS = 10;

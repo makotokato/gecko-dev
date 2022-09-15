@@ -7,20 +7,19 @@ import os
 import copy
 
 import attr
-from taskgraph.config import GraphConfig
+from taskgraph import filter_tasks
+from taskgraph.config import GraphConfig, load_graph_config
 from taskgraph.graph import Graph
+from taskgraph.optimize.base import optimize_task_graph
 from taskgraph.parameters import parameters_loader
 from taskgraph.task import Task
 from taskgraph.taskgraph import TaskGraph
+from taskgraph.transforms.base import TransformSequence, TransformConfig
 from taskgraph.util.python_path import find_object
 from taskgraph.util.yaml import load_yaml
 
-from . import filter_tasks
 from .morph import morph
-from .optimize import optimize_task_graph
-from .transforms.base import TransformSequence, TransformConfig
 from .util.verify import verifications
-from .config import load_graph_config
 
 logger = logging.getLogger(__name__)
 
@@ -249,15 +248,15 @@ class TaskGraphGenerator:
                     continue
 
     def _run(self):
-        # Initial verifications that don't depend on any generation state.
-        verifications("initial")
-
         logger.info("Loading graph configuration.")
         graph_config = load_graph_config(self.root_dir)
 
         yield ("graph_config", graph_config)
 
         graph_config.register()
+
+        # Initial verifications that don't depend on any generation state.
+        verifications("initial")
 
         if callable(self._parameters):
             parameters = self._parameters(graph_config)

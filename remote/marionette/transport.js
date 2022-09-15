@@ -6,8 +6,8 @@
 
 const EXPORTED_SYMBOLS = ["DebuggerTransport"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -252,7 +252,7 @@ DebuggerTransport.prototype = {
       this._finishCurrentOutgoing();
     }
 
-    if (this._outgoing.length > 0) {
+    if (this._outgoing.length) {
       let threadManager = Cc["@mozilla.org/thread-manager;1"].getService();
       this._output.asyncWait(this, 0, 0, threadManager.currentThread);
     }

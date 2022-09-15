@@ -12,7 +12,6 @@ var gSSService = Cc["@mozilla.org/ssservice;1"].getService(
   Ci.nsISiteSecurityService
 );
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { FileUtils } = ChromeUtils.import(
   "resource://gre/modules/FileUtils.jsm"
 );
@@ -123,7 +122,6 @@ function processStsHeader(host, header, status, securityInfo) {
         uri,
         header,
         secInfo,
-        Ci.nsISiteSecurityService.SOURCE_PRELOAD_LIST,
         {},
         maxAge,
         includeSubdomains
@@ -307,9 +305,9 @@ async function probeHSTSStatuses(inHosts) {
   // too many in-flight requests and the time it takes to process them causes
   // them all to time out.
   let allResults = [];
-  while (inHosts.length > 0) {
+  while (inHosts.length) {
     let promises = [];
-    for (let i = 0; i < MAX_CONCURRENT_REQUESTS && inHosts.length > 0; i++) {
+    for (let i = 0; i < MAX_CONCURRENT_REQUESTS && inHosts.length; i++) {
       let host = inHosts.shift();
       promises.push(getHSTSStatus(host));
     }

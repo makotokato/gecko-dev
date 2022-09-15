@@ -5,7 +5,7 @@
 "use strict";
 
 var FormAutofillHandler;
-add_task(async function setup() {
+add_setup(async () => {
   ({ FormAutofillHandler } = ChromeUtils.import(
     "resource://autofill/FormAutofillHandler.jsm"
   ));
@@ -476,12 +476,66 @@ const TESTCASES = [
   },
   {
     description:
-      "An invalid credit card form due to non-autocomplete-attr cc-number only",
+      "A valid credit card form with non-autocomplete-attr cc-number only (high confidence).",
+    document: `<form>
+               <input id="cc-number" name="cc-number">
+               </form>`,
+    sections: [
+      [
+        {
+          section: "",
+          addressType: "",
+          contactType: "",
+          fieldName: "cc-number",
+        },
+      ],
+    ],
+    validFieldDetails: [
+      { section: "", addressType: "", contactType: "", fieldName: "cc-number" },
+    ],
+    ids: ["cc-number"],
+    prefs: [
+      [
+        "extensions.formautofill.creditCards.heuristics.numberOnly.confidenceThreshold",
+        "0.95",
+      ],
+      ["extensions.formautofill.creditCards.heuristics.testConfidence", "0.96"],
+    ],
+  },
+  {
+    description:
+      "A invalid credit card form with non-autocomplete-attr cc-number + another input field",
+    document: `<form>
+               <input id="cc-number" name="cc-number">
+               <input id="password" type="password">
+               </form>`,
+    sections: [[]],
+    validFieldDetails: [],
+    ids: [],
+    prefs: [
+      [
+        "extensions.formautofill.creditCards.heuristics.numberOnly.confidenceThreshold",
+        "0.95",
+      ],
+      ["extensions.formautofill.creditCards.heuristics.testConfidence", "0.96"],
+    ],
+  },
+  {
+    description:
+      "A valid credit card form with non-autocomplete-attr cc-number only (low confidence).",
     document: `<form>
                <input id="cc-number" name="cc-number">
                </form>`,
     sections: [[]],
     validFieldDetails: [],
+    ids: [],
+    prefs: [
+      [
+        "extensions.formautofill.creditCards.heuristics.numberOnly.confidenceThreshold",
+        "0.95",
+      ],
+      ["extensions.formautofill.creditCards.heuristics.testConfidence", "0.9"],
+    ],
   },
   {
     description: "An invalid credit card form due to omitted cc-number.",
@@ -489,6 +543,67 @@ const TESTCASES = [
                <input id="cc-name" autocomplete="cc-name">
                <input id="cc-exp-month" autocomplete="cc-exp-month">
                <input id="cc-exp-year" autocomplete="cc-exp-year">
+               </form>`,
+    sections: [[]],
+    validFieldDetails: [],
+    prefs: [
+      [
+        "extensions.formautofill.creditCards.heuristics.nameExpirySection.enabled",
+        false,
+      ],
+    ],
+  },
+  {
+    description: "A valid credit card form with cc-name and cc-exp.",
+    document: `<form>
+               <input id="cc-name" autocomplete="cc-name">
+               <input id="cc-exp-month" autocomplete="cc-exp-month">
+               <input id="cc-exp-year" autocomplete="cc-exp-year">
+               </form>`,
+    sections: [
+      [
+        { section: "", addressType: "", contactType: "", fieldName: "cc-name" },
+        {
+          section: "",
+          addressType: "",
+          contactType: "",
+          fieldName: "cc-exp-month",
+        },
+        {
+          section: "",
+          addressType: "",
+          contactType: "",
+          fieldName: "cc-exp-year",
+        },
+      ],
+    ],
+    validFieldDetails: [
+      { section: "", addressType: "", contactType: "", fieldName: "cc-name" },
+      {
+        section: "",
+        addressType: "",
+        contactType: "",
+        fieldName: "cc-exp-month",
+      },
+      {
+        section: "",
+        addressType: "",
+        contactType: "",
+        fieldName: "cc-exp-year",
+      },
+    ],
+    ids: ["cc-name", "cc-exp-month", "cc-exp-year"],
+    prefs: [
+      [
+        "extensions.formautofill.creditCards.heuristics.nameExpirySection.enabled",
+        true,
+      ],
+    ],
+  },
+  {
+    description: "An invalid credit card form with only a cc-name field",
+    document: `<form>
+               <input id="cc-name" autocomplete="cc-name">
                </form>`,
     sections: [[]],
     validFieldDetails: [],
@@ -1115,6 +1230,10 @@ for (let tc of TESTCASES) {
     add_task(async function() {
       info("Starting testcase: " + testcase.description);
 
+      if (testcase.prefs) {
+        testcase.prefs.forEach(pref => SetPref(pref[0], pref[1]));
+      }
+
       let doc = MockDocument.createTestDocument(
         "http://localhost:8080/test/",
         testcase.document
@@ -1201,6 +1320,10 @@ for (let tc of TESTCASES) {
         verifyDetails(section.fieldDetails, testcase.sections[i]);
       }
       verifyDetails(validFieldDetails, testcase.validFieldDetails);
+
+      if (testcase.prefs) {
+        testcase.prefs.forEach(pref => Services.prefs.clearUserPref(pref[0]));
+      }
     });
   })();
 }

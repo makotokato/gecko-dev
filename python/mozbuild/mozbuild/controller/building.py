@@ -918,10 +918,15 @@ class CCacheStats(object):
         ("failed", "Uncacheable/Compilation failed"),
         ("preprocessor_error", "Uncacheable/Preprocessing failed"),
         ("cache_file_missing", "Errors/Missing cache file"),
-        ("bad_args", "Uncacheable/Bad compiler arguments"),
+        ("internal_error", "Errors/Internal error"),
         ("autoconf", "Uncacheable/Autoconf compile/link"),
         ("no_input", "Uncacheable/No input file"),
         ("unsupported_code_directive", "Uncacheable/Unsupported code directive"),
+        ("unsupported_compiler_options", "Uncacheable/Unsupported compiler option"),
+        ("could_not_use_precompiled", "Uncacheable/Could not use precompiled header"),
+        ("compiler_stdout", "Uncacheable/Compiler produced stdout"),
+        ("unsupported_language", "Uncacheable/Unsupported source language"),
+        ("bad_args", "Uncacheable/Bad compiler arguments"),
         ("num_cleanups", "Primary storage/Cleanups"),
         ("cache_files", "Primary storage/Files"),
         # Cache size is reported in GB, see
@@ -951,6 +956,7 @@ class CCacheStats(object):
         "Summary/Misses/Preprocessed",
         "Primary storage/Hits",
         "Primary storage/Misses",
+        "Errors/Could not find compiler",
     ]
 
     DIRECTORY_DESCRIPTION_4_4 = "Summary/Cache directory"
@@ -1501,8 +1507,10 @@ class BuildDriver(MozbuildObject):
                     pathToThirdparty, encoding="utf-8", newline="\n"
                 ) as f, io.open(pathToGenerated, encoding="utf-8", newline="\n") as g:
                     # Normalize the path (no trailing /)
-                    suppress = f.readlines() + g.readlines()
-                    LOCAL_SUPPRESS_DIRS = tuple(s.strip("/") for s in suppress)
+                    LOCAL_SUPPRESS_DIRS = tuple(
+                        [line.strip("\n/") for line in f]
+                        + [line.strip("\n/") for line in g]
+                    )
             else:
                 # For application based on gecko like thunderbird
                 LOCAL_SUPPRESS_DIRS = ()

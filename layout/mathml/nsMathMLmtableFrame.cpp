@@ -264,27 +264,6 @@ class nsDisplaymtdBorder final : public nsDisplayBorder {
   nsDisplaymtdBorder(nsDisplayListBuilder* aBuilder, nsMathMLmtdFrame* aFrame)
       : nsDisplayBorder(aBuilder, aFrame) {}
 
-  nsDisplayItemGeometry* AllocateGeometry(
-      nsDisplayListBuilder* aBuilder) override {
-    return new nsDisplayItemGenericImageGeometry(this, aBuilder);
-  }
-
-  void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
-                                 const nsDisplayItemGeometry* aGeometry,
-                                 nsRegion* aInvalidRegion) const override {
-    auto geometry =
-        static_cast<const nsDisplayItemGenericImageGeometry*>(aGeometry);
-
-    if (aBuilder->ShouldSyncDecodeImages() &&
-        geometry->ShouldInvalidateToSyncDecodeImages()) {
-      bool snap;
-      aInvalidRegion->Or(*aInvalidRegion, GetBounds(aBuilder, &snap));
-    }
-
-    nsDisplayItem::ComputeInvalidationRegion(aBuilder, aGeometry,
-                                             aInvalidRegion);
-  }
-
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder,
                            bool* aSnap) const override {
     *aSnap = true;
@@ -311,11 +290,9 @@ class nsDisplaymtdBorder final : public nsDisplayBorder {
                                  ? PaintBorderFlags::SyncDecodeImages
                                  : PaintBorderFlags();
 
-    ImgDrawResult result = nsCSSRendering::PaintBorderWithStyleBorder(
+    Unused << nsCSSRendering::PaintBorderWithStyleBorder(
         mFrame->PresContext(), *aCtx, mFrame, GetPaintRect(aBuilder, aCtx),
         bounds, styleBorder, mFrame->Style(), flags, mFrame->GetSkipSides());
-
-    nsDisplayItemGenericImageGeometry::UpdateDrawResult(this, result);
   }
 
   bool CreateWebRenderCommands(
@@ -620,19 +597,19 @@ static void ParseAlignAttribute(nsString& aValue, eAlign& aAlign,
   // ToInteger ignores the whitespaces around the number
   aValue.CompressWhitespace(true, false);
 
-  if (0 == aValue.Find("top")) {
+  if (0 == aValue.Find(u"top")) {
     len = 3;  // 3 is the length of 'top'
     aAlign = eAlign_top;
-  } else if (0 == aValue.Find("bottom")) {
+  } else if (0 == aValue.Find(u"bottom")) {
     len = 6;  // 6 is the length of 'bottom'
     aAlign = eAlign_bottom;
-  } else if (0 == aValue.Find("center")) {
+  } else if (0 == aValue.Find(u"center")) {
     len = 6;  // 6 is the length of 'center'
     aAlign = eAlign_center;
-  } else if (0 == aValue.Find("baseline")) {
+  } else if (0 == aValue.Find(u"baseline")) {
     len = 8;  // 8 is the length of 'baseline'
     aAlign = eAlign_baseline;
-  } else if (0 == aValue.Find("axis")) {
+  } else if (0 == aValue.Find(u"axis")) {
     len = 4;  // 4 is the length of 'axis'
     aAlign = eAlign_axis;
   }
@@ -890,7 +867,6 @@ void nsMathMLmtableWrapperFrame::Reflow(nsPresContext* aPresContext,
   mBoundingMetrics.rightBearing = aDesiredSize.Width();
 
   aDesiredSize.mBoundingMetrics = mBoundingMetrics;
-  NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aDesiredSize);
 }
 
 nsContainerFrame* NS_NewMathMLmtableFrame(PresShell* aPresShell,

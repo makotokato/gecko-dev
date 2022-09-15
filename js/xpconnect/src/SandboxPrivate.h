@@ -30,8 +30,8 @@ class SandboxPrivate : public nsIGlobalObject,
                        public nsWrapperCache {
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(SandboxPrivate,
-                                                         nsIGlobalObject)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS_AMBIGUOUS(SandboxPrivate,
+                                                        nsIGlobalObject)
 
   static void Create(nsIPrincipal* principal, JS::Handle<JSObject*> global) {
     RefPtr<SandboxPrivate> sbp = new SandboxPrivate(principal);
@@ -55,6 +55,8 @@ class SandboxPrivate : public nsIGlobalObject,
   mozilla::OriginTrials Trials() const final { return {}; }
 
   nsIPrincipal* GetPrincipal() override { return mPrincipal; }
+
+  nsIPrincipal* GetEffectiveCookiePrincipal() override { return mPrincipal; }
 
   nsIPrincipal* GetEffectiveStoragePrincipal() override { return mPrincipal; }
 

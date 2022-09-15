@@ -1,11 +1,10 @@
-"use strict";
+/* eslint-env mozilla/chrome-script */
 
-/* global addMessageListener, sendAsyncMessage */
+"use strict";
 
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 let listener = msg => {
   void (msg instanceof Ci.nsIConsoleMessage);

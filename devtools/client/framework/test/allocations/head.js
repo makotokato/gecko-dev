@@ -34,8 +34,8 @@ let tracker;
 // => Avoid loading devtools module as much as possible
 // => If you really have to, lazy load them
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 XPCOMUtils.defineLazyGetter(this, "TrackedObjects", () => {
   return ChromeUtils.import(
@@ -130,7 +130,7 @@ async function stopRecordingAllocations(
   );
 
   const objectNodeIds = TrackedObjects.getAllNodeIds();
-  if (objectNodeIds.length > 0) {
+  if (objectNodeIds.length) {
     tracker.traceObjects(objectNodeIds);
   }
 
@@ -161,7 +161,7 @@ async function stopRecordingAllocations(
         "resource://devtools/shared/test-helpers/tracked-objects.jsm"
       );
       const objectNodeIds = TrackedObjects.getAllNodeIds();
-      if (objectNodeIds.length > 0) {
+      if (objectNodeIds.length) {
         const { DevToolsLoader } = ChromeUtils.import(
           "resource://devtools/shared/loader/Loader.jsm"
         );

@@ -17,6 +17,7 @@
 #include "mozilla/Unused.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/HTMLFrameElement.h"
+#include "mozilla/dom/ImageDocument.h"
 #include "mozilla/dom/BrowserParent.h"
 
 #include "nsCOMPtr.h"
@@ -73,7 +74,8 @@ nsSubDocumentFrame::nsSubDocumentFrame(ComputedStyle* aStyle,
       mIsInline(false),
       mPostedReflowCallback(false),
       mDidCreateDoc(false),
-      mCallingShow(false) {}
+      mCallingShow(false),
+      mIsInObjectOrEmbed(false) {}
 
 #ifdef ACCESSIBILITY
 a11y::AccType nsSubDocumentFrame::AccessibleType() {
@@ -145,7 +147,13 @@ void nsSubDocumentFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
         frameloader->Hide();
       }
     }
+
+    if (RefPtr<BrowsingContext> bc = frameloader->GetExtantBrowsingContext()) {
+      mIsInObjectOrEmbed = bc->IsEmbedderTypeObjectOrEmbed();
+    }
   }
+
+  MaybeUpdateRemoteStyle();
 
   PropagateIsUnderHiddenEmbedderElementToSubView(
       PresShell()->IsUnderHiddenEmbedderElement() ||
@@ -181,7 +189,7 @@ void nsSubDocumentFrame::ShowViewer() {
   }
 
   RefPtr<nsFrameLoader> frameloader = FrameLoader();
-  if (!frameloader) {
+  if (!frameloader || frameloader->IsDead()) {
     return;
   }
 
@@ -617,8 +625,9 @@ nscoord nsSubDocumentFrame::GetPrefISize(gfxContext* aRenderingContext) {
 IntrinsicSize nsSubDocumentFrame::GetIntrinsicSize() {
   const auto containAxes = StyleDisplay()->GetContainSizeAxes();
   if (containAxes.IsBoth()) {
-    // Intrinsic size of 'contain:size' replaced elements is 0,0.
-    return IntrinsicSize(0, 0);
+    // Intrinsic size of 'contain:size' replaced elements is determined by
+    // contain-intrinsic-size.
+    return containAxes.ContainIntrinsicSize(IntrinsicSize(0, 0), *this);
   }
 
   if (nsCOMPtr<nsIObjectLoadingContent> iolc = do_QueryInterface(mContent)) {
@@ -626,7 +635,7 @@ IntrinsicSize nsSubDocumentFrame::GetIntrinsicSize() {
 
     if (auto size = olc->GetSubdocumentIntrinsicSize()) {
       // Use the intrinsic size from the child SVG document, if available.
-      return containAxes.ContainIntrinsicSize(*size, GetWritingMode());
+      return containAxes.ContainIntrinsicSize(*size, *this);
     }
   }
 
@@ -640,7 +649,7 @@ IntrinsicSize nsSubDocumentFrame::GetIntrinsicSize() {
 
   // We must be an HTML <iframe>. Return fallback size.
   return containAxes.ContainIntrinsicSize(IntrinsicSize(kFallbackIntrinsicSize),
-                                          GetWritingMode());
+                                          *this);
 }
 
 /* virtual */
@@ -753,8 +762,6 @@ void nsSubDocumentFrame::Reflow(nsPresContext* aPresContext,
       NS_FRAME_TRACE_CALLS,
       ("exit nsSubDocumentFrame::Reflow: size=%d,%d status=%s",
        aDesiredSize.Width(), aDesiredSize.Height(), ToString(aStatus).c_str()));
-
-  NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aDesiredSize);
 }
 
 bool nsSubDocumentFrame::ReflowFinished() {
@@ -823,33 +830,66 @@ void nsSubDocumentFrame::MaybeUpdateEmbedderColorScheme() {
     return;
   }
 
-  auto usedColorScheme = LookAndFeel::ColorSchemeForFrame(this);
-  bool needUpdate = [&] {
-    switch (bc->GetEmbedderColorScheme()) {
-      case PrefersColorSchemeOverride::Light:
-        return usedColorScheme != ColorScheme::Light;
-      case PrefersColorSchemeOverride::Dark:
-        return usedColorScheme != ColorScheme::Dark;
-      case PrefersColorSchemeOverride::None:
-      case PrefersColorSchemeOverride::EndGuard_:
-        break;
-    }
-    return true;
-  }();
-  if (!needUpdate) {
+  auto ToOverride = [](ColorScheme aScheme) -> PrefersColorSchemeOverride {
+    return aScheme == ColorScheme::Dark ? PrefersColorSchemeOverride::Dark
+                                        : PrefersColorSchemeOverride::Light;
+  };
+
+  EmbedderColorSchemes schemes{
+      ToOverride(LookAndFeel::ColorSchemeForFrame(this, ColorSchemeMode::Used)),
+      ToOverride(
+          LookAndFeel::ColorSchemeForFrame(this, ColorSchemeMode::Preferred))};
+  if (bc->GetEmbedderColorSchemes() == schemes) {
     return;
   }
 
-  auto value = usedColorScheme == ColorScheme::Dark
-                   ? PrefersColorSchemeOverride::Dark
-                   : PrefersColorSchemeOverride::Light;
-  Unused << bc->SetEmbedderColorScheme(value);
+  Unused << bc->SetEmbedderColorSchemes(schemes);
+}
+
+void nsSubDocumentFrame::MaybeUpdateRemoteStyle(
+    ComputedStyle* aOldComputedStyle) {
+  if (!mIsInObjectOrEmbed) {
+    return;
+  }
+
+  if (aOldComputedStyle &&
+      aOldComputedStyle->StyleVisibility()->mImageRendering ==
+          Style()->StyleVisibility()->mImageRendering) {
+    return;
+  }
+
+  if (!mFrameLoader) {
+    return;
+  }
+
+  if (mFrameLoader->IsRemoteFrame()) {
+    mFrameLoader->UpdateRemoteStyle(
+        Style()->StyleVisibility()->mImageRendering);
+    return;
+  }
+
+  BrowsingContext* context = mFrameLoader->GetExtantBrowsingContext();
+  if (!context) {
+    return;
+  }
+
+  Document* document = context->GetDocument();
+  if (!document) {
+    return;
+  }
+
+  if (document->IsImageDocument()) {
+    document->AsImageDocument()->UpdateRemoteStyle(
+        Style()->StyleVisibility()->mImageRendering);
+  }
 }
 
 void nsSubDocumentFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
   nsAtomicContainerFrame::DidSetComputedStyle(aOldComputedStyle);
 
   MaybeUpdateEmbedderColorScheme();
+
+  MaybeUpdateRemoteStyle(aOldComputedStyle);
 
   // If this presshell has invisible ancestors, we don't need to propagate the
   // visibility style change to the subdocument since the subdocument should
@@ -1236,11 +1276,6 @@ nsPoint nsSubDocumentFrame::GetExtraOffset() const {
 }
 
 void nsSubDocumentFrame::SubdocumentIntrinsicSizeOrRatioChanged() {
-  if (MOZ_UNLIKELY(HasAllStateBits(NS_FRAME_IS_DIRTY))) {
-    // We will be reflowed soon anyway.
-    return;
-  }
-
   const nsStylePosition* pos = StylePosition();
   bool dependsOnIntrinsics =
       !pos->mWidth.ConvertsToLength() || !pos->mHeight.ConvertsToLength();
@@ -1249,6 +1284,7 @@ void nsSubDocumentFrame::SubdocumentIntrinsicSizeOrRatioChanged() {
     auto dirtyHint = dependsOnIntrinsics ? IntrinsicDirty::StyleChange
                                          : IntrinsicDirty::Resize;
     PresShell()->FrameNeedsReflow(this, dirtyHint, NS_FRAME_IS_DIRTY);
+    InvalidateFrame();
   }
 }
 

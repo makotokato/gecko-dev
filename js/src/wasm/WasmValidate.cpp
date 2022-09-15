@@ -110,10 +110,6 @@ bool wasm::DecodeLocalEntries(Decoder& d, const TypeContext& types,
       return false;
     }
 
-    if (!type.isDefaultable()) {
-      return d.fail("cannot have a non-defaultable local");
-    }
-
     if (!locals->appendN(type, count)) {
       return false;
     }
@@ -138,8 +134,8 @@ bool wasm::DecodeValidatedLocalEntries(Decoder& d, ValTypeVector* locals) {
 }
 
 bool wasm::CheckIsSubtypeOf(Decoder& d, const ModuleEnvironment& env,
-                            size_t opcodeOffset, ValType actual,
-                            ValType expected, TypeCache* cache) {
+                            size_t opcodeOffset, FieldType actual,
+                            FieldType expected, TypeCache* cache) {
   switch (env.types->isSubtypeOf(actual, expected, cache)) {
     case TypeResult::OOM:
       return false;
@@ -178,7 +174,7 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
                                     const uint8_t* bodyEnd, Decoder* d) {
   ValidatingOpIter iter(env, *d);
 
-  if (!iter.startFunction(funcIndex)) {
+  if (!iter.startFunction(funcIndex, locals)) {
     return false;
   }
 
@@ -223,6 +219,17 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
         CHECK(iter.readCallIndirect(&unusedIndex, &unusedIndex2, &nothing,
                                     &unusedArgs));
       }
+#ifdef ENABLE_WASM_FUNCTION_REFERENCES
+      case uint16_t(Op::CallRef): {
+        if (!env.functionReferencesEnabled()) {
+          return iter.unrecognizedOpcode(&op);
+        }
+        const FuncType* unusedType;
+        bool unused;
+        NothingVector unusedArgs{};
+        CHECK(iter.readCallRef(&unusedType, &unused, &nothing, &unusedArgs));
+      }
+#endif
       case uint16_t(Op::I32Const): {
         int32_t unused;
         CHECK(iter.readI32Const(&unused));
@@ -545,15 +552,14 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
           return iter.unrecognizedOpcode(&op);
         }
         switch (op.b1) {
-          case uint32_t(GcOp::StructNewWithRtt): {
+          case uint32_t(GcOp::StructNew): {
             uint32_t unusedUint;
             NothingVector unusedArgs{};
-            CHECK(
-                iter.readStructNewWithRtt(&unusedUint, &nothing, &unusedArgs));
+            CHECK(iter.readStructNew(&unusedUint, &unusedArgs));
           }
-          case uint32_t(GcOp::StructNewDefaultWithRtt): {
+          case uint32_t(GcOp::StructNewDefault): {
             uint32_t unusedUint;
-            CHECK(iter.readStructNewDefaultWithRtt(&unusedUint, &nothing));
+            CHECK(iter.readStructNewDefault(&unusedUint));
           }
           case uint32_t(GcOp::StructGet): {
             uint32_t unusedUint1, unusedUint2;
@@ -575,15 +581,27 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
             CHECK(iter.readStructSet(&unusedUint1, &unusedUint2, &nothing,
                                      &nothing));
           }
-          case uint32_t(GcOp::ArrayNewWithRtt): {
+          case uint32_t(GcOp::ArrayNew): {
             uint32_t unusedUint;
-            CHECK(iter.readArrayNewWithRtt(&unusedUint, &nothing, &nothing,
-                                           &nothing));
+            CHECK(iter.readArrayNew(&unusedUint, &nothing, &nothing));
           }
-          case uint32_t(GcOp::ArrayNewDefaultWithRtt): {
+          case uint32_t(GcOp::ArrayNewFixed): {
+            uint32_t unusedUint1, unusedUint2;
+            CHECK(iter.readArrayNewFixed(&unusedUint1, &unusedUint2));
+          }
+          case uint32_t(GcOp::ArrayNewDefault): {
             uint32_t unusedUint;
-            CHECK(iter.readArrayNewDefaultWithRtt(&unusedUint, &nothing,
-                                                  &nothing));
+            CHECK(iter.readArrayNewDefault(&unusedUint, &nothing));
+          }
+          case uint32_t(GcOp::ArrayNewData): {
+            uint32_t unusedUint1, unusedUint2;
+            CHECK(iter.readArrayNewData(&unusedUint1, &unusedUint2, &nothing,
+                                        &nothing));
+          }
+          case uint32_t(GcOp::ArrayNewElem): {
+            uint32_t unusedUint1, unusedUint2;
+            CHECK(iter.readArrayNewElem(&unusedUint1, &unusedUint2, &nothing,
+                                        &nothing));
           }
           case uint32_t(GcOp::ArrayGet): {
             uint32_t unusedUint1;
@@ -609,32 +627,24 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
             uint32_t unusedUint1;
             CHECK(iter.readArrayLen(&unusedUint1, &nothing));
           }
-          case uint16_t(GcOp::RttCanon): {
-            ValType unusedTy;
-            CHECK(iter.readRttCanon(&unusedTy));
-          }
-          case uint16_t(GcOp::RttSub): {
-            uint32_t unusedRttTypeIndex;
-            CHECK(iter.readRttSub(&nothing, &unusedRttTypeIndex));
+          case uint32_t(GcOp::ArrayCopy): {
+            int32_t unusedInt;
+            bool unusedBool;
+            CHECK(iter.readArrayCopy(&unusedInt, &unusedBool, &nothing,
+                                     &nothing, &nothing, &nothing, &nothing));
           }
           case uint16_t(GcOp::RefTest): {
-            uint32_t unusedRttTypeIndex;
-            uint32_t unusedRttDepth;
-            CHECK(iter.readRefTest(&nothing, &unusedRttTypeIndex,
-                                   &unusedRttDepth, &nothing));
+            uint32_t typeIndex;
+            CHECK(iter.readRefTest(&typeIndex, &nothing));
           }
           case uint16_t(GcOp::RefCast): {
-            uint32_t unusedRttTypeIndex;
-            uint32_t unusedRttDepth;
-            CHECK(iter.readRefCast(&nothing, &unusedRttTypeIndex,
-                                   &unusedRttDepth, &nothing));
+            uint32_t typeIndex;
+            CHECK(iter.readRefCast(&typeIndex, &nothing));
           }
           case uint16_t(GcOp::BrOnCast): {
             uint32_t unusedRelativeDepth;
-            uint32_t unusedRttTypeIndex;
-            uint32_t unusedRttDepth;
-            CHECK(iter.readBrOnCast(&unusedRelativeDepth, &nothing,
-                                    &unusedRttTypeIndex, &unusedRttDepth,
+            uint32_t typeIndex;
+            CHECK(iter.readBrOnCast(&unusedRelativeDepth, &typeIndex,
                                     &unusedType, &nothings));
           }
           default:
@@ -646,7 +656,7 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
 
 #ifdef ENABLE_WASM_SIMD
       case uint16_t(Op::SimdPrefix): {
-        if (!env.v128Enabled()) {
+        if (!env.simdAvailable()) {
           return iter.unrecognizedOpcode(&op);
         }
         uint32_t noIndex;
@@ -1143,6 +1153,14 @@ static bool DecodeFunctionBodyExprs(const ModuleEnvironment& env,
         CHECK(
             iter.readBrOnNull(&unusedDepth, &unusedType, &nothings, &nothing));
       }
+      case uint16_t(Op::BrOnNonNull): {
+        if (!env.functionReferencesEnabled()) {
+          return iter.unrecognizedOpcode(&op);
+        }
+        uint32_t unusedDepth;
+        CHECK(iter.readBrOnNonNull(&unusedDepth, &unusedType, &nothings,
+                                   &nothing));
+      }
 #endif
 #ifdef ENABLE_WASM_GC
       case uint16_t(Op::RefEq): {
@@ -1492,6 +1510,13 @@ static bool DecodeValTypeVector(Decoder& d, ModuleEnvironment* env,
     if (!d.readValType(env->types->length(), env->features, &(*valTypes)[i])) {
       return false;
     }
+#ifdef ENABLE_WASM_FUNCTION_REFERENCES
+    if (env->functionReferencesEnabled()) {
+      // Disable validatation of param/result types for functions.
+      // ValidateTypeState rejects only TypeState::Func, which is needed.
+      continue;
+    }
+#endif
     if (!ValidateTypeState(d, typeState, (*valTypes)[i])) {
       return false;
     }
@@ -2596,8 +2621,9 @@ static bool DecodeElemSection(Decoder& d, ModuleEnvironment* env) {
       case ElemSegmentKind::ActiveWithTableIndex: {
         RefType tblElemType = env->tables[seg->tableIndex].elemType;
         TypeCache cache;
-        if (!CheckIsSubtypeOf(d, *env, d.currentOffset(), ValType(elemType),
-                              ValType(tblElemType), &cache)) {
+        if (!CheckIsSubtypeOf(d, *env, d.currentOffset(),
+                              ValType(elemType).fieldType(),
+                              ValType(tblElemType).fieldType(), &cache)) {
           return false;
         }
         break;
@@ -2663,8 +2689,9 @@ static bool DecodeElemSection(Decoder& d, ModuleEnvironment* env) {
           default:
             return d.fail("failed to read initializer operation");
         }
-        if (!CheckIsSubtypeOf(d, *env, d.currentOffset(), ValType(initType),
-                              ValType(elemType), &cache)) {
+        if (!CheckIsSubtypeOf(d, *env, d.currentOffset(),
+                              ValType(initType).fieldType(),
+                              ValType(elemType).fieldType(), &cache)) {
           return false;
         }
       }

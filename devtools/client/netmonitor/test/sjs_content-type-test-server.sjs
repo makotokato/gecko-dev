@@ -30,7 +30,7 @@ function gzipCompressString(string, obs) {
 
 function doubleGzipCompressString(string, observer) {
   const observer2 = {
-    onStreamComplete: function(loader, context, status, length, result) {
+    onStreamComplete(loader, context, status, length, result) {
       const buffer = String.fromCharCode.apply(this, result);
       gzipCompressString(buffer, observer);
     },
@@ -299,6 +299,13 @@ function handleRequest(request, response) {
           response.finish();
           break;
         }
+        case "application-ogg": {
+          response.setStatusLine(request.httpVersion, status, "OK");
+          response.setHeader("Content-Type", "application/ogg", false);
+          setCacheHeaders();
+          response.finish();
+          break;
+        }
         case "audio": {
           response.setStatusLine(request.httpVersion, status, "OK");
           response.setHeader("Content-Type", "audio/ogg", false);
@@ -345,13 +352,7 @@ function handleRequest(request, response) {
           setCacheHeaders();
 
           const observer = {
-            onStreamComplete: function(
-              loader,
-              context,
-              statusl,
-              length,
-              result
-            ) {
+            onStreamComplete(loader, context, statusl, length, result) {
               const buffer = String.fromCharCode.apply(this, result);
               response.setHeader("Content-Length", "" + buffer.length, false);
               response.write(buffer);

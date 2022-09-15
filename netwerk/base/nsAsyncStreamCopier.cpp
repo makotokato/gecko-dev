@@ -155,6 +155,20 @@ nsAsyncStreamCopier::GetStatus(nsresult* status) {
   return NS_OK;
 }
 
+NS_IMETHODIMP nsAsyncStreamCopier::SetCanceledReason(
+    const nsACString& aReason) {
+  return nsIAsyncStreamCopier::SetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP nsAsyncStreamCopier::GetCanceledReason(nsACString& aReason) {
+  return nsIAsyncStreamCopier::GetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP nsAsyncStreamCopier::CancelWithReason(nsresult aStatus,
+                                                    const nsACString& aReason) {
+  return nsIAsyncStreamCopier::CancelWithReasonImpl(aStatus, aReason);
+}
+
 NS_IMETHODIMP
 nsAsyncStreamCopier::Cancel(nsresult status) {
   nsCOMPtr<nsISupports> copierCtx;
@@ -220,7 +234,7 @@ nsAsyncStreamCopier::SetLoadGroup(nsILoadGroup* aLoadGroup) { return NS_OK; }
 nsresult nsAsyncStreamCopier::InitInternal(
     nsIInputStream* source, nsIOutputStream* sink, nsIEventTarget* target,
     uint32_t chunkSize, bool closeSource,
-    bool closeSink) NO_THREAD_SAFETY_ANALYSIS {
+    bool closeSink) MOZ_NO_THREAD_SAFETY_ANALYSIS {
   NS_ASSERTION(!mSource && !mSink, "Init() called more than once");
   if (chunkSize == 0) {
     chunkSize = nsIOService::gDefaultSegmentSize;

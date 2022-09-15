@@ -39,6 +39,7 @@
 #include "js/UniquePtr.h"
 #include "util/Text.h"
 #include "util/Unicode.h"
+#include "vm/ErrorContext.h"
 #include "vm/FrameIter.h"  // js::{,NonBuiltin}FrameIter
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
@@ -490,10 +491,11 @@ SourceCoords::LineToken SourceCoords::lineToken(uint32_t offset) const {
   return LineToken(indexFromOffset(offset), offset);
 }
 
-TokenStreamAnyChars::TokenStreamAnyChars(JSContext* cx,
+TokenStreamAnyChars::TokenStreamAnyChars(JSContext* cx, ErrorContext* ec,
                                          const ReadOnlyCompileOptions& options,
                                          StrictModeGetter* smg)
     : cx(cx),
+      ec(ec),
       options_(options),
       strictModeGetter_(smg),
       filename_(options.filename()),
@@ -511,12 +513,10 @@ TokenStreamAnyChars::TokenStreamAnyChars(JSContext* cx,
 }
 
 template <typename Unit>
-TokenStreamCharsBase<Unit>::TokenStreamCharsBase(JSContext* cx,
-                                                 ParserAtomsTable* pasrerAtoms,
-                                                 const Unit* units,
-                                                 size_t length,
-                                                 size_t startOffset)
-    : TokenStreamCharsShared(cx, pasrerAtoms),
+TokenStreamCharsBase<Unit>::TokenStreamCharsBase(
+    JSContext* cx, ErrorContext* ec, ParserAtomsTable* parserAtoms,
+    const Unit* units, size_t length, size_t startOffset)
+    : TokenStreamCharsShared(cx, ec, parserAtoms),
       sourceUnits(units, length, startOffset) {}
 
 bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(CharBuffer& charBuffer,
@@ -580,9 +580,9 @@ bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(CharBuffer& charBuffer,
 
 template <typename Unit, class AnyCharsAccess>
 TokenStreamSpecific<Unit, AnyCharsAccess>::TokenStreamSpecific(
-    JSContext* cx, ParserAtomsTable* pasrerAtoms,
+    JSContext* cx, ErrorContext* ec, ParserAtomsTable* parserAtoms,
     const ReadOnlyCompileOptions& options, const Unit* units, size_t length)
-    : TokenStreamChars<Unit, AnyCharsAccess>(cx, pasrerAtoms, units, length,
+    : TokenStreamChars<Unit, AnyCharsAccess>(cx, ec, parserAtoms, units, length,
                                              options.scriptSourceOffset) {}
 
 bool TokenStreamAnyChars::checkOptions() {
@@ -595,7 +595,7 @@ bool TokenStreamAnyChars::checkOptions() {
   return true;
 }
 
-void TokenStreamAnyChars::reportErrorNoOffset(unsigned errorNumber, ...) {
+void TokenStreamAnyChars::reportErrorNoOffset(unsigned errorNumber, ...) const {
   va_list args;
   va_start(args, errorNumber);
 
@@ -605,11 +605,11 @@ void TokenStreamAnyChars::reportErrorNoOffset(unsigned errorNumber, ...) {
 }
 
 void TokenStreamAnyChars::reportErrorNoOffsetVA(unsigned errorNumber,
-                                                va_list* args) {
+                                                va_list* args) const {
   ErrorMetadata metadata;
   computeErrorMetadataNoOffset(&metadata);
 
-  ReportCompileErrorLatin1(cx, std::move(metadata), nullptr, errorNumber, args);
+  ReportCompileErrorLatin1(ec, std::move(metadata), nullptr, errorNumber, args);
 }
 
 [[nodiscard]] MOZ_ALWAYS_INLINE bool
@@ -812,7 +812,7 @@ uint32_t TokenStreamAnyChars::computePartialColumn(
       // condition means we don't have a cached pointer.
       if (!longLineColumnInfo_.add(ptr, line, Vector<ChunkInfo>(cx))) {
         // In case of OOM, just count columns from the start of the line.
-        cx->recoverFromOutOfMemory();
+        ec->recoverFromOutOfMemory();
         return ColumnFromPartial(start, 0, UnitsType::PossiblyMultiUnit);
       }
     }
@@ -881,7 +881,7 @@ uint32_t TokenStreamAnyChars::computePartialColumn(
 
     if (!lastChunkVectorForLine_->reserve(chunkIndex + 1)) {
       // As earlier, just start from the greatest offset/column in case of OOM.
-      cx->recoverFromOutOfMemory();
+      ec->recoverFromOutOfMemory();
       return ColumnFromPartial(partialOffset, partialColumn,
                                UnitsType::PossiblyMultiUnit);
     }
@@ -1007,7 +1007,7 @@ MOZ_COLD void TokenStreamChars<Utf8Unit, AnyCharsAccess>::internalEncodingError(
 
     auto notes = MakeUnique<JSErrorNotes>();
     if (!notes) {
-      ReportOutOfMemory(anyChars.cx);
+      ReportOutOfMemory(anyChars.ec);
       break;
     }
 
@@ -1033,13 +1033,13 @@ MOZ_COLD void TokenStreamChars<Utf8Unit, AnyCharsAccess>::internalEncodingError(
     uint32_t line, column;
     computeLineAndColumn(offset, &line, &column);
 
-    if (!notes->addNoteASCII(anyChars.cx, anyChars.getFilename(), 0, line,
+    if (!notes->addNoteASCII(anyChars.ec, anyChars.getFilename(), 0, line,
                              column, GetErrorMessage, nullptr,
                              JSMSG_BAD_CODE_UNITS, badUnitsStr)) {
       break;
     }
 
-    ReportCompileErrorLatin1(anyChars.cx, std::move(err), std::move(notes),
+    ReportCompileErrorLatin1(anyChars.ec, std::move(err), std::move(notes),
                              errorNumber, &args);
   } while (false);
 
@@ -1587,7 +1587,8 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::seekTo(
   return true;
 }
 
-void TokenStreamAnyChars::computeErrorMetadataNoOffset(ErrorMetadata* err) {
+void TokenStreamAnyChars::computeErrorMetadataNoOffset(
+    ErrorMetadata* err) const {
   err->isMuted = mutedErrors;
   err->filename = filename_;
   err->lineNumber = 0;
@@ -1597,7 +1598,7 @@ void TokenStreamAnyChars::computeErrorMetadataNoOffset(ErrorMetadata* err) {
 }
 
 bool TokenStreamAnyChars::fillExceptingContext(ErrorMetadata* err,
-                                               uint32_t offset) {
+                                               uint32_t offset) const {
   err->isMuted = mutedErrors;
 
   // If this TokenStreamAnyChars doesn't have location information, try to
@@ -1617,17 +1618,11 @@ bool TokenStreamAnyChars::fillExceptingContext(ErrorMetadata* err,
   return true;
 }
 
-template <typename Unit, class AnyCharsAccess>
-bool TokenStreamSpecific<Unit, AnyCharsAccess>::hasTokenizationStarted() const {
-  const TokenStreamAnyChars& anyChars = anyCharsAccess();
-  return anyChars.isCurrentTokenType(TokenKind::Eof) && !anyChars.isEOF();
-}
-
 template <>
 inline void SourceUnits<char16_t>::computeWindowOffsetAndLength(
     const char16_t* encodedWindow, size_t encodedTokenOffset,
     size_t* utf16TokenOffset, size_t encodedWindowLength,
-    size_t* utf16WindowLength) {
+    size_t* utf16WindowLength) const {
   MOZ_ASSERT_UNREACHABLE("shouldn't need to recompute for UTF-16");
 }
 
@@ -1635,7 +1630,7 @@ template <>
 inline void SourceUnits<Utf8Unit>::computeWindowOffsetAndLength(
     const Utf8Unit* encodedWindow, size_t encodedTokenOffset,
     size_t* utf16TokenOffset, size_t encodedWindowLength,
-    size_t* utf16WindowLength) {
+    size_t* utf16WindowLength) const {
   MOZ_ASSERT(encodedTokenOffset <= encodedWindowLength,
              "token offset must be within the window, and the two lambda "
              "calls below presume this ordering of values");
@@ -1674,7 +1669,7 @@ inline void SourceUnits<Utf8Unit>::computeWindowOffsetAndLength(
 
 template <typename Unit>
 bool TokenStreamCharsBase<Unit>::addLineOfContext(ErrorMetadata* err,
-                                                  uint32_t offset) {
+                                                  uint32_t offset) const {
   // Rename the variable to make meaning clearer: an offset into source units
   // in Unit encoding.
   size_t encodedOffset = offset;
@@ -1761,7 +1756,7 @@ bool TokenStreamCharsBase<Unit>::addLineOfContext(ErrorMetadata* err,
 
 template <typename Unit, class AnyCharsAccess>
 bool TokenStreamSpecific<Unit, AnyCharsAccess>::computeErrorMetadata(
-    ErrorMetadata* err, const ErrorOffset& errorOffset) {
+    ErrorMetadata* err, const ErrorOffset& errorOffset) const {
   if (errorOffset.is<NoOffset>()) {
     anyCharsAccess().computeErrorMetadataNoOffset(err);
     return true;
@@ -1791,7 +1786,7 @@ void TokenStreamSpecific<Unit, AnyCharsAccess>::reportIllegalCharacter(
     int32_t cp) {
   UniqueChars display = JS_smprintf("U+%04X", cp);
   if (!display) {
-    ReportOutOfMemory(anyCharsAccess().cx);
+    ReportOutOfMemory(anyCharsAccess().ec);
     return;
   }
   error(JSMSG_ILLEGAL_CHARACTER, display.get());
@@ -3313,6 +3308,12 @@ template <typename Unit, class AnyCharsAccess>
               matchCodeUnit('=') ? TokenKind::SubAssign : TokenKind::Sub;
         }
         break;
+
+#ifdef ENABLE_DECORATORS
+      case '@':
+        simpleKind = TokenKind::At;
+        break;
+#endif
 
       default:
         // We consumed a bad ASCII code point/unit.  Put it back so the

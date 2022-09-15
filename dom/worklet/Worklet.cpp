@@ -381,10 +381,8 @@ bool ExecutionRunnable::ParseAndLinkModule(
   if (!module) {
     return false;
   }
-  // Link() was previously named Instantiate().
-  // https://github.com/tc39/ecma262/pull/1312
   // Any imports will fail here - bug 1572644.
-  if (!JS::ModuleInstantiate(aCx, module)) {
+  if (!JS::ModuleLink(aCx, module)) {
     return false;
   }
   aModule.set(module);
@@ -449,7 +447,7 @@ void ExecutionRunnable::RunOnMainThread() {
 // ---------------------------------------------------------------------------
 // Worklet
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(Worklet)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(Worklet)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Worklet)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mWindow)
@@ -462,8 +460,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Worklet)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mWindow)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOwnedObject)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(Worklet)
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(Worklet)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(Worklet)

@@ -177,8 +177,8 @@ var openStoragePanel = async function({ tab, descriptor, hostType } = {}) {
       info("Toolbox and storage already open");
 
       return {
-        toolbox: toolbox,
-        storage: storage,
+        toolbox,
+        storage,
       };
     }
   }
@@ -200,8 +200,8 @@ var openStoragePanel = async function({ tab, descriptor, hostType } = {}) {
   await waitForToolboxFrameFocus(toolbox);
 
   return {
-    toolbox: toolbox,
-    storage: storage,
+    toolbox,
+    storage,
   };
 };
 
@@ -268,7 +268,7 @@ function variablesViewExpandTo(options) {
       const name = expandTo.shift();
       const newProp = prop.get(name);
 
-      if (expandTo.length > 0) {
+      if (expandTo.length) {
         ok(newProp, "found property " + name);
         if (newProp && newProp.expand) {
           newProp.expand();

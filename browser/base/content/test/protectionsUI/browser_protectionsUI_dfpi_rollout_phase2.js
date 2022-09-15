@@ -9,8 +9,8 @@ const { ExperimentFakes } = ChromeUtils.import(
   "resource://testing-common/NimbusTestUtils.jsm"
 );
 
-const { EnterprisePolicyTesting } = ChromeUtils.import(
-  "resource://testing-common/EnterprisePolicyTesting.jsm"
+const { EnterprisePolicyTesting } = ChromeUtils.importESModule(
+  "resource://testing-common/EnterprisePolicyTesting.sys.mjs"
 );
 
 ChromeUtils.defineModuleGetter(
@@ -40,9 +40,6 @@ function cleanup() {
   Services.prefs.clearUserPref(ROLLOUT_PREF_PHASE1_PREFERENCES);
   Services.prefs.clearUserPref(CB_CATEGORY_PREF);
 
-  // Reset the rollout scalar back to 2 = unset. We have to simulate this on
-  // test cleanup, because BrowserGlue only sets this once initially.
-  Services.telemetry.scalarSet("privacy.dfpi_rollout_enabledByDefault", 2);
   // Same for the tcpByDefault feature probe.
   Services.telemetry.scalarSet(
     "privacy.dfpi_rollout_tcpByDefault_feature",
@@ -71,12 +68,6 @@ function testTelemetryState(
   expectedValueTCPByDefault,
   message = "Scalars should have correct value"
 ) {
-  TelemetryTestUtils.assertScalar(
-    TelemetryTestUtils.getProcessScalars("parent"),
-    "privacy.dfpi_rollout_enabledByDefault",
-    expectedValueOptIn,
-    message
-  );
   TelemetryTestUtils.assertScalar(
     TelemetryTestUtils.getProcessScalars("parent"),
     "privacy.dfpi_rollout_tcpByDefault_feature",
@@ -163,11 +154,11 @@ add_task(async function test_phase2() {
   );
 
   ok(
-    !NimbusFeatures.tcpByDefault.isEnabled(),
+    !NimbusFeatures.tcpByDefault.getVariable("enabled"),
     "tcpByDefault Nimbus feature is disabled initially."
   );
   ok(
-    !NimbusFeatures.tcpPreferences.isEnabled(),
+    !NimbusFeatures.tcpPreferences.getVariable("enabled"),
     "tcpPreferences Nimbus feature is disabled initially."
   );
 
@@ -202,11 +193,11 @@ add_task(async function test_phase2() {
   );
 
   ok(
-    NimbusFeatures.tcpByDefault.isEnabled(),
+    NimbusFeatures.tcpByDefault.getVariable("enabled"),
     "tcpByDefault Nimbus feature is enabled."
   );
   ok(
-    !NimbusFeatures.tcpPreferences.isEnabled(),
+    !NimbusFeatures.tcpPreferences.getVariable("enabled"),
     "tcpPreferences Nimbus feature is still disabled."
   );
 
@@ -240,11 +231,11 @@ add_task(async function test_phase1_opt_out_to_phase2() {
   );
 
   ok(
-    !NimbusFeatures.tcpByDefault.isEnabled(),
+    !NimbusFeatures.tcpByDefault.getVariable("enabled"),
     "tcpByDefault Nimbus feature is disabled initially."
   );
   ok(
-    !NimbusFeatures.tcpPreferences.isEnabled(),
+    !NimbusFeatures.tcpPreferences.getVariable("enabled"),
     "tcpPreferences Nimbus feature is disabled initially."
   );
 
@@ -270,11 +261,11 @@ add_task(async function test_phase1_opt_out_to_phase2() {
   testTelemetryState(0, false, "Telemetry indicates opt-out.");
 
   ok(
-    !NimbusFeatures.tcpByDefault.isEnabled(),
+    !NimbusFeatures.tcpByDefault.getVariable("enabled"),
     "tcpByDefault Nimbus feature is still disabled."
   );
   ok(
-    NimbusFeatures.tcpPreferences.isEnabled(),
+    NimbusFeatures.tcpPreferences.getVariable("enabled"),
     "tcpPreferences Nimbus feature is enabled after-opt-out."
   );
 
@@ -336,11 +327,11 @@ add_task(async function test_phase1_opt_in_to_phase2() {
   );
 
   ok(
-    !NimbusFeatures.tcpByDefault.isEnabled(),
+    !NimbusFeatures.tcpByDefault.getVariable("enabled"),
     "tcpByDefault Nimbus feature is disabled initially."
   );
   ok(
-    !NimbusFeatures.tcpPreferences.isEnabled(),
+    !NimbusFeatures.tcpPreferences.getVariable("enabled"),
     "tcpPreferences Nimbus feature is disabled initially."
   );
 
@@ -365,7 +356,7 @@ add_task(async function test_phase1_opt_in_to_phase2() {
   testTelemetryState(1, false, "Telemetry indicates opt-in.");
 
   ok(
-    !NimbusFeatures.tcpByDefault.isEnabled(),
+    !NimbusFeatures.tcpByDefault.getVariable("enabled"),
     "tcpByDefault Nimbus feature is still disabled."
   );
   // ROLLOUT_PREF_PHASE1_PREFERENCES controls the tcpPreferences feature state,
@@ -373,7 +364,7 @@ add_task(async function test_phase1_opt_in_to_phase2() {
   // ROLLOUT_PREF_PHASE1_PREFERENCES is not set, but the preferences section is
   // shown because the rollout pref is set to true.
   ok(
-    !NimbusFeatures.tcpPreferences.isEnabled(),
+    !NimbusFeatures.tcpPreferences.getVariable("enabled"),
     "tcpPreferences Nimbus feature is disabled after opt-in."
   );
 
@@ -395,7 +386,7 @@ add_task(async function test_phase1_opt_in_to_phase2() {
   // Instead, wait for the Nimbus feature update callback.
   await featureUpdatePromise;
   ok(
-    NimbusFeatures.tcpByDefault.isEnabled(),
+    NimbusFeatures.tcpByDefault.getVariable("enabled"),
     "tcpByDefault Nimbus feature is now enabled."
   );
 

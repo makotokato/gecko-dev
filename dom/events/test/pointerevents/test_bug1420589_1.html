@@ -63,7 +63,7 @@ function withoutImplicitlyPointerCaptureForTouch() {
     ok(expectedEvents.includes(e.data), " don't expect " + e.data);
     expectedEvents = expectedEvents.filter(item => item !== e.data);
     if (e.data == "iframe2 touchend") {
-      ok(expectedEvents.length == 0, " expect " + expectedEvents);
+      ok(!expectedEvents.length, " expect " + expectedEvents);
       SimpleTest.finish();
     }
   })
@@ -85,10 +85,10 @@ function withoutImplicitlyPointerCaptureForTouch() {
                        [left1, left2], [top1, top2], [rx, rx], [ry, ry],
                        [angle, angle], [force, force], modifiers);
   utils.sendTouchEvent('touchmove', [test1PointerId, test2PointerId],
-                       [left1, left2], [top1, top2], [rx, rx], [ry, ry],
+                       [left1 + 1, left2 + 1], [top1, top2], [rx, rx], [ry, ry],
                        [angle, angle], [force, force], modifiers);
   utils.sendTouchEvent('touchend', [test1PointerId, test2PointerId],
-                       [left1, left2], [top1, top2], [rx, rx], [ry, ry],
+                       [left1 + 1, left2 + 1], [top1, top2], [rx, rx], [ry, ry],
                        [angle, angle], [force, force], modifiers);
 }
 

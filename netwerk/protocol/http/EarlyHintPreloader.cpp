@@ -9,6 +9,8 @@
 #include "mozilla/CORSMode.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/ReferrerInfo.h"
+#include "mozilla/StaticPrefs_network.h"
+#include "mozilla/glean/GleanMetrics.h"
 #include "mozilla/Logging.h"
 #include "nsAttrValue.h"
 #include "nsAttrValueInlines.h"
@@ -146,7 +148,7 @@ nsSecurityFlags EarlyHintPreloader::ComputeSecurityFlags(CORSMode aCORSMode,
 // static
 void EarlyHintPreloader::MaybeCreateAndInsertPreload(
     OngoingEarlyHints* aOngoingEarlyHints, const LinkHeader& aHeader,
-    nsIURI* aBaseURI, nsIPrincipal* aTriggeringPrincipal,
+    nsIURI* aBaseURI, nsIPrincipal* aPrincipal,
     nsICookieJarSettings* aCookieJarSettings) {
   if (!aHeader.mRel.LowerCaseEqualsASCII("preload")) {
     return;
@@ -154,6 +156,14 @@ void EarlyHintPreloader::MaybeCreateAndInsertPreload(
 
   nsAttrValue as;
   ParseAsValue(aHeader.mAs, as);
+
+  ASDestination destination = static_cast<ASDestination>(as.GetEnumValue());
+  CollectResourcesTypeTelemetry(destination);
+
+  if (!StaticPrefs::network_early_hints_enabled()) {
+    return;
+  }
+
   if (as.GetEnumValue() == ASDestination::DESTINATION_INVALID) {
     // return early when it's definitly not an asset type we preload
     // would be caught later as well, e.g. when creating the PreloadHashKey
@@ -173,7 +183,7 @@ void EarlyHintPreloader::MaybeCreateAndInsertPreload(
 
   Maybe<PreloadHashKey> hashKey =
       GenerateHashKey(static_cast<ASDestination>(as.GetEnumValue()), uri,
-                      aTriggeringPrincipal, corsMode, aHeader.mType);
+                      aPrincipal, corsMode, aHeader.mType);
   if (!hashKey) {
     return;
   }
@@ -202,7 +212,7 @@ void EarlyHintPreloader::MaybeCreateAndInsertPreload(
       aHeader.mType.LowerCaseEqualsASCII("module"));
 
   NS_ENSURE_SUCCESS_VOID(earlyHintPreloader->OpenChannel(
-      aTriggeringPrincipal, securityFlags, contentPolicyType, referrerInfo,
+      aPrincipal, securityFlags, contentPolicyType, referrerInfo,
       aCookieJarSettings));
 
   DebugOnly<bool> result =
@@ -211,7 +221,7 @@ void EarlyHintPreloader::MaybeCreateAndInsertPreload(
 }
 
 nsresult EarlyHintPreloader::OpenChannel(
-    nsIPrincipal* aTriggeringPrincipal, nsSecurityFlags aSecurityFlags,
+    nsIPrincipal* aPrincipal, nsSecurityFlags aSecurityFlags,
     nsContentPolicyType aContentPolicyType, nsIReferrerInfo* aReferrerInfo,
     nsICookieJarSettings* aCookieJarSettings) {
   MOZ_ASSERT(aContentPolicyType == nsContentPolicyType::TYPE_IMAGE ||
@@ -221,8 +231,8 @@ nsresult EarlyHintPreloader::OpenChannel(
              aContentPolicyType == nsContentPolicyType::TYPE_STYLESHEET ||
              aContentPolicyType == nsContentPolicyType::TYPE_FONT);
   nsresult rv =
-      NS_NewChannel(getter_AddRefs(mChannel), mURI, aTriggeringPrincipal,
-                    aSecurityFlags, aContentPolicyType, aCookieJarSettings,
+      NS_NewChannel(getter_AddRefs(mChannel), mURI, aPrincipal, aSecurityFlags,
+                    aContentPolicyType, aCookieJarSettings,
                     /* aPerformanceStorage */ nullptr,
                     /* aLoadGroup */ nullptr,
                     /* aCallbacks */ this, nsIRequest::LOAD_NORMAL);
@@ -378,4 +388,20 @@ EarlyHintPreloader::GetInterface(const nsIID& aIID, void** aResult) {
   return NS_ERROR_NO_INTERFACE;
 }
 
+void EarlyHintPreloader::CollectResourcesTypeTelemetry(
+    ASDestination aASDestination) {
+  if (aASDestination == ASDestination::DESTINATION_FONT) {
+    glean::netwerk::early_hints.Get("font"_ns).Add(1);
+  } else if (aASDestination == ASDestination::DESTINATION_SCRIPT) {
+    glean::netwerk::early_hints.Get("script"_ns).Add(1);
+  } else if (aASDestination == ASDestination::DESTINATION_STYLE) {
+    glean::netwerk::early_hints.Get("stylesheet"_ns).Add(1);
+  } else if (aASDestination == ASDestination::DESTINATION_IMAGE) {
+    glean::netwerk::early_hints.Get("image"_ns).Add(1);
+  } else if (aASDestination == ASDestination::DESTINATION_FETCH) {
+    glean::netwerk::early_hints.Get("fetch"_ns).Add(1);
+  } else {
+    glean::netwerk::early_hints.Get("other"_ns).Add(1);
+  }
+}
 }  // namespace mozilla::net

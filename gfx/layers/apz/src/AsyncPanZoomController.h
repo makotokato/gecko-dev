@@ -415,6 +415,7 @@ class AsyncPanZoomController {
    * Clear any overscroll on this APZC.
    */
   void ClearOverscroll();
+  void ClearPhysicalOverscroll();
 
   /**
    * Returns whether this APZC is for an element marked with the 'scrollgrab'
@@ -575,6 +576,9 @@ class AsyncPanZoomController {
   SampleTime GetFrameTime() const;
 
   bool IsZero(const ParentLayerPoint& aPoint) const;
+  bool IsZero(ParentLayerCoord aCoord) const;
+
+  bool FuzzyGreater(ParentLayerCoord aCoord1, ParentLayerCoord aCoord2) const;
 
  private:
   // Get whether the horizontal content of the honoured target of auto-dir
@@ -942,9 +946,12 @@ class AsyncPanZoomController {
     FREE,     /* No locking at all */
     STANDARD, /* Default axis locking mode that remains locked until pan ends */
     STICKY,   /* Allow lock to be broken, with hysteresis */
+    DOMINANT_AXIS, /* Only allow movement on one axis */
   };
 
   static AxisLockMode GetAxisLockMode();
+
+  bool UsingStatefulAxisLock() const;
 
   enum PinchLockMode {
     PINCH_FREE,     /* No locking at all */
@@ -1000,10 +1007,11 @@ class AsyncPanZoomController {
   // monitor. Do not read from or modify them without locking.
   ScrollMetadata mScrollMetadata;
 
-  // Protects |mScrollMetadata|, |mLastContentPaintMetrics| and |mState|.
-  // Before manipulating |mScrollMetadata| or |mLastContentPaintMetrics| the
-  // monitor should be held. When setting |mState|, either the SetState()
-  // function can be used, or the monitor can be held and then |mState| updated.
+  // Protects |mScrollMetadata|, |mLastContentPaintMetrics|, |mState| and
+  // |mLastSnapTargetIds|.  Before manipulating |mScrollMetadata|,
+  // |mLastContentPaintMetrics| or |mLastSnapTargetIds| the monitor should be
+  // held. When setting |mState|, either the SetState() function can be used, or
+  // the monitor can be held and then |mState| updated.
   // IMPORTANT: See the note about lock ordering at the top of
   // APZCTreeManager.h. This is mutable to allow entering it from 'const'
   // methods; doing otherwise would significantly limit what methods could be
@@ -1521,7 +1529,7 @@ class AsyncPanZoomController {
 
   // Start a smooth-scrolling animation to the given destination, with MSD
   // physics that is suited for scroll-snapping.
-  void SmoothMsdScrollTo(const CSSPoint& aDestination,
+  void SmoothMsdScrollTo(CSSSnapTarget&& aDestination,
                          ScrollTriggeredByScript aTriggeredByScript);
 
   // Returns whether overscroll is allowed during an event.
@@ -1707,11 +1715,19 @@ class AsyncPanZoomController {
 
   bool IsOverscrolled() const;
 
+  // IsPhysicallyOverscrolled() checks whether the APZC is overscrolled
+  // by an overscroll effect which applies a transform to the APZC's contents.
+  bool IsPhysicallyOverscrolled() const;
+
  private:
   bool IsInInvalidOverscroll() const;
 
  public:
   bool IsInPanningState() const;
+
+  // Returns whether being in the middle of a gesture. E.g., this APZC has
+  // started handling a pan gesture but hasn't yet received pan-end, etc.
+  bool IsInScrollingGesture() const;
 
  private:
   /* This is the cumulative CSS transform for all the layers from (and
@@ -1754,6 +1770,8 @@ class AsyncPanZoomController {
   // is in a panning state.
   TimeDuration mTouchStartRestingTimeBeforePan;
   Maybe<ParentLayerCoord> mMinimumVelocityDuringPan;
+  // This variable needs to be protected by |mRecursiveMutex|.
+  ScrollSnapTargetIds mLastSnapTargetIds;
   // Extra offset to add to the async scroll position for testing
   CSSPoint mTestAsyncScrollOffset;
   // Extra zoom to include in the aync zoom for testing
@@ -1794,20 +1812,19 @@ class AsyncPanZoomController {
   // |aUnit| affects the snapping behaviour (see ScrollSnapUtils::
   // GetSnapPointForDestination).
   // Returns true iff. a target snap point was found.
-  bool MaybeAdjustDeltaForScrollSnapping(ScrollUnit aUnit,
-                                         ScrollSnapFlags aFlags,
-                                         ParentLayerPoint& aDelta,
-                                         CSSPoint& aStartPosition);
+  Maybe<CSSSnapTarget> MaybeAdjustDeltaForScrollSnapping(
+      ScrollUnit aUnit, ScrollSnapFlags aSnapFlags, ParentLayerPoint& aDelta,
+      CSSPoint& aStartPosition);
 
   // A wrapper function of MaybeAdjustDeltaForScrollSnapping for
   // ScrollWheelInput.
-  bool MaybeAdjustDeltaForScrollSnappingOnWheelInput(
+  Maybe<CSSSnapTarget> MaybeAdjustDeltaForScrollSnappingOnWheelInput(
       const ScrollWheelInput& aEvent, ParentLayerPoint& aDelta,
       CSSPoint& aStartPosition);
 
-  bool MaybeAdjustDestinationForScrollSnapping(const KeyboardInput& aEvent,
-                                               CSSPoint& aDestination,
-                                               ScrollSnapFlags aSnapFlags);
+  Maybe<CSSSnapTarget> MaybeAdjustDestinationForScrollSnapping(
+      const KeyboardInput& aEvent, CSSPoint& aDestination,
+      ScrollSnapFlags aSnapFlags);
 
   // Snap to a snap position nearby the current scroll position, if appropriate.
   void ScrollSnap(ScrollSnapFlags aSnapFlags);
@@ -1824,9 +1841,9 @@ class AsyncPanZoomController {
   // |aUnit| affects the snapping behaviour (see ScrollSnapUtils::
   // GetSnapPointForDestination). It should generally be determined by the
   // type of event that's triggering the scroll.
-  Maybe<CSSPoint> FindSnapPointNear(const CSSPoint& aDestination,
-                                    ScrollUnit aUnit,
-                                    ScrollSnapFlags aSnapFlags);
+  Maybe<CSSSnapTarget> FindSnapPointNear(const CSSPoint& aDestination,
+                                         ScrollUnit aUnit,
+                                         ScrollSnapFlags aSnapFlags);
 
   friend std::ostream& operator<<(
       std::ostream& aOut, const AsyncPanZoomController::PanZoomState& aState);

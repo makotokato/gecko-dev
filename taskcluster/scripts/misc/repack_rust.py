@@ -13,6 +13,7 @@ from __future__ import absolute_import, print_function
 
 import argparse
 import errno
+import glob
 import hashlib
 import os
 import shutil
@@ -457,6 +458,7 @@ def repack(
     targets,
     channel="stable",
     cargo_channel=None,
+    compiler_builtins_hack=False,
     patches=[],
 ):
     install_dir = "rustc"
@@ -506,6 +508,31 @@ def repack(
         for std in stds:
             install(os.path.basename(std["url"]), install_dir)
             pass
+    # Workaround for https://github.com/rust-lang/rust/issues/98746:
+    # Remove debug symbols from the compiler_builtins rlib.
+    hack_targets = ()
+    if compiler_builtins_hack:
+        hack_targets = (
+            "x86_64-unknown-linux-gnu",
+            "i686-unknown-linux-gnu",
+            "x86_64-linux-android",
+            "i686-linux-android",
+            "thumbv7neon-linux-androideabi",
+            "aarch64-linux-android",
+        )
+        llvm_bin = os.path.join(os.environ["MOZ_FETCHES_DIR"], "clang", "bin")
+    for t in hack_targets:
+        if t not in targets:
+            continue
+        for lib in glob.glob(
+            os.path.join(
+                install_dir, "lib", "rustlib", t, "lib", "libcompiler_builtins*"
+            )
+        ):
+            log("Strip debuginfo from %s" % lib)
+            subprocess.check_call(
+                [os.path.join(llvm_bin, "llvm-strip"), "-d", os.path.abspath(lib)],
+            )
 
     log("Creating archive...")
     tar_file = install_dir + ".tar.zst"
@@ -525,48 +552,6 @@ def repack(
         # Move the tarball to the output directory for upload.
         log("Moving %s to the upload directory..." % tar_file)
         shutil.move(tar_file, upload_dir)
-
-
-def repack_cargo(host, channel="nightly"):
-    log("Repacking cargo for %s..." % host)
-    # Cargo doesn't seem to have a .toml manifest.
-    base_url = "https://static.rust-lang.org/cargo-dist/"
-    req = requests.get(os.path.join(base_url, "channel-cargo-" + channel))
-    req.raise_for_status()
-    file = ""
-    for line in req.iter_lines():
-        if line.find(host) != -1:
-            file = line.strip()
-    if not file:
-        log("No manifest entry for %s!" % host)
-        return
-    manifest = {
-        "date": req.headers["Last-Modified"],
-        "pkg": {
-            "cargo": {
-                "version": channel,
-                "target": {
-                    host: {
-                        "url": os.path.join(base_url, file),
-                        "hash": None,
-                        "available": True,
-                    },
-                },
-            },
-        },
-    }
-    log("Using manifest for cargo %s." % channel)
-    log("Fetching packages...")
-    cargo = fetch_package(manifest, "cargo", host)
-    log("Installing packages...")
-    install_dir = "cargo"
-    shutil.rmtree(install_dir)
-    install(os.path.basename(cargo["url"]), install_dir)
-    tar_basename = "cargo-%s-repack" % host
-    log("Tarring %s..." % tar_basename)
-    tar_file = tar_basename + ".tar.zst"
-    build_tar_package(tar_file, ".", install_dir)
-    shutil.rmtree(install_dir)
 
 
 def expand_platform(name):
@@ -632,6 +617,11 @@ def args():
         "--cargo-channel",
         help="Release channel version to use for cargo."
         " Defaults to the same as --channel.",
+    )
+    parser.add_argument(
+        "--compiler-builtins-hack",
+        action="store_true",
+        help="Enable workaround for " "https://github.com/rust-lang/rust/issues/98746.",
     )
     parser.add_argument(
         "--host",

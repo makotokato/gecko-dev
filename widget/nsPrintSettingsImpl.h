@@ -69,8 +69,6 @@ class nsPrintSettings : public nsIPrintSettings {
    */
   virtual void InitWithInitializer(const PrintSettingsInitializer& aSettings);
 
-  PrintSettingsInitializer GetSettingsInitializer() final;
-
   nsPrintSettings& operator=(const nsPrintSettings& rhs);
 
   // Sets a default file name for the print settings.
@@ -101,6 +99,7 @@ class nsPrintSettings : public nsIPrintSettings {
   bool mShrinkToFit = true;
   bool mShowMarginGuides = false;
   bool mHonorPageRuleMargins = true;
+  bool mIgnoreUnwriteableMargins = false;
   bool mPrintSelectionOnly = false;
 
   int32_t mPrintPageDelay = 50;  // XXX Do we really want this?

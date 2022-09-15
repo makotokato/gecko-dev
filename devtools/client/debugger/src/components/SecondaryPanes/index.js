@@ -23,6 +23,7 @@ import {
   getCurrentThread,
   getThreadContext,
   getPauseReason,
+  getShouldBreakpointsPaneOpenOnPause,
   getLocationSource,
   getSkipPausing,
   shouldLogEventBreakpoints,
@@ -83,6 +84,8 @@ class SecondaryPanes extends Component {
       mapScopesEnabled: PropTypes.bool.isRequired,
       pauseOnExceptions: PropTypes.func.isRequired,
       pauseReason: PropTypes.string.isRequired,
+      shouldBreakpointsPaneOpenOnPause: PropTypes.bool.isRequired,
+      thread: PropTypes.string.isRequired,
       renderWhyPauseDelay: PropTypes.number.isRequired,
       selectedFrame: PropTypes.object,
       shouldPauseOnCaughtExceptions: PropTypes.bool.isRequired,
@@ -90,8 +93,11 @@ class SecondaryPanes extends Component {
       skipPausing: PropTypes.bool.isRequired,
       source: PropTypes.object,
       toggleEventLogging: PropTypes.func.isRequired,
+      resetBreakpointsPaneState: PropTypes.func.isRequired,
       toggleMapScopes: PropTypes.func.isRequired,
       workers: PropTypes.array.isRequired,
+      removeAllBreakpoints: PropTypes.func.isRequired,
+      removeAllXHRBreakpoints: PropTypes.func.isRequired,
     };
   }
 
@@ -105,7 +111,6 @@ class SecondaryPanes extends Component {
 
   watchExpressionHeaderButtons() {
     const { expressions } = this.props;
-
     const buttons = [];
 
     if (expressions.length) {
@@ -116,12 +121,11 @@ class SecondaryPanes extends Component {
             this.props.evaluateExpressions(this.props.cx);
           },
           "refresh",
-          "refresh",
+          "active",
           L10N.getStr("watchExpressions.refreshButton")
         )
       );
     }
-
     buttons.push(
       debugBtn(
         evt => {
@@ -131,18 +135,15 @@ class SecondaryPanes extends Component {
           this.setState({ showExpressionsInput: true });
         },
         "plus",
-        "plus",
+        "active",
         L10N.getStr("expressions.placeholder")
       )
     );
-
     return buttons;
   }
 
   xhrBreakpointsHeaderButtons() {
-    const buttons = [];
-
-    buttons.push(
+    return [
       debugBtn(
         evt => {
           if (prefs.xhrBreakpointsVisible) {
@@ -151,12 +152,34 @@ class SecondaryPanes extends Component {
           this.setState({ showXHRInput: true });
         },
         "plus",
-        "plus",
+        "active",
         L10N.getStr("xhrBreakpoints.label")
-      )
-    );
+      ),
 
-    return buttons;
+      debugBtn(
+        evt => {
+          evt.stopPropagation();
+          this.props.removeAllXHRBreakpoints();
+        },
+        "removeAll",
+        "active",
+        L10N.getStr("xhrBreakpoints.removeAll.tooltip")
+      ),
+    ];
+  }
+
+  breakpointsHeaderButtons() {
+    return [
+      debugBtn(
+        evt => {
+          evt.stopPropagation();
+          this.props.removeAllBreakpoints(this.props.cx);
+        },
+        "removeAll",
+        "active",
+        L10N.getStr("breakpointMenuItem.deleteAll")
+      ),
+    ];
   }
 
   getScopeItem() {
@@ -299,11 +322,14 @@ class SecondaryPanes extends Component {
       shouldPauseOnCaughtExceptions,
       pauseOnExceptions,
       pauseReason,
+      shouldBreakpointsPaneOpenOnPause,
+      thread,
     } = this.props;
 
     return {
       header: L10N.getStr("breakpoints.header"),
       className: "breakpoints-pane",
+      buttons: this.breakpointsHeaderButtons(),
       component: (
         <Breakpoints
           shouldPauseOnExceptions={shouldPauseOnExceptions}
@@ -313,10 +339,14 @@ class SecondaryPanes extends Component {
       ),
       opened:
         prefs.breakpointsVisible ||
-        pauseReason === "breakpoint" ||
-        pauseReason === "resumeLimit",
+        (pauseReason === "breakpoint" && shouldBreakpointsPaneOpenOnPause),
       onToggle: opened => {
         prefs.breakpointsVisible = opened;
+        //  one-shot flag used to force open the Breakpoints Pane only
+        //  when hitting a breakpoint, but not when selecting frames etc...
+        if (shouldBreakpointsPaneOpenOnPause) {
+          this.props.resetBreakpointsPaneState(thread);
+        }
       },
     };
   }
@@ -358,7 +388,7 @@ class SecondaryPanes extends Component {
     const { horizontal, hasFrames } = this.props;
 
     if (horizontal) {
-      if (features.workers && this.props.workers.length > 0) {
+      if (features.workers && this.props.workers.length) {
         items.push(this.getThreadsItem());
       }
 
@@ -395,7 +425,7 @@ class SecondaryPanes extends Component {
     }
 
     const items = [];
-    if (features.workers && this.props.workers.length > 0) {
+    if (features.workers && this.props.workers.length) {
       items.push(this.getThreadsItem());
     }
 
@@ -477,6 +507,10 @@ const mapStateToProps = state => {
   const thread = getCurrentThread(state);
   const selectedFrame = getSelectedFrame(state, thread);
   const pauseReason = getPauseReason(state, thread);
+  const shouldBreakpointsPaneOpenOnPause = getShouldBreakpointsPaneOpenOnPause(
+    state,
+    thread
+  );
 
   return {
     cx: getThreadContext(state),
@@ -492,6 +526,8 @@ const mapStateToProps = state => {
     logEventBreakpoints: shouldLogEventBreakpoints(state),
     source: selectedFrame && getLocationSource(state, selectedFrame.location),
     pauseReason: pauseReason?.type ?? "",
+    shouldBreakpointsPaneOpenOnPause,
+    thread,
   };
 };
 
@@ -501,4 +537,7 @@ export default connect(mapStateToProps, {
   toggleMapScopes: actions.toggleMapScopes,
   breakOnNext: actions.breakOnNext,
   toggleEventLogging: actions.toggleEventLogging,
+  removeAllBreakpoints: actions.removeAllBreakpoints,
+  removeAllXHRBreakpoints: actions.removeAllXHRBreakpoints,
+  resetBreakpointsPaneState: actions.resetBreakpointsPaneState,
 })(SecondaryPanes);

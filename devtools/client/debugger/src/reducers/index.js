@@ -10,6 +10,7 @@
 import expressions, { initialExpressionState } from "./expressions";
 import sourceActors from "./source-actors";
 import sources, { initialSourcesState } from "./sources";
+import sourceBlackBox, { initialSourceBlackBoxState } from "./source-blackbox";
 import sourcesContent, { initialSourcesContentState } from "./sources-content";
 import tabs, { initialTabState } from "./tabs";
 import breakpoints, { initialBreakpointsState } from "./breakpoints";
@@ -24,7 +25,7 @@ import projectTextSearch, {
   initialProjectTextSearchState,
 } from "./project-text-search";
 import quickOpen, { initialQuickOpenState } from "./quick-open";
-import sourceTree, { initialSourcesTreeState } from "./source-tree";
+import sourcesTree, { initialSourcesTreeState } from "./sources-tree";
 import threads, { initialThreadsState } from "./threads";
 import eventListenerBreakpoints, {
   initialEventListenerState,
@@ -44,6 +45,7 @@ export function initialState() {
     sourcesContent: initialSourcesContentState(),
     expressions: initialExpressionState(),
     sourceActors: new Map(),
+    sourceBlackBox: initialSourceBlackBoxState(),
     tabs: initialTabState(),
     breakpoints: initialBreakpointsState(),
     pendingBreakpoints: {},
@@ -54,7 +56,7 @@ export function initialState() {
     ast: initialASTState(),
     projectTextSearch: initialProjectTextSearchState(),
     quickOpen: initialQuickOpenState(),
-    sourceTree: initialSourcesTreeState(),
+    sourcesTree: initialSourcesTreeState(),
     threads: initialThreadsState(),
     objectInspector: objectInspector.reducer.initialOIState(),
     eventListenerBreakpoints: initialEventListenerState(),
@@ -66,6 +68,7 @@ export function initialState() {
 export default {
   expressions,
   sourceActors,
+  sourceBlackBox,
   sourcesContent,
   sources,
   tabs,
@@ -78,7 +81,7 @@ export default {
   ast,
   projectTextSearch,
   quickOpen,
-  sourceTree,
+  sourcesTree,
   threads,
   objectInspector: objectInspector.reducer.default,
   eventListenerBreakpoints,

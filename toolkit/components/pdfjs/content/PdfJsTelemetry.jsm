@@ -18,8 +18,6 @@
 
 var EXPORTED_SYMBOLS = ["PdfJsTelemetry"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 var PdfJsTelemetry = {
   onViewerIsUsed(isAttachment) {
     Services.telemetry.scalarAdd("pdf.viewer.used", 1);
@@ -83,5 +81,13 @@ var PdfJsTelemetry = {
   onTagged(tagged) {
     let histogram = Services.telemetry.getHistogramById("PDF_VIEWER_TAGGED");
     histogram.add(tagged);
+  },
+  onEditing(type) {
+    if (["ink", "freetext", "print", "save"].includes(type)) {
+      Glean.pdfjs.editing[type].add(1);
+    }
+  },
+  onButtons(id) {
+    Glean.pdfjs.buttons[id].add(1);
   },
 };

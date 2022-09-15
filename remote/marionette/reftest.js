@@ -6,9 +6,8 @@
 
 const EXPORTED_SYMBOLS = ["reftest"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -16,7 +15,7 @@ const lazy = {};
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
 
-  AppInfo: "chrome://remote/content/marionette/appinfo.js",
+  AppInfo: "chrome://remote/content/shared/AppInfo.jsm",
   assert: "chrome://remote/content/shared/webdriver/Assert.jsm",
   capture: "chrome://remote/content/marionette/capture.js",
   Log: "chrome://remote/content/shared/Log.jsm",
@@ -240,7 +239,7 @@ reftest.Runner = class {
 
   async abort() {
     if (this.reftestWin && this.reftestWin != this.parentWindow) {
-      this.driver.closeChromeWindow();
+      await this.driver.closeChromeWindow();
       let parentHandle = lazy.windowManager.getWindowProperties(
         this.parentWindow
       );

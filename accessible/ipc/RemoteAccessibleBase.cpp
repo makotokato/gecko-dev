@@ -24,6 +24,7 @@
 #include "nsAccUtils.h"
 #include "nsTextEquivUtils.h"
 #include "Pivot.h"
+#include "Relation.h"
 #include "RelationType.h"
 #include "xpcAccessibleDocument.h"
 
@@ -56,8 +57,22 @@ void RemoteAccessibleBase<Derived>::Shutdown() {
     CachedTableAccessible::Invalidate(this);
   }
 
-  // XXX Ideally  this wouldn't be necessary, but it seems OuterDoc accessibles
-  // can be destroyed before the doc they own.
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    // Remove this acc's relation map from the doc's map of
+    // reverse relations. We don't need to do additional processing
+    // of the corresponding forward relations, because this shutdown
+    // should trigger a cache update from the content process.
+    // Similarly, we don't need to remove the reverse rels created
+    // by this acc's forward rels because they'll be cleared during
+    // the next update's call to PreProcessRelations().
+    // In short, accs are responsible for managing their own
+    // reverse relation map, both in PreProcessRelations() and in
+    // Shutdown().
+    Unused << mDoc->mReverseRelations.Remove(ID());
+  }
+
+  // XXX Ideally  this wouldn't be necessary, but it seems OuterDoc
+  // accessibles can be destroyed before the doc they own.
   uint32_t childCount = mChildren.Length();
   if (!IsOuterDoc()) {
     for (uint32_t idx = 0; idx < childCount; idx++) mChildren[idx]->Shutdown();
@@ -249,17 +264,22 @@ void RemoteAccessibleBase<Derived>::Value(nsString& aValue) const {
     }
 
     if (IsCombobox()) {
-      Pivot p = Pivot(const_cast<RemoteAccessibleBase<Derived>*>(this));
-      PivotStateRule rule(states::ACTIVE);
-      Accessible* option = p.First(rule);
-      if (!option) {
-        option =
-            const_cast<RemoteAccessibleBase<Derived>*>(this)->GetSelectedItem(
-                0);
-      }
-
+      // For combo boxes, rely on selection state to determine the value.
+      const Accessible* option =
+          const_cast<RemoteAccessibleBase<Derived>*>(this)->GetSelectedItem(0);
       if (option) {
         option->Name(aValue);
+      }
+      return;
+    }
+
+    if (IsTextLeaf() || IsImage()) {
+      if (const Accessible* actionAcc = ActionAncestor()) {
+        if (const_cast<Accessible*>(actionAcc)->State() & states::LINKED) {
+          // Text and image descendants of links expose the link URL as the
+          // value.
+          return actionAcc->Value(aValue);
+        }
       }
     }
   }
@@ -400,7 +420,6 @@ Accessible* RemoteAccessibleBase<Derived>::ChildAtPoint(
 
 template <class Derived>
 Maybe<nsRect> RemoteAccessibleBase<Derived>::RetrieveCachedBounds() const {
-  MOZ_ASSERT(mCachedFields);
   if (!mCachedFields) {
     return Nothing();
   }
@@ -484,15 +503,18 @@ void RemoteAccessibleBase<Derived>::ApplyScrollOffset(nsRect& aBounds) const {
 
 template <class Derived>
 nsRect RemoteAccessibleBase<Derived>::BoundsInAppUnits() const {
-  dom::CanonicalBrowsingContext* cbc =
-      static_cast<dom::BrowserParent*>(mDoc->Manager())
-          ->GetBrowsingContext()
-          ->Top();
-  dom::BrowserParent* bp = cbc->GetBrowserParent();
-  nsPresContext* presContext =
-      bp->GetOwnerElement()->OwnerDoc()->GetPresContext();
-  return LayoutDeviceIntRect::ToAppUnits(Bounds(),
-                                         presContext->AppUnitsPerDevPixel());
+  if (dom::CanonicalBrowsingContext* cbc = mDoc->GetBrowsingContext()->Top()) {
+    if (dom::BrowserParent* bp = cbc->GetBrowserParent()) {
+      DocAccessibleParent* topDoc = bp->GetTopLevelDocAccessible();
+      if (topDoc && topDoc->mCachedFields) {
+        auto appUnitsPerDevPixel = topDoc->mCachedFields->GetAttribute<int32_t>(
+            nsGkAtoms::_moz_device_pixel_ratio);
+        MOZ_ASSERT(appUnitsPerDevPixel);
+        return LayoutDeviceIntRect::ToAppUnits(Bounds(), *appUnitsPerDevPixel);
+      }
+    }
+  }
+  return LayoutDeviceIntRect::ToAppUnits(Bounds(), AppUnitsPerCSSPixel());
 }
 
 template <class Derived>
@@ -586,7 +608,10 @@ LayoutDeviceIntRect RemoteAccessibleBase<Derived>::BoundsWithOffset(
     // This block is not thread safe because it queries a LocalAccessible.
     // It is also not needed in Android since the only local accessible is
     // the outer doc browser that has an offset of 0.
-    if (LocalAccessible* localAcc = const_cast<Accessible*>(acc)->AsLocal()) {
+    // acc could be null if the OuterDocAccessible died before the top level
+    // DocAccessibleParent.
+    if (LocalAccessible* localAcc =
+            acc ? const_cast<Accessible*>(acc)->AsLocal() : nullptr) {
       // LocalAccessible::Bounds returns screen-relative bounds in
       // dev pixels.
       LayoutDeviceIntRect localBounds = localAcc->Bounds();
@@ -608,6 +633,56 @@ LayoutDeviceIntRect RemoteAccessibleBase<Derived>::BoundsWithOffset(
 template <class Derived>
 LayoutDeviceIntRect RemoteAccessibleBase<Derived>::Bounds() const {
   return BoundsWithOffset(Nothing());
+}
+
+template <class Derived>
+Relation RemoteAccessibleBase<Derived>::RelationByType(
+    RelationType aType) const {
+  // We are able to handle some relations completely in the
+  // parent process, without the help of the cache. Those
+  // relations are enumerated here. Other relations, whose
+  // types are stored in kRelationTypeAtoms, are processed
+  // below using the cache.
+  if (aType == RelationType::CONTAINING_TAB_PANE) {
+    if (dom::CanonicalBrowsingContext* cbc = mDoc->GetBrowsingContext()) {
+      if (dom::CanonicalBrowsingContext* topCbc = cbc->Top()) {
+        if (dom::BrowserParent* bp = topCbc->GetBrowserParent()) {
+          return Relation(bp->GetTopLevelDocAccessible());
+        }
+      }
+    }
+    return Relation();
+  }
+
+  Relation rel;
+  if (!mCachedFields) {
+    return rel;
+  }
+
+  for (auto data : kRelationTypeAtoms) {
+    if (data.mType != aType ||
+        (data.mValidTag && TagName() != data.mValidTag)) {
+      continue;
+    }
+
+    if (auto maybeIds =
+            mCachedFields->GetAttribute<nsTArray<uint64_t>>(data.mAtom)) {
+      rel.AppendIter(new RemoteAccIterator(*maybeIds, Document()));
+    }
+    // Each relation type has only one relevant cached attribute,
+    // so break after we've handled the attr for this type,
+    // even if we didn't find any targets.
+    break;
+  }
+
+  if (auto accRelMapEntry = mDoc->mReverseRelations.Lookup(ID())) {
+    if (auto reverseIdsEntry =
+            accRelMapEntry.Data().Lookup(static_cast<uint64_t>(aType))) {
+      rel.AppendIter(new RemoteAccIterator(reverseIdsEntry.Data(), Document()));
+    }
+  }
+
+  return rel;
 }
 
 template <class Derived>
@@ -637,6 +712,104 @@ void RemoteAccessibleBase<Derived>::AppendTextTo(nsAString& aText,
     aText += kImaginaryEmbeddedObjectChar;
   } else {
     aText += kEmbeddedObjectChar;
+  }
+}
+
+template <class Derived>
+nsTArray<bool> RemoteAccessibleBase<Derived>::PreProcessRelations(
+    AccAttributes* aFields) {
+  nsTArray<bool> updateTracker(ArrayLength(kRelationTypeAtoms));
+  for (auto const& data : kRelationTypeAtoms) {
+    if (data.mValidTag) {
+      // The relation we're currently processing only applies to particular
+      // elements. Check to see if we're one of them.
+      nsAtom* tag = TagName();
+      if (!tag) {
+        // TagName() returns null on an initial cache push -- check aFields
+        // for a tag name instead.
+        if (auto maybeTag =
+                aFields->GetAttribute<RefPtr<nsAtom>>(nsGkAtoms::tag)) {
+          tag = *maybeTag;
+        }
+      }
+      MOZ_ASSERT(
+          tag || IsTextLeaf(),
+          "Could not fetch tag via TagName() or from initial cache push!");
+      if (tag != data.mValidTag) {
+        // If this rel doesn't apply to us, do no pre-processing. Also,
+        // note in our updateTracker that we should do no post-processing.
+        updateTracker.AppendElement(false);
+        continue;
+      }
+    }
+
+    if (!data.mReverseType) {
+      updateTracker.AppendElement(false);
+      continue;
+    }
+
+    nsStaticAtom* const relAtom = data.mAtom;
+    auto newRelationTargets =
+        aFields->GetAttribute<nsTArray<uint64_t>>(relAtom);
+    bool shouldAddNewImplicitRels =
+        newRelationTargets && newRelationTargets->Length();
+
+    // Remove existing implicit relations if we need to perform an update, or
+    // if we've recieved a DeleteEntry(). Only do this if mCachedFields is
+    // initialized. If mCachedFields is not initialized, we still need to
+    // construct the update array so we correctly handle reverse rels in
+    // PostProcessRelations.
+    if ((shouldAddNewImplicitRels ||
+         aFields->GetAttribute<DeleteEntry>(relAtom)) &&
+        mCachedFields) {
+      if (auto maybeOldIDs =
+              mCachedFields->GetAttribute<nsTArray<uint64_t>>(relAtom)) {
+        for (uint64_t id : *maybeOldIDs) {
+          // For each target, fetch its reverse relation map
+          nsTHashMap<nsUint64HashKey, nsTArray<uint64_t>>& reverseRels =
+              Document()->mReverseRelations.LookupOrInsert(id);
+          // Then fetch its reverse relation's ID list
+          nsTArray<uint64_t>& reverseRelIDs = reverseRels.LookupOrInsert(
+              static_cast<uint64_t>(*data.mReverseType));
+          //  There might be other reverse relations stored for this acc, so
+          //  remove our ID instead of deleting the array entirely.
+          DebugOnly<bool> removed = reverseRelIDs.RemoveElement(ID());
+          MOZ_ASSERT(removed, "Can't find old reverse relation");
+        }
+      }
+    }
+
+    updateTracker.AppendElement(shouldAddNewImplicitRels);
+  }
+
+  return updateTracker;
+}
+
+template <class Derived>
+void RemoteAccessibleBase<Derived>::PostProcessRelations(
+    const nsTArray<bool>& aToUpdate) {
+  size_t updateCount = aToUpdate.Length();
+  MOZ_ASSERT(updateCount == ArrayLength(kRelationTypeAtoms),
+             "Did not note update status for every relation type!");
+  for (size_t i = 0; i < updateCount; i++) {
+    if (aToUpdate.ElementAt(i)) {
+      // Since kRelationTypeAtoms was used to generate aToUpdate, we
+      // know the ith entry of aToUpdate corresponds to the relation type in
+      // the ith entry of kRelationTypeAtoms. Fetch the related data here.
+      auto const& data = kRelationTypeAtoms[i];
+
+      const nsTArray<uint64_t>& newIDs =
+          *mCachedFields->GetAttribute<nsTArray<uint64_t>>(data.mAtom);
+      for (uint64_t id : newIDs) {
+        nsTHashMap<nsUint64HashKey, nsTArray<uint64_t>>& relations =
+            Document()->mReverseRelations.LookupOrInsert(id);
+        MOZ_ASSERT(data.mReverseType,
+                   "Updating implicit rels, but no implicit rel exists?");
+        nsTArray<uint64_t>& ids =
+            relations.LookupOrInsert(static_cast<uint64_t>(*data.mReverseType));
+        ids.AppendElement(ID());
+      }
+    }
   }
 }
 
@@ -759,6 +932,38 @@ uint64_t RemoteAccessibleBase<Derived>::State() {
       // we've since been notified of a style change invalidating that state.
       state &= ~states::OPAQUE1;
     }
+
+    auto* cbc = mDoc->GetBrowsingContext();
+    if (cbc && !cbc->IsActive()) {
+      // If our browsing context is _not_ active, we're in a background tab
+      // and inherently offscreen.
+      state |= states::OFFSCREEN;
+    } else if (this == mDoc) {
+      // mDoc is not stored in its own viewport cache, so we handle it
+      // separately here. See bug 1774197.
+      // We assume top level tab docs are on screen if their BC is active, so
+      // we don't need additional handling for them here. We still need to trap
+      // the case where `this == mDoc && AsDoc()->IsTopLevel()`, otherwise we'll
+      // fail to find mDoc in the following `else if` case, and incorrectly
+      // return the top-level tab document as offscreen.
+      if (!AsDoc()->IsTopLevel()) {
+        // Otherwise, if we're dealing with an iframe (OOP or in process) in the
+        // active browsing context, we use its Outer Doc's position in the
+        // embedding document's viewport to determine if the iframe has been
+        // scrolled offscreen.
+        Accessible* parent = Parent();
+        MOZ_ASSERT(parent && parent->IsRemote(),
+                   "Could not find remote parent for embedded content doc?");
+        RemoteAccessible* outerDoc = parent->AsRemote();
+        DocAccessibleParent* embeddingDocument = outerDoc->Document();
+        if (embeddingDocument &&
+            !embeddingDocument->mOnScreenAccessibles.Contains(outerDoc->ID())) {
+          state |= states::OFFSCREEN;
+        }
+      }
+    } else if (!mDoc->mOnScreenAccessibles.Contains(ID())) {
+      state |= states::OFFSCREEN;
+    }
   }
   auto* browser = static_cast<dom::BrowserParent*>(Document()->Manager());
   if (browser == dom::BrowserParent::GetFocused()) {
@@ -772,6 +977,13 @@ uint64_t RemoteAccessibleBase<Derived>::State() {
 template <class Derived>
 already_AddRefed<AccAttributes> RemoteAccessibleBase<Derived>::Attributes() {
   RefPtr<AccAttributes> attributes = new AccAttributes();
+  nsAccessibilityService* accService = GetAccService();
+  if (!accService) {
+    // The service can be shut down before RemoteAccessibles. If it is shut
+    // down, we can't calculate some attributes. We're about to die anyway.
+    return attributes.forget();
+  }
+
   if (mCachedFields) {
     // We use GetAttribute instead of GetAttributeRefPtr because we need
     // nsAtom, not const nsAtom.
@@ -818,31 +1030,36 @@ already_AddRefed<AccAttributes> RemoteAccessibleBase<Derived>::Attributes() {
       attributes->SetAttribute(nsGkAtoms::layout_guess, layoutGuess);
     }
 
-    if (auto ariaAttrs = GetCachedARIAAttributes()) {
-      ariaAttrs->CopyTo(attributes);
-    }
+    accService->MarkupAttributes(this, attributes);
 
+    const nsRoleMapEntry* roleMap = ARIARoleMap();
     nsAutoString role;
     mCachedFields->GetAttribute(nsGkAtoms::role, role);
     if (role.IsEmpty()) {
-      bool found = false;
-      if (const nsRoleMapEntry* roleMap = ARIARoleMap()) {
-        if (roleMap->roleAtom != nsGkAtoms::_empty) {
-          // Single, known role.
-          attributes->SetAttribute(nsGkAtoms::xmlroles, roleMap->roleAtom);
-          found = true;
-        }
-      }
-      if (!found) {
-        if (nsAtom* landmark = LandmarkRole()) {
-          // Landmark role from markup; e.g. HTML <main>.
-          attributes->SetAttribute(nsGkAtoms::xmlroles, landmark);
-        }
+      if (roleMap && roleMap->roleAtom != nsGkAtoms::_empty) {
+        // Single, known role.
+        attributes->SetAttribute(nsGkAtoms::xmlroles, roleMap->roleAtom);
+      } else if (nsAtom* landmark = LandmarkRole()) {
+        // Landmark role from markup; e.g. HTML <main>.
+        attributes->SetAttribute(nsGkAtoms::xmlroles, landmark);
       }
     } else {
       // Unknown role or multiple roles.
       attributes->SetAttribute(nsGkAtoms::xmlroles, std::move(role));
     }
+
+    if (roleMap) {
+      nsAutoString live;
+      if (nsAccUtils::GetLiveAttrValue(roleMap->liveAttRule, live)) {
+        attributes->SetAttribute(nsGkAtoms::aria_live, std::move(live));
+      }
+    }
+
+    if (auto ariaAttrs = GetCachedARIAAttributes()) {
+      ariaAttrs->CopyTo(attributes);
+    }
+
+    nsAccUtils::SetLiveContainerAttributes(attributes, this);
   }
 
   nsAutoString name;
@@ -886,6 +1103,34 @@ Maybe<float> RemoteAccessibleBase<Derived>::Opacity() const {
   }
 
   return Nothing();
+}
+
+template <class Derived>
+void RemoteAccessibleBase<Derived>::LiveRegionAttributes(
+    nsAString* aLive, nsAString* aRelevant, Maybe<bool>* aAtomic,
+    nsAString* aBusy) const {
+  if (!mCachedFields) {
+    return;
+  }
+  RefPtr<const AccAttributes> attrs = GetCachedARIAAttributes();
+  if (!attrs) {
+    return;
+  }
+  if (aLive) {
+    attrs->GetAttribute(nsGkAtoms::aria_live, *aLive);
+  }
+  if (aRelevant) {
+    attrs->GetAttribute(nsGkAtoms::aria_relevant, *aRelevant);
+  }
+  if (aAtomic) {
+    if (auto value =
+            attrs->GetAttribute<RefPtr<nsAtom>>(nsGkAtoms::aria_atomic)) {
+      *aAtomic = Some(*value == nsGkAtoms::_true);
+    }
+  }
+  if (aBusy) {
+    attrs->GetAttribute(nsGkAtoms::aria_busy, *aBusy);
+  }
 }
 
 template <class Derived>
@@ -956,6 +1201,17 @@ bool RemoteAccessibleBase<Derived>::DoAction(uint8_t aIndex) const {
 
   Unused << mDoc->SendDoActionAsync(mID, aIndex);
   return true;
+}
+
+template <class Derived>
+KeyBinding RemoteAccessibleBase<Derived>::AccessKey() const {
+  if (mCachedFields) {
+    if (auto value =
+            mCachedFields->GetAttribute<uint64_t>(nsGkAtoms::accesskey)) {
+      return KeyBinding(*value);
+    }
+  }
+  return KeyBinding();
 }
 
 template <class Derived>

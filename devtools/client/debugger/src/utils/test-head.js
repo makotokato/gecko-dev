@@ -83,7 +83,6 @@ function createSourceObject(filename, props = {}) {
     id: filename,
     url: makeSourceURL(filename),
     thread: props.thread || "FakeThread",
-    isBlackBoxed: !!props.isBlackBoxed,
     isPrettyPrinted: false,
     isExtension: false,
     isOriginal: filename.includes("originalSource"),
@@ -120,9 +119,7 @@ function createMakeSource() {
           return false;
         },
         getCachedFront(typeName) {
-          if (typeName == "thread") {
-            return { actorID: "FakeThread" };
-          }
+          return typeName == "thread" ? { actorID: "FakeThread" } : null;
         },
       },
       // Allow to use custom ID's for reducer source objects
@@ -132,7 +129,6 @@ function createMakeSource() {
       sourceMapBaseURL: props.sourceMapBaseURL || null,
       sourceMapURL: props.sourceMapURL || null,
       introductionType: props.introductionType || null,
-      isBlackBoxed: !!props.isBlackBoxed,
       extensionName: null,
     };
   };

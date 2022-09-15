@@ -4,7 +4,6 @@
 
 "use strict";
 const { Ci } = require("chrome");
-const Services = require("Services");
 
 loader.lazyRequireGetter(
   this,
@@ -56,6 +55,12 @@ class NetworkEventContentWatcher {
       this.httpOnImageCacheResponse,
       "http-on-image-cache-response"
     );
+  }
+  /**
+   * Allows clearing of network events
+   */
+  clear() {
+    this._networkEvents.clear();
   }
 
   get conn() {
@@ -229,6 +234,7 @@ class NetworkEventContentWatcher {
   }
 
   destroy() {
+    this.clear();
     Services.obs.removeObserver(
       this.httpFailedOpeningRequest,
       "http-on-failed-opening-request"

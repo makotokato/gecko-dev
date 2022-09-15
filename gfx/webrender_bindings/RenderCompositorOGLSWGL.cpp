@@ -133,7 +133,10 @@ EGLSurface RenderCompositorOGLSWGL::CreateEGLSurface() {
   surface = gl::GLContextEGL::CreateEGLSurfaceForCompositorWidget(
       mWidget, gl::GLContextEGL::Cast(GetGLContext())->mConfig);
   if (surface == EGL_NO_SURFACE) {
-    gfxCriticalNote << "Failed to create EGLSurface";
+    const auto* renderThread = RenderThread::Get();
+    gfxCriticalNote << "Failed to create EGLSurface. "
+                    << renderThread->RendererCount() << " renderers, "
+                    << renderThread->ActiveRendererCount() << " active.";
   }
 
   // The subsequent render after creating a new surface must be a full render.
@@ -197,7 +200,7 @@ void RenderCompositorOGLSWGL::HandleExternalImage(
   // since the effect doesn't hold a strong reference.
   RefPtr<SurfaceTextureSource> layer = new SurfaceTextureSource(
       (TextureSourceProvider*)mCompositor, host->mSurfTex, host->mFormat,
-      target, wrapMode, host->mSize, host->mIgnoreTransform);
+      target, wrapMode, host->mSize, host->mTransformOverride);
   RefPtr<TexturedEffect> texturedEffect =
       CreateTexturedEffect(host->mFormat, layer, aFrameSurface.mFilter,
                            /* isAlphaPremultiplied */ true);

@@ -315,16 +315,14 @@ xpcAccessible::GetAccessKey(nsAString& aAccessKey) {
 
   if (!IntlGeneric()) return NS_ERROR_FAILURE;
 
-  if (RemoteAccessible* proxy = IntlGeneric()->AsRemote()) {
 #if defined(XP_WIN)
+  if (IntlGeneric()->IsRemote() &&
+      !StaticPrefs::accessibility_cache_enabled_AtStartup()) {
     return NS_ERROR_NOT_IMPLEMENTED;
-#else
-    proxy->AccessKey().ToString(aAccessKey);
-#endif
-  } else {
-    Intl()->AccessKey().ToString(aAccessKey);
   }
+#endif
 
+  IntlGeneric()->AccessKey().ToString(aAccessKey);
   return NS_OK;
 }
 
@@ -333,15 +331,10 @@ xpcAccessible::GetKeyboardShortcut(nsAString& aKeyBinding) {
   aKeyBinding.Truncate();
   if (!IntlGeneric()) return NS_ERROR_FAILURE;
 
-  if (RemoteAccessible* proxy = IntlGeneric()->AsRemote()) {
-#if defined(XP_WIN)
+  if (IntlGeneric()->IsRemote()) {
     return NS_ERROR_NOT_IMPLEMENTED;
-#else
-    proxy->KeyboardShortcut().ToString(aKeyBinding);
-#endif
-  } else {
-    Intl()->KeyboardShortcut().ToString(aKeyBinding);
   }
+  Intl()->KeyboardShortcut().ToString(aKeyBinding);
   return NS_OK;
 }
 
@@ -498,17 +491,9 @@ xpcAccessible::GetRelationByType(uint32_t aType,
 
   if (!IntlGeneric()) return NS_ERROR_FAILURE;
 
-  if (IntlGeneric()->IsLocal()) {
-    Relation rel = Intl()->RelationByType(static_cast<RelationType>(aType));
-    NS_ADDREF(*aRelation = new nsAccessibleRelation(aType, &rel));
-    return NS_OK;
-  }
-
-  RemoteAccessible* proxy = IntlGeneric()->AsRemote();
-  nsTArray<RemoteAccessible*> targets =
-      proxy->RelationByType(static_cast<RelationType>(aType));
-  NS_ADDREF(*aRelation = new nsAccessibleRelation(aType, &targets));
-
+  Relation rel =
+      IntlGeneric()->RelationByType(static_cast<RelationType>(aType));
+  NS_ADDREF(*aRelation = new nsAccessibleRelation(aType, &rel));
   return NS_OK;
 }
 
@@ -567,15 +552,7 @@ xpcAccessible::GetFocusedChild(nsIAccessible** aChild) {
 
   if (!IntlGeneric()) return NS_ERROR_FAILURE;
 
-  if (RemoteAccessible* proxy = IntlGeneric()->AsRemote()) {
-#if defined(XP_WIN)
-    return NS_ERROR_NOT_IMPLEMENTED;
-#else
-    NS_IF_ADDREF(*aChild = ToXPC(proxy->FocusedChild()));
-#endif
-  } else {
-    NS_IF_ADDREF(*aChild = ToXPC(Intl()->FocusedChild()));
-  }
+  NS_IF_ADDREF(*aChild = ToXPC(IntlGeneric()->FocusedChild()));
 
   return NS_OK;
 }

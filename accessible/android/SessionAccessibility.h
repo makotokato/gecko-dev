@@ -46,6 +46,7 @@ class SessionAccessibility final
 
   static void Init();
   static RefPtr<SessionAccessibility> GetInstanceFor(Accessible* aAccessible);
+  static RefPtr<SessionAccessibility> GetInstanceFor(PresShell* aPresShell);
 
   // Native implementations
   using Base::AttachNative;
@@ -79,7 +80,7 @@ class SessionAccessibility final
                                      int32_t aCaretOffset);
   void SendTextTraversedEvent(Accessible* aAccessible, int32_t aStartOffset,
                               int32_t aEndOffset);
-  void SendTextChangedEvent(Accessible* aAccessible, const nsString& aStr,
+  void SendTextChangedEvent(Accessible* aAccessible, const nsAString& aStr,
                             int32_t aStart, uint32_t aLen, bool aIsInsert,
                             bool aFromUser);
   void SendSelectedEvent(Accessible* aAccessible, bool aSelected);
@@ -87,7 +88,8 @@ class SessionAccessibility final
   void SendWindowContentChangedEvent();
   void SendWindowStateChangedEvent(Accessible* aAccessible);
   void SendAnnouncementEvent(Accessible* aAccessible,
-                             const nsString& aAnnouncement, uint16_t aPriority);
+                             const nsAString& aAnnouncement,
+                             uint16_t aPriority);
 
   // Cache methods
   void ReplaceViewportCache(
@@ -104,15 +106,14 @@ class SessionAccessibility final
 
   void UpdateAccessibleFocusBoundaries(Accessible* aFirst, Accessible* aLast);
 
-  Accessible* GetAccessibleByID(int32_t aID) const {
-    return mIDToAccessibleMap.Get(aID);
-  }
+  Accessible* GetAccessibleByID(int32_t aID) const;
 
   static const int32_t kNoID = -1;
   static const int32_t kUnsetID = 0;
 
   static void RegisterAccessible(Accessible* aAccessible);
   static void UnregisterAccessible(Accessible* aAccessible);
+  static void UnregisterAll(PresShell* aPresShell);
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(SessionAccessibility)
 

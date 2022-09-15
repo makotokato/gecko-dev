@@ -354,7 +354,7 @@ mozHunspell::LoadDictionariesFromDir(nsIFile* aDir) {
     if (NS_FAILED(rv) || !check) continue;
 
     // Replace '_' separator with '-'
-    dict.ReplaceChar("_", '-');
+    dict.ReplaceChar('_', '-');
 
     nsCOMPtr<nsIURI> uri;
     rv = NS_NewFileURI(getter_AddRefs(uri), file);
@@ -419,6 +419,7 @@ nsresult mozHunspell::DictionaryData::LoadIfNecessary() {
       RLBoxHunspell::Create(mAffixFileName, dictFileName));
   if (!hunspell) {
     mLoadFailed = true;
+    // TODO Bug 1788857: Verify error propagation in case of inaccessible file
     return NS_ERROR_OUT_OF_MEMORY;
   }
   mHunspell = std::move(hunspell);

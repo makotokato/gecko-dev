@@ -24,21 +24,18 @@
 #include "builtin/SelfHostingDefines.h"
 #include "ds/Sort.h"
 #include "gc/GCContext.h"
-#include "gc/Marking.h"
-#include "js/CallAndConstruct.h"      // JS::IsCallable
+#include "js/ForOfIterator.h"         // JS::ForOfIterator
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertySpec.h"
-#include "js/Proxy.h"
 #include "util/DifferentialTesting.h"
 #include "util/Poison.h"
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
-#include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
-#include "vm/JSScript.h"
 #include "vm/NativeObject.h"  // js::PlainObject
 #include "vm/Shape.h"
+#include "vm/StringType.h"
 #include "vm/TypedArrayObject.h"
 #include "vm/WellKnownAtom.h"  // js_*_str
 
@@ -47,12 +44,8 @@
 #  include "builtin/TupleObject.h"
 #endif
 
-#include "vm/Compartment-inl.h"
-#include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
 #include "vm/PlainObject-inl.h"  // js::PlainObject::createWithTemplate
-#include "vm/Stack-inl.h"
-#include "vm/StringType-inl.h"
 
 using namespace js;
 
@@ -709,7 +702,10 @@ JS_PUBLIC_API bool js::GetPropertyKeys(JSContext* cx, HandleObject obj,
                   props);
 }
 
-static inline void RegisterEnumerator(ObjectRealm& realm, NativeIterator* ni) {
+static inline void RegisterEnumerator(NativeIterator* ni) {
+  MOZ_ASSERT(ni->objectBeingIterated());
+  ObjectRealm& realm = ObjectRealm::get(ni->objectBeingIterated());
+
   // Register non-escaping native enumerators (for-in) with the current
   // context.
   ni->link(realm.enumerators);
@@ -773,16 +769,10 @@ static PropertyIteratorObject* CreatePropertyIterator(
 
   // This also registers |ni| with |propIter|.
   bool hadError = false;
-  NativeIterator* ni = new (mem) NativeIterator(
-      cx, propIter, objBeingIterated, props, numShapes, shapesHash, &hadError);
+  new (mem) NativeIterator(cx, propIter, objBeingIterated, props, numShapes,
+                           shapesHash, &hadError);
   if (hadError) {
     return nullptr;
-  }
-
-  ObjectRealm& realm = objBeingIterated ? ObjectRealm::get(objBeingIterated)
-                                        : ObjectRealm::get(propIter);
-  if (!ni->isEmptyIteratorSingleton()) {
-    RegisterEnumerator(realm, ni);
   }
 
   return propIter;
@@ -1047,8 +1037,8 @@ static JSObject* GetIterator(JSContext* cx, HandleObject obj) {
   if (PropertyIteratorObject* iterobj =
           LookupInIteratorCache(cx, obj, &numShapes)) {
     NativeIterator* ni = iterobj->getNativeIterator();
-    ni->changeObjectBeingIterated(*obj);
-    RegisterEnumerator(ObjectRealm::get(obj), ni);
+    ni->initObjectBeingIterated(*obj);
+    RegisterEnumerator(ni);
     return iterobj;
   }
 
@@ -1081,6 +1071,7 @@ static JSObject* GetIterator(JSContext* cx, HandleObject obj) {
   if (!iterobj) {
     return nullptr;
   }
+  RegisterEnumerator(iterobj->getNativeIterator());
 
   cx->check(iterobj);
 
@@ -1395,7 +1386,7 @@ PropertyIteratorObject* GlobalObject::getOrCreateEmptyIterator(JSContext* cx) {
     if (!iter) {
       return nullptr;
     }
-    MOZ_ASSERT(iter->getNativeIterator()->isEmptyIteratorSingleton());
+    iter->getNativeIterator()->markEmptyIteratorSingleton();
     cx->global()->data().emptyIterator.init(iter);
   }
   return cx->global()->data().emptyIterator;
@@ -1440,6 +1431,8 @@ void js::CloseIterator(JSObject* obj) {
 
   MOZ_ASSERT(ni->isActive());
   ni->markInactive();
+
+  ni->clearObjectBeingIterated();
 
   // Reset the enumerator; it may still be in the cached iterators for
   // this thread and can be reused.
@@ -1932,4 +1925,33 @@ IteratorHelperObject* js::NewIteratorHelper(JSContext* cx) {
     return nullptr;
   }
   return NewObjectWithGivenProto<IteratorHelperObject>(cx, proto);
+}
+
+bool js::IterableToArray(JSContext* cx, HandleValue iterable,
+                         MutableHandle<ArrayObject*> array) {
+  JS::ForOfIterator iterator(cx);
+  if (!iterator.init(iterable, JS::ForOfIterator::ThrowOnNonIterable)) {
+    return false;
+  }
+
+  array.set(NewDenseEmptyArray(cx));
+  if (!array) {
+    return false;
+  }
+
+  RootedValue nextValue(cx);
+  while (true) {
+    bool done;
+    if (!iterator.next(&nextValue, &done)) {
+      return false;
+    }
+    if (done) {
+      break;
+    }
+
+    if (!NewbornArrayPush(cx, array, nextValue)) {
+      return false;
+    }
+  }
+  return true;
 }

@@ -15,6 +15,7 @@ use api::{NotificationRequest, Checkpoint, QualitySettings};
 use api::{PrimitiveKeyKind, RenderReasons};
 use api::units::*;
 use api::channel::{single_msg_channel, Sender, Receiver};
+use crate::AsyncPropertySampler;
 #[cfg(any(feature = "capture", feature = "replay"))]
 use crate::render_api::CaptureBits;
 #[cfg(feature = "replay")]
@@ -41,7 +42,7 @@ use crate::prim_store::{PrimitiveInstanceKind, PrimTemplateCommonData};
 use crate::prim_store::interned::*;
 use crate::profiler::{self, TransactionProfile};
 use crate::render_task_graph::RenderTaskGraphBuilder;
-use crate::renderer::{AsyncPropertySampler, FullFrameStats, PipelineInfo};
+use crate::renderer::{FullFrameStats, PipelineInfo};
 use crate::resource_cache::ResourceCache;
 #[cfg(feature = "replay")]
 use crate::resource_cache::PlainCacheOwn;
@@ -67,6 +68,7 @@ use std::path::PathBuf;
 #[cfg(feature = "replay")]
 use crate::frame_builder::Frame;
 use time::precise_time_ns;
+use core::time::Duration;
 use crate::util::{Recycler, VecHelper, drain_filter};
 
 #[cfg_attr(feature = "capture", derive(Serialize))]
@@ -914,6 +916,7 @@ impl RenderBackend {
                 txn.invalidate_rendered_frame,
                 frame_counter,
                 has_built_scene,
+                None,
             );
         }
 
@@ -957,6 +960,9 @@ impl RenderBackend {
 
                 for (_, doc) in &mut self.documents {
                     doc.scratch.memory_pressure();
+                    for tile_cache in self.tile_caches.values_mut() {
+                        tile_cache.memory_pressure(&mut self.resource_cache);
+                    }
                 }
 
                 let resource_updates = self.resource_cache.pending_updates();
@@ -972,16 +978,6 @@ impl RenderBackend {
             }
             ApiMsg::DebugCommand(option) => {
                 let msg = match option {
-                    DebugCommand::EnableDualSourceBlending(enable) => {
-                        // Set in the config used for any future documents
-                        // that are created.
-                        self.frame_config
-                            .dual_source_blending_is_enabled = enable;
-                        self.update_frame_builder_config();
-
-                        // We don't want to forward this message to the renderer.
-                        return RenderBackendStatus::Continue;
-                    }
                     DebugCommand::SetPictureTileSize(tile_size) => {
                         self.frame_config.tile_size_override = tile_size;
                         self.update_frame_builder_config();
@@ -1261,7 +1257,8 @@ impl RenderBackend {
                 txn.generate_frame.id(),
                 txn.invalidate_rendered_frame,
                 frame_counter,
-                false
+                false,
+                txn.creation_time,
             );
         }
         if built_frame {
@@ -1299,7 +1296,8 @@ impl RenderBackend {
                     None,
                     false,
                     frame_counter,
-                    false);
+                    false,
+                    None);
             }
             #[cfg(feature = "capture")]
             match built_frame {
@@ -1321,6 +1319,7 @@ impl RenderBackend {
         invalidate_rendered_frame: bool,
         frame_counter: &mut u32,
         has_built_scene: bool,
+        start_time: Option<u64>
     ) -> bool {
         let requested_frame = render_frame;
 
@@ -1391,6 +1390,9 @@ impl RenderBackend {
         }
 
         if build_frame {
+            if start_time.is_some() {
+              Telemetry::record_time_to_frame_build(Duration::from_nanos(precise_time_ns() - start_time.unwrap()));
+            }
             profile_scope!("generate frame");
 
             *frame_counter += 1;

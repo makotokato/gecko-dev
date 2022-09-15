@@ -26,6 +26,7 @@
 
 #include "WrapperFactory.h"
 #include "AccessCheck.h"
+#include "JSServices.h"
 
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/dom/BindingUtils.h"
@@ -119,7 +120,6 @@ nsXPConnect::~nsXPConnect() {
                            JS::GCReason::XPCONNECT_SHUTDOWN);
 
   XPCWrappedNativeScope::SystemIsBeingShutDown();
-  mRuntime->SystemIsBeingShutDown();
 
   // The above causes us to clean up a bunch of XPConnect data structures,
   // after which point we need to GC to clean everything up. We need to do
@@ -510,6 +510,10 @@ bool InitGlobalObject(JSContext* aJSContext, JS::Handle<JSObject*> aGlobal,
     // XPCCallContext gives us an active request needed to save/restore.
     if (!ObjectScope(aGlobal)->AttachComponentsObject(aJSContext) ||
         !XPCNativeWrapper::AttachNewConstructorObject(aJSContext, aGlobal)) {
+      return UnexpectedFailure(false);
+    }
+
+    if (!mozJSModuleLoader::Get()->DefineJSServices(aJSContext, aGlobal)) {
       return UnexpectedFailure(false);
     }
   }

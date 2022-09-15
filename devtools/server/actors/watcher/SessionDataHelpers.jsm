@@ -31,8 +31,8 @@ if (typeof module == "object") {
     true
   );
 } else {
-  const { XPCOMUtils } = ChromeUtils.import(
-    "resource://gre/modules/XPCOMUtils.jsm"
+  const { XPCOMUtils } = ChromeUtils.importESModule(
+    "resource://gre/modules/XPCOMUtils.sys.mjs"
   );
   // Ignore the "duplicate" definitions here as this are also defined
   // in the if block above.
@@ -67,7 +67,7 @@ const SUPPORTED_DATA = {
 // Optional function, if data isn't a primitive data type in order to produce a key
 // for the given data entry
 const DATA_KEY_FUNCTION = {
-  [SUPPORTED_DATA.BLACKBOXING]: function({ url, range }) {
+  [SUPPORTED_DATA.BLACKBOXING]({ url, range }) {
     return (
       url +
       (range
@@ -75,21 +75,21 @@ const DATA_KEY_FUNCTION = {
         : "")
     );
   },
-  [SUPPORTED_DATA.BREAKPOINTS]: function({ location }) {
+  [SUPPORTED_DATA.BREAKPOINTS]({ location }) {
     lazy.validateBreakpointLocation(location);
     const { sourceUrl, sourceId, line, column } = location;
     return `${sourceUrl}:${sourceId}:${line}:${column}`;
   },
-  [SUPPORTED_DATA.TARGET_CONFIGURATION]: function({ key }) {
+  [SUPPORTED_DATA.TARGET_CONFIGURATION]({ key }) {
     // Configuration data entries are { key, value } objects, `key` can be used
     // as the unique identifier for the entry.
     return key;
   },
-  [SUPPORTED_DATA.THREAD_CONFIGURATION]: function({ key }) {
+  [SUPPORTED_DATA.THREAD_CONFIGURATION]({ key }) {
     // See target configuration comment
     return key;
   },
-  [SUPPORTED_DATA.XHR_BREAKPOINTS]: function({ path, method }) {
+  [SUPPORTED_DATA.XHR_BREAKPOINTS]({ path, method }) {
     if (typeof path != "string") {
       throw new Error(
         `XHR Breakpoints expect to have path string, got ${typeof path} instead.`
@@ -102,7 +102,7 @@ const DATA_KEY_FUNCTION = {
     }
     return `${path}:${method}`;
   },
-  [SUPPORTED_DATA.EVENT_BREAKPOINTS]: function(id) {
+  [SUPPORTED_DATA.EVENT_BREAKPOINTS](id) {
     if (typeof id != "string") {
       throw new Error(
         `Event Breakpoints expect the id to be a string , got ${typeof id} instead.`
@@ -143,6 +143,9 @@ const SessionDataHelpers = {
     const toBeAdded = [];
     const keyFunction = DATA_KEY_FUNCTION[type] || idFunction;
     for (const entry of entries) {
+      if (!sessionData[type]) {
+        sessionData[type] = [];
+      }
       const existingIndex = sessionData[type].findIndex(existingEntry => {
         return keyFunction(existingEntry) === keyFunction(entry);
       });
@@ -176,9 +179,11 @@ const SessionDataHelpers = {
     let includesAtLeastOne = false;
     const keyFunction = DATA_KEY_FUNCTION[type] || idFunction;
     for (const entry of entries) {
-      const idx = sessionData[type].findIndex(existingEntry => {
-        return keyFunction(existingEntry) === keyFunction(entry);
-      });
+      const idx = sessionData[type]
+        ? sessionData[type].findIndex(existingEntry => {
+            return keyFunction(existingEntry) === keyFunction(entry);
+          })
+        : -1;
       if (idx !== -1) {
         sessionData[type].splice(idx, 1);
         includesAtLeastOne = true;

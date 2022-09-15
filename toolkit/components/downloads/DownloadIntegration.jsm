@@ -20,9 +20,8 @@ const { Downloads } = ChromeUtils.import(
 const { Integration } = ChromeUtils.import(
   "resource://gre/modules/Integration.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -81,11 +80,6 @@ XPCOMUtils.defineLazyServiceGetter(
   "gExternalProtocolService",
   "@mozilla.org/uriloader/external-protocol-service;1",
   "nsIExternalProtocolService"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "RuntimePermissions",
-  "resource://gre/modules/RuntimePermissions.jsm"
 );
 
 XPCOMUtils.defineLazyGetter(lazy, "gParentalControlsService", function() {
@@ -418,21 +412,6 @@ var DownloadIntegration = {
   },
 
   /**
-   * Checks to determine whether to block downloads for not granted runtime permissions.
-   *
-   * @return {Promise}
-   * @resolves The boolean indicates to block downloads or not.
-   */
-  async shouldBlockForRuntimePermissions() {
-    return (
-      AppConstants.platform == "android" &&
-      !(await lazy.RuntimePermissions.waitForPermissions(
-        lazy.RuntimePermissions.WRITE_EXTERNAL_STORAGE
-      ))
-    );
-  },
-
-  /**
    * Checks to determine whether to block downloads because they might be
    * malware, based on application reputation checks.
    *
@@ -722,16 +701,10 @@ var DownloadIntegration = {
       fileExtension &&
       fileExtension.toLowerCase() == "exe";
 
-    let isExemptExecutableExtension = false;
-    try {
-      let url = new URL(aDownload.source.url);
-      isExemptExecutableExtension = Services.policies.isExemptExecutableExtension(
-        url.origin,
-        fileExtension?.toLowerCase()
-      );
-    } catch (e) {
-      // Invalid URL, go down the original path.
-    }
+    let isExemptExecutableExtension = Services.policies.isExemptExecutableExtension(
+      aDownload.source.url,
+      fileExtension
+    );
 
     // Ask for confirmation if the file is executable, except for .exe on
     // Windows where the operating system will show the prompt based on the

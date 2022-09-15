@@ -3,9 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const {
@@ -32,11 +31,9 @@ ChromeUtils.defineModuleGetter(
   "PartnerLinkAttribution",
   "resource:///modules/PartnerLinkAttribution.jsm"
 );
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PlacesUtils",
-  "resource://gre/modules/PlacesUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+});
 ChromeUtils.defineModuleGetter(
   lazy,
   "PrivateBrowsingUtils",
@@ -280,6 +277,11 @@ class PlacesFeed {
       private: isPrivate,
       targetBrowser: action._target.browser,
       fromChrome: false, // This ensure we maintain user preference for how to open new tabs.
+      globalHistoryOptions: {
+        triggeringSponsoredURL: action.data.sponsored_tile_id
+          ? action.data.url
+          : undefined,
+      },
     };
 
     // Always include the referrer (even for http links) if we have one
@@ -352,11 +354,11 @@ class PlacesFeed {
       let utmCampaign = pocketNewtabExperiment?.slug;
       let utmContent = pocketNewtabExperiment?.branch?.slug;
 
-      const url = new URL(`https://${pocketSiteHost}/ff_signup`);
-      url.searchParams.append("utmSource", utmSource);
+      const url = new URL(`https://${pocketSiteHost}/signup`);
+      url.searchParams.append("utm_source", utmSource);
       if (utmCampaign && utmContent) {
-        url.searchParams.append("utmCampaign", utmCampaign);
-        url.searchParams.append("utmContent", utmContent);
+        url.searchParams.append("utm_campaign", utmCampaign);
+        url.searchParams.append("utm_content", utmContent);
       }
 
       const win = browser.ownerGlobal;

@@ -21,10 +21,8 @@ declare namespace MockedExports {
    * This interface teaches ChromeUtils.import how to find modules.
    */
   interface KnownModules {
-    "resource://gre/modules/Services.jsm": typeof import("resource://gre/modules/Services.jsm");
     Services: typeof import("Services");
     chrome: typeof import("chrome");
-    "resource://gre/modules/osfile.jsm": typeof import("resource://gre/modules/osfile.jsm");
     "resource://gre/modules/AppConstants.jsm": typeof import("resource://gre/modules/AppConstants.jsm");
     "resource:///modules/CustomizableUI.jsm": typeof import("resource:///modules/CustomizableUI.jsm");
     "resource:///modules/CustomizableWidgets.jsm": typeof import("resource:///modules/CustomizableWidgets.jsm");
@@ -197,10 +195,6 @@ declare namespace MockedExports {
     };
   };
 
-  const ServicesJSM: {
-    Services: Services;
-  };
-
   const EventEmitter: {
     decorate: (target: object) => void;
   };
@@ -208,25 +202,6 @@ declare namespace MockedExports {
   const AppConstantsJSM: {
     AppConstants: {
       platform: string;
-    };
-  };
-
-  const osfileJSM: {
-    OS: {
-      Path: {
-        split: (
-          path: string
-        ) => {
-          absolute: boolean;
-          components: string[];
-          winDrive?: string;
-        };
-        join: (...pathParts: string[]) => string;
-      };
-      File: {
-        stat: (path: string) => Promise<{ isDir: boolean }>;
-        Error: any;
-      };
     };
   };
 
@@ -312,6 +287,7 @@ declare namespace MockedExports {
     Cc: Cc;
     Ci: Ci;
     Cu: Cu;
+    Services: Services;
   };
 
   interface FluentLocalization {
@@ -356,10 +332,6 @@ declare module "devtools/shared/event-emitter2" {
   export = MockedExports.EventEmitter;
 }
 
-declare module "resource://gre/modules/Services.jsm" {
-  export = MockedExports.ServicesJSM;
-}
-
 declare module "Services" {
   export = MockedExports.Services;
 }
@@ -370,10 +342,6 @@ declare module "chrome" {
 
 declare module "ChromeUtils" {
   export = ChromeUtils;
-}
-
-declare module "resource://gre/modules/osfile.jsm" {
-  export = MockedExports.osfileJSM;
 }
 
 declare module "resource://gre/modules/AppConstants.jsm" {
@@ -419,6 +387,7 @@ declare var PathUtils: PathUtilsInterface;
 declare var Cu: MockedExports.Cu;
 declare var Cc: MockedExports.Cc;
 declare var Ci: MockedExports.Ci;
+declare var Services: MockedExports.Services;
 
 /**
  * This is a variant on the normal Document, as it contains chrome-specific properties.

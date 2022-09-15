@@ -7,12 +7,10 @@
 #ifndef vm_Realm_h
 #define vm_Realm_h
 
-#include "mozilla/Atomics.h"
-#include "mozilla/LinkedList.h"
+#include "mozilla/Array.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/TimeStamp.h"
-#include "mozilla/Tuple.h"
 #include "mozilla/Variant.h"
 #include "mozilla/XorShift128PlusRNG.h"
 
@@ -21,16 +19,14 @@
 #include "builtin/Array.h"
 #include "gc/Barrier.h"
 #include "js/GCVariant.h"
+#include "js/RealmOptions.h"
 #include "js/TelemetryTimers.h"
 #include "js/UniquePtr.h"
 #include "vm/ArrayBufferObject.h"
-#include "vm/Compartment.h"
-#include "vm/NativeObject.h"
-#include "vm/PlainObject.h"    // js::PlainObject
+#include "vm/JSContext.h"
 #include "vm/PromiseLookup.h"  // js::PromiseLookup
 #include "vm/RegExpShared.h"
 #include "vm/SavedStacks.h"
-#include "vm/Time.h"
 #include "wasm/WasmRealm.h"
 
 namespace js {
@@ -44,13 +40,12 @@ class JitRealm;
 }  // namespace jit
 
 class AutoRestoreRealmDebugMode;
+class Debugger;
 class GlobalObject;
 class GlobalObjectData;
 class GlobalLexicalEnvironmentObject;
-class MapObject;
 class NonSyntacticLexicalEnvironmentObject;
-class ScriptSourceObject;
-class SetObject;
+struct IdValuePair;
 struct NativeIterator;
 
 /*
@@ -125,6 +120,25 @@ class NewProxyCache {
     entries_[0].shape = shape;
   }
   void purge() { entries_.reset(); }
+};
+
+// Cache for NewPlainObjectWithProperties. When the list of properties matches
+// a recently created object's shape, we can use this shape directly.
+class NewPlainObjectWithPropsCache {
+  static const size_t NumEntries = 4;
+  mozilla::Array<Shape*, NumEntries> entries_;
+
+ public:
+  NewPlainObjectWithPropsCache() { purge(); }
+
+  Shape* lookup(IdValuePair* properties, size_t nproperties) const;
+  void add(Shape* shape);
+
+  void purge() {
+    for (size_t i = 0; i < NumEntries; i++) {
+      entries_[i] = nullptr;
+    }
+  }
 };
 
 // [SMDOC] Object MetadataBuilder API
@@ -221,7 +235,6 @@ struct IteratorHashPolicy {
 
 class DebugEnvironments;
 class ObjectWeakMap;
-class WeakMapBase;
 
 // ObjectRealm stores various tables and other state associated with particular
 // objects in a realm. To make sure the correct ObjectRealm is used for an
@@ -404,6 +417,7 @@ class JS::Realm : public JS::shadow::Realm {
 
   js::DtoaCache dtoaCache;
   js::NewProxyCache newProxyCache;
+  js::NewPlainObjectWithPropsCache newPlainObjectWithPropsCache;
   js::ArraySpeciesLookup arraySpeciesLookup;
   js::PromiseLookup promiseLookup;
 
@@ -430,6 +444,17 @@ class JS::Realm : public JS::shadow::Realm {
   // NukeCrossCompartmentWrappers is called with the NukeAllReferences option.
   // This prevents us from creating new wrappers for the compartment.
   bool nukedIncomingWrappers = false;
+
+  // Enable async stack capturing for this realm even if
+  // JS::ContextOptions::asyncStackCaptureDebuggeeOnly_ is true.
+  //
+  // No-op when JS::ContextOptions::asyncStack_ is false, or
+  // JS::ContextOptions::asyncStackCaptureDebuggeeOnly_ is false.
+  //
+  // This can be used as a lightweight alternative for making the global
+  // debuggee, if the async stack capturing is necessary but no other debugging
+  // features are used.
+  bool isAsyncStackCapturingEnabled = false;
 
  private:
   void updateDebuggerObservesFlag(unsigned flag);

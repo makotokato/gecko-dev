@@ -8,6 +8,7 @@
 #include "mozilla/MFMediaEngineParent.h"
 #include "mozilla/MFMediaEngineUtils.h"
 #include "mozilla/StaticPrefs_media.h"
+#include "mozilla/WindowsVersion.h"
 
 namespace mozilla {
 
@@ -24,6 +25,13 @@ void MFMediaEngineDecoderModule::Init() {
 already_AddRefed<PlatformDecoderModule> MFMediaEngineDecoderModule::Create() {
   RefPtr<MFMediaEngineDecoderModule> module = new MFMediaEngineDecoderModule();
   return module.forget();
+}
+
+/* static */
+bool MFMediaEngineDecoderModule::SupportsConfig(const TrackInfo& aConfig) {
+  RefPtr<MFMediaEngineDecoderModule> module = new MFMediaEngineDecoderModule();
+  return module->SupportInternal(SupportDecoderParams(aConfig), nullptr) !=
+         media::DecodeSupport::Unsupported;
 }
 
 already_AddRefed<MediaDataDecoder>
@@ -90,11 +98,73 @@ media::DecodeSupportSet MFMediaEngineDecoderModule::SupportInternal(
   if (!StaticPrefs::media_wmf_media_engine_enabled()) {
     return media::DecodeSupport::Unsupported;
   }
-  // TODO : ask media engine or simply ask WMFDecoderModule? I guess the
-  // internal implementation of MFMediaEngine should be using MFT, so they
-  // should be the same in term of support types. Implement this when we
-  // start implementing media engine in following patches.
-  return media::DecodeSupport::SoftwareDecode;
+  bool supports = false;
+  WMFStreamType type = GetStreamTypeFromMimeType(aParams.MimeType());
+  if (type != WMFStreamType::Unknown) {
+    supports = CanCreateMFTDecoder(type);
+  }
+  MOZ_LOG(sPDMLog, LogLevel::Debug,
+          ("MFMediaEngine decoder %s requested type '%s'",
+           supports ? "supports" : "rejects", aParams.MimeType().get()));
+  return supports ? media::DecodeSupport::SoftwareDecode
+                  : media::DecodeSupport::Unsupported;
+}
+
+static bool CreateMFTDecoderOnMTA(const WMFStreamType& aType) {
+  RefPtr<MFTDecoder> decoder = new MFTDecoder();
+  static std::unordered_map<WMFStreamType, bool> sResults;
+  if (auto rv = sResults.find(aType); rv != sResults.end()) {
+    return rv->second;
+  }
+
+  bool result = false;
+  switch (aType) {
+    case WMFStreamType::MP3:
+      result = SUCCEEDED(decoder->Create(CLSID_CMP3DecMediaObject));
+      break;
+    case WMFStreamType::AAC:
+      result = SUCCEEDED(decoder->Create(CLSID_CMSAACDecMFT));
+      break;
+    // Opus and vorbis are supported via extension.
+    // https://www.microsoft.com/en-us/p/web-media-extensions/9n5tdp8vcmhs
+    case WMFStreamType::OPUS:
+      result = SUCCEEDED(decoder->Create(CLSID_MSOpusDecoder));
+      break;
+    case WMFStreamType::VORBIS:
+      result = SUCCEEDED(decoder->Create(
+          MFT_CATEGORY_AUDIO_DECODER, MFAudioFormat_Vorbis, MFAudioFormat_PCM));
+      break;
+    case WMFStreamType::H264:
+      result = SUCCEEDED(decoder->Create(CLSID_CMSH264DecoderMFT));
+      break;
+    case WMFStreamType::VP8:
+    case WMFStreamType::VP9: {
+      static const uint32_t VPX_USABLE_BUILD = 16287;
+      if (IsWindowsBuildOrLater(VPX_USABLE_BUILD)) {
+        result = SUCCEEDED(decoder->Create(CLSID_CMSVPXDecMFT));
+      }
+      break;
+    }
+#ifdef MOZ_AV1
+    case WMFStreamType::AV1:
+      result = SUCCEEDED(decoder->Create(MFT_CATEGORY_VIDEO_DECODER,
+                                         MFVideoFormat_AV1, GUID_NULL));
+      break;
+#endif
+    default:
+      MOZ_ASSERT_UNREACHABLE("Unexpected type");
+  }
+  sResults.insert({aType, result});
+  return result;
+}
+
+bool MFMediaEngineDecoderModule::CanCreateMFTDecoder(
+    const WMFStreamType& aType) const {
+  // TODO : caching the result to prevent performing on MTA thread everytime.
+  bool canCreateDecoder = false;
+  mozilla::mscom::EnsureMTA(
+      [&]() { canCreateDecoder = CreateMFTDecoderOnMTA(aType); });
+  return canCreateDecoder;
 }
 
 #undef LOG

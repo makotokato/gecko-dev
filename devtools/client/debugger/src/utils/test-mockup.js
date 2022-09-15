@@ -13,17 +13,15 @@ import * as asyncValue from "./async-value";
 
 import { initialState } from "../reducers/index";
 
-import { getPathParts } from "./sources-tree/utils";
 import { getDisplayURL } from "./sources-tree/getURL";
 
 function makeMockSource(url = "url", id = "source", thread = "FakeThread") {
   return {
     id,
     url,
+    displayURL: getDisplayURL(url),
     thread,
-    isBlackBoxed: false,
     isPrettyPrinted: false,
-    relativeUrl: url,
     isWasm: false,
     extensionName: null,
     isExtension: false,
@@ -36,12 +34,7 @@ function makeMockDisplaySource(
   id = "source",
   thread = "FakeThread"
 ) {
-  const displayURL = getDisplayURL(url);
-  return {
-    ...makeMockSource(url, id, thread),
-    displayURL,
-    parts: getPathParts(displayURL, thread, "http://www.example.com"),
-  };
+  return makeMockSource(url, id, thread);
 }
 
 function makeMockSourceWithContent(
@@ -97,10 +90,9 @@ function makeMockWasmSource() {
   return {
     id: "wasm-source-id",
     url: "url",
+    displayURL: getDisplayURL("url"),
     thread: "FakeThread",
-    isBlackBoxed: false,
     isPrettyPrinted: false,
-    relativeUrl: "url",
     isWasm: true,
     extensionName: null,
     isExtension: false,

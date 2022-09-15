@@ -7,7 +7,6 @@
 #include "vm/Watchtower.h"
 
 #include "js/CallAndConstruct.h"
-#include "js/Id.h"
 #include "vm/Compartment.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
@@ -16,6 +15,7 @@
 
 #include "vm/Compartment-inl.h"
 #include "vm/JSObject-inl.h"
+#include "vm/Realm-inl.h"
 
 using namespace js;
 
@@ -245,7 +245,7 @@ bool Watchtower::watchFreezeOrSealSlow(JSContext* cx,
 }
 
 // static
-bool Watchtower::watchObjectSwapSlow(JSContext* cx, HandleObject a,
+void Watchtower::watchObjectSwapSlow(JSContext* cx, HandleObject a,
                                      HandleObject b) {
   MOZ_ASSERT(watchesObjectSwap(a, b));
 
@@ -256,18 +256,6 @@ bool Watchtower::watchObjectSwapSlow(JSContext* cx, HandleObject a,
     InvalidateMegamorphicCache(cx, b.as<NativeObject>());
   }
 
-  if (MOZ_UNLIKELY(a->useWatchtowerTestingCallback() ||
-                   b->useWatchtowerTestingCallback())) {
-    RootedValue extra(cx, ObjectValue(*b));
-    if (!InvokeWatchtowerCallback(cx, "object-swap", a, extra)) {
-      // The JSObject::swap caller unfortunately assumes failures are OOM and
-      // crashes. Ignore non-OOM exceptions for now.
-      if (cx->isThrowingOutOfMemory()) {
-        return false;
-      }
-      cx->clearPendingException();
-    }
-  }
-
-  return true;
+  // Note: we don't invoke the testing callback for swap because the objects may
+  // not be safe to expose to JS at this point. See bug 1754699.
 }

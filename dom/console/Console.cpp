@@ -113,7 +113,7 @@ class ConsoleCallData final {
       : mConsoleID(aConsole->mConsoleID),
         mPrefix(aConsole->mPrefix),
         mMethodName(aName),
-        mTimeStamp(JS_Now() / PR_USEC_PER_MSEC),
+        mMicroSecondTimeStamp(JS_Now()),
         mStartTimerValue(0),
         mStartTimerStatus(Console::eTimerUnknown),
         mLogTimerDuration(0),
@@ -159,7 +159,7 @@ class ConsoleCallData final {
   const nsString mPrefix;
 
   const Console::MethodName mMethodName;
-  int64_t mTimeStamp;
+  int64_t mMicroSecondTimeStamp;
 
   // These values are set in the owning thread and they contain the timestamp of
   // when the new timer has started, the name of it and the status of the
@@ -793,7 +793,7 @@ class ConsoleProfileWorkerRunnable final : public ConsoleWorkerRunnable {
   nsString mAction;
 };
 
-NS_IMPL_CYCLE_COLLECTION_MULTI_ZONE_JSHOLDER_CLASS(Console)
+NS_IMPL_CYCLE_COLLECTION_CLASS(Console)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Console)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mGlobal)
@@ -1613,7 +1613,8 @@ bool Console::PopulateConsoleNotificationInTheTargetScope(
   event.mLineNumber = frame.mLineNumber;
   event.mColumnNumber = frame.mColumnNumber;
   event.mFunctionName = frame.mFunctionName;
-  event.mTimeStamp = aData->mTimeStamp;
+  event.mTimeStamp = aData->mMicroSecondTimeStamp / PR_USEC_PER_MSEC;
+  event.mMicroSecondTimeStamp = aData->mMicroSecondTimeStamp;
   event.mPrivate = !!aData->mOriginAttributes.mPrivateBrowsingId;
 
   switch (aData->mMethodName) {
@@ -2599,8 +2600,7 @@ bool Console::MonotonicTimer(JSContext* aCx, MethodName aMethodName,
     *aTimeStamp = performance->Now();
 
     nsDocShell* docShell = static_cast<nsDocShell*>(win->GetDocShell());
-    RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
-    bool isTimelineRecording = timelines && timelines->HasConsumer(docShell);
+    bool isTimelineRecording = TimelineConsumers::HasConsumer(docShell);
 
     // The 'timeStamp' recordings do not need an argument; use empty string
     // if no arguments passed in.
@@ -2617,8 +2617,8 @@ bool Console::MonotonicTimer(JSContext* aCx, MethodName aMethodName,
         return false;
       }
 
-      timelines->AddMarkerForDocShell(docShell,
-                                      MakeUnique<TimestampTimelineMarker>(key));
+      TimelineConsumers::AddMarkerForDocShell(
+          docShell, MakeUnique<TimestampTimelineMarker>(key));
     }
     // For `console.time(foo)` and `console.timeEnd(foo)`.
     else if (isTimelineRecording && aData.Length() == 1) {
@@ -2633,7 +2633,7 @@ bool Console::MonotonicTimer(JSContext* aCx, MethodName aMethodName,
         return false;
       }
 
-      timelines->AddMarkerForDocShell(
+      TimelineConsumers::AddMarkerForDocShell(
           docShell,
           MakeUnique<ConsoleTimelineMarker>(key, aMethodName == MethodTime
                                                      ? MarkerTracingType::START
@@ -2817,7 +2817,7 @@ ConsoleLogLevel PrefToValue(const nsAString& aPref,
     message.AssignLiteral("Invalid Console.maxLogLevelPref value: ");
     message.Append(NS_ConvertUTF8toUTF16(value));
 
-    nsContentUtils::LogSimpleConsoleError(message, "chrome", false,
+    nsContentUtils::LogSimpleConsoleError(message, "chrome"_ns, false,
                                           true /* from chrome context*/);
     return aLevel;
   }

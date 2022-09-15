@@ -5,11 +5,16 @@
 "use strict";
 
 const { Cu } = require("chrome");
-const Services = require("Services");
 
 const {
   DevToolsShim,
 } = require("chrome://devtools-startup/content/DevToolsShim.jsm");
+
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  BrowserToolboxLauncher:
+    "resource://devtools/client/framework/browser-toolbox/Launcher.sys.mjs",
+});
 
 loader.lazyRequireGetter(
   this,
@@ -35,12 +40,14 @@ loader.lazyRequireGetter(
   "devtools/client/webconsole/browser-console-manager",
   true
 );
-loader.lazyRequireGetter(this, "Telemetry", "devtools/client/shared/telemetry");
-loader.lazyImporter(
+loader.lazyRequireGetter(
   this,
-  "BrowserToolboxLauncher",
-  "resource://devtools/client/framework/browser-toolbox/Launcher.jsm"
+  "Toolbox",
+  "devtools/client/framework/toolbox",
+  true
 );
+
+loader.lazyRequireGetter(this, "Telemetry", "devtools/client/shared/telemetry");
 
 const {
   defaultTools: DefaultTools,
@@ -73,6 +80,9 @@ function DevTools() {
   EventEmitter.decorate(this);
   this._telemetry = new Telemetry();
   this._telemetry.setEventRecordingEnabled(true);
+
+  // List of all commands of debugged local Web Extension.
+  this._commandsPromiseByWebExtId = new Map(); // Map<extensionId, commands>
 
   // Listen for changes to the theme pref.
   this._onThemeChanged = this._onThemeChanged.bind(this);
@@ -439,17 +449,17 @@ DevTools.prototype = {
    * @param {Object} state
    *                 A SessionStore state object that gets modified by reference
    */
-  saveDevToolsSession: function(state) {
+  saveDevToolsSession(state) {
     state.browserConsole = BrowserConsoleManager.getBrowserConsoleSessionState();
-    state.browserToolbox = BrowserToolboxLauncher.getBrowserToolboxSessionState();
+    state.browserToolbox = lazy.BrowserToolboxLauncher.getBrowserToolboxSessionState();
   },
 
   /**
    * Restore the devtools session state as provided by SessionStore.
    */
-  restoreDevToolsSession: async function({ browserConsole, browserToolbox }) {
+  async restoreDevToolsSession({ browserConsole, browserToolbox }) {
     if (browserToolbox) {
-      BrowserToolboxLauncher.init();
+      lazy.BrowserToolboxLauncher.init();
     }
 
     if (browserConsole && !BrowserConsoleManager.getBrowserConsole()) {
@@ -600,7 +610,7 @@ DevTools.prototype = {
         console.log(
           "Can't open a toolbox for this document as this is debugged from its opener tab"
         );
-        return;
+        return null;
       }
     }
     const descriptor = await TabDescriptorFactory.createDescriptorForTab(tab);
@@ -611,6 +621,40 @@ DevTools.prototype = {
       raise,
       reason,
       hostOptions,
+    });
+  },
+
+  /**
+   * Open a Toolbox in a dedicated top-level window for debugging a local WebExtension.
+   * This will re-open a previously opened toolbox if we try to re-debug the same extension.
+   *
+   * Note that this will spawn a new DevToolsClient.
+   *
+   * @param {String} extensionId
+   *        ID of the extension to debug.
+   */
+  async showToolboxForWebExtension(extensionId) {
+    // Ensure spawning only one commands instance per extension at a time by caching its commands.
+    // showToolbox will later reopen the previously opened toolbox if called with the same
+    // descriptor.
+    let commandsPromise = this._commandsPromiseByWebExtId.get(extensionId);
+    if (!commandsPromise) {
+      commandsPromise = CommandsFactory.forAddon(extensionId);
+      this._commandsPromiseByWebExtId.set(extensionId, commandsPromise);
+    }
+    const commands = await commandsPromise;
+    commands.client.once("closed").then(() => {
+      this._commandsPromiseByWebExtId.delete(extensionId);
+    });
+
+    // CommandsFactory.forAddon will spawn a new DevToolsClient.
+    // And by default, the WebExtensionDescriptor won't close the DevToolsClient
+    // when the toolbox closes and fronts are destroyed.
+    // Ensure we do close it, similarly to local tab debugging.
+    commands.descriptorFront.shouldCloseClient = true;
+
+    return this.showToolbox(commands.descriptorFront, {
+      hostType: Toolbox.HostType.WINDOW,
     });
   },
 
@@ -747,7 +791,7 @@ DevTools.prototype = {
    * Note that is will end up being cached in WebExtension codebase, via
    * DevToolsExtensionPageContextParent.getDevToolsCommands.
    */
-  createCommandsForTabForWebExtension: function(tab) {
+  createCommandsForTabForWebExtension(tab) {
     return CommandsFactory.forTab(tab, { isWebExtension: true });
   },
 
@@ -755,7 +799,7 @@ DevTools.prototype = {
    * Compatibility layer for web-extensions. Used by DevToolsShim for
    * toolkit/components/extensions/ext-c-toolkit.js
    */
-  openBrowserConsole: function() {
+  openBrowserConsole() {
     const {
       BrowserConsoleManager,
     } = require("devtools/client/webconsole/browser-console-manager");
@@ -885,6 +929,18 @@ DevTools.prototype = {
    */
   getToolboxes() {
     return Array.from(this._toolboxes.values());
+  },
+
+  /**
+   * Returns whether the given tab has toolbox.
+   *
+   * @param {XULTab} tab
+   *        The browser tab.
+   * @return {boolean}
+   *        Returns true if the tab has toolbox.
+   */
+  hasToolboxForTab(tab) {
+    return this.getToolboxes().some(t => t.descriptorFront.localTab === tab);
   },
 };
 

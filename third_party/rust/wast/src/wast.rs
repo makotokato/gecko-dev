@@ -1,8 +1,9 @@
-use crate::core::Expression;
+use crate::component::WastVal;
+use crate::core::{WastArgCore, WastRetCore};
 use crate::kw;
 use crate::parser::{self, Cursor, Parse, ParseBuffer, Parser, Peek, Result};
 use crate::token::{Id, Span};
-use crate::{AssertExpression, Error, Wat};
+use crate::{Error, Wat};
 
 /// A parsed representation of a `*.wast` file.
 ///
@@ -85,7 +86,7 @@ pub enum WastDirective<'a> {
     AssertReturn {
         span: Span,
         exec: WastExecute<'a>,
-        results: Vec<AssertExpression<'a>>,
+        results: Vec<WastRet<'a>>,
     },
     AssertExhaustion {
         span: Span,
@@ -227,7 +228,7 @@ impl<'a> Parse<'a> for WastExecute<'a> {
     }
 }
 
-fn parse_wat<'a>(parser: Parser<'a>) -> Result<Wat<'a>> {
+fn parse_wat(parser: Parser) -> Result<Wat> {
     // Note that this doesn't use `Parse for Wat` since the `parser` provided
     // has already peeled back the first layer of parentheses while `Parse for
     // Wat` expects to be the top layer which means it also tries to peel off
@@ -247,7 +248,7 @@ pub struct WastInvoke<'a> {
     pub span: Span,
     pub module: Option<Id<'a>>,
     pub name: &'a str,
-    pub args: Vec<Expression<'a>>,
+    pub args: Vec<WastArg<'a>>,
 }
 
 impl<'a> Parse<'a> for WastInvoke<'a> {
@@ -293,11 +294,11 @@ impl QuoteWat<'_> {
                     return Err(Error::new(*span, "malformed UTF-8 encoding".to_string()));
                 }
             }
-            ret.push_str(" ");
+            ret.push(' ');
         }
         if let Some(prefix) = prefix {
             ret.insert_str(0, prefix);
-            ret.push_str(")");
+            ret.push(')');
         }
         let buf = ParseBuffer::new(&ret)?;
         let mut wat = parser::parse::<Wat<'_>>(&buf)?;
@@ -325,6 +326,40 @@ impl<'a> Parse<'a> for QuoteWat<'a> {
             Ok(ctor(span, src))
         } else {
             Ok(QuoteWat::Wat(parse_wat(parser)?))
+        }
+    }
+}
+
+#[derive(Debug)]
+#[allow(missing_docs)]
+pub enum WastArg<'a> {
+    Core(WastArgCore<'a>),
+    Component(WastVal<'a>),
+}
+
+impl<'a> Parse<'a> for WastArg<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        if parser.peek::<WastArgCore<'_>>() {
+            Ok(WastArg::Core(parser.parse()?))
+        } else {
+            Ok(WastArg::Component(parser.parse()?))
+        }
+    }
+}
+
+#[derive(Debug)]
+#[allow(missing_docs)]
+pub enum WastRet<'a> {
+    Core(WastRetCore<'a>),
+    Component(WastVal<'a>),
+}
+
+impl<'a> Parse<'a> for WastRet<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        if parser.peek::<WastRetCore<'_>>() {
+            Ok(WastRet::Core(parser.parse()?))
+        } else {
+            Ok(WastRet::Component(parser.parse()?))
         }
     }
 }

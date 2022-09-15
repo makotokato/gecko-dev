@@ -621,6 +621,13 @@ class nsBlockFrame : public nsContainerFrame {
    */
   void ClearLineClampEllipsis();
 
+  /**
+   * Returns whether this block is in a -webkit-line-clamp context. That is,
+   * whether this block is in a block formatting-context whose root block has
+   * -webkit-line-clamp: <n>.
+   */
+  bool IsInLineClampContext() const;
+
  protected:
   /** @see DoRemoveFrame */
   void DoRemoveFrameInternal(nsIFrame* aDeletedFrame, uint32_t aFlags,
@@ -778,26 +785,10 @@ class nsBlockFrame : public nsContainerFrame {
                          LineIterator aLine, nsIFrame* aFrame,
                          LineReflowStatus* aLineReflowStatus);
 
-  // Compute the available size for a float.
-  mozilla::LogicalRect AdjustFloatAvailableSpace(
-      BlockReflowState& aState,
-      const mozilla::LogicalRect& aFloatAvailableSpace);
-  // Computes the border-box inline size of the float
-  nscoord ComputeFloatISize(BlockReflowState& aState,
-                            const mozilla::LogicalRect& aFloatAvailableSpace,
-                            nsIFrame* aFloat);
-  // An incomplete aReflowStatus indicates the float should be split
-  // but only if the available height is constrained.
-  // aAdjustedAvailableSpace is the result of calling
-  // nsBlockFrame::AdjustFloatAvailableSpace.
-  void ReflowFloat(BlockReflowState& aState,
-                   const mozilla::LogicalRect& aAdjustedAvailableSpace,
-                   nsIFrame* aFloat, mozilla::LogicalMargin& aFloatMargin,
-                   mozilla::LogicalMargin& aFloatOffsets,
-                   // Whether the float's position
-                   // (aAdjustedAvailableSpace) has been pushed down
-                   // due to the presence of other floats.
-                   bool aFloatPushedDown, nsReflowStatus& aReflowStatus);
+  // @param aReflowStatus an incomplete status indicates the float should be
+  //        split but only if the available block-size is constrained.
+  void ReflowFloat(BlockReflowState& aState, ReflowInput& aFloatRI,
+                   nsIFrame* aFloat, nsReflowStatus& aReflowStatus);
 
   //----------------------------------------
   // Methods for pushing/pulling lines/frames

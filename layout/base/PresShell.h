@@ -237,10 +237,10 @@ class PresShell final : public nsStubDocumentObserver,
 #endif  // #ifdef ACCESSIBILITY
 
   /**
-   * See `mLastOverWindowMouseLocation`.
+   * See `mLastOverWindowPointerLocation`.
    */
-  const nsPoint& GetLastOverWindowMouseLocation() const {
-    return mLastOverWindowMouseLocation;
+  const nsPoint& GetLastOverWindowPointerLocation() const {
+    return mLastOverWindowPointerLocation;
   }
 
   void Init(nsPresContext*, nsViewManager*);
@@ -346,15 +346,17 @@ class PresShell final : public nsStubDocumentObserver,
   MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult Initialize();
 
   /**
-   * Reflow the frame model into a new width and height.  The
+   * Schedule a reflow for the frame model into a new width and height.  The
    * coordinates for aWidth and aHeight must be in standard nscoord's.
+   *
+   * Returns whether layout might have changed.
    */
-  MOZ_CAN_RUN_SCRIPT nsresult
-  ResizeReflow(nscoord aWidth, nscoord aHeight,
-               ResizeReflowOptions = ResizeReflowOptions::NoOption);
-  MOZ_CAN_RUN_SCRIPT nsresult ResizeReflowIgnoreOverride(nscoord aWidth,
-                                                         nscoord aHeight,
-                                                         ResizeReflowOptions);
+  MOZ_CAN_RUN_SCRIPT void ResizeReflow(
+      nscoord aWidth, nscoord aHeight,
+      ResizeReflowOptions = ResizeReflowOptions::NoOption);
+  MOZ_CAN_RUN_SCRIPT bool ResizeReflowIgnoreOverride(
+      nscoord aWidth, nscoord aHeight,
+      ResizeReflowOptions = ResizeReflowOptions::NoOption);
 
   /**
    * Add this pres shell to the refresh driver to be observed for resize
@@ -382,9 +384,16 @@ class PresShell final : public nsStubDocumentObserver,
    * This is what ResizeReflowIgnoreOverride does when not shrink-wrapping (that
    * is, when ResizeReflowOptions::BSizeLimit is not specified).
    */
-  void SimpleResizeReflow(nscoord aWidth, nscoord aHeight, ResizeReflowOptions);
+  bool SimpleResizeReflow(nscoord aWidth, nscoord aHeight);
 
  public:
+  /**
+   * Updates pending layout, assuming reasonable (up-to-date, or mid-update for
+   * container queries) styling of the page. Returns whether a reflow did not
+   * get interrupted (and thus layout should be considered fully up-to-date).
+   */
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY bool DoFlushLayout(bool aInterruptible);
+
   /**
    * Note that the assumptions that determine whether we need a mobile viewport
    * manager may have changed.
@@ -482,6 +491,9 @@ class PresShell final : public nsStubDocumentObserver,
   void FlushPendingScrollAnchorSelections();
   void PostPendingScrollAnchorAdjustment(
       layout::ScrollAnchorContainer* aContainer);
+
+  void PostPendingScrollResnap(nsIScrollableFrame* aScrollableFrame);
+  void FlushPendingScrollResnap();
 
   void CancelAllPendingReflows();
 
@@ -588,27 +600,25 @@ class PresShell final : public nsStubDocumentObserver,
    * the rect is empty.
    * @param aVertical see ScrollContentIntoView and ScrollAxis
    * @param aHorizontal see ScrollContentIntoView and ScrollAxis
-   * @param aScrollFlags if SCROLL_FIRST_ANCESTOR_ONLY is set, only the
+   * @param aScrollFlags if ScrollFirstAncestorOnly is set, only the
    * nearest scrollable ancestor is scrolled, otherwise all
    * scrollable ancestors may be scrolled if necessary
-   * if SCROLL_OVERFLOW_HIDDEN is set then we may scroll in a direction
+   * if ScrollOverflowHidden is set then we may scroll in a direction
    * even if overflow:hidden is specified in that direction; otherwise
    * we will not scroll in that direction when overflow:hidden is
    * set for that direction
-   * If SCROLL_NO_PARENT_FRAMES is set then we only scroll
+   * If ScrollNoParentFrames is set then we only scroll
    * nodes in this document, not in any parent documents which
    * contain this document in a iframe or the like.
-   * If SCROLL_IGNORE_SCROLL_MARGIN_AND_PADDING is set we ignore scroll-margin
-   * value specified for |aFrame| and scroll-padding value for the scroll
-   * container. This option is typically used to locate poped-up frames into
-   * view.
+   * @param aTarget optional, specifying the targe frame where we want to scroll
+   * if it's different from aFrame.
    * @return true if any scrolling happened, false if no scrolling happened
    */
   MOZ_CAN_RUN_SCRIPT
   bool ScrollFrameRectIntoView(nsIFrame* aFrame, const nsRect& aRect,
                                const nsMargin& aMargin, ScrollAxis aVertical,
-                               ScrollAxis aHorizontal,
-                               ScrollFlags aScrollFlags);
+                               ScrollAxis aHorizontal, ScrollFlags aScrollFlags,
+                               const nsIFrame* aTarget = nullptr);
 
   /**
    * Suppress notification of the frame manager that frames are
@@ -1153,6 +1163,7 @@ class PresShell final : public nsStubDocumentObserver,
   bool HasHandledUserInput() const { return mHasHandledUserInput; }
 
   MOZ_CAN_RUN_SCRIPT void FireResizeEvent();
+  MOZ_CAN_RUN_SCRIPT void FireResizeEventSync();
 
   void NativeAnonymousContentRemoved(nsIContent* aAnonContent);
 
@@ -1259,6 +1270,11 @@ class PresShell final : public nsStubDocumentObserver,
   NS_IMETHOD RepaintSelection(RawSelectionType aRawSelectionType) override;
   void SelectionWillTakeFocus() override;
   void SelectionWillLoseFocus() override;
+
+  // Implements the "focus fix-up rule". Returns true if the focus moved (in
+  // which case we might need to update layout again).
+  // See https://github.com/whatwg/html/issues/8225
+  MOZ_CAN_RUN_SCRIPT bool FixUpFocus();
 
   /**
    * Set a "resolution" for the document, which if not 1.0 will
@@ -1728,11 +1744,19 @@ class PresShell final : public nsStubDocumentObserver,
    */
   void NotifyDestroyingFrame(nsIFrame* aFrame);
 
-#ifdef DEBUG
-  nsIFrame* GetDrawEventTargetFrame() { return mDrawEventTargetFrame; }
-#endif
-
   bool GetZoomableByAPZ() const;
+
+  /**
+   * If this frame has content hidden via `content-visibilty` that has a pending
+   * reflow, force the content to reflow immediately.
+   */
+  void EnsureReflowIfFrameHasHiddenContent(nsIFrame*);
+
+  /**
+   * Whether or not this presshell is  is forcing a reflow of hidden content in
+   * this frame via EnsureReflowIfFrameHasHiddenContent().
+   */
+  bool IsForcingLayoutForHiddenContent(const nsIFrame*) const;
 
  private:
   ~PresShell();
@@ -1976,9 +2000,15 @@ class PresShell final : public nsStubDocumentObserver,
     bool IsKeyPressEvent() override;
   };
 
+  /**
+   * return the nsPoint represents the location of the mouse event relative to
+   * the root document in visual coordinates
+   */
+  nsPoint GetEventLocation(const WidgetMouseEvent& aEvent) const;
+
   // Check if aEvent is a mouse event and record the mouse location for later
   // synth mouse moves.
-  void RecordMouseLocation(WidgetGUIEvent* aEvent);
+  void RecordPointerLocation(WidgetGUIEvent* aEvent);
   inline bool MouseLocationWasSetBySynthesizedMouseEventForTests() const;
   class nsSynthMouseMoveEvent final : public nsARefreshObserver {
    public:
@@ -2824,14 +2854,11 @@ class PresShell final : public nsStubDocumentObserver,
   MOZ_CAN_RUN_SCRIPT_BOUNDARY bool VerifyIncrementalReflow();
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void DoVerifyReflow();
   void VerifyHasDirtyRootAncestor(nsIFrame* aFrame);
-  void ShowEventTargetDebug();
 
   bool mInVerifyReflow = false;
   // The reflow root under which we're currently reflowing.  Null when
   // not in reflow.
   nsIFrame* mCurrentReflowRoot = nullptr;
-
-  nsIFrame* mDrawEventTargetFrame = nullptr;
 #endif  // #ifdef DEBUG
 
   // Send, and reset, the current per tick telemetry. This includes:
@@ -2988,6 +3015,9 @@ class PresShell final : public nsStubDocumentObserver,
   nsTHashSet<nsIFrame*> mFramesToDirty;
   nsTHashSet<nsIScrollableFrame*> mPendingScrollAnchorSelection;
   nsTHashSet<nsIScrollableFrame*> mPendingScrollAnchorAdjustment;
+  nsTHashSet<nsIScrollableFrame*> mPendingScrollResnap;
+
+  nsTHashSet<nsIContent*> mHiddenContentInForcedLayout;
 
   nsCallbackEventRequest* mFirstCallbackEventRequest = nullptr;
   nsCallbackEventRequest* mLastCallbackEventRequest = nullptr;
@@ -3001,8 +3031,9 @@ class PresShell final : public nsStubDocumentObserver,
   // NS_UNCONSTRAINEDSIZE) if the mouse isn't over our window or there is no
   // last observed mouse location for some reason.
   nsPoint mMouseLocation;
-  // The last mouse location (see `mMouseLocation`) which was over the window.
-  nsPoint mLastOverWindowMouseLocation;
+  // The last observed pointer location relative to that root document in visual
+  // coordinates.
+  nsPoint mLastOverWindowPointerLocation;
   // This is an APZ state variable that tracks the target guid for the last
   // mouse event that was processed (corresponding to mMouseLocation). This is
   // needed for the synthetic mouse events.

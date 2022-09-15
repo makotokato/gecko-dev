@@ -16,17 +16,19 @@
 
 #include "builtin/SelfHostingDefines.h"
 #include "gc/Barrier.h"
-#include "vm/Stack.h"
+#include "vm/NativeObject.h"
 
 namespace js {
 
+class ArrayObject;
 class PlainObject;
 class PropertyIteratorObject;
 
 struct NativeIterator {
  private:
-  // Object being iterated.  Non-null except in NativeIterator sentinels and
-  // empty property iterators created when |null| or |undefined| is iterated.
+  // Object being iterated.  Non-null except in NativeIterator sentinels,
+  // the empty iterator singleton (for iterating |null| or |undefined|), and
+  // inactive iterators.
   GCPtr<JSObject*> objectBeingIterated_ = {};
 
   // Internal iterator object.
@@ -78,6 +80,10 @@ struct NativeIterator {
     // remove it.
     static constexpr uint32_t HasUnvisitedPropertyDeletion = 0x4;
 
+    // Whether this is the shared empty iterator object used for iterating over
+    // null/undefined.
+    static constexpr uint32_t IsEmptyIteratorSingleton = 0x8;
+
     // If any of these bits are set on a |NativeIterator|, it isn't
     // currently reusable.  (An active |NativeIterator| can't be stolen
     // *right now*; a |NativeIterator| that's had its properties mutated
@@ -87,7 +93,7 @@ struct NativeIterator {
   };
 
  private:
-  static constexpr uint32_t FlagsBits = 3;
+  static constexpr uint32_t FlagsBits = 4;
   static constexpr uint32_t FlagsMask = (1 << FlagsBits) - 1;
 
  public:
@@ -133,7 +139,14 @@ struct NativeIterator {
 
   JSObject* objectBeingIterated() const { return objectBeingIterated_; }
 
-  void changeObjectBeingIterated(JSObject& obj) { objectBeingIterated_ = &obj; }
+  void initObjectBeingIterated(JSObject& obj) {
+    MOZ_ASSERT(!objectBeingIterated_);
+    objectBeingIterated_.init(&obj);
+  }
+  void clearObjectBeingIterated() {
+    MOZ_ASSERT(objectBeingIterated_);
+    objectBeingIterated_ = nullptr;
+  }
 
   GCPtr<Shape*>* shapesBegin() const {
     static_assert(
@@ -280,12 +293,20 @@ struct NativeIterator {
   // null/undefined.
   bool isEmptyIteratorSingleton() const {
     // Note: equivalent code is inlined in MacroAssembler::iteratorClose.
-    bool res = objectBeingIterated() == nullptr;
-    MOZ_ASSERT_IF(res, flags() == Flags::Initialized);
+    bool res = flags() & Flags::IsEmptyIteratorSingleton;
+    MOZ_ASSERT_IF(
+        res, flags() == (Flags::Initialized | Flags::IsEmptyIteratorSingleton));
+    MOZ_ASSERT_IF(res, !objectBeingIterated_);
     MOZ_ASSERT_IF(res, initialPropertyCount() == 0);
     MOZ_ASSERT_IF(res, shapeCount() == 0);
     MOZ_ASSERT_IF(res, isUnlinked());
     return res;
+  }
+  void markEmptyIteratorSingleton() {
+    flagsAndCount_ |= Flags::IsEmptyIteratorSingleton;
+
+    // isEmptyIteratorSingleton() has various debug assertions.
+    MOZ_ASSERT(isEmptyIteratorSingleton());
   }
 
   bool isActive() const {
@@ -527,6 +548,9 @@ class IteratorHelperObject : public NativeObject {
 };
 
 IteratorHelperObject* NewIteratorHelper(JSContext* cx);
+
+bool IterableToArray(JSContext* cx, HandleValue iterable,
+                     MutableHandle<ArrayObject*> array);
 
 } /* namespace js */
 

@@ -9,7 +9,6 @@ const {
 } = require("devtools/server/actors/resources/index");
 
 const { Ci, components } = require("chrome");
-const Services = require("Services");
 
 loader.lazyRequireGetter(
   this,
@@ -47,13 +46,20 @@ class NetworkEventStackTracesWatcher {
   }
 
   /**
+   * Allows clearing of network stacktrace resources
+   */
+  clear() {
+    this.stacktraces.clear();
+  }
+
+  /**
    * Stop watching for network event's strack traces related to a given Target Actor.
    *
    * @param TargetActor targetActor
    *        The target actor from which we should stop observing the strack traces
    */
   destroy(targetActor) {
-    this.stacktraces.clear();
+    this.clear();
     Services.obs.removeObserver(this, "http-on-opening-request");
     Services.obs.removeObserver(this, "document-on-opening-request");
     Services.obs.removeObserver(this, "network-monitor-alternate-stack");
@@ -185,9 +191,8 @@ class NetworkEventStackTracesWatcher {
       {
         resourceType: NETWORK_EVENT_STACKTRACE,
         resourceId,
-        stacktraceAvailable: stacktrace && stacktrace.length > 0,
-        lastFrame:
-          stacktrace && stacktrace.length > 0 ? stacktrace[0] : undefined,
+        stacktraceAvailable: stacktrace && !!stacktrace.length,
+        lastFrame: stacktrace && stacktrace.length ? stacktrace[0] : undefined,
       },
     ]);
   }

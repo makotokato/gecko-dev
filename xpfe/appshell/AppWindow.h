@@ -91,7 +91,8 @@ class AppWindow final : public nsIBaseWindow,
     MOZ_CAN_RUN_SCRIPT_BOUNDARY
     virtual mozilla::PresShell* GetPresShell() override;
     MOZ_CAN_RUN_SCRIPT_BOUNDARY
-    virtual bool WindowMoved(nsIWidget* aWidget, int32_t x, int32_t y) override;
+    virtual bool WindowMoved(nsIWidget* aWidget, int32_t x, int32_t y,
+                             ByMoveToRect) override;
     MOZ_CAN_RUN_SCRIPT_BOUNDARY
     virtual bool WindowResized(nsIWidget* aWidget, int32_t aWidth,
                                int32_t aHeight) override;
@@ -170,6 +171,7 @@ class AppWindow final : public nsIBaseWindow,
   MOZ_CAN_RUN_SCRIPT void MacFullscreenMenubarOverlapChanged(
       mozilla::DesktopCoord aOverlapAmount);
   MOZ_CAN_RUN_SCRIPT void OcclusionStateChanged(bool aIsFullyOccluded);
+  void RecomputeBrowsingContextVisibility();
   MOZ_CAN_RUN_SCRIPT void OSToolbarButtonPressed();
   MOZ_CAN_RUN_SCRIPT
   bool ZLevelChanged(bool aImmediate, nsWindowZ* aPlacement,
@@ -348,7 +350,7 @@ class AppWindow final : public nsIBaseWindow,
 
   nsCOMPtr<nsIRemoteTab> mPrimaryBrowserParent;
 
-  nsCOMPtr<nsITimer> mSPTimer GUARDED_BY(mSPTimerLock);
+  nsCOMPtr<nsITimer> mSPTimer MOZ_GUARDED_BY(mSPTimerLock);
   mozilla::Mutex mSPTimerLock;
   WidgetListenerDelegate mWidgetListenerDelegate;
 

@@ -8,8 +8,11 @@ Releases
    :glob:
    :hidden:
 
+   nss_3_82.rst
+   nss_3_81.rst
    nss_3_80.rst
    nss_3_79.rst
+   nss_3_79_1.rst
    nss_3_78_1.rst
    nss_3_78.rst
    nss_3_77.rst
@@ -37,33 +40,19 @@ Releases
 
 .. note::
 
-   **NSS 3.80** is the latest version of NSS.
-   Complete release notes are available here: :ref:`mozilla_projects_nss_nss_3_80_release_notes`
+   **NSS 3.82** is the latest version of NSS.
+   Complete release notes are available here: :ref:`mozilla_projects_nss_nss_3_82_release_notes`
 
-   **NSS 3.79** is the latest ESR version of NSS.
-   Complete release notes are available here: :ref:`mozilla_projects_nss_nss_3_79_release_notes`
+   **NSS 3.79.1** is the latest ESR version of NSS.
+   Complete release notes are available here: :ref:`mozilla_projects_nss_nss_3_79_1_release_notes`
 
 
 .. container::
 
-   Changes in 3.80 included in this release:
+   Changes in 3.82 included in this release:
 
-   - Bug 1774720 - Fix SEC_ERROR_ALGORITHM_MISMATCH entry in SECerrs.h.
-   - Bug 1617956 - Add support for asynchronous client auth hooks.
-   - Bug 1497537 - nss-policy-check: make unknown keyword check optional.
-   - Bug 1765383 - GatherBuffer: Reduced plaintext buffer allocations by allocating it on initialization. Replaced redundant code with assert. Debug builds: Added buffer freeing/allocation for each record.
-   - Bug 1773022 - Mark 3.79 as an ESR release.
-   - Bug 1764206 - Bump nssckbi version number for June.
-   - Bug 1759815 - Remove Hellenic Academic 2011 Root.
-   - Bug 1770267 - Add E-Tugra Roots.
-   - Bug 1768970 - Add Certainly Roots.
-   - Bug 1764392 - Add DigitCert Roots.
-   - Bug 1759794 - Protect SFTKSlot needLogin with slotLock.
-   - Bug 1366464 - Compare signature and signatureAlgorithm fields in legacy certificate verifier.
-   - Bug 1771497 - Uninitialized value in cert_VerifyCertChainOld.
-   - Bug 1771495 - Unchecked return code in sec_DecodeSigAlg.
-   - Bug 1771498 - Uninitialized value in cert_ComputeCertType.
-   - Bug 1760998 - Avoid data race on primary password change.
-   - Bug 1769063 - Replace ppc64 dcbzl intrinisic.
-   - Bug 1771036 - Allow LDFLAGS override in makefile builds.
-
+   - Bug 1330271 - check for null template in sec_asn1{d,e}_push_state
+   - Bug 1735925 - QuickDER: Forbid NULL tags with non-zero length
+   - Bug 1784724 - Initialize local variables in TlsConnectTestBase::ConnectAndCheckCipherSuite
+   - Bug 1784191 - Cast the result of GetProcAddress
+   - Bug 1681099 - pk11wrap: Tighten certificate lookup based on PKCS #11 URI

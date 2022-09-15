@@ -36,13 +36,10 @@ const known_scripts = {
     // Loaded by this test
     actorModuleURI,
 
-    "resource:///modules/StartupRecorder.jsm",
-
     // General utilities
     "resource://gre/modules/AppConstants.jsm",
     "resource://gre/modules/DeferredTask.jsm",
-    "resource://gre/modules/Services.jsm", // bug 1464542
-    "resource://gre/modules/XPCOMUtils.jsm",
+    "resource://gre/modules/XPCOMUtils.sys.mjs",
 
     // Logging related
     "resource://gre/modules/Log.jsm",
@@ -143,7 +140,7 @@ add_task(async function() {
     loadedInfo.processScripts[uri] = "";
   }
 
-  checkLoadedScripts({
+  await checkLoadedScripts({
     loadedInfo,
     known: known_scripts,
     intermittent: intermittently_loaded_scripts,

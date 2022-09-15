@@ -4,7 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const { debounce } = require("devtools/shared/debounce");
 const isMacOS = Services.appinfo.OS === "Darwin";
 
@@ -1076,7 +1075,7 @@ class JSTerm extends Component {
       return { preLabel, label, isElementAccess };
     });
 
-    if (items.length > 0) {
+    if (items.length) {
       const { preLabel, label } = items[0];
       let suffix = label.substring(preLabel.length);
       if (isElementAccess) {
@@ -1489,11 +1488,7 @@ class JSTerm extends Component {
   }
 
   renderEvaluationContextSelector() {
-    if (
-      !this.props.webConsoleUI.wrapper.toolbox ||
-      this.props.editorMode ||
-      !this.props.showEvaluationContextSelector
-    ) {
+    if (this.props.editorMode || !this.props.showEvaluationContextSelector) {
       return null;
     }
 

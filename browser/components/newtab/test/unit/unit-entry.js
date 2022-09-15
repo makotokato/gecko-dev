@@ -3,6 +3,8 @@ import Adapter from "enzyme-adapter-react-16";
 import { chaiAssertions } from "test/schemas/pings";
 import chaiJsonSchema from "chai-json-schema";
 import enzyme from "enzyme";
+import FxMSCommonSchema from "../../content-src/asrouter/schemas/FxMSCommon.schema.json";
+
 enzyme.configure({ adapter: new Adapter() });
 
 // Cause React warnings to make tests that trigger them fail
@@ -29,6 +31,7 @@ sinon.assert.expose(assert, { prefix: "" });
 
 chai.use(chaiAssertions);
 chai.use(chaiJsonSchema);
+chai.tv4.addSchema("file:///FxMSCommon.schema.json", FxMSCommonSchema);
 
 const overrider = new GlobalOverrider();
 
@@ -120,6 +123,9 @@ const TEST_GLOBAL = {
   AppConstants: {
     MOZILLA_OFFICIAL: true,
     MOZ_APP_VERSION: "69.0a1",
+    isChinaRepack() {
+      return false;
+    },
     isPlatformAndVersionAtMost() {
       return false;
     },
@@ -127,6 +133,16 @@ const TEST_GLOBAL = {
   },
   ASRouterPreferences: {
     console: new ConsoleAPI(),
+  },
+  BrowserUtils: {
+    sendToDeviceEmailsSupported() {
+      return true;
+    },
+  },
+  BuiltInThemes: {
+    findActiveColorwayCollection() {
+      return true;
+    },
   },
   UpdateUtils: { getUpdateChannel() {} },
   BasePromiseWorker: class {
@@ -139,10 +155,14 @@ const TEST_GLOBAL = {
   BrowserWindowTracker: { getTopWindow() {} },
   ChromeUtils: {
     defineModuleGetter: updateGlobalOrObject,
+    defineESModuleGetters: updateGlobalOrObject,
     generateQI() {
       return {};
     },
     import() {
+      return global;
+    },
+    importESModule() {
       return global;
     },
   },
@@ -532,14 +552,12 @@ const TEST_GLOBAL = {
       getVariable() {},
     },
     newtab: {
-      isEnabled() {},
       getVariable() {},
       getAllVariables() {},
       onUpdate() {},
       off() {},
     },
     pocketNewtab: {
-      isEnabled() {},
       getVariable() {},
       getAllVariables() {},
       onUpdate() {},
@@ -595,8 +613,48 @@ const TEST_GLOBAL = {
       locale: {
         set() {},
       },
+      newtabCategory: {
+        set() {},
+      },
+      homepageCategory: {
+        set() {},
+      },
+    },
+    newtabSearch: {
+      enabled: {
+        set() {},
+      },
+    },
+    pocket: {
+      enabled: {
+        set() {},
+      },
+      impression: {
+        record() {},
+      },
+      isSignedIn: {
+        set() {},
+      },
+      sponsoredStoriesEnabled: {
+        set() {},
+      },
+      click: {
+        record() {},
+      },
+      save: {
+        record() {},
+      },
+      topicClick: {
+        record() {},
+      },
     },
     topsites: {
+      enabled: {
+        set() {},
+      },
+      sponsoredEnabled: {
+        set() {},
+      },
       impression: {
         record() {},
       },
@@ -609,6 +667,9 @@ const TEST_GLOBAL = {
     newtab: {
       submit() {},
     },
+  },
+  Utils: {
+    SERVER_URL: "bogus://foo",
   },
 };
 overrider.set(TEST_GLOBAL);

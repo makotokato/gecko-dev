@@ -143,3 +143,72 @@
 .urlbarView-row[dynamicType=unitConversion] > .urlbarView-row-inner[selected] .urlbarView-dynamic-unitConversion-action {
   color: var(--autocomplete-popup-highlight-color);
 }
+
+.urlbarView-row[dynamicType=quickactions] > .urlbarView-row-inner {
+  align-items: start;
+}
+
+.urlbarView-row[dynamicType=quickactions] .urlbarView-dynamic-quickactions-buttons {
+  display: flex;
+  flex-grow: 1;
+  gap: 0.9em 1.8em;
+  max-width: calc(100% - 32px);
+}
+
+#urlbar[searchmode] .urlbarView-row[dynamicType=quickactions] .urlbarView-dynamic-quickactions-buttons {
+  flex-wrap: wrap;
+}
+
+.urlbarView-results[wrap] > .urlbarView-row[dynamicType=quickactions] > .urlbarView-row-inner {
+  flex-wrap: unset;
+}
+
+.urlbarView-row[dynamicType=quickactions] .urlbarView-quickaction-row {
+  box-shadow: 0px 0px 1px rgba(128, 128, 142, 0.9), 0px 0px 4px rgba(128, 128, 142, 0.5);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  padding: .5em;
+  margin-top: 2px;
+  position: relative;
+  overflow: hidden;
+}
+
+.urlbarView-row[dynamicType=quickactions] .urlbarView-quickaction-row[disabled] {
+  opacity: .4;
+}
+
+.urlbarView-row[dynamicType=quickactions] .urlbarView-label {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.urlbarView-row[dynamicType=quickactions] .urlbarView-favicon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.urlbarView-row[dynamicType=quickactions] .urlbarView-favicon-img {
+  width: 16px;
+  height: 16px;
+}
+
+.urlbarView-row[dynamicType=quickactions][label]::before {
+  top: -1em;
+  margin-inline-start: 6px;
+}
+
+.urlbarView-row[dynamicType=quickactions] .urlbarView-quickaction-row:hover:not([disabled]) {
+  background-color: var(--autocomplete-popup-highlight-background);
+}
+
+.urlbarView-row[dynamicType=quickactions] .urlbarView-quickaction-row[selected] {
+  background-color: var(--autocomplete-popup-highlight-background);
+  color: var(--autocomplete-popup-highlight-color);
+}
+
+.urlbarView-row[dynamicType=quickactions] .urlbarView-title,
+.urlbarView-row[dynamicType=quickactions] .urlbarView-label {
+  display: flex
+}

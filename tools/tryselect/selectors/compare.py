@@ -25,17 +25,24 @@ class CompareParser(BaseTryParser):
             },
         ],
     ]
+    common_groups = ["task"]
+    task_configs = [
+        "rebuild",
+    ]
 
 
 def run(compare_commit=None, **kwargs):
     vcs = get_repository_object(build.topsrcdir)
+
+    if compare_commit is None:
+        compare_commit = vcs.base_ref
     if vcs.branch:
         current_revision_ref = vcs.branch
     else:
         current_revision_ref = vcs.head_ref
 
     try:
-        fuzzy_run()
+        fuzzy_run(**kwargs)
         vcs.update(compare_commit)
         again_run()
     finally:

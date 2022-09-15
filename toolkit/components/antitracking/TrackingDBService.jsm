@@ -4,15 +4,10 @@
 
 "use strict";
 
-const { ComponentUtils } = ChromeUtils.import(
-  "resource://gre/modules/ComponentUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
-);
-const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 const { Sqlite } = ChromeUtils.import("resource://gre/modules/Sqlite.jsm");
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const SCHEMA_VERSION = 1;
 const TRACKERS_BLOCKED_COUNT = "contentblocking.trackers_blocked_count";
@@ -20,7 +15,7 @@ const TRACKERS_BLOCKED_COUNT = "contentblocking.trackers_blocked_count";
 const lazy = {};
 
 XPCOMUtils.defineLazyGetter(lazy, "DB_PATH", function() {
-  return OS.Path.join(OS.Constants.Path.profileDir, "protections.sqlite");
+  return PathUtils.join(PathUtils.profileDir, "protections.sqlite");
 });
 
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -126,7 +121,6 @@ function TrackingDBService() {
 TrackingDBService.prototype = {
   classID: Components.ID("{3c9c43b6-09eb-4ed2-9b87-e29f4221eef0}"),
   QueryInterface: ChromeUtils.generateQI(["nsITrackingDBService"]),
-  _xpcom_factory: ComponentUtils.generateSingletonFactory(TrackingDBService),
   // This is the connection to the database, opened in _initialize and closed on _shutdown.
   _db: null,
   waitingTasks: new Set(),

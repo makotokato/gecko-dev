@@ -210,7 +210,10 @@ void AssertTagValues() {
                     SCTAG_DOM_DOMMATRIX == 0xffff8013 &&
                     SCTAG_DOM_URLSEARCHPARAMS == 0xffff8014 &&
                     SCTAG_DOM_DOMMATRIXREADONLY == 0xffff8015 &&
-                    SCTAG_DOM_STRUCTUREDCLONETESTER == 0xffff8018,
+                    SCTAG_DOM_STRUCTUREDCLONETESTER == 0xffff8018 &&
+                    SCTAG_DOM_FILESYSTEMHANDLE == 0xffff8019 &&
+                    SCTAG_DOM_FILESYSTEMFILEHANDLE == 0xffff801a &&
+                    SCTAG_DOM_FILESYSTEMDIRECTORYHANDLE == 0xffff801b,
                 "Something has changed the sctag values. This is wrong!");
 }
 
@@ -373,6 +376,10 @@ void StructuredCloneHolder::Read(nsIGlobalObject* aGlobal, JSContext* aCx,
                                  const JS::CloneDataPolicy& aCloneDataPolicy,
                                  ErrorResult& aRv) {
   MOZ_ASSERT(aGlobal);
+  // Error stacks require the reading (deserialization) of principals, which is
+  // only possible on the main thread.
+  MOZ_ASSERT_IF(aCloneDataPolicy.areErrorStackFramesAllowed(),
+                NS_IsMainThread());
 
   mozilla::AutoRestore<nsIGlobalObject*> guard(mGlobal);
   auto errorMessageGuard = MakeScopeExit([&] { mErrorMessage.Truncate(); });
@@ -496,7 +503,11 @@ bool StructuredCloneHolder::WriteFullySerializableObjects(
   }
 
   // Don't know what this is
-  xpc::Throw(aCx, NS_ERROR_DOM_DATA_CLONE_ERR);
+  ErrorResult rv;
+  const char* className = JS::GetClass(obj)->name;
+  rv.ThrowDataCloneError(nsDependentCString(className) +
+                         " object could not be cloned."_ns);
+  MOZ_ALWAYS_TRUE(rv.MaybeSetPendingException(aCx));
   return false;
 }
 
@@ -1059,15 +1070,13 @@ bool StructuredCloneHolder::CustomWriteHandler(
   {
     ImageBitmap* imageBitmap = nullptr;
     if (NS_SUCCEEDED(UNWRAP_OBJECT(ImageBitmap, &obj, imageBitmap))) {
-      if (imageBitmap->IsWriteOnly()) {
-        return false;
-      }
-
       SameProcessScopeRequired(aSameProcessScopeRequired);
 
       if (CloneScope() == StructuredCloneScope::SameProcess) {
-        return ImageBitmap::WriteStructuredClone(aWriter, GetSurfaces(),
-                                                 imageBitmap);
+        ErrorResult rv;
+        ImageBitmap::WriteStructuredClone(aWriter, GetSurfaces(), imageBitmap,
+                                          rv);
+        return !rv.MaybeSetPendingException(aCx);
       }
       return false;
     }

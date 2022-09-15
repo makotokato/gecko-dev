@@ -162,7 +162,7 @@ template <class T>
 class StaticRefPtr;
 
 namespace dom {
-class ShmemImage;
+class IPCImage;
 struct AutocompleteInfo;
 class BrowserChild;
 class BrowserParent;
@@ -182,6 +182,7 @@ class Event;
 class EventTarget;
 class HTMLInputElement;
 class IPCDataTransfer;
+class IPCDataTransferImageContainer;
 class IPCDataTransferItem;
 struct LifecycleCallbackArgs;
 class MessageBroadcaster;
@@ -194,9 +195,8 @@ enum class ReferrerPolicy : uint8_t;
 }  // namespace dom
 
 namespace ipc {
+class BigBuffer;
 class IProtocol;
-class IShmemAllocator;
-class Shmem;
 }  // namespace ipc
 
 namespace gfx {
@@ -280,8 +280,6 @@ class nsContentUtils {
   static bool IsCallerChromeOrElementTransformGettersEnabled(JSContext* aCx,
                                                              JSObject*);
 
-  static bool IsCallerChromeOrErrorPage(JSContext*, JSObject*);
-
   // The APIs for checking whether the caller is system (in the sense of system
   // principal) should only be used when the JSContext is known to accurately
   // represent the caller.  In practice, that means you should only use them in
@@ -351,13 +349,22 @@ class nsContentUtils {
   static bool ShouldResistFingerprinting();
   static bool ShouldResistFingerprinting(nsIGlobalObject* aGlobalObject);
   static bool ShouldResistFingerprinting(nsIDocShell* aDocShell);
-  static bool ShouldResistFingerprinting(nsIPrincipal* aPrincipal);
   // These functions are the new, nuanced functions
   static bool ShouldResistFingerprinting(const Document* aDoc);
   static bool ShouldResistFingerprinting(nsIChannel* aChannel);
-  static bool ShouldResistFingerprinting(
-      nsIPrincipal* aPrincipal,
-      const mozilla::OriginAttributes& aOriginAttributes);
+  static bool ShouldResistFingerprinting(nsILoadInfo* aPrincipal);
+  // These functions are labeled as dangerous because they will do the wrong
+  // thing in _most_ cases. They should only be used if you don't have a fully
+  // constructed LoadInfo or Document.
+  // A constant string used as justification is required when calling them,
+  // it should explain why a Document, Channel, LoadInfo, or CookieJarSettings
+  // does not exist in this context.
+  // (see below for more on justification strings.)
+  static bool ShouldResistFingerprinting_dangerous(
+      nsIURI* aURI, const mozilla::OriginAttributes& aOriginAttributes,
+      const char* aJustification);
+  static bool ShouldResistFingerprinting_dangerous(nsIPrincipal* aPrincipal,
+                                                   const char* aJustification);
 
   /**
    * Implement a RFP function that only checks the pref, and does not take
@@ -431,6 +438,13 @@ class nsContentUtils {
    * @see https://dom.spec.whatwg.org/#retarget
    */
   static nsINode* Retarget(nsINode* aTargetA, nsINode* aTargetB);
+
+  /**
+   * @see https://wicg.github.io/element-timing/#get-an-element
+   */
+  static nsINode* GetAnElementForTiming(Element* aTarget,
+                                        const Document* aDocument,
+                                        nsIGlobalObject* aGlobal);
 
   /*
    * https://dom.spec.whatwg.org/#concept-tree-inclusive-ancestor.
@@ -1120,7 +1134,7 @@ class nsContentUtils {
    *   @param [aErrorFlags] See nsIScriptError.
    */
   static void LogSimpleConsoleError(
-      const nsAString& aErrorText, const char* aCategory,
+      const nsAString& aErrorText, const nsACString& aCategory,
       bool aFromPrivateWindow, bool aFromChromeContext,
       uint32_t aErrorFlags = nsIScriptError::errorFlag);
 
@@ -2474,16 +2488,6 @@ class nsContentUtils {
   static void GetModifierSeparatorText(nsAString& text);
 
   /**
-   * Returns if aContent has a tabbable subdocument.
-   * A sub document isn't tabbable when it's a zombie document.
-   *
-   * @param aElement element to test.
-   *
-   * @return Whether the subdocument is tabbable.
-   */
-  static bool IsSubDocumentTabbable(nsIContent* aContent);
-
-  /**
    * Returns if aContent has the 'scrollgrab' property.
    * aContent may be null (in this case false is returned).
    */
@@ -2860,13 +2864,11 @@ class nsContentUtils {
   static bool IsFileImage(nsIFile* aFile, nsACString& aType);
 
   /**
-   * Given an IPCDataTransferItem that has a flavor for which IsFlavorImage
-   * returns true and whose IPCDataTransferData is of type nsCString (raw image
-   * data), construct an imgIContainer for the image encoded by the transfer
-   * item.
+   * Given an IPCDataTransferImageContainer construct an imgIContainer for the
+   * image encoded by the transfer item.
    */
-  static nsresult DataTransferItemToImage(
-      const mozilla::dom::IPCDataTransferItem& aItem,
+  static nsresult DeserializeDataTransferImageContainer(
+      const mozilla::dom::IPCDataTransferImageContainer& aData,
       imgIContainer** aContainer);
 
   /**
@@ -2877,15 +2879,13 @@ class nsContentUtils {
 
   static nsresult IPCTransferableToTransferable(
       const mozilla::dom::IPCDataTransfer& aDataTransfer, bool aAddDataFlavor,
-      nsITransferable* aTransferable,
-      mozilla::ipc::IShmemAllocator* aAllocator);
+      nsITransferable* aTransferable);
 
   static nsresult IPCTransferableToTransferable(
       const mozilla::dom::IPCDataTransfer& aDataTransfer,
       const bool& aIsPrivateData, nsIPrincipal* aRequestingPrincipal,
       const nsContentPolicyType& aContentPolicyType, bool aAddDataFlavor,
-      nsITransferable* aTransferable,
-      mozilla::ipc::IShmemAllocator* aAllocator);
+      nsITransferable* aTransferable);
 
   static nsresult IPCTransferableItemToVariant(
       const mozilla::dom::IPCDataTransferItem& aDataTransferItem,
@@ -2902,24 +2902,16 @@ class nsContentUtils {
       mozilla::dom::ContentChild* aChild, mozilla::dom::ContentParent* aParent);
 
   /*
-   * Get the pixel data from the given source surface and return it as a buffer.
-   * The length and stride will be assigned from the surface.
+   * Get the pixel data from the given source surface and return it as a
+   * BigBuffer. The length and stride will be assigned from the surface.
    */
-  static mozilla::UniquePtr<char[]> GetSurfaceData(
+  static mozilla::Maybe<mozilla::ipc::BigBuffer> GetSurfaceData(
       mozilla::gfx::DataSourceSurface&, size_t* aLength, int32_t* aStride);
 
-  /*
-   * Get the pixel data from the given source surface and fill it in Shmem.
-   * The length and stride will be assigned from the surface.
-   */
-  static mozilla::Maybe<mozilla::ipc::Shmem> GetSurfaceData(
-      mozilla::gfx::DataSourceSurface& aSurface, size_t* aLength,
-      int32_t* aStride, mozilla::ipc::IShmemAllocator* aAlloc);
-
-  static mozilla::Maybe<mozilla::dom::ShmemImage> SurfaceToIPCImage(
-      mozilla::gfx::DataSourceSurface&, mozilla::ipc::IShmemAllocator*);
+  static mozilla::Maybe<mozilla::dom::IPCImage> SurfaceToIPCImage(
+      mozilla::gfx::DataSourceSurface&);
   static already_AddRefed<mozilla::gfx::DataSourceSurface> IPCImageToSurface(
-      mozilla::dom::ShmemImage&&, mozilla::ipc::IShmemAllocator*);
+      mozilla::dom::IPCImage&&);
 
   // Helpers shared by the implementations of nsContentUtils methods and
   // nsIDOMWindowUtils methods.
@@ -3344,6 +3336,19 @@ class nsContentUtils {
 
   static nsresult AnonymizeId(nsAString& aId, const nsACString& aOriginKey,
                               OriginFormat aFormat = OriginFormat::Base64);
+
+  /**
+   * Return true if we should hide the synthetic browsing context for <object>
+   * or <embed> images in synthetic documents.
+   */
+  static bool ShouldHideObjectOrEmbedImageDocument();
+
+  /**
+   * Returns the object type that the object loading content will actually use
+   * to load the resource. Used for ORB and loading images into synthetic
+   * documents.
+   */
+  static uint32_t ResolveObjectType(uint32_t aType);
 
  private:
   static bool InitializeEventTable();

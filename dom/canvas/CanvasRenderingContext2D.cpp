@@ -18,6 +18,8 @@
 #include "mozilla/SVGImageContext.h"
 #include "mozilla/SVGObserverUtils.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/FontFaceSetImpl.h"
+#include "mozilla/dom/FontFaceSet.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
 #include "mozilla/dom/GeneratePlaceholderCanvasData.h"
 #include "nsPresContext.h"
@@ -903,7 +905,7 @@ CanvasShutdownObserver::Observe(nsISupports* aSubject, const char* aTopic,
 NS_IMPL_CYCLE_COLLECTING_ADDREF(CanvasRenderingContext2D)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(CanvasRenderingContext2D)
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(CanvasRenderingContext2D)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(CanvasRenderingContext2D)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(CanvasRenderingContext2D)
   // Make sure we remove ourselves from the list of demotable contexts (raw
@@ -925,12 +927,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(CanvasRenderingContext2D)
       SVGObserverUtils::DetachFromCanvasContext(autoSVGFiltersObserver);
     }
     ImplCycleCollectionUnlink(tmp->mStyleStack[i].autoSVGFiltersObserver);
-  }
-  for (size_t x = 0; x < tmp->mHitRegionsOptions.Length(); x++) {
-    RegionInfo& info = tmp->mHitRegionsOptions[x];
-    if (info.mElement) {
-      ImplCycleCollectionUnlink(info.mElement);
-    }
   }
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
   NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_PTR
@@ -956,16 +952,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(CanvasRenderingContext2D)
     ImplCycleCollectionTraverse(cb, tmp->mStyleStack[i].autoSVGFiltersObserver,
                                 "RAII SVG Filters Observer");
   }
-  for (size_t x = 0; x < tmp->mHitRegionsOptions.Length(); x++) {
-    RegionInfo& info = tmp->mHitRegionsOptions[x];
-    if (info.mElement) {
-      ImplCycleCollectionTraverse(cb, info.mElement,
-                                  "Hit region fallback element");
-    }
-  }
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(CanvasRenderingContext2D)
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(CanvasRenderingContext2D)
   if (nsCCUncollectableMarker::sGeneration && tmp->HasKnownLiveWrapper()) {
@@ -1007,6 +994,7 @@ CanvasRenderingContext2D::ContextState::ContextState(const ContextState& aOther)
       textAlign(aOther.textAlign),
       textBaseline(aOther.textBaseline),
       textDirection(aOther.textDirection),
+      fontKerning(aOther.fontKerning),
       shadowColor(aOther.shadowColor),
       transform(aOther.transform),
       shadowOffset(aOther.shadowOffset),
@@ -1055,8 +1043,8 @@ void CanvasRenderingContext2D::ContextState::SetGradientStyle(
  **/
 
 // Initialize our static variables.
-Atomic<uintptr_t> CanvasRenderingContext2D::sNumLivingContexts(0);
-DrawTarget* CanvasRenderingContext2D::sErrorTarget = nullptr;
+MOZ_THREAD_LOCAL(uintptr_t) CanvasRenderingContext2D::sNumLivingContexts;
+MOZ_THREAD_LOCAL(DrawTarget*) CanvasRenderingContext2D::sErrorTarget;
 
 CanvasRenderingContext2D::CanvasRenderingContext2D(
     layers::LayersBackend aCompositorBackend)
@@ -1077,7 +1065,9 @@ CanvasRenderingContext2D::CanvasRenderingContext2D(
       mPathTransformWillUpdate(false),
       mInvalidateCount(0),
       mWriteOnly(false) {
-  sNumLivingContexts++;
+  sNumLivingContexts.infallibleInit();
+  sErrorTarget.infallibleInit();
+  sNumLivingContexts.set(sNumLivingContexts.get() + 1);
 }
 
 CanvasRenderingContext2D::~CanvasRenderingContext2D() {
@@ -1085,9 +1075,10 @@ CanvasRenderingContext2D::~CanvasRenderingContext2D() {
   RemoveShutdownObserver();
   Reset();
 
-  sNumLivingContexts--;
-  if (!sNumLivingContexts) {
-    NS_IF_RELEASE(sErrorTarget);
+  sNumLivingContexts.set(sNumLivingContexts.get() - 1);
+  if (sNumLivingContexts.get() == 0 && sErrorTarget.get()) {
+    RefPtr<DrawTarget> target = dont_AddRef(sErrorTarget.get());
+    sErrorTarget.set(nullptr);
   }
 }
 
@@ -1141,9 +1132,6 @@ nsresult CanvasRenderingContext2D::Reset() {
   ReturnTarget(forceReset);
   mTarget = nullptr;
   mBufferProvider = nullptr;
-
-  // reset hit regions
-  mHitRegionsOptions.ClearAndRetainStorage();
 
   // Since the target changes the backing texture will change, and this will
   // no longer be valid.
@@ -1364,7 +1352,7 @@ bool CanvasRenderingContext2D::EnsureTarget(const gfx::Rect* aCoveredRect,
   }
 
   if (mTarget) {
-    return mTarget != sErrorTarget;
+    return mTarget != sErrorTarget.get();
   }
 
   // Check that the dimensions are sane
@@ -1491,11 +1479,11 @@ void CanvasRenderingContext2D::SetInitialState() {
 void CanvasRenderingContext2D::SetErrorState() {
   EnsureErrorTarget();
 
-  if (mTarget && mTarget != sErrorTarget) {
+  if (mTarget && mTarget != sErrorTarget.get()) {
     gCanvasAzureMemoryUsed -= mWidth * mHeight * 4;
   }
 
-  mTarget = sErrorTarget;
+  mTarget = sErrorTarget.get();
   mBufferProvider = nullptr;
 
   // clear transforms, clips, etc.
@@ -1707,7 +1695,7 @@ void CanvasRenderingContext2D::ClearTarget(int32_t aWidth, int32_t aHeight) {
 }
 
 void CanvasRenderingContext2D::ReturnTarget(bool aForceReset) {
-  if (mTarget && mBufferProvider && mTarget != sErrorTarget) {
+  if (mTarget && mBufferProvider && mTarget != sErrorTarget.get()) {
     CurrentState().transform = mTarget->GetTransform();
     if (aForceReset || !mBufferProvider->PreservesDrawingState()) {
       for (const auto& style : mStyleStack) {
@@ -1826,17 +1814,6 @@ UniquePtr<uint8_t[]> CanvasRenderingContext2D::GetImageBuffer(
   return ret;
 }
 
-nsString CanvasRenderingContext2D::GetHitRegion(
-    const mozilla::gfx::Point& aPoint) {
-  for (size_t x = 0; x < mHitRegionsOptions.Length(); x++) {
-    RegionInfo& info = mHitRegionsOptions[x];
-    if (info.mPath->ContainsPoint(aPoint, Matrix())) {
-      return info.mId;
-    }
-  }
-  return nsString();
-}
-
 NS_IMETHODIMP
 CanvasRenderingContext2D::GetInputStream(const char* aMimeType,
                                          const nsAString& aEncoderOptions,
@@ -1869,7 +1846,7 @@ CanvasRenderingContext2D::GetSurfaceSnapshot(gfxAlphaType* aOutAlphaType) {
   // already exists, otherwise we get performance issues. See bug 1567054.
   if (!EnsureTarget()) {
     MOZ_ASSERT(
-        mTarget == sErrorTarget,
+        mTarget == sErrorTarget.get(),
         "On EnsureTarget failure mTarget should be set to sErrorTarget.");
     // In rare circumstances we may have failed to create an error target.
     return mTarget ? mTarget->Snapshot() : nullptr;
@@ -2302,7 +2279,7 @@ already_AddRefed<CanvasPattern> CanvasRenderingContext2D::CreatePattern(
     element = img;
   } else if (aSource.IsHTMLVideoElement()) {
     auto& video = aSource.GetAsHTMLVideoElement();
-    video.MarkAsContentSource(
+    video.LogVisibility(
         mozilla::dom::HTMLVideoElement::CallerAPI::CREATE_PATTERN);
     element = &video;
   } else if (aSource.IsOffscreenCanvas()) {
@@ -2329,9 +2306,9 @@ already_AddRefed<CanvasPattern> CanvasRenderingContext2D::CreatePattern(
         return nullptr;
       }
 
-      RefPtr<CanvasPattern> pat =
-          new CanvasPattern(this, srcSurf, repeatMode, nullptr,
-                            offscreenCanvas->IsWriteOnly(), false);
+      RefPtr<CanvasPattern> pat = new CanvasPattern(
+          this, srcSurf, repeatMode, srcCanvas->PrincipalOrNull(),
+          offscreenCanvas->IsWriteOnly(), false);
 
       return pat.forget();
     }
@@ -3403,9 +3380,8 @@ void CanvasRenderingContext2D::SetFont(const nsACString& aFont,
 bool CanvasRenderingContext2D::SetFontInternal(const nsACString& aFont,
                                                ErrorResult& aError) {
   RefPtr<PresShell> presShell = GetPresShell();
-  if (NS_WARN_IF(!presShell)) {
-    aError.Throw(NS_ERROR_FAILURE);
-    return false;
+  if (!presShell) {
+    return SetFontInternalDisconnected(aFont, aError);
   }
 
   nsCString usedFont;
@@ -3435,6 +3411,10 @@ bool CanvasRenderingContext2D::SetFontInternal(const nsACString& aFont,
   resizedFont.size =
       fontStyle->mSize.ScaledBy(1.0f / c->CSSToDevPixelScale().scale);
 
+  // Our FontKerning constants (see the enum definition) are the same as the
+  // NS_FONT_KERNING_* values so we can simply assign here.
+  resizedFont.kerning = uint8_t(CurrentState().fontKerning);
+
   c->Document()->FlushUserFontSet();
 
   nsFontMetrics::Params params;
@@ -3453,6 +3433,125 @@ bool CanvasRenderingContext2D::SetFontInternal(const nsACString& aFont,
   CurrentState().fontLanguage = fontStyle->mLanguage;
   CurrentState().fontExplicitLanguage = fontStyle->mExplicitLanguage;
 
+  return true;
+}
+
+static nsAutoCString FamilyListToString(
+    const StyleFontFamilyList& aFamilyList) {
+  return StringJoin(","_ns, aFamilyList.list.AsSpan(),
+                    [](nsACString& dst, const StyleSingleFontFamily& name) {
+                      name.AppendToString(dst);
+                    });
+}
+
+static void SerializeFontForCanvas(const StyleFontFamilyList& aList,
+                                   const gfxFontStyle& aStyle,
+                                   nsACString& aUsedFont) {
+  // Re-serialize the font shorthand as required by the canvas spec.
+  aUsedFont.Truncate();
+
+  if (!aStyle.style.IsNormal()) {
+    aStyle.style.ToString(aUsedFont);
+    aUsedFont.Append(" ");
+  }
+
+  // font-weight is serialized as a number
+  if (!aStyle.weight.IsNormal()) {
+    aUsedFont.AppendFloat(aStyle.weight.ToFloat());
+  }
+
+  // font-stretch is serialized using CSS Fonts 3 keywords, not percentages.
+  if (!aStyle.stretch.IsNormal() &&
+      Servo_FontStretch_SerializeKeyword(&aStyle.stretch, &aUsedFont)) {
+    aUsedFont.Append(" ");
+  }
+
+  // Serialize the computed (not specified) size, and the family name(s).
+  aUsedFont.AppendFloat(aStyle.size);
+  aUsedFont.Append("px ");
+  aUsedFont.Append(FamilyListToString(aList));
+}
+
+bool CanvasRenderingContext2D::SetFontInternalDisconnected(
+    const nsACString& aFont, ErrorResult& aError) {
+  FontFaceSet* fontFaceSet = nullptr;
+  if (mCanvasElement) {
+    fontFaceSet = mCanvasElement->OwnerDoc()->Fonts();
+  } else {
+    nsIGlobalObject* global = GetParentObject();
+    fontFaceSet = global ? global->Fonts() : nullptr;
+  }
+
+  FontFaceSetImpl* fontFaceSetImpl =
+      fontFaceSet ? fontFaceSet->GetImpl() : nullptr;
+  RefPtr<URLExtraData> urlExtraData =
+      fontFaceSetImpl ? fontFaceSetImpl->GetURLExtraData() : nullptr;
+
+  if (fontFaceSetImpl) {
+    fontFaceSetImpl->FlushUserFontSet();
+  }
+
+  // In the OffscreenCanvas case we don't have the context necessary to call
+  // GetFontStyleForServo(), as we do in the main-thread canvas context, so
+  // instead we borrow ParseFontShorthandForMatching to parse the attribute.
+  StyleComputedFontStyleDescriptor style(
+      StyleComputedFontStyleDescriptor::Normal());
+  StyleFontFamilyList list;
+  gfxFontStyle fontStyle;
+  float size = 0.0f;
+  if (!ServoCSSParser::ParseFontShorthandForMatching(
+          aFont, urlExtraData, list, fontStyle.style, fontStyle.stretch,
+          fontStyle.weight, &size)) {
+    return false;
+  }
+
+  fontStyle.size = size;
+
+  // Set the kerning feature, if required by the fontKerning attribute.
+  gfxFontFeature setting{TRUETYPE_TAG('k', 'e', 'r', 'n'), 0};
+  switch (CurrentState().fontKerning) {
+    case FontKerning::NONE:
+      setting.mValue = 0;
+      fontStyle.featureSettings.AppendElement(setting);
+      break;
+    case FontKerning::NORMAL:
+      setting.mValue = 1;
+      fontStyle.featureSettings.AppendElement(setting);
+      break;
+    default:
+      // auto case implies use user agent default
+      break;
+  }
+
+  // If we have a canvas element, get its lang (if known).
+  RefPtr<nsAtom> language;
+  bool explicitLanguage = false;
+  if (mCanvasElement) {
+    language = mCanvasElement->FragmentOrElement::GetLang();
+    if (language) {
+      explicitLanguage = true;
+    } else {
+      language = mCanvasElement->OwnerDoc()->GetLanguageForStyle();
+    }
+  }
+  // TODO: For workers, should we be passing a language? Where from?
+
+  // TODO: Cache fontGroups in the Worker (use an nsFontCache?)
+  gfxFontGroup* fontGroup = gfxPlatform::GetPlatform()->CreateFontGroup(
+      nullptr,           // aPresContext
+      list,              // aFontFamilyList
+      &fontStyle,        // aStyle
+      language,          // aLanguage
+      explicitLanguage,  // aExplicitLanguage
+      nullptr,           // aTextPerf
+      fontFaceSetImpl,   // aUserFontSet
+      1.0);              // aDevToCssSize
+  CurrentState().fontGroup = fontGroup;
+  SerializeFontForCanvas(list, fontStyle, CurrentState().font);
+  CurrentState().fontFont = nsFont(StyleFontFamily{list, false, false},
+                                   StyleCSSPixelLength::FromPixels(size));
+  CurrentState().fontLanguage = nullptr;
+  CurrentState().fontExplicitLanguage = false;
   return true;
 }
 
@@ -3551,6 +3650,34 @@ void CanvasRenderingContext2D::GetDirection(nsAString& aDirection) {
   }
 }
 
+void CanvasRenderingContext2D::SetFontKerning(const nsAString& aFontKerning) {
+  auto oldValue = CurrentState().fontKerning;
+  if (aFontKerning.EqualsLiteral("auto")) {
+    CurrentState().fontKerning = FontKerning::AUTO;
+  } else if (aFontKerning.EqualsLiteral("normal")) {
+    CurrentState().fontKerning = FontKerning::NORMAL;
+  } else if (aFontKerning.EqualsLiteral("none")) {
+    CurrentState().fontKerning = FontKerning::NONE;
+  }
+  if (CurrentState().fontKerning != oldValue) {
+    CurrentState().fontGroup = nullptr;
+  }
+}
+
+void CanvasRenderingContext2D::GetFontKerning(nsAString& aFontKerning) {
+  switch (CurrentState().fontKerning) {
+    case FontKerning::AUTO:
+      aFontKerning.AssignLiteral("auto");
+      break;
+    case FontKerning::NORMAL:
+      aFontKerning.AssignLiteral("normal");
+      break;
+    case FontKerning::NONE:
+      aFontKerning.AssignLiteral("none");
+      break;
+  }
+}
+
 /*
  * Helper function that replaces the whitespace characters in a string
  * with U+0020 SPACE. The whitespace characters are defined as U+0020 SPACE,
@@ -3559,7 +3686,7 @@ void CanvasRenderingContext2D::GetDirection(nsAString& aDirection) {
  * @param str The string whose whitespace characters to replace.
  */
 static inline void TextReplaceWhitespaceCharacters(nsAutoString& aStr) {
-  aStr.ReplaceChar("\x09\x0A\x0B\x0C\x0D", char16_t(' '));
+  aStr.ReplaceChar(u"\x09\x0A\x0B\x0C\x0D", char16_t(' '));
 }
 
 void CanvasRenderingContext2D::FillText(const nsAString& aText, double aX,
@@ -3585,95 +3712,6 @@ TextMetrics* CanvasRenderingContext2D::MeasureText(const nsAString& aRawText,
   Optional<double> maxWidth;
   return DrawOrMeasureText(aRawText, 0, 0, maxWidth, TextDrawOperation::MEASURE,
                            aError);
-}
-
-void CanvasRenderingContext2D::AddHitRegion(const HitRegionOptions& aOptions,
-                                            ErrorResult& aError) {
-  RefPtr<gfx::Path> path;
-  if (aOptions.mPath) {
-    EnsureTarget();
-    if (!IsTargetValid()) {
-      return;
-    }
-    path = aOptions.mPath->GetPath(CanvasWindingRule::Nonzero, mTarget);
-  }
-
-  if (!path) {
-    // check if the path is valid
-    EnsureUserSpacePath(CanvasWindingRule::Nonzero);
-    path = mPath;
-  }
-
-  if (!path) {
-    return aError.ThrowNotSupportedError("Invalid path");
-  }
-
-  // get the bounds of the current path. They are relative to the canvas
-  gfx::Rect bounds(path->GetBounds(mTarget->GetTransform()));
-  if ((bounds.width == 0) || (bounds.height == 0) || !bounds.IsFinite()) {
-    return aError.ThrowNotSupportedError("The specified region has no pixels");
-  }
-
-  // remove old hit region first
-  RemoveHitRegion(aOptions.mId);
-
-  if (aOptions.mControl) {
-    // also remove regions with this control
-    for (size_t x = 0; x < mHitRegionsOptions.Length(); x++) {
-      RegionInfo& info = mHitRegionsOptions[x];
-      if (info.mElement == aOptions.mControl) {
-        mHitRegionsOptions.RemoveElementAt(x);
-        break;
-      }
-    }
-#ifdef ACCESSIBILITY
-    aOptions.mControl->SetProperty(nsGkAtoms::hitregion,
-                                   reinterpret_cast<void*>(true));
-#endif
-  }
-
-  // finally, add the region to the list
-  RegionInfo info;
-  info.mId = aOptions.mId;
-  info.mElement = aOptions.mControl;
-  RefPtr<PathBuilder> pathBuilder =
-      path->TransformedCopyToBuilder(mTarget->GetTransform());
-  info.mPath = pathBuilder->Finish();
-
-  mHitRegionsOptions.InsertElementAt(0, info);
-}
-
-void CanvasRenderingContext2D::RemoveHitRegion(const nsAString& aId) {
-  if (aId.Length() == 0) {
-    return;
-  }
-
-  for (size_t x = 0; x < mHitRegionsOptions.Length(); x++) {
-    RegionInfo& info = mHitRegionsOptions[x];
-    if (info.mId == aId) {
-      mHitRegionsOptions.RemoveElementAt(x);
-
-      return;
-    }
-  }
-}
-
-void CanvasRenderingContext2D::ClearHitRegions() { mHitRegionsOptions.Clear(); }
-
-bool CanvasRenderingContext2D::GetHitRegionRect(Element* aElement,
-                                                nsRect& aRect) {
-  for (unsigned int x = 0; x < mHitRegionsOptions.Length(); x++) {
-    RegionInfo& info = mHitRegionsOptions[x];
-    if (info.mElement == aElement) {
-      gfx::Rect bounds(info.mPath->GetBounds());
-      gfxRect rect(bounds.x, bounds.y, bounds.width, bounds.height);
-      aRect = nsLayoutUtils::RoundGfxRectToAppRect(rect, AppUnitsPerCSSPixel());
-
-      return true;
-    }
-  }
-
-  return false;
 }
 
 /**
@@ -4071,8 +4109,7 @@ TextMetrics* CanvasRenderingContext2D::DrawOrMeasureText(
 
   GetAppUnitsValues(&processor.mAppUnitsPerDevPixel, nullptr);
   processor.mPt = gfx::Point(aX, aY);
-  processor.mDrawTarget =
-      gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget();
+  processor.mDrawTarget = gfxPlatform::ThreadLocalScreenReferenceDrawTarget();
 
   // If we don't have a target then we don't have a transform. A target won't
   // be needed in the case where we're measuring the text size. This allows
@@ -4092,9 +4129,9 @@ TextMetrics* CanvasRenderingContext2D::DrawOrMeasureText(
 
   processor.mFontgrp
       ->UpdateUserFonts();  // ensure user font generation is current
+  RefPtr<gfxFont> font = processor.mFontgrp->GetFirstValidFont();
   const gfxFont::Metrics& fontMetrics =
-      processor.mFontgrp->GetFirstValidFont()->GetMetrics(
-          nsFontMetrics::eHorizontal);
+      font->GetMetrics(nsFontMetrics::eHorizontal);
 
   // calls bidi algo twice since it needs the full text width and the
   // bounding boxes before rendering anything
@@ -4804,7 +4841,7 @@ void CanvasRenderingContext2D::DrawImage(const CanvasImageSource& aImage,
       element = img;
     } else {
       HTMLVideoElement* video = &aImage.GetAsHTMLVideoElement();
-      video->MarkAsContentSource(
+      video->LogVisibility(
           mozilla::dom::HTMLVideoElement::CallerAPI::DRAW_IMAGE);
       element = video;
     }
@@ -5034,16 +5071,14 @@ void CanvasRenderingContext2D::DrawDirectlyToCanvas(
   // FLAG_CLAMP is added for increased performance, since we never tile here.
   uint32_t modifiedFlags = aImage.mDrawingFlags | imgIContainer::FLAG_CLAMP;
 
-  CSSIntSize sz(
-      scaledImageSize.width,
-      scaledImageSize
-          .height);  // XXX hmm is scaledImageSize really in CSS pixels?
+  // XXX hmm is scaledImageSize really in CSS pixels?
+  CSSIntSize sz(scaledImageSize.width, scaledImageSize.height);
   SVGImageContext svgContext(Some(sz));
 
   auto result = aImage.mImgContainer->Draw(
       context, scaledImageSize,
       ImageRegion::Create(gfxRect(aSrc.x, aSrc.y, aSrc.width, aSrc.height)),
-      aImage.mWhichFrame, SamplingFilter::GOOD, Some(svgContext), modifiedFlags,
+      aImage.mWhichFrame, SamplingFilter::GOOD, svgContext, modifiedFlags,
       CurrentState().globalAlpha);
 
   if (result != ImgDrawResult::SUCCESS) {
@@ -5488,7 +5523,7 @@ nsresult CanvasRenderingContext2D::GetImageDataArray(
 }
 
 void CanvasRenderingContext2D::EnsureErrorTarget() {
-  if (sErrorTarget) {
+  if (sErrorTarget.get()) {
     return;
   }
 
@@ -5497,8 +5532,7 @@ void CanvasRenderingContext2D::EnsureErrorTarget() {
           IntSize(1, 1), SurfaceFormat::B8G8R8A8);
   MOZ_ASSERT(errorTarget, "Failed to allocate the error target!");
 
-  sErrorTarget = errorTarget;
-  NS_IF_ADDREF(sErrorTarget);
+  sErrorTarget.set(errorTarget.forget().take());
 }
 
 void CanvasRenderingContext2D::FillRuleChanged() {
@@ -5834,17 +5868,15 @@ NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(CanvasPath, Release)
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(CanvasPath, mParent)
 
 CanvasPath::CanvasPath(nsISupports* aParent) : mParent(aParent) {
-  mPathBuilder = gfxPlatform::GetPlatform()
-                     ->ScreenReferenceDrawTarget()
-                     ->CreatePathBuilder();
+  mPathBuilder =
+      gfxPlatform::ThreadLocalScreenReferenceDrawTarget()->CreatePathBuilder();
 }
 
 CanvasPath::CanvasPath(nsISupports* aParent,
                        already_AddRefed<PathBuilder> aPathBuilder)
     : mParent(aParent), mPathBuilder(aPathBuilder) {
   if (!mPathBuilder) {
-    mPathBuilder = gfxPlatform::GetPlatform()
-                       ->ScreenReferenceDrawTarget()
+    mPathBuilder = gfxPlatform::ThreadLocalScreenReferenceDrawTarget()
                        ->CreatePathBuilder();
   }
 }
@@ -5862,9 +5894,10 @@ already_AddRefed<CanvasPath> CanvasPath::Constructor(
 
 already_AddRefed<CanvasPath> CanvasPath::Constructor(
     const GlobalObject& aGlobal, CanvasPath& aCanvasPath) {
-  RefPtr<gfx::Path> tempPath = aCanvasPath.GetPath(
-      CanvasWindingRule::Nonzero,
-      gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget().get());
+  RefPtr<gfx::DrawTarget> drawTarget =
+      gfxPlatform::ThreadLocalScreenReferenceDrawTarget();
+  RefPtr<gfx::Path> tempPath =
+      aCanvasPath.GetPath(CanvasWindingRule::Nonzero, drawTarget.get());
 
   RefPtr<CanvasPath> path =
       new CanvasPath(aGlobal.GetAsSupports(), tempPath->CopyToBuilder());
@@ -6026,9 +6059,10 @@ void CanvasPath::BezierTo(const gfx::Point& aCP1, const gfx::Point& aCP2,
 
 void CanvasPath::AddPath(CanvasPath& aCanvasPath, const DOMMatrix2DInit& aInit,
                          ErrorResult& aError) {
-  RefPtr<gfx::Path> tempPath = aCanvasPath.GetPath(
-      CanvasWindingRule::Nonzero,
-      gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget().get());
+  RefPtr<gfx::DrawTarget> drawTarget =
+      gfxPlatform::ThreadLocalScreenReferenceDrawTarget();
+  RefPtr<gfx::Path> tempPath =
+      aCanvasPath.GetPath(CanvasWindingRule::Nonzero, drawTarget.get());
 
   RefPtr<DOMMatrixReadOnly> matrix =
       DOMMatrixReadOnly::FromMatrix(GetParentObject(), aInit, aError);

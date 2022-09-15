@@ -181,7 +181,7 @@ nsresult GDIFontEntry::ReadCMAP(FontInfoData* aFontInfoData) {
     charmap->mBuildOnTheFly = true;
   }
   if (mCharacterMap.compareExchange(nullptr, charmap.get())) {
-    Unused << charmap.forget();
+    charmap.get()->AddRef();
   }
 
   LOG_FONTLIST(("(fontlist-cmap) name: %s, size: %zd hash: %8.8x%s\n",
@@ -400,7 +400,7 @@ static bool ShouldIgnoreItalicStyle(const nsACString& aName) {
 
 int CALLBACK GDIFontFamily::FamilyAddStylesProc(
     const ENUMLOGFONTEXW* lpelfe, const NEWTEXTMETRICEXW* nmetrics,
-    DWORD fontType, LPARAM data) NO_THREAD_SAFETY_ANALYSIS {
+    DWORD fontType, LPARAM data) MOZ_NO_THREAD_SAFETY_ANALYSIS {
   const NEWTEXTMETRICW& metrics = nmetrics->ntmTm;
   LOGFONTW logFont = lpelfe->elfLogFont;
   GDIFontFamily* ff = reinterpret_cast<GDIFontFamily*>(data);

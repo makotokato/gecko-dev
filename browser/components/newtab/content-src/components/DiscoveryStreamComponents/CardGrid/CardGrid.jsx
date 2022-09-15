@@ -2,97 +2,200 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import {
-  DSCard,
-  PlaceholderDSCard,
-  LastCardMessage,
-} from "../DSCard/DSCard.jsx";
+import { DSCard, PlaceholderDSCard } from "../DSCard/DSCard.jsx";
 import { DSEmptyState } from "../DSEmptyState/DSEmptyState.jsx";
 import { TopicsWidget } from "../TopicsWidget/TopicsWidget.jsx";
+import { SafeAnchor } from "../SafeAnchor/SafeAnchor";
 import { FluentOrText } from "../../FluentOrText/FluentOrText.jsx";
-import { actionCreators as ac } from "common/Actions.jsm";
-import React from "react";
+import { actionCreators as ac, actionTypes as at } from "common/Actions.jsm";
+import React, { useEffect, useState, useRef, useCallback } from "react";
+import { connect, useSelector } from "react-redux";
 const WIDGET_IDS = {
   TOPICS: 1,
 };
 
-export function DSSubHeader(props) {
+export function DSSubHeader({ children }) {
   return (
     <div className="section-top-bar ds-sub-header">
-      <h3 className="section-title-container">
-        <span className="section-title">{props.children}</span>
-      </h3>
+      <h3 className="section-title-container">{children}</h3>
     </div>
   );
 }
 
-export function GridContainer(props) {
-  const { header, className, children } = props;
+export function IntersectionObserver({
+  children,
+  windowObj = window,
+  onIntersecting,
+}) {
+  const intersectionElement = useRef(null);
+
+  useEffect(() => {
+    let observer;
+    if (!observer && onIntersecting && intersectionElement.current) {
+      observer = new windowObj.IntersectionObserver(entries => {
+        const entry = entries.find(e => e.isIntersecting);
+
+        if (entry) {
+          // Stop observing since element has been seen
+          if (observer && intersectionElement.current) {
+            observer.unobserve(intersectionElement.current);
+          }
+
+          onIntersecting();
+        }
+      });
+      observer.observe(intersectionElement.current);
+    }
+    // Cleanup
+    return () => observer?.disconnect();
+  }, [windowObj, onIntersecting]);
+
+  return <div ref={intersectionElement}>{children}</div>;
+}
+
+export function RecentSavesContainer({
+  gridClassName = "",
+  dispatch,
+  windowObj = window,
+  items = 3,
+  source = "CARDGRID_RECENT_SAVES",
+}) {
+  const {
+    recentSavesData,
+    isUserLoggedIn,
+    experimentData: { utmCampaign, utmContent, utmSource },
+  } = useSelector(state => state.DiscoveryStream);
+
+  const [visible, setVisible] = useState(false);
+  const onIntersecting = useCallback(() => setVisible(true), []);
+
+  useEffect(() => {
+    if (visible) {
+      dispatch(
+        ac.AlsoToMain({
+          type: at.DISCOVERY_STREAM_POCKET_STATE_INIT,
+        })
+      );
+    }
+  }, [visible, dispatch]);
+
+  // The user has not yet scrolled to this section,
+  // so wait before potentially requesting Pocket data.
+  if (!visible) {
+    return (
+      <IntersectionObserver
+        windowObj={windowObj}
+        onIntersecting={onIntersecting}
+      />
+    );
+  }
+
+  // Intersection observer has finished, but we're not yet logged in.
+  if (visible && !isUserLoggedIn) {
+    return null;
+  }
+
+  function renderCard(rec, index) {
+    return (
+      <DSCard
+        key={`dscard-${rec?.id || index}`}
+        id={rec.id}
+        pos={index}
+        type={source}
+        image_src={rec.image_src}
+        raw_image_src={rec.raw_image_src}
+        word_count={rec.word_count}
+        time_to_read={rec.time_to_read}
+        title={rec.title}
+        excerpt={rec.excerpt}
+        url={rec.url}
+        source={rec.domain}
+        isRecentSave={true}
+        dispatch={dispatch}
+      />
+    );
+  }
+
+  function onMyListClicked() {
+    dispatch(
+      ac.DiscoveryStreamUserEvent({
+        event: "CLICK",
+        source: `${source}_VIEW_LIST`,
+      })
+    );
+  }
+
+  let queryParams = `?utm_source=${utmSource}`;
+  if (utmCampaign && utmContent) {
+    queryParams += `&utm_content=${utmContent}&utm_campaign=${utmCampaign}`;
+  }
+  const recentSavesCards = [];
+  // We fill the cards with a for loop over an inline map because
+  // we want empty placeholders if there are not enough cards.
+  for (let index = 0; index < items; index++) {
+    const recentSave = recentSavesData[index];
+    if (!recentSave) {
+      recentSavesCards.push(<PlaceholderDSCard key={`dscard-${index}`} />);
+    } else {
+      recentSavesCards.push(
+        renderCard(
+          {
+            id: recentSave.id,
+            image_src: recentSave.top_image_url,
+            raw_image_src: recentSave.top_image_url,
+            word_count: recentSave.word_count,
+            time_to_read: recentSave.time_to_read,
+            title: recentSave.resolved_title || recentSave.given_title,
+            url: recentSave.resolved_url || recentSave.given_url,
+            domain: recentSave.domain_metadata?.name,
+            excerpt: recentSave.excerpt,
+          },
+          index
+        )
+      );
+    }
+  }
+
+  // We are visible and logged in.
   return (
     <>
-      {header && (
-        <DSSubHeader>
-          <FluentOrText message={header} />
-        </DSSubHeader>
-      )}
-      <div className={`ds-card-grid ${className}`}>{children}</div>
+      <DSSubHeader>
+        <span className="section-title">
+          <FluentOrText message="Recently Saved to your List" />
+        </span>
+        <SafeAnchor
+          onLinkClick={onMyListClicked}
+          className="section-sub-link"
+          url={`https://getpocket.com/a${queryParams}`}
+        >
+          <FluentOrText message="View My List" />
+        </SafeAnchor>
+      </DSSubHeader>
+      <div className={`ds-card-grid-recent-saves ${gridClassName}`}>
+        {recentSavesCards}
+      </div>
     </>
   );
 }
 
-export class CardGrid extends React.PureComponent {
-  constructor(props) {
-    super(props);
-    this.state = { moreLoaded: false };
-    this.loadMoreClicked = this.loadMoreClicked.bind(this);
-  }
-
-  loadMoreClicked() {
-    this.props.dispatch(
-      ac.UserEvent({
-        event: "CLICK",
-        source: "DS_LOAD_MORE_BUTTON",
-      })
-    );
-    this.setState({ moreLoaded: true });
-  }
-
-  get showLoadMore() {
-    const { loadMore, data, loadMoreThreshold } = this.props;
-    return (
-      loadMore &&
-      data.recommendations.length > loadMoreThreshold &&
-      !this.state.moreLoaded
-    );
-  }
-
+export class _CardGrid extends React.PureComponent {
   renderCards() {
-    let { items } = this.props;
+    const prefs = this.props.Prefs.values;
     const {
+      items,
       hybridLayout,
       hideCardBackground,
       fourCardLayout,
-      hideDescriptions,
-      lastCardMessageEnabled,
-      saveToPocketCard,
-      loadMoreThreshold,
       compactGrid,
-      compactImages,
-      imageGradient,
-      newSponsoredLabel,
-      titleLines,
-      descLines,
-      readTime,
       essentialReadsHeader,
       editorsPicksHeader,
       widgets,
+      recentSavesEnabled,
+      hideDescriptions,
+      DiscoveryStream,
     } = this.props;
-    let showLastCardMessage = lastCardMessageEnabled;
-    if (this.showLoadMore) {
-      items = loadMoreThreshold;
-      // We don't want to show this until after load more has been clicked.
-      showLastCardMessage = false;
-    }
+    const { saveToPocketCard } = DiscoveryStream;
+    const showRecentSaves = prefs.showRecentSaves && recentSavesEnabled;
 
     const recs = this.props.data.recommendations.slice(0, items);
     const cards = [];
@@ -113,7 +216,6 @@ export class CardGrid extends React.PureComponent {
             raw_image_src={rec.raw_image_src}
             word_count={rec.word_count}
             time_to_read={rec.time_to_read}
-            displayReadTime={readTime}
             title={rec.title}
             excerpt={rec.excerpt}
             url={rec.url}
@@ -128,31 +230,10 @@ export class CardGrid extends React.PureComponent {
             pocket_id={rec.pocket_id}
             context_type={rec.context_type}
             bookmarkGuid={rec.bookmarkGuid}
-            engagement={rec.engagement}
-            pocket_button_enabled={this.props.pocket_button_enabled}
-            display_engagement_labels={this.props.display_engagement_labels}
-            hideDescriptions={hideDescriptions}
-            saveToPocketCard={saveToPocketCard}
-            compactImages={compactImages}
-            imageGradient={imageGradient}
-            newSponsoredLabel={newSponsoredLabel}
-            titleLines={titleLines}
-            descLines={descLines}
-            cta={rec.cta}
-            cta_variant={this.props.cta_variant}
-            is_video={this.props.enable_video_playheads && rec.is_video}
             is_collection={this.props.is_collection}
+            saveToPocketCard={saveToPocketCard && !rec.flight_id}
           />
         )
-      );
-    }
-
-    // Replace last card with "you are all caught up card"
-    if (showLastCardMessage) {
-      cards.splice(
-        cards.length - 1,
-        1,
-        <LastCardMessage key={`dscard-last-${cards.length - 1}`} />
       );
     }
 
@@ -191,23 +272,24 @@ export class CardGrid extends React.PureComponent {
       }
     }
 
+    let moreRecsHeader = "";
     // For now this is English only.
-    if (essentialReadsHeader && editorsPicksHeader) {
+    if (showRecentSaves || (essentialReadsHeader && editorsPicksHeader)) {
       let spliceAt = 6;
       // For 4 card row layouts, second row is 8 cards, and regular it is 6 cards.
       if (fourCardLayout) {
         spliceAt = 8;
       }
+      // If we have a custom header, ensure the more recs section also has a header.
+      moreRecsHeader = "More Recommendations";
       // Put the first 2 rows into essentialReadsCards.
       essentialReadsCards = [...cards.splice(0, spliceAt)];
       // Put the rest into editorsPicksCards.
-      editorsPicksCards = [...cards.splice(0, cards.length)];
+      if (essentialReadsHeader && editorsPicksHeader) {
+        editorsPicksCards = [...cards.splice(0, cards.length)];
+      }
     }
 
-    // Used for CSS overrides to default styling (eg: "hero")
-    const variantClass = this.props.display_variant
-      ? `ds-card-grid-${this.props.display_variant}`
-      : ``;
     const hideCardBackgroundClass = hideCardBackground
       ? `ds-card-grid-hide-background`
       : ``;
@@ -222,22 +304,40 @@ export class CardGrid extends React.PureComponent {
       ? `ds-card-grid-hybrid-layout`
       : ``;
 
-    const className = `ds-card-grid-${this.props.border} ${variantClass} ${hybridLayoutClassName} ${hideCardBackgroundClass} ${fourCardLayoutClass} ${hideDescriptionsClassName} ${compactGridClassName}`;
+    const gridClassName = `ds-card-grid ds-card-grid-border ${hybridLayoutClassName} ${hideCardBackgroundClass} ${fourCardLayoutClass} ${hideDescriptionsClassName} ${compactGridClassName}`;
 
     return (
       <>
         {essentialReadsCards?.length > 0 && (
-          <GridContainer className={className}>
-            {essentialReadsCards}
-          </GridContainer>
+          <div className={gridClassName}>{essentialReadsCards}</div>
+        )}
+        {showRecentSaves && (
+          <RecentSavesContainer
+            gridClassName={gridClassName}
+            dispatch={this.props.dispatch}
+          />
         )}
         {editorsPicksCards?.length > 0 && (
-          <GridContainer className={className} header="Editor’s Picks">
-            {editorsPicksCards}
-          </GridContainer>
+          <>
+            <DSSubHeader>
+              <span className="section-title">
+                <FluentOrText message="Editor’s Picks" />
+              </span>
+            </DSSubHeader>
+            <div className={gridClassName}>{editorsPicksCards}</div>
+          </>
         )}
         {cards?.length > 0 && (
-          <GridContainer className={className}>{cards}</GridContainer>
+          <>
+            {moreRecsHeader && (
+              <DSSubHeader>
+                <span className="section-title">
+                  <FluentOrText message={moreRecsHeader} />
+                </span>
+              </DSSubHeader>
+            )}
+            <div className={gridClassName}>{cards}</div>
+          </>
         )}
       </>
     );
@@ -277,23 +377,16 @@ export class CardGrid extends React.PureComponent {
         ) : (
           this.renderCards()
         )}
-        {this.showLoadMore && (
-          <button
-            className="ASRouterButton primary ds-card-grid-load-more-button"
-            onClick={this.loadMoreClicked}
-            data-l10n-id="newtab-pocket-load-more-stories-button"
-          />
-        )}
       </div>
     );
   }
 }
 
-CardGrid.defaultProps = {
-  border: `border`,
+_CardGrid.defaultProps = {
   items: 4, // Number of stories to display
-  enable_video_playheads: false,
-  lastCardMessageEnabled: false,
-  saveToPocketCard: false,
-  loadMoreThreshold: 12,
 };
+
+export const CardGrid = connect(state => ({
+  Prefs: state.Prefs,
+  DiscoveryStream: state.DiscoveryStream,
+}))(_CardGrid);

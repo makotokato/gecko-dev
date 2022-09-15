@@ -47,12 +47,6 @@ class nsDisplayTableItem : public nsPaintedDisplayItem {
   // cells extending outside them.
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder,
                            bool* aSnap) const override;
-
-  virtual nsDisplayItemGeometry* AllocateGeometry(
-      nsDisplayListBuilder* aBuilder) override;
-  virtual void ComputeInvalidationRegion(
-      nsDisplayListBuilder* aBuilder, const nsDisplayItemGeometry* aGeometry,
-      nsRegion* aInvalidRegion) const override;
 };
 
 class nsDisplayTableBackgroundSet {
@@ -319,7 +313,7 @@ class nsTableFrame : public nsContainerFrame {
       mozilla::ComputeSizeFlags aFlags) override;
 
   /**
-   * A copy of nsIFrame::ShrinkWidthToFit that calls a different
+   * A copy of nsIFrame::ShrinkISizeToFit that calls a different
    * GetPrefISize, since tables have two different ones.
    */
   nscoord TableShrinkISizeToFit(gfxContext* aRenderingContext,

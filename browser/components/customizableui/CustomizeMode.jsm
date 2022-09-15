@@ -22,12 +22,11 @@ const kDownloadAutohideCheckboxId = "downloads-button-autohide-checkbox";
 const kDownloadAutohidePanelId = "downloads-button-autohide-panel";
 const kDownloadAutoHidePref = "browser.download.autohideButton";
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { CustomizableUI } = ChromeUtils.import(
   "resource:///modules/CustomizableUI.jsm"
 );
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
@@ -2671,12 +2670,12 @@ CustomizeMode.prototype = {
     if (panelOnTheLeft) {
       // Tested in RTL, these get inverted automatically, so this does the
       // right thing without taking RTL into account explicitly.
-      position = "leftcenter topright";
+      position = "topleft topright";
       if (toolbarContainer) {
         offsetX = 8;
       }
     } else {
-      position = "rightcenter topleft";
+      position = "topright topleft";
       if (toolbarContainer) {
         offsetX = -8;
       }

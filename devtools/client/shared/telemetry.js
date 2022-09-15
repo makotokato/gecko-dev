@@ -10,7 +10,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const TelemetryStopwatch = require("TelemetryStopwatch");
 const { getNthPathExcluding } = require("devtools/shared/platform/stack");
 const {
@@ -791,10 +790,10 @@ function getChartsFromToolId(id) {
   }
 
   return {
-    useTimedEvent: useTimedEvent,
-    timerHist: timerHist,
-    countHist: countHist,
-    countScalar: countScalar,
+    useTimedEvent,
+    timerHist,
+    countHist,
+    countScalar,
   };
 }
 

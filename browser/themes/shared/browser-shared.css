@@ -4,6 +4,7 @@
 
 @import url("chrome://browser/skin/downloads/indicator.css");
 @import url("chrome://browser/skin/addons/extension-controlled.css");
+@import url("chrome://browser/skin/addons/unified-extensions.css");
 @import url("chrome://browser/skin/toolbarbuttons.css");
 @import url("chrome://browser/skin/toolbarbutton-icons.css");
 @import url("chrome://browser/skin/menupanel.css");
@@ -306,10 +307,10 @@ menupopup::part(drop-indicator) {
   background-color: var(--lwt-accent-color-inactive, var(--lwt-accent-color));
 }
 
-/* Private browsing and accessibility indicators */
+/* Private browsing indicator */
 
-.accessibility-indicator,
 .private-browsing-indicator {
+  background-image: url("chrome://global/skin/icons/indicator-private-browsing.svg");
   background-repeat: no-repeat;
   background-size: 100% auto;
   background-position: center;
@@ -322,34 +323,27 @@ menupopup::part(drop-indicator) {
   z-index: 1;
 }
 
-.accessibility-indicator {
-  -moz-context-properties: fill;
-  fill: #00C8D7;
-  background-image: url("chrome://browser/skin/indicator-accessibility.svg");
-  -moz-user-focus: normal;
-  /* Clear default button styling */
-  appearance: none;
-  margin-block: unset;
-  min-width: unset;
-  color: unset;
-  text-shadow: unset;
+/* New Private Browsing Indicator */
+
+#private-browsing-indicator-with-label {
+  -moz-box-align: center;
+  margin-inline: 7px;
 }
 
-.accessibility-indicator:is(:hover, :active, :focus, :-moz-focusring) {
-  fill: #008ea4;
-  outline: 0;
+.private-browsing-indicator-icon {
+  list-style-image: url("chrome://global/skin/icons/indicator-private-browsing.svg");
+  width: 16px;
+  height: 16px;
 }
 
-.private-browsing-indicator {
-  background-image: url("chrome://global/skin/icons/indicator-private-browsing.svg");
-}
-
-:root:not([accessibilitymode]) .accessibility-indicator,
-:root:not([privatebrowsingmode=temporary]) .private-browsing-indicator {
+:root:not([privatebrowsingmode=temporary]) .private-browsing-indicator,
+:root[privatebrowsingnewindicator] .private-browsing-indicator,
+:root:not([privatebrowsingnewindicator]) #private-browsing-indicator-with-label,
+:root:not([privatebrowsingmode=temporary]) #private-browsing-indicator-with-label {
   display: none;
 }
 
-/* End private browsing and accessibility indicators */
+/* End private browsing indicator */
 
 /* Override theme colors since the picker uses extra colors that
    themes cannot set */

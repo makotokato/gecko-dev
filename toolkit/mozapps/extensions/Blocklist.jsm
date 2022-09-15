@@ -10,10 +10,9 @@
 
 var EXPORTED_SYMBOLS = ["Blocklist", "BlocklistPrivate"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -90,7 +89,7 @@ const kRegExpRemovalRegExp = /^\/\^\(\(?|\\|\)\)?\$\/$/g;
 // providers that differ from the existing types.
 XPCOMUtils.defineLazyGetter(lazy, "kXPIAddonTypes", () => {
   // In practice, this result is equivalent to ALL_XPI_TYPES in XPIProvider.jsm.
-  // "plugin" (from GMPProvider.jsm) is intentionally omitted, as we decided to
+  // "plugin" (from GMPProvider.sys.mjs) is intentionally omitted, as we decided to
   // not support blocklisting of GMP plugins in bug 1086668.
   return lazy.AddonManagerPrivate.getAddonTypesByProvider("XPIProvider");
 });
@@ -1297,10 +1296,9 @@ var gBlocklistLevel = DEFAULT_LEVEL;
  *          item    - the nsIPluginTag or Addon object
  */
 
-// From appinfo in Services.jsm. It is not possible to use the one in
-// Services.jsm since it will not successfully QueryInterface nsIXULAppInfo in
-// xpcshell tests due to other code calling Services.appinfo before the
-// nsIXULAppInfo is created by the tests.
+// It is not possible to use the one in Services since it will not successfully
+// QueryInterface nsIXULAppInfo in xpcshell tests due to other code calling
+// Services.appinfo before the nsIXULAppInfo is created by the tests.
 XPCOMUtils.defineLazyGetter(lazy, "gApp", function() {
   // eslint-disable-next-line mozilla/use-services
   let appinfo = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULRuntime);

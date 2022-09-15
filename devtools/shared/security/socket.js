@@ -9,7 +9,6 @@ var { Ci, Cc, CC, Cr } = require("chrome");
 // Ensure PSM is initialized to support TLS sockets
 Cc["@mozilla.org/psm;1"].getService(Ci.nsISupports);
 
-var Services = require("Services");
 var DevToolsUtils = require("devtools/shared/DevToolsUtils");
 var { dumpn } = DevToolsUtils;
 loader.lazyRequireGetter(
@@ -316,9 +315,8 @@ function _isInputAlive(input) {
  *            mechanism. Defaults is false.
  *          fromBrowserToolbox:
  *            Should only be passed when opening a socket for a Browser Toolbox
- *            session. This will skip notifying DevToolsSocketStatus
- *            about the opened socket, to avoid triggering the visual cue in the
- *            URL bar.
+ *            session. DevToolsSocketStatus will track the socket separately to
+ *            avoid triggering the visual cue in the URL bar.
  *          portOrPath:
  *            The port or path to listen on.
  *            If given an integer, the port to listen on.  Use -1 to choose any available
@@ -368,7 +366,7 @@ SocketListener.prototype = {
   /**
    * Validate that all options have been set to a supported configuration.
    */
-  _validateOptions: function() {
+  _validateOptions() {
     if (this.portOrPath === null) {
       throw new Error("Must set a port / path to listen on.");
     }
@@ -380,7 +378,7 @@ SocketListener.prototype = {
   /**
    * Listens on the given port or socket file for remote debugger connections.
    */
-  open: function() {
+  open() {
     this._validateOptions();
     this._devToolsServer.addSocketListener(this);
 
@@ -411,9 +409,9 @@ SocketListener.prototype = {
       dumpn("Socket listening on: " + (self.port || self.portOrPath));
     })()
       .then(() => {
-        if (!self.fromBrowserToolbox) {
-          DevToolsSocketStatus.notifySocketOpened();
-        }
+        DevToolsSocketStatus.notifySocketOpened({
+          fromBrowserToolbox: self.fromBrowserToolbox,
+        });
         this._advertise();
       })
       .catch(e => {
@@ -427,7 +425,7 @@ SocketListener.prototype = {
       });
   },
 
-  _advertise: function() {
+  _advertise() {
     if (!this.discoverable || !this.port) {
       return;
     }
@@ -441,7 +439,7 @@ SocketListener.prototype = {
     discovery.addService("devtools", advertisement);
   },
 
-  _createSocketInstance: function() {
+  _createSocketInstance() {
     return Cc["@mozilla.org/network/server-socket;1"].createInstance(
       Ci.nsIServerSocket
     );
@@ -451,7 +449,7 @@ SocketListener.prototype = {
    * Closes the SocketListener.  Notifies the server to remove the listener from
    * the set of active SocketListeners.
    */
-  close: function() {
+  close() {
     if (this.discoverable && this.port) {
       discovery.removeService("devtools");
     }
@@ -459,9 +457,9 @@ SocketListener.prototype = {
       this._socket.close();
       this._socket = null;
 
-      if (!this.fromBrowserToolbox) {
-        DevToolsSocketStatus.notifySocketClosed();
-      }
+      DevToolsSocketStatus.notifySocketClosed({
+        fromBrowserToolbox: this.fromBrowserToolbox,
+      });
     }
     this._devToolsServer.removeSocketListener(this);
   },
@@ -510,7 +508,7 @@ SocketListener.prototype = {
   },
   "SocketListener.onSocketAccepted"),
 
-  onStopListening: function(socket, status) {
+  onStopListening(socket, status) {
     dumpn("onStopListening, status: " + status);
   },
 };

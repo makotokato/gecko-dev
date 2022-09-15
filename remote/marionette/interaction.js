@@ -8,8 +8,8 @@
 
 const EXPORTED_SYMBOLS = ["interaction"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -373,7 +373,7 @@ function clearResettableElement(el) {
   let isEmpty;
   switch (el.type) {
     case "file":
-      isEmpty = el.files.length == 0;
+      isEmpty = !el.files.length;
       break;
 
     default:

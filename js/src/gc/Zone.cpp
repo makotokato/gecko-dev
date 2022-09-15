@@ -11,17 +11,13 @@
 
 #include "gc/FinalizationObservers.h"
 #include "gc/GCContext.h"
-#include "gc/GCLock.h"
-#include "gc/Policy.h"
 #include "gc/PublicIterators.h"
 #include "jit/BaselineIC.h"
 #include "jit/BaselineJIT.h"
 #include "jit/Invalidation.h"
-#include "jit/Ion.h"
 #include "jit/JitZone.h"
 #include "vm/Runtime.h"
 #include "vm/Time.h"
-#include "wasm/WasmInstance.h"
 
 #include "debugger/DebugAPI-inl.h"
 #include "gc/GC-inl.h"
@@ -38,9 +34,6 @@ Zone* const Zone::NotOnList = reinterpret_cast<Zone*>(1);
 
 ZoneAllocator::ZoneAllocator(JSRuntime* rt, Kind kind)
     : JS::shadow::Zone(rt, &rt->gc.barrierTracer, kind),
-      gcHeapSize(&rt->gc.heapSize),
-      mallocHeapSize(nullptr),
-      jitHeapSize(nullptr),
       jitHeapThreshold(jit::MaxCodeBytesPerProcess * 0.8) {}
 
 ZoneAllocator::~ZoneAllocator() {
@@ -58,19 +51,22 @@ void ZoneAllocator::fixupAfterMovingGC() {
 #endif
 }
 
-void js::ZoneAllocator::updateMemoryCountersOnGCStart() {
+void js::ZoneAllocator::updateSchedulingStateOnGCStart() {
   gcHeapSize.updateOnGCStart();
   mallocHeapSize.updateOnGCStart();
   jitHeapSize.updateOnGCStart();
+  perZoneGCTime = mozilla::TimeDuration();
 }
 
-void js::ZoneAllocator::updateGCStartThresholds(GCRuntime& gc,
-                                                const js::AutoLockGC& lock) {
+void js::ZoneAllocator::updateGCStartThresholds(GCRuntime& gc) {
   bool isAtomsZone = JS::Zone::from(this)->isAtomsZone();
-  gcHeapThreshold.updateStartThreshold(gcHeapSize.retainedBytes(), gc.tunables,
-                                       gc.schedulingState, isAtomsZone, lock);
-  mallocHeapThreshold.updateStartThreshold(
-      mallocHeapSize.retainedBytes(), gc.tunables, gc.schedulingState, lock);
+  gcHeapThreshold.updateStartThreshold(
+      gcHeapSize.retainedBytes(), smoothedAllocationRate.ref(),
+      smoothedCollectionRate.ref(), gc.tunables, gc.schedulingState,
+      isAtomsZone);
+
+  mallocHeapThreshold.updateStartThreshold(mallocHeapSize.retainedBytes(),
+                                           gc.tunables, gc.schedulingState);
 }
 
 void js::ZoneAllocator::setGCSliceThresholds(GCRuntime& gc,
@@ -170,7 +166,6 @@ JS::Zone::Zone(JSRuntime* rt, Kind kind)
       stringStats(this),
       pretenuring(this),
       uniqueIds_(this),
-      tenuredAllocsSinceMinorGC_(0),
       gcWeakMapList_(this),
       compartments_(),
       crossZoneStringWrappers_(this),
@@ -197,11 +192,9 @@ JS::Zone::Zone(JSRuntime* rt, Kind kind)
   /* Ensure that there are no vtables to mess us up here. */
   MOZ_ASSERT(reinterpret_cast<JS::shadow::Zone*>(this) ==
              static_cast<JS::shadow::Zone*>(this));
-  MOZ_ASSERT_IF(isAtomsZone(), !rt->unsafeAtomsZone());
+  MOZ_ASSERT_IF(isAtomsZone(), rt->gc.zones().empty());
 
-  // We can't call updateGCStartThresholds until the Zone has been constructed.
-  AutoLockGC lock(rt);
-  updateGCStartThresholds(rt->gc, lock);
+  updateGCStartThresholds(rt->gc);
 }
 
 Zone::~Zone() {
@@ -282,8 +275,8 @@ void Zone::sweepAfterMinorGC(JSTracer* trc) {
 }
 
 void Zone::sweepEphemeronTablesAfterMinorGC() {
-  for (EphemeronEdgeTable::Range r = gcNurseryEphemeronEdges().all();
-       !r.empty(); r.popFront()) {
+  for (auto r = gcNurseryEphemeronEdges().mutableAll(); !r.empty();
+       r.popFront()) {
     // Sweep gcNurseryEphemeronEdges to move live (forwarded) keys to
     // gcEphemeronEdges, scanning through all the entries for such keys to
     // update them.
@@ -683,7 +676,7 @@ void* ZoneAllocator::onOutOfMemory(js::AllocFunction allocFunc,
 }
 
 void ZoneAllocator::reportAllocationOverflow() const {
-  js::ReportAllocationOverflow(nullptr);
+  js::ReportAllocationOverflow(static_cast<JSContext*>(nullptr));
 }
 
 ZoneList::ZoneList() : head(nullptr), tail(nullptr) {}
@@ -720,21 +713,42 @@ Zone* ZoneList::front() const {
   return head;
 }
 
-void ZoneList::append(Zone* zone) {
-  ZoneList singleZone(zone);
-  transferFrom(singleZone);
-}
+void ZoneList::prepend(Zone* zone) { prependList(ZoneList(zone)); }
 
-void ZoneList::transferFrom(ZoneList& other) {
+void ZoneList::append(Zone* zone) { appendList(ZoneList(zone)); }
+
+void ZoneList::prependList(ZoneList&& other) {
   check();
   other.check();
-  if (!other.head) {
+
+  if (other.isEmpty()) {
     return;
   }
 
   MOZ_ASSERT(tail != other.tail);
 
-  if (tail) {
+  if (!isEmpty()) {
+    other.tail->listNext_ = head;
+  } else {
+    tail = other.tail;
+  }
+  head = other.head;
+
+  other.head = nullptr;
+  other.tail = nullptr;
+}
+
+void ZoneList::appendList(ZoneList&& other) {
+  check();
+  other.check();
+
+  if (other.isEmpty()) {
+    return;
+  }
+
+  MOZ_ASSERT(tail != other.tail);
+
+  if (!isEmpty()) {
     tail->listNext_ = other.head;
   } else {
     head = other.head;

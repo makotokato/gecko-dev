@@ -21,7 +21,6 @@ Test that the frame component reacts to source-map pref changse.
 
 window.onload = async function () {
   try {
-    const Services = browserRequire("Services");
     const ReactDOM = browserRequire("devtools/client/shared/vendor/react-dom");
     const React = browserRequire("devtools/client/shared/vendor/react");
     const Frame = React.createFactory(browserRequire("devtools/client/shared/components/Frame"));
@@ -32,7 +31,7 @@ window.onload = async function () {
       sourceUrl: "https://bugzilla.mozilla.org/original.js",
     };
     const mockSourceMapService = {
-      _update: function () {
+      _update () {
         this._callback(Services.prefs.getBoolPref(PREF)
           ? {
               url: resolvedLocation.sourceUrl,
@@ -41,7 +40,7 @@ window.onload = async function () {
             }
           : null);
       },
-      subscribeByLocation: function (loc, callback) {
+      subscribeByLocation (loc, callback) {
         this._callback = callback;
         // Resolve immediately.
         this._update();

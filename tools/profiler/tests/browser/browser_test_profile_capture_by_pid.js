@@ -54,10 +54,10 @@ async function test_with_filter(fnFilterWithContentId) {
     );
 
     info("Capture the profile data.");
-    const profile = await stopAndGetProfile();
+    const profile = await waitSamplingAndStopAndGetProfile();
 
     await TestUtils.waitForCondition(async function() {
-      return (await GetPidsWithSamplerThread()).length == 0;
+      return !(await GetPidsWithSamplerThread()).length;
     }, "Wait for all sampler threads to stop after profiler stop");
 
     return { contentPid, pidsWithSamplerThread, profile };

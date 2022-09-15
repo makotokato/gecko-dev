@@ -6,7 +6,6 @@
 
 // Register the about:debugging URL, that allows to debug tabs, extensions, workers on
 // the current instance of Firefox or on a remote Firefox.
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const { nsIAboutModule } = Ci;
 
@@ -19,7 +18,7 @@ AboutDebugging.prototype = {
 
   QueryInterface: ChromeUtils.generateQI([nsIAboutModule]),
 
-  newChannel: function(_, loadInfo) {
+  newChannel(_, loadInfo) {
     const chan = Services.io.newChannelFromURIWithLoadInfo(
       Services.io.newURI("chrome://devtools/content/aboutdebugging/index.html"),
       loadInfo
@@ -28,11 +27,11 @@ AboutDebugging.prototype = {
     return chan;
   },
 
-  getURIFlags: function(uri) {
+  getURIFlags(uri) {
     return nsIAboutModule.ALLOW_SCRIPT | nsIAboutModule.IS_SECURE_CHROME_UI;
   },
 
-  getChromeURI: function(_uri) {
+  getChromeURI(_uri) {
     return Services.io.newURI(
       "chrome://devtools/content/aboutdebugging/index.html"
     );

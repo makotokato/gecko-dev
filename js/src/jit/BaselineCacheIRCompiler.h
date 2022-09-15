@@ -65,8 +65,8 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
       uint32_t newShapeOffset, mozilla::Maybe<uint32_t> numNewSlotsOffset);
 
   bool updateArgc(CallFlags flags, Register argcReg, Register scratch);
-  void loadStackObject(ArgumentKind kind, CallFlags flags, size_t stackPushed,
-                       Register argcReg, Register dest);
+  void loadStackObject(ArgumentKind kind, CallFlags flags, Register argcReg,
+                       Register dest);
   void pushArguments(Register argcReg, Register calleeReg, Register scratch,
                      Register scratch2, CallFlags flags, bool isJitCall);
   void pushStandardArguments(Register argcReg, Register scratch,
@@ -109,8 +109,8 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
  public:
   friend class AutoStubFrame;
 
-  BaselineCacheIRCompiler(JSContext* cx, const CacheIRWriter& writer,
-                          uint32_t stubDataOffset);
+  BaselineCacheIRCompiler(JSContext* cx, TempAllocator& alloc,
+                          const CacheIRWriter& writer, uint32_t stubDataOffset);
 
   [[nodiscard]] bool init(CacheKind kind);
 

@@ -6,21 +6,25 @@
 /* global gToolbox */
 
 add_task(async function() {
-  Services.prefs.setCharPref(
+  // Disable several prefs to avoid network requests.
+  await pushPref("browser.safebrowsing.blockedURIs.enabled", false);
+  await pushPref("browser.safebrowsing.downloads.enabled", false);
+  await pushPref("browser.safebrowsing.malware.enabled", false);
+  await pushPref("browser.safebrowsing.passwords.enabled", false);
+  await pushPref("browser.safebrowsing.phishing.enabled", false);
+  await pushPref("privacy.query_stripping.enabled", false);
+  await pushPref("extensions.systemAddon.update.enabled", false);
+
+  await pushPref("services.settings.server", "invalid://err");
+
+  // Define a set list of visible columns
+  await pushPref(
     "devtools.netmonitor.visibleColumns",
-    JSON.stringify([
-      "domain",
-      "file",
-      "url",
-      "method",
-      "status",
-      "type",
-      "waterfall",
-    ])
+    JSON.stringify(["file", "url", "status"])
   );
-  registerCleanupFunction(() => {
-    Services.prefs.clearUserPref("devtools.netmonitor.visibleColumns");
-  });
+
+  // Force observice all processes to see the content process requests
+  await pushPref("devtools.browsertoolbox.scope", "everything");
 
   const ToolboxTask = await initBrowserToolboxTask({
     enableBrowserToolboxFission: true,
@@ -31,6 +35,16 @@ add_task(async function() {
   });
 
   await ToolboxTask.spawn(null, async () => {
+    const { resourceCommand } = gToolbox.commands;
+
+    // Assert that the toolbox is not listening to network events
+    // before the netmonitor panel is opened.
+    is(
+      resourceCommand.isResourceWatched(resourceCommand.TYPES.NETWORK_EVENT),
+      false,
+      "The toolox is not watching for network event resources"
+    );
+
     await gToolbox.selectTool("netmonitor");
     const monitor = gToolbox.getCurrentPanel();
     const { document, store, windowRequire } = monitor.panelWin;
@@ -40,6 +54,16 @@ add_task(async function() {
     );
 
     store.dispatch(Actions.batchEnable(false));
+
+    await waitUntil(
+      () => !!document.querySelector(".request-list-empty-notice")
+    );
+
+    is(
+      resourceCommand.isResourceWatched(resourceCommand.TYPES.NETWORK_EVENT),
+      true,
+      "The network panel is now watching for network event resources"
+    );
 
     const emptyListNotice = document.querySelector(
       ".request-list-empty-notice"

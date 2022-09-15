@@ -18,6 +18,7 @@
 #include "jit/JitFrames.h"
 #include "jit/JSJitFrameIter.h"
 #include "util/DifferentialTesting.h"
+#include "vm/BigIntType.h"
 #include "vm/JSObject.h"
 #include "vm/ProxyObject.h"
 #include "vm/Runtime.h"
@@ -41,6 +42,8 @@
 #  include "jit/loong64/MacroAssembler-loong64-inl.h"
 #elif defined(JS_CODEGEN_RISCV64)
 #  include "jit/riscv64/MacroAssembler-riscv64-inl.h"
+#elif defined(JS_CODEGEN_WASM32)
+#  include "jit/wasm32/MacroAssembler-wasm32-inl.h"
 #elif !defined(JS_CODEGEN_NONE)
 #  error "Unknown architecture!"
 #endif
@@ -749,7 +752,7 @@ void MacroAssembler::branchTestProxyHandlerFamily(Condition cond,
 void MacroAssembler::branchTestNeedsIncrementalBarrier(Condition cond,
                                                        Label* label) {
   MOZ_ASSERT(cond == Zero || cond == NonZero);
-  CompileZone* zone = GetJitContext()->realm()->zone();
+  CompileZone* zone = realm()->zone();
   const uint32_t* needsBarrierAddr = zone->addressOfNeedsIncrementalBarrier();
   branchTest32(cond, AbsoluteAddress(needsBarrierAddr), Imm32(0x1), label);
 }
@@ -757,13 +760,12 @@ void MacroAssembler::branchTestNeedsIncrementalBarrier(Condition cond,
 void MacroAssembler::branchTestNeedsIncrementalBarrierAnyZone(
     Condition cond, Label* label, Register scratch) {
   MOZ_ASSERT(cond == Zero || cond == NonZero);
-  if (GetJitContext()->maybeRealm()) {
+  if (maybeRealm_) {
     branchTestNeedsIncrementalBarrier(cond, label);
   } else {
     // We are compiling the interpreter or another runtime-wide trampoline, so
     // we have to load cx->zone.
-    loadPtr(AbsoluteAddress(GetJitContext()->runtime->addressOfZone()),
-            scratch);
+    loadPtr(AbsoluteAddress(runtime()->addressOfZone()), scratch);
     Address needsBarrierAddr(scratch, Zone::offsetOfNeedsIncrementalBarrier());
     branchTest32(cond, needsBarrierAddr, Imm32(0x1), label);
   }
@@ -1038,12 +1040,7 @@ void MacroAssembler::assertStackAlignment(uint32_t alignment,
 }
 
 void MacroAssembler::storeCallBoolResult(Register reg) {
-  if (reg != ReturnReg) {
-    mov(ReturnReg, reg);
-  }
-  // C++ compilers like to only use the bottom byte for bools, but we
-  // need to maintain the entire register.
-  and32(Imm32(0xFF), reg);
+  convertBoolToInt32(ReturnReg, reg);
 }
 
 void MacroAssembler::storeCallInt32Result(Register reg) {

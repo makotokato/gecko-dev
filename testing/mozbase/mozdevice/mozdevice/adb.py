@@ -3875,6 +3875,28 @@ class ADBDevice(ADBCommand):
 
     # Application management methods
 
+    def add_change_device_settings(self, app_name, timeout=None):
+        """
+        Allows the test to change Android device settings.
+        :param str: app_name: Name of application (e.g. `org.mozilla.fennec`)
+        """
+        self.shell_output(
+            "appops set %s android:write_settings allow" % app_name,
+            timeout=timeout,
+            enable_run_as=False,
+        )
+
+    def add_mock_location(self, app_name, timeout=None):
+        """
+        Allows the Android device to use mock locations.
+        :param str: app_name: Name of application (e.g. `org.mozilla.fennec`)
+        """
+        self.shell_output(
+            "appops set %s android:mock_location allow" % app_name,
+            timeout=timeout,
+            enable_run_as=False,
+        )
+
     def grant_runtime_permissions(self, app_name, timeout=None):
         """
         Grant required runtime permissions to the specified app

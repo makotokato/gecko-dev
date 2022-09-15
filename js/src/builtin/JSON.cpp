@@ -17,8 +17,6 @@
 #include "jstypes.h"
 
 #include "builtin/Array.h"
-#include "builtin/BigInt.h"
-#include "js/CallAndConstruct.h"      // JS::IsCallable
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "js/Object.h"                // JS::GetBuiltinClass
@@ -42,7 +40,7 @@
 #endif
 
 #include "builtin/Array-inl.h"
-#include "builtin/Boolean-inl.h"
+#include "vm/GeckoProfiler-inl.h"
 #include "vm/JSAtom-inl.h"
 #include "vm/NativeObject-inl.h"
 
@@ -1143,6 +1141,7 @@ static bool json_toSource(JSContext* cx, unsigned argc, Value* vp) {
 
 /* ES5 15.12.2. */
 static bool json_parse(JSContext* cx, unsigned argc, Value* vp) {
+  AutoJSMethodProfilerEntry pseudoFrame(cx, "JSON", "parse");
   CallArgs args = CallArgsFromVp(argc, vp);
 
   /* Step 1. */
@@ -1291,6 +1290,7 @@ bool BuildImmutableProperty(JSContext* cx, HandleValue value, HandleId name,
 }
 
 static bool json_parseImmutable(JSContext* cx, unsigned argc, Value* vp) {
+  AutoJSMethodProfilerEntry pseudoFrame(cx, "JSON", "parseImmutable");
   CallArgs args = CallArgsFromVp(argc, vp);
 
   /* Step 1. */
@@ -1330,6 +1330,7 @@ static bool json_parseImmutable(JSContext* cx, unsigned argc, Value* vp) {
 
 /* ES6 24.3.2. */
 bool json_stringify(JSContext* cx, unsigned argc, Value* vp) {
+  AutoJSMethodProfilerEntry pseudoFrame(cx, "JSON", "stringify");
   CallArgs args = CallArgsFromVp(argc, vp);
 
   RootedObject replacer(cx,

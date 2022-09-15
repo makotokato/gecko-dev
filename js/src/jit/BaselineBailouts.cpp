@@ -9,6 +9,7 @@
 
 #include "builtin/ModuleObject.h"
 #include "debugger/DebugAPI.h"
+#include "gc/GC.h"
 #include "jit/arm/Simulator-arm.h"
 #include "jit/Bailouts.h"
 #include "jit/BaselineFrame.h"
@@ -31,9 +32,10 @@
 #include "util/Memory.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/BytecodeUtil.h"
-#include "vm/TraceLogging.h"
+#include "vm/JitActivation.h"
 
 #include "jit/JitFrames-inl.h"
+#include "vm/JSContext-inl.h"
 #include "vm/JSScript-inl.h"
 
 using namespace js;
@@ -1453,10 +1455,6 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
   // Caller should have saved the exception while we perform the bailout.
   MOZ_ASSERT(!cx->isExceptionPending());
 
-  TraceLoggerThread* logger = TraceLoggerForCurrentThread(cx);
-  TraceLogStopEvent(logger, TraceLogger_IonMonkey);
-  TraceLogStartEvent(logger, TraceLogger_Baseline);
-
   // Ion bailout can fail due to overrecursion and OOM. In such cases we
   // cannot honor any further Debugger hooks on the frame, and need to
   // ensure that its Debugger.Frame entry is cleaned up.
@@ -1575,15 +1573,6 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
     // Skip recover instructions as they are already recovered by
     // |initInstructionResults|.
     snapIter.settleOnFrame();
-
-    if (!builder.isOutermostFrame()) {
-      // TraceLogger doesn't create entries for inlined frames. But we
-      // see them in Baseline. Here we create the start events of those
-      // entries. So they correspond to what we will see in Baseline.
-      TraceLoggerEvent scriptEvent(TraceLogger_Scripts, builder.script());
-      TraceLogStartEvent(logger, scriptEvent);
-      TraceLogStartEvent(logger, TraceLogger_Baseline);
-    }
 
     JitSpew(JitSpew_BaselineBailouts, "    FrameNo %zu", builder.frameNo());
 

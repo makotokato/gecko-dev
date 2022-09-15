@@ -37,7 +37,6 @@ class FinalizationQueueObject;
 class GlobalObject;
 class VerifyPreTracer;
 class WeakRefObject;
-class ZoneAllocator;
 
 namespace gc {
 
@@ -217,8 +216,10 @@ class ZoneList {
   bool isEmpty() const;
   Zone* front() const;
 
+  void prepend(Zone* zone);
   void append(Zone* zone);
-  void transferFrom(ZoneList& other);
+  void prependList(ZoneList&& other);
+  void appendList(ZoneList&& other);
   Zone* removeFront();
   void clear();
 
@@ -262,7 +263,7 @@ class BarrierTracer final : public GenericTracerImpl<BarrierTracer> {
 
  private:
   template <typename T>
-  T* onEdge(T* thing);
+  void onEdge(T** thingp, const char* name);
   friend class GenericTracerImpl<BarrierTracer>;
 
   void handleBufferFull(JS::GCCellPtr cell);
@@ -275,7 +276,7 @@ struct SweepingTracer final : public GenericTracerImpl<SweepingTracer> {
 
  private:
   template <typename T>
-  T* onEdge(T* thingp);
+  void onEdge(T** thingp, const char* name);
   friend class GenericTracerImpl<SweepingTracer>;
 };
 
@@ -285,18 +286,18 @@ class GCRuntime {
  public:
   explicit GCRuntime(JSRuntime* rt);
   [[nodiscard]] bool init(uint32_t maxbytes);
+  bool wasInitialized() const { return initialized; }
   void finishRoots();
   void finish();
 
-#ifdef DEBUG
-  void assertNoPermanentSharedThings();
-#endif
+  Zone* atomsZone() {
+    Zone* zone = zones()[0];
+    MOZ_ASSERT(JS::shadow::Zone::from(zone)->isAtomsZone());
+    return zone;
+  }
 
-  void freezePermanentSharedThings();
-  template <typename T>
-  void freezeAtomsZoneArenas(AllocKind kind, ArenaList& arenaList);
-  void restorePermanentSharedThings();
-  void restoreAtomsZoneArenas(AllocKind kind, ArenaList& arenaList);
+  [[nodiscard]] bool freezeSharedAtomsZone();
+  void restoreSharedAtomsZone();
 
   JS::HeapState heapState() const { return heapState_; }
 
@@ -480,8 +481,6 @@ class GCRuntime {
   void removeBlackRootsTracer(JSTraceDataOp traceOp, void* data);
   void clearBlackAndGrayRootTracers();
 
-  void updateMemoryCountersOnGCStart();
-
   void setGCCallback(JSGCCallback callback, void* data);
   void callGCCallback(JSGCStatus status, JS::GCReason reason) const;
   void setObjectsTenuredCallback(JSObjectsTenuredCallback callback, void* data);
@@ -576,6 +575,12 @@ class GCRuntime {
   NonEmptyChunksIter allNonEmptyChunks(const AutoLockGC& lock) {
     return NonEmptyChunksIter(availableChunks(lock), fullChunks(lock));
   }
+  uint32_t minEmptyChunkCount(const AutoLockGC& lock) const {
+    return minEmptyChunkCount_;
+  }
+  uint32_t maxEmptyChunkCount(const AutoLockGC& lock) const {
+    return maxEmptyChunkCount_;
+  }
 #ifdef DEBUG
   void verifyAllChunks();
 #endif
@@ -624,10 +629,11 @@ class GCRuntime {
   template <AllowGC allowGC>
   static JSObject* tryNewTenuredObject(JSContext* cx, AllocKind kind,
                                        size_t thingSize, size_t nDynamicSlots);
-  template <typename T, AllowGC allowGC>
-  static T* tryNewTenuredThing(JSContext* cx, AllocKind kind, size_t thingSize);
   template <AllowGC allowGC>
-  JSString* tryNewNurseryString(JSContext* cx, size_t thingSize,
+  static TenuredCell* tryNewTenuredThing(JSContext* cx, AllocKind kind,
+                                         size_t thingSize);
+  template <AllowGC allowGC>
+  Cell* tryNewNurseryStringCell(JSContext* cx, size_t thingSize,
                                 AllocKind kind);
   template <AllowGC allowGC>
   JS::BigInt* tryNewNurseryBigInt(JSContext* cx, size_t thingSize,
@@ -648,6 +654,8 @@ class GCRuntime {
 
   JS::GCReason lastStartReason() const { return initialReason; }
 
+  void updateAllocationRates();
+
  private:
   enum IncrementalResult { ResetIncremental = 0, Ok };
 
@@ -656,8 +664,9 @@ class GCRuntime {
   TriggerResult checkHeapThreshold(Zone* zone, const HeapSize& heapSize,
                                    const HeapThreshold& heapThreshold);
 
-  void updateGCThresholdsAfterCollection(const AutoLockGC& lock);
-  void updateAllGCStartThresholds(const AutoLockGC& lock);
+  void updateSchedulingStateOnGCStart();
+  void updateSchedulingStateAfterCollection(mozilla::TimeStamp currentTime);
+  void updateAllGCStartThresholds();
 
   // For ArenaLists::allocateFromArena()
   friend class ArenaLists;
@@ -682,6 +691,8 @@ class GCRuntime {
   ChunkPool expireEmptyChunkPool(const AutoLockGC& lock);
   void freeEmptyChunks(const AutoLockGC& lock);
   void prepareToFreeChunk(TenuredChunkInfo& info);
+  void setMinEmptyChunkCount(uint32_t value, const AutoLockGC& lock);
+  void setMaxEmptyChunkCount(uint32_t value, const AutoLockGC& lock);
 
   friend class BackgroundAllocTask;
   bool wantBackgroundAllocation(const AutoLockGC& lock) const;
@@ -830,7 +841,7 @@ class GCRuntime {
                           SortedArenaList& sweepList);
   IncrementalProgress sweepPropMapTree(JS::GCContext* gcx, SliceBudget& budget);
   void endSweepPhase(bool lastGC);
-  void queueZonesAndStartBackgroundSweep(ZoneList& zones);
+  void queueZonesAndStartBackgroundSweep(ZoneList&& zones);
   void sweepFromBackgroundThread(AutoLockHelperThreadState& lock);
   void startBackgroundFree();
   void freeFromBackgroundThread(AutoLockHelperThreadState& lock);
@@ -919,20 +930,21 @@ class GCRuntime {
  public:
   JSRuntime* const rt;
 
-  // The unique atoms zone.
-  WriteOnceData<Zone*> atomsZone;
-
   // Embedders can use this zone however they wish.
   MainThreadData<JS::Zone*> systemZone;
 
   MainThreadData<JS::GCContext> mainThreadContext;
 
  private:
-  // All zones in the runtime, except the atoms zone.
+  // For parent runtimes, a zone containing atoms that is shared by child
+  // runtimes.
+  MainThreadData<Zone*> sharedAtomsZone_;
+
+  // All zones in the runtime. The first element is always the atoms zone.
   MainThreadOrGCTaskData<ZoneVector> zones_;
 
   // Any activity affecting the heap.
-  mozilla::Atomic<JS::HeapState, mozilla::SequentiallyConsistent> heapState_;
+  MainThreadOrGCTaskData<JS::HeapState> heapState_;
   friend class AutoHeapSession;
   friend class JS::AutoEnterCycleCollection;
 
@@ -995,10 +1007,22 @@ class GCRuntime {
   // so as to reduce the cost of operations on the available lists.
   GCLockData<ChunkPool> fullChunks_;
 
+  /*
+   * JSGC_MIN_EMPTY_CHUNK_COUNT
+   * JSGC_MAX_EMPTY_CHUNK_COUNT
+   *
+   * Controls the number of empty chunks reserved for future allocation.
+   *
+   * They can be read off main thread by the background allocation task and the
+   * background decommit task.
+   */
+  GCLockData<uint32_t> minEmptyChunkCount_;
+  GCLockData<uint32_t> maxEmptyChunkCount_;
+
   MainThreadData<RootedValueMap> rootsHash;
 
   // An incrementing id used to assign unique ids to cells that require one.
-  mozilla::Atomic<uint64_t, mozilla::ReleaseAcquire> nextCellUniqueId_;
+  MainThreadData<uint64_t> nextCellUniqueId_;
 
   /*
    * Number of the committed arenas in all GC chunks including empty chunks.
@@ -1010,6 +1034,7 @@ class GCRuntime {
   MainThreadData<mozilla::TimeStamp> lastGCStartTime_;
   MainThreadData<mozilla::TimeStamp> lastGCEndTime_;
 
+  WriteOnceData<bool> initialized;
   MainThreadData<bool> incrementalGCEnabled;
   MainThreadData<bool> perZoneGCEnabled;
 
@@ -1081,8 +1106,9 @@ class GCRuntime {
   // marking.
   MainThreadData<bool> markOnBackgroundThreadDuringSweeping;
 
-  /* Whether any sweeping will take place in the separate GC helper thread. */
-  MainThreadData<bool> sweepOnBackgroundThread;
+  // Whether any sweeping and decommitting will run on a separate GC helper
+  // thread.
+  MainThreadData<bool> useBackgroundThreads;
 
 #ifdef DEBUG
   /* Shutdown has started. Further collections must be shutdown collections. */
@@ -1274,6 +1300,12 @@ class GCRuntime {
   MainThreadOrGCTaskData<gc::StoreBuffer> storeBuffer_;
 
   mozilla::TimeStamp lastLastDitchTime;
+
+  // The last time per-zone allocation rates were updated.
+  MainThreadData<mozilla::TimeStamp> lastAllocRateUpdateTime;
+
+  // Total collector time since per-zone allocation rates were last updated.
+  MainThreadData<mozilla::TimeDuration> collectorTimeSinceAllocRateUpdate;
 
   friend class MarkingValidator;
   friend class AutoEnterIteration;

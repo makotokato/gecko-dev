@@ -274,6 +274,16 @@ vendoring:
   # If the action is run-script:
   #   script is the script to run
   #   cwd is the directory the script should run with as its cwd
+  #   args is a list of arguments to pass to the script
+  #
+  # If the action is run-command:
+  #   command is the command to run
+  #      Unlike run-script, `command` is _not_ processed to be relative
+  #      to the vendor directory, and is passed directly to python's
+  #      execution code without any path substitution or manipulation
+  #   cwd is the directory the command should run with as its cwd
+  #   args is a list of arguments to pass to the command
+  #
   #
   # Unless specified otherwise, all files/directories are relative to the
   #     vendor-directory. If the vendor-directory is different from the
@@ -351,42 +361,6 @@ def load_moz_yaml(filename, verify=True, require_license_file=True):
     return manifest
 
 
-def update_moz_yaml(filename, release, revision, verify=True, write=True):
-    """Update origin:release and vendoring:revision without stripping
-    comments or reordering fields."""
-
-    if verify:
-        load_moz_yaml(filename)
-
-    lines = []
-    with open(filename) as f:
-        found_release = False
-        found_revision = False
-        section = None
-        for line in f.readlines():
-            m = RE_SECTION(line)
-            if m:
-                section = m.group(1)
-            else:
-                m = RE_FIELD(line)
-                if m:
-                    (name, value) = m.groups()
-                    if section == "origin" and name == "release":
-                        line = "  release: %s\n" % release
-                        found_release = True
-                    elif section == "origin" and name == "revision":
-                        line = "  revision: %s\n" % revision
-                        found_revision = True
-            lines.append(line)
-
-        if not found_release and found_revision:
-            raise ValueError("Failed to find origin:release and " "origin:revision")
-
-    if write:
-        with open(filename, "w") as f:
-            f.writelines(lines)
-
-
 def _schema_1():
     """Returns Voluptuous Schema object."""
     return Schema(
@@ -408,7 +382,7 @@ def _schema_1():
                 # that isn't a Space, ~, ^, :, ?, *, or ]
                 # The second group [^ ~^:?*[\]\.]+ matches 1 or more times
                 # anything that isn't a Space, ~, ^, :, ?, *, [, ], or .
-                Required("revision"): Match(r"^[^ ~^:?*[\]]*[^ ~^:?*[\]\.]+$"),
+                "revision": Match(r"^[^ ~^:?*[\]]*[^ ~^:?*[\]\.]+$"),
             },
             "updatebot": {
                 Required("maintainer-phab"): All(str, Length(min=1)),
@@ -470,6 +444,7 @@ def _schema_1():
                                     "replace-in-file",
                                     "replace-in-file-regex",
                                     "run-script",
+                                    "run-command",
                                     "delete-path",
                                 ],
                                 msg="Invalid action specified in update-actions",
@@ -480,6 +455,7 @@ def _schema_1():
                             "with": All(str, Length(min=1)),
                             "file": All(str, Length(min=1)),
                             "script": All(str, Length(min=1)),
+                            "command": All(str, Length(min=1)),
                             "args": All([All(str, Length(min=1))]),
                             "cwd": All(str, Length(min=1)),
                             "path": All(str, Length(min=1)),
@@ -528,6 +504,12 @@ def _schema_1_additional(filename, manifest, require_license_file=True):
     if "vendoring" in manifest and "origin" not in manifest:
         raise ValueError('"vendoring" requires an "origin"')
 
+    # Cannot vendor without a computer-readable revision.
+    if "vendoring" in manifest and "revision" not in manifest["origin"]:
+        raise ValueError(
+            'If "vendoring" is present, "revision" must be present in "origin"'
+        )
+
     # Only commit and tag are allowed for tracking
     if "vendoring" in manifest:
         if "tracking" not in manifest["vendoring"]:
@@ -548,10 +530,6 @@ def _schema_1_additional(filename, manifest, require_license_file=True):
             raise ValueError(
                 "If Updatebot tasks are specified, a vendoring url must be included."
             )
-        if "origin" not in manifest or "revision" not in manifest["origin"]:
-            raise ValueError(
-                "If Updatebot tasks are specified, an origin revision must be specified."
-            )
 
     # Check for a simple YAML file
     with open(filename, "r") as f:
@@ -564,10 +542,6 @@ def _schema_1_additional(filename, manifest, require_license_file=True):
                     break
         if not has_schema:
             raise ValueError("Not simple YAML")
-
-    # Verify YAML can be updated.
-    if "vendor" in manifest:
-        update_moz_yaml(filename, "", "", verify=False, write=True)
 
 
 # Do type conversion for the few things that need it.
@@ -623,6 +597,15 @@ class UpdateActions(object):
                 if set(v.keys()) - set(["args", "cwd", "script", "action"]) != set():
                     raise Invalid(
                         "run-script action may only specify 'script', 'cwd', and 'args' keys"
+                    )
+            elif v["action"] == "run-command":
+                if "command" not in v or "cwd" not in v:
+                    raise Invalid(
+                        "run-command action must specify 'command' and 'cwd' keys"
+                    )
+                if set(v.keys()) - set(["args", "cwd", "command", "action"]) != set():
+                    raise Invalid(
+                        "run-command action may only specify 'command', 'cwd', and 'args' keys"
                     )
             else:
                 # This check occurs before the validator above, so the above is

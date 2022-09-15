@@ -5,13 +5,12 @@
 
 var EXPORTED_SYMBOLS = ["ExtensionsUI"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const { EventEmitter } = ChromeUtils.import(
   "resource://gre/modules/EventEmitter.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const lazy = {};
 
@@ -422,7 +421,7 @@ var ExtensionsUI = {
         return false;
       }
 
-      let popupOptions = {
+      let options = {
         hideClose: true,
         popupIconURL: icon || DEFAULT_EXTENSION_ICON,
         popupIconClass: icon ? "" : "addon-warning-icon",
@@ -455,14 +454,23 @@ var ExtensionsUI = {
         },
       ];
 
+      if (browser.ownerGlobal.gUnifiedExtensions.isEnabled) {
+        options.popupOptions = {
+          position: "bottomright topright",
+        };
+      }
+
       window.PopupNotifications.show(
         browser,
         "addon-webext-permissions",
         strings.header,
-        "addons-notification-icon",
+        browser.ownerGlobal.gUnifiedExtensions.getPopupAnchorID(
+          browser,
+          window
+        ),
         action,
         secondaryActions,
-        popupOptions
+        options
       );
     });
 
@@ -473,7 +481,7 @@ var ExtensionsUI = {
 
   showDefaultSearchPrompt(target, strings, icon) {
     return new Promise(resolve => {
-      let popupOptions = {
+      let options = {
         hideClose: true,
         popupIconURL: icon || DEFAULT_EXTENSION_ICON,
         persistent: true,
@@ -504,6 +512,7 @@ var ExtensionsUI = {
       ];
 
       let { browser, window } = getTabBrowser(target);
+
       window.PopupNotifications.show(
         browser,
         "addon-webext-defaultsearch",
@@ -511,7 +520,7 @@ var ExtensionsUI = {
         "addons-notification-icon",
         action,
         secondaryActions,
-        popupOptions
+        options
       );
     });
   },
@@ -667,7 +676,9 @@ var ExtensionsUI = {
 
     // Insert all before Manage Extension, after any extension's menu items.
     let items = [headerItem, whenClicked, alwaysOn, allDomains, separator];
-    let manageItem = popup.querySelector(".customize-context-manageExtension");
+    let manageItem =
+      popup.querySelector(".customize-context-manageExtension") ||
+      popup.querySelector(".unified-extensions-context-menu-manage-extension");
     items.forEach(item => item && popup.insertBefore(item, manageItem));
 
     let cleanup = () => items.forEach(item => item?.remove());

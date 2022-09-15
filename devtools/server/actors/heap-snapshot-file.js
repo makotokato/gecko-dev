@@ -5,7 +5,6 @@
 "use strict";
 
 const protocol = require("devtools/shared/protocol");
-const Services = require("Services");
 
 const {
   heapSnapshotFileSpec,
@@ -31,7 +30,7 @@ loader.lazyRequireGetter(
 exports.HeapSnapshotFileActor = protocol.ActorClassWithSpec(
   heapSnapshotFileSpec,
   {
-    initialize: function(conn, parent) {
+    initialize(conn, parent) {
       if (
         Services.appinfo.processType !== Services.appinfo.PROCESS_TYPE_DEFAULT
       ) {

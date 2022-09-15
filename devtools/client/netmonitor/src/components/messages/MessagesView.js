@@ -4,7 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const {
   Component,
   createRef,
@@ -140,7 +139,7 @@ class MessagesView extends Component {
       }),
       SplitBox({
         className: "devtools-responsive-container",
-        initialHeight: initialHeight,
+        initialHeight,
         minSize: "50px",
         maxSize: "80%",
         splitterSize: messageDetailsOpen ? 1 : 0,

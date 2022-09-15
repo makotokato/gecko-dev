@@ -397,9 +397,8 @@ nsresult PuppetWidget::SynthesizeNativeKeyEvent(
     return NS_ERROR_FAILURE;
   }
   mBrowserChild->SendSynthesizeNativeKeyEvent(
-      aNativeKeyboardLayout, aNativeKeyCode, aModifierFlags,
-      nsString(aCharacters), nsString(aUnmodifiedCharacters),
-      notifier.SaveObserver());
+      aNativeKeyboardLayout, aNativeKeyCode, aModifierFlags, aCharacters,
+      aUnmodifiedCharacters, notifier.SaveObserver());
   return NS_OK;
 }
 
@@ -898,7 +897,7 @@ void PuppetWidget::SetCursor(const Cursor& aCursor) {
   }
 
   bool hasCustomCursor = false;
-  UniquePtr<char[]> customCursorData;
+  Maybe<mozilla::ipc::BigBuffer> customCursorData;
   size_t length = 0;
   IntSize customCursorSize;
   int32_t stride = 0;
@@ -936,10 +935,8 @@ void PuppetWidget::SetCursor(const Cursor& aCursor) {
     }
   }
 
-  nsDependentCString cursorData(customCursorData ? customCursorData.get() : "",
-                                length);
   if (!mBrowserChild->SendSetCursor(
-          aCursor.mDefaultCursor, hasCustomCursor, cursorData,
+          aCursor.mDefaultCursor, hasCustomCursor, std::move(customCursorData),
           customCursorSize.width, customCursorSize.height, resolution.mX,
           resolution.mY, stride, format, aCursor.mHotspotX, aCursor.mHotspotY,
           force)) {
@@ -1082,8 +1079,8 @@ void PuppetWidget::LookUpDictionary(
     return;
   }
 
-  mBrowserChild->SendLookUpDictionary(nsString(aText), aFontRangeArray,
-                                      aIsVertical, aPoint);
+  mBrowserChild->SendLookUpDictionary(aText, aFontRangeArray, aIsVertical,
+                                      aPoint);
 }
 
 bool PuppetWidget::HasPendingInputEvent() {

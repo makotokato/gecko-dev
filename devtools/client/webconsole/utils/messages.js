@@ -4,7 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const l10n = require("devtools/client/webconsole/utils/l10n");
 const ResourceCommand = require("devtools/shared/commands/resource/resource-command");
 const {
@@ -622,7 +621,7 @@ function createSimpleTableMessage(columns, items, timeStamp) {
     type: MESSAGE_TYPE.SIMPLE_TABLE,
     columns,
     items,
-    timeStamp: timeStamp,
+    timeStamp,
   });
 }
 

@@ -23,7 +23,6 @@
 #include "NamespaceImports.h"
 
 #include "js/TypeDecls.h"
-#include "js/UniquePtr.h"
 #include "js/Utility.h"
 #include "js/Value.h"
 #include "vm/BytecodeFormatFlags.h"  // JOF_*
@@ -341,12 +340,14 @@ MOZ_ALWAYS_INLINE unsigned StackUses(jsbytecode* pc) {
     case JSOp::PopN:
       return GET_UINT16(pc);
     case JSOp::New:
+    case JSOp::NewContent:
     case JSOp::SuperCall:
       return 2 + GET_ARGC(pc) + 1;
     default:
       /* stack: fun, this, [argc arguments] */
-      MOZ_ASSERT(op == JSOp::Call || op == JSOp::CallIgnoresRv ||
-                 op == JSOp::Eval || op == JSOp::CallIter ||
+      MOZ_ASSERT(op == JSOp::Call || op == JSOp::CallContent ||
+                 op == JSOp::CallIgnoresRv || op == JSOp::Eval ||
+                 op == JSOp::CallIter || op == JSOp::CallContentIter ||
                  op == JSOp::StrictEval);
       return 2 + GET_ARGC(pc);
   }

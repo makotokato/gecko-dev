@@ -18,7 +18,7 @@ Sanitizer.onStartup();
 // the shutdown blocker added by swm. Normally, swm should be initialized before
 // that and the similar crash signatures are fixed. So, assume this cannot
 // happen in the real world and initilaize swm here as a workaround.
-const swm = Cc["@mozilla.org/serviceworkers/manager;1"].getService(
+Cc["@mozilla.org/serviceworkers/manager;1"].getService(
   Ci.nsIServiceWorkerManager
 );
 
@@ -42,8 +42,7 @@ add_task(async function run_test() {
   SSService.processHeader(
     Services.io.newURI("http://example.com"),
     header,
-    secInfo,
-    Ci.nsISiteSecurityService.SOURCE_ORGANIC_REQUEST
+    secInfo
   );
   await TestUtils.topicObserved(
     "data-storage-written",

@@ -571,9 +571,14 @@ nsBaseDragService::EndDragSession(bool aDoneDrag, uint32_t aKeyModifiers) {
     }
   }
 
+  uint32_t dropEffect = nsIDragService::DRAGDROP_ACTION_NONE;
+  if (mDataTransfer) {
+    dropEffect = mDataTransfer->DropEffectInt();
+  }
+
   for (uint32_t i = 0; i < mChildProcesses.Length(); ++i) {
     mozilla::Unused << mChildProcesses[i]->SendEndDragSession(
-        aDoneDrag, mUserCancelled, mEndDragPoint, aKeyModifiers);
+        aDoneDrag, mUserCancelled, mEndDragPoint, aKeyModifiers, dropEffect);
     // Continue sending input events with input priority when stopping the dnd
     // session.
     mChildProcesses[i]->SetInputPriorityEventEnabled(true);
@@ -910,11 +915,10 @@ nsresult nsBaseDragService::DrawDragForImage(
     RefPtr<gfxContext> ctx = gfxContext::CreateOrNull(dt);
     if (!ctx) return NS_ERROR_FAILURE;
 
-    ImgDrawResult res =
-        imgContainer->Draw(ctx, destSize, ImageRegion::Create(destSize),
-                           imgIContainer::FRAME_CURRENT, SamplingFilter::GOOD,
-                           /* no SVGImageContext */ Nothing(),
-                           imgIContainer::FLAG_SYNC_DECODE, 1.0);
+    ImgDrawResult res = imgContainer->Draw(
+        ctx, destSize, ImageRegion::Create(destSize),
+        imgIContainer::FRAME_CURRENT, SamplingFilter::GOOD, SVGImageContext(),
+        imgIContainer::FLAG_SYNC_DECODE, 1.0);
     if (res == ImgDrawResult::BAD_IMAGE || res == ImgDrawResult::BAD_ARGS ||
         res == ImgDrawResult::NOT_SUPPORTED) {
       return NS_ERROR_FAILURE;
@@ -982,7 +986,8 @@ bool nsBaseDragService::MaybeAddChildProcess(
 bool nsBaseDragService::RemoveAllChildProcesses() {
   for (uint32_t c = 0; c < mChildProcesses.Length(); c++) {
     mozilla::Unused << mChildProcesses[c]->SendEndDragSession(
-        true, false, LayoutDeviceIntPoint(), 0);
+        true, false, LayoutDeviceIntPoint(), 0,
+        nsIDragService::DRAGDROP_ACTION_NONE);
   }
   mChildProcesses.Clear();
   return true;

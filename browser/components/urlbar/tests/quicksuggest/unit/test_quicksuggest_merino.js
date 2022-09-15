@@ -7,6 +7,8 @@
 "use strict";
 
 XPCOMUtils.defineLazyModuleGetters(this, {
+  ExperimentFakes: "resource://testing-common/NimbusTestUtils.jsm",
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
   TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.jsm",
 });
 
@@ -113,6 +115,7 @@ const EXPECTED_MERINO_RESULT = {
 };
 
 let gMerinoResponse;
+let gMerinoEndpointURL;
 
 add_task(async function init() {
   UrlbarPrefs.set("quicksuggest.enabled", true);
@@ -127,6 +130,7 @@ add_task(async function init() {
   url.pathname = path;
   url.port = server.identity.primaryPort;
   UrlbarPrefs.set(PREF_MERINO_ENDPOINT_URL, url.toString());
+  gMerinoEndpointURL = url;
 
   UrlbarPrefs.set("merino.timeoutMs", TEST_MERINO_TIMEOUT_MS);
 
@@ -1017,10 +1021,10 @@ add_task(async function timestamps() {
   // Set up the Merino response with template URLs.
   let resp = setMerinoResponse();
   let suggestion = resp.body.suggestions[0];
-  let { timestampTemplate } = UrlbarProviderQuickSuggest;
+  let { TIMESTAMP_TEMPLATE } = UrlbarProviderQuickSuggest;
 
-  suggestion.url = `http://example.com/time-${timestampTemplate}`;
-  suggestion.click_url = `http://example.com/time-${timestampTemplate}-foo`;
+  suggestion.url = `http://example.com/time-${TIMESTAMP_TEMPLATE}`;
+  suggestion.click_url = `http://example.com/time-${TIMESTAMP_TEMPLATE}-foo`;
 
   // Do a search.
   let context = createContext("test", {
@@ -1267,6 +1271,71 @@ add_task(async function bestMatch() {
   UrlbarPrefs.clear("bestMatch.enabled");
   UrlbarPrefs.clear("suggest.bestmatch");
 });
+
+// Tests setting the endpoint URL via Nimbus.
+add_task(async function endpointSetByNimbus() {
+  UrlbarPrefs.set(PREF_MERINO_ENABLED, true);
+  UrlbarPrefs.set(PREF_REMOTE_SETTINGS_ENABLED, false);
+  UrlbarPrefs.set(PREF_DATA_COLLECTION_ENABLED, true);
+
+  // Clear the endpoint pref so we know the URL is not being fetched from it.
+  UrlbarPrefs.set(PREF_MERINO_ENDPOINT_URL, "");
+
+  setMerinoResponse();
+  await QuickSuggestTestUtils.initNimbusFeature();
+
+  // First, with the endpoint pref set to an empty string, make sure no Merino
+  // results are returned.
+  await check_results({
+    context: createContext(SEARCH_STRING, {
+      providers: [UrlbarProviderQuickSuggest.name],
+      isPrivate: false,
+    }),
+    matches: [],
+  });
+
+  // Now install an experiment that sets the endpoint and make sure a result is
+  // returned.
+  await withEndpointExperiment(async () => {
+    await check_results({
+      context: createContext(SEARCH_STRING, {
+        providers: [UrlbarProviderQuickSuggest.name],
+        isPrivate: false,
+      }),
+      matches: [EXPECTED_MERINO_RESULT],
+    });
+  });
+
+  UrlbarPrefs.set(PREF_MERINO_ENDPOINT_URL, gMerinoEndpointURL.toString());
+});
+
+async function withEndpointExperiment(callback) {
+  let {
+    enrollmentPromise,
+    doExperimentCleanup,
+  } = ExperimentFakes.enrollmentHelper(
+    ExperimentFakes.recipe("mock-experiment", {
+      active: true,
+      branches: [
+        {
+          slug: "treatment",
+          features: [
+            {
+              featureId: NimbusFeatures.urlbar.featureId,
+              value: {
+                enabled: true,
+                merinoEndpointURL: gMerinoEndpointURL.toString(),
+              },
+            },
+          ],
+        },
+      ],
+    })
+  );
+  await enrollmentPromise;
+  await callback();
+  await doExperimentCleanup();
+}
 
 function makeMerinoServer(endpointPath) {
   let server = makeTestServer();

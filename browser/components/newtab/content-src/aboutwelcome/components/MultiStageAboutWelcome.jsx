@@ -18,7 +18,7 @@ const TRANSITION_OUT_TIME = 1000;
 export const MultiStageAboutWelcome = props => {
   let { screens } = props;
 
-  const [index, setScreenIndex] = useState(0);
+  const [index, setScreenIndex] = useState(props.startScreen);
   useEffect(() => {
     // Send impression ping when respective screen first renders
     screens.forEach((screen, order) => {
@@ -30,24 +30,27 @@ export const MultiStageAboutWelcome = props => {
     });
 
     // Remember that a new screen has loaded for browser navigation
-    if (index > window.history.state) {
+    if (props.updateHistory && index > window.history.state) {
       window.history.pushState(index, "");
     }
   }, [index]);
 
   useEffect(() => {
-    // Switch to the screen tracked in state (null for initial state)
-    // or last screen index if a user navigates by pressing back
-    // button from about:home
-    const handler = ({ state }) =>
-      setScreenIndex(Math.min(state, screens.length - 1));
+    if (props.updateHistory) {
+      // Switch to the screen tracked in state (null for initial state)
+      // or last screen index if a user navigates by pressing back
+      // button from about:home
+      const handler = ({ state }) =>
+        setScreenIndex(Math.min(state, screens.length - 1));
 
-    // Handle page load, e.g., going back to about:welcome from about:home
-    handler(window.history);
+      // Handle page load, e.g., going back to about:welcome from about:home
+      handler(window.history);
 
-    // Watch for browser back/forward button navigation events
-    window.addEventListener("popstate", handler);
-    return () => window.removeEventListener("popstate", handler);
+      // Watch for browser back/forward button navigation events
+      window.addEventListener("popstate", handler);
+      return () => window.removeEventListener("popstate", handler);
+    }
+    return false;
   }, []);
 
   const [flowParams, setFlowParams] = useState(null);
@@ -121,8 +124,10 @@ export const MultiStageAboutWelcome = props => {
   const [topSites, setTopSites] = useState([]);
   useEffect(() => {
     (async () => {
-      let DEFAULT_SITES = await window.AWGetDefaultSites();
-      const importable = JSON.parse(await window.AWGetImportableSites());
+      let DEFAULT_SITES = await window.AWGetDefaultSites?.();
+      const importable = JSON.parse(
+        (await window.AWGetImportableSites?.()) || "[]"
+      );
       const showImportable = useImportable && importable.length >= 5;
       if (!importTelemetrySent.current) {
         AboutWelcomeUtils.sendImpressionTelemetry(`${props.message_id}_SITES`, {
@@ -164,16 +169,22 @@ export const MultiStageAboutWelcome = props => {
       >
         {screens.map((screen, order) => {
           const isFirstCenteredScreen =
-            screen.content.position !== "corner" &&
+            (!screen.content.position ||
+              screen.content.position === "center") &&
             screen === centeredScreens[0];
           const isLastCenteredScreen =
-            screen.content.position !== "corner" &&
+            (!screen.content.position ||
+              screen.content.position === "center") &&
             screen === centeredScreens[centeredScreens.length - 1];
           /* If first screen is corner positioned, don't include it in the count for the steps indicator. This assumes corner positioning will only be used on the first screen. */
           const totalNumberOfScreens =
             screens[0].content.position === "corner"
               ? screens.length - 1
               : screens.length;
+          /* Don't include a starting corner screen when determining step indicator order */
+          const stepOrder =
+            screens[0].content.position === "corner" ? order - 1 : order;
+
           return index === order ? (
             <WelcomeScreen
               key={screen.id + order}
@@ -181,7 +192,7 @@ export const MultiStageAboutWelcome = props => {
               totalNumberOfScreens={totalNumberOfScreens}
               isFirstCenteredScreen={isFirstCenteredScreen}
               isLastCenteredScreen={isLastCenteredScreen}
-              startsWithCorner={screens[0].content.position === "corner"}
+              stepOrder={stepOrder}
               order={order}
               content={screen.content}
               navigate={handleTransition}
@@ -192,6 +203,7 @@ export const MultiStageAboutWelcome = props => {
               activeTheme={activeTheme}
               initialTheme={initialTheme}
               setActiveTheme={setActiveTheme}
+              setInitialTheme={setInitialTheme}
               autoAdvance={screen.auto_advance}
               negotiatedLanguage={negotiatedLanguage}
               langPackInstallPhase={langPackInstallPhase}
@@ -207,6 +219,10 @@ export const SecondaryCTA = props => {
   let targetElement = props.position
     ? `secondary_button_${props.position}`
     : `secondary_button`;
+  const buttonStyling = props.content.secondary_button?.has_arrow_icon
+    ? `secondary text-link arrow-icon`
+    : `secondary text-link`;
+
   return (
     <div
       className={
@@ -218,7 +234,7 @@ export const SecondaryCTA = props => {
       </Localized>
       <Localized text={props.content[targetElement].label}>
         <button
-          className="secondary text-link"
+          className={buttonStyling}
           value={targetElement}
           onClick={props.handleAction}
         />
@@ -230,8 +246,12 @@ export const SecondaryCTA = props => {
 export const StepsIndicator = props => {
   let steps = [];
   for (let i = 0; i < props.totalNumberOfScreens; i++) {
-    let className = i === props.order ? "current" : "";
-    steps.push(<div key={i} className={`indicator ${className}`} />);
+    let className = `${i === props.order ? "current" : ""} ${
+      i < props.order ? "complete" : ""
+    }`;
+    steps.push(
+      <div key={i} className={`indicator ${className}`} role="presentation" />
+    );
   }
   return steps;
 };
@@ -271,7 +291,8 @@ export class WelcomeScreen extends React.PureComponent {
 
   async handleAction(event) {
     let { props } = this;
-    let { value } = event.currentTarget;
+    const value =
+      event.currentTarget.value ?? event.currentTarget.getAttribute("value");
     let targetContent =
       props.content[value] ||
       props.content.tiles ||
@@ -311,6 +332,12 @@ export class WelcomeScreen extends React.PureComponent {
       window.AWSelectTheme(themeToUse);
     }
 
+    // If the action has persistActiveTheme: true, we set the initial theme to the currently active theme
+    // so that it can be reverted to in the event that the user navigates away from the screen
+    if (action.persistActiveTheme) {
+      this.props.setInitialTheme(this.props.activeTheme);
+    }
+
     if (action.navigate) {
       props.navigate();
     }
@@ -322,6 +349,7 @@ export class WelcomeScreen extends React.PureComponent {
         content={this.props.content}
         id={this.props.id}
         order={this.props.order}
+        stepOrder={this.props.stepOrder}
         activeTheme={this.props.activeTheme}
         totalNumberOfScreens={this.props.totalNumberOfScreens}
         appAndSystemLocaleInfo={this.props.appAndSystemLocaleInfo}

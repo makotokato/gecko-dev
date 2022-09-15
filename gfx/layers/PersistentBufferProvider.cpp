@@ -118,10 +118,6 @@ PersistentBufferProviderAccelerated::GetFrontBuffer() {
   return GetDrawTargetWebgl()->GetFrontBuffer();
 }
 
-bool PersistentBufferProviderAccelerated::CopySnapshotTo(gfx::DrawTarget* aDT) {
-  return GetDrawTargetWebgl()->CopySnapshotTo(aDT);
-}
-
 already_AddRefed<gfx::DrawTarget>
 PersistentBufferProviderAccelerated::BorrowDrawTarget(
     const gfx::IntRect& aPersistedRect) {
@@ -134,6 +130,12 @@ bool PersistentBufferProviderAccelerated::ReturnDrawTarget(
   bool result = PersistentBufferProviderBasic::ReturnDrawTarget(std::move(aDT));
   GetDrawTargetWebgl()->EndFrame();
   return result;
+}
+
+already_AddRefed<gfx::SourceSurface>
+PersistentBufferProviderAccelerated::BorrowSnapshot() {
+  mSnapshot = GetDrawTargetWebgl()->GetDataSnapshot();
+  return do_AddRef(mSnapshot);
 }
 
 bool PersistentBufferProviderAccelerated::RequiresRefresh() const {

@@ -254,7 +254,7 @@ var TemporalHelpers = {
    * calendar object (so that it doesn't have to call the calendar getter itself
    * if it wants to make any assertions about the calendar.)
    */
-  checkPlainDateTimeConversionFastPath(func) {
+  checkPlainDateTimeConversionFastPath(func, message = "checkPlainDateTimeConversionFastPath") {
     const actual = [];
     const expected = [];
 
@@ -287,7 +287,7 @@ var TemporalHelpers = {
     });
 
     func(datetime, calendar);
-    assert.compareArray(actual, expected, "property getters not called");
+    assert.compareArray(actual, expected, `${message}: property getters not called`);
   },
 
   /*
@@ -898,6 +898,102 @@ var TemporalHelpers = {
   },
 
   /*
+   * A custom calendar used in prototype pollution checks. Verifies that the
+   * fromFields methods are always called with a null-prototype fields object.
+   */
+  calendarCheckFieldsPrototypePollution() {
+    class CalendarCheckFieldsPrototypePollution extends Temporal.Calendar {
+      constructor() {
+        super("iso8601");
+        this.dateFromFieldsCallCount = 0;
+        this.yearMonthFromFieldsCallCount = 0;
+        this.monthDayFromFieldsCallCount = 0;
+      }
+
+      // toString must remain "iso8601", so that some methods don't throw due to
+      // incompatible calendars
+
+      dateFromFields(fields, options = {}) {
+        this.dateFromFieldsCallCount++;
+        assert.sameValue(Object.getPrototypeOf(fields), null, "dateFromFields should be called with null-prototype fields object");
+        return super.dateFromFields(fields, options);
+      }
+
+      yearMonthFromFields(fields, options = {}) {
+        this.yearMonthFromFieldsCallCount++;
+        assert.sameValue(Object.getPrototypeOf(fields), null, "yearMonthFromFields should be called with null-prototype fields object");
+        return super.yearMonthFromFields(fields, options);
+      }
+
+      monthDayFromFields(fields, options = {}) {
+        this.monthDayFromFieldsCallCount++;
+        assert.sameValue(Object.getPrototypeOf(fields), null, "monthDayFromFields should be called with null-prototype fields object");
+        return super.monthDayFromFields(fields, options);
+      }
+    }
+
+    return new CalendarCheckFieldsPrototypePollution();
+  },
+
+  /*
+   * A custom calendar used in prototype pollution checks. Verifies that the
+   * mergeFields() method is always called with null-prototype fields objects.
+   */
+  calendarCheckMergeFieldsPrototypePollution() {
+    class CalendarCheckMergeFieldsPrototypePollution extends Temporal.Calendar {
+      constructor() {
+        super("iso8601");
+        this.mergeFieldsCallCount = 0;
+      }
+
+      toString() {
+        return "merge-fields-null-proto";
+      }
+
+      mergeFields(fields, additionalFields) {
+        this.mergeFieldsCallCount++;
+        assert.sameValue(Object.getPrototypeOf(fields), null, "mergeFields should be called with null-prototype fields object (first argument)");
+        assert.sameValue(Object.getPrototypeOf(additionalFields), null, "mergeFields should be called with null-prototype fields object (second argument)");
+        return super.mergeFields(fields, additionalFields);
+      }
+    }
+
+    return new CalendarCheckMergeFieldsPrototypePollution();
+  },
+
+  /*
+   * A custom calendar used in prototype pollution checks. Verifies that methods
+   * are always called with a null-prototype options object.
+   */
+  calendarCheckOptionsPrototypePollution() {
+    class CalendarCheckOptionsPrototypePollution extends Temporal.Calendar {
+      constructor() {
+        super("iso8601");
+        this.yearMonthFromFieldsCallCount = 0;
+        this.dateUntilCallCount = 0;
+      }
+
+      toString() {
+        return "options-null-proto";
+      }
+
+      yearMonthFromFields(fields, options) {
+        this.yearMonthFromFieldsCallCount++;
+        assert.sameValue(Object.getPrototypeOf(options), null, "yearMonthFromFields should be called with null-prototype options");
+        return super.yearMonthFromFields(fields, options);
+      }
+
+      dateUntil(one, two, options) {
+        this.dateUntilCallCount++;
+        assert.sameValue(Object.getPrototypeOf(options), null, "dateUntil should be called with null-prototype options");
+        return super.dateUntil(one, two, options);
+      }
+    }
+
+    return new CalendarCheckOptionsPrototypePollution();
+  },
+
+  /*
    * A custom calendar that asserts its dateAdd() method is called with the
    * options parameter having the value undefined.
    */
@@ -1463,4 +1559,56 @@ var TemporalHelpers = {
       },
     };
   },
+
+  /*
+   * An object containing further methods that return arrays of ISO strings, for
+   * testing parsers.
+   */
+  ISO: {
+    /*
+     * PlainTime strings that may be mistaken for PlainMonthDay or
+     * PlainYearMonth strings, and so require a time designator.
+     */
+    plainTimeStringsAmbiguous() {
+      const ambiguousStrings = [
+        "2021-12",  // ambiguity between YYYY-MM and HHMM-UU
+        "1214",     // ambiguity between MMDD and HHMM
+        "0229",     //   ditto, including MMDD that doesn't occur every year
+        "1130",     //   ditto, including DD that doesn't occur in every month
+        "12-14",    // ambiguity between MM-DD and HH-UU
+        "202112",   // ambiguity between YYYYMM and HHMMSS
+      ];
+      // Adding a calendar annotation to one of these strings must not cause
+      // disambiguation in favour of time.
+      const stringsWithCalendar = ambiguousStrings.map((s) => s + '[u-ca=iso8601]');
+      return ambiguousStrings.concat(stringsWithCalendar);
+    },
+
+    /*
+     * PlainTime strings that are of similar form to PlainMonthDay and
+     * PlainYearMonth strings, but are not ambiguous due to components that
+     * aren't valid as months or days.
+     */
+    plainTimeStringsUnambiguous() {
+      return [
+        "2021-13",          // 13 is not a month
+        "202113",           //   ditto
+        "2021-13[-13:00]",  //   ditto
+        "202113[-13:00]",   //   ditto
+        "0000-00",          // 0 is not a month
+        "000000",           //   ditto
+        "0000-00[UTC]",     //   ditto
+        "000000[UTC]",      //   ditto
+        "1314",             // 13 is not a month
+        "13-14",            //   ditto
+        "1232",             // 32 is not a day
+        "0230",             // 30 is not a day in February
+        "0631",             // 31 is not a day in June
+        "0000",             // 0 is neither a month nor a day
+        "00-00",            //   ditto
+        "2021-12[-12:00]",  // HHMM-UU is ambiguous with YYYY-MM, but TZ disambiguates
+        "202112[UTC]",      // HHMMSS is ambiguous with YYYYMM, but TZ disambiguates
+      ];
+    }
+  }
 };

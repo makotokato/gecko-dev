@@ -5,10 +5,9 @@
 
 const EXPORTED_SYMBOLS = ["AboutWelcomeDefaults", "DEFAULT_WELCOME_CONTENT"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -18,7 +17,22 @@ const lazy = {};
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   AddonRepository: "resource://gre/modules/addons/AddonRepository.jsm",
   AttributionCode: "resource:///modules/AttributionCode.jsm",
+  BuiltInThemes: "resource:///modules/BuiltInThemes.jsm",
+  BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
 });
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "usesFirefoxSync",
+  "services.sync.username"
+);
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "mobileDevices",
+  "services.sync.clients.devices.mobile",
+  0
+);
 
 const DEFAULT_WELCOME_CONTENT = {
   id: "DEFAULT_ABOUTWELCOME_PROTON",
@@ -249,6 +263,395 @@ const DEFAULT_WELCOME_CONTENT = {
   ],
 };
 
+// Message to be updated based on finalized MR designs
+const MR_ABOUT_WELCOME_DEFAULT = {
+  id: "MR_WELCOME_DEFAULT",
+  template: "multistage",
+  // Allow tests to easily disable transitions.
+  transitions: Services.prefs.getBoolPref(
+    "browser.aboutwelcome.transitions",
+    true
+  ),
+  backdrop:
+    "var(--mr-welcome-background-color) var(--mr-welcome-background-gradient)",
+  screens: [
+    {
+      id: "AW_PIN_FIREFOX",
+      content: {
+        position: "split",
+        split_narrow_bkg_position: "-155px",
+        background:
+          "url('chrome://activity-stream/content/data/content/assets/mr-pintaskbar.svg') var(--mr-secondary-position) no-repeat var(--mr-screen-background-color)",
+        progress_bar: true,
+        logo: {},
+        title: {
+          string_id: "mr2022-onboarding-welcome-pin-header",
+        },
+        subtitle: {
+          string_id: "mr2022-onboarding-welcome-pin-subtitle",
+        },
+        primary_button: {
+          label: {
+            string_id: "mr2022-onboarding-pin-primary-button-label",
+          },
+          action: {
+            navigate: true,
+            type: "PIN_FIREFOX_TO_TASKBAR",
+          },
+        },
+        secondary_button: {
+          label: {
+            string_id: "mr2022-onboarding-secondary-skip-button-label",
+          },
+          action: {
+            navigate: true,
+          },
+          has_arrow_icon: true,
+        },
+        secondary_button_top: {
+          label: {
+            string_id: "mr1-onboarding-sign-in-button-label",
+          },
+          action: {
+            data: {
+              entrypoint: "activity-stream-firstrun",
+            },
+            type: "SHOW_FIREFOX_ACCOUNTS",
+            addFlowParams: true,
+          },
+        },
+      },
+    },
+    {
+      id: "AW_LANGUAGE_MISMATCH",
+      content: {
+        position: "split",
+        background: "var(--mr-screen-background-color)",
+        progress_bar: true,
+        logo: {},
+        title: {
+          string_id: "mr2022-onboarding-live-language-text",
+        },
+        subtitle: {
+          string_id: "mr2022-language-mismatch-subtitle",
+        },
+        hero_text: {
+          string_id: "mr2022-onboarding-live-language-text",
+          useLangPack: true,
+        },
+        languageSwitcher: {
+          downloading: {
+            string_id: "onboarding-live-language-button-label-downloading",
+          },
+          cancel: {
+            string_id: "onboarding-live-language-secondary-cancel-download",
+          },
+          waiting: { string_id: "onboarding-live-language-waiting-button" },
+          skip: { string_id: "mr2022-onboarding-secondary-skip-button-label" },
+          action: {
+            navigate: true,
+          },
+          switch: {
+            string_id: "mr2022-onboarding-live-language-switch-to",
+            useLangPack: true,
+          },
+          continue: {
+            string_id: "mr2022-onboarding-live-language-continue-in",
+          },
+        },
+      },
+    },
+    {
+      id: "AW_SET_DEFAULT",
+      content: {
+        position: "split",
+        split_narrow_bkg_position: "-60px",
+        background:
+          "url('chrome://activity-stream/content/data/content/assets/mr-settodefault.svg') var(--mr-secondary-position) no-repeat var(--mr-screen-background-color)",
+        progress_bar: true,
+        logo: {},
+        title: {
+          string_id: "mr2022-onboarding-set-default-title",
+        },
+        subtitle: {
+          string_id: "mr2022-onboarding-set-default-subtitle",
+        },
+        primary_button: {
+          label: {
+            string_id: "mr2022-onboarding-set-default-primary-button-label",
+          },
+          action: {
+            navigate: true,
+            type: "SET_DEFAULT_BROWSER",
+          },
+        },
+        secondary_button: {
+          label: {
+            string_id: "mr2022-onboarding-secondary-skip-button-label",
+          },
+          action: {
+            navigate: true,
+          },
+          has_arrow_icon: true,
+        },
+      },
+    },
+    {
+      id: "AW_IMPORT_SETTINGS",
+      content: {
+        position: "split",
+        split_narrow_bkg_position: "-42px",
+        background:
+          "url('chrome://activity-stream/content/data/content/assets/mr-import.svg') var(--mr-secondary-position) no-repeat var(--mr-screen-background-color)",
+        progress_bar: true,
+        logo: {},
+        title: {
+          string_id: "mr2022-onboarding-import-header",
+        },
+        subtitle: {
+          string_id: "mr2022-onboarding-import-subtitle",
+        },
+        primary_button: {
+          label: {
+            string_id:
+              "mr2022-onboarding-import-primary-button-label-no-attribution",
+          },
+          action: {
+            type: "SHOW_MIGRATION_WIZARD",
+            data: {},
+            navigate: true,
+          },
+        },
+        secondary_button: {
+          label: {
+            string_id: "mr2022-onboarding-secondary-skip-button-label",
+          },
+          action: {
+            navigate: true,
+          },
+          has_arrow_icon: true,
+        },
+      },
+    },
+    {
+      id: "AW_CHOOSE_COLORWAY",
+      content: {
+        position: "split",
+        split_narrow_bkg_position: "-65px",
+        background:
+          "url('chrome://activity-stream/content/data/content/assets/mr-colorways.avif') var(--mr-secondary-position) no-repeat var(--mr-screen-background-color)",
+        progress_bar: true,
+        logo: {},
+        title: {
+          string_id: "mr2022-onboarding-colorway-title",
+        },
+        subtitle: {
+          string_id: "mr2022-onboarding-colorway-subtitle",
+        },
+        tiles: {
+          type: "colorway",
+          action: {
+            theme: "<event>",
+          },
+          defaultVariationIndex: 1,
+          systemVariations: ["light", "automatic", "dark"],
+          variations: ["soft", "balanced", "bold"],
+          colorways: [
+            {
+              id: "default",
+              label: {
+                string_id: "mr2022-onboarding-colorway-label-default",
+              },
+              tooltip: {
+                string_id: "mr2022-onboarding-colorway-tooltip-default",
+              },
+              description: {
+                string_id: "mr2022-onboarding-colorway-description-default",
+              },
+            },
+            {
+              id: "playmaker",
+              label: {
+                string_id: "mr2022-onboarding-colorway-label-playmaker",
+              },
+              tooltip: {
+                string_id: "mr2022-onboarding-colorway-tooltip-playmaker",
+              },
+              description: {
+                string_id: "mr2022-onboarding-colorway-description-playmaker",
+              },
+            },
+            {
+              id: "expressionist",
+              label: {
+                string_id: "mr2022-onboarding-colorway-label-expressionist",
+              },
+              tooltip: {
+                string_id: "mr2022-onboarding-colorway-tooltip-expressionist",
+              },
+              description: {
+                string_id:
+                  "mr2022-onboarding-colorway-description-expressionist",
+              },
+            },
+            {
+              id: "visionary",
+              label: {
+                string_id: "mr2022-onboarding-colorway-label-visionary",
+              },
+              tooltip: {
+                string_id: "mr2022-onboarding-colorway-tooltip-visionary",
+              },
+              description: {
+                string_id: "mr2022-onboarding-colorway-description-visionary",
+              },
+            },
+            {
+              id: "activist",
+              label: {
+                string_id: "mr2022-onboarding-colorway-label-activist",
+              },
+              tooltip: {
+                string_id: "mr2022-onboarding-colorway-tooltip-activist",
+              },
+              description: {
+                string_id: "mr2022-onboarding-colorway-description-activist",
+              },
+            },
+            {
+              id: "dreamer",
+              label: {
+                string_id: "mr2022-onboarding-colorway-label-dreamer",
+              },
+              tooltip: {
+                string_id: "mr2022-onboarding-colorway-tooltip-dreamer",
+              },
+              description: {
+                string_id: "mr2022-onboarding-colorway-description-dreamer",
+              },
+            },
+            {
+              id: "innovator",
+              label: {
+                string_id: "mr2022-onboarding-colorway-label-innovator",
+              },
+              tooltip: {
+                string_id: "mr2022-onboarding-colorway-tooltip-innovator",
+              },
+              description: {
+                string_id: "mr2022-onboarding-colorway-description-innovator",
+              },
+            },
+          ],
+        },
+        primary_button: {
+          label: {
+            string_id:
+              "mr2022-onboarding-colorway-primary-button-label-continue",
+          },
+          action: {
+            persistActiveTheme: true,
+            navigate: true,
+          },
+        },
+        secondary_button: {
+          label: {
+            string_id: "mr2022-onboarding-secondary-skip-button-label",
+          },
+          action: {
+            theme: "automatic",
+            navigate: true,
+          },
+          has_arrow_icon: true,
+        },
+        navigate_away: {
+          action: {
+            theme: "revert",
+          },
+        },
+      },
+    },
+    {
+      id: "AW_MOBILE_DOWNLOAD",
+      content: {
+        position: "split",
+        split_narrow_bkg_position: "-160px",
+        background:
+          "url('chrome://activity-stream/content/data/content/assets/mr-mobilecrosspromo.svg') var(--mr-secondary-position) no-repeat var(--mr-screen-background-color)",
+        progress_bar: true,
+        logo: {},
+        title: {
+          string_id: "mr2022-onboarding-mobile-download-title",
+        },
+        subtitle: {
+          string_id: "mr2022-onboarding-mobile-download-subtitle",
+        },
+        hero_image: {
+          url:
+            "chrome://activity-stream/content/data/content/assets/mobile-download-qr-new-user.svg",
+        },
+        cta_paragraph: {
+          text: {
+            string_id: "mr2022-onboarding-mobile-download-cta-text",
+            string_name: "download-label",
+          },
+          action: {
+            type: "OPEN_URL",
+            data: {
+              args:
+                "https://www.mozilla.org/firefox/mobile/get-app/?utm_medium=firefox-desktop&utm_source=onboarding-modal&utm_campaign=mr2022&utm_content=new-global",
+              where: "tab",
+            },
+          },
+        },
+        secondary_button: {
+          label: {
+            string_id: "mr2022-onboarding-secondary-skip-button-label",
+          },
+          action: {
+            navigate: true,
+          },
+          has_arrow_icon: true,
+        },
+      },
+    },
+    {
+      id: "AW_GRATITUDE",
+      content: {
+        position: "split",
+        split_narrow_bkg_position: "-228px",
+        background:
+          "url('chrome://activity-stream/content/data/content/assets/mr-gratitude.svg') var(--mr-secondary-position) no-repeat var(--mr-screen-background-color)",
+        progress_bar: true,
+        logo: {},
+        title: {
+          string_id: "mr2022-onboarding-gratitude-title",
+        },
+        subtitle: {
+          string_id: "mr2022-onboarding-gratitude-subtitle",
+        },
+        primary_button: {
+          label: {
+            string_id: "mr2022-onboarding-gratitude-primary-button-label",
+          },
+          action: {
+            type: "OPEN_FIREFOX_VIEW",
+            navigate: true,
+          },
+        },
+        secondary_button: {
+          label: {
+            string_id: "mr2022-onboarding-gratitude-secondary-button-label",
+          },
+          action: {
+            navigate: true,
+          },
+        },
+      },
+    },
+  ],
+};
+
 async function getAddonFromRepository(data) {
   const [addonInfo] = await lazy.AddonRepository.getAddonsByIDs([data]);
   if (addonInfo.sourceURI.scheme !== "https") {
@@ -315,8 +718,11 @@ async function getAttributionContent() {
 }
 
 // Return default multistage welcome content
-function getDefaults() {
-  return Cu.cloneInto(DEFAULT_WELCOME_CONTENT, {});
+function getDefaults(templateMR = false) {
+  const defaultContent = templateMR
+    ? MR_ABOUT_WELCOME_DEFAULT
+    : DEFAULT_WELCOME_CONTENT;
+  return Cu.cloneInto(defaultContent, {});
 }
 
 let gSourceL10n = null;
@@ -335,24 +741,85 @@ function getLocalizedUA(ua) {
   return null;
 }
 
+// Helper to find screens and remove them where applicable.
+function removeScreens(check, screens) {
+  for (let i = 0; i < screens?.length; i++) {
+    if (check(screens[i])) {
+      screens.splice(i--, 1);
+    }
+  }
+}
+
+// Function to evalute the appropriate string for the welcome screen button label
+function evaluateWelcomeScreenButtonLabel(removeDefault, content) {
+  if (content.templateMR) {
+    return removeDefault
+      ? "mr2022-onboarding-get-started-primary-button-label"
+      : "mr2022-onboarding-set-default-primary-button-label";
+  }
+  return removeDefault
+    ? "mr1-onboarding-get-started-primary-button-label"
+    : "mr1-onboarding-set-default-only-primary-button-label";
+}
+
+function prepareMobileDownload(screens) {
+  let mobileContent = screens.find(screen => screen.id === "AW_MOBILE_DOWNLOAD")
+    ?.content;
+
+  if (!mobileContent) {
+    return;
+  }
+  if (!lazy.BrowserUtils.sendToDeviceEmailsSupported()) {
+    // If send to device emails are not supported for a user's locale,
+    // remove the send to device link and update the screen text
+    delete mobileContent.cta_paragraph.action;
+    mobileContent.cta_paragraph.text = {
+      string_id: "mr2022-onboarding-no-mobile-download-cta-text",
+    };
+  }
+  // Update CN specific QRCode url
+  if (AppConstants.isChinaRepack()) {
+    mobileContent.hero_image.url = `${mobileContent.hero_image.url.slice(
+      0,
+      mobileContent.hero_image.url.indexOf(".svg")
+    )}-cn.svg`;
+  }
+}
+
+function prepareMRContent(content) {
+  // Expand with logic for finalized MR designs
+  const { screens } = content;
+
+  // Do not show the screen to users who are already using firefox sync
+  // and syncing to a mobile device
+  if (lazy.usesFirefoxSync && lazy.mobileDevices > 0) {
+    removeScreens(screen => screen.id === "AW_MOBILE_DOWNLOAD", screens);
+  } else {
+    prepareMobileDownload(screens);
+  }
+
+  // Remove colorways screen if there is no active colorways collection
+  const hasActiveColorways = !!lazy.BuiltInThemes.findActiveColorwayCollection?.();
+  if (!hasActiveColorways) {
+    removeScreens(screen => screen.id === "AW_CHOOSE_COLORWAY", screens);
+  }
+
+  return content;
+}
+
 async function prepareContentForReact(content) {
+  const { screens } = content;
+
   if (content?.template === "return_to_amo") {
     return content;
   }
 
-  // Helper to find screens and remove them where applicable.
-  function removeScreens(check) {
-    const { screens } = content;
-    for (let i = 0; i < screens?.length; i++) {
-      if (check(screens[i])) {
-        screens.splice(i--, 1);
-      }
-    }
-  }
-
   // Change content for Windows 7 because non-light themes aren't quite right.
   if (AppConstants.isPlatformAndVersionAtMost("win", "6.1")) {
-    removeScreens(screen => ["theme"].includes(screen.content?.tiles?.type));
+    removeScreens(
+      screen => ["theme"].includes(screen.content?.tiles?.type),
+      screens
+    );
   }
 
   // Set the primary import button source based on attribution.
@@ -390,13 +857,21 @@ async function prepareContentForReact(content) {
     if (pinScreen?.content) {
       pinScreen.id = removeDefault ? "AW_GET_STARTED" : "AW_ONLY_DEFAULT";
       pinScreen.content.title = {
-        string_id: "mr1-onboarding-welcome-header",
+        string_id: content.templateMR
+          ? "mr2022-onboarding-welcome-pin-header"
+          : "mr1-onboarding-welcome-header",
       };
+
+      if (content.templateMR) {
+        pinScreen.content.subtitle = {
+          string_id: removeDefault
+            ? "mr2022-onboarding-get-started-primary-subtitle"
+            : "mr2022-onboarding-set-default-only-subtitle",
+        };
+      }
       pinScreen.content.primary_button = {
         label: {
-          string_id: removeDefault
-            ? "mr1-onboarding-get-started-primary-button-label"
-            : "mr1-onboarding-set-default-only-primary-button-label",
+          string_id: evaluateWelcomeScreenButtonLabel(removeDefault, content),
         },
         action: {
           navigate: true,
@@ -414,7 +889,7 @@ async function prepareContentForReact(content) {
     }
   }
   if (removeDefault) {
-    removeScreens(screen => screen.id?.startsWith("AW_SET_DEFAULT"));
+    removeScreens(screen => screen.id?.startsWith("AW_SET_DEFAULT"), screens);
   }
 
   // Remove Firefox Accounts related UI and prevent related metrics.
@@ -454,7 +929,11 @@ async function prepareContentForReact(content) {
   }
 
   if (shouldRemoveLanguageMismatchScreen) {
-    removeScreens(screen => screen.id === "AW_LANGUAGE_MISMATCH");
+    removeScreens(screen => screen.id === "AW_LANGUAGE_MISMATCH", screens);
+  }
+
+  if (content.templateMR) {
+    return prepareMRContent(content);
   }
 
   return content;

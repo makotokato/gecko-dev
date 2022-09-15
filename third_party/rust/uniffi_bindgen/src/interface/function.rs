@@ -39,7 +39,7 @@ use anyhow::{bail, Result};
 use super::attributes::{ArgumentAttributes, FunctionAttributes};
 use super::ffi::{FFIArgument, FFIFunction};
 use super::literal::{convert_default_value, Literal};
-use super::types::{IterTypes, Type, TypeIterator};
+use super::types::{Type, TypeIterator};
 use super::{APIConverter, ComponentInterface};
 
 /// Represents a standalone function.
@@ -89,23 +89,77 @@ impl Function {
     }
 
     pub fn derive_ffi_func(&mut self, ci_prefix: &str) -> Result<()> {
-        self.ffi_func.name.push_str(ci_prefix);
-        self.ffi_func.name.push('_');
-        self.ffi_func.name.push_str(&self.name);
+        // The name is already set if the function is defined in a proc-macro-generated JSON file
+        // rather than in UDL. Don't overwrite it in that case.
+        if self.ffi_func.name.is_empty() {
+            self.ffi_func.name = format!("{ci_prefix}_{}", self.name);
+        }
+
         self.ffi_func.arguments = self.arguments.iter().map(|arg| arg.into()).collect();
         self.ffi_func.return_type = self.return_type.as_ref().map(|rt| rt.into());
         Ok(())
     }
 }
 
-impl IterTypes for Function {
-    fn iter_types(&self) -> TypeIterator<'_> {
-        Box::new(
-            self.arguments
-                .iter()
-                .flat_map(IterTypes::iter_types)
-                .chain(self.return_type.iter_types()),
-        )
+impl From<uniffi_meta::FnParamMetadata> for Argument {
+    fn from(meta: uniffi_meta::FnParamMetadata) -> Self {
+        Argument {
+            name: meta.name,
+            type_: convert_type(&meta.ty),
+            by_ref: false,
+            optional: false,
+            default: None,
+        }
+    }
+}
+
+impl From<uniffi_meta::FnMetadata> for Function {
+    fn from(meta: uniffi_meta::FnMetadata) -> Self {
+        let ffi_name = meta.ffi_symbol_name();
+
+        let return_type = meta.return_type.map(|out| convert_type(&out));
+        let arguments = meta.inputs.into_iter().map(Into::into).collect();
+
+        let ffi_func = FFIFunction {
+            name: ffi_name,
+            ..FFIFunction::default()
+        };
+
+        Self {
+            name: meta.name,
+            arguments,
+            return_type,
+            ffi_func,
+            attributes: Default::default(),
+        }
+    }
+}
+
+fn convert_type(s: &uniffi_meta::Type) -> Type {
+    use uniffi_meta::Type as Ty;
+
+    match s {
+        Ty::U8 => Type::UInt8,
+        Ty::U16 => Type::UInt16,
+        Ty::U32 => Type::UInt32,
+        Ty::U64 => Type::UInt64,
+        Ty::I8 => Type::Int8,
+        Ty::I16 => Type::Int16,
+        Ty::I32 => Type::Int32,
+        Ty::I64 => Type::Int64,
+        Ty::F32 => Type::Float32,
+        Ty::F64 => Type::Float64,
+        Ty::Bool => Type::Boolean,
+        Ty::String => Type::String,
+        Ty::Option { inner_type } => Type::Optional(convert_type(inner_type).into()),
+        Ty::Vec { inner_type } => Type::Sequence(convert_type(inner_type).into()),
+        Ty::HashMap {
+            key_type,
+            value_type,
+        } => Type::Map(
+            convert_type(key_type).into(),
+            convert_type(value_type).into(),
+        ),
     }
 }
 
@@ -165,19 +219,20 @@ impl Argument {
     pub fn name(&self) -> &str {
         &self.name
     }
+
     pub fn type_(&self) -> Type {
         self.type_.clone()
     }
+
     pub fn by_ref(&self) -> bool {
         self.by_ref
     }
+
     pub fn default_value(&self) -> Option<Literal> {
         self.default.clone()
     }
-}
 
-impl IterTypes for Argument {
-    fn iter_types(&self) -> TypeIterator<'_> {
+    pub fn iter_types(&self) -> TypeIterator<'_> {
         self.type_.iter_types()
     }
 }

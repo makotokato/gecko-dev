@@ -5,15 +5,13 @@
 
 var EXPORTED_SYMBOLS = ["AboutPrivateBrowsingChild"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const { RemotePageChild } = ChromeUtils.import(
   "resource://gre/actors/RemotePageChild.jsm"
 );
-
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const lazy = {};
 
@@ -37,6 +35,9 @@ class AboutPrivateBrowsingChild extends RemotePageChild {
         defineAs: "PrivateBrowsingShouldHideDefault",
       }
     );
+    Cu.exportFunction(this.PrivateBrowsingEnableNewLogo.bind(this), window, {
+      defineAs: "PrivateBrowsingEnableNewLogo",
+    });
     Cu.exportFunction(
       this.PrivateBrowsingExposureTelemetry.bind(this),
       window,
@@ -57,6 +58,12 @@ class AboutPrivateBrowsingChild extends RemotePageChild {
   PrivateBrowsingShouldHideDefault() {
     const config = lazy.NimbusFeatures.pbNewtab.getAllVariables() || {};
     return config?.content?.hideDefault;
+  }
+
+  PrivateBrowsingEnableNewLogo() {
+    return lazy.NimbusFeatures.majorRelease2022.getVariable(
+      "feltPrivacyPBMNewLogo"
+    );
   }
 
   PrivateBrowsingExposureTelemetry() {

@@ -9,7 +9,7 @@
 //   - open a link with the download attribute
 //   - save a link or image from the context menu
 
-requestLongerTimeout(5);
+requestLongerTimeout(8);
 
 let types = {
   text: "text/plain",
@@ -177,6 +177,7 @@ add_task(async function init() {
   httpServer.registerPathHandler("/bellr", handleRequest);
   httpServer.registerPathHandler("/bellg", handleRequest);
   httpServer.registerPathHandler("/bellb", handleRequest);
+  httpServer.registerPathHandler("/executable.exe", handleRequest);
 
   await BrowserTestUtils.openNewForegroundTab(
     gBrowser,
@@ -201,14 +202,12 @@ function getItems(parentid) {
           elem.localName == "img" && elem.dataset.nodrag != "true";
         let unknown = elem.dataset.unknown;
         let noattach = elem.dataset.noattach;
-        let winexeext = elem.dataset.winexeext;
         elements.push({
           draggable,
           unknown,
           filename,
           url,
           noattach,
-          winexeext,
         });
         elem = elem.nextElementSibling;
       }
@@ -456,10 +455,12 @@ add_task(async function saveas_files() {
           let list = await Downloads.getList(Downloads.PUBLIC);
           let downloadFinishedPromise = promiseDownloadFinished(list);
 
-          await BrowserTestUtils.openNewForegroundTab(
+          await BrowserTestUtils.openNewForegroundTab({
             gBrowser,
-            expectedItems[idx].url
-          );
+            opening: expectedItems[idx].url,
+            waitForLoad: false,
+            waitForStateStop: true,
+          });
 
           let download = await downloadFinishedPromise;
 
@@ -482,10 +483,12 @@ add_task(async function saveas_files() {
           continue;
         }
 
-        await BrowserTestUtils.openNewForegroundTab(
+        await BrowserTestUtils.openNewForegroundTab({
           gBrowser,
-          expectedItems[idx].url
-        );
+          opening: expectedItems[idx].url,
+          waitForLoad: false,
+          waitForStateStop: true,
+        });
       }
 
       let filename = await new Promise(resolve => {
@@ -583,16 +586,6 @@ add_task(async function save_links() {
     let filename = PathUtils.filename(download.target.path);
 
     let expectedFilename = expectedItems[idx].filename;
-    if (AppConstants.platform == "win") {
-      // On Windows, an extension is added to executable files when saving as
-      // an attachment to avoid the file looking like an executable. This is
-      // done in validateLeafName in HelperAppDlg.jsm.
-      // XXXndeakin should we do this for all save mechanisms?
-      if (expectedItems[idx].winexeext) {
-        expectedFilename += "." + expectedItems[idx].winexeext;
-      }
-    }
-
     // Use checkShortenedFilename to check long filenames.
     if (expectedItems[idx].filename.length > 240) {
       ok(

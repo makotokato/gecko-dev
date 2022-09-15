@@ -20,8 +20,8 @@
   --in-content-item-selected: var(--in-content-primary-button-background);
   --in-content-item-selected-text: var(--in-content-primary-button-text-color);
   --in-content-icon-color: rgb(91,91,102);
-  --in-content-accent-color: #0a84ff;
-  --in-content-accent-color-active: #0060df;
+  --in-content-accent-color: var(--in-content-primary-button-background);
+  --in-content-accent-color-active: var(--in-content-primary-button-background-hover);
   --in-content-border-hover: var(--grey-90-a50);
   --in-content-border-invalid: var(--red-50);
   --in-content-border-color: #d7d7db;
@@ -51,6 +51,10 @@
   --in-content-danger-button-background-hover: #c50042;
   --in-content-danger-button-background-active: #810220;
   --in-content-focus-outline-color: var(--in-content-primary-button-background);
+  --in-content-focus-outline-width: 2px;
+  --in-content-focus-outline-offset: 2px;
+  --in-content-focus-outline-inset: calc(-1 * var(--in-content-focus-outline-width));
+  --in-content-focus-outline: var(--in-content-focus-outline-width) solid var(--in-content-focus-outline-color);
 
   --in-content-table-background: #f8f8fa;
   --in-content-table-border-color: var(--in-content-box-border-color);
@@ -156,8 +160,6 @@
 
     --in-content-table-background: rgb(35, 34, 43);
 
-    --in-content-accent-color: var(--in-content-primary-button-background);
-    --in-content-accent-color-active: var(--in-content-primary-button-background-hover);
     --in-content-link-color: var(--in-content-primary-button-background);
     --in-content-link-color-hover: var(--in-content-primary-button-background-hover);
     --in-content-link-color-active: var(--in-content-primary-button-background-active);
@@ -260,9 +262,11 @@
   color: var(--in-content-page-color);
 }
 
-html|body {
+:root:not(.system-font-size) {
   font-size: 15px;
-  font-weight: normal;
+}
+
+html|body {
   margin: 0;
 }
 
@@ -391,8 +395,10 @@ xul|checkbox:not([native]):-moz-focusring > .checkbox-check, /* :not([native]) t
 xul|radio[focused="true"] > .radio-check,
 xul|tab:-moz-focusring > .tab-middle > .tab-text {
   box-shadow: none;
-  outline: 2px solid var(--in-content-focus-outline-color);
-  outline-offset: 2px;
+  /* Don't set `var(--in-content-focus-outline)` here to allow more complicated UIs
+     to use a different color when needed */
+  outline: var(--in-content-focus-outline-width) solid var(--in-content-focus-outline-color);
+  outline-offset: var(--in-content-focus-outline-offset);
 }
 
 html|select:not([size], [multiple]) {
@@ -625,7 +631,7 @@ xul|search-textbox[focused],
 xul|tree:focus-visible,
 xul|richlistbox:focus-visible {
   border-color: transparent;
-  outline: 2px solid var(--in-content-focus-outline-color);
+  outline: var(--in-content-focus-outline);
   outline-offset: -1px; /* Prevents antialising around the corners */
 }
 
@@ -670,7 +676,7 @@ button.text-link:is(:not([disabled="true"]), :enabled):hover:active {
 
 html|a:-moz-focusring,
 .text-link:-moz-focusring {
-  outline: 2px solid var(--in-content-focus-outline-color);
+  outline: var(--in-content-focus-outline);
   outline-offset: 1px;
   border-radius: 4px;
 }
@@ -937,8 +943,8 @@ html|*#categories > html|*.category:dir(rtl) {
 
 #categories[keyboard-navigation="true"]:-moz-focusring > .category[current],
 #categories > .category:-moz-focusring {
-  outline: 2px solid var(--in-content-focus-outline-color);
-  outline-offset: -2px;
+  outline: var(--in-content-focus-outline);
+  outline-offset: var(--in-content-focus-outline-inset);
 }
 
 html|*#categories[last-input-type="mouse"] > html|button.category:-moz-focusring {
@@ -1083,7 +1089,7 @@ xul|richlistbox:not(#categories) > xul|richlistitem[selected] {
 }
 
 xul|richlistitem[selected] xul|menulist:focus-visible {
-  outline-offset: -2px;
+  outline-offset: var(--in-content-focus-outline-inset);
 }
 
 /* Use a 2px border so that selected row highlight is still visible behind
@@ -1310,8 +1316,8 @@ xul|*.sidebar-footer-link {
 }
 
 .sidebar-footer-link:-moz-focusring {
-  outline: 2px solid var(--in-content-focus-outline-color);
-  outline-offset: -2px;
+  outline: var(--in-content-focus-outline);
+  outline-offset: var(--in-content-focus-outline-inset);
 }
 
 .sidebar-footer-icon {

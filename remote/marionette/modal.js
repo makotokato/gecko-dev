@@ -6,15 +6,14 @@
 
 const EXPORTED_SYMBOLS = ["modal"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
-  AppInfo: "chrome://remote/content/marionette/appinfo.js",
+  AppInfo: "chrome://remote/content/shared/AppInfo.jsm",
 
   Log: "chrome://remote/content/shared/Log.jsm",
 });
@@ -59,7 +58,7 @@ modal.findModalDialogs = function(context) {
 
   if (lazy.AppInfo.isAndroid) {
     const geckoViewPrompts = context.window.prompts();
-    if (geckoViewPrompts.length > 0) {
+    if (geckoViewPrompts.length) {
       lazy.logger.trace("Found open GeckoView prompt");
       const prompt = geckoViewPrompts[0];
       return new modal.Dialog(() => context, prompt);

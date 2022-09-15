@@ -15,9 +15,8 @@
 
 var EXPORTED_SYMBOLS = ["ExtensionCommon"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
@@ -2485,7 +2484,10 @@ class EventManager {
     let { extension } = this.context;
     const resetIdle = () => {
       if (this.resetIdleOnEvent) {
-        extension?.emit("background-script-reset-idle");
+        extension?.emit("background-script-reset-idle", {
+          reason: "event",
+          eventName: this.name,
+        });
       }
     };
 

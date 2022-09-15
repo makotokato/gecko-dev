@@ -21,6 +21,7 @@
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/BrowserHost.h"
 #include "mozilla/dom/BrowserParent.h"
+#include "mozilla/dom/IdentityCredential.h"
 #include "mozilla/dom/MediaController.h"
 #include "mozilla/dom/WindowGlobalChild.h"
 #include "mozilla/dom/ChromeUtils.h"
@@ -987,19 +988,9 @@ already_AddRefed<Promise> WindowGlobalParent::GetSecurityInfo(
   }
 
   SendGetSecurityInfo(
-      [promise](Maybe<nsCString>&& aResult) {
-        if (aResult) {
-          nsCOMPtr<nsISupports> infoObj;
-          nsresult rv =
-              NS_DeserializeObject(aResult.value(), getter_AddRefs(infoObj));
-          if (NS_WARN_IF(NS_FAILED(rv))) {
-            promise->MaybeReject(NS_ERROR_FAILURE);
-          }
-          nsCOMPtr<nsITransportSecurityInfo> info = do_QueryInterface(infoObj);
-          if (!info) {
-            promise->MaybeReject(NS_ERROR_FAILURE);
-          }
-          promise->MaybeResolve(info);
+      [promise](const nsCOMPtr<nsITransportSecurityInfo>& aSecurityInfo) {
+        if (aSecurityInfo) {
+          promise->MaybeResolve(aSecurityInfo);
         } else {
           promise->MaybeResolveWithUndefined();
         }
@@ -1297,13 +1288,13 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvSetDocumentDomain(
     }
   }
 
-  if (!Document::IsValidDomain(uri, aDomain)) {
+  if (!aDomain || !Document::IsValidDomain(uri, aDomain)) {
     // Error: illegal domain
     return IPC_FAIL(
         this, "Setting domain that's not a suffix of existing domain value.");
   }
 
-  if (GetBrowsingContext()->CrossOriginIsolated()) {
+  if (Group()->IsPotentiallyCrossOriginIsolated()) {
     return IPC_FAIL(this, "Setting domain in a cross-origin isolated BC.");
   }
 
@@ -1380,10 +1371,24 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvReloadWithHttpsOnlyException() {
 
   RefPtr<nsDocShellLoadState> loadState = new nsDocShellLoadState(insecureURI);
   loadState->SetTriggeringPrincipal(nsContentUtils::GetSystemPrincipal());
-  loadState->SetLoadFlags(nsIWebNavigation::LOAD_FLAGS_REPLACE_HISTORY);
+  loadState->SetLoadType(LOAD_NORMAL_REPLACE);
 
   BrowsingContext()->Top()->LoadURI(loadState, /* setNavigating */ true);
 
+  return IPC_OK();
+}
+
+IPCResult WindowGlobalParent::RecvDiscoverIdentityCredentialFromExternalSource(
+    const IdentityCredentialRequestOptions& aOptions,
+    const DiscoverIdentityCredentialFromExternalSourceResolver& aResolver) {
+  IdentityCredential::DiscoverFromExternalSourceInMainProcess(
+      DocumentPrincipal(), aOptions)
+      ->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [aResolver](const IPCIdentityCredential& aResult) {
+            return aResolver(Some(aResult));
+          },
+          [aResolver](nsresult aErr) { aResolver(Nothing()); });
   return IPC_OK();
 }
 
@@ -1453,8 +1458,8 @@ void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
   WindowContext::Discard();
 
   // Report content blocking log when destroyed.
-  // There shouldn't have any content blocking log when a documnet is loaded in
-  // the parent process(See NotifyContentBlockingeEvent), so we could skip
+  // There shouldn't have any content blocking log when a document is loaded in
+  // the parent process(See NotifyContentBlockingEvent), so we could skip
   // reporting log when it is in-process.
   if (!IsInProcess()) {
     RefPtr<BrowserParent> browserParent =
@@ -1468,6 +1473,7 @@ void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
         if (mDocumentURI && (net::SchemeIsHTTP(mDocumentURI) ||
                              net::SchemeIsHTTPS(mDocumentURI))) {
           GetContentBlockingLog()->ReportOrigins();
+          GetContentBlockingLog()->ReportEmailTrackingLog(DocumentPrincipal());
         }
       }
     }

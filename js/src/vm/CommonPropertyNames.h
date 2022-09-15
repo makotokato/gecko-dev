@@ -22,8 +22,11 @@
 //   * MACRO_: other text
 #define FOR_EACH_COMMON_PROPERTYNAME_(MACRO0, MACRO1, MACRO2, MACRO_)          \
   MACRO_(abort, abort, "abort")                                                \
+  IF_DECORATORS(MACRO_(accessor, accessor, "accessor"))                        \
   MACRO_(add, add, "add")                                                      \
   MACRO_(allowContentIter, allowContentIter, "allowContentIter")               \
+  MACRO_(allowContentIterWith, allowContentIterWith, "allowContentIterWith")   \
+  MACRO_(ambiguous, ambiguous, "ambiguous")                                    \
   MACRO_(anonymous, anonymous, "anonymous")                                    \
   MACRO_(Any, Any, "Any")                                                      \
   MACRO_(apply, apply, "apply")                                                \
@@ -222,9 +225,8 @@
   MACRO_(global, global, "global")                                             \
   MACRO_(globalThis, globalThis, "globalThis")                                 \
   MACRO_(group, group, "group")                                                \
-  MACRO_(groupBy, groupBy, "groupBy")                                          \
-  MACRO_(groupByToMap, groupByToMap, "groupByToMap")                           \
   MACRO_(groups, groups, "groups")                                             \
+  MACRO_(groupToMap, groupToMap, "groupToMap")                                 \
   MACRO_(h11, h11, "h11")                                                      \
   MACRO_(h12, h12, "h12")                                                      \
   MACRO_(h23, h23, "h23")                                                      \
@@ -515,8 +517,6 @@
   MACRO_(unitDisplay, unitDisplay, "unitDisplay")                              \
   MACRO_(unknown, unknown, "unknown")                                          \
   MACRO_(unregister, unregister, "unregister")                                 \
-  MACRO_(UnsafeGetBooleanFromReservedSlot, UnsafeGetBooleanFromReservedSlot,   \
-         "UnsafeGetBooleanFromReservedSlot")                                   \
   MACRO_(UnsafeGetInt32FromReservedSlot, UnsafeGetInt32FromReservedSlot,       \
          "UnsafeGetInt32FromReservedSlot")                                     \
   MACRO_(UnsafeGetObjectFromReservedSlot, UnsafeGetObjectFromReservedSlot,     \

@@ -23,6 +23,8 @@ class AccAttributes;
 class AccGroupInfo;
 class HyperTextAccessibleBase;
 class LocalAccessible;
+class Relation;
+enum class RelationType;
 class RemoteAccessible;
 class TableAccessibleBase;
 class TableCellAccessibleBase;
@@ -66,6 +68,72 @@ struct GroupPos {
   int32_t level;
   int32_t posInSet;
   int32_t setSize;
+};
+
+/**
+ * Represent key binding associated with accessible (such as access key and
+ * global keyboard shortcuts).
+ */
+class KeyBinding {
+ public:
+  /**
+   * Modifier mask values.
+   */
+  static const uint32_t kShift = 1;
+  static const uint32_t kControl = 2;
+  static const uint32_t kAlt = 4;
+  static const uint32_t kMeta = 8;
+  static const uint32_t kOS = 16;
+
+  static uint32_t AccelModifier();
+
+  KeyBinding() : mKey(0), mModifierMask(0) {}
+  KeyBinding(uint32_t aKey, uint32_t aModifierMask)
+      : mKey(aKey), mModifierMask(aModifierMask) {}
+  explicit KeyBinding(uint64_t aSerialized) : mSerialized(aSerialized) {}
+
+  inline bool IsEmpty() const { return !mKey; }
+  inline uint32_t Key() const { return mKey; }
+  inline uint32_t ModifierMask() const { return mModifierMask; }
+
+  /**
+   * Serialize this KeyBinding to a uint64_t for use in the parent process
+   * cache. This is simpler than custom IPDL serialization for this simple case.
+   */
+  uint64_t Serialize() { return mSerialized; }
+
+  enum Format { ePlatformFormat, eAtkFormat };
+
+  /**
+   * Return formatted string for this key binding depending on the given format.
+   */
+  inline void ToString(nsAString& aValue,
+                       Format aFormat = ePlatformFormat) const {
+    aValue.Truncate();
+    AppendToString(aValue, aFormat);
+  }
+  inline void AppendToString(nsAString& aValue,
+                             Format aFormat = ePlatformFormat) const {
+    if (mKey) {
+      if (aFormat == ePlatformFormat) {
+        ToPlatformFormat(aValue);
+      } else {
+        ToAtkFormat(aValue);
+      }
+    }
+  }
+
+ private:
+  void ToPlatformFormat(nsAString& aValue) const;
+  void ToAtkFormat(nsAString& aValue) const;
+
+  union {
+    struct {
+      uint32_t mKey;
+      uint32_t mModifierMask;
+    };
+    uint64_t mSerialized;
+  };
 };
 
 class Accessible {
@@ -132,6 +200,11 @@ class Accessible {
 
   virtual Accessible* ChildAtPoint(int32_t aX, int32_t aY,
                                    EWhichChildAtPoint aWhichChild) = 0;
+
+  /**
+   * Return the focused child if any.
+   */
+  virtual Accessible* FocusedChild();
 
   /**
    * Return ARIA role map if any.
@@ -246,11 +319,25 @@ class Accessible {
 
   virtual Maybe<float> Opacity() const = 0;
 
+  /**
+   * Get the live region attributes (if any) for this single Accessible. This
+   * does not propagate attributes from ancestors. If any argument is null, that
+   * attribute is not fetched.
+   */
+  virtual void LiveRegionAttributes(nsAString* aLive, nsAString* aRelevant,
+                                    Maybe<bool>* aAtomic,
+                                    nsAString* aBusy) const = 0;
+
   LayoutDeviceIntSize Size() const;
 
   LayoutDeviceIntPoint Position(uint32_t aCoordType);
 
   virtual Maybe<int32_t> GetIntARIAAttr(nsAtom* aAttrName) const = 0;
+
+  /**
+   * Get the relation of the given type.
+   */
+  virtual Relation RelationByType(RelationType aType) const = 0;
 
   // Methods that interact with content.
 
@@ -303,6 +390,11 @@ class Accessible {
    * Invoke the accessible action.
    */
   virtual bool DoAction(uint8_t aIndex) const = 0;
+
+  /**
+   * Return access key, such as Alt+D.
+   */
+  virtual KeyBinding AccessKey() const = 0;
 
   //////////////////////////////////////////////////////////////////////////////
   // SelectAccessible
@@ -474,7 +566,9 @@ class Accessible {
    * Provide a human readable description of the accessible,
    * including memory address, role, name, DOM tag and DOM ID.
    */
-  void DebugDescription(nsCString& aDesc);
+  void DebugDescription(nsCString& aDesc) const;
+
+  static void DebugPrint(const char* aPrefix, const Accessible* aAccessible);
 #endif
 
   /**

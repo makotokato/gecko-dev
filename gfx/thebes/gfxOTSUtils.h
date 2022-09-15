@@ -35,6 +35,8 @@ class gfxOTSExpandingMemoryStream : public ots::OTSStream {
 
   ~gfxOTSExpandingMemoryStream() { mAlloc.Free(mPtr); }
 
+  size_t size() override { return mLimit; }
+
   // Return the buffer, resized to fit its contents (as it may have been
   // over-allocated during growth), and give up ownership of it so the
   // caller becomes responsible to call free() when finished with it.
@@ -107,23 +109,33 @@ class MOZ_STACK_CLASS gfxOTSContext : public ots::OTSContext {
     // and possibly OTL and Variation tables (depending on prefs)
     if ((!mCheckOTLTables && (aTag == TRUETYPE_TAG('G', 'D', 'E', 'F') ||
                               aTag == TRUETYPE_TAG('G', 'P', 'O', 'S') ||
-                              aTag == TRUETYPE_TAG('G', 'S', 'U', 'B'))) ||
-        (!mCheckVariationTables &&
-         (aTag == TRUETYPE_TAG('a', 'v', 'a', 'r') ||
-          aTag == TRUETYPE_TAG('c', 'v', 'a', 'r') ||
-          aTag == TRUETYPE_TAG('f', 'v', 'a', 'r') ||
-          aTag == TRUETYPE_TAG('g', 'v', 'a', 'r') ||
-          aTag == TRUETYPE_TAG('H', 'V', 'A', 'R') ||
-          aTag == TRUETYPE_TAG('M', 'V', 'A', 'R') ||
-          aTag == TRUETYPE_TAG('S', 'T', 'A', 'T') ||
-          aTag == TRUETYPE_TAG('V', 'V', 'A', 'R'))) ||
-        aTag == TRUETYPE_TAG('S', 'V', 'G', ' ') ||
-        aTag == TRUETYPE_TAG('C', 'O', 'L', 'R') ||
-        aTag == TRUETYPE_TAG('C', 'P', 'A', 'L') ||
-        (mKeepColorBitmaps && (aTag == TRUETYPE_TAG('C', 'B', 'D', 'T') ||
-                               aTag == TRUETYPE_TAG('C', 'B', 'L', 'C'))) ||
-        false) {
+                              aTag == TRUETYPE_TAG('G', 'S', 'U', 'B')))) {
       return ots::TABLE_ACTION_PASSTHRU;
+    }
+    if (aTag == TRUETYPE_TAG('S', 'V', 'G', ' ') ||
+        aTag == TRUETYPE_TAG('C', 'O', 'L', 'R') ||
+        aTag == TRUETYPE_TAG('C', 'P', 'A', 'L')) {
+      return ots::TABLE_ACTION_PASSTHRU;
+    }
+    if (mKeepColorBitmaps && (aTag == TRUETYPE_TAG('C', 'B', 'D', 'T') ||
+                              aTag == TRUETYPE_TAG('C', 'B', 'L', 'C'))) {
+      return ots::TABLE_ACTION_PASSTHRU;
+    }
+    auto isVariationTable = [](uint32_t aTag) -> bool {
+      return aTag == TRUETYPE_TAG('a', 'v', 'a', 'r') ||
+             aTag == TRUETYPE_TAG('c', 'v', 'a', 'r') ||
+             aTag == TRUETYPE_TAG('f', 'v', 'a', 'r') ||
+             aTag == TRUETYPE_TAG('g', 'v', 'a', 'r') ||
+             aTag == TRUETYPE_TAG('H', 'V', 'A', 'R') ||
+             aTag == TRUETYPE_TAG('M', 'V', 'A', 'R') ||
+             aTag == TRUETYPE_TAG('S', 'T', 'A', 'T') ||
+             aTag == TRUETYPE_TAG('V', 'V', 'A', 'R');
+    };
+    if (!mCheckVariationTables && isVariationTable(aTag)) {
+      return ots::TABLE_ACTION_PASSTHRU;
+    }
+    if (!gfxPlatform::HasVariationFontSupport() && isVariationTable(aTag)) {
+      return ots::TABLE_ACTION_DROP;
     }
     return ots::TABLE_ACTION_DEFAULT;
   }

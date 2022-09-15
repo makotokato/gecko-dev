@@ -14,6 +14,7 @@
 #include "mozilla/Scoped.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
+#include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_print.h"
 #include "nsPrintfCString.h"
 
@@ -254,15 +255,6 @@ static cairo_surface_t* GetAsImageSurface(cairo_surface_t* aSurface) {
   return nullptr;
 }
 
-// We're creating a subimage from the parent image's data (in aData) without
-// altering that data or its stride. This constrains the values in aRect, and
-// how they're used. Callers must see to it that the parent fully contains the
-// subimage. Here we ensure that no clipping is done in the X dimension at the
-// beginning of any line. (To do otherwise would require creating a copy of
-// aData from parts of every line in aData (from aRect.Y() to aRect.Height()),
-// and setting the copy to a different stride.) A non-zero aRect.X() is used
-// only to specify the subimage's location in its parent (via
-// cairo_surface_set_device_offset()). This change resolves bug 1719215.
 static cairo_surface_t* CreateSubImageForData(unsigned char* aData,
                                               const IntRect& aRect, int aStride,
                                               SurfaceFormat aFormat) {
@@ -270,12 +262,14 @@ static cairo_surface_t* CreateSubImageForData(unsigned char* aData,
     gfxWarning() << "DrawTargetCairo.CreateSubImageForData null aData";
     return nullptr;
   }
-  unsigned char* data = aData + aRect.Y() * aStride;
+  unsigned char* data =
+      aData + aRect.Y() * aStride + aRect.X() * BytesPerPixel(aFormat);
 
   cairo_surface_t* image = cairo_image_surface_create_for_data(
       data, GfxFormatToCairoFormat(aFormat), aRect.Width(), aRect.Height(),
       aStride);
-  // Set the subimage's location in its parent
+  // Set the subimage's device offset so that in remains in the same place
+  // relative to the parent
   cairo_surface_set_device_offset(image, -aRect.X(), -aRect.Y());
   return image;
 }
@@ -891,7 +885,17 @@ void DrawTargetCairo::DrawSurface(SourceSurface* aSurface, const Rect& aDest,
   cairo_pattern_set_matrix(pat, &src_mat);
   cairo_pattern_set_filter(
       pat, GfxSamplingFilterToCairoFilter(aSurfOptions.mSamplingFilter));
-  cairo_pattern_set_extend(pat, CAIRO_EXTEND_PAD);
+  // For PDF output, we avoid using EXTEND_PAD here because floating-point
+  // error accumulation may lead cairo_pdf_surface to conclude that padding
+  // is needed due to an apparent one- or two-pixel mismatch between source
+  // pattern and destination rect sizes when we're rendering a pdf.js page,
+  // and this forces undesirable fallback to the rasterization codepath
+  // instead of simply replaying the recording.
+  // (See bug 1777209.)
+  cairo_pattern_set_extend(
+      pat, cairo_surface_get_type(mSurface) == CAIRO_SURFACE_TYPE_PDF
+               ? CAIRO_EXTEND_NONE
+               : CAIRO_EXTEND_PAD);
 
   cairo_set_antialias(mContext,
                       GfxAntialiasToCairoAntialias(aOptions.mAntialiasMode));
@@ -1751,6 +1755,16 @@ already_AddRefed<DrawTarget> DrawTargetCairo::CreateSimilarDrawTarget(
       similar = cairo_win32_surface_create_with_dib(
           GfxFormatToCairoFormat(aFormat), aSize.width, aSize.height);
       break;
+#endif
+#ifdef CAIRO_HAS_QUARTZ_SURFACE
+    case CAIRO_SURFACE_TYPE_QUARTZ:
+      if (StaticPrefs::gfx_cairo_quartz_cg_layer_enabled()) {
+        similar = cairo_quartz_surface_create_cg_layer(
+            mSurface, GfxFormatToCairoContent(aFormat), aSize.width,
+            aSize.height);
+        break;
+      }
+      [[fallthrough]];
 #endif
     default:
       similar = cairo_surface_create_similar(mSurface,

@@ -1343,10 +1343,22 @@ nsresult nsWebBrowserPersist::SaveURIInternal(
   // current state of the prefs/permissions.
   nsCOMPtr<nsICookieJarSettings> cookieJarSettings = aCookieJarSettings;
   if (!cookieJarSettings) {
+    // Although the variable is called 'triggering principal', it is used as the
+    // loading principal in the download channel, so we treat it as a loading
+    // principal also.
+    bool shouldResistFingerprinting =
+        nsContentUtils::ShouldResistFingerprinting_dangerous(
+            aTriggeringPrincipal,
+            "We are creating a new CookieJar Settings, so none exists "
+            "currently. Although the variable is called 'triggering principal',"
+            "it is used as the loading principal in the download channel, so we"
+            "treat it as a loading principal also.");
     cookieJarSettings =
         aIsPrivate
-            ? net::CookieJarSettings::Create(net::CookieJarSettings::ePrivate)
-            : net::CookieJarSettings::Create(net::CookieJarSettings::eRegular);
+            ? net::CookieJarSettings::Create(net::CookieJarSettings::ePrivate,
+                                             shouldResistFingerprinting)
+            : net::CookieJarSettings::Create(net::CookieJarSettings::eRegular,
+                                             shouldResistFingerprinting);
   }
 
   // Open a channel to the URI
@@ -1418,7 +1430,7 @@ nsresult nsWebBrowserPersist::SaveURIInternal(
       const char* kWhitespace = "\b\t\r\n ";
       nsAutoCString extraHeaders(aExtraHeaders);
       while (true) {
-        crlf = extraHeaders.Find("\r\n", true);
+        crlf = extraHeaders.Find("\r\n");
         if (crlf == -1) break;
         extraHeaders.Mid(oneHeader, 0, crlf);
         extraHeaders.Cut(0, crlf + 2);

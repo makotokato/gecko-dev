@@ -3,9 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const { actionTypes: at, actionCreators: ac } = ChromeUtils.import(
   "resource://activity-stream/common/Actions.jsm"
@@ -175,12 +174,12 @@ class AboutPreferences {
     const homeHeader = createAppend("label", contentsGroup).appendChild(
       document.createElementNS(HTML_NS, "h2")
     );
-    document.l10n.setAttributes(homeHeader, "home-prefs-content-header");
+    document.l10n.setAttributes(homeHeader, "home-prefs-content-header2");
 
     const homeDescription = createAppend("description", contentsGroup);
     document.l10n.setAttributes(
       homeDescription,
-      "home-prefs-content-description"
+      "home-prefs-content-description2"
     );
 
     // Add preferences for each section

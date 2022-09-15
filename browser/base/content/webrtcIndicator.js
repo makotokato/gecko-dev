@@ -2,9 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
@@ -554,7 +553,6 @@ const WebRTCIndicator = {
         bundle.GetStringFromName("webrtcIndicator.controlSharing.menuitem")
       );
       menuitem.stream = stream;
-      menuitem.addEventListener("command", this);
 
       menupopup.appendChild(menuitem);
       return;
@@ -578,7 +576,6 @@ const WebRTCIndicator = {
       label = stream.browser.contentTitle || stream.uri;
       item.setAttribute("label", bundle.formatStringFromName(labelId, [label]));
       item.stream = stream;
-      item.addEventListener("command", this);
       menupopup.appendChild(item);
     }
   },
@@ -595,7 +592,7 @@ const WebRTCIndicator = {
   },
 
   onCommand(event) {
-    webrtcUI.showSharingDoorhanger(event.target.stream);
+    webrtcUI.showSharingDoorhanger(event.target.stream, event);
   },
 
   /**

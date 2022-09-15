@@ -110,7 +110,6 @@ class nsNSSSocketInfo final : public CommonSocketControl {
   }
 
   bool GetJoined() { return mJoined; }
-  void SetSentClientCert() { mSentClientCert = true; }
 
   uint32_t GetProviderTlsFlags() const { return mProviderTlsFlags; }
 
@@ -125,6 +124,10 @@ class nsNSSSocketInfo final : public CommonSocketControl {
   void SetCertVerificationWaiting();
   // Use errorCode == 0 to indicate success;
   void SetCertVerificationResult(PRErrorCode errorCode) override;
+
+  void ClientAuthCertificateSelected(
+      nsTArray<uint8_t>& certBytes,
+      nsTArray<nsTArray<uint8_t>>& certChainBytes);
 
   // for logging only
   PRBool IsWaitingForCertVerification() const {
@@ -181,10 +184,6 @@ class nsNSSSocketInfo final : public CommonSocketControl {
   void SetSharedOwningReference(mozilla::psm::SharedSSLState* ref);
 
   nsresult SetResumptionTokenFromExternalCache();
-
-  void SetClientCertChain(mozilla::UniqueCERTCertList&& clientCertChain) {
-    mClientCertChain = std::move(clientCertChain);
-  }
 
  protected:
   virtual ~nsNSSSocketInfo();
@@ -262,34 +261,6 @@ class nsNSSSocketInfo final : public CommonSocketControl {
   nsCOMPtr<nsITlsHandshakeCallbackListener> mTlsHandshakeCallback;
 };
 
-// This class is used to store the needed information for invoking the client
-// cert selection UI.
-class ClientAuthInfo final {
- public:
-  explicit ClientAuthInfo(const nsACString& hostName,
-                          const OriginAttributes& originAttributes,
-                          int32_t port, uint32_t providerFlags,
-                          uint32_t providerTlsFlags);
-  ~ClientAuthInfo() = default;
-  ClientAuthInfo(ClientAuthInfo&& aOther) noexcept;
-
-  const nsACString& HostName() const;
-  const OriginAttributes& OriginAttributesRef() const;
-  int32_t Port() const;
-  uint32_t ProviderFlags() const;
-  uint32_t ProviderTlsFlags() const;
-
- private:
-  ClientAuthInfo(const ClientAuthInfo&) = delete;
-  void operator=(const ClientAuthInfo&) = delete;
-
-  nsCString mHostName;
-  OriginAttributes mOriginAttributes;
-  int32_t mPort;
-  uint32_t mProviderFlags;
-  uint32_t mProviderTlsFlags;
-};
-
 class nsSSLIOLayerHelpers {
  public:
   explicit nsSSLIOLayerHelpers(uint32_t aTlsFlags = 0);
@@ -356,14 +327,16 @@ class nsSSLIOLayerHelpers {
 nsresult nsSSLIOLayerNewSocket(int32_t family, const char* host, int32_t port,
                                nsIProxyInfo* proxy,
                                const OriginAttributes& originAttributes,
-                               PRFileDesc** fd, nsISupports** securityInfo,
+                               PRFileDesc** fd,
+                               nsISSLSocketControl** tlsSocketControl,
                                bool forSTARTTLS, uint32_t flags,
                                uint32_t tlsFlags);
 
 nsresult nsSSLIOLayerAddToSocket(int32_t family, const char* host, int32_t port,
                                  nsIProxyInfo* proxy,
                                  const OriginAttributes& originAttributes,
-                                 PRFileDesc* fd, nsISupports** securityInfo,
+                                 PRFileDesc* fd,
+                                 nsISSLSocketControl** tlsSocketControl,
                                  bool forSTARTTLS, uint32_t flags,
                                  uint32_t tlsFlags);
 
@@ -378,11 +351,5 @@ void DoSign(size_t cert_len, const uint8_t* cert, size_t data_len,
             const uint8_t* data, size_t params_len, const uint8_t* params,
             SignCallback cb, void* ctx);
 }
-
-SECStatus DoGetClientAuthData(ClientAuthInfo&& info,
-                              const mozilla::UniqueCERTCertificate& serverCert,
-                              nsTArray<nsTArray<uint8_t>>&& collectedCANames,
-                              mozilla::UniqueCERTCertificate& outCert,
-                              mozilla::UniqueCERTCertList& outBuiltChain);
 
 #endif  // nsNSSIOLayer_h

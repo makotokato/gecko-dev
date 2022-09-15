@@ -4,7 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const {
   Component,
   createFactory,
@@ -408,8 +407,8 @@ class HeadersPanel extends Component {
           },
           textarea({
             className: "raw-headers",
-            rows: rows,
-            value: value,
+            rows,
+            value,
             readOnly: true,
           })
         )

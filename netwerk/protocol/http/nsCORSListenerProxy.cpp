@@ -51,6 +51,7 @@
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/nsHTTPSOnlyUtils.h"
 #include "mozilla/dom/ReferrerInfo.h"
+#include "mozilla/dom/RequestBinding.h"
 #include <algorithm>
 
 using namespace mozilla;
@@ -928,7 +929,7 @@ nsresult nsCORSListenerProxy::UpdateChannel(nsIChannel* aChannel,
   // can't return early on failure.
   nsCOMPtr<nsIHttpChannelInternal> internal = do_QueryInterface(aChannel);
   if (internal) {
-    rv = internal->SetCorsMode(nsIHttpChannelInternal::CORS_MODE_CORS);
+    rv = internal->SetRequestMode(dom::RequestMode::Cors);
     NS_ENSURE_SUCCESS(rv, rv);
     rv = internal->SetCorsIncludeCredentials(mWithCredentials);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -1659,13 +1660,12 @@ void nsCORSListenerProxy::LogBlockedCORSRequest(uint64_t aInnerWindowID,
                                               nsIScriptError::errorFlag,
                                               aCategory, aInnerWindowID);
   } else {
-    nsCString category = PromiseFlatCString(aCategory);
     rv = scriptError->Init(aMessage,
                            u""_ns,  // sourceName
                            u""_ns,  // sourceLine
                            0,       // lineNumber
                            0,       // columnNumber
-                           nsIScriptError::errorFlag, category.get(),
+                           nsIScriptError::errorFlag, aCategory,
                            aPrivateBrowsing,
                            aFromChromeContext);  // From chrome context
   }

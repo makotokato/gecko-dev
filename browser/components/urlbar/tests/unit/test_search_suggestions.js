@@ -6,15 +6,12 @@
  * UrlbarProviderSearchSuggestions.
  */
 
-const { FormHistory } = ChromeUtils.import(
-  "resource://gre/modules/FormHistory.jsm"
-);
-
 const SUGGEST_PREF = "browser.urlbar.suggest.searches";
 const SUGGEST_ENABLED_PREF = "browser.search.suggest.enabled";
 const PRIVATE_ENABLED_PREF = "browser.search.suggest.enabled.private";
 const PRIVATE_SEARCH_PREF = "browser.search.separatePrivateDefault.ui.enabled";
 const TAB_TO_SEARCH_PREF = "browser.urlbar.suggest.engines";
+const QUICKACTIONS_PREF = "browser.urlbar.suggest.quickactions";
 const MAX_RICH_RESULTS_PREF = "browser.urlbar.maxRichResults";
 const MAX_FORM_HISTORY_PREF = "browser.urlbar.maxHistoricalSearchSuggestions";
 const SHOW_SEARCH_SUGGESTIONS_FIRST_PREF =
@@ -140,10 +137,12 @@ add_task(async function setup() {
   registerCleanupFunction(async () => {
     Services.search.setDefault(oldDefaultEngine);
     Services.prefs.clearUserPref(PRIVATE_SEARCH_PREF);
+    Services.prefs.clearUserPref(QUICKACTIONS_PREF);
     Services.prefs.clearUserPref(TAB_TO_SEARCH_PREF);
   });
   Services.search.setDefault(engine);
   Services.prefs.setBoolPref(PRIVATE_SEARCH_PREF, false);
+  Services.prefs.setBoolPref(QUICKACTIONS_PREF, false);
   // Tab-to-search engines can introduce unexpected results, espescially because
   // they depend on real en-US engines.
   Services.prefs.setBoolPref(TAB_TO_SEARCH_PREF, false);
@@ -1525,17 +1524,6 @@ add_task(async function avoid_remote_url_suggestions_2() {
       makeSearchResult(context, {
         engineName: SUGGESTIONS_ENGINE_NAME,
         suggestion: "abouteds",
-      }),
-    ],
-  });
-
-  context = createContext("about:", { isPrivate: false });
-  await check_results({
-    context,
-    matches: [
-      makeSearchResult(context, {
-        engineName: SUGGESTIONS_ENGINE_NAME,
-        heuristic: true,
       }),
     ],
   });

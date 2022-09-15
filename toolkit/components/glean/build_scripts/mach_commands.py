@@ -41,6 +41,32 @@ def data_review(command_context, bug=None):
 
 
 @Command(
+    "perf-data-review",
+    category="misc",
+    description="Generate a skeleton performance data review request form for a given bug's data",
+)
+@CommandArgument(
+    "bug", default=None, nargs="?", type=str, help="bug number or search pattern"
+)
+def perf_data_review(command_context, bug=None):
+    # Get the metrics_index's list of metrics indices
+    # by loading the index as a module.
+    from os import path
+    import sys
+
+    sys.path.append(path.join(path.dirname(__file__), path.pardir))
+    from metrics_index import metrics_yamls
+
+    sys.path.append(path.dirname(__file__))
+    import perf_data_review
+    from pathlib import Path
+
+    return perf_data_review.generate(
+        bug, [Path(command_context.topsrcdir) / x for x in metrics_yamls]
+    )
+
+
+@Command(
     "update-glean-tags",
     category="misc",
     description=(
@@ -50,9 +76,16 @@ def data_review(command_context, bug=None):
 def update_glean_tags(command_context):
     from pathlib import Path
     import yaml
-    from mozbuild.frontend.reader import BuildReader, EmptyConfig
+    from mozbuild.backend.configenvironment import ConfigEnvironment
+    from mozbuild.frontend.reader import BuildReader
 
-    config = EmptyConfig(str((Path(__file__).parent / "../../../../").resolve()))
+    config = ConfigEnvironment(
+        command_context.topsrcdir,
+        command_context.topobjdir,
+        defines=command_context.defines,
+        substs=command_context.substs,
+    )
+
     reader = BuildReader(config)
     bug_components = set()
     for p in reader.read_topsrcdir():
@@ -73,3 +106,108 @@ def update_glean_tags(command_context):
         "{}\n{}\n\n".format(LICENSE_HEADER, GENERATED_HEADER)
         + yaml.dump(tags, width=78, explicit_start=True)
     )
+
+
+def replace_in_file(path, pattern, replace):
+    """
+    Replace `pattern` with `replace` in the file `path`.
+    The file is modified on disk.
+
+    Returns `True` if exactly one replacement happened.
+    `False` otherwise.
+    """
+
+    import re
+
+    with open(path, "r+") as file:
+        data = file.read()
+        data, subs_made = re.subn(pattern, replace, data, flags=re.MULTILINE)
+
+        file.seek(0)
+        file.write(data)
+        file.truncate()
+
+        if subs_made != 1:
+            return False
+
+    return True
+
+
+def replace_in_file_or_die(path, pattern, replace):
+    """
+    Replace `pattern` with `replace` in the file `path`.
+    The file is modified on disk.
+
+    If not exactly one occurrence of `pattern` was replaced it will exit with exit code 1.
+    """
+
+    import sys
+
+    success = replace_in_file(path, pattern, replace)
+    if not success:
+        print(f"ERROR: Failed to replace one occurrence in {path}")
+        print(f"  Pattern: {pattern}")
+        print(f"  Replace: {replace}")
+        print("File was modified. Check the diff.")
+        sys.exit(1)
+
+
+@Command(
+    "update-glean",
+    category="misc",
+    description="Update Glean to the given version",
+)
+@CommandArgument("version", help="Glean version to upgrade to")
+def update_glean(command_context, version):
+    from pathlib import Path
+    import textwrap
+
+    topsrcdir = Path(command_context.topsrcdir)
+
+    replace_in_file_or_die(
+        topsrcdir / "build.gradle",
+        r'gleanVersion = "[0-9.]+"',
+        f'gleanVersion = "{version}"',
+    )
+    replace_in_file_or_die(
+        topsrcdir / "toolkit" / "components" / "glean" / "Cargo.toml",
+        r'^glean = "[0-9.]+"',
+        f'glean = "{version}"',
+    )
+    replace_in_file_or_die(
+        topsrcdir / "toolkit" / "components" / "glean" / "api" / "Cargo.toml",
+        r'^glean = "[0-9.]+"',
+        f'glean = "{version}"',
+    )
+    replace_in_file_or_die(
+        topsrcdir / "gfx" / "wr" / "webrender" / "Cargo.toml",
+        r'^glean = "[0-9.]+"',
+        f'glean = "{version}"',
+    )
+    replace_in_file_or_die(
+        topsrcdir / "python" / "sites" / "mach.txt",
+        r"glean-sdk==[0-9.]+",
+        f"glean-sdk=={version}",
+    )
+
+    instructions = f"""
+    Version in files modified. Please run the following commands:
+
+        cargo update -p glean
+        mach vendor rust
+
+    Vendoring will require re-certification of crates.
+    To do that run
+
+        mach cargo vet certify glean {version}
+        mach cargo vet certify glean-core {version}
+
+    This will require you to rerun `mach vendor rust` afterwards.
+
+    Then run:
+
+        cd gfx/wr
+        cargo update -p glean
+    """
+
+    print(textwrap.dedent(instructions))

@@ -10,10 +10,9 @@
 
 const EXPORTED_SYMBOLS = ["LoginAutoComplete", "LoginAutoCompleteResult"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const lazy = {};
 
@@ -29,11 +28,6 @@ XPCOMUtils.defineLazyServiceGetter(
   "formFillController",
   "@mozilla.org/satchel/form-fill-controller;1",
   Ci.nsIFormFillController
-);
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "SHOULD_SHOW_ORIGIN",
-  "signon.showAutoCompleteOrigins"
 );
 XPCOMUtils.defineLazyGetter(lazy, "log", () => {
   return lazy.LoginHelper.createLogger("LoginAutoComplete");
@@ -118,13 +112,10 @@ class InsecureLoginFormAutocompleteItem extends AutocompleteItem {
   constructor() {
     super("insecureWarning");
 
-    XPCOMUtils.defineLazyGetter(this, "label", () => {
-      let learnMoreString = getLocalizedString("insecureFieldWarningLearnMore");
-      return getLocalizedString(
-        "insecureFieldWarningDescription2",
-        learnMoreString
-      );
-    });
+    this.label = getLocalizedString(
+      "insecureFieldWarningDescription2",
+      getLocalizedString("insecureFieldWarningLearnMore")
+    );
   }
 }
 
@@ -139,43 +130,36 @@ class LoginAutocompleteItem extends AutocompleteItem {
     actor,
     isOriginMatched
   ) {
-    super(lazy.SHOULD_SHOW_ORIGIN ? "loginWithOrigin" : "login");
+    super("loginWithOrigin");
     this.login = login.QueryInterface(Ci.nsILoginMetaInfo);
     this.#actor = actor;
 
-    let isDuplicateUsername =
+    const isDuplicateUsername =
       login.username && duplicateUsernames.has(login.username);
 
-    XPCOMUtils.defineLazyGetter(this, "label", () => {
-      let username = login.username;
-      // If login is empty or duplicated we want to append a modification date to it.
-      if (!username || isDuplicateUsername) {
-        if (!username) {
-          username = getLocalizedString("noUsername");
-        }
-        let time = lazy.dateAndTimeFormatter.format(
-          new Date(login.timePasswordChanged)
-        );
-        username = getLocalizedString("loginHostAge", username, time);
-      }
-      return username;
-    });
+    let username = login.username
+      ? login.username
+      : getLocalizedString("noUsername");
 
-    XPCOMUtils.defineLazyGetter(this, "value", () => {
-      return hasBeenTypePassword ? login.password : login.username;
-    });
+    // If login is empty or duplicated we want to append a modification date to it.
+    if (!login.username || isDuplicateUsername) {
+      const time = lazy.dateAndTimeFormatter.format(
+        new Date(login.timePasswordChanged)
+      );
+      username = getLocalizedString("loginHostAge", username, time);
+    }
 
-    XPCOMUtils.defineLazyGetter(this, "comment", () => {
-      return JSON.stringify({
-        guid: login.guid,
-        login,
-        isDuplicateUsername,
-        isOriginMatched,
-        comment:
-          isOriginMatched && login.httpRealm === null
-            ? getLocalizedString("displaySameOrigin")
-            : login.displayOrigin,
-      });
+    this.label = username;
+    this.value = hasBeenTypePassword ? login.password : login.username;
+    this.comment = JSON.stringify({
+      guid: login.guid,
+      login,
+      isDuplicateUsername,
+      isOriginMatched,
+      comment:
+        isOriginMatched && login.httpRealm === null
+          ? getLocalizedString("displaySameOrigin")
+          : login.displayOrigin,
     });
   }
 
@@ -194,17 +178,15 @@ class LoginAutocompleteItem extends AutocompleteItem {
 class GeneratedPasswordAutocompleteItem extends AutocompleteItem {
   constructor(generatedPassword, willAutoSaveGeneratedPassword) {
     super("generatedPassword");
-    XPCOMUtils.defineLazyGetter(this, "comment", () =>
-      JSON.stringify({
-        generatedPassword,
-        willAutoSaveGeneratedPassword,
-      })
-    );
+
+    this.label = getLocalizedString("useASecurelyGeneratedPassword");
+
     this.value = generatedPassword;
 
-    XPCOMUtils.defineLazyGetter(this, "label", () =>
-      getLocalizedString("useASecurelyGeneratedPassword")
-    );
+    this.comment = JSON.stringify({
+      generatedPassword,
+      willAutoSaveGeneratedPassword,
+    });
   }
 }
 
@@ -251,23 +233,20 @@ class ImportableLoginsAutocompleteItem extends AutocompleteItem {
 class LoginsFooterAutocompleteItem extends AutocompleteItem {
   constructor(formHostname, telemetryEventData) {
     super("loginsFooter");
-    XPCOMUtils.defineLazyGetter(this, "comment", () => {
-      // The comment field of `loginsFooter` results have many additional pieces of
-      // information for telemetry purposes. After bug 1555209, this information
-      // can be passed to the parent process outside of nsIAutoCompleteResult APIs
-      // so we won't need this hack.
-      return JSON.stringify({
-        telemetryEventData,
-        formHostname,
-        fillMessageName: "PasswordManager:OpenPreferences",
-        fillMessageData: {
-          entryPoint: "autocomplete",
-        },
-      });
-    });
 
-    XPCOMUtils.defineLazyGetter(this, "label", () => {
-      return getLocalizedString("viewSavedLogins.label");
+    this.label = getLocalizedString("viewSavedLogins.label");
+
+    // The comment field of `loginsFooter` results have many additional pieces of
+    // information for telemetry purposes. After bug 1555209, this information
+    // can be passed to the parent process outside of nsIAutoCompleteResult APIs
+    // so we won't need this hack.
+    this.comment = JSON.stringify({
+      telemetryEventData,
+      formHostname,
+      fillMessageName: "PasswordManager:OpenPreferences",
+      fillMessageData: {
+        entryPoint: "autocomplete",
+      },
     });
   }
 }
@@ -331,8 +310,8 @@ class LoginAutoCompleteResult {
 
     this.searchString = aSearchString;
 
-    // Insecure field warning comes first if it applies and is enabled.
-    if (!isSecure && lazy.LoginHelper.showInsecureFieldWarning) {
+    // Insecure field warning comes first.
+    if (!isSecure) {
       this.#rows.push(new InsecureLoginFormAutocompleteItem());
     }
 
@@ -550,7 +529,7 @@ class LoginAutoComplete {
       // N.B. This check must occur after the `await` above for it to be
       // effective.
       if (this.#autoCompleteLookupPromise !== autoCompleteLookupPromise) {
-        lazy.log.debug("ignoring result from previous search");
+        lazy.log.debug("Ignoring result from previous search.");
         return;
       }
 

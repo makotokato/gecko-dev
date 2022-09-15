@@ -47,9 +47,6 @@ for stlfile in ["jsdate.*", "jsnum.*"]:
 with Files("builtin/intl/*"):
     BUG_COMPONENT = component_intl
 
-if CONFIG["ENABLE_WASM_CRANELIFT"]:
-    CONFIGURE_SUBST_FILES += ["rust/extra-bindgen-flags"]
-
 if not CONFIG["JS_DISABLE_SHELL"]:
     DIRS += [
         "rust",
@@ -196,6 +193,7 @@ EXPORTS.js += [
     "../public/SavedFrameAPI.h",
     "../public/ScalarType.h",
     "../public/ScriptPrivate.h",
+    "../public/ShadowRealmCallbacks.h",
     "../public/SharedArrayBuffer.h",
     "../public/SliceBudget.h",
     "../public/SourceText.h",
@@ -209,7 +207,6 @@ EXPORTS.js += [
     "../public/Symbol.h",
     "../public/TelemetryTimers.h",
     "../public/TraceKind.h",
-    "../public/TraceLoggerAPI.h",
     "../public/TracingAPI.h",
     "../public/Transcoding.h",
     "../public/TypeDecls.h",
@@ -314,6 +311,7 @@ UNIFIED_SOURCES += [
     "builtin/Promise.cpp",
     "builtin/Reflect.cpp",
     "builtin/ReflectParse.cpp",
+    "builtin/ShadowRealm.cpp",
     "builtin/String.cpp",
     "builtin/Symbol.cpp",
     "builtin/TestingFunctions.cpp",
@@ -321,6 +319,7 @@ UNIFIED_SOURCES += [
     "builtin/WeakMapObject.cpp",
     "builtin/WeakRefObject.cpp",
     "builtin/WeakSetObject.cpp",
+    "builtin/WrappedFunctionObject.cpp",
     "ds/Bitmap.cpp",
     "ds/LifoAlloc.cpp",
     "jsapi.cpp",
@@ -362,6 +361,7 @@ UNIFIED_SOURCES += [
     "vm/DateTime.cpp",
     "vm/EnvironmentObject.cpp",
     "vm/EqualityOperations.cpp",
+    "vm/ErrorContext.cpp",
     "vm/ErrorMessages.cpp",
     "vm/ErrorObject.cpp",
     "vm/ErrorReporting.cpp",
@@ -499,13 +499,6 @@ if CONFIG["MOZ_INSTRUMENTS"]:
         "devtools/Instruments.cpp",
     ]
 
-if CONFIG["ENABLE_TRACE_LOGGING"]:
-    SOURCES += [
-        "vm/TraceLogging.cpp",
-        "vm/TraceLoggingGraph.cpp",
-        "vm/TraceLoggingTypes.cpp",
-    ]
-
 if CONFIG["OS_ARCH"] == "WINNT":
     OS_LIBS += [
         "advapi32",
@@ -592,7 +585,6 @@ selfhosted_inputs = [
     "builtin/Generator.js",
     "builtin/Iterator.js",
     "builtin/Map.js",
-    "builtin/Module.js",
     "builtin/Number.js",
     "builtin/Object.js",
     "builtin/Promise.js",

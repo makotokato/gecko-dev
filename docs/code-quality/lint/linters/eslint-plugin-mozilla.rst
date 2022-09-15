@@ -53,6 +53,9 @@ The plugin implements the following rules:
    eslint-plugin-mozilla/reject-global-this
    eslint-plugin-mozilla/reject-globalThis-modification
    eslint-plugin-mozilla/reject-importGlobalProperties
+   eslint-plugin-mozilla/reject-lazy-imports-into-globals
+   eslint-plugin-mozilla/reject-mixing-eager-and-lazy
+   eslint-plugin-mozilla/reject-multiple-getters-calls
    eslint-plugin-mozilla/reject-osfile
    eslint-plugin-mozilla/reject-relative-requires
    eslint-plugin-mozilla/reject-requires-await
@@ -69,7 +72,10 @@ The plugin implements the following rules:
    eslint-plugin-mozilla/use-ownerGlobal
    eslint-plugin-mozilla/use-returnValue
    eslint-plugin-mozilla/use-services
+   eslint-plugin-mozilla/valid-ci-uses
    eslint-plugin-mozilla/valid-lazy
+   eslint-plugin-mozilla/valid-services
+   eslint-plugin-mozilla/valid-services-property
    eslint-plugin-mozilla/var-only-at-top-level
 
 Tests

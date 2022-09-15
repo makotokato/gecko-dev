@@ -105,7 +105,7 @@ using namespace xpc;
 using mozilla::dom::DestroyProtoAndIfaceCache;
 using mozilla::dom::IndexedDatabaseManager;
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(SandboxPrivate)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(SandboxPrivate)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(SandboxPrivate)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
@@ -119,8 +119,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(SandboxPrivate)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mModuleLoader)
   tmp->TraverseObjectsInGlobal(cb);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(SandboxPrivate)
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(SandboxPrivate)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(SandboxPrivate)
@@ -412,7 +410,7 @@ static bool SandboxStructuredClone(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool SandboxCreateStructuredClone(JSContext* cx, HandleObject obj) {
+bool xpc::SandboxCreateStructuredClone(JSContext* cx, HandleObject obj) {
   MOZ_ASSERT(JS_IsGlobalObject(obj));
 
   return JS_DefineFunction(cx, obj, "structuredClone", SandboxStructuredClone,
@@ -1443,9 +1441,15 @@ nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
     }
 
     bool allowComponents = principal->IsSystemPrincipal();
-    if (options.wantComponents && allowComponents &&
-        !ObjectScope(sandbox)->AttachComponentsObject(cx))
-      return NS_ERROR_XPC_UNEXPECTED;
+    if (options.wantComponents && allowComponents) {
+      if (!ObjectScope(sandbox)->AttachComponentsObject(cx)) {
+        return NS_ERROR_XPC_UNEXPECTED;
+      }
+
+      if (!ObjectScope(sandbox)->AttachJSServices(cx)) {
+        return NS_ERROR_XPC_UNEXPECTED;
+      }
+    }
 
     if (!XPCNativeWrapper::AttachNewConstructorObject(cx, sandbox)) {
       return NS_ERROR_XPC_UNEXPECTED;

@@ -13,31 +13,25 @@
 
 #include "jsfriendapi.h"
 
+#include "builtin/WrappedFunctionObject.h"
 #include "debugger/DebugAPI.h"
 #include "debugger/Debugger.h"
-#include "gc/Policy.h"
-#include "gc/PublicIterators.h"
+#include "gc/GC.h"
 #include "jit/JitRealm.h"
 #include "jit/JitRuntime.h"
-#include "js/CallAndConstruct.h"  // JS::IsCallable
-#include "js/Date.h"
+#include "js/CallAndConstruct.h"      // JS::IsCallable
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
+#include "js/GCVariant.h"
 #include "js/Proxy.h"
 #include "js/RootingAPI.h"
 #include "js/Wrapper.h"
-#include "proxy/DeadObjectProxy.h"
+#include "vm/Compartment.h"
 #include "vm/DateTime.h"
 #include "vm/Iteration.h"
 #include "vm/JSContext.h"
-#include "vm/WrapperObject.h"
 
-#include "gc/GC-inl.h"
 #include "gc/Marking-inl.h"
-#include "vm/JSAtom-inl.h"
-#include "vm/JSFunction-inl.h"
 #include "vm/JSObject-inl.h"
-#include "vm/JSScript-inl.h"
-#include "vm/NativeObject-inl.h"
 
 using namespace js;
 
@@ -394,6 +388,7 @@ void Realm::fixupAfterMovingGC(JSTracer* trc) {
 void Realm::purge() {
   dtoaCache.purge();
   newProxyCache.purge();
+  newPlainObjectWithPropsCache.purge();
   objects_.iteratorCache.clearAndCompact();
   arraySpeciesLookup.purge();
   promiseLookup.purge();
@@ -722,6 +717,11 @@ JS_PUBLIC_API JSObject* JS::GetRealmObjectPrototype(JSContext* cx) {
   return GlobalObject::getOrCreateObjectPrototype(cx, cx->global());
 }
 
+JS_PUBLIC_API JS::Handle<JSObject*> JS::GetRealmObjectPrototypeHandle(
+    JSContext* cx) {
+  return GlobalObject::getOrCreateObjectPrototypeHandle(cx, cx->global());
+}
+
 JS_PUBLIC_API JSObject* JS::GetRealmFunctionPrototype(JSContext* cx) {
   CHECK_THREAD(cx);
   return GlobalObject::getOrCreateFunctionPrototype(cx, cx->global());
@@ -741,6 +741,11 @@ JS_PUBLIC_API JSObject* JS::GetRealmErrorPrototype(JSContext* cx) {
 JS_PUBLIC_API JSObject* JS::GetRealmIteratorPrototype(JSContext* cx) {
   CHECK_THREAD(cx);
   return GlobalObject::getOrCreateIteratorPrototype(cx, cx->global());
+}
+
+JS_PUBLIC_API JSObject* JS::GetRealmAsyncIteratorPrototype(JSContext* cx) {
+  CHECK_THREAD(cx);
+  return GlobalObject::getOrCreateAsyncIteratorPrototype(cx, cx->global());
 }
 
 JS_PUBLIC_API JSObject* JS::GetRealmKeyObject(JSContext* cx) {
@@ -775,6 +780,12 @@ JS_PUBLIC_API Realm* JS::GetFunctionRealm(JSContext* cx, HandleObject objArg) {
 
       obj = fun->getBoundFunctionTarget();
       continue;
+    }
+
+    // WrappedFunctionObjects also have a [[Realm]] internal slot,
+    // which is the nonCCWRealm by construction.
+    if (obj->is<WrappedFunctionObject>()) {
+      return obj->nonCCWRealm();
     }
 
     // Step 4.

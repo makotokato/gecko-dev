@@ -31,11 +31,11 @@ namespace wasm {
 // A V128 value.
 
 struct V128 {
-  uint8_t bytes[16];  // Little-endian
+  uint8_t bytes[16] = {};  // Little-endian
 
   WASM_CHECK_CACHEABLE_POD(bytes);
 
-  V128() { memset(bytes, 0, sizeof(bytes)); }
+  V128() = default;
 
   explicit V128(uint8_t splatValue) {
     memset(bytes, int(splatValue), sizeof(bytes));
@@ -321,9 +321,6 @@ class LitVal {
         cell_.ref_ = AnyRef::null();
         break;
       }
-      case ValType::Kind::Rtt: {
-        MOZ_CRASH("not defaultable");
-      }
     }
   }
 
@@ -416,7 +413,6 @@ class MOZ_NON_PARAM Val : public LitVal {
         return cell_.f64_ == rhs.cell_.f64_;
       case ValType::V128:
         return cell_.v128_ == rhs.cell_.v128_;
-      case ValType::Rtt:
       case ValType::Ref:
         return cell_.ref_ == rhs.cell_.ref_;
     }
@@ -440,9 +436,15 @@ class MOZ_NON_PARAM Val : public LitVal {
 
   // Read from `loc` which is a rooted location and needs no barriers.
   void readFromRootedLocation(const void* loc);
+
+  // Initialize from `loc` which is a rooted location and needs no barriers.
+  void initFromRootedLocation(ValType type, const void* loc);
+
   // Write to `loc` which is a rooted location and needs no barriers.
   void writeToRootedLocation(void* loc, bool mustWrite64) const;
 
+  // Read from `loc` which is in the heap.
+  void readFromHeapLocation(void* loc);
   // Write to `loc` which is in the heap and must be barriered.
   void writeToHeapLocation(void* loc) const;
 
@@ -567,6 +569,43 @@ struct InternalBarrierMethods<wasm::Val> {
 #ifdef DEBUG
   static void assertThingIsNotGray(const wasm::Val& v) {
     if (v.isJSObject()) {
+      JS::AssertObjectIsNotGray(v.asJSObject());
+    }
+  }
+#endif
+};
+
+template <>
+struct InternalBarrierMethods<wasm::AnyRef> {
+  STATIC_ASSERT_ANYREF_IS_JSOBJECT;
+
+  static bool isMarkable(const wasm::AnyRef v) { return !v.isNull(); }
+
+  static void preBarrier(const wasm::AnyRef v) {
+    if (!v.isNull()) {
+      gc::PreWriteBarrier(v.asJSObject());
+    }
+  }
+
+  static MOZ_ALWAYS_INLINE void postBarrier(wasm::AnyRef* vp,
+                                            const wasm::AnyRef prev,
+                                            const wasm::AnyRef next) {
+    JSObject* prevObj = !prev.isNull() ? prev.asJSObject() : nullptr;
+    JSObject* nextObj = !next.isNull() ? next.asJSObject() : nullptr;
+    if (nextObj) {
+      JSObject::postWriteBarrier(vp->asJSObjectAddress(), prevObj, nextObj);
+    }
+  }
+
+  static void readBarrier(const wasm::AnyRef v) {
+    if (!v.isNull()) {
+      gc::ReadBarrier(v.asJSObject());
+    }
+  }
+
+#ifdef DEBUG
+  static void assertThingIsNotGray(const wasm::AnyRef v) {
+    if (!v.isNull()) {
       JS::AssertObjectIsNotGray(v.asJSObject());
     }
   }

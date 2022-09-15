@@ -24,11 +24,20 @@
         "AsyncTabSwitcher",
         "resource:///modules/AsyncTabSwitcher.jsm"
       );
-      ChromeUtils.defineModuleGetter(
-        this,
-        "UrlbarProviderOpenTabs",
-        "resource:///modules/UrlbarProviderOpenTabs.jsm"
-      );
+      ChromeUtils.defineESModuleGetters(this, {
+        UrlbarProviderOpenTabs:
+          "resource:///modules/UrlbarProviderOpenTabs.sys.mjs",
+      });
+      XPCOMUtils.defineLazyModuleGetters(this, {
+        E10SUtils: "resource://gre/modules/E10SUtils.jsm",
+        PictureInPicture: "resource://gre/modules/PictureInPicture.jsm",
+      });
+      XPCOMUtils.defineLazyServiceGetters(this, {
+        MacSharingService: [
+          "@mozilla.org/widget/macsharingservice;1",
+          "nsIMacSharingService",
+        ],
+      });
 
       if (AppConstants.MOZ_CRASHREPORTER) {
         ChromeUtils.defineModuleGetter(
@@ -42,8 +51,7 @@
 
       Services.els.addSystemEventListener(document, "keydown", this, false);
       Services.els.addSystemEventListener(document, "keypress", this, false);
-      window.addEventListener("sizemodechange", this);
-      window.addEventListener("occlusionstatechange", this);
+      document.addEventListener("visibilitychange", this);
       window.addEventListener("framefocusrequested", this);
 
       this.tabContainer.init();
@@ -60,17 +68,6 @@
       }
 
       this._setFindbarData();
-
-      XPCOMUtils.defineLazyModuleGetters(this, {
-        E10SUtils: "resource://gre/modules/E10SUtils.jsm",
-        PictureInPicture: "resource://gre/modules/PictureInPicture.jsm",
-      });
-      XPCOMUtils.defineLazyServiceGetters(this, {
-        MacSharingService: [
-          "@mozilla.org/widget/macsharingservice;1",
-          "nsIMacSharingService",
-        ],
-      });
 
       // We take over setting the document title, so remove the l10n id to
       // avoid it being re-translated and overwriting document content if
@@ -634,13 +631,7 @@
       let findBar = document.createXULElement("findbar");
       let browser = this.getBrowserForTab(aTab);
 
-      // The findbar should be inserted after the browserStack and, if present for
-      // this tab, after the StatusPanel as well.
-      let insertAfterElement = browser.parentNode;
-      if (insertAfterElement.nextElementSibling == StatusPanel.panel) {
-        insertAfterElement = StatusPanel.panel;
-      }
-      insertAfterElement.insertAdjacentElement("afterend", findBar);
+      browser.parentNode.insertAdjacentElement("afterend", findBar);
 
       await new Promise(r => requestAnimationFrame(r));
       delete aTab._pendingFindBar;
@@ -661,10 +652,7 @@
     },
 
     _appendStatusPanel() {
-      this.selectedBrowser.parentNode.insertAdjacentElement(
-        "afterend",
-        StatusPanel.panel
-      );
+      this.selectedBrowser.insertAdjacentElement("afterend", StatusPanel.panel);
     },
 
     _updateTabBarForPinnedTabs() {
@@ -753,7 +741,7 @@
           .reduce((a, b) => a.concat(b))
           .filter(
             anim =>
-              anim instanceof CSSAnimation &&
+              CSSAnimation.isInstance(anim) &&
               (anim.animationName === "tab-throbber-animation" ||
                 anim.animationName === "tab-throbber-animation-rtl") &&
               anim.playState === "running"
@@ -1074,7 +1062,9 @@
         TelemetryStopwatch.start("FX_TAB_SWITCH_UPDATE_MS");
 
         if (gMultiProcessBrowser) {
+          this._asyncTabSwitching = true;
           this._getSwitcher().requestTab(newTab);
+          this._asyncTabSwitching = false;
         }
 
         document.commandDispatcher.lock();
@@ -1101,9 +1091,7 @@
         oldBrowser.removeAttribute("primary");
         oldBrowser.docShellIsActive = false;
         newBrowser.setAttribute("primary", "true");
-        newBrowser.docShellIsActive =
-          window.windowState != window.STATE_MINIMIZED &&
-          !window.isFullyOccluded;
+        newBrowser.docShellIsActive = !document.hidden;
       }
 
       this._selectedBrowser = newBrowser;
@@ -1397,7 +1385,26 @@
         }
 
         if (!window.fullScreen || newTab.isEmpty) {
-          gURLBar.select();
+          if (this._asyncTabSwitching) {
+            // The onLocationChange event called in updateCurrentBrowser() will
+            // be captured in browser.js, then it calls gURLBar.setURI(). In case
+            // of that doing processing of here before doing above processing,
+            // the selection status that gURLBar.select() does will be releasing
+            // by gURLBar.setURI(). To resolve it, we call gURLBar.select() after
+            // finishing gURLBar.setURI().
+            const currentActiveElement = document.activeElement;
+            gURLBar.inputField.addEventListener(
+              "SetURI",
+              () => {
+                if (currentActiveElement === document.activeElement) {
+                  gURLBar.select();
+                }
+              },
+              { once: true }
+            );
+          } else {
+            gURLBar.select();
+          }
           return;
         }
       }
@@ -1433,7 +1440,7 @@
         // last clicked when switching back to that tab
         if (
           newFocusedElement &&
-          (newFocusedElement instanceof HTMLAnchorElement ||
+          (HTMLAnchorElement.isInstance(newFocusedElement) ||
             newFocusedElement.getAttributeNS(
               "http://www.w3.org/1999/xlink",
               "type"
@@ -1664,6 +1671,7 @@
       var aName;
       var aCsp;
       var aSkipLoad;
+      var aGlobalHistoryOptions;
       if (
         arguments.length == 2 &&
         typeof arguments[1] == "object" &&
@@ -1693,6 +1701,7 @@
         aName = params.name;
         aCsp = params.csp;
         aSkipLoad = params.skipLoad;
+        aGlobalHistoryOptions = params.globalHistoryOptions;
       }
 
       // all callers of loadOneTab need to pass a valid triggeringPrincipal.
@@ -1732,6 +1741,7 @@
         name: aName,
         csp: aCsp,
         skipLoad: aSkipLoad,
+        globalHistoryOptions: aGlobalHistoryOptions,
       });
       if (!bgLoad) {
         this.selectedTab = tab;
@@ -2163,22 +2173,14 @@
       let notificationbox = document.createXULElement("notificationbox");
       notificationbox.setAttribute("notificationside", "top");
 
-      // We set large flex on both containers to allow the devtools toolbox to
-      // set a flex attribute. We don't want the toolbox to actually take up free
-      // space, but we do want it to collapse when the window shrinks, and with
-      // flex=0 it can't. When the toolbox is on the bottom it's a sibling of
-      // browserStack, and when it's on the side it's a sibling of
-      // browserContainer.
       let stack = document.createXULElement("stack");
       stack.className = "browserStack";
       stack.appendChild(b);
-      stack.setAttribute("flex", "10000");
 
       let browserContainer = document.createXULElement("vbox");
       browserContainer.className = "browserContainer";
       browserContainer.appendChild(notificationbox);
       browserContainer.appendChild(stack);
-      browserContainer.setAttribute("flex", "10000");
 
       let browserSidebarContainer = document.createXULElement("hbox");
       browserSidebarContainer.className = "browserSidebarContainer";
@@ -2287,7 +2289,7 @@
             getter = () => {
               if (AppConstants.NIGHTLY_BUILD) {
                 let message = `[bug 1345098] Lazy browser prematurely inserted via '${name}' property access:\n`;
-                console.log(message + new Error().stack);
+                Services.console.logStringMessage(message + new Error().stack);
               }
               this._insertBrowser(aTab);
               return browser[name];
@@ -2295,7 +2297,7 @@
             setter = value => {
               if (AppConstants.NIGHTLY_BUILD) {
                 let message = `[bug 1345098] Lazy browser prematurely inserted via '${name}' property access:\n`;
-                console.log(message + new Error().stack);
+                Services.console.logStringMessage(message + new Error().stack);
               }
               this._insertBrowser(aTab);
               return (browser[name] = value);
@@ -2589,6 +2591,7 @@
         csp,
         skipLoad,
         batchInsertingTabs,
+        globalHistoryOptions,
       } = {}
     ) {
       // all callers of addTab that pass a params object need to pass
@@ -2920,6 +2923,7 @@
               charset,
               postData,
               csp,
+              globalHistoryOptions,
             });
           } catch (ex) {
             Cu.reportError(ex);
@@ -3340,6 +3344,9 @@
 
     getTabsToTheStartFrom(aTab) {
       let tabsToStart = [];
+      if (aTab.hidden) {
+        return tabsToStart;
+      }
       let tabs = this.visibleTabs;
       for (let i = 0; i < tabs.length; ++i) {
         if (tabs[i] == aTab) {
@@ -3361,6 +3368,9 @@
 
     getTabsToTheEndFrom(aTab) {
       let tabsToEnd = [];
+      if (aTab.hidden) {
+        return tabsToEnd;
+      }
       let tabs = this.visibleTabs;
       for (let i = tabs.length - 1; i >= 0; --i) {
         if (tabs[i] == aTab) {
@@ -4740,6 +4750,10 @@
         options += "," + name + "=" + aOptions[name];
       }
 
+      if (PrivateBrowsingUtils.isWindowPrivate(window)) {
+        options += ",private=1";
+      }
+
       // Play the tab closing animation to give immediate feedback while
       // waiting for the new window to appear.
       // content area when the docshells are swapped.
@@ -4762,7 +4776,7 @@
      * to a new browser window, unless it is (they are) already the only tab(s)
      * in the current window, in which case this will do nothing.
      */
-    replaceTabsWithWindow(contextTab, aOptions) {
+    replaceTabsWithWindow(contextTab, aOptions = {}) {
       let tabs;
       if (contextTab.multiselected) {
         tabs = this.selectedTabs;
@@ -5312,9 +5326,7 @@
         return this._switcher.shouldActivateDocShell(aBrowser);
       }
       return (
-        (aBrowser == this.selectedBrowser &&
-          window.windowState != window.STATE_MINIMIZED &&
-          !window.isFullyOccluded) ||
+        (aBrowser == this.selectedBrowser && !document.hidden) ||
         this._printPreviewBrowsers.has(aBrowser) ||
         this.PictureInPicture.isOriginatingBrowser(aBrowser)
       );
@@ -5629,16 +5641,11 @@
           aEvent.preventDefault();
           break;
         }
-        case "sizemodechange":
-        case "occlusionstatechange":
-          if (aEvent.target == window && !this._switcher) {
-            this.selectedBrowser.preserveLayers(
-              window.windowState == window.STATE_MINIMIZED ||
-                window.isFullyOccluded
-            );
-            this.selectedBrowser.docShellIsActive = this.shouldActivateDocShell(
-              this.selectedBrowser
-            );
+        case "visibilitychange":
+          const inactive = document.hidden;
+          if (!this._switcher) {
+            this.selectedBrowser.preserveLayers(inactive);
+            this.selectedBrowser.docShellIsActive = !inactive;
           }
           break;
       }
@@ -5765,8 +5772,7 @@
           false
         );
       }
-      window.removeEventListener("sizemodechange", this);
-      window.removeEventListener("occlusionstatechange", this);
+      document.removeEventListener("visibilitychange", this);
       window.removeEventListener("framefocusrequested", this);
 
       if (gMultiProcessBrowser) {
@@ -5857,7 +5863,7 @@
             return;
           }
 
-          let targetIsWindow = event.target instanceof Window;
+          let targetIsWindow = Window.isInstance(event.target);
 
           // We're about to open a modal dialog, so figure out for which tab:
           // If this is a same-process modal dialog, then we're given its DOM
@@ -6855,7 +6861,16 @@
 var StatusPanel = {
   get panel() {
     delete this.panel;
-    return (this.panel = document.getElementById("statuspanel"));
+    this.panel = document.getElementById("statuspanel");
+    this.panel.addEventListener(
+      "transitionend",
+      this._onTransitionEnd.bind(this)
+    );
+    this.panel.addEventListener(
+      "transitioncancel",
+      this._onTransitionEnd.bind(this)
+    );
+    return this.panel;
   },
 
   get isVisible() {
@@ -6894,6 +6909,7 @@ var StatusPanel = {
     if (this._labelElement.value != text || (text && !this.isVisible)) {
       this.panel.setAttribute("previoustype", this.panel.getAttribute("type"));
       this.panel.setAttribute("type", type);
+
       this._label = text;
       this._labelElement.setAttribute(
         "crop",
@@ -6930,11 +6946,23 @@ var StatusPanel = {
 
     if (val) {
       this._labelElement.value = val;
+      if (this.panel.hidden) {
+        this.panel.hidden = false;
+        // This ensures that the "inactive" attribute removal triggers a
+        // transition.
+        getComputedStyle(this.panel).display;
+      }
       this.panel.removeAttribute("inactive");
       MousePosTracker.addListener(this);
     } else {
       this.panel.setAttribute("inactive", "true");
       MousePosTracker.removeListener(this);
+    }
+  },
+
+  _onTransitionEnd() {
+    if (!this.isVisible) {
+      this.panel.hidden = true;
     }
   },
 
@@ -7031,6 +7059,8 @@ var TabContextMenu = {
       (aPopupMenu.triggerNode.tab || aPopupMenu.triggerNode.closest("tab"));
 
     this.contextTab = tab || gBrowser.selectedTab;
+    this.contextTab.addEventListener("TabAttrModified", this);
+    aPopupMenu.addEventListener("popuphiding", this);
 
     let disabled = gBrowser.tabs.length == 1;
     let multiselectionContext = this.contextTab.multiselected;
@@ -7044,10 +7074,6 @@ var TabContextMenu = {
     );
     for (let menuItem of menuItems) {
       menuItem.disabled = disabled;
-    }
-
-    if (this.contextTab.hasAttribute("customizemode")) {
-      document.getElementById("context_openTabInWindow").disabled = true;
     }
 
     disabled = gBrowser.visibleTabs.length == 1;
@@ -7097,11 +7123,13 @@ var TabContextMenu = {
     contextUnpinSelectedTabs.hidden =
       !this.contextTab.pinned || !multiselectionContext;
 
+    // Move Tab items
     let contextMoveTabOptions = document.getElementById(
       "context_moveTabOptions"
     );
     contextMoveTabOptions.setAttribute("data-l10n-args", tabCountInfo);
-    contextMoveTabOptions.disabled = gBrowser.allTabsSelected();
+    contextMoveTabOptions.disabled =
+      this.contextTab.hidden || gBrowser.allTabsSelected();
     let selectedTabs = gBrowser.selectedTabs;
     let contextMoveTabToEnd = document.getElementById("context_moveToEnd");
     let allSelectedTabsAdjacent = selectedTabs.every(
@@ -7130,6 +7158,10 @@ var TabContextMenu = {
       tabsToMove[0] == visibleTabs[0] ||
       tabsToMove[0] == visibleTabs[gBrowser._numPinnedTabs];
     contextMoveTabToStart.disabled = isFirstTab && allSelectedTabsAdjacent;
+
+    if (this.contextTab.hasAttribute("customizemode")) {
+      document.getElementById("context_openTabInWindow").disabled = true;
+    }
 
     // Only one of "Duplicate Tab"/"Duplicate Tabs" should be visible.
     document.getElementById(
@@ -7171,7 +7203,7 @@ var TabContextMenu = {
       closeTabsToTheEndItem.disabled &&
       closeOtherTabsItem.disabled;
 
-    // Hide "Bookmark Tab" for multiselection.
+    // Hide "Bookmark Tab…" for multiselection.
     // Update its state if visible.
     let bookmarkTab = document.getElementById("context_bookmarkTab");
     bookmarkTab.hidden = multiselectionContext;
@@ -7224,14 +7256,15 @@ var TabContextMenu = {
     let selectAllTabs = document.getElementById("context_selectAllTabs");
     selectAllTabs.disabled = gBrowser.allTabsSelected();
 
-    this.contextTab.addEventListener("TabAttrModified", this);
-    aPopupMenu.addEventListener("popuphiding", this);
-
     gSync.updateTabContextMenu(aPopupMenu, this.contextTab);
 
-    document.getElementById("context_reopenInContainer").hidden =
+    let reopenInContainer = document.getElementById(
+      "context_reopenInContainer"
+    );
+    reopenInContainer.hidden =
       !Services.prefs.getBoolPref("privacy.userContext.enabled", false) ||
       PrivateBrowsingUtils.isWindowPrivate(window);
+    reopenInContainer.disabled = this.contextTab.hidden;
 
     gShareUtils.updateShareURLMenuItem(
       this.contextTab.linkedBrowser,

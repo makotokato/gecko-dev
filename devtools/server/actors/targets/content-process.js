@@ -12,7 +12,6 @@
  */
 
 const { Cc, Ci, Cu } = require("chrome");
-const Services = require("Services");
 
 const { ThreadActor } = require("devtools/server/actors/thread");
 const { WebConsoleActor } = require("devtools/server/actors/webconsole");
@@ -29,9 +28,9 @@ const {
 const Targets = require("devtools/server/actors/targets/index");
 const Resources = require("devtools/server/actors/resources/index");
 const TargetActorMixin = require("devtools/server/actors/targets/target-actor-mixin");
-const {
-  TargetActorRegistry,
-} = require("resource://devtools/server/actors/targets/target-actor-registry.jsm");
+const { TargetActorRegistry } = ChromeUtils.importESModule(
+  "resource://devtools/server/actors/targets/target-actor-registry.sys.mjs"
+);
 
 loader.lazyRequireGetter(
   this,
@@ -50,10 +49,7 @@ const ContentProcessTargetActor = TargetActorMixin(
   Targets.TYPES.PROCESS,
   contentProcessTargetSpec,
   {
-    initialize: function(
-      connection,
-      { isXpcShellTarget = false, sessionContext } = {}
-    ) {
+    initialize(connection, { isXpcShellTarget = false, sessionContext } = {}) {
       Actor.prototype.initialize.call(this, connection);
       this.conn = connection;
       this.threadActor = null;
@@ -138,7 +134,7 @@ const ContentProcessTargetActor = TargetActorMixin(
       return this._dbg;
     },
 
-    form: function() {
+    form() {
       if (!this._consoleActor) {
         this._consoleActor = new WebConsoleActor(this.conn, this);
         this.manage(this._consoleActor);
@@ -177,7 +173,7 @@ const ContentProcessTargetActor = TargetActorMixin(
       return this._workerList;
     },
 
-    listWorkers: function() {
+    listWorkers() {
       return this.ensureWorkerList()
         .getList()
         .then(actors => {
@@ -202,7 +198,7 @@ const ContentProcessTargetActor = TargetActorMixin(
         });
     },
 
-    _onWorkerListChanged: function() {
+    _onWorkerListChanged() {
       this.conn.send({ from: this.actorID, type: "workerListChanged" });
       this._workerList.onListChanged = null;
     },
@@ -213,10 +209,16 @@ const ContentProcessTargetActor = TargetActorMixin(
       );
     },
 
-    destroy: function() {
-      if (this.isDestroyed()) {
+    destroy() {
+      // Avoid reentrancy. We will destroy the Transport when emitting "destroyed",
+      // which will force destroying all actors.
+      if (this.destroying) {
         return;
       }
+      this.destroying = true;
+
+      // Unregistering watchers first is important
+      // otherwise you might have leaks reported when running browser_browser_toolbox_netmonitor.js in debug builds
       Resources.unwatchAllResources(this);
 
       this.emit("destroyed");

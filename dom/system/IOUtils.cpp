@@ -41,8 +41,11 @@
 #include "nsIDirectoryEnumerator.h"
 #include "nsIFile.h"
 #include "nsIGlobalObject.h"
+#include "nsIInputStream.h"
 #include "nsISupports.h"
 #include "nsLocalFile.h"
+#include "nsNetUtil.h"
+#include "nsNSSComponent.h"
 #include "nsPrintfCString.h"
 #include "nsReadableUtils.h"
 #include "nsString.h"
@@ -54,6 +57,8 @@
 #include "prio.h"
 #include "prtime.h"
 #include "prtypes.h"
+#include "ScopedNSSTypes.h"
+#include "secoidt.h"
 
 #if defined(XP_UNIX) && !defined(ANDROID)
 #  include "nsSystemInfo.h"
@@ -63,6 +68,10 @@
 #  include "nsILocalFileWin.h"
 #elif defined(XP_MACOSX)
 #  include "nsILocalFileMac.h"
+#endif
+
+#ifdef XP_UNIX
+#  include "base/process_util.h"
 #endif
 
 #define REJECT_IF_INIT_PATH_FAILED(_file, _path, _promise)            \
@@ -263,6 +272,40 @@ static void RejectShuttingDown(Promise* aPromise) {
                   IOUtils::IOError(NS_ERROR_ABORT).WithMessage(SHUTDOWN_ERROR));
 }
 
+static bool AssertParentProcessWithCallerLocationImpl(GlobalObject& aGlobal,
+                                                      nsCString& reason) {
+  if (MOZ_LIKELY(XRE_IsParentProcess())) {
+    return true;
+  }
+
+  AutoJSAPI jsapi;
+  nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
+  MOZ_ALWAYS_TRUE(global);
+  MOZ_ALWAYS_TRUE(jsapi.Init(global));
+
+  JSContext* cx = jsapi.cx();
+
+  JS::AutoFilename scriptFilename;
+  unsigned lineNo = 0;
+  unsigned colNo = 0;
+
+  NS_ENSURE_TRUE(
+      JS::DescribeScriptedCaller(cx, &scriptFilename, &lineNo, &colNo), false);
+
+  NS_ENSURE_TRUE(scriptFilename.get(), false);
+
+  reason.AppendPrintf(" Called from %s:%d:%d.", scriptFilename.get(), lineNo,
+                      colNo);
+  return false;
+}
+
+static void AssertParentProcessWithCallerLocation(GlobalObject& aGlobal) {
+  nsCString reason = "IOUtils can only be used in the parent process."_ns;
+  if (!AssertParentProcessWithCallerLocationImpl(aGlobal, reason)) {
+    MOZ_CRASH_UNSAFE_PRINTF("%s", reason.get());
+  }
+}
+
 // IOUtils implementation
 /* static */
 IOUtils::StateMutex IOUtils::sState{"IOUtils::sState"};
@@ -272,7 +315,8 @@ template <typename Fn>
 already_AddRefed<Promise> IOUtils::WithPromiseAndState(GlobalObject& aGlobal,
                                                        ErrorResult& aError,
                                                        Fn aFn) {
-  MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess());
+  AssertParentProcessWithCallerLocation(aGlobal);
+
   RefPtr<Promise> promise = CreateJSPromise(aGlobal, aError);
   if (!promise) {
     return nullptr;
@@ -804,6 +848,32 @@ already_AddRefed<Promise> IOUtils::CreateUnique(GlobalObject& aGlobal,
             [file = std::move(file), aPermissions, aFileType]() {
               return CreateUniqueSync(file, aFileType, aPermissions);
             });
+      });
+}
+
+/* static */
+already_AddRefed<Promise> IOUtils::ComputeHexDigest(
+    GlobalObject& aGlobal, const nsAString& aPath,
+    const HashAlgorithm aAlgorithm, ErrorResult& aError) {
+  const bool nssInitialized = EnsureNSSInitializedChromeOrContent();
+
+  return WithPromiseAndState(
+      aGlobal, aError, [&](Promise* promise, auto& state) {
+        if (!nssInitialized) {
+          RejectJSPromise(promise,
+                          IOError(NS_ERROR_UNEXPECTED)
+                              .WithMessage("Could not initialize NSS"));
+          return;
+        }
+
+        nsCOMPtr<nsIFile> file = new nsLocalFile();
+        REJECT_IF_INIT_PATH_FAILED(file, aPath, promise);
+
+        DispatchAndResolve<nsCString>(state->mEventQueue, promise,
+                                      [file = std::move(file), aAlgorithm]() {
+                                        return ComputeHexDigestSync(file,
+                                                                    aAlgorithm);
+                                      });
       });
 }
 
@@ -1719,6 +1789,86 @@ Result<nsString, IOUtils::IOError> IOUtils::CreateUniqueSync(
   return path;
 }
 
+/* static */
+Result<nsCString, IOUtils::IOError> IOUtils::ComputeHexDigestSync(
+    nsIFile* aFile, const HashAlgorithm aAlgorithm) {
+  static constexpr size_t BUFFER_SIZE = 8192;
+
+  SECOidTag alg;
+  switch (aAlgorithm) {
+    case HashAlgorithm::Sha1:
+      alg = SEC_OID_SHA1;
+      break;
+
+    case HashAlgorithm::Sha256:
+      alg = SEC_OID_SHA256;
+      break;
+
+    case HashAlgorithm::Sha384:
+      alg = SEC_OID_SHA384;
+      break;
+
+    case HashAlgorithm::Sha512:
+      alg = SEC_OID_SHA512;
+      break;
+
+    default:
+      MOZ_RELEASE_ASSERT(false, "Unexpected HashAlgorithm");
+  }
+
+  Digest digest;
+  if (nsresult rv = digest.Begin(alg); NS_FAILED(rv)) {
+    return Err(IOError(rv).WithMessage("Could not hash file at %s",
+                                       aFile->HumanReadablePath().get()));
+  }
+
+  RefPtr<nsIInputStream> stream;
+  if (nsresult rv = NS_NewLocalFileInputStream(getter_AddRefs(stream), aFile);
+      NS_FAILED(rv)) {
+    return Err(IOError(rv).WithMessage("Could not open the file at %s",
+                                       aFile->HumanReadablePath().get()));
+  }
+
+  char buffer[BUFFER_SIZE];
+  uint32_t read = 0;
+  for (;;) {
+    if (nsresult rv = stream->Read(buffer, BUFFER_SIZE, &read); NS_FAILED(rv)) {
+      return Err(IOError(rv).WithMessage(
+          "Encountered an unexpected error while reading file(%s)",
+          aFile->HumanReadablePath().get()));
+    }
+    if (read == 0) {
+      break;
+    }
+
+    if (nsresult rv =
+            digest.Update(reinterpret_cast<unsigned char*>(buffer), read);
+        NS_FAILED(rv)) {
+      return Err(IOError(rv).WithMessage("Could not hash file at %s",
+                                         aFile->HumanReadablePath().get()));
+    }
+  }
+
+  AutoTArray<uint8_t, SHA512_LENGTH> rawDigest;
+  if (nsresult rv = digest.End(rawDigest); NS_FAILED(rv)) {
+    return Err(IOError(rv).WithMessage("Could not hash file at %s",
+                                       aFile->HumanReadablePath().get()));
+  }
+
+  nsCString hexDigest;
+  if (!hexDigest.SetCapacity(2 * rawDigest.Length(), fallible)) {
+    return Err(IOError(NS_ERROR_OUT_OF_MEMORY));
+  }
+
+  const char HEX[] = "0123456789abcdef";
+  for (uint8_t b : rawDigest) {
+    hexDigest.Append(HEX[(b >> 4) & 0xF]);
+    hexDigest.Append(HEX[b & 0xF]);
+  }
+
+  return hexDigest;
+}
+
 #if defined(XP_WIN)
 
 Result<uint32_t, IOUtils::IOError> IOUtils::GetWindowsAttributesSync(
@@ -1849,8 +1999,35 @@ Result<Ok, IOUtils::IOError> IOUtils::DelMacXAttrSync(nsIFile* aFile,
 void IOUtils::GetProfileBeforeChange(GlobalObject& aGlobal,
                                      JS::MutableHandle<JS::Value> aClient,
                                      ErrorResult& aRv) {
+  return GetShutdownClient(aGlobal, aClient, aRv,
+                           ShutdownPhase::ProfileBeforeChange);
+}
+
+/* static */
+void IOUtils::GetSendTelemetry(GlobalObject& aGlobal,
+                               JS::MutableHandle<JS::Value> aClient,
+                               ErrorResult& aRv) {
+  return GetShutdownClient(aGlobal, aClient, aRv, ShutdownPhase::SendTelemetry);
+}
+
+/**
+ * Assert that the given phase has a shutdown client exposed by IOUtils
+ *
+ * There is no shutdown client exposed for XpcomWillShutdown.
+ */
+static void AssertHasShutdownClient(const IOUtils::ShutdownPhase aPhase) {
+  MOZ_RELEASE_ASSERT(aPhase >= IOUtils::ShutdownPhase::ProfileBeforeChange &&
+                     aPhase < IOUtils::ShutdownPhase::XpcomWillShutdown);
+}
+
+/* static */
+void IOUtils::GetShutdownClient(GlobalObject& aGlobal,
+                                JS::MutableHandle<JS::Value> aClient,
+                                ErrorResult& aRv,
+                                const IOUtils::ShutdownPhase aPhase) {
   MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
+  AssertHasShutdownClient(aPhase);
 
   if (auto state = GetState()) {
     MOZ_RELEASE_ASSERT(state.ref()->mBlockerStatus !=
@@ -1863,7 +2040,7 @@ void IOUtils::GetProfileBeforeChange(GlobalObject& aGlobal,
 
     MOZ_RELEASE_ASSERT(state.ref()->mBlockerStatus ==
                        ShutdownBlockerStatus::Initialized);
-    auto result = state.ref()->mEventQueue->GetProfileBeforeChangeClient();
+    auto result = state.ref()->mEventQueue->GetShutdownClient(aPhase);
     if (result.isErr()) {
       aRv.ThrowAbortError("IOUtils: could not get shutdown client");
       return;
@@ -1931,36 +2108,122 @@ void IOUtils::State::SetShutdownHooks() {
 nsresult IOUtils::EventQueue::SetShutdownHooks() {
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
 
+  constexpr static auto STACK = u"IOUtils::EventQueue::SetShutdownHooks"_ns;
+  constexpr static auto FILE = NS_LITERAL_STRING_FROM_CSTRING(__FILE__);
+
   nsCOMPtr<nsIAsyncShutdownService> svc = services::GetAsyncShutdownService();
   if (!svc) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  nsCOMPtr<nsIAsyncShutdownBlocker> blocker = new IOUtilsShutdownBlocker(
-      IOUtilsShutdownBlocker::Phase::ProfileBeforeChange);
+  nsCOMPtr<nsIAsyncShutdownBlocker> profileBeforeChangeBlocker;
 
-  nsCOMPtr<nsIAsyncShutdownClient> profileBeforeChange;
-  MOZ_TRY(svc->GetProfileBeforeChange(getter_AddRefs(profileBeforeChange)));
-  MOZ_RELEASE_ASSERT(profileBeforeChange);
+  // Create a shutdown blocker for the profile-before-change phase.
+  {
+    profileBeforeChangeBlocker =
+        new IOUtilsShutdownBlocker(ShutdownPhase::ProfileBeforeChange);
 
-  MOZ_TRY(profileBeforeChange->AddBlocker(
-      blocker, NS_LITERAL_STRING_FROM_CSTRING(__FILE__), __LINE__,
-      u"IOUtils::EventQueue::SetShutdownHooks"_ns));
+    nsCOMPtr<nsIAsyncShutdownClient> globalClient;
+    MOZ_TRY(svc->GetProfileBeforeChange(getter_AddRefs(globalClient)));
+    MOZ_RELEASE_ASSERT(globalClient);
 
-  nsCOMPtr<nsIAsyncShutdownClient> xpcomWillShutdown;
-  MOZ_TRY(svc->GetXpcomWillShutdown(getter_AddRefs(xpcomWillShutdown)));
-  MOZ_RELEASE_ASSERT(xpcomWillShutdown);
+    MOZ_TRY(globalClient->AddBlocker(profileBeforeChangeBlocker, FILE, __LINE__,
+                                     STACK));
+  }
 
-  blocker = new IOUtilsShutdownBlocker(
-      IOUtilsShutdownBlocker::Phase::XpcomWillShutdown);
-  MOZ_TRY(xpcomWillShutdown->AddBlocker(
-      blocker, NS_LITERAL_STRING_FROM_CSTRING(__FILE__), __LINE__,
-      u"IOUtils::EventQueue::SetShutdownHooks"_ns));
+  // Create the shutdown barrier for profile-before-change so that consumers can
+  // register shutdown blockers.
+  //
+  // The blocker we just created will wait for all clients registered on this
+  // barrier to finish.
+  {
+    nsCOMPtr<nsIAsyncShutdownBarrier> barrier;
 
-  MOZ_TRY(svc->MakeBarrier(
-      u"IOUtils: waiting for profileBeforeChange IO to complete"_ns,
-      getter_AddRefs(mProfileBeforeChangeBarrier)));
-  MOZ_RELEASE_ASSERT(mProfileBeforeChangeBarrier);
+    // It is okay for this to fail. The created shutdown blocker won't await
+    // anything and shutdown will proceed.
+    MOZ_TRY(svc->MakeBarrier(
+        u"IOUtils: waiting for profileBeforeChange IO to complete"_ns,
+        getter_AddRefs(barrier)));
+    MOZ_RELEASE_ASSERT(barrier);
+
+    mBarriers[ShutdownPhase::ProfileBeforeChange] = std::move(barrier);
+  }
+
+  // Create a shutdown blocker for the profile-before-change-telemetry phase.
+  nsCOMPtr<nsIAsyncShutdownBlocker> sendTelemetryBlocker;
+  {
+    sendTelemetryBlocker =
+        new IOUtilsShutdownBlocker(ShutdownPhase::SendTelemetry);
+
+    nsCOMPtr<nsIAsyncShutdownClient> globalClient;
+    MOZ_TRY(svc->GetSendTelemetry(getter_AddRefs(globalClient)));
+    MOZ_RELEASE_ASSERT(globalClient);
+
+    MOZ_TRY(
+        globalClient->AddBlocker(sendTelemetryBlocker, FILE, __LINE__, STACK));
+  }
+
+  // Create the shutdown barrier for profile-before-change-telemetry so that
+  // consumers can register shutdown blockers.
+  //
+  // The blocker we just created will wait for all clients registered on this
+  // barrier to finish.
+  {
+    nsCOMPtr<nsIAsyncShutdownBarrier> barrier;
+
+    MOZ_TRY(svc->MakeBarrier(
+        u"IOUtils: waiting for sendTelemetry IO to complete"_ns,
+        getter_AddRefs(barrier)));
+    MOZ_RELEASE_ASSERT(barrier);
+
+    // Add a blocker on the previous shutdown phase.
+    nsCOMPtr<nsIAsyncShutdownClient> client;
+    MOZ_TRY(barrier->GetClient(getter_AddRefs(client)));
+
+    MOZ_TRY(
+        client->AddBlocker(profileBeforeChangeBlocker, FILE, __LINE__, STACK));
+
+    mBarriers[ShutdownPhase::SendTelemetry] = std::move(barrier);
+  }
+
+  // Create a shutdown blocker for the xpcom-will-shutdown phase.
+  {
+    nsCOMPtr<nsIAsyncShutdownClient> globalClient;
+    MOZ_TRY(svc->GetXpcomWillShutdown(getter_AddRefs(globalClient)));
+    MOZ_RELEASE_ASSERT(globalClient);
+
+    nsCOMPtr<nsIAsyncShutdownBlocker> blocker =
+        new IOUtilsShutdownBlocker(ShutdownPhase::XpcomWillShutdown);
+    MOZ_TRY(globalClient->AddBlocker(
+        blocker, FILE, __LINE__, u"IOUtils::EventQueue::SetShutdownHooks"_ns));
+  }
+
+  // Create a shutdown barrier for the xpcom-will-shutdown phase.
+  //
+  // The blocker we just created will wait for all clients registered on this
+  // barrier to finish.
+  //
+  // The only client registered on this barrier should be a blocker for the
+  // previous phase. This is to ensure that all shutdown IO happens when
+  // shutdown phases do not happen (e.g., in xpcshell tests where
+  // profile-before-change does not occur).
+  {
+    nsCOMPtr<nsIAsyncShutdownBarrier> barrier;
+
+    MOZ_TRY(svc->MakeBarrier(
+        u"IOUtils: waiting for xpcomWillShutdown IO to complete"_ns,
+        getter_AddRefs(barrier)));
+    MOZ_RELEASE_ASSERT(barrier);
+
+    // Add a blocker on the previous shutdown phase.
+    nsCOMPtr<nsIAsyncShutdownClient> client;
+    MOZ_TRY(barrier->GetClient(getter_AddRefs(client)));
+
+    client->AddBlocker(sendTelemetryBlocker, FILE, __LINE__,
+                       u"IOUtils::EventQueue::SetShutdownHooks"_ns);
+
+    mBarriers[ShutdownPhase::XpcomWillShutdown] = std::move(barrier);
+  }
 
   return NS_OK;
 }
@@ -1985,25 +2248,27 @@ RefPtr<IOUtils::IOPromise<OkT>> IOUtils::EventQueue::Dispatch(Fn aFunc) {
   return promise;
 };
 
-Result<already_AddRefed<nsIAsyncShutdownClient>, nsresult>
-IOUtils::EventQueue::GetProfileBeforeChangeClient() {
-  if (!mProfileBeforeChangeBarrier) {
+Result<already_AddRefed<nsIAsyncShutdownBarrier>, nsresult>
+IOUtils::EventQueue::GetShutdownBarrier(const IOUtils::ShutdownPhase aPhase) {
+  if (!mBarriers[aPhase]) {
     return Err(NS_ERROR_NOT_AVAILABLE);
   }
 
-  nsCOMPtr<nsIAsyncShutdownClient> profileBeforeChange;
-  MOZ_TRY(mProfileBeforeChangeBarrier->GetClient(
-      getter_AddRefs(profileBeforeChange)));
-  return profileBeforeChange.forget();
+  return do_AddRef(mBarriers[aPhase]);
 }
 
-Result<already_AddRefed<nsIAsyncShutdownBarrier>, nsresult>
-IOUtils::EventQueue::GetProfileBeforeChangeBarrier() {
-  if (!mProfileBeforeChangeBarrier) {
+Result<already_AddRefed<nsIAsyncShutdownClient>, nsresult>
+IOUtils::EventQueue::GetShutdownClient(const IOUtils::ShutdownPhase aPhase) {
+  AssertHasShutdownClient(aPhase);
+
+  if (!mBarriers[aPhase]) {
     return Err(NS_ERROR_NOT_AVAILABLE);
   }
 
-  return do_AddRef(mProfileBeforeChangeBarrier);
+  nsCOMPtr<nsIAsyncShutdownClient> client;
+  MOZ_TRY(mBarriers[aPhase]->GetClient(getter_AddRefs(client)));
+
+  return do_AddRef(client);
 }
 
 /* static */
@@ -2097,27 +2362,16 @@ NS_IMPL_ISUPPORTS(IOUtilsShutdownBlocker, nsIAsyncShutdownBlocker,
 
 NS_IMETHODIMP IOUtilsShutdownBlocker::GetName(nsAString& aName) {
   aName = u"IOUtils Blocker ("_ns;
-
-  switch (mPhase) {
-    case Phase::ProfileBeforeChange:
-      aName.Append(u"profile-before-change"_ns);
-      break;
-
-    case Phase::XpcomWillShutdown:
-      aName.Append(u"xpcom-will-shutdown"_ns);
-      break;
-
-    default:
-      MOZ_CRASH("Unknown shutdown phase");
-  }
-
+  aName.Append(PHASE_NAMES[mPhase]);
   aName.Append(')');
+
   return NS_OK;
 }
 
 NS_IMETHODIMP IOUtilsShutdownBlocker::BlockShutdown(
     nsIAsyncShutdownClient* aBarrierClient) {
   using EventQueueStatus = IOUtils::EventQueueStatus;
+  using ShutdownPhase = IOUtils::ShutdownPhase;
 
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
 
@@ -2126,10 +2380,10 @@ NS_IMETHODIMP IOUtilsShutdownBlocker::BlockShutdown(
   {
     auto state = IOUtils::sState.Lock();
     if (state->mQueueStatus == EventQueueStatus::Shutdown) {
-      // If the blocker for profile-before-change has already run, then the
-      // event queue is already torn down and we have nothing to do.
+      // If the previous blockers have already run, then the event queue is
+      // already torn down and we have nothing to do.
 
-      MOZ_RELEASE_ASSERT(mPhase == Phase::XpcomWillShutdown);
+      MOZ_RELEASE_ASSERT(mPhase == ShutdownPhase::XpcomWillShutdown);
       MOZ_RELEASE_ASSERT(!state->mEventQueue);
 
       Unused << NS_WARN_IF(NS_FAILED(aBarrierClient->RemoveBlocker(this)));
@@ -2142,8 +2396,7 @@ NS_IMETHODIMP IOUtilsShutdownBlocker::BlockShutdown(
 
     mParentClient = aBarrierClient;
 
-    barrier =
-        state->mEventQueue->GetProfileBeforeChangeBarrier().unwrapOr(nullptr);
+    barrier = state->mEventQueue->GetShutdownBarrier(mPhase).unwrapOr(nullptr);
   }
 
   // We cannot barrier->Wait() while holding the mutex because it will lead to
@@ -2162,32 +2415,61 @@ NS_IMETHODIMP IOUtilsShutdownBlocker::BlockShutdown(
 
 NS_IMETHODIMP IOUtilsShutdownBlocker::Done() {
   using EventQueueStatus = IOUtils::EventQueueStatus;
+  using ShutdownPhase = IOUtils::ShutdownPhase;
 
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
 
-  auto state = IOUtils::sState.Lock();
-  MOZ_RELEASE_ASSERT(state->mEventQueue);
+  bool didFlush = false;
 
-  // This method is called once we have served all shutdown clients. Now we
-  // flush the remaining IO queue and forbid additional IO requests.
-  state->mEventQueue->Dispatch<Ok>([]() { return Ok{}; })
-      ->Then(GetMainThreadSerialEventTarget(), __func__,
-             [self = RefPtr(this)]() {
-               if (self->mParentClient) {
-                 Unused << NS_WARN_IF(
-                     NS_FAILED(self->mParentClient->RemoveBlocker(self)));
-                 self->mParentClient = nullptr;
+  {
+    auto state = IOUtils::sState.Lock();
 
-                 auto state = IOUtils::sState.Lock();
-                 MOZ_RELEASE_ASSERT(state->mEventQueue);
-                 state->mEventQueue = nullptr;
-               }
-             });
+    if (state->mEventQueue) {
+      MOZ_RELEASE_ASSERT(state->mQueueStatus == EventQueueStatus::Initialized);
 
-  MOZ_RELEASE_ASSERT(state->mQueueStatus == EventQueueStatus::Initialized);
-  state->mQueueStatus = EventQueueStatus::Shutdown;
+      // This method is called once we have served all shutdown clients. Now we
+      // flush the remaining IO queue. This ensures any straggling IO that was
+      // not part of the shutdown blocker finishes before we move to the next
+      // phase.
+      state->mEventQueue->Dispatch<Ok>([]() { return Ok{}; })
+          ->Then(GetMainThreadSerialEventTarget(), __func__,
+                 [self = RefPtr(this)]() { self->OnFlush(); });
+
+      // And if we're the last shutdown phase to allow IO, disable the event
+      // queue to disallow further IO requests.
+      if (mPhase >= LAST_IO_PHASE) {
+        state->mQueueStatus = EventQueueStatus::Shutdown;
+      }
+
+      didFlush = true;
+    }
+  }
+
+  // If we have already shut down the event loop, then call OnFlush to stop
+  // blocking our parent shutdown client.
+  if (!didFlush) {
+    MOZ_RELEASE_ASSERT(mPhase == ShutdownPhase::XpcomWillShutdown);
+    OnFlush();
+  }
 
   return NS_OK;
+}
+
+void IOUtilsShutdownBlocker::OnFlush() {
+  if (mParentClient) {
+    (void)NS_WARN_IF(NS_FAILED(mParentClient->RemoveBlocker(this)));
+    mParentClient = nullptr;
+
+    // If we are past the last shutdown phase that allows IO,
+    // we can shutdown the event queue here because no additional IO requests
+    // will be allowed (see |Done()|).
+    if (mPhase >= LAST_IO_PHASE) {
+      auto state = IOUtils::sState.Lock();
+      if (state->mEventQueue) {
+        state->mEventQueue = nullptr;
+      }
+    }
+  }
 }
 
 NS_IMETHODIMP IOUtilsShutdownBlocker::GetState(nsIPropertyBag** aState) {
@@ -2436,6 +2718,80 @@ void SyncReadFile::ReadBytesInto(const Uint8Array& aDestArray,
 }
 
 void SyncReadFile::Close() { mStream = nullptr; }
+
+#ifdef XP_UNIX
+namespace {
+
+static nsCString FromUnixString(const IOUtils::UnixString& aString) {
+  if (aString.IsUTF8String()) {
+    return aString.GetAsUTF8String();
+  }
+  if (aString.IsUint8Array()) {
+    const auto& u8a = aString.GetAsUint8Array();
+    u8a.ComputeState();
+    // Cast to deal with char signedness
+    return nsCString(reinterpret_cast<const char*>(u8a.Data()), u8a.Length());
+  }
+  MOZ_CRASH("unreachable");
+}
+
+}  // namespace
+
+// static
+uint32_t IOUtils::LaunchProcess(GlobalObject& aGlobal,
+                                const Sequence<UnixString>& aArgv,
+                                const LaunchOptions& aOptions,
+                                ErrorResult& aRv) {
+  // The binding is worker-only, so should always be off-main-thread.
+  MOZ_ASSERT(!NS_IsMainThread());
+
+  // This generally won't work in child processes due to sandboxing.
+  AssertParentProcessWithCallerLocation(aGlobal);
+
+  std::vector<std::string> argv;
+  base::LaunchOptions options;
+
+  for (const auto& arg : aArgv) {
+    argv.push_back(FromUnixString(arg).get());
+  }
+
+  size_t envLen = aOptions.mEnvironment.Length();
+  base::EnvironmentArray envp(new char*[envLen + 1]);
+  for (size_t i = 0; i < envLen; ++i) {
+    // EnvironmentArray is a UniquePtr instance which will `free`
+    // these strings.
+    envp[i] = strdup(FromUnixString(aOptions.mEnvironment[i]).get());
+  }
+  envp[envLen] = nullptr;
+  options.full_env = std::move(envp);
+
+  if (aOptions.mWorkdir.WasPassed()) {
+    options.workdir = FromUnixString(aOptions.mWorkdir.Value()).get();
+  }
+
+  if (aOptions.mFdMap.WasPassed()) {
+    for (const auto& fdItem : aOptions.mFdMap.Value()) {
+      options.fds_to_remap.push_back({fdItem.mSrc, fdItem.mDst});
+    }
+  }
+
+#  ifdef XP_MACOSX
+  options.disclaim = aOptions.mDisclaim;
+#  endif
+
+  base::ProcessHandle pid;
+  static_assert(sizeof(pid) <= sizeof(uint32_t),
+                "WebIDL long should be large enough for a pid");
+  bool ok = base::LaunchApp(argv, options, &pid);
+  if (!ok) {
+    aRv.Throw(NS_ERROR_FAILURE);
+    return 0;
+  }
+
+  MOZ_ASSERT(pid >= 0);
+  return static_cast<uint32_t>(pid);
+}
+#endif  // XP_UNIX
 
 }  // namespace mozilla::dom
 

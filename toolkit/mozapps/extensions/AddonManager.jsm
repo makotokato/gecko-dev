@@ -71,9 +71,8 @@ const AMO_ATTRIBUTION_DATA_KEYS = [
 ];
 const AMO_ATTRIBUTION_DATA_MAX_LENGTH = 40;
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 // This global is overridden by xpcshell tests, and therefore cannot be
 // a const.
@@ -709,7 +708,7 @@ var AddonManagerInternal = {
         CATEGORY_PROVIDER_MODULE
       )) {
         try {
-          ChromeUtils.import(url);
+          ChromeUtils.importESModule(url);
           logger.debug(`Loaded provider scope for ${url}`);
         } catch (e) {
           AddonManagerPrivate.recordException(

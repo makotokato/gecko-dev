@@ -14,15 +14,14 @@ var EXPORTED_SYMBOLS = ["FormAutofillPrompter"];
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { FormAutofill } = ChromeUtils.import(
   "resource://autofill/FormAutofill.jsm"
 );
 const { FormAutofillUtils } = ChromeUtils.import(
   "resource://autofill/FormAutofillUtils.jsm"
 );
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -384,19 +383,9 @@ let FormAutofillPrompter = {
       creditCard.record["cc-number"] ||
       creditCard.record["cc-number-decrypted"];
     let name = creditCard.record["cc-name"];
-    let month = creditCard.record["cc-exp-month"];
-    let year = creditCard.record["cc-exp-year"];
     let type = lazy.CreditCard.getType(number);
-    let ccLabelInfo = lazy.CreditCard.getLabelInfo({
-      number,
-      name,
-      month,
-      year,
-      type,
-    });
-    let description = [ccLabelInfo.args.number, ccLabelInfo.args.name].join(
-      ", "
-    );
+    let maskedNumber = lazy.CreditCard.getMaskedNumber(number);
+    let description = `${maskedNumber}, ${name}`;
     const telemetryObject = creditCard.guid
       ? "update_doorhanger"
       : "capture_doorhanger";

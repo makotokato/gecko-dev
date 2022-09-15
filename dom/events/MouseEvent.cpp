@@ -215,13 +215,7 @@ already_AddRefed<EventTarget> MouseEvent::GetRelatedTarget() {
   return EnsureWebAccessibleRelatedTarget(relatedTarget);
 }
 
-void MouseEvent::GetRegion(nsAString& aRegion) {
-  SetDOMStringToNull(aRegion);
-  WidgetMouseEventBase* mouseEventBase = mEvent->AsMouseEventBase();
-  if (mouseEventBase) {
-    aRegion = mouseEventBase->mRegion;
-  }
-}
+void MouseEvent::GetRegion(nsAString& aRegion) { SetDOMStringToNull(aRegion); }
 
 CSSIntPoint MouseEvent::ScreenPoint(CallerType aCallerType) const {
   if (mEvent->mFlags.mIsPositionless) {

@@ -22,7 +22,6 @@
 
 var EXPORTED_SYMBOLS = ["ClientEngine", "ClientsRec"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { Async } = ChromeUtils.import("resource://services-common/async.js");
 const {
   DEVICE_TYPE_DESKTOP,
@@ -40,8 +39,8 @@ const { CryptoWrapper } = ChromeUtils.import(
 const { Resource } = ChromeUtils.import("resource://services-sync/resource.js");
 const { Svc, Utils } = ChromeUtils.import("resource://services-sync/util.js");
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -56,7 +55,7 @@ const { PREF_ACCOUNT_ROOT } = ChromeUtils.import(
   "resource://gre/modules/FxAccountsCommon.js"
 );
 
-const CLIENTS_TTL = 1814400; // 21 days
+const CLIENTS_TTL = 15552000; // 180 days
 const CLIENTS_TTL_REFRESH = 604800; // 7 days
 const STALE_CLIENT_REMOTE_AGE = 604800; // 7 days
 
@@ -596,7 +595,7 @@ ClientEngine.prototype = {
       const fxaDeviceId = this.getClientFxaDeviceId(id);
       return fxaDeviceId ? acc.concat(fxaDeviceId) : acc;
     }, []);
-    if (idsToNotify.length > 0) {
+    if (idsToNotify.length) {
       this._notifyOtherClientsModified(idsToNotify);
     }
   },

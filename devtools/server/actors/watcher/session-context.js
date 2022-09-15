@@ -120,7 +120,7 @@ function createWebExtensionSessionContext(
   const type = SESSION_TYPES.WEBEXTENSION;
   return {
     type,
-    addonId: addonId,
+    addonId,
     addonBrowsingContextID: browsingContextID,
     addonInnerWindowId: innerWindowId,
     // For now, there is only one target (WebExtensionTargetActor), it is never replaced,
@@ -214,7 +214,7 @@ function getWatcherSupportedResources(type, { isBrowserToolboxFission } = {}) {
     [Resources.TYPES.NETWORK_EVENT_STACKTRACE]: true,
     [Resources.TYPES.REFLOW]: true,
     [Resources.TYPES.STYLESHEET]: true,
-    [Resources.TYPES.SOURCE]: isTabOrWebExtensionToolbox,
+    [Resources.TYPES.SOURCE]: true,
     [Resources.TYPES.THREAD_STATE]: isTabOrWebExtensionToolbox,
     [Resources.TYPES.SERVER_SENT_EVENT]: isTabOrWebExtensionToolbox,
     [Resources.TYPES.WEBSOCKET]: isTabOrWebExtensionToolbox,

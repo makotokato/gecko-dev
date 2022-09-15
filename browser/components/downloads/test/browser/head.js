@@ -24,11 +24,9 @@ ChromeUtils.defineModuleGetter(
   "FileUtils",
   "resource://gre/modules/FileUtils.jsm"
 );
-ChromeUtils.defineModuleGetter(
-  this,
-  "PlacesUtils",
-  "resource://gre/modules/PlacesUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+});
 ChromeUtils.defineModuleGetter(
   this,
   "HttpServer",
@@ -111,8 +109,10 @@ function continueResponses() {
 /**
  * Creates a download, which could be interrupted in the middle of it's progress.
  */
-function promiseInterruptibleDownload() {
-  let interruptibleFile = FileUtils.getFile("TmpD", ["interruptible.txt"]);
+function promiseInterruptibleDownload(extension = ".txt") {
+  let interruptibleFile = FileUtils.getFile("TmpD", [
+    `interruptible${extension}`,
+  ]);
   interruptibleFile.createUnique(
     Ci.nsIFile.NORMAL_FILE_TYPE,
     FileUtils.PERMS_FILE

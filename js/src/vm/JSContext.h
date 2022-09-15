@@ -14,23 +14,24 @@
 
 #include "jstypes.h"  // JS_PUBLIC_API
 
+#include "builtin/AtomicsObject.h"
 #include "ds/TraceableFifo.h"
 #include "frontend/NameCollections.h"
 #include "gc/Memory.h"
 #include "irregexp/RegExpTypes.h"
-#include "js/CharacterEncoding.h"
+#include "jit/PcScriptCache.h"
 #include "js/ContextOptions.h"  // JS::ContextOptions
 #include "js/Exception.h"
 #include "js/GCVector.h"
 #include "js/Interrupt.h"
 #include "js/Promise.h"
 #include "js/Result.h"
+#include "js/Stack.h"  // JS::NativeStackBase, JS::NativeStackLimit
 #include "js/Utility.h"
 #include "js/Vector.h"
 #include "threading/ProtectedData.h"
 #include "util/StructuredSpewer.h"
 #include "vm/Activation.h"  // js::Activation
-#include "vm/ErrorReporting.h"
 #include "vm/MallocProvider.h"
 #include "vm/Runtime.h"
 #include "vm/SharedStencil.h"  // js::SharedImmutableScriptDataTable
@@ -45,10 +46,6 @@ namespace js {
 class AutoAllocInAtomsZone;
 class AutoMaybeLeaveAtomsZone;
 class AutoRealm;
-
-namespace frontend {
-class WellKnownParserAtoms;
-}  // namespace frontend
 
 namespace jit {
 class ICScript;
@@ -179,14 +176,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   js::ContextData<JS::ContextOptions> options_;
 
-  // Free lists for allocating in the current zone.
-  js::ContextData<js::gc::FreeLists*> freeLists_;
-
-  // This is reset each time we switch zone, then added to the variable in the
-  // zone when we switch away from it.  This would be a js::ThreadData but we
-  // need to take its address.
-  uint32_t allocsThisZoneSinceMinorGC_;
-
   // Thread that the JSContext is currently running on, if in use.
   js::ThreadId currentThread_;
 
@@ -250,11 +239,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
     return kind_ == js::ContextKind::HelperThread;
   }
 
-  js::gc::FreeLists& freeLists() {
-    MOZ_ASSERT(freeLists_);
-    return *freeLists_;
-  }
-
   template <typename T>
   bool isInsideCurrentZone(T thing) const {
     return thing->zoneFromAnyThread() == zone_;
@@ -265,6 +249,7 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
     return thing->compartment() == compartment();
   }
 
+  void onOutOfMemory();
   void* onOutOfMemory(js::AllocFunction allocFunc, arena_id_t arena,
                       size_t nbytes, void* reallocPtr = nullptr) {
     if (isHelperThreadContext()) {
@@ -274,22 +259,19 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
     return runtime_->onOutOfMemory(allocFunc, arena, nbytes, reallocPtr, this);
   }
 
+  void onOverRecursed();
+
+  // Allocate a GC thing.
+  template <typename T, js::AllowGC allowGC = js::CanGC, typename... Args>
+  T* newCell(Args&&... args) {
+    return js::gc::CellAllocator::template NewCell<T, allowGC>(
+        this, std::forward<Args>(args)...);
+  }
+
   /* Clear the pending exception (if any) due to OOM. */
   void recoverFromOutOfMemory();
 
-  void reportAllocationOverflow() { js::ReportAllocationOverflow(this); }
-
-  void noteTenuredAlloc() { allocsThisZoneSinceMinorGC_++; }
-
-  uint32_t* addressOfTenuredAllocCount() {
-    return &allocsThisZoneSinceMinorGC_;
-  }
-
-  uint32_t getAndResetAllocsThisZoneSinceMinorGC() {
-    uint32_t allocs = allocsThisZoneSinceMinorGC_;
-    allocsThisZoneSinceMinorGC_ = 0;
-    return allocs;
-  }
+  void reportAllocationOverflow();
 
   // Accessors for immutable runtime data.
   JSAtomState& names() { return *runtime_->commonNames; }
@@ -303,8 +285,13 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   }
   js::PropertyName* emptyString() { return runtime_->emptyString; }
   JS::GCContext* gcContext() { return runtime_->gcContext(); }
-  uintptr_t stackLimit(JS::StackKind kind) { return nativeStackLimit[kind]; }
-  uintptr_t stackLimitForJitCode(JS::StackKind kind);
+  JS::StackKind stackKindForCurrentPrincipal();
+  JS::NativeStackLimit stackLimitForCurrentPrincipal();
+  JS::NativeStackLimit stackLimit(JS::StackKind kind) {
+    MOZ_ASSERT(isMainThreadContext());
+    return nativeStackLimit[kind];
+  }
+  JS::NativeStackLimit stackLimitForJitCode(JS::StackKind kind);
   size_t gcSystemPageSize() { return js::gc::SystemPageSize(); }
 
   /*
@@ -327,8 +314,7 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   inline void enterAtomsZone();
   inline void leaveAtomsZone(JS::Realm* oldRealm);
-  enum IsAtomsZone { AtomsZone, NotAtomsZone };
-  inline void setZone(js::Zone* zone, IsAtomsZone isAtomsZone);
+  inline void setZone(js::Zone* zone);
 
   friend class js::AutoAllocInAtomsZone;
   friend class js::AutoMaybeLeaveAtomsZone;
@@ -383,8 +369,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   js::AtomsTable& atoms() { return runtime_->atoms(); }
 
-  const JS::Zone* atomsZone() { return runtime_->atomsZone(); }
-
   js::SymbolRegistry& symbolRegistry() { return runtime_->symbolRegistry(); }
 
   // Methods to access runtime data that must be protected by locks.
@@ -402,12 +386,12 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
     atomMarking().markAtomValue(this, value);
   }
 
+  // Interface for recording telemetry metrics.
+  js::Metrics metrics() { return js::Metrics(runtime_); }
+
   // Methods specific to any HelperThread for the context.
-  bool addPendingCompileError(js::CompileError** err);
   void addPendingOverRecursed();
   void addPendingOutOfMemory();
-
-  bool isCompileErrorPending() const;
 
   JSRuntime* runtime() { return runtime_; }
   const JSRuntime* runtime() const { return runtime_; }
@@ -493,10 +477,13 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
  private:
   // Base address of the native stack for the current thread.
-  mozilla::Maybe<uintptr_t> nativeStackBase_;
+  mozilla::Maybe<JS::NativeStackBase> nativeStackBase_;
 
  public:
-  uintptr_t nativeStackBase() const { return *nativeStackBase_; }
+  JS::NativeStackBase nativeStackBase() const {
+    MOZ_ASSERT(isMainThreadContext());
+    return *nativeStackBase_;
+  }
 
  public:
   /* If non-null, report JavaScript entry points to this monitor. */
@@ -522,11 +509,7 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
  public:
   js::jit::Simulator* simulator() const;
-  uintptr_t* addressOfSimulatorStackLimit();
-#endif
-
-#ifdef JS_TRACE_LOGGING
-  js::UnprotectedData<js::TraceLoggerThread*> traceLogger;
+  JS::NativeStackLimit* addressOfSimulatorStackLimit();
 #endif
 
  public:
@@ -658,18 +641,26 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   }
 
 #ifdef DEBUG
-  // True if this context has ever called ReportOverRecursed,
-  // ReportOutOfMemory, or ReportOversizedAllocation.
-  js::ContextData<bool> hadNondeterministicException_;
+  // True if this context has ever thrown an exception because of an exceeded
+  // limit: stack space (ReportOverRecursed), memory (ReportOutOfMemory), or
+  // some other self-imposed limit (eg ReportOversizedAllocation). Used when
+  // detecting bailout loops in WarpOracle: bailout loops involving resource
+  // exhaustion are generally not interesting.
+  js::ContextData<bool> hadResourceExhaustion_;
 
  public:
-  bool hadNondeterministicException() const {
-    return hadNondeterministicException_ ||
-           js::oom::simulator.isThreadSimulatingAny();
+  bool hadResourceExhaustion() const {
+    return hadResourceExhaustion_ || js::oom::simulator.isThreadSimulatingAny();
   }
 #endif
 
  public:
+  void reportResourceExhaustion() {
+#ifdef DEBUG
+    hadResourceExhaustion_ = true;
+#endif
+  }
+
   js::ContextData<int32_t> reportGranularity; /* see vm/Probes.h */
 
   js::ContextData<js::AutoResolving*> resolvingList;
@@ -849,16 +840,16 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   // Any thread can call requestInterrupt() to request that this thread
   // stop running. To stop this thread, requestInterrupt sets two fields:
-  // interruptBits_ (a bitset of InterruptReasons) and jitStackLimit_ (set to
-  // UINTPTR_MAX). The JS engine must continually poll one of these fields
-  // and call handleInterrupt if either field has the interrupt value.
+  // interruptBits_ (a bitset of InterruptReasons) and jitStackLimit (set to
+  // JS::NativeStackLimitMin). The JS engine must continually poll one of these
+  // fields and call handleInterrupt if either field has the interrupt value.
   //
-  // The point of setting jitStackLimit_ to UINTPTR_MAX is that JIT code
-  // already needs to guard on jitStackLimit_ in every function prologue to
+  // The point of setting jitStackLimit to JS::NativeStackLimitMin is that JIT
+  // code already needs to guard on jitStackLimit in every function prologue to
   // avoid stack overflow, so we avoid a second branch on interruptBits_ by
-  // setting jitStackLimit_ to a value that is guaranteed to fail the guard.)
+  // setting jitStackLimit to a value that is guaranteed to fail the guard.)
   //
-  // Note that the writes to interruptBits_ and jitStackLimit_ use a Relaxed
+  // Note that the writes to interruptBits_ and jitStackLimit use a Relaxed
   // Atomic so, while the writes are guaranteed to eventually be visible to
   // this thread, it can happen in any order. handleInterrupt calls the
   // interrupt callback if either is set, so it really doesn't matter as long
@@ -886,8 +877,12 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
  public:
   void* addressOfInterruptBits() { return &interruptBits_; }
-  void* addressOfJitStackLimit() { return &jitStackLimit; }
+  void* addressOfJitStackLimit() {
+    MOZ_ASSERT(isMainThreadContext());
+    return &jitStackLimit;
+  }
   void* addressOfJitStackLimitNoInterrupt() {
+    MOZ_ASSERT(isMainThreadContext());
     return &jitStackLimitNoInterrupt;
   }
   void* addressOfZone() { return &zone_; }
@@ -900,10 +895,10 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   // object.
   js::FutexThread fx;
 
-  mozilla::Atomic<uintptr_t, mozilla::Relaxed> jitStackLimit;
+  mozilla::Atomic<JS::NativeStackLimit, mozilla::Relaxed> jitStackLimit;
 
   // Like jitStackLimit, but not reset to trigger interrupts.
-  js::ContextData<uintptr_t> jitStackLimitNoInterrupt;
+  js::ContextData<JS::NativeStackLimit> jitStackLimitNoInterrupt;
 
   // Queue of pending jobs as described in ES2016 section 8.4.
   //

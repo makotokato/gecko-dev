@@ -8,9 +8,11 @@
 #define _MOZILLA_GFX_DRAWTARGETWEBGL_H
 
 #include "mozilla/gfx/2D.h"
+#include "mozilla/gfx/PathSkia.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/WeakPtr.h"
 #include "mozilla/ThreadLocal.h"
+#include "mozilla/ipc/Shmem.h"
 #include <vector>
 
 namespace mozilla {
@@ -67,7 +69,11 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
   IntSize mSize;
   RefPtr<WebGLFramebufferJS> mFramebuffer;
   RefPtr<WebGLTextureJS> mTex;
+  RefPtr<WebGLTextureJS> mClipMask;
+  IntRect mClipBounds;
   RefPtr<DrawTargetSkia> mSkia;
+  // The Shmem backing the Skia DT, if applicable.
+  mozilla::ipc::Shmem mShmem;
   // The currently cached snapshot of the WebGL context
   RefPtr<DataSourceSurface> mSnapshot;
   // Whether or not the Skia target has valid contents and is being drawn to
@@ -75,15 +81,29 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
   // Whether or not Skia layering over the WebGL context is enabled
   bool mSkiaLayer = false;
   // Whether or not the WebGL context has valid contents and is being drawn to
-  bool mWebglValid = false;
+  bool mWebglValid = true;
   // Whether or not the clip state has changed since last used by SharedContext.
-  bool mClipDirty = true;
+  bool mClipChanged = true;
+  // Whether or not the clip state needs to be refreshed. Sometimes the clip
+  // state may be overwritten and require a refresh later, even though it has
+  // not changed.
+  bool mRefreshClipState = true;
   // The framebuffer has been modified and should be copied to the swap chain.
   bool mNeedsPresent = true;
   // The number of layers currently pushed.
   int32_t mLayerDepth = 0;
 
   RefPtr<TextureHandle> mSnapshotTexture;
+
+  // Store a log of clips currently pushed so that they can be used to init
+  // the clip state of temporary DTs.
+  struct ClipStack {
+    Matrix mTransform;
+    Rect mRect;
+    RefPtr<const Path> mPath;
+  };
+
+  std::vector<ClipStack> mClipStack;
 
   // UsageProfile stores per-frame counters for significant profiling events
   // that assist in determining whether acceleration should still be used for
@@ -137,6 +157,7 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
     // Avoid spurious state changes by caching last used state.
     RefPtr<WebGLProgramJS> mLastProgram;
     RefPtr<WebGLTextureJS> mLastTexture;
+    RefPtr<WebGLTextureJS> mLastClipMask;
     bool mDirtyViewport = true;
     bool mDirtyAA = true;
 
@@ -148,6 +169,7 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
     RefPtr<WebGLUniformLocationJS> mSolidProgramAA;
     RefPtr<WebGLUniformLocationJS> mSolidProgramTransform;
     RefPtr<WebGLUniformLocationJS> mSolidProgramColor;
+    RefPtr<WebGLUniformLocationJS> mSolidProgramClipMask;
     RefPtr<WebGLProgramJS> mImageProgram;
     RefPtr<WebGLUniformLocationJS> mImageProgramViewport;
     RefPtr<WebGLUniformLocationJS> mImageProgramAA;
@@ -157,12 +179,15 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
     RefPtr<WebGLUniformLocationJS> mImageProgramColor;
     RefPtr<WebGLUniformLocationJS> mImageProgramSwizzle;
     RefPtr<WebGLUniformLocationJS> mImageProgramSampler;
+    RefPtr<WebGLUniformLocationJS> mImageProgramClipMask;
 
     // Scratch framebuffer used to wrap textures for miscellaneous utility ops.
     RefPtr<WebGLFramebufferJS> mScratchFramebuffer;
     // Buffer filled with zero data for initializing textures.
     RefPtr<WebGLBufferJS> mZeroBuffer;
-    IntSize mZeroSize;
+    size_t mZeroSize = 0;
+    // 1x1 texture with solid white mask for disabling clipping
+    RefPtr<WebGLTextureJS> mNoClipMask;
 
     uint32_t mMaxTextureSize = 0;
 
@@ -198,6 +223,10 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
     // A memory pressure event may signal from another thread that caches should
     // be cleared if possible.
     Atomic<bool> mShouldClearCaches;
+    // Whether the Shmem is currently being processed by the remote side. If so,
+    // we need to wait for processing to complete before any further commands
+    // modifying the Skia DT can proceed.
+    bool mWaitForShmem = false;
 
     const Matrix& GetTransform() const { return mCurrentTarget->mTransform; }
 
@@ -210,6 +239,11 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
                        const Maybe<DeviceColor>& aBlendColor = Nothing());
 
     void SetClipRect(const IntRect& aClipRect) { mClipRect = aClipRect; }
+    bool SetClipMask(const RefPtr<WebGLTextureJS>& aTex);
+    bool SetNoClipMask();
+    bool HasClipMask() const {
+      return mLastClipMask && mLastClipMask != mNoClipMask;
+    }
 
     bool IsCurrentTarget(DrawTargetWebgl* aDT) const {
       return aDT == mCurrentTarget;
@@ -223,7 +257,8 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
 
     bool SupportsPattern(const Pattern& aPattern);
 
-    void InitTexParameters(WebGLTextureJS* aTex);
+    void SetTexFilter(WebGLTextureJS* aTex, bool aFilter);
+    void InitTexParameters(WebGLTextureJS* aTex, bool aFilter = true);
 
     bool ReadInto(uint8_t* aDstData, int32_t aDstStride, SurfaceFormat aFormat,
                   const IntRect& aBounds, TextureHandle* aHandle = nullptr);
@@ -254,8 +289,9 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
                        const ShadowOptions* aShadow = nullptr,
                        bool aCacheable = true);
 
-    bool FillGlyphsAccel(ScaledFont* aFont, const GlyphBuffer& aBuffer,
+    bool DrawGlyphsAccel(ScaledFont* aFont, const GlyphBuffer& aBuffer,
                          const Pattern& aPattern, const DrawOptions& aOptions,
+                         const StrokeOptions* aStrokeOptions,
                          bool aUseSubpixelAA);
 
     void PruneTextureHandle(const RefPtr<TextureHandle>& aHandle);
@@ -272,6 +308,8 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
     void ClearAllTextures();
     void ClearEmptyTextureMemory();
     void ClearCachesIfNecessary();
+
+    void WaitForShmem();
   };
 
   RefPtr<SharedContext> mSharedContext;
@@ -295,6 +333,7 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
   BackendType GetBackendType() const override { return BackendType::WEBGL; }
   IntSize GetSize() const override { return mSize; }
 
+  already_AddRefed<SourceSurface> GetDataSnapshot();
   already_AddRefed<SourceSurface> Snapshot() override;
   already_AddRefed<SourceSurface> GetBackingSurface() override;
   void DetachAllSnapshots() override;
@@ -327,9 +366,16 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
                    const IntPoint& aDestination) override;
   void FillRect(const Rect& aRect, const Pattern& aPattern,
                 const DrawOptions& aOptions = DrawOptions()) override;
+  bool StrokeRectAccel(const Rect& aRect, const Pattern& aPattern,
+                       const StrokeOptions& aStrokeOptions,
+                       const DrawOptions& aOptions);
   void StrokeRect(const Rect& aRect, const Pattern& aPattern,
                   const StrokeOptions& aStrokeOptions = StrokeOptions(),
                   const DrawOptions& aOptions = DrawOptions()) override;
+  bool StrokeLineAccel(const Point& aStart, const Point& aEnd,
+                       const Pattern& aPattern,
+                       const StrokeOptions& aStrokeOptions,
+                       const DrawOptions& aOptions);
   void StrokeLine(const Point& aStart, const Point& aEnd,
                   const Pattern& aPattern,
                   const StrokeOptions& aStrokeOptions = StrokeOptions(),
@@ -396,8 +442,6 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
 
   Maybe<layers::SurfaceDescriptor> GetFrontBuffer();
 
-  bool CopySnapshotTo(DrawTarget* aDT);
-
   void OnMemoryPressure() { mSharedContext->OnMemoryPressure(); }
 
   operator std::string() const {
@@ -411,6 +455,8 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
     return mSharedContext->SupportsPattern(aPattern);
   }
 
+  bool SetSimpleClipRect();
+  bool GenerateComplexClipMask();
   bool PrepareContext(bool aClipped = true);
 
   void DrawRectFallback(const Rect& aRect, const Pattern& aPattern,
@@ -434,7 +480,14 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
   void FlattenSkia();
   bool FlushFromSkia();
 
+  void WaitForShmem() {
+    if (mSharedContext->mWaitForShmem) {
+      mSharedContext->WaitForShmem();
+    }
+  }
+
   void MarkSkiaChanged() {
+    WaitForShmem();
     if (!mSkiaValid) {
       ReadIntoSkia();
     } else if (mSkiaLayer) {
@@ -459,14 +512,11 @@ class DrawTargetWebgl : public DrawTarget, public SupportsWeakPtr {
   struct AutoRestoreContext {
     DrawTargetWebgl* mTarget;
     IntRect mClipRect;
+    RefPtr<WebGLTextureJS> mLastClipMask;
 
-    explicit AutoRestoreContext(DrawTargetWebgl* aTarget)
-        : mTarget(aTarget), mClipRect(aTarget->mSharedContext->mClipRect) {}
+    explicit AutoRestoreContext(DrawTargetWebgl* aTarget);
 
-    ~AutoRestoreContext() {
-      mTarget->mSharedContext->SetClipRect(mClipRect);
-      mTarget->mClipDirty = true;
-    }
+    ~AutoRestoreContext();
   };
 };
 

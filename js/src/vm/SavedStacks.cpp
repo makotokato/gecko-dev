@@ -10,7 +10,6 @@
 #include "mozilla/DebugOnly.h"
 
 #include <algorithm>
-#include <math.h>
 #include <utility>
 
 #include "jsapi.h"
@@ -19,8 +18,6 @@
 
 #include "gc/GCContext.h"
 #include "gc/HashUtil.h"
-#include "gc/Marking.h"
-#include "gc/Policy.h"
 #include "js/CharacterEncoding.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertyAndElement.h"    // JS_DefineProperty, JS_GetProperty
@@ -30,18 +27,17 @@
 #include "js/Vector.h"
 #include "util/DifferentialTesting.h"
 #include "util/StringBuffer.h"
+#include "vm/Compartment.h"
+#include "vm/FrameIter.h"
 #include "vm/GeckoProfiler.h"
 #include "vm/JSScript.h"
 #include "vm/Realm.h"
 #include "vm/SavedFrame.h"
-#include "vm/Time.h"
 #include "vm/WrapperObject.h"
 
 #include "debugger/DebugAPI-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSContext-inl.h"
-#include "vm/NativeObject-inl.h"
-#include "vm/Stack-inl.h"
 
 using mozilla::AddToHash;
 using mozilla::DebugOnly;
@@ -971,18 +967,17 @@ static bool FormatStackFrameLine(js::StringBuffer& sb,
   return NumberValueToStringBuffer(NumberValue(frame->getLine()), sb);
 }
 
-static bool FormatStackFrameColumn(JSContext* cx, js::StringBuffer& sb,
+static bool FormatStackFrameColumn(js::StringBuffer& sb,
                                    JS::Handle<js::SavedFrame*> frame) {
   if (frame->isWasm()) {
     // See comment in WasmFrameIter::computeLine().
-    js::ToCStringBuf cbuf;
+    js::Int32ToCStringBuf cbuf;
+    size_t cstrlen;
     const char* cstr =
-        NumberToCStringWithBase(cx, &cbuf, frame->wasmBytecodeOffset(), 16);
-    if (!cstr) {
-      return false;
-    }
+        Uint32ToHexCString(&cbuf, frame->wasmBytecodeOffset(), &cstrlen);
+    MOZ_ASSERT(cstr);
 
-    return sb.append("0x") && sb.append(cstr, strlen(cstr));
+    return sb.append("0x") && sb.append(cstr, cstrlen);
   }
 
   return NumberValueToStringBuffer(NumberValue(frame->getColumn()), sb);
@@ -1002,7 +997,7 @@ static bool FormatSpiderMonkeyStackFrame(JSContext* cx, js::StringBuffer& sb,
          (!name || sb.append(name)) && sb.append('@') &&
          sb.append(frame->getSource()) && sb.append(':') &&
          FormatStackFrameLine(sb, frame) && sb.append(':') &&
-         FormatStackFrameColumn(cx, sb, frame) && sb.append('\n');
+         FormatStackFrameColumn(sb, frame) && sb.append('\n');
 }
 
 static bool FormatV8StackFrame(JSContext* cx, js::StringBuffer& sb,
@@ -1014,7 +1009,7 @@ static bool FormatV8StackFrame(JSContext* cx, js::StringBuffer& sb,
          (!name || (sb.append(name) && sb.append(' ') && sb.append('('))) &&
          sb.append(frame->getSource()) && sb.append(':') &&
          FormatStackFrameLine(sb, frame) && sb.append(':') &&
-         FormatStackFrameColumn(cx, sb, frame) && (!name || sb.append(')')) &&
+         FormatStackFrameColumn(sb, frame) && (!name || sb.append(')')) &&
          (lastFrame || sb.append('\n'));
 }
 

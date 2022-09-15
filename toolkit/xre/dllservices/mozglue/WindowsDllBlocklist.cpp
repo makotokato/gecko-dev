@@ -460,6 +460,11 @@ static NTSTATUS NTAPI patched_LdrLoadDll(PWCHAR filePath, PULONG flags,
         goto continue_loading;
       }
 
+      if ((info->mFlags & DllBlockInfo::UTILITY_PROCESSES_ONLY) &&
+          !(sInitFlags & eDllBlocklistInitFlagIsUtilityProcess)) {
+        goto continue_loading;
+      }
+
       if ((info->mFlags & DllBlockInfo::BROWSER_PROCESS_ONLY) &&
           (sInitFlags & eDllBlocklistInitFlagIsChildProcess)) {
         goto continue_loading;
@@ -520,7 +525,12 @@ continue_loading:
   NTSTATUS ret;
   HANDLE myHandle;
 
-  ret = stub_LdrLoadDll(filePath, flags, moduleFileName, &myHandle);
+  {
+#if defined(_M_AMD64) || defined(_M_ARM64)
+    AutoSuppressStackWalking suppress;
+#endif
+    ret = stub_LdrLoadDll(filePath, flags, moduleFileName, &myHandle);
+  }
 
   if (handle) {
     *handle = myHandle;

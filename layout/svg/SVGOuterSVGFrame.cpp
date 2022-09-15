@@ -114,7 +114,7 @@ void SVGOuterSVGFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
   // prevent them from painting by [ab]use NS_FRAME_IS_NONDISPLAY. The
   // frame will be recreated via an nsChangeHint_ReconstructFrame restyle if
   // the value returned by PassesConditionalProcessingTests changes.
-  SVGSVGElement* svg = static_cast<SVGSVGElement*>(aContent);
+  auto* svg = static_cast<SVGSVGElement*>(aContent);
   if (!svg->PassesConditionalProcessingTests()) {
     AddStateBits(NS_FRAME_IS_NONDISPLAY);
   }
@@ -174,27 +174,20 @@ nscoord SVGOuterSVGFrame::GetPrefISize(gfxContext* aRenderingContext) {
       wm.IsVertical() ? svg->mLengthAttributes[SVGSVGElement::ATTR_HEIGHT]
                       : svg->mLengthAttributes[SVGSVGElement::ATTR_WIDTH];
 
-  if (ContainSizeAxesIfApplicable(this).mIContained) {
-    result = nscoord(0);
+  if (Maybe<nscoord> containISize =
+          ContainSizeAxesIfApplicable(this).ContainIntrinsicISize(*this)) {
+    result = *containISize;
   } else if (isize.IsPercentage()) {
-    // It looks like our containing block's isize may depend on our isize. In
-    // that case our behavior is undefined according to CSS 2.1 section 10.3.2.
-    // As a last resort, we'll fall back to returning zero.
-    result = nscoord(0);
-
-    // Returning zero may be unhelpful, however, as it leads to unexpected
-    // disappearance of %-sized SVGs in orthogonal contexts, where our
-    // containing block wants to shrink-wrap. So let's look for an ancestor
-    // with non-zero size in this dimension, and use that as a (somewhat
-    // arbitrary) result instead.
-    nsIFrame* parent = GetParent();
-    while (parent) {
-      nscoord parentISize = parent->GetLogicalSize(wm).ISize(wm);
-      if (parentISize > 0 && parentISize != NS_UNCONSTRAINEDSIZE) {
-        result = parentISize;
-        break;
-      }
-      parent = parent->GetParent();
+    if (isize.IsExplicitlySet() || StylePosition()->ISize(wm).HasPercent()) {
+      // Our containing block's inline-size depends on our inline-size. In this
+      // case, return the fallback intrinsic size per
+      // https://drafts.csswg.org/css-sizing-3/#intrinsic-sizes
+      result = wm.IsVertical() ? kFallbackIntrinsicSize.height
+                               : kFallbackIntrinsicSize.width;
+    } else {
+      // If the width/height attribute in the inline axis is not set, return
+      // size 0 to match blink and webkit's behavior.
+      result = nscoord(0);
     }
   } else {
     result = nsPresContext::CSSPixelsToAppUnits(isize.GetAnimValue(svg));
@@ -213,8 +206,9 @@ IntrinsicSize SVGOuterSVGFrame::GetIntrinsicSize() {
 
   const auto containAxes = ContainSizeAxesIfApplicable(this);
   if (containAxes.IsBoth()) {
-    // Intrinsic size of 'contain:size' replaced elements is 0,0.
-    return IntrinsicSize(0, 0);
+    // Intrinsic size of 'contain:size' replaced elements is determined by
+    // contain-intrinsic-size, defaulting to 0x0.
+    return containAxes.ContainIntrinsicSize(IntrinsicSize(0, 0), *this);
   }
 
   SVGSVGElement* content = static_cast<SVGSVGElement*>(GetContent());
@@ -237,7 +231,7 @@ IntrinsicSize SVGOuterSVGFrame::GetIntrinsicSize() {
     intrinsicSize.height.emplace(std::max(val, 0));
   }
 
-  return containAxes.ContainIntrinsicSize(intrinsicSize, GetWritingMode());
+  return containAxes.ContainIntrinsicSize(intrinsicSize, *this);
 }
 
 /* virtual */
@@ -249,11 +243,8 @@ AspectRatio SVGOuterSVGFrame::GetIntrinsicRatio() const {
   // We only have an intrinsic size/ratio if our width and height attributes
   // are both specified and set to non-percentage values, or we have a viewBox
   // rect: https://svgwg.org/svg2-draft/coords.html#SizingSVGInCSS
-  // Unfortunately we have to return the ratio as two nscoords whereas what
-  // we have are two floats. Using app units allows for some floating point
-  // values to work but really small or large numbers will fail.
 
-  SVGSVGElement* content = static_cast<SVGSVGElement*>(GetContent());
+  auto* content = static_cast<SVGSVGElement*>(GetContent());
   const SVGAnimatedLength& width =
       content->mLengthAttributes[SVGSVGElement::ATTR_WIDTH];
   const SVGAnimatedLength& height =
@@ -271,18 +262,10 @@ AspectRatio SVGOuterSVGFrame::GetIntrinsicRatio() const {
     }
   }
 
-  SVGViewElement* viewElement = content->GetCurrentViewElement();
-  const SVGViewBox* viewbox = nullptr;
-
-  // The logic here should match HasViewBox().
-  if (viewElement && viewElement->mViewBox.HasRect()) {
-    viewbox = &viewElement->mViewBox.GetAnimValue();
-  } else if (content->mViewBox.HasRect()) {
-    viewbox = &content->mViewBox.GetAnimValue();
-  }
-
-  if (viewbox) {
-    return AspectRatio::FromSize(viewbox->width, viewbox->height);
+  const auto& viewBox = content->GetViewBoxInternal();
+  if (viewBox.HasRect()) {
+    const auto& anim = viewBox.GetAnimValue();
+    return AspectRatio::FromSize(anim.width, anim.height);
   }
 
   return SVGDisplayContainerFrame::GetIntrinsicRatio();
@@ -507,7 +490,6 @@ void SVGOuterSVGFrame::Reflow(nsPresContext* aPresContext,
   NS_FRAME_TRACE(NS_FRAME_TRACE_CALLS,
                  ("exit SVGOuterSVGFrame::Reflow: size=%d,%d",
                   aDesiredSize.Width(), aDesiredSize.Height()));
-  NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aDesiredSize);
 }
 
 void SVGOuterSVGFrame::DidReflow(nsPresContext* aPresContext,
@@ -556,11 +538,6 @@ class nsDisplayOuterSVG final : public nsPaintedDisplayItem {
   virtual void ComputeInvalidationRegion(
       nsDisplayListBuilder* aBuilder, const nsDisplayItemGeometry* aGeometry,
       nsRegion* aInvalidRegion) const override;
-
-  nsDisplayItemGeometry* AllocateGeometry(
-      nsDisplayListBuilder* aBuilder) override {
-    return new nsDisplayItemGenericImageGeometry(this, aBuilder);
-  }
 
   NS_DISPLAY_DECL_NAME("SVGOuterSVG", TYPE_SVG_OUTER_SVG)
 };
@@ -626,7 +603,6 @@ void nsDisplayOuterSVG::Paint(nsDisplayListBuilder* aBuilder,
                  gfxMatrix::Translation(devPixelOffset);
   SVGUtils::PaintFrameWithEffects(mFrame, *aContext, tm, imgParams,
                                   &contentAreaDirtyRect);
-  nsDisplayItemGenericImageGeometry::UpdateDrawResult(this, imgParams.result);
   aContext->Restore();
 
 #if defined(DEBUG) && defined(SVG_DEBUG_PAINT_TIMING)
@@ -658,15 +634,6 @@ void nsDisplayOuterSVG::ComputeInvalidationRegion(
 
   nsDisplayItem::ComputeInvalidationRegion(aBuilder, aGeometry, aInvalidRegion);
   aInvalidRegion->Or(*aInvalidRegion, result);
-
-  const auto* geometry =
-      static_cast<const nsDisplayItemGenericImageGeometry*>(aGeometry);
-
-  if (aBuilder->ShouldSyncDecodeImages() &&
-      geometry->ShouldInvalidateToSyncDecodeImages()) {
-    bool snap;
-    aInvalidRegion->Or(*aInvalidRegion, GetBounds(aBuilder, &snap));
-  }
 }
 
 nsresult SVGOuterSVGFrame::AttributeChanged(int32_t aNameSpaceID,

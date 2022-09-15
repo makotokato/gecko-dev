@@ -20,21 +20,17 @@
 #include "builtin/TestingFunctions.h"
 #include "gc/Statistics.h"
 #include "jit/Assembler.h"
-#include "jit/AtomicOperations.h"
 #include "jit/Ion.h"
-#include "jit/JitCommon.h"
 #include "jit/JitOptions.h"
-#include "jit/ProcessExecutableMemory.h"
+#include "jit/Simulator.h"
 #include "js/Utility.h"
 #include "threading/ProtectedData.h"  // js::AutoNoteSingleThreadedRegion
 #include "util/Poison.h"
 #include "vm/ArrayBufferObject.h"
-#include "vm/BigIntType.h"
 #include "vm/DateTime.h"
 #include "vm/HelperThreads.h"
 #include "vm/Runtime.h"
 #include "vm/Time.h"
-#include "vm/TraceLogging.h"
 #ifdef MOZ_VTUNE
 #  include "vtune/VTuneWrapper.h"
 #endif
@@ -198,10 +194,6 @@ JS_PUBLIC_API const char* JS::detail::InitWithFailureDiagnostic(
   RETURN_IF_FAIL(js::jit::SimulatorProcess::initialize());
 #endif
 
-#ifdef JS_TRACE_LOGGING
-  RETURN_IF_FAIL(JS::InitTraceLogger());
-#endif
-
 #ifndef JS_CODEGEN_NONE
   // This is forced by InitializeJit.
   MOZ_ASSERT(js::jit::CPUFlagsHaveBeenComputed());
@@ -267,11 +259,6 @@ JS_PUBLIC_API void JS_ShutDown(void) {
 
 #ifdef JS_SIMULATOR
   js::jit::SimulatorProcess::destroy();
-#endif
-
-#ifdef JS_TRACE_LOGGING
-  js::DestroyTraceLoggerThreadState();
-  js::DestroyTraceLoggerGraphState();
 #endif
 
   js::wasm::ShutDown();

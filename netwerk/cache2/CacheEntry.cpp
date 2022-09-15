@@ -1045,10 +1045,10 @@ nsresult CacheEntry::GetCacheEntryId(uint64_t* aCacheEntryId) {
   return NS_OK;
 }
 
-nsresult CacheEntry::GetFetchCount(int32_t* aFetchCount) {
+nsresult CacheEntry::GetFetchCount(uint32_t* aFetchCount) {
   NS_ENSURE_SUCCESS(mFileStatus, NS_ERROR_NOT_AVAILABLE);
 
-  return mFile->GetFetchCount(reinterpret_cast<uint32_t*>(aFetchCount));
+  return mFile->GetFetchCount(aFetchCount);
 }
 
 nsresult CacheEntry::GetLastFetched(uint32_t* aLastFetched) {
@@ -1331,7 +1331,7 @@ nsresult CacheEntry::OpenOutputStreamInternal(int64_t offset,
   return NS_OK;
 }
 
-nsresult CacheEntry::GetSecurityInfo(nsISupports** aSecurityInfo) {
+nsresult CacheEntry::GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) {
   {
     mozilla::MutexAutoLock lock(mLock);
     if (mSecurityInfoLoaded) {
@@ -1343,15 +1343,21 @@ nsresult CacheEntry::GetSecurityInfo(nsISupports** aSecurityInfo) {
   NS_ENSURE_SUCCESS(mFileStatus, NS_ERROR_NOT_AVAILABLE);
 
   nsCString info;
-  nsCOMPtr<nsISupports> secInfo;
+  nsCOMPtr<nsISupports> secInfoSupports;
   nsresult rv;
 
   rv = mFile->GetElement("security-info", getter_Copies(info));
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!info.IsVoid()) {
-    rv = NS_DeserializeObject(info, getter_AddRefs(secInfo));
+    rv = NS_DeserializeObject(info, getter_AddRefs(secInfoSupports));
     NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  nsCOMPtr<nsITransportSecurityInfo> secInfo =
+      do_QueryInterface(secInfoSupports);
+  if (!secInfo) {
+    return NS_ERROR_NOT_AVAILABLE;
   }
 
   {
@@ -1365,7 +1371,8 @@ nsresult CacheEntry::GetSecurityInfo(nsISupports** aSecurityInfo) {
 
   return NS_OK;
 }
-nsresult CacheEntry::SetSecurityInfo(nsISupports* aSecurityInfo) {
+
+nsresult CacheEntry::SetSecurityInfo(nsITransportSecurityInfo* aSecurityInfo) {
   nsresult rv;
 
   NS_ENSURE_SUCCESS(mFileStatus, mFileStatus);

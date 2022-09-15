@@ -10,6 +10,7 @@ import os
 import re
 
 import taskgraph
+from taskgraph.util.schema import Schema
 from taskgraph.util.taskcluster import get_root_url
 from voluptuous import Any, Optional, Required
 
@@ -17,7 +18,6 @@ from gecko_taskgraph.transforms.job import run_job_using
 from gecko_taskgraph.transforms.job.common import add_artifacts
 
 from gecko_taskgraph.util.hash import hash_path
-from gecko_taskgraph.util.schema import Schema
 from gecko_taskgraph import GECKO
 
 DSC_PACKAGE_RE = re.compile(".*(?=_)")
@@ -171,7 +171,7 @@ def common_package(config, job, taskdesc, distro, version):
         # Install the necessary build dependencies.
         "(cd ..; mk-build-deps -i -r {package}/debian/control -t '{resolver}' || exit 100) && "
         # Build the package
-        'DEB_BUILD_OPTIONS="parallel=$(nproc) nocheck" dpkg-buildpackage && '
+        'DEB_BUILD_OPTIONS="parallel=$(nproc) nocheck" dpkg-buildpackage -sa && '
         # Copy the artifacts
         "mkdir -p {artifacts}/apt && "
         "dcmd cp ../{package}_*.changes {artifacts}/apt/ && "

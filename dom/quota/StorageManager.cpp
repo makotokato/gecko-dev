@@ -5,11 +5,13 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "StorageManager.h"
+#include "fs/FileSystemRequestHandler.h"
 
 #include <cstdint>
 #include <cstdlib>
 #include <utility>
 #include "ErrorList.h"
+#include "fs/FileSystemRequestHandler.h"
 #include "MainThreadUtils.h"
 #include "js/CallArgs.h"
 #include "js/TypeDecls.h"
@@ -23,6 +25,7 @@
 #include "mozilla/TelemetryScalarEnums.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/FileSystemManager.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/PromiseWorkerProxy.h"
 #include "mozilla/dom/StorageManagerBinding.h"
@@ -360,6 +363,7 @@ already_AddRefed<Promise> ExecuteOpOnMainOrWorkerThread(
   RefPtr<PromiseWorkerProxy> promiseProxy =
       PromiseWorkerProxy::Create(workerPrivate, promise);
   if (NS_WARN_IF(!promiseProxy)) {
+    aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }
 
@@ -753,17 +757,24 @@ already_AddRefed<Promise> StorageManager::Estimate(ErrorResult& aRv) {
 }
 
 already_AddRefed<Promise> StorageManager::GetDirectory(ErrorResult& aRv) {
-  RefPtr<Promise> promise = Promise::Create(GetParentObject(), aRv);
-  if (aRv.Failed()) {
-    return nullptr;
+  if (!mFileSystemManager) {
+    MOZ_ASSERT(mOwner);
+
+    mFileSystemManager = MakeRefPtr<FileSystemManager>(mOwner, this);
   }
 
-  promise->MaybeReject(NS_ERROR_NOT_IMPLEMENTED);
-
-  return promise.forget();
+  return mFileSystemManager->GetDirectory(aRv);
 }
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(StorageManager, mOwner)
+void StorageManager::Shutdown() {
+  if (mFileSystemManager) {
+    mFileSystemManager->Shutdown();
+    mFileSystemManager = nullptr;
+  }
+}
+
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(StorageManager, mOwner,
+                                      mFileSystemManager)
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(StorageManager)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(StorageManager)

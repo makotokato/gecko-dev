@@ -6,8 +6,8 @@
 
 const EXPORTED_SYMBOLS = ["Module"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -15,6 +15,11 @@ const lazy = {};
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   ContextDescriptorType:
     "chrome://remote/content/shared/messagehandler/MessageHandler.jsm",
+  error: "chrome://remote/content/shared/webdriver/Errors.jsm",
+});
+
+XPCOMUtils.defineLazyGetter(lazy, "disabledExperimentalAPI", () => {
+  return !Services.prefs.getBoolPref("remote.experimental.enabled");
 });
 
 class Module {
@@ -68,26 +73,66 @@ class Module {
    *     form [module name].[event name].
    * @param {Object} data
    *     The event's data.
+   * @param {ContextInfo=} contextInfo
+   *     The event's context info, see MessageHandler:emitEvent. Optional.
    */
-  emitEvent(name, data) {
-    this.messageHandler.emitEvent(name, data, { isProtocolEvent: false });
+  emitEvent(name, data, contextInfo) {
+    this.messageHandler.emitEvent(name, data, contextInfo);
   }
 
   /**
-   * Emit a protocol specific message handler event.
+   * Intercept an event and modify the payload.
    *
-   * Such events should bubble up to the root of a MessageHandler network.
+   * It's required to be implemented in windowglobal-in-root modules.
    *
-   * @param {String} name
-   *     Name of the event. Protocol level events should be of the
-   *     form [module name].[event name].
-   * @param {Object} data
-   *     The event's data.
+   * @param {string} name
+   *     Name of the event.
+   * @param {Object} payload
+   *    The event's payload.
+   * @returns {Object}
+   *     The modified event payload.
    */
-  emitProtocolEvent(name, data) {
-    this.messageHandler.emitEvent(name, data, {
-      isProtocolEvent: true,
-    });
+  interceptEvent(name, payload) {
+    throw new Error(
+      `Could not intercept event ${name}, interceptEvent is not implemented in windowglobal-in-root module`
+    );
+  }
+
+  /**
+   * Assert if experimental commands are enabled.
+   *
+   * @param {String} methodName
+   *     Name of the command.
+   *
+   * @throws {UnknownCommandError}
+   *     If experimental commands are disabled.
+   */
+  assertExperimentalCommandsEnabled(methodName) {
+    // TODO: 1778987. Move it to a BiDi specific place.
+    if (lazy.disabledExperimentalAPI) {
+      throw new lazy.error.UnknownCommandError(methodName);
+    }
+  }
+
+  /**
+   * Assert if experimental events are enabled.
+   *
+   * @param {string} moduleName
+   *     Name of the module.
+   *
+   * @param {string} event
+   *     Name of the event.
+   *
+   * @throws {InvalidArgumentError}
+   *     If experimental events are disabled.
+   */
+  assertExperimentalEventsEnabled(moduleName, event) {
+    // TODO: 1778987. Move it to a BiDi specific place.
+    if (lazy.disabledExperimentalAPI) {
+      throw new lazy.error.InvalidArgumentError(
+        `Module ${moduleName} does not support event ${event}`
+      );
+    }
   }
 
   /**
@@ -126,10 +171,7 @@ class Module {
   }
 
   static supportsEvent(event) {
-    return (
-      this.supportsMethod("_subscribeEvent") &&
-      this.supportedEvents.includes(event)
-    );
+    return this.supportedEvents.includes(event);
   }
 
   static supportsMethod(methodName) {

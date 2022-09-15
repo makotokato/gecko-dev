@@ -3,6 +3,8 @@
 
 "use strict";
 
+const asyncStorage = require("devtools/shared/async-storage");
+
 /**
  * Test to check the sync between URL parameters and the parameters section
  */
@@ -10,8 +12,8 @@
 add_task(async function() {
   // Turn on the pref
   await pushPref("devtools.netmonitor.features.newEditAndResend", true);
-  // Resetting the pref
-  await pushPref("devtools.netmonitor.customRequest", "");
+  // Reset the storage for the persisted custom request
+  await asyncStorage.removeItem("devtools.netmonitor.customRequest");
 
   const { tab, monitor } = await initNetMonitor(HTTPS_CUSTOM_GET_URL, {
     requestCount: 1,
@@ -40,7 +42,7 @@ add_task(async function() {
     document,
     ".monitor-panel .network-action-bar"
   );
-  getContextMenuItem(monitor, "request-list-context-resend").click();
+  await selectContextMenuItem(monitor, "request-list-context-edit-resend");
   await waitForPanels;
 
   const queryScenarios = [
@@ -106,7 +108,7 @@ add_task(async function() {
 
   const newParameterValue = Array.from(
     document.querySelectorAll(
-      "#http-custom-query #http-custom-name-and-value .http-custom-input-value"
+      "#http-custom-query .http-custom-input .http-custom-input-value"
     )
   ).pop();
   newParameterValue.focus();
@@ -171,10 +173,10 @@ function assertQueryScenario(
 
   // Check if the parameter name and value are what we expect
   const parameterNames = document.querySelectorAll(
-    "#http-custom-query #http-custom-input-and-map-form .http-custom-input-name"
+    "#http-custom-query .http-custom-input-and-map-form .http-custom-input-name"
   );
   const parameterValues = document.querySelectorAll(
-    "#http-custom-query #http-custom-input-and-map-form .http-custom-input-value"
+    "#http-custom-query .http-custom-input-and-map-form .http-custom-input-value"
   );
 
   for (let i = 0; i < expectedParameters.length; i++) {

@@ -1248,7 +1248,7 @@ nsresult nsContentSecurityManager::CheckAllowLoadInPrivilegedAboutContext(
 }
 
 /*
- * Every protocol handler must set one of the five security flags
+ * Every protocol handler must set one of the six security flags
  * defined in nsIProtocolHandler - if not - deny the load.
  */
 nsresult nsContentSecurityManager::CheckChannelHasProtocolSecurityFlag(
@@ -1273,6 +1273,9 @@ nsresult nsContentSecurityManager::CheckChannelHasProtocolSecurityFlag(
   NS_ENSURE_SUCCESS(rv, rv);
 
   uint32_t securityFlagsSet = 0;
+  if (flags & nsIProtocolHandler::WEBEXT_URI_WEB_ACCESSIBLE) {
+    securityFlagsSet += 1;
+  }
   if (flags & nsIProtocolHandler::URI_LOADABLE_BY_ANYONE) {
     securityFlagsSet += 1;
   }
@@ -1513,6 +1516,10 @@ nsresult nsContentSecurityManager::CheckChannel(nsIChannel* aChannel) {
     AddLoadFlags(aChannel, nsIRequest::LOAD_ANONYMOUS);
   }
 
+  if (!CrossOriginEmbedderPolicyAllowsCredentials(aChannel)) {
+    AddLoadFlags(aChannel, nsIRequest::LOAD_ANONYMOUS);
+  }
+
   nsSecurityFlags securityMode = loadInfo->GetSecurityMode();
 
   // CORS mode is handled by nsCORSListenerProxy
@@ -1560,6 +1567,54 @@ nsresult nsContentSecurityManager::CheckChannel(nsIChannel* aChannel) {
   }
 
   return NS_OK;
+}
+
+// https://fetch.spec.whatwg.org/#ref-for-cross-origin-embedder-policy-allows-credentials
+bool nsContentSecurityManager::CrossOriginEmbedderPolicyAllowsCredentials(
+    nsIChannel* aChannel) {
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+
+  // 1. If request’s mode is not "no-cors", then return true.
+  //
+  // `no-cors` check applies to document navigation such that if it is
+  // an document navigation, this check should return true to allow
+  // credentials.
+  if (loadInfo->GetExternalContentPolicyType() ==
+          ExtContentPolicy::TYPE_DOCUMENT ||
+      loadInfo->GetExternalContentPolicyType() ==
+          ExtContentPolicy::TYPE_SUBDOCUMENT) {
+    return true;
+  }
+
+  if (loadInfo->GetSecurityMode() !=
+          nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL &&
+      loadInfo->GetSecurityMode() !=
+          nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_INHERITS_SEC_CONTEXT) {
+    return true;
+  }
+
+  // If request’s client’s policy container’s embedder policy’s value is not
+  // "credentialless", then return true.
+  if (loadInfo->GetLoadingEmbedderPolicy() !=
+      nsILoadInfo::EMBEDDER_POLICY_CREDENTIALLESS) {
+    return true;
+  }
+
+  // If request’s origin is same origin with request’s current URL’s origin and
+  // request does not have a redirect-tainted origin, then return true.
+  nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
+  nsCOMPtr<nsIPrincipal> resourcePrincipal;
+  ssm->GetChannelURIPrincipal(aChannel, getter_AddRefs(resourcePrincipal));
+
+  bool sameOrigin = resourcePrincipal->Equals(loadInfo->TriggeringPrincipal());
+  nsAutoCString serializedOrigin;
+  GetSerializedOrigin(loadInfo->TriggeringPrincipal(), resourcePrincipal,
+                      serializedOrigin, loadInfo);
+  if (sameOrigin && !serializedOrigin.IsEmpty()) {
+    return true;
+  }
+
+  return false;
 }
 
 // https://fetch.spec.whatwg.org/#serializing-a-request-origin

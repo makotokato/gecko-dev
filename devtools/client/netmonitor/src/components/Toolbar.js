@@ -4,7 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const {
   Component,
   createFactory,
@@ -180,6 +179,9 @@ class Toolbar extends Component {
     super(props);
 
     this.autocompleteProvider = this.autocompleteProvider.bind(this);
+    this.onSearchBoxFocusKeyboardShortcut = this.onSearchBoxFocusKeyboardShortcut.bind(
+      this
+    );
     this.onSearchBoxFocus = this.onSearchBoxFocus.bind(this);
     this.toggleRequestFilterType = this.toggleRequestFilterType.bind(this);
     this.updatePersistentLogsEnabled = this.updatePersistentLogsEnabled.bind(
@@ -274,6 +276,12 @@ class Toolbar extends Component {
 
   autocompleteProvider(filter) {
     return autocompleteProvider(filter, this.props.filteredRequests);
+  }
+
+  onSearchBoxFocusKeyboardShortcut(event) {
+    // Don't take focus when the keyboard shortcut is triggered in a CodeMirror instance,
+    // so the CodeMirror search UI is displayed.
+    return !!event.target.closest(".CodeMirror");
   }
 
   onSearchBoxFocus() {
@@ -502,6 +510,7 @@ class Toolbar extends Component {
       type: "filter",
       ref: "searchbox",
       onChange: setRequestFilterText,
+      onFocusKeyboardShortcut: this.onSearchBoxFocusKeyboardShortcut,
       onFocus: this.onSearchBoxFocus,
       autocompleteProvider: this.autocompleteProvider,
       learnMoreUrl: LEARN_MORE_URL,

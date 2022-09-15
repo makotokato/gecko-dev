@@ -102,7 +102,6 @@ gfxPlatformGtk::gfxPlatformGtk() {
     gtk_init(nullptr, nullptr);
   }
 
-  mMaxGenericSubstitutions = UNINITIALIZED_VALUE;
   mIsX11Display = gfxPlatform::IsHeadless() ? false : GdkIsX11Display();
   if (XRE_IsParentProcess()) {
     InitX11EGLConfig();
@@ -112,10 +111,6 @@ gfxPlatformGtk::gfxPlatformGtk() {
     InitDmabufConfig();
     if (gfxConfig::IsEnabled(Feature::DMABUF)) {
       gfxVars::SetUseDMABuf(true);
-    }
-    InitVAAPIConfig();
-    if (gfxConfig::IsEnabled(Feature::VAAPI)) {
-      gfxVars::SetUseVAAPI(true);
     }
   }
 
@@ -229,30 +224,29 @@ void gfxPlatformGtk::InitDmabufConfig() {
 #endif
 }
 
-void gfxPlatformGtk::InitVAAPIConfig() {
-  FeatureState& feature = gfxConfig::GetFeature(Feature::VAAPI);
+bool gfxPlatformGtk::InitVAAPIConfig(bool aForceEnabledByUser) {
+  FeatureState& feature =
+      gfxConfig::GetFeature(Feature::HARDWARE_VIDEO_DECODING);
 #ifdef MOZ_WAYLAND
-#  ifdef NIGHTLY_BUILD
   feature.EnableByDefault();
-#  else
-  feature.DisableByDefault(FeatureStatus::Disabled,
-                           "VAAPI is disabled by default",
-                           "FEATURE_VAAPI_DISABLED"_ns);
-#  endif
+
+  if (aForceEnabledByUser) {
+    feature.UserForceEnable("Force enabled by pref");
+  }
+
   nsCString failureId;
-  int32_t status;
+  int32_t status = nsIGfxInfo::FEATURE_STATUS_UNKNOWN;
   nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
-  if (NS_FAILED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_VAAPI, failureId,
-                                          &status))) {
+  if (NS_FAILED(gfxInfo->GetFeatureStatus(
+          nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING, failureId, &status))) {
     feature.Disable(FeatureStatus::BlockedNoGfxInfo, "gfxInfo is broken",
                     "FEATURE_FAILURE_NO_GFX_INFO"_ns);
+  } else if (status == nsIGfxInfo::FEATURE_BLOCKED_PLATFORM_TEST) {
+    feature.ForceDisable(FeatureStatus::Unavailable,
+                         "Force disabled by gfxInfo", failureId);
   } else if (status != nsIGfxInfo::FEATURE_STATUS_OK) {
     feature.Disable(FeatureStatus::Blocklisted, "Blocklisted by gfxInfo",
                     failureId);
-  }
-
-  if (StaticPrefs::media_ffmpeg_vaapi_enabled()) {
-    feature.UserForceEnable("Force enabled by pref");
   }
 
   if (!gfxVars::UseEGL()) {
@@ -264,6 +258,7 @@ void gfxPlatformGtk::InitVAAPIConfig() {
                            "Wayland support missing",
                            "FEATURE_FAILURE_NO_WAYLAND"_ns);
 #endif
+  return feature.IsEnabled();
 }
 
 void gfxPlatformGtk::InitWebRenderConfig() {
@@ -478,22 +473,9 @@ void gfxPlatformGtk::FontsPrefsChanged(const char* aPref) {
     return;
   }
 
-  mMaxGenericSubstitutions = UNINITIALIZED_VALUE;
   gfxFcPlatformFontList* pfl = gfxFcPlatformFontList::PlatformFontList();
   pfl->ClearGenericMappings();
   FlushFontAndWordCaches();
-}
-
-uint32_t gfxPlatformGtk::MaxGenericSubstitions() {
-  if (mMaxGenericSubstitutions == UNINITIALIZED_VALUE) {
-    mMaxGenericSubstitutions =
-        Preferences::GetInt(GFX_PREF_MAX_GENERIC_SUBSTITUTIONS, 3);
-    if (mMaxGenericSubstitutions < 0) {
-      mMaxGenericSubstitutions = 3;
-    }
-  }
-
-  return uint32_t(mMaxGenericSubstitutions);
 }
 
 bool gfxPlatformGtk::AccelerateLayersByDefault() { return true; }
@@ -725,7 +707,7 @@ class GtkVsyncSource final : public VsyncSource {
     }
 
     mGLContext = gl::GLContextGLX::CreateGLContext(
-        {}, gfx::XlibDisplay::Borrow(mXDisplay), root, config, false, nullptr);
+        {}, gfx::XlibDisplay::Borrow(mXDisplay), root, config);
 
     if (!mGLContext) {
       lock.NotifyAll();
@@ -966,10 +948,10 @@ gfxPlatformGtk::CreateGlobalHardwareVsyncSource() {
   nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
   nsString windowProtocol;
   gfxInfo->GetWindowProtocol(windowProtocol);
-  bool isXwayland = windowProtocol.Find("xwayland") != -1;
+  bool isXwayland = windowProtocol.Find(u"xwayland") != -1;
   nsString adapterDriverVendor;
   gfxInfo->GetAdapterDriverVendor(adapterDriverVendor);
-  bool isMesa = adapterDriverVendor.Find("mesa") != -1;
+  bool isMesa = adapterDriverVendor.Find(u"mesa") != -1;
 
   // Only use GLX vsync when the OpenGL compositor / WebRender is being used.
   // The extra cost of initializing a GLX context while blocking the main thread
@@ -993,7 +975,7 @@ gfxPlatformGtk::CreateGlobalHardwareVsyncSource() {
   RefPtr<VsyncSource> softwareVsync = new XrandrSoftwareVsyncSource();
   return softwareVsync.forget();
 #else
-  return CreateSoftwareVsyncSource();
+  return GetSoftwareVsyncSource();
 #endif
 }
 

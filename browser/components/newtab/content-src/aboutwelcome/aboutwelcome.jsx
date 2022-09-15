@@ -16,7 +16,7 @@ class AboutWelcome extends React.PureComponent {
   }
 
   async fetchFxAFlowUri() {
-    this.setState({ metricsFlowUri: await window.AWGetFxAMetricsFlowURI() });
+    this.setState({ metricsFlowUri: await window.AWGetFxAMetricsFlowURI?.() });
   }
 
   componentDidMount() {
@@ -71,10 +71,12 @@ class AboutWelcome extends React.PureComponent {
       <MultiStageAboutWelcome
         message_id={props.messageId}
         screens={props.screens}
+        updateHistory={!props.disableHistoryUpdates}
         metricsFlowUri={this.state.metricsFlowUri}
         utm_term={props.UTMTerm}
         transitions={props.transitions}
         backdrop={props.backdrop}
+        startScreen={props.startScreen || 0}
         appAndSystemLocaleInfo={props.appAndSystemLocaleInfo}
       />
     );

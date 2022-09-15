@@ -9,6 +9,7 @@
 #include "mozilla/webgpu/PWebGPUChild.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/WeakPtr.h"
+#include "mozilla/webgpu/ffi/wgpu.h"
 
 namespace mozilla {
 namespace dom {
@@ -62,8 +63,8 @@ class WebGPUChild final : public PWebGPUChild, public SupportsWeakPtr {
   Maybe<DeviceRequest> AdapterRequestDevice(
       RawId aSelfId, const dom::GPUDeviceDescriptor& aDesc,
       ffi::WGPULimits* aLimits);
-  RawId DeviceCreateBuffer(RawId aSelfId,
-                           const dom::GPUBufferDescriptor& aDesc);
+  RawId DeviceCreateBuffer(RawId aSelfId, const dom::GPUBufferDescriptor& aDesc,
+                           MaybeShmem&& aShmem);
   RawId DeviceCreateTexture(RawId aSelfId,
                             const dom::GPUTextureDescriptor& aDesc);
   RawId TextureCreateView(RawId aSelfId, RawId aDeviceId,
@@ -83,9 +84,6 @@ class WebGPUChild final : public PWebGPUChild, public SupportsWeakPtr {
       RawId aSelfId, const dom::GPUPipelineLayoutDescriptor& aDesc);
   RawId DeviceCreateBindGroup(RawId aSelfId,
                               const dom::GPUBindGroupDescriptor& aDesc);
-  RawId DeviceCreateShaderModule(RawId aSelfId,
-                                 const dom::GPUShaderModuleDescriptor& aDesc);
-
   RawId DeviceCreateComputePipeline(
       PipelineCreationContext* const aContext,
       const dom::GPUComputePipelineDescriptor& aDesc);
@@ -98,6 +96,9 @@ class WebGPUChild final : public PWebGPUChild, public SupportsWeakPtr {
   RefPtr<PipelinePromise> DeviceCreateRenderPipelineAsync(
       PipelineCreationContext* const aContext,
       const dom::GPURenderPipelineDescriptor& aDesc);
+  already_AddRefed<ShaderModule> DeviceCreateShaderModule(
+      Device* aDevice, const dom::GPUShaderModuleDescriptor& aDesc,
+      RefPtr<dom::Promise> aPromise);
 
   void DeviceCreateSwapChain(RawId aSelfId, const RGBDescriptor& aRgbDesc,
                              size_t maxBufferCount,

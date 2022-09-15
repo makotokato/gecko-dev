@@ -95,9 +95,9 @@ class WebSocketChannel : public BaseWebSocketChannel,
   // nsIWebSocketChannel methods BaseWebSocketChannel didn't implement for us
   //
   NS_IMETHOD AsyncOpen(nsIURI* aURI, const nsACString& aOrigin,
-                       JS::HandleValue aOriginAttributes, uint64_t aWindowID,
-                       nsIWebSocketListener* aListener, nsISupports* aContext,
-                       JSContext* aCx) override;
+                       JS::Handle<JS::Value> aOriginAttributes,
+                       uint64_t aWindowID, nsIWebSocketListener* aListener,
+                       nsISupports* aContext, JSContext* aCx) override;
   NS_IMETHOD AsyncOpenNative(nsIURI* aURI, const nsACString& aOrigin,
                              const OriginAttributes& aOriginAttributes,
                              uint64_t aWindowID,
@@ -108,7 +108,7 @@ class WebSocketChannel : public BaseWebSocketChannel,
   NS_IMETHOD SendBinaryMsg(const nsACString& aMsg) override;
   NS_IMETHOD SendBinaryStream(nsIInputStream* aStream,
                               uint32_t length) override;
-  NS_IMETHOD GetSecurityInfo(nsISupports** aSecurityInfo) override;
+  NS_IMETHOD GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) override;
 
   WebSocketChannel();
   static void Shutdown();
@@ -118,8 +118,6 @@ class WebSocketChannel : public BaseWebSocketChannel,
   bool IsEncrypted() const override;
 
   nsresult OnTransportAvailableInternal();
-  nsresult OnWebSocketConnectionAvailable(
-      WebSocketConnectionBase* aConnection) override;
   void OnError(nsresult aStatus) override;
   void OnTCPClosed() override;
   nsresult OnDataReceived(uint8_t* aData, uint32_t aCount) override;
@@ -216,7 +214,7 @@ class WebSocketChannel : public BaseWebSocketChannel,
   nsCOMPtr<nsIHttpChannelInternal> mChannel;
   nsCOMPtr<nsIHttpChannel> mHttpChannel;
 
-  nsCOMPtr<nsICancelable> mCancelable GUARDED_BY(mMutex);
+  nsCOMPtr<nsICancelable> mCancelable MOZ_GUARDED_BY(mMutex);
   // Mainthread only
   nsCOMPtr<nsIAsyncVerifyRedirectCallback> mRedirectCallback;
   // Set on Mainthread during AsyncOpen, used on IO thread and Mainthread
@@ -256,7 +254,7 @@ class WebSocketChannel : public BaseWebSocketChannel,
   wsConnectingState mConnecting; /* 0 if not connecting, MainThread only */
   // Set on MainThread, deleted on MainThread, used on MainThread or
   // IO Thread (in DoStopSession). Mutex required to access off-main-thread.
-  nsCOMPtr<nsITimer> mReconnectDelayTimer GUARDED_BY(mMutex);
+  nsCOMPtr<nsITimer> mReconnectDelayTimer MOZ_GUARDED_BY(mMutex);
 
   // Only touched on IOThread (DoStopSession reads it on MainThread if
   // we haven't connected yet (mDataStarted==false), and it's always null
@@ -312,8 +310,8 @@ class WebSocketChannel : public BaseWebSocketChannel,
   nsresult mStopOnClose;
   uint16_t mServerCloseCode;     // only used on IO thread
   nsCString mServerCloseReason;  // only used on IO thread
-  uint16_t mScriptCloseCode GUARDED_BY(mMutex);
-  nsCString mScriptCloseReason GUARDED_BY(mMutex);
+  uint16_t mScriptCloseCode MOZ_GUARDED_BY(mMutex);
+  nsCString mScriptCloseReason MOZ_GUARDED_BY(mMutex);
 
   // These are for the read buffers
   const static uint32_t kIncomingBufferInitialSize = 16 * 1024;

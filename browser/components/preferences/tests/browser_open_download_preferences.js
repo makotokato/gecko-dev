@@ -66,7 +66,7 @@ function downloadHadFinished(publicList) {
 
 async function removeTheFile(download) {
   Assert.ok(
-    await OS.File.exists(download.target.path),
+    await IOUtils.exists(download.target.path),
     "The file should have been downloaded."
   );
 

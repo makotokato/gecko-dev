@@ -6,8 +6,8 @@
 
 const EXPORTED_SYMBOLS = ["SecurityInfo"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const wpl = Ci.nsIWebProgressListener;
@@ -162,10 +162,26 @@ const SecurityInfo = {
       info.signatureSchemeName = securityInfo.signatureSchemeName;
     }
 
-    info.isDomainMismatch = securityInfo.isDomainMismatch;
+    if (
+      securityInfo.overridableErrorCategory ==
+      Ci.nsITransportSecurityInfo.ERROR_TRUST
+    ) {
+      info.overridableErrorCategory = "trust_error";
+      info.isUntrusted = true;
+    } else if (
+      securityInfo.overridableErrorCategory ==
+      Ci.nsITransportSecurityInfo.ERROR_DOMAIN
+    ) {
+      info.overridableErrorCategory = "domain_mismatch";
+      info.isDomainMismatch = true;
+    } else if (
+      securityInfo.overridableErrorCategory ==
+      Ci.nsITransportSecurityInfo.ERROR_TIME
+    ) {
+      info.overridableErrorCategory = "expired_or_not_yet_valid";
+      info.isNotValidAtThisTime = true;
+    }
     info.isExtendedValidation = securityInfo.isExtendedValidation;
-    info.isNotValidAtThisTime = securityInfo.isNotValidAtThisTime;
-    info.isUntrusted = securityInfo.isUntrusted;
 
     info.certificateTransparencyStatus = this.getTransparencyStatus(
       securityInfo.certificateTransparencyStatus

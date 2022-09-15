@@ -6,8 +6,6 @@
 
 var EXPORTED_SYMBOLS = ["Page"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 const { ContentProcessDomain } = ChromeUtils.import(
   "chrome://remote/content/cdp/domains/ContentProcessDomain.jsm"
 );
@@ -146,7 +144,7 @@ class Page extends ContentProcessDomain {
         frame: this._getFrameDetails({ context }),
       };
 
-      if (context.children.length > 0) {
+      if (context.children.length) {
         const frames = [];
         for (const childContext of context.children) {
           frames.push(getFrames(childContext));
@@ -219,7 +217,7 @@ class Page extends ContentProcessDomain {
 
     const Runtime = this.session.domains.get("Runtime");
     const contexts = Runtime._getContextsForFrame(frameId);
-    if (contexts.length == 0) {
+    if (!contexts.length) {
       throw new Error("No frame for given id found");
     }
 

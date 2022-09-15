@@ -31,7 +31,7 @@ void UrlMetric::Set(const nsACString& aValue) const {
 Result<Maybe<nsCString>, nsCString> UrlMetric::TestGetValue(
     const nsACString& aPingName) const {
   nsCString err;
-  if (fog_url_test_get_error(mId, &aPingName, &err)) {
+  if (fog_url_test_get_error(mId, &err)) {
     return Err(err);
   }
   if (!fog_url_test_has_value(mId, &aPingName)) {
@@ -55,7 +55,7 @@ GleanUrl::Set(const nsACString& aValue) {
 
 NS_IMETHODIMP
 GleanUrl::TestGetValue(const nsACString& aStorageName, JSContext* aCx,
-                       JS::MutableHandleValue aResult) {
+                       JS::MutableHandle<JS::Value> aResult) {
   auto result = mUrl.TestGetValue(aStorageName);
   if (result.isErr()) {
     aResult.set(JS::UndefinedValue());

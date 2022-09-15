@@ -14,12 +14,9 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "jsnum.h"
-#include "gc/Barrier.h"
-#include "gc/Marking.h"
 #include "js/CallArgs.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/Wrapper.h"
-#include "vm/Iteration.h"
 #include "vm/JSObject.h"
 
 #include "vm/JSContext-inl.h"
@@ -278,8 +275,8 @@ template <class T>
                                                    int argIndex) {
   HandleValue val = args.get(argIndex);
   return UnwrapAndTypeCheckValue<T>(cx, val, [cx, val, methodName, argIndex] {
-    ToCStringBuf cbuf;
-    char* numStr = NumberToCString(&cbuf, argIndex + 1);
+    Int32ToCStringBuf cbuf;
+    char* numStr = Int32ToCString(&cbuf, argIndex + 1);
     MOZ_ASSERT(numStr);
     JS_ReportErrorNumberLatin1(
         cx, GetErrorMessage, nullptr, JSMSG_WRONG_TYPE_ARG, numStr, methodName,

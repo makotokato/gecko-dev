@@ -21,7 +21,7 @@
 //! about how these API-level types map into the lower-level types of the FFI layer as represented
 //! by the [`ffi::FFIType`](super::ffi::FFIType) enum, but that's a detail that is invisible to end users.
 
-use std::{collections::hash_map::Entry, collections::BTreeSet, collections::HashMap};
+use std::{collections::hash_map::Entry, collections::BTreeSet, collections::HashMap, iter};
 
 use anyhow::{bail, Result};
 use heck::ToUpperCamelCase;
@@ -97,11 +97,11 @@ impl Type {
             // cases like a record named `SequenceRecord` interfering with `sequence<Record>`.
             // However, types that support importing all end up with the same prefix of "Type", so
             // that the import handling code knows how to find the remote reference.
-            Type::Object(nm) => format!("Type{}", nm),
-            Type::Error(nm) => format!("Type{}", nm),
-            Type::Enum(nm) => format!("Type{}", nm),
-            Type::Record(nm) => format!("Type{}", nm),
-            Type::CallbackInterface(nm) => format!("CallbackInterface{}", nm),
+            Type::Object(nm) => format!("Type{nm}"),
+            Type::Error(nm) => format!("Type{nm}"),
+            Type::Enum(nm) => format!("Type{nm}"),
+            Type::Record(nm) => format!("Type{nm}"),
+            Type::CallbackInterface(nm) => format!("CallbackInterface{nm}"),
             Type::Timestamp => "Timestamp".into(),
             Type::Duration => "Duration".into(),
             // Recursive types.
@@ -117,12 +117,21 @@ impl Type {
                 v.canonical_name().to_upper_camel_case()
             ),
             // A type that exists externally.
-            Type::External { name, .. } | Type::Custom { name, .. } => format!("Type{}", name),
+            Type::External { name, .. } | Type::Custom { name, .. } => format!("Type{name}"),
         }
     }
 
     pub fn ffi_type(&self) -> FFIType {
         self.into()
+    }
+
+    pub fn iter_types(&self) -> TypeIterator<'_> {
+        let nested_types = match self {
+            Type::Optional(t) | Type::Sequence(t) => t.iter_types(),
+            Type::Map(k, v) => Box::new(k.iter_types().chain(v.iter_types())),
+            _ => Box::new(iter::empty()),
+        };
+        Box::new(std::iter::once(self).chain(nested_types))
     }
 }
 
@@ -151,7 +160,7 @@ impl From<&Type> for FFIType {
             // We might add a separate type for borrowed strings in future.
             Type::String => FFIType::RustBuffer,
             // Objects are pointers to an Arc<>
-            Type::Object(_) => FFIType::RustArcPtr,
+            Type::Object(name) => FFIType::RustArcPtr(name.to_owned()),
             // Callback interfaces are passed as opaque integer handles.
             Type::CallbackInterface(_) => FFIType::UInt64,
             // Other types are serialized into a bytebuffer and deserialized on the other side.
@@ -166,6 +175,13 @@ impl From<&Type> for FFIType {
             | Type::External { .. } => FFIType::RustBuffer,
             Type::Custom { builtin, .. } => FFIType::from(builtin.as_ref()),
         }
+    }
+}
+
+// Needed for rust scaffolding askama template
+impl From<&&Type> for FFIType {
+    fn from(ty: &&Type) -> Self {
+        (*ty).into()
     }
 }
 
@@ -201,14 +217,13 @@ impl TypeUniverse {
     pub fn add_type_definition(&mut self, name: &str, type_: Type) -> Result<()> {
         if resolve_builtin_type(name).is_some() {
             bail!(
-                "please don't shadow builtin types ({}, {})",
-                name,
-                type_.canonical_name()
+                "please don't shadow builtin types ({name}, {})",
+                type_.canonical_name(),
             );
         }
         let type_ = self.add_known_type(type_)?;
         match self.type_definitions.entry(name.to_string()) {
-            Entry::Occupied(_) => bail!("Conflicting type definition for \"{}\"", name),
+            Entry::Occupied(_) => bail!("Conflicting type definition for \"{name}\""),
             Entry::Vacant(e) => {
                 e.insert(type_);
                 Ok(())
@@ -242,72 +257,16 @@ impl TypeUniverse {
     }
 
     /// Iterator over all the known types in this universe.
-    pub fn iter_known_types(&self) -> impl Iterator<Item = Type> + '_ {
-        self.all_known_types.iter().cloned()
+    pub fn iter_known_types(&self) -> impl Iterator<Item = &Type> {
+        self.all_known_types.iter()
     }
 }
 
 /// An abstract type for an iterator over &Type references.
 ///
 /// Ideally we would not need to name this type explicitly, and could just
-/// use an `impl Iterator<Item=&Type>` on any method that yields types.
-/// Unfortunately existential types are not currently supported in trait method
-/// signatures, so for now we hide the concrete type behind a box.
+/// use an `impl Iterator<Item = &Type>` on any method that yields types.
 pub type TypeIterator<'a> = Box<dyn Iterator<Item = &'a Type> + 'a>;
-
-/// A trait for objects that may contain references to types.
-///
-/// Various objects in our interface will contain (possibly nested) references to types -
-/// for example a `Record` struct will contain one or more `Field` structs which will each
-/// have an associated type. This trait provides a uniform interface for inspecting the
-/// types references by an object.
-
-pub trait IterTypes {
-    /// Iterate over all types contained within on object.
-    ///
-    /// This method iterates over the types contained with in object, making
-    /// no particular guarantees about ordering or handling of duplicates.
-    ///
-    /// The return type is a Box in order to hide the concrete implementation
-    /// details of the iterator. Ideally we would return `impl Iterator` here
-    /// but that's not currently supported for trait methods.
-    fn iter_types(&self) -> TypeIterator<'_>;
-}
-
-impl<T: IterTypes> IterTypes for &T {
-    fn iter_types(&self) -> TypeIterator<'_> {
-        (*self).iter_types()
-    }
-}
-
-impl<T: IterTypes> IterTypes for Box<T> {
-    fn iter_types(&self) -> TypeIterator<'_> {
-        self.as_ref().iter_types()
-    }
-}
-
-impl<T: IterTypes> IterTypes for Option<T> {
-    fn iter_types(&self) -> TypeIterator<'_> {
-        Box::new(self.iter().flat_map(IterTypes::iter_types))
-    }
-}
-
-impl IterTypes for Type {
-    fn iter_types(&self) -> TypeIterator<'_> {
-        let nested_types = match self {
-            Type::Optional(t) | Type::Sequence(t) => Some(t.iter_types()),
-            Type::Map(k, v) => Some(Box::new(k.iter_types().chain(v.iter_types())) as _),
-            _ => None,
-        };
-        Box::new(std::iter::once(self).chain(nested_types.into_iter().flatten()))
-    }
-}
-
-impl IterTypes for TypeUniverse {
-    fn iter_types(&self) -> TypeIterator<'_> {
-        Box::new(self.all_known_types.iter())
-    }
-}
 
 #[cfg(test)]
 mod test_type {

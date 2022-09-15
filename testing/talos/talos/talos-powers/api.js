@@ -44,7 +44,7 @@ function TalosPowersService() {
 }
 
 TalosPowersService.prototype = {
-  factory: ComponentUtils._getFactory(TalosPowersService),
+  factory: ComponentUtils.generateSingletonFactory(TalosPowersService),
   classDescription: "Talos Powers",
   classID: Components.ID("{f5d53443-d58d-4a2f-8df0-98525d4f91ad}"),
   contractID: "@mozilla.org/talos/talos-powers-service;1",
@@ -205,7 +205,7 @@ TalosPowersService.prototype = {
    *
    */
   addInstantMarker(marker) {
-    ChromeUtils.addProfilerMarker("Talos", undefined, marker);
+    ChromeUtils.addProfilerMarker("Talos", { category: "Test" }, marker);
   },
 
   /**
@@ -219,7 +219,11 @@ TalosPowersService.prototype = {
    *        undefined, a single instance marker will be placed.
    */
   addIntervalMarker(marker, startTime) {
-    ChromeUtils.addProfilerMarker("Talos", startTime, marker);
+    ChromeUtils.addProfilerMarker(
+      "Talos",
+      { startTime, category: "Test" },
+      marker
+    );
   },
 
   receiveProfileCommand(message) {

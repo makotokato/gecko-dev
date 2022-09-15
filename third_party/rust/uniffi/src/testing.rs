@@ -10,11 +10,11 @@
 //! the `uniffi_macros` crate.
 
 use anyhow::{bail, Result};
+use camino::{Utf8Path, Utf8PathBuf};
 use cargo_metadata::Message;
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use std::{
     collections::HashMap,
-    path::Path,
     process::{Command, Stdio},
     sync::Mutex,
 };
@@ -22,12 +22,11 @@ use std::{
 // These statics are used for a bit of simple caching and concurrency control.
 // They map uniffi component crate directories to data about build steps that have already
 // been executed by this process.
-lazy_static! {
-    static ref COMPILED_COMPONENTS: Mutex<HashMap<String, String>> = Mutex::new(HashMap::new());
-    // Since uniffi-bindgen does the actual generating/compiling of bindings and script files,
-    // we ensure that only one call happens at once (making tests pretty much serialized sorry :/).
-    static ref UNIFFI_BINDGEN: Mutex<i32> = Mutex::new(0);
-}
+static COMPILED_COMPONENTS: Lazy<Mutex<HashMap<Utf8PathBuf, Utf8PathBuf>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+// Since uniffi-bindgen does the actual generating/compiling of bindings and script files,
+// we ensure that only one call happens at once (making tests pretty much serialized sorry :/).
+static UNIFFI_BINDGEN: Lazy<Mutex<i32>> = Lazy::new(|| Mutex::new(0));
 
 /// Execute the given foreign-language script as part of a rust test suite.
 ///
@@ -41,13 +40,8 @@ pub fn run_foreign_language_testcase(
     test_file: &str,
 ) -> Result<()> {
     let cdylib_file = ensure_compiled_cdylib(pkg_dir)?;
-    let out_dir = Path::new(cdylib_file.as_str())
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Generated cdylib has no parent directory"))?
-        .to_str()
-        .unwrap();
     let _lock = UNIFFI_BINDGEN.lock();
-    run_uniffi_bindgen_test(out_dir, udl_files, test_file)?;
+    run_uniffi_bindgen_test(cdylib_file.as_str(), udl_files, test_file)?;
     Ok(())
 }
 
@@ -59,11 +53,13 @@ pub fn run_foreign_language_testcase(
 ///
 /// Internally, this function does a bit of caching and concurrency management to avoid rebuilding
 /// the component for multiple testcases.
-pub fn ensure_compiled_cdylib(pkg_dir: &str) -> Result<String> {
+pub fn ensure_compiled_cdylib(pkg_dir: &str) -> Result<Utf8PathBuf> {
+    let pkg_dir = Utf8Path::new(pkg_dir);
+
     // Have we already compiled this component?
     let mut compiled_components = COMPILED_COMPONENTS.lock().unwrap();
     if let Some(cdylib_file) = compiled_components.get(pkg_dir) {
-        return Ok(cdylib_file.to_string());
+        return Ok(cdylib_file.to_owned());
     }
     // Nope, looks like we'll have to compile it afresh.
     let mut cmd = Command::new("cargo");
@@ -101,15 +97,13 @@ pub fn ensure_compiled_cdylib(pkg_dir: &str) -> Result<String> {
             {
                 Some(cdylib) => {
                     log::warn!(
-                        "Crate produced multiple cdylibs, using the one produced by {}",
-                        pkg_dir
+                        "Crate produced multiple cdylibs, using the one produced by {pkg_dir}",
                     );
                     cdylib
                 }
                 None => {
                     bail!(
-                        "Crate produced multiple cdylibs, none of which is produced by {}",
-                        pkg_dir
+                        "Crate produced multiple cdylibs, none of which is produced by {pkg_dir}",
                     );
                 }
             }
@@ -123,10 +117,10 @@ pub fn ensure_compiled_cdylib(pkg_dir: &str) -> Result<String> {
     if cdylib_files.len() != 1 {
         bail!("Failed to build exactly one cdylib file, it must not be a uniffi component");
     }
-    let cdylib_file = cdylib_files[0].to_string();
+    let cdylib_file = cdylib_files[0];
     // Cache the result for subsequent tests.
-    compiled_components.insert(pkg_dir.to_string(), cdylib_file.clone());
-    Ok(cdylib_file)
+    compiled_components.insert(pkg_dir.to_owned(), cdylib_file.to_owned());
+    Ok(cdylib_file.to_owned())
 }
 
 /// Execute the `uniffi-bindgen test` command.
@@ -138,18 +132,18 @@ pub fn ensure_compiled_cdylib(pkg_dir: &str) -> Result<String> {
 /// on the `uniffi_bindgen` crate and execute its methods in-process. This is useful for folks
 /// who are working on uniffi itself and want to test out their changes to the bindings generator.
 #[cfg(not(feature = "builtin-bindgen"))]
-fn run_uniffi_bindgen_test(out_dir: &str, udl_files: &[&str], test_file: &str) -> Result<()> {
+fn run_uniffi_bindgen_test(cdylib_file: &str, udl_files: &[&str], test_file: &str) -> Result<()> {
     let udl_files = udl_files.join("\n");
     let status = Command::new("uniffi-bindgen")
-        .args(&["test", out_dir, &udl_files, test_file])
+        .args(&["test", cdylib_file, &udl_files, test_file])
         .status()?;
     if !status.success() {
-        bail!("Error while running tests: {}", status);
+        bail!("Error while running tests: {status}");
     }
     Ok(())
 }
 
 #[cfg(feature = "builtin-bindgen")]
-fn run_uniffi_bindgen_test(out_dir: &str, udl_files: &[&str], test_file: &str) -> Result<()> {
-    uniffi_bindgen::run_tests(out_dir, udl_files, vec![test_file], None)
+fn run_uniffi_bindgen_test(cdylib_file: &str, udl_files: &[&str], test_file: &str) -> Result<()> {
+    uniffi_bindgen::run_tests(cdylib_file, udl_files, &[test_file], None)
 }

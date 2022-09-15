@@ -1,5 +1,7 @@
 use nix::sys::inotify::{AddWatchFlags,InitFlags,Inotify};
+use nix::Error;
 use nix::errno::Errno;
+use tempfile;
 use std::ffi::OsString;
 use std::fs::{rename, File};
 
@@ -12,7 +14,7 @@ pub fn test_inotify() {
     instance.add_watch(tempdir.path(), AddWatchFlags::IN_ALL_EVENTS).unwrap();
 
     let events = instance.read_events();
-    assert_eq!(events.unwrap_err(), Errno::EAGAIN);
+    assert_eq!(events.unwrap_err(), Error::Sys(Errno::EAGAIN));
 
     File::create(tempdir.path().join("test")).unwrap();
 
@@ -29,7 +31,7 @@ pub fn test_inotify_multi_events() {
     instance.add_watch(tempdir.path(), AddWatchFlags::IN_ALL_EVENTS).unwrap();
 
     let events = instance.read_events();
-    assert_eq!(events.unwrap_err(), Errno::EAGAIN);
+    assert_eq!(events.unwrap_err(), Error::Sys(Errno::EAGAIN));
 
     File::create(tempdir.path().join("test")).unwrap();
     rename(tempdir.path().join("test"), tempdir.path().join("test2")).unwrap();

@@ -16,6 +16,7 @@ EXPORTS.mozilla.ipc += [
     "BackgroundStarterChild.h",
     "BackgroundStarterParent.h",
     "BackgroundUtils.h",
+    "BigBuffer.h",
     "BrowserProcessSubThread.h",
     "ByteBuf.h",
     "ByteBufUtils.h",
@@ -59,6 +60,7 @@ EXPORTS.mozilla.ipc += [
     "ShmemMessageUtils.h",
     "TaintingIPCUtils.h",
     "TaskFactory.h",
+    "ToplevelActorHolder.h",
     "TransportSecurityInfoUtils.h",
     "URIUtils.h",
     "UtilityAudioDecoderChild.h",
@@ -154,6 +156,7 @@ EXPORTS.ipc += [
 UNIFIED_SOURCES += [
     "BackgroundImpl.cpp",
     "BackgroundUtils.cpp",
+    "BigBuffer.cpp",
     "BrowserProcessSubThread.cpp",
     "CrashReporterClient.cpp",
     "CrashReporterHost.cpp",
@@ -227,6 +230,7 @@ if CONFIG["MOZ_WEBRTC"]:
     ]
 
 PREPROCESSED_IPDL_SOURCES = [
+    "PUtilityAudioDecoder.ipdl",
     "PUtilityProcess.ipdl",
 ]
 
@@ -239,7 +243,6 @@ IPDL_SOURCES = [
     "PBackgroundTest.ipdl",
     "PIdleScheduler.ipdl",
     "ProtocolTypes.ipdlh",
-    "PUtilityAudioDecoder.ipdl",
     "URIParams.ipdlh",
 ]
 

@@ -11,7 +11,7 @@ const PRIMITIVE_TYPES = [
   { value: -0, serialized: { type: "number", value: "-0" } },
   {
     value: Number.POSITIVE_INFINITY,
-    serialized: { type: "number", value: "+Infinity" },
+    serialized: { type: "number", value: "Infinity" },
   },
   {
     value: Number.NEGATIVE_INFINITY,
@@ -221,18 +221,98 @@ const REMOTE_COMPLEX_VALUES = [
     },
     deserializable: true,
   },
+  {
+    value: {},
+    maxDepth: 1,
+    serialized: {
+      type: "object",
+      value: [],
+    },
+    deserializable: true,
+  },
+  {
+    value: {
+      "1": 1,
+      "2": "2",
+      foo: true,
+    },
+    serialized: {
+      type: "object",
+    },
+  },
+  {
+    value: {
+      "1": 1,
+      "2": "2",
+      foo: true,
+    },
+    maxDepth: 0,
+    serialized: {
+      type: "object",
+    },
+  },
+  {
+    value: {
+      "1": 1,
+      "2": "2",
+      foo: true,
+    },
+    maxDepth: 1,
+    serialized: {
+      type: "object",
+      value: [
+        ["1", { type: "number", value: 1 }],
+        ["2", { type: "string", value: "2" }],
+        ["foo", { type: "boolean", value: true }],
+      ],
+    },
+    deserializable: true,
+  },
+  {
+    value: {
+      "1": 1,
+      "2": "2",
+      "3": {
+        bar: "foo",
+      },
+      foo: true,
+    },
+    maxDepth: 2,
+    serialized: {
+      type: "object",
+      value: [
+        ["1", { type: "number", value: 1 }],
+        ["2", { type: "string", value: "2" }],
+        [
+          "3",
+          {
+            type: "object",
+            value: [["bar", { type: "string", value: "foo" }]],
+          },
+        ],
+        ["foo", { type: "boolean", value: true }],
+      ],
+    },
+    deserializable: true,
+  },
 ];
 
-const { deserialize, serialize } = ChromeUtils.import(
+const { Realm } = ChromeUtils.import(
+  "chrome://remote/content/webdriver-bidi/Realm.jsm"
+);
+
+const { deserialize, serialize, stringify } = ChromeUtils.import(
   "chrome://remote/content/webdriver-bidi/RemoteValue.jsm"
 );
 
 add_test(function test_deserializePrimitiveTypes() {
+  const realm = new Realm();
+
   for (const type of PRIMITIVE_TYPES) {
     const { value: expectedValue, serialized } = type;
 
     info(`Checking '${serialized.type}'`);
-    const value = deserialize(serialized);
+    const value = deserialize(realm, serialized);
 
     if (serialized.value == "NaN") {
       ok(Number.isNaN(value), `Got expected value for ${serialized}`);
@@ -249,6 +329,8 @@ add_test(function test_deserializePrimitiveTypes() {
 });
 
 add_test(function test_deserializeDateLocalValue() {
+  const realm = new Realm();
+
   const validaDateStrings = [
     "2009",
     "2009-05",
@@ -266,7 +348,7 @@ add_test(function test_deserializeDateLocalValue() {
   ];
   for (const dateString of validaDateStrings) {
     info(`Checking '${dateString}'`);
-    const value = deserialize({ type: "date", value: dateString });
+    const value = deserialize(realm, { type: "date", value: dateString });
 
     Assert.equal(
       value.getTime(),
@@ -279,6 +361,8 @@ add_test(function test_deserializeDateLocalValue() {
 });
 
 add_test(function test_deserializeLocalValues() {
+  const realm = new Realm();
+
   for (const type of REMOTE_SIMPLE_VALUES.concat(REMOTE_COMPLEX_VALUES)) {
     const { value: expectedValue, serialized, deserializable } = type;
 
@@ -288,36 +372,53 @@ add_test(function test_deserializeLocalValues() {
     }
 
     info(`Checking '${serialized.type}'`);
-    const value = deserialize(serialized);
+    const value = deserialize(realm, serialized);
+    assertLocalValue(serialized.type, value, expectedValue);
+  }
 
-    let formattedValue = value;
-    let formattedExpectedValue = expectedValue;
+  run_next_test();
+});
 
-    // Format certain types for easier assertion
-    if (serialized.type == "map") {
-      Assert.equal(
-        Object.prototype.toString.call(expectedValue),
-        "[object Map]",
-        "Got expected type Map"
-      );
+add_test(function test_deserializeLocalValuesByHandle() {
+  // Create two realms, realm1 will be used to serialize values, while realm2
+  // will be used as a reference empty realm without any object reference.
+  const realm1 = new Realm();
+  const realm2 = new Realm();
 
-      formattedValue = Array.from(value.values());
-      formattedExpectedValue = Array.from(expectedValue.values());
-    } else if (serialized.type == "set") {
-      Assert.equal(
-        Object.prototype.toString.call(expectedValue),
-        "[object Set]",
-        "Got expected type Set"
-      );
+  for (const type of REMOTE_SIMPLE_VALUES.concat(REMOTE_COMPLEX_VALUES)) {
+    const { value: expectedValue, serialized } = type;
 
-      formattedValue = Array.from(value);
-      formattedExpectedValue = Array.from(expectedValue);
-    }
+    // No need to skip non-deserializable cases here.
 
-    Assert.deepEqual(
-      formattedValue,
-      formattedExpectedValue,
-      "Got expected structure"
+    info(`Checking '${serialized.type}'`);
+    // Serialize the value once to get a handle.
+    const serializedValue = serialize(
+      expectedValue,
+      0,
+      "root",
+      new Map(),
+      realm1
+    );
+
+    // Create a remote reference containing only the handle.
+    // `deserialize` should not need any other property.
+    const remoteReference = { handle: serializedValue.handle };
+
+    // Check that the remote reference can be deserialized in realm1.
+    const deserializedValue = deserialize(realm1, remoteReference);
+    assertLocalValue(serialized.type, deserializedValue, expectedValue);
+
+    Assert.throws(
+      () => deserialize(realm2, remoteReference),
+      /InvalidArgumentError:/,
+      `Got expected error when using the wrong realm for deserialize`
+    );
+
+    realm1.removeObjectHandle(serializedValue.handle);
+    Assert.throws(
+      () => deserialize(realm1, remoteReference),
+      /InvalidArgumentError:/,
+      `Got expected error when after deleting the object handle`
     );
   }
 
@@ -325,6 +426,8 @@ add_test(function test_deserializeLocalValues() {
 });
 
 add_test(function test_deserializePrimitiveTypesInvalidValues() {
+  const realm = new Realm();
+
   const invalidValues = [
     { type: "bigint", values: [undefined, null, false, "foo", [], {}] },
     { type: "boolean", values: [undefined, null, 42, "foo", [], {}] },
@@ -342,7 +445,7 @@ add_test(function test_deserializePrimitiveTypesInvalidValues() {
       info(`Checking '${type}' with value ${value}`);
 
       Assert.throws(
-        () => deserialize({ type, value }),
+        () => deserialize(realm, { type, value }),
         /InvalidArgument/,
         `Got expected error for type ${type} and value ${value}`
       );
@@ -353,6 +456,8 @@ add_test(function test_deserializePrimitiveTypesInvalidValues() {
 });
 
 add_test(function test_deserializeDateLocalValueInvalidValues() {
+  const realm = new Realm();
+
   const invalidaDateStrings = [
     "10",
     "20009",
@@ -393,8 +498,8 @@ add_test(function test_deserializeDateLocalValueInvalidValues() {
     info(`Checking '${dateString}'`);
 
     Assert.throws(
-      () => deserialize({ type: "date", value: dateString }),
-      /InvalidArgument/,
+      () => deserialize(realm, { type: "date", value: dateString }),
+      /InvalidArgumentError:/,
       `Got expected error for date string: ${dateString}`
     );
   }
@@ -402,7 +507,37 @@ add_test(function test_deserializeDateLocalValueInvalidValues() {
   run_next_test();
 });
 
+add_test(function test_deserializeLocalValuesInvalidType() {
+  const realm = new Realm();
+
+  const invalidTypes = [undefined, null, false, 42, {}];
+
+  for (const invalidType of invalidTypes) {
+    info(`Checking type: '${invalidType}'`);
+
+    Assert.throws(
+      () => deserialize(realm, { type: invalidType }),
+      /InvalidArgumentError:/,
+      `Got expected error for type ${invalidType}`
+    );
+
+    Assert.throws(
+      () =>
+        deserialize(realm, {
+          type: "array",
+          value: [{ type: invalidType }],
+        }),
+      /InvalidArgumentError:/,
+      `Got expected error for nested type ${invalidType}`
+    );
+  }
+
+  run_next_test();
+});
+
 add_test(function test_deserializeLocalValuesInvalidValues() {
+  const realm = new Realm();
+
   const invalidValues = [
     { type: "array", values: [undefined, null, false, 42, "foo", {}] },
     {
@@ -470,6 +605,29 @@ add_test(function test_deserializeLocalValuesInvalidValues() {
         [[]],
         [["1"]],
         [{ "1": "2" }],
+        [
+          [
+            { type: "number", value: "1" },
+            { type: "number", value: "2" },
+          ],
+        ],
+        [
+          [
+            { type: "object", value: [] },
+            { type: "number", value: "1" },
+          ],
+        ],
+        [
+          [
+            {
+              type: "regexp",
+              value: {
+                pattern: "foo",
+              },
+            },
+            { type: "number", value: "1" },
+          ],
+        ],
       ],
     },
   ];
@@ -481,8 +639,8 @@ add_test(function test_deserializeLocalValuesInvalidValues() {
       info(`Checking '${type}' with value ${value}`);
 
       Assert.throws(
-        () => deserialize({ type, value }),
-        /InvalidArgument/,
+        () => deserialize(realm, { type, value }),
+        /InvalidArgumentError:/,
         `Got expected error for type ${type} and value ${value}`
       );
     }
@@ -492,46 +650,159 @@ add_test(function test_deserializeLocalValuesInvalidValues() {
 });
 
 add_test(function test_serializePrimitiveTypes() {
+  const realm = new Realm();
+
   for (const type of PRIMITIVE_TYPES) {
     const { value, serialized } = type;
 
-    const serializedValue = serialize(value);
-    for (const prop in serialized) {
-      info(`Checking '${serialized.type}'`);
+    const serializedValue = serialize(value, 0, "none", new Map(), realm);
+    Assert.deepEqual(serialized, serializedValue, "Got expected structure");
 
-      Assert.strictEqual(
-        serializedValue[prop],
-        serialized[prop],
-        `Got expected value for property ${prop}`
-      );
-    }
+    // For primitive values, the serialization with ownershipType=root should
+    // be exactly identical to the one with ownershipType=none.
+    const serializedWithRoot = serialize(value, 0, "root", new Map(), realm);
+    Assert.deepEqual(serialized, serializedWithRoot, "Got expected structure");
   }
 
   run_next_test();
 });
 
 add_test(function test_serializeRemoteSimpleValues() {
+  const realm = new Realm();
+
   for (const type of REMOTE_SIMPLE_VALUES) {
     const { value, serialized } = type;
 
-    info(`Checking '${serialized.type}'`);
-    const serializedValue = serialize(value);
+    info(`Checking '${serialized.type}' with none ownershipType`);
+    const serializedValue = serialize(value, 0, "none", new Map(), realm);
 
     Assert.deepEqual(serialized, serializedValue, "Got expected structure");
+
+    info(`Checking '${serialized.type}' with root ownershipType`);
+    const serializedWithRoot = serialize(value, 0, "root", new Map(), realm);
+
+    Assert.equal(
+      typeof serializedWithRoot.handle,
+      "string",
+      "Got a handle property"
+    );
+    Assert.deepEqual(
+      Object.assign({}, serialized, { handle: serializedWithRoot.handle }),
+      serializedWithRoot,
+      "Got expected structure, plus a generated handle id"
+    );
   }
 
   run_next_test();
 });
 
 add_test(function test_serializeRemoteComplexValues() {
+  const realm = new Realm();
+
   for (const type of REMOTE_COMPLEX_VALUES) {
     const { value, serialized, maxDepth } = type;
 
-    info(`Checking '${serialized.type}'`);
-    const serializedValue = serialize(value, maxDepth);
+    info(`Checking '${serialized.type}' with none ownershipType`);
+    const serializedValue = serialize(
+      value,
+      maxDepth,
+      "none",
+      new Map(),
+      realm
+    );
 
     Assert.deepEqual(serialized, serializedValue, "Got expected structure");
+
+    info(`Checking '${serialized.type}' with root ownershipType`);
+    const serializedWithRoot = serialize(
+      value,
+      maxDepth,
+      "root",
+      new Map(),
+      realm
+    );
+
+    Assert.equal(
+      typeof serializedWithRoot.handle,
+      "string",
+      "Got a handle property"
+    );
+    Assert.deepEqual(
+      Object.assign({}, serialized, { handle: serializedWithRoot.handle }),
+      serializedWithRoot,
+      "Got expected structure, plus a generated handle id"
+    );
   }
 
   run_next_test();
 });
+
+add_test(function test_stringify() {
+  const STRINGIFY_TEST_CASES = [
+    [undefined, "undefined"],
+    [null, "null"],
+    ["foobar", "foobar"],
+    ["2", "2"],
+    [-0, "0"],
+    [Infinity, "Infinity"],
+    [-Infinity, "-Infinity"],
+    [3, "3"],
+    [1.4, "1.4"],
+    [true, "true"],
+    [42n, "42"],
+    [{ toString: () => "bar" }, "bar", "toString: () => 'bar'"],
+    [{ toString: () => 4 }, "[object Object]", "toString: () => 4"],
+    [{ toString: undefined }, "[object Object]", "toString: undefined"],
+    [{ toString: null }, "[object Object]", "toString: null"],
+    [
+      {
+        toString: () => {
+          throw new Error("toString error");
+        },
+      },
+      "[object Object]",
+      "toString: () => { throw new Error('toString error'); }",
+    ],
+  ];
+
+  for (const [value, expectedString, description] of STRINGIFY_TEST_CASES) {
+    info(`Checking '${description || value}'`);
+    const stringifiedValue = stringify(value);
+
+    Assert.strictEqual(expectedString, stringifiedValue, "Got expected string");
+  }
+
+  run_next_test();
+});
+
+function assertLocalValue(type, value, expectedValue) {
+  let formattedValue = value;
+  let formattedExpectedValue = expectedValue;
+
+  // Format certain types for easier assertion
+  if (type == "map") {
+    Assert.equal(
+      Object.prototype.toString.call(expectedValue),
+      "[object Map]",
+      "Got expected type Map"
+    );
+
+    formattedValue = Array.from(value.values());
+    formattedExpectedValue = Array.from(expectedValue.values());
+  } else if (type == "set") {
+    Assert.equal(
+      Object.prototype.toString.call(expectedValue),
+      "[object Set]",
+      "Got expected type Set"
+    );
+
+    formattedValue = Array.from(value);
+    formattedExpectedValue = Array.from(expectedValue);
+  }
+
+  Assert.deepEqual(
+    formattedValue,
+    formattedExpectedValue,
+    "Got expected structure"
+  );
+}

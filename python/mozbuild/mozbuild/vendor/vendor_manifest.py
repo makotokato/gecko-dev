@@ -26,7 +26,7 @@ from mozbuild.vendor.rewrite_mozbuild import (
 )
 
 DEFAULT_EXCLUDE_FILES = [".git*"]
-DEFAULT_KEEP_FILES = ["moz.build", "moz.yaml"]
+DEFAULT_KEEP_FILES = ["**/moz.build", "**/moz.yaml"]
 DEFAULT_INCLUDE_FILES = []
 
 
@@ -39,12 +39,18 @@ def _replace_in_file(file, pattern, replacement, regex=False):
         contents = f.read()
 
     if regex:
-        contents = re.sub(pattern, replacement, contents)
+        newcontents = re.sub(pattern, replacement, contents)
     else:
-        contents = contents.replace(pattern, replacement)
+        newcontents = contents.replace(pattern, replacement)
+
+    if newcontents == contents:
+        raise Exception(
+            "Could not find '%s' in %s to %sreplace with '%s'"
+            % (pattern, file, "regex-" if regex else "", replacement)
+        )
 
     with open(file, "w") as f:
-        f.write(contents)
+        f.write(newcontents)
 
 
 class VendorManifest(MozbuildObject):
@@ -132,7 +138,11 @@ class VendorManifest(MozbuildObject):
     ):
         # First update the Cargo.toml
         cargo_file = os.path.join(os.path.dirname(self.yaml_file), "Cargo.toml")
-        _replace_in_file(cargo_file, old_revision, new_revision)
+        try:
+            _replace_in_file(cargo_file, old_revision, new_revision)
+        except Exception:
+            # If we can't find it the first time, try again with a short hash
+            _replace_in_file(cargo_file, old_revision[:8], new_revision)
 
         # Then call ./mach vendor rust
         from mozbuild.vendor.vendor_rust import VendorRust
@@ -503,14 +513,18 @@ class VendorManifest(MozbuildObject):
                     file,
                     update["pattern"],
                     replacement,
-                    regex=update["action"] == "replace-in-file",
+                    regex=update["action"] == "replace-in-file-regex",
                 )
             elif update["action"] == "delete-path":
                 path = self.get_full_path(update["path"])
                 self.logInfo({"path": path}, "action: delete-path path: {path}")
                 mozfile.remove(path)
-            elif update["action"] == "run-script":
-                script = self.get_full_path(update["script"], support_cwd=True)
+            elif update["action"] in ["run-script", "run-command"]:
+                if update["action"] == "run-script":
+                    command = self.get_full_path(update["script"], support_cwd=True)
+                else:
+                    command = update["command"]
+
                 run_dir = self.get_full_path(update["cwd"], support_cwd=True)
 
                 args = []
@@ -531,14 +545,25 @@ class VendorManifest(MozbuildObject):
                         args.append(a)
 
                 self.logInfo(
-                    {"script": script, "run_dir": run_dir, "args": args},
-                    "action: run-script script: {script} working dir: {run_dir} args: {args}",
+                    {
+                        "command": command,
+                        "run_dir": run_dir,
+                        "args": args,
+                        "type": update["action"],
+                    },
+                    "action: {type} command: {command} working dir: {run_dir} args: {args}",
+                )
+                extra_env = (
+                    {"GECKO_PATH": os.getcwd()}
+                    if "GECKO_PATH" not in os.environ
+                    else {}
                 )
                 self.run_process(
-                    args=[script] + args,
+                    args=[command] + args,
                     cwd=run_dir,
-                    log_name=script,
+                    log_name=command,
                     require_unix_environment=True,
+                    append_env=extra_env,
                 )
             else:
                 assert False, "Unknown action supplied (how did this pass validation?)"

@@ -3,7 +3,6 @@
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { TestUtils } = ChromeUtils.import(
   "resource://testing-common/TestUtils.jsm"
 );
@@ -52,7 +51,7 @@ add_task(async function test_import_json_dump_into_idb() {
   await RemoteSettingsWorker.importJSONDump("main", "language-dictionaries");
 
   const after = await client.get({ syncIfEmpty: false });
-  Assert.ok(after.length > 0);
+  Assert.ok(!!after.length);
   let lastModifiedStamp = await client.getLastModified();
 
   Assert.equal(

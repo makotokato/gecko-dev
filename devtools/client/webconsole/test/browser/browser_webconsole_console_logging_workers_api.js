@@ -20,12 +20,21 @@ add_task(async function() {
 });
 
 async function testWorkerMessage(directConnectionToWorkerThread = false) {
-  const hud = await openNewTabAndConsole(TEST_URI);
+  await addTab(TEST_URI);
+  // Open the debugger first as it can cause some message to be duplicated (See Bug 1778852)
+  await openDebugger();
+
+  info("Open the console");
+  const hud = await openConsole();
 
   const cachedMessage = await waitFor(() =>
     findConsoleAPIMessage(hud, "initial-message-from-worker")
   );
-  ok(true, "We get the cached message from the worker");
+  is(
+    findConsoleAPIMessages(hud, "initial-message-from-worker").length,
+    1,
+    "We get a single cached message from the worker"
+  );
 
   ok(
     cachedMessage
@@ -83,12 +92,14 @@ async function testWorkerMessage(directConnectionToWorkerThread = false) {
   }
 
   info("Click on the clear button and wait for messages to be removed");
+  const onMessagesCacheCleared = hud.ui.once("messages-cache-cleared");
   hud.ui.window.document.querySelector(".devtools-clear-icon").click();
   await waitFor(
     () =>
       !findConsoleAPIMessage(hud, "initial-message-from-worker") &&
       !findConsoleAPIMessage(hud, "log-from-worker")
   );
+  await onMessagesCacheCleared;
   ok(true, "Messages were removed");
 
   info("Close and reopen the console to check messages were cleared properly");

@@ -36,10 +36,14 @@
 #include "nsIXULRuntime.h"  // for BrowserTabsRemoteAutostart
 #include "nsPrintfCString.h"
 
+#include "mozilla/ipc/UtilityAudioDecoderParent.h"
+
 #ifdef XP_WIN
-#  include "MFMediaEngineDecoderModule.h"
 #  include "WMFDecoderModule.h"
 #  include "mozilla/WindowsVersion.h"
+#  ifdef MOZ_WMF_MEDIA_ENGINE
+#    include "MFMediaEngineDecoderModule.h"
+#  endif
 #endif
 #ifdef MOZ_FFVPX
 #  include "FFVPXRuntimeLinker.h"
@@ -58,6 +62,13 @@
 #endif
 
 #include <functional>
+
+using DecodeSupport = mozilla::media::DecodeSupport;
+using DecodeSupportSet = mozilla::media::DecodeSupportSet;
+using MediaCodec = mozilla::media::MediaCodec;
+using MediaCodecsSupport = mozilla::media::MediaCodecsSupport;
+using MediaCodecsSupported = mozilla::media::MediaCodecsSupported;
+using MCSInfo = mozilla::media::MCSInfo;
 
 namespace mozilla {
 
@@ -88,10 +99,6 @@ class PDMInitializer final {
     if (!IsWin7AndPre2000Compatible()) {
       WMFDecoderModule::Init();
     }
-
-    if (IsWin8OrLater() && StaticPrefs::media_wmf_media_engine_enabled()) {
-      MFMediaEngineDecoderModule::Init();
-    }
 #endif
 #ifdef MOZ_APPLEMEDIA
     AppleDecoderModule::Init();
@@ -111,6 +118,11 @@ class PDMInitializer final {
     if (!IsWin7AndPre2000Compatible()) {
       WMFDecoderModule::Init();
     }
+#  ifdef MOZ_WMF_MEDIA_ENGINE
+    if (IsWin8OrLater() && StaticPrefs::media_wmf_media_engine_enabled()) {
+      MFMediaEngineDecoderModule::Init();
+    }
+#  endif
 #endif
 #ifdef MOZ_APPLEMEDIA
     AppleDecoderModule::Init();
@@ -437,24 +449,31 @@ PDMFactory::CreateDecoderWithPDM(PlatformDecoderModule* aPDM,
   return aPDM->AsyncCreateDecoder(aParams);
 }
 
-bool PDMFactory::SupportsMimeType(const nsACString& aMimeType) const {
+DecodeSupportSet PDMFactory::SupportsMimeType(
+    const nsACString& aMimeType) const {
   UniquePtr<TrackInfo> trackInfo = CreateTrackInfoWithMIMEType(aMimeType);
   if (!trackInfo) {
-    return false;
+    return DecodeSupport::Unsupported;
   }
   return Supports(SupportDecoderParams(*trackInfo), nullptr);
 }
 
-bool PDMFactory::Supports(const SupportDecoderParams& aParams,
-                          DecoderDoctorDiagnostics* aDiagnostics) const {
+DecodeSupportSet PDMFactory::Supports(
+    const SupportDecoderParams& aParams,
+    DecoderDoctorDiagnostics* aDiagnostics) const {
   if (mEMEPDM) {
-    return mEMEPDM->Supports(aParams, aDiagnostics) !=
-           media::DecodeSupport::Unsupported;
+    return mEMEPDM->Supports(aParams, aDiagnostics);
   }
 
   RefPtr<PlatformDecoderModule> current =
       GetDecoderModule(aParams, aDiagnostics);
-  return !!current;
+
+  if (!current) {
+    return DecodeSupport::Unsupported;
+  }
+
+  // We have a PDM - check for + return SW/HW support info
+  return current->Supports(aParams, aDiagnostics);
 }
 
 void PDMFactory::CreatePDMs() {
@@ -512,9 +531,6 @@ static DecoderDoctorDiagnostics::Flags GetFailureFlagBasedOnFFmpegStatus(
 
 void PDMFactory::CreateRddPDMs() {
 #ifdef XP_WIN
-  if (IsWin8OrLater() && StaticPrefs::media_wmf_media_engine_enabled()) {
-    CreateAndStartupPDM<MFMediaEngineDecoderModule>();
-  }
   if (StaticPrefs::media_wmf_enabled() &&
       StaticPrefs::media_rdd_wmf_enabled()) {
     CreateAndStartupPDM<WMFDecoderModule>();
@@ -543,38 +559,51 @@ void PDMFactory::CreateRddPDMs() {
 }
 
 void PDMFactory::CreateUtilityPDMs() {
+  const ipc::SandboxingKind aKind =
+      ipc::UtilityAudioDecoderParent::GetSandboxingKind();
 #ifdef XP_WIN
   if (StaticPrefs::media_wmf_enabled() &&
-      StaticPrefs::media_utility_wmf_enabled()) {
+      StaticPrefs::media_utility_wmf_enabled() &&
+      aKind == ipc::SandboxingKind::UTILITY_AUDIO_DECODING_WMF) {
     CreateAndStartupPDM<WMFDecoderModule>();
   }
 #endif
 #ifdef MOZ_APPLEMEDIA
-  if (StaticPrefs::media_utility_applemedia_enabled()) {
+  if (StaticPrefs::media_utility_applemedia_enabled() &&
+      aKind == ipc::SandboxingKind::UTILITY_AUDIO_DECODING_APPLE_MEDIA) {
     CreateAndStartupPDM<AppleDecoderModule>();
   }
 #endif
+  if (aKind == ipc::SandboxingKind::UTILITY_AUDIO_DECODING_GENERIC) {
 #ifdef MOZ_FFVPX
-  if (StaticPrefs::media_ffvpx_enabled() &&
-      StaticPrefs::media_utility_ffvpx_enabled()) {
-    CreateAndStartupPDM<FFVPXRuntimeLinker>();
-  }
+    if (StaticPrefs::media_ffvpx_enabled() &&
+        StaticPrefs::media_utility_ffvpx_enabled()) {
+      CreateAndStartupPDM<FFVPXRuntimeLinker>();
+    }
 #endif
 #ifdef MOZ_FFMPEG
-  if (StaticPrefs::media_ffmpeg_enabled() &&
-      StaticPrefs::media_utility_ffmpeg_enabled() &&
-      !CreateAndStartupPDM<FFmpegRuntimeLinker>()) {
-    mFailureFlags += GetFailureFlagBasedOnFFmpegStatus(
-        FFmpegRuntimeLinker::LinkStatusCode());
-  }
+    if (StaticPrefs::media_ffmpeg_enabled() &&
+        StaticPrefs::media_utility_ffmpeg_enabled() &&
+        !CreateAndStartupPDM<FFmpegRuntimeLinker>()) {
+      mFailureFlags += GetFailureFlagBasedOnFFmpegStatus(
+          FFmpegRuntimeLinker::LinkStatusCode());
+    }
 #endif
 #ifdef MOZ_WIDGET_ANDROID
-  if (StaticPrefs::media_utility_android_media_codec_enabled()) {
-    StartupPDM(AndroidDecoderModule::Create(),
-               StaticPrefs::media_android_media_codec_preferred());
+    if (StaticPrefs::media_utility_android_media_codec_enabled()) {
+      StartupPDM(AndroidDecoderModule::Create(),
+                 StaticPrefs::media_android_media_codec_preferred());
+    }
+#endif
+    CreateAndStartupPDM<AgnosticDecoderModule>();
+  }
+#ifdef MOZ_WMF_MEDIA_ENGINE
+  if (aKind == ipc::SandboxingKind::MF_MEDIA_ENGINE_CDM) {
+    if (IsWin8OrLater() && StaticPrefs::media_wmf_media_engine_enabled()) {
+      CreateAndStartupPDM<MFMediaEngineDecoderModule>();
+    }
   }
 #endif
-  CreateAndStartupPDM<AgnosticDecoderModule>();
 }
 
 void PDMFactory::CreateContentPDMs() {
@@ -587,8 +616,25 @@ void PDMFactory::CreateContentPDMs() {
   }
 
   if (StaticPrefs::media_utility_process_enabled()) {
-    CreateAndStartupPDM<RemoteDecoderModule>(RemoteDecodeIn::UtilityProcess);
+#ifdef MOZ_APPLEMEDIA
+    CreateAndStartupPDM<RemoteDecoderModule>(
+        RemoteDecodeIn::UtilityProcess_AppleMedia);
+#endif
+#ifdef XP_WIN
+    CreateAndStartupPDM<RemoteDecoderModule>(
+        RemoteDecodeIn::UtilityProcess_WMF);
+#endif
+    // WMF and AppleMedia should be created before Generic because the order
+    // affects what decoder module would be chose first.
+    CreateAndStartupPDM<RemoteDecoderModule>(
+        RemoteDecodeIn::UtilityProcess_Generic);
   }
+#ifdef MOZ_WMF_MEDIA_ENGINE
+  if (StaticPrefs::media_wmf_media_engine_enabled()) {
+    CreateAndStartupPDM<RemoteDecoderModule>(
+        RemoteDecodeIn::UtilityProcess_MFMediaEngineCDM);
+  }
+#endif
 
 #ifdef XP_WIN
   if (StaticPrefs::media_wmf_enabled() && !IsWin7AndPre2000Compatible()) {
@@ -739,7 +785,7 @@ void PDMFactory::SetCDMProxy(CDMProxy* aProxy) {
 }
 
 /* static */
-PDMFactory::MediaCodecsSupported PDMFactory::Supported(bool aForceRefresh) {
+media::MediaCodecsSupported PDMFactory::Supported(bool aForceRefresh) {
   MOZ_ASSERT(NS_IsMainThread());
 
   static auto calculate = []() {
@@ -753,100 +799,69 @@ PDMFactory::MediaCodecsSupported PDMFactory::Supported(bool aForceRefresh) {
     // available.
     // This logic will have to be revisited if a PDM supporting either codec
     // will be added in addition to the WMF and FFmpeg PDM (such as OpenH264)
-    if (pdm->SupportsMimeType("video/avc"_ns)) {
-      supported += MediaCodecs::H264;
-    }
-    if (pdm->SupportsMimeType("video/vp9"_ns)) {
-      supported += MediaCodecs::VP9;
-    }
-    if (pdm->SupportsMimeType("video/vp8"_ns)) {
-      supported += MediaCodecs::VP8;
-    }
-    if (pdm->SupportsMimeType("video/av1"_ns)) {
-      supported += MediaCodecs::AV1;
-    }
-    if (pdm->SupportsMimeType("video/theora"_ns)) {
-      supported += MediaCodecs::Theora;
-    }
-    if (pdm->SupportsMimeType("audio/mp4a-latm"_ns)) {
-      supported += MediaCodecs::AAC;
-    }
-    // MP3 can be either decoded by ffvpx or WMF/FFmpeg
-    if (pdm->SupportsMimeType("audio/mpeg"_ns)) {
-      supported += MediaCodecs::MP3;
-    }
-    if (pdm->SupportsMimeType("audio/opus"_ns)) {
-      supported += MediaCodecs::Opus;
-    }
-    if (pdm->SupportsMimeType("audio/vorbis"_ns)) {
-      supported += MediaCodecs::Vorbis;
-    }
-    if (pdm->SupportsMimeType("audio/flac"_ns)) {
-      supported += MediaCodecs::Flac;
-    }
-    if (pdm->SupportsMimeType("audio/x-wav"_ns)) {
-      supported += MediaCodecs::Wave;
+    for (const auto& cd : MCSInfo::GetAllCodecDefinitions()) {
+      supported += MCSInfo::GetDecodeMediaCodecsSupported(
+          cd.codec, pdm->SupportsMimeType(nsCString(cd.mimeTypeString)));
     }
     return supported;
   };
+
   static MediaCodecsSupported supported = calculate();
   if (aForceRefresh) {
     supported = calculate();
   }
+
   return supported;
 }
 
 /* static */
-bool PDMFactory::SupportsMimeType(const nsACString& aMimeType,
-                                  const MediaCodecsSupported& aSupported,
-                                  RemoteDecodeIn aLocation) {
-  const bool videoSupport = aLocation != RemoteDecodeIn::UtilityProcess;
-  const bool audioSupport = (aLocation == RemoteDecodeIn::UtilityProcess &&
-                             StaticPrefs::media_utility_process_enabled()) ||
-                            (aLocation == RemoteDecodeIn::RddProcess &&
-                             !StaticPrefs::media_utility_process_enabled());
+DecodeSupportSet PDMFactory::SupportsMimeType(
+    const nsACString& aMimeType, const MediaCodecsSupported& aSupported,
+    RemoteDecodeIn aLocation) {
+  const TrackSupportSet supports =
+      RemoteDecoderManagerChild::GetTrackSupport(aLocation);
 
-  if (videoSupport) {
+  if (supports.contains(TrackSupport::Video)) {
     if (MP4Decoder::IsH264(aMimeType)) {
-      return aSupported.contains(MediaCodecs::H264);
+      return MCSInfo::GetDecodeSupportSet(MediaCodec::H264, aSupported);
     }
     if (VPXDecoder::IsVP9(aMimeType)) {
-      return aSupported.contains(MediaCodecs::VP9);
+      return MCSInfo::GetDecodeSupportSet(MediaCodec::VP9, aSupported);
     }
     if (VPXDecoder::IsVP8(aMimeType)) {
-      return aSupported.contains(MediaCodecs::VP8);
+      return MCSInfo::GetDecodeSupportSet(MediaCodec::VP8, aSupported);
     }
 #ifdef MOZ_AV1
     if (AOMDecoder::IsAV1(aMimeType)) {
-      return aSupported.contains(MediaCodecs::AV1);
+      return MCSInfo::GetDecodeSupportSet(MediaCodec::AV1, aSupported);
     }
 #endif
     if (TheoraDecoder::IsTheora(aMimeType)) {
-      return aSupported.contains(MediaCodecs::Theora);
+      return MCSInfo::GetDecodeSupportSet(MediaCodec::Theora, aSupported);
     }
   }
 
-  if (audioSupport) {
+  if (supports.contains(TrackSupport::Audio)) {
     if (MP4Decoder::IsAAC(aMimeType)) {
-      return aSupported.contains(MediaCodecs::AAC);
+      return MCSInfo::GetDecodeSupportSet(MediaCodec::AAC, aSupported);
     }
     if (aMimeType.EqualsLiteral("audio/mpeg")) {
-      return aSupported.contains(MediaCodecs::MP3);
+      return MCSInfo::GetDecodeSupportSet(MediaCodec::MP3, aSupported);
     }
     if (OpusDataDecoder::IsOpus(aMimeType)) {
-      return aSupported.contains(MediaCodecs::Opus);
+      return MCSInfo::GetDecodeSupportSet(MediaCodec::Opus, aSupported);
     }
     if (VorbisDataDecoder::IsVorbis(aMimeType)) {
-      return aSupported.contains(MediaCodecs::Vorbis);
+      return MCSInfo::GetDecodeSupportSet(MediaCodec::Vorbis, aSupported);
     }
     if (aMimeType.EqualsLiteral("audio/flac")) {
-      return aSupported.contains(MediaCodecs::Flac);
+      return MCSInfo::GetDecodeSupportSet(MediaCodec::FLAC, aSupported);
     }
     if (WaveDataDecoder::IsWave(aMimeType)) {
-      return aSupported.contains(MediaCodecs::Wave);
+      return MCSInfo::GetDecodeSupportSet(MediaCodec::Wave, aSupported);
     }
   }
-  return false;
+  return DecodeSupport::Unsupported;
 }
 
 /* static */

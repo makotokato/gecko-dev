@@ -10,7 +10,6 @@ var {
   FrontClassWithSpec,
   generateActorSpec,
 } = require("devtools/shared/protocol");
-var Services = require("Services");
 
 const lazySpec = generateActorSpec({
   typeName: "lazy",
@@ -23,13 +22,13 @@ const lazySpec = generateActorSpec({
 });
 
 exports.LazyActor = ActorClassWithSpec(lazySpec, {
-  initialize: function(conn, id) {
+  initialize(conn, id) {
     Actor.prototype.initialize.call(this, conn);
 
     Services.obs.notifyObservers(null, "actor", "instantiated");
   },
 
-  hello: function(str) {
+  hello(str) {
     return "world";
   },
 });

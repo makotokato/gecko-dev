@@ -5,11 +5,9 @@
 
 // Test that the Shutdown Terminator reloads durations correctly
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
-const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
 
-var { Path, File, Constants } = OS;
+var { Path, Constants } = OS;
 
 var PATH;
 

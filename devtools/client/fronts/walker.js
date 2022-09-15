@@ -4,7 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const {
   FrontClassWithSpec,
   types,
@@ -134,7 +133,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
     // mimicking what the server will do here.
     const actorID = node.actorID;
     this._releaseFront(node, !!options.force);
-    return super.releaseNode({ actorID: actorID });
+    return super.releaseNode({ actorID });
   }
 
   async findInspectingNode() {
@@ -329,8 +328,8 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
     const previousSibling = await this.previousSibling(node);
     const nextSibling = await super.removeNode(node);
     return {
-      previousSibling: previousSibling,
-      nextSibling: nextSibling,
+      previousSibling,
+      nextSibling,
     };
   }
 

@@ -7,9 +7,7 @@
 #ifndef vm_Watchtower_h
 #define vm_Watchtower_h
 
-#include "js/Id.h"
 #include "js/TypeDecls.h"
-#include "vm/JSContext.h"
 #include "vm/NativeObject.h"
 
 namespace js {
@@ -43,7 +41,7 @@ class Watchtower {
                                       HandleId id);
   static bool watchFreezeOrSealSlow(JSContext* cx, Handle<NativeObject*> obj);
   static bool watchProtoChangeSlow(JSContext* cx, HandleObject obj);
-  static bool watchObjectSwapSlow(JSContext* cx, HandleObject a,
+  static void watchObjectSwapSlow(JSContext* cx, HandleObject a,
                                   HandleObject b);
 
  public:
@@ -107,11 +105,11 @@ class Watchtower {
     }
     return watchProtoChangeSlow(cx, obj);
   }
-  static bool watchObjectSwap(JSContext* cx, HandleObject a, HandleObject b) {
+  static void watchObjectSwap(JSContext* cx, HandleObject a, HandleObject b) {
     if (MOZ_LIKELY(!watchesObjectSwap(a, b))) {
-      return true;
+      return;
     }
-    return watchObjectSwapSlow(cx, a, b);
+    watchObjectSwapSlow(cx, a, b);
   }
 };
 

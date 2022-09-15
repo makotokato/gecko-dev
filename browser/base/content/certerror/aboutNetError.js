@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* eslint-env mozilla/frame-script */
+/* eslint-env mozilla/remote-page */
 
 import "chrome://global/content/certviewer/pvutils_bundle.jsm";
 import "chrome://global/content/certviewer/asn1js_bundle.jsm";
@@ -313,6 +313,10 @@ function initPage() {
   if (ld) {
     // eslint-disable-next-line no-unsanitized/property
     ld.innerHTML = errDesc.innerHTML;
+  }
+
+  if (err == "dnsNotFound") {
+    RPMCheckAlternateHostAvailable();
   }
 
   if (err == "sslv3Used") {
@@ -772,7 +776,7 @@ function setCertErrorDetails(event) {
         desc,
         "cert-error-symantec-distrust-description",
         {
-          HOST_NAME,
+          hostname: HOST_NAME,
         }
       );
 
@@ -985,7 +989,7 @@ async function setTechnicalDetailsOnCertError(
   let args = {
     hostname: hostString,
   };
-  if (failedCertInfo.isUntrusted) {
+  if (failedCertInfo.overridableErrorCategory == "trust-error") {
     switch (failedCertInfo.errorCodeString) {
       case "MOZILLA_PKIX_ERROR_MITM_DETECTED":
         setL10NLabel("cert-error-mitm-intro");
@@ -1029,7 +1033,7 @@ async function setTechnicalDetailsOnCertError(
         setL10NLabel("cert-error-intro", args);
         setL10NLabel("cert-error-untrusted-default", {}, {}, false);
     }
-  } else if (failedCertInfo.isDomainMismatch) {
+  } else if (failedCertInfo.overridableErrorCategory == "domain-mismatch") {
     let serverCertBase64 = failedCertInfo.certChainStrings[0];
     let parsed = await parse(pemToDER(serverCertBase64));
     let subjectAltNamesExtension = parsed.ext.san;
@@ -1112,7 +1116,9 @@ async function setTechnicalDetailsOnCertError(
     } else {
       setL10NLabel("cert-error-domain-mismatch", { hostname: hostString });
     }
-  } else if (failedCertInfo.isNotValidAtThisTime) {
+  } else if (
+    failedCertInfo.overridableErrorCategory == "expired-or-not-yet-valid"
+  ) {
     let notBefore = failedCertInfo.validNotBefore;
     let notAfter = failedCertInfo.validNotAfter;
     args = {
@@ -1176,7 +1182,7 @@ function setFocus(selector, position = "afterbegin") {
     // be focused. We use a requestAnimationFrame to queue up the focus to occur
     // once the button has its frame.
     requestAnimationFrame(() => {
-      button.focus({ preventFocusRing: true });
+      button.focus({ focusVisible: false });
     });
   }
 }

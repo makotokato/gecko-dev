@@ -170,6 +170,15 @@ add_task(async function my_test() {
 });
 ```
 
+Use `add_setup()` when asynchronous test task is meant to prepare test for run.
+All setup tasks are executed once in order they appear prior to any test tasks.
+
+```js
+add_setup(async () => {
+  await clearStorage();
+});
+```
+
 Or alternatively, manually call `waitForExplicitFinish` and `finish`:
 
 ```js
@@ -224,8 +233,8 @@ Right now, useful helpers derived from MochiKit are available in
 
 Although all of Mochikit is available at `testing/mochitest/MochiKit`, only
 include files that you require to minimize test load times. Bug 367569 added
-`sendChar`, `sendKey`, and `sendString` helpers. These are available in
-`testing/mochitest/tests/SimpleTest/EventUtils.js`.
+`sendChar`, `sendKey`, and `sendString` helpers.
+These are available in [`testing/mochitest/tests/SimpleTest/EventUtils.js`](https://searchfox.org/mozilla-central/source/testing/mochitest/tests/SimpleTest/EventUtils.js).
 
 If you need to access some data files from your Mochitest, you can get an URI
 for them by using `SimpleTest.getTestFileURL("relative/path/to/data.file")`.

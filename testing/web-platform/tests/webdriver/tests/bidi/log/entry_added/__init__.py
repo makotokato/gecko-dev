@@ -1,9 +1,16 @@
-def assert_base_entry(entry,
-                      level=None,
-                      text=None,
-                      time_start=None,
-                      time_end=None,
-                      stacktrace=None):
+from webdriver.bidi.modules.script import ContextTarget
+
+
+def assert_base_entry(
+    entry,
+    level=None,
+    text=None,
+    time_start=None,
+    time_end=None,
+    stacktrace=None,
+    realm=None,
+    context=None,
+):
     assert "level" in entry
     assert isinstance(entry["level"], str)
     if level is not None:
@@ -32,17 +39,35 @@ def assert_base_entry(entry,
         for index in range(0, len(call_frames)):
             assert call_frames[index] == stacktrace[index]
 
+    assert "source" in entry
+    source = entry["source"]
 
-def assert_console_entry(entry,
-                         method=None,
-                         level=None,
-                         text=None,
-                         args=None,
-                         time_start=None,
-                         time_end=None,
-                         realm=None,
-                         stacktrace=None):
-    assert_base_entry(entry, level, text, time_start, time_end, stacktrace)
+    assert "realm" in source
+    assert isinstance(source["realm"], str)
+
+    if realm is not None:
+        assert source["realm"] == realm
+
+    if context is not None:
+        assert "context" in source
+        assert source["context"] == context
+
+
+def assert_console_entry(
+    entry,
+    method=None,
+    level=None,
+    text=None,
+    args=None,
+    time_start=None,
+    time_end=None,
+    realm=None,
+    stacktrace=None,
+    context=None,
+):
+    assert_base_entry(
+        entry, level, text, time_start, time_end, stacktrace, realm, context
+    )
 
     assert "type" in entry
     assert isinstance(entry["type"], str)
@@ -58,40 +83,66 @@ def assert_console_entry(entry,
     if args is not None:
         assert entry["args"] == args
 
-    if realm is not None:
-        assert "realm" in entry
-        assert isinstance(entry["realm"], str)
 
-
-def assert_javascript_entry(entry,
-                            level=None,
-                            text=None,
-                            time_start=None,
-                            time_end=None,
-                            stacktrace=None):
-    assert_base_entry(entry, level, text, time_start, time_end, stacktrace)
+def assert_javascript_entry(
+    entry,
+    level=None,
+    text=None,
+    time_start=None,
+    time_end=None,
+    stacktrace=None,
+    realm=None,
+    context=None,
+):
+    assert_base_entry(
+        entry, level, text, time_start, time_end, stacktrace, realm, context
+    )
 
     assert "type" in entry
     assert isinstance(entry["type"], str)
     assert entry["type"] == "javascript"
 
 
-def create_console_api_message(current_session, inline, text):
-    current_session.execute_script(f"console.log('{text}')")
+async def create_console_api_message(bidi_session, context, text):
+    await bidi_session.script.call_function(
+        function_declaration="""(text) => console.log(text)""",
+        arguments=[{"type": "string", "value": text}],
+        await_promise=False,
+        target=ContextTarget(context["context"]),
+    )
     return text
 
 
-def create_javascript_error(current_session, inline, error_message="foo"):
-    return current_session.execute_script(f"""
-        const script = document.createElement("script");
-        script.append(document.createTextNode(`(() => {{throw new Error('{error_message}')}})()`));
-        document.body.append(script);
-        const err = new Error('{error_message}'); return err.toString()
-    """)
+async def create_console_api_message_for_primitive_value(bidi_session, context, type, value):
+    await bidi_session.script.evaluate(
+        expression=f"""console.{type}({value})""",
+        await_promise=False,
+        target=ContextTarget(context["context"]),
+    )
 
 
-def create_log(current_session, inline, log_type, text="foo"):
+async def create_javascript_error(bidi_session, context, error_message="foo"):
+    str_remote_value = {"type": "string", "value": error_message}
+
+    result = await bidi_session.script.call_function(
+        function_declaration="""(error_message) => {
+            const script = document.createElement("script");
+            script.append(document.createTextNode(`(() => { throw new Error("${error_message}") })()`));
+            document.body.append(script);
+
+            const err = new Error(error_message);
+            return err.toString();
+        }""",
+        arguments=[str_remote_value],
+        await_promise=False,
+        target=ContextTarget(context["context"]),
+    )
+
+    return result["value"]
+
+
+def create_log(bidi_session, context, log_type, text="foo"):
     if log_type == "console_api_log":
-        return create_console_api_message(current_session, inline, text)
+        return create_console_api_message(bidi_session, context, text)
     if log_type == "javascript_error":
-        return create_javascript_error(current_session, inline, text)
+        return create_javascript_error(bidi_session, context, text)

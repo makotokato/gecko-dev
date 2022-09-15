@@ -26,11 +26,11 @@
 #  include "jit/ProcessExecutableMemory.h"
 #endif
 
+#include "jit/FlushICache.h"
 #include "util/Text.h"
 #include "vm/HelperThreads.h"
 #include "vm/Realm.h"
 #include "wasm/WasmBaselineCompile.h"
-#include "wasm/WasmCraneliftCompile.h"
 #include "wasm/WasmGenerator.h"
 #include "wasm/WasmIonCompile.h"
 #include "wasm/WasmOpIter.h"
@@ -76,7 +76,7 @@ uint32_t wasm::ObservedCPUFeatures() {
   return LOONG64 | (jit::GetLOONG64Flags() << ARCH_BITS);
 #elif defined(JS_CODEGEN_RISCV64)
   return 0;
-#elif defined(JS_CODEGEN_NONE)
+#elif defined(JS_CODEGEN_NONE) || defined(JS_CODEGEN_WASM32)
   return 0;
 #else
 #  error "unknown architecture"
@@ -94,14 +94,7 @@ FeatureArgs FeatureArgs::build(JSContext* cx, const FeatureOptions& options) {
   features.sharedMemory =
       wasm::ThreadsAvailable(cx) ? Shareable::True : Shareable::False;
 
-  // See comments in WasmConstants.h regarding the meaning of the wormhole
-  // options.
-  bool wormholeOverride =
-      wasm::SimdWormholeAvailable(cx) && options.simdWormhole;
-  features.simdWormhole = wormholeOverride;
-  if (wormholeOverride) {
-    features.v128 = true;
-  }
+  features.simd = jit::JitSupportsWasmSimd();
   features.intrinsics = options.intrinsics;
 
   return features;
@@ -113,10 +106,6 @@ SharedCompileArgs CompileArgs::build(JSContext* cx,
                                      CompileArgsError* error) {
   bool baseline = BaselineAvailable(cx);
   bool ion = IonAvailable(cx);
-  bool cranelift = CraneliftAvailable(cx);
-
-  // At most one optimizing compiler.
-  MOZ_RELEASE_ASSERT(!(ion && cranelift));
 
   // Debug information such as source view or debug traps will require
   // additional memory and permanently stay in baseline code, so we try to
@@ -130,19 +119,19 @@ SharedCompileArgs CompileArgs::build(JSContext* cx,
   // The <Compiler>Available() predicates should ensure no failure here, but
   // when we're fuzzing we allow inconsistent switches and the check may thus
   // fail.  Let it go to a run-time error instead of crashing.
-  if (debug && (ion || cranelift)) {
+  if (debug && ion) {
     *error = CompileArgsError::NoCompiler;
     return nullptr;
   }
 
-  if (forceTiering && !(baseline && (cranelift || ion))) {
+  if (forceTiering && !(baseline && ion)) {
     // This can happen only in testing, and in this case we don't have a
     // proper way to signal the error, so just silently override the default,
     // instead of adding a skip-if directive to every test using debug/gc.
     forceTiering = false;
   }
 
-  if (!(baseline || ion || cranelift)) {
+  if (!(baseline || ion)) {
     *error = CompileArgsError::NoCompiler;
     return nullptr;
   }
@@ -155,7 +144,6 @@ SharedCompileArgs CompileArgs::build(JSContext* cx,
 
   target->baselineEnabled = baseline;
   target->ionEnabled = ion;
-  target->craneliftEnabled = cranelift;
   target->debugEnabled = debug;
   target->forceTiering = forceTiering;
   target->features = FeatureArgs::build(cx, options);
@@ -172,8 +160,7 @@ SharedCompileArgs CompileArgs::buildAndReport(JSContext* cx,
   if (args) {
     Log(cx, "available wasm compilers: tier1=%s tier2=%s",
         args->baselineEnabled ? "baseline" : "none",
-        args->ionEnabled ? "ion"
-                         : (args->craneliftEnabled ? "cranelift" : "none"));
+        args->ionEnabled ? "ion" : "none");
     return args;
   }
 
@@ -574,6 +561,11 @@ static bool TieringBeneficial(uint32_t codeSize) {
   return true;
 }
 
+// Ensure that we have the non-compiler requirements to tier safely.
+static bool PlatformCanTier() {
+  return CanUseExtraThreads() && jit::CanFlushExecutionContextForAllThreads();
+}
+
 CompilerEnvironment::CompilerEnvironment(const CompileArgs& args)
     : state_(InitialWithArgs), args_(&args) {}
 
@@ -592,20 +584,6 @@ void CompilerEnvironment::computeParameters() {
   state_ = Computed;
 }
 
-// Check that this architecture either:
-// - is cache-coherent, which is the case for most tier-1 architectures we care
-// about.
-// - or has the ability to invalidate the instruction cache of all threads, so
-// background compilation in tiered compilation can be synchronized across all
-// threads.
-static bool IsICacheSafe() {
-#ifdef JS_CODEGEN_ARM64
-  return jit::CanFlushICacheFromBackgroundThreads();
-#else
-  return true;
-#endif
-}
-
 void CompilerEnvironment::computeParameters(Decoder& d) {
   MOZ_ASSERT(!isComputed());
 
@@ -617,16 +595,14 @@ void CompilerEnvironment::computeParameters(Decoder& d) {
   bool baselineEnabled = args_->baselineEnabled;
   bool ionEnabled = args_->ionEnabled;
   bool debugEnabled = args_->debugEnabled;
-  bool craneliftEnabled = args_->craneliftEnabled;
   bool forceTiering = args_->forceTiering;
 
-  bool hasSecondTier = ionEnabled || craneliftEnabled;
+  bool hasSecondTier = ionEnabled;
   MOZ_ASSERT_IF(debugEnabled, baselineEnabled);
   MOZ_ASSERT_IF(forceTiering, baselineEnabled && hasSecondTier);
 
   // Various constraints in various places should prevent failure here.
-  MOZ_RELEASE_ASSERT(baselineEnabled || ionEnabled || craneliftEnabled);
-  MOZ_RELEASE_ASSERT(!(ionEnabled && craneliftEnabled));
+  MOZ_RELEASE_ASSERT(baselineEnabled || ionEnabled);
 
   uint32_t codeSectionSize = 0;
 
@@ -635,8 +611,9 @@ void CompilerEnvironment::computeParameters(Decoder& d) {
     codeSectionSize = range.size;
   }
 
-  if (baselineEnabled && hasSecondTier && CanUseExtraThreads() &&
-      (TieringBeneficial(codeSectionSize) || forceTiering) && IsICacheSafe()) {
+  if (baselineEnabled && hasSecondTier &&
+      (TieringBeneficial(codeSectionSize) || forceTiering) &&
+      PlatformCanTier()) {
     mode_ = CompileMode::Tier1;
     tier_ = Tier::Baseline;
   } else {
@@ -644,8 +621,7 @@ void CompilerEnvironment::computeParameters(Decoder& d) {
     tier_ = hasSecondTier ? Tier::Optimized : Tier::Baseline;
   }
 
-  optimizedBackend_ =
-      craneliftEnabled ? OptimizedBackend::Cranelift : OptimizedBackend::Ion;
+  optimizedBackend_ = OptimizedBackend::Ion;
 
   debug_ = debugEnabled ? DebugEnabled::True : DebugEnabled::False;
 
@@ -746,9 +722,7 @@ bool wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
                         UniqueCharsVector* warnings, Atomic<bool>* cancelled) {
   Decoder d(bytecode, 0, error);
 
-  OptimizedBackend optimizedBackend = args.craneliftEnabled
-                                          ? OptimizedBackend::Cranelift
-                                          : OptimizedBackend::Ion;
+  OptimizedBackend optimizedBackend = OptimizedBackend::Ion;
 
   ModuleEnvironment moduleEnv(args.features);
   if (!DecodeModuleEnvironment(d, &moduleEnv)) {

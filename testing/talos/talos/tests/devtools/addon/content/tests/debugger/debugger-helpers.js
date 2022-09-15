@@ -77,16 +77,19 @@ async function waitUntil(predicate, msg) {
     }, DEBUGGER_POLLING_INTERVAL);
   });
 }
+exports.waitUntil = waitUntil;
 
 function findSource(dbg, url) {
   const sources = dbg.selectors.getSourceList(dbg.getState());
   return sources.find(s => (s.url || "").includes(url));
 }
+exports.findSource = findSource;
 
 function getCM(dbg) {
   const el = dbg.win.document.querySelector(".CodeMirror");
   return el.CodeMirror;
 }
+exports.getCM = getCM;
 
 function waitForText(dbg, url, text) {
   return waitUntil(() => {
@@ -100,12 +103,13 @@ function waitForText(dbg, url, text) {
     return editorText.includes(text);
   }, "text is visible");
 }
+exports.waitForText = waitForText;
 
 function waitForSymbols(dbg) {
   return waitUntil(() => {
     const state = dbg.store.getState();
     const source = dbg.selectors.getSelectedSource(state);
-    return dbg.selectors.hasSymbols(state, source);
+    return dbg.selectors.getSymbols(state, source);
   }, "has file metadata");
 }
 
@@ -192,11 +196,12 @@ function selectSource(dbg, url) {
 
       // wait for symbols -- a flat map of all named variables in a file -- to be calculated.
       // this is a slow process and becomes slower the larger the file is
-      return dbg.selectors.hasSymbols(state, source);
+      return dbg.selectors.getSymbols(state, source);
     },
     "selected source"
   );
 }
+exports.selectSource = selectSource;
 
 function evalInContent(dbg, tab, testFunction) {
   dump(`Run function in content process: ${testFunction}\n`);

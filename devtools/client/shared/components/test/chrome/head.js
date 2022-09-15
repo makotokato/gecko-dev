@@ -15,7 +15,6 @@ var { gDevTools } = require("devtools/client/framework/devtools");
 var { BrowserLoader } = ChromeUtils.import(
   "resource://devtools/shared/loader/browser-loader.js"
 );
-var Services = require("Services");
 var { DevToolsServer } = require("devtools/server/devtools-server");
 var { DevToolsClient } = require("devtools/client/devtools-client");
 var DevToolsUtils = require("devtools/shared/DevToolsUtils");
@@ -40,7 +39,7 @@ const TestRenderer = browserRequire(
   "devtools/client/shared/vendor/react-test-renderer"
 );
 
-var EXAMPLE_URL = "http://example.com/browser/browser/devtools/shared/test/";
+var EXAMPLE_URL = "https://example.com/browser/browser/devtools/shared/test/";
 
 SimpleTest.registerCleanupFunction(() => {
   window._snapshots = null;
@@ -104,7 +103,7 @@ TEST_TREE_VIEW.children = {
 const TEST_TREE_VIEW_INTERFACE = {
   provider: {
     getChildren: x => TEST_TREE_VIEW.children[x.label],
-    hasChildren: x => TEST_TREE_VIEW.children[x.label].length > 0,
+    hasChildren: x => !!TEST_TREE_VIEW.children[x.label].length,
     getLabel: x => x.label,
     getValue: x => x.value,
     getKey: x => x.label,

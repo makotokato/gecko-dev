@@ -40,19 +40,15 @@
 #include "nsIJARURI.h"
 #include "nsIChannel.h"
 #include "nsNetUtil.h"
-#include "nsJSPrincipals.h"
 #include "nsJSUtils.h"
 #include "xpcprivate.h"
 #include "xpcpublic.h"
 #include "nsContentUtils.h"
-#include "nsReadableUtils.h"
 #include "nsXULAppAPI.h"
 #include "WrapperFactory.h"
 #include "JSMEnvironmentProxy.h"
 #include "ModuleEnvironmentProxy.h"
-
-#include "AutoMemMap.h"
-#include "ScriptPreloader-inl.h"
+#include "JSServices.h"
 
 #include "mozilla/scache/StartupCache.h"
 #include "mozilla/scache/StartupCacheUtils.h"
@@ -67,8 +63,6 @@
 #include "mozilla/dom/AutoEntryScript.h"
 #include "mozilla/dom/ReferrerPolicyBinding.h"
 #include "mozilla/dom/ScriptSettings.h"
-#include "mozilla/ResultExtensions.h"
-#include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/Unused.h"
 
 using namespace mozilla;
@@ -270,9 +264,14 @@ NS_IMPL_ISUPPORTS(mozJSModuleLoader, nsIMemoryReporter)
 mozJSModuleLoader::mozJSModuleLoader()
     : mImports(16),
       mInProgressImports(16),
+      mFallbackImports(16),
+#ifdef STARTUP_RECORDER_ENABLED
+      mImportStacks(16),
+#endif
       mLocations(16),
       mInitialized(false),
-      mLoaderGlobal(dom::RootingCx()) {
+      mLoaderGlobal(dom::RootingCx()),
+      mServicesObj(dom::RootingCx()) {
   MOZ_ASSERT(!sSelf, "mozJSModuleLoader should be a singleton");
 }
 
@@ -290,10 +289,25 @@ mozJSModuleLoader::mozJSModuleLoader()
 
 class MOZ_STACK_CLASS ModuleLoaderInfo {
  public:
-  explicit ModuleLoaderInfo(const nsACString& aLocation)
-      : mLocation(&aLocation), mIsModule(false) {}
-  explicit ModuleLoaderInfo(nsIURI* aURI, bool aIsModule)
-      : mLocation(nullptr), mURI(aURI), mIsModule(aIsModule) {}
+  explicit ModuleLoaderInfo(const nsACString& aLocation,
+                            SkipCheckForBrokenURLOrZeroSized aSkipCheck =
+                                SkipCheckForBrokenURLOrZeroSized::No)
+      : mLocation(&aLocation), mIsModule(false), mSkipCheck(aSkipCheck) {}
+  explicit ModuleLoaderInfo(JS::loader::ModuleLoadRequest* aRequest)
+      : mLocation(nullptr),
+        mURI(aRequest->mURI),
+        mIsModule(true),
+        mSkipCheck(aRequest->GetComponentLoadContext()->mSkipCheck) {}
+
+  SkipCheckForBrokenURLOrZeroSized getSkipCheckForBrokenURLOrZeroSized() const {
+    return mSkipCheck;
+  }
+
+  void resetChannelWithCheckForBrokenURLOrZeroSized() {
+    MOZ_ASSERT(mSkipCheck == SkipCheckForBrokenURLOrZeroSized::Yes);
+    mSkipCheck = SkipCheckForBrokenURLOrZeroSized::No;
+    mScriptChannel = nullptr;
+  }
 
   nsIIOService* IOService() {
     MOZ_ASSERT(mIOService);
@@ -325,16 +339,18 @@ class MOZ_STACK_CLASS ModuleLoaderInfo {
   }
   nsresult EnsureScriptChannel() {
     BEGIN_ENSURE(ScriptChannel, IOService, URI);
+
+    // Skip check for missing URL when handling JSM-to-ESM fallback.
     return NS_NewChannel(
         getter_AddRefs(mScriptChannel), mURI,
         nsContentUtils::GetSystemPrincipal(),
         nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
         nsIContentPolicy::TYPE_SCRIPT,
-        nullptr,  // nsICookieJarSettings
-        nullptr,  // aPerformanceStorage
-        nullptr,  // aLoadGroup
-        nullptr,  // aCallbacks
-        nsIRequest::LOAD_NORMAL, mIOService);
+        /* aCookieJarSettings = */ nullptr,
+        /* aPerformanceStorage = */ nullptr,
+        /* aLoadGroup = */ nullptr, /* aCallbacks = */ nullptr,
+        nsIRequest::LOAD_NORMAL, mIOService, /* aSandboxFlags = */ 0,
+        mSkipCheck == SkipCheckForBrokenURLOrZeroSized::Yes);
   }
 
   nsIURI* ResolvedURI() {
@@ -366,6 +382,7 @@ class MOZ_STACK_CLASS ModuleLoaderInfo {
   nsCOMPtr<nsIChannel> mScriptChannel;
   nsCOMPtr<nsIURI> mResolvedURI;
   const bool mIsModule;
+  SkipCheckForBrokenURLOrZeroSized mSkipCheck;
 };
 
 template <typename... Args>
@@ -459,11 +476,29 @@ static size_t SizeOfTableExcludingThis(
   return n;
 }
 
+#ifdef STARTUP_RECORDER_ENABLED
+template <class Key, class Data, class UserData, class Converter>
+static size_t SizeOfStringTableExcludingThis(
+    const nsBaseHashtable<Key, Data, UserData, Converter>& aTable,
+    MallocSizeOf aMallocSizeOf) {
+  size_t n = aTable.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  for (const auto& entry : aTable) {
+    n += entry.GetKey().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+    n += entry.GetData().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+  }
+  return n;
+}
+#endif
+
 size_t mozJSModuleLoader::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) {
   size_t n = aMallocSizeOf(this);
   n += SizeOfTableExcludingThis(mImports, aMallocSizeOf);
   n += mLocations.ShallowSizeOfExcludingThis(aMallocSizeOf);
   n += SizeOfTableExcludingThis(mInProgressImports, aMallocSizeOf);
+  n += SizeOfTableExcludingThis(mFallbackImports, aMallocSizeOf);
+#ifdef STARTUP_RECORDER_ENABLED
+  n += SizeOfStringTableExcludingThis(mImportStacks, aMallocSizeOf);
+#endif
   return n;
 }
 
@@ -541,10 +576,18 @@ void mozJSModuleLoader::CreateLoaderGlobal(JSContext* aCx,
   // been defined so the JS debugger can tell what module the global is
   // for
   RootedObject global(aCx);
+
+#ifdef DEBUG
+  // See mozJSModuleLoader::DefineJSServices.
+  mIsInitializingLoaderGlobal = true;
+#endif
   nsresult rv = xpc::InitClassesWithNewWrappedGlobal(
       aCx, static_cast<nsIGlobalObject*>(backstagePass),
       nsContentUtils::GetSystemPrincipal(), xpc::DONT_FIRE_ONNEWGLOBALHOOK,
       options, &global);
+#ifdef DEBUG
+  mIsInitializingLoaderGlobal = false;
+#endif
   NS_ENSURE_SUCCESS_VOID(rv);
 
   NS_ENSURE_TRUE_VOID(global);
@@ -553,6 +596,14 @@ void mozJSModuleLoader::CreateLoaderGlobal(JSContext* aCx,
 
   JSAutoRealm ar(aCx, global);
   if (!JS_DefineFunctions(aCx, global, gGlobalFun)) {
+    return;
+  }
+
+  if (!CreateJSServices(aCx)) {
+    return;
+  }
+
+  if (!DefineJSServices(aCx, global)) {
     return;
   }
 
@@ -589,8 +640,9 @@ JSObject* mozJSModuleLoader::GetSharedGlobal(JSContext* aCx) {
 
 /* static */
 nsresult mozJSModuleLoader::LoadSingleModuleScript(
-    JSContext* aCx, nsIURI* aURI, MutableHandleScript aScriptOut) {
-  ModuleLoaderInfo info(aURI, true);
+    JSContext* aCx, JS::loader::ModuleLoadRequest* aRequest,
+    MutableHandleScript aScriptOut) {
+  ModuleLoaderInfo info(aRequest);
   nsresult rv = info.EnsureResolvedURI();
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -598,7 +650,7 @@ nsresult mozJSModuleLoader::LoadSingleModuleScript(
   rv = GetSourceFile(info.ResolvedURI(), getter_AddRefs(sourceFile));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  bool realFile = LocationIsRealFile(aURI);
+  bool realFile = LocationIsRealFile(aRequest->mURI);
 
   RootedScript script(aCx);
   return GetScriptForLocation(aCx, info, sourceFile, realFile, aScriptOut);
@@ -955,7 +1007,12 @@ void mozJSModuleLoader::UnloadModules() {
     JS_SetAllNonReservedSlotsToUndefined(mLoaderGlobal);
     mLoaderGlobal = nullptr;
   }
+  mServicesObj = nullptr;
 
+#ifdef STARTUP_RECORDER_ENABLED
+  mImportStacks.Clear();
+#endif
+  mFallbackImports.Clear();
   mInProgressImports.Clear();
   mImports.Clear();
   mLocations.Clear();
@@ -1145,6 +1202,18 @@ nsresult mozJSModuleLoader::GetLoadedJSAndESModules(
   return NS_OK;
 }
 
+#ifdef STARTUP_RECORDER_ENABLED
+void mozJSModuleLoader::RecordImportStack(JSContext* aCx,
+                                          const nsACString& aLocation) {
+  if (!Preferences::GetBool("browser.startup.record", false)) {
+    return;
+  }
+
+  mImportStacks.InsertOrUpdate(
+      aLocation, xpc_PrintJSStack(aCx, false, false, false).get());
+}
+#endif
+
 nsresult mozJSModuleLoader::GetModuleImportStack(const nsACString& aLocation,
                                                  nsACString& retval) {
 #ifdef STARTUP_RECORDER_ENABLED
@@ -1152,13 +1221,12 @@ nsresult mozJSModuleLoader::GetModuleImportStack(const nsACString& aLocation,
   MOZ_ASSERT(mInitialized);
 
   ModuleLoaderInfo info(aLocation);
-
-  ModuleEntry* mod;
-  if (!mImports.Get(info.Key(), &mod)) {
+  auto str = mImportStacks.Lookup(info.Key());
+  if (!str) {
     return NS_ERROR_FAILURE;
   }
 
-  retval = mod->importStack;
+  retval = *str;
   return NS_OK;
 #else
   return NS_ERROR_NOT_IMPLEMENTED;
@@ -1335,7 +1403,14 @@ nsresult mozJSModuleLoader::Import(JSContext* aCx, const nsACString& aLocation,
                     MarkerInnerWindowIdFromJSContext(aCx)),
       aLocation);
 
-  ModuleLoaderInfo info(aLocation);
+  // The JSM may already be ESM-ified, and in that case the load is expected
+  // to fail.  Suppress the error message, the crash, and also the telemetry
+  // event for the failure.
+  //
+  // If this load fails, it will be redirected to `.sys.mjs` URL
+  // in TryFallbackToImportESModule, and if the redirect also fails,
+  // the load is performed again below, with the check enabled.
+  ModuleLoaderInfo info(aLocation, SkipCheckForBrokenURLOrZeroSized::Yes);
 
   nsresult rv;
   ModuleEntry* mod;
@@ -1346,6 +1421,16 @@ nsresult mozJSModuleLoader::Import(JSContext* aCx, const nsACString& aLocation,
     // will likely not succeed and might even crash, so fail here.
     if (PastShutdownPhase(ShutdownPhase::XPCOMShutdownFinal)) {
       return NS_ERROR_ILLEGAL_DURING_SHUTDOWN;
+    }
+
+    // If we've hit file-not-found and fallback was successful,
+    // return the cached data.
+    bool aFound;
+    rv = TryCachedFallbackToImportESModule(
+        aCx, aLocation, aModuleGlobal, aModuleExports, aIgnoreExports, &aFound);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (aFound) {
+      return NS_OK;
     }
 
     newEntry = MakeUnique<ModuleEntry>(RootingContext::get(aCx));
@@ -1398,8 +1483,23 @@ nsresult mozJSModuleLoader::Import(JSContext* aCx, const nsACString& aLocation,
       }
 
       if (rv == NS_ERROR_FILE_NOT_FOUND) {
-        return TryFallbackToImportESModule(aCx, aLocation, aModuleGlobal,
-                                           aModuleExports, aIgnoreExports);
+        rv = TryFallbackToImportESModule(aCx, aLocation, aModuleGlobal,
+                                         aModuleExports, aIgnoreExports);
+
+        if (rv == NS_ERROR_FILE_NOT_FOUND) {
+          // Both JSM and ESM are not found, with the check inside necko
+          // skipped (See EnsureScriptChannel and mSkipCheck).
+          //
+          // Perform the load again with the check enabled, so that
+          // logging, crash-on-autonation, and telemetry event happen.
+          if (NS_SUCCEEDED(info.EnsureURI()) &&
+              !LocationIsRealFile(info.URI())) {
+            info.resetChannelWithCheckForBrokenURLOrZeroSized();
+            (void)ReadScript(info);
+          }
+        }
+
+        return rv;
       }
 
       // Something failed, but we don't know what it is, guess.
@@ -1407,9 +1507,7 @@ nsresult mozJSModuleLoader::Import(JSContext* aCx, const nsACString& aLocation,
     }
 
 #ifdef STARTUP_RECORDER_ENABLED
-    if (Preferences::GetBool("browser.startup.record", false)) {
-      newEntry->importStack = xpc_PrintJSStack(aCx, false, false, false).get();
-    }
+    RecordImportStack(aCx, aLocation);
 #endif
 
     mod = newEntry.get();
@@ -1459,7 +1557,16 @@ nsresult mozJSModuleLoader::TryFallbackToImportESModule(
   }
 
   JS::RootedObject moduleNamespace(aCx);
-  nsresult rv = ImportESModule(aCx, mjsLocation, &moduleNamespace);
+  // The fallback can fail if the URL was not for ESMified JSM.  Suppress the
+  // error message, the crash, and also the telemetry event for the failure.
+  nsresult rv = ImportESModule(aCx, mjsLocation, &moduleNamespace,
+                               SkipCheckForBrokenURLOrZeroSized::Yes);
+  if (rv == NS_ERROR_FILE_NOT_FOUND) {
+    // The error for ESModule shouldn't be exposed if the file does not exist.
+    if (JS_IsExceptionPending(aCx)) {
+      JS_ClearPendingException(aCx);
+    }
+  }
   NS_ENSURE_SUCCESS(rv, rv);
 
   JS::RootedObject globalProxy(aCx);
@@ -1476,7 +1583,15 @@ nsresult mozJSModuleLoader::TryFallbackToImportESModule(
     if (!globalProxy) {
       return NS_ERROR_FAILURE;
     }
+
+    // Cache the redirect to use in subsequent imports.
+    ModuleLoaderInfo info(aLocation);
+    auto newEntry = MakeUnique<FallbackModuleEntry>(RootingContext::get(aCx));
+    newEntry->globalProxy = globalProxy;
+    newEntry->moduleNamespace = moduleNamespace;
+    mFallbackImports.InsertOrUpdate(info.Key(), std::move(newEntry));
   }
+
   if (!JS_WrapObject(aCx, &globalProxy)) {
     return NS_ERROR_FAILURE;
   }
@@ -1493,9 +1608,40 @@ nsresult mozJSModuleLoader::TryFallbackToImportESModule(
   return NS_OK;
 }
 
+nsresult mozJSModuleLoader::TryCachedFallbackToImportESModule(
+    JSContext* aCx, const nsACString& aLocation,
+    JS::MutableHandleObject aModuleGlobal,
+    JS::MutableHandleObject aModuleExports, bool aIgnoreExports, bool* aFound) {
+  ModuleLoaderInfo info(aLocation);
+  FallbackModuleEntry* fallbackMod;
+  if (!mFallbackImports.Get(info.Key(), &fallbackMod)) {
+    *aFound = false;
+    return NS_OK;
+  }
+
+  JS::RootedObject globalProxy(aCx, fallbackMod->globalProxy);
+  if (!JS_WrapObject(aCx, &globalProxy)) {
+    return NS_ERROR_FAILURE;
+  }
+  aModuleGlobal.set(globalProxy);
+
+  if (!aIgnoreExports) {
+    JS::RootedObject exports(aCx, fallbackMod->moduleNamespace);
+    if (!JS_WrapObject(aCx, &exports)) {
+      return NS_ERROR_FAILURE;
+    }
+    aModuleExports.set(exports);
+  }
+
+  *aFound = true;
+  return NS_OK;
+}
+
 nsresult mozJSModuleLoader::ImportESModule(
     JSContext* aCx, const nsACString& aLocation,
-    JS::MutableHandleObject aModuleNamespace) {
+    JS::MutableHandleObject aModuleNamespace,
+    SkipCheckForBrokenURLOrZeroSized
+        aSkipCheck /* = SkipCheckForBrokenURLOrZeroSized::No */) {
   using namespace JS::loader;
 
   MOZ_ASSERT(mModuleLoader);
@@ -1504,7 +1650,7 @@ nsresult mozJSModuleLoader::ImportESModule(
   nsCString str(aLocation);
 
   AUTO_PROFILER_MARKER_TEXT(
-      "ChromeUtils.importModule", JS,
+      "ChromeUtils.importESModule", JS,
       MarkerOptions(MarkerStack::Capture(),
                     MarkerInnerWindowIdFromJSContext(aCx)),
       aLocation);
@@ -1519,6 +1665,12 @@ nsresult mozJSModuleLoader::ImportESModule(
   nsresult rv = NS_NewURI(getter_AddRefs(uri), aLocation);
   NS_ENSURE_SUCCESS(rv, rv);
 
+#ifdef STARTUP_RECORDER_ENABLED
+  if (!mModuleLoader->IsModuleFetched(uri)) {
+    RecordImportStack(aCx, aLocation);
+  }
+#endif
+
   nsCOMPtr<nsIPrincipal> principal =
       mModuleLoader->GetGlobalObject()->PrincipalOrNull();
   MOZ_ASSERT(principal);
@@ -1527,6 +1679,7 @@ nsresult mozJSModuleLoader::ImportESModule(
       CORS_NONE, dom::ReferrerPolicy::No_referrer, principal);
 
   RefPtr<ComponentLoadContext> context = new ComponentLoadContext();
+  context->mSkipCheck = aSkipCheck;
 
   RefPtr<VisitedURLSet> visitedSet =
       ModuleLoadRequest::NewVisitedSetForTopLevelImport(uri);
@@ -1538,12 +1691,25 @@ nsresult mozJSModuleLoader::ImportESModule(
       /* aIsDynamicImport = */ false, mModuleLoader, visitedSet, nullptr);
 
   rv = request->StartModuleLoad();
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+    mModuleLoader->MaybeReportLoadError(aCx);
+    return rv;
+  }
 
   rv = mModuleLoader->ProcessRequests();
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+    mModuleLoader->MaybeReportLoadError(aCx);
+    return rv;
+  }
 
   MOZ_ASSERT(request->IsReadyToRun());
+  if (!request->mModuleScript) {
+    mModuleLoader->MaybeReportLoadError(aCx);
+    return NS_ERROR_FAILURE;
+  }
+
+  // All modules are loaded. MaybeReportLoadError isn't necessary from here.
+
   if (!request->InstantiateModuleGraph()) {
     return NS_ERROR_FAILURE;
   }
@@ -1579,6 +1745,41 @@ nsresult mozJSModuleLoader::Unload(const nsACString& aLocation) {
   // until UnloadModules is called. So be it.
 
   return NS_OK;
+}
+
+bool mozJSModuleLoader::CreateJSServices(JSContext* aCx) {
+  JSObject* services = NewJSServices(aCx);
+  if (!services) {
+    return false;
+  }
+
+  mServicesObj = services;
+  return true;
+}
+
+bool mozJSModuleLoader::DefineJSServices(JSContext* aCx,
+                                         JS::Handle<JSObject*> aGlobal) {
+  if (!mServicesObj) {
+    // This function is called whenever creating a new global that needs
+    // `Services`, including the loader's shared global.
+    //
+    // This function is no-op if it's called during creating the loader's
+    // shared global.
+    //
+    // See also  CreateAndDefineJSServices.
+    MOZ_ASSERT(!mLoaderGlobal);
+    MOZ_ASSERT(mIsInitializingLoaderGlobal);
+    return true;
+  }
+
+  JS::Rooted<JS::Value> services(aCx, ObjectValue(*mServicesObj));
+  if (!JS_WrapValue(aCx, &services)) {
+    return false;
+  }
+
+  JS::Rooted<JS::PropertyKey> servicesId(
+      aCx, XPCJSContext::Get()->GetStringID(XPCJSContext::IDX_SERVICES));
+  return JS_DefinePropertyById(aCx, aGlobal, servicesId, services, 0);
 }
 
 size_t mozJSModuleLoader::ModuleEntry::SizeOfIncludingThis(

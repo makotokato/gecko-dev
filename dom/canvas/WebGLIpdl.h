@@ -27,11 +27,10 @@ class RaiiShmem final {
 
  public:
   /// Returns zeroed data.
-  static RaiiShmem Alloc(
-      mozilla::ipc::IProtocol* const allocator, const size_t size,
-      const mozilla::ipc::SharedMemory::SharedMemoryType type) {
+  static RaiiShmem Alloc(mozilla::ipc::IProtocol* const allocator,
+                         const size_t size) {
     mozilla::ipc::Shmem shmem;
-    if (!allocator->AllocShmem(size, type, &shmem)) return {};
+    if (!allocator->AllocShmem(size, &shmem)) return {};
     return {allocator, shmem};
   }
 
@@ -248,7 +247,10 @@ struct ParamTraits<mozilla::WebGLContextOptions> final
   using T = mozilla::WebGLContextOptions;
 
   static bool Validate(const T& val) {
-    return ValidateParam(val.powerPreference) && ValidateParam(val.colorSpace);
+    bool ok = true;
+    ok &= ValidateParam(val.powerPreference);
+    ok &= ValidateParam(val.colorSpace);
+    return ok;
   }
 };
 

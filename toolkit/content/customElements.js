@@ -21,9 +21,6 @@
   const MozElements = {};
   window.MozElements = MozElements;
 
-  const { Services } = ChromeUtils.import(
-    "resource://gre/modules/Services.jsm"
-  );
   const { AppConstants } = ChromeUtils.import(
     "resource://gre/modules/AppConstants.jsm"
   );
@@ -483,11 +480,6 @@
        *      return `<hbox class="example"`;
        *    }
        *
-       *    static get entities() {
-       *      // Optional field for parseXULToFragment
-       *      return `["chrome://global/locale/notification.dtd"]`;
-       *    }
-       *
        *    connectedCallback() {
        *      this.appendChild(this.constructor.fragment);
        *    }
@@ -689,7 +681,7 @@
         get(target, prop, receiver) {
           let propOrMethod = target[prop];
           if (typeof propOrMethod == "function") {
-            if (propOrMethod instanceof MozQueryInterface) {
+            if (MozQueryInterface.isInstance(propOrMethod)) {
               return Reflect.get(target, prop, receiver);
             }
             return function(...args) {

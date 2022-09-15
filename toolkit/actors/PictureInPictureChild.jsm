@@ -17,7 +17,6 @@ ChromeUtils.defineModuleGetter(
   "DeferredTask",
   "resource://gre/modules/DeferredTask.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 ChromeUtils.defineModuleGetter(
   lazy,
   "KEYBOARD_CONTROLS",
@@ -48,8 +47,8 @@ const { WebVTT } = ChromeUtils.import("resource://gre/modules/vtt.jsm");
 const { setTimeout, clearTimeout } = ChromeUtils.import(
   "resource://gre/modules/Timer.jsm"
 );
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
@@ -1665,6 +1664,7 @@ class PictureInPictureChild extends JSWindowActorChild {
         break;
       }
       case "emptied": {
+        this.isSubtitlesEnabled = false;
         if (this.emptiedTimeout) {
           clearTimeout(this.emptiedTimeout);
           this.emptiedTimeout = null;
@@ -1780,6 +1780,22 @@ class PictureInPictureChild extends JSWindowActorChild {
       }
       case "PictureInPicture:Unmute": {
         this.unmute();
+        break;
+      }
+      case "PictureInPicture:SeekForward":
+      case "PictureInPicture:SeekBackward": {
+        let selectedTime;
+        let video = this.getWeakVideo();
+        let currentTime = this.videoWrapper.getCurrentTime(video);
+        if (message.name == "PictureInPicture:SeekBackward") {
+          selectedTime = currentTime - SEEK_TIME_SECS;
+          selectedTime = selectedTime >= 0 ? selectedTime : 0;
+        } else {
+          const maxtime = this.videoWrapper.getDuration(video);
+          selectedTime = currentTime + SEEK_TIME_SECS;
+          selectedTime = selectedTime <= maxtime ? selectedTime : maxtime;
+        }
+        this.videoWrapper.setCurrentTime(video, selectedTime);
         break;
       }
       case "PictureInPicture:KeyDown": {
@@ -2293,6 +2309,8 @@ class PictureInPictureChild extends JSWindowActorChild {
             ?.length).toString(),
         }
       );
+    } else {
+      this.sendAsyncMessage("PictureInPicture:HideSubtitlesButton");
     }
     this.#subtitlesEnabled = val;
   }

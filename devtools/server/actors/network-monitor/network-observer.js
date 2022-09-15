@@ -13,8 +13,6 @@
 const DEBUG_PLATFORM_EVENTS = false;
 
 const { Cc, Ci } = require("chrome");
-const Services = require("Services");
-const ChromeUtils = require("ChromeUtils");
 
 loader.lazyRequireGetter(
   this,
@@ -97,6 +95,9 @@ const HTTP_TEMPORARY_REDIRECT = 307;
  *          given the initial network request information as an argument.
  *          onNetworkEvent() must return an object which holds several add*()
  *          methods which are used to add further network request/response information.
+ *        - shouldIgnoreChannel(channel) [optional]
+ *          In additional to `NetworkUtils.matchRequest`, allow to ignore even more
+ *          requests.
  */
 function NetworkObserver(filters, owner) {
   this.filters = filters;
@@ -184,7 +185,7 @@ NetworkObserver.prototype = {
   /**
    * The network monitor initializer.
    */
-  init: function() {
+  init() {
     this.responsePipeSegmentSize = Services.prefs.getIntPref(
       "network.buffer.cache.size"
     );
@@ -229,19 +230,38 @@ NetworkObserver.prototype = {
     this._throttler = null;
   },
 
-  _getThrottler: function() {
+  _getThrottler() {
     if (this.throttleData !== null && this._throttler === null) {
       this._throttler = new NetworkThrottleManager(this.throttleData);
     }
     return this._throttler;
   },
 
+  /**
+   * Given a network channel, should this observer ignore this request
+   * based on the filters passed as constructor arguments.
+   *
+   * @param {nsIHttpChannel/nsIWebSocketChannel} channel
+   *        The request that should be inspected or ignored.
+   * @return {boolean}
+   *         Return true, if the request should be ignored.
+   */
+  _shouldIgnoreChannel(channel) {
+    if (
+      typeof this.owner.shouldIgnoreChannel == "function" &&
+      this.owner.shouldIgnoreChannel(channel)
+    ) {
+      return true;
+    }
+    return !NetworkUtils.matchRequest(channel, this.filters);
+  },
+
   _decodedCertificateCache: null,
 
-  _serviceWorkerRequest: function(subject, topic, data) {
+  _serviceWorkerRequest(subject, topic, data) {
     const channel = subject.QueryInterface(Ci.nsIHttpChannel);
 
-    if (!NetworkUtils.matchRequest(channel, this.filters)) {
+    if (this._shouldIgnoreChannel(channel)) {
       return;
     }
 
@@ -258,7 +278,7 @@ NetworkObserver.prototype = {
    * channels for which asyncOpen has synchronously failed.  This is the only
    * place to catch early security check failures.
    */
-  _httpFailedOpening: function(subject, topic) {
+  _httpFailedOpening(subject, topic) {
     if (
       !this.owner ||
       topic != "http-on-failed-opening-request" ||
@@ -268,7 +288,7 @@ NetworkObserver.prototype = {
     }
 
     const channel = subject.QueryInterface(Ci.nsIHttpChannel);
-    if (!NetworkUtils.matchRequest(channel, this.filters)) {
+    if (this._shouldIgnoreChannel(channel)) {
       return;
     }
 
@@ -285,7 +305,7 @@ NetworkObserver.prototype = {
     this._httpResponseExaminer(subject, topic, blockedCode);
   },
 
-  _httpStopRequest: function(subject, topic) {
+  _httpStopRequest(subject, topic) {
     if (
       !this.owner ||
       topic != "http-on-stop-request" ||
@@ -295,7 +315,7 @@ NetworkObserver.prototype = {
     }
 
     const channel = subject.QueryInterface(Ci.nsIHttpChannel);
-    if (!NetworkUtils.matchRequest(channel, this.filters)) {
+    if (this._shouldIgnoreChannel(channel)) {
       return;
     }
 
@@ -359,7 +379,7 @@ NetworkObserver.prototype = {
    * @param string topic
    * @returns void
    */
-  _httpResponseExaminer: function(subject, topic, blockedReason) {
+  _httpResponseExaminer(subject, topic, blockedReason) {
     // The httpResponseExaminer is used to retrieve the uncached response
     // headers. The data retrieved is stored in openResponses. The
     // NetworkResponseListener is responsible with updating the httpActivity
@@ -380,7 +400,7 @@ NetworkObserver.prototype = {
     subject.QueryInterface(Ci.nsIClassifiedChannel);
     const channel = subject.QueryInterface(Ci.nsIHttpChannel);
 
-    if (!NetworkUtils.matchRequest(channel, this.filters)) {
+    if (this._shouldIgnoreChannel(channel)) {
       return;
     }
 
@@ -394,7 +414,7 @@ NetworkObserver.prototype = {
 
     const response = {
       id: gSequenceId(),
-      channel: channel,
+      channel,
       headers: [],
       cookies: [],
     };
@@ -403,12 +423,12 @@ NetworkObserver.prototype = {
 
     if (!blockedOrFailed) {
       channel.visitOriginalResponseHeaders({
-        visitHeader: function(name, value) {
+        visitHeader(name, value) {
           const lowerName = name.toLowerCase();
           if (lowerName == "set-cookie") {
             setCookieHeaders.push(value);
           }
-          response.headers.push({ name: name, value: value });
+          response.headers.push({ name, value });
         },
       });
 
@@ -458,7 +478,7 @@ NetworkObserver.prototype = {
       if (!httpActivity.owner) {
         httpActivity = this._createNetworkEvent(channel, {
           fromCache: !fromServiceWorker,
-          fromServiceWorker: fromServiceWorker,
+          fromServiceWorker,
         });
       }
 
@@ -505,18 +525,19 @@ NetworkObserver.prototype = {
    * @param nsIHttpChannel aSubject
    * @returns void
    */
-  _httpModifyExaminer: function(subject) {
+  _httpModifyExaminer(subject) {
     const throttler = this._getThrottler();
     if (throttler) {
       const channel = subject.QueryInterface(Ci.nsIHttpChannel);
-      if (NetworkUtils.matchRequest(channel, this.filters)) {
-        logPlatformEvent("http-on-modify-request", channel);
-
-        // Read any request body here, before it is throttled.
-        const httpActivity = this.createOrGetActivityObject(channel);
-        this._onRequestBodySent(httpActivity);
-        throttler.manageUpload(channel);
+      if (this._shouldIgnoreChannel(channel)) {
+        return;
       }
+      logPlatformEvent("http-on-modify-request", channel);
+
+      // Read any request body here, before it is throttled.
+      const httpActivity = this.createOrGetActivityObject(channel);
+      this._onRequestBodySent(httpActivity);
+      throttler.manageUpload(channel);
     }
   },
 
@@ -525,7 +546,7 @@ NetworkObserver.prototype = {
    * is required by a particular http activity event.  Arguments are
    * the same as for observeActivity.
    */
-  _dispatchActivity: function(
+  _dispatchActivity(
     httpActivity,
     channel,
     activityType,
@@ -686,7 +707,7 @@ NetworkObserver.prototype = {
    * - Set a few attributes on http activity object
    * - Register listener to record response content
    */
-  _createNetworkEvent: function(
+  _createNetworkEvent(
     channel,
     {
       timestamp,
@@ -748,8 +769,8 @@ NetworkObserver.prototype = {
    * @param string extraStringData
    * @return void
    */
-  _onRequestHeader: function(channel, timestamp, extraStringData) {
-    if (!NetworkUtils.matchRequest(channel, this.filters)) {
+  _onRequestHeader(channel, timestamp, extraStringData) {
+    if (this._shouldIgnoreChannel(channel)) {
       return;
     }
 
@@ -764,7 +785,7 @@ NetworkObserver.prototype = {
    * @return object
    *        The HTTP activity object, or null if it is not found.
    */
-  _findActivityObject: function(channel) {
+  _findActivityObject(channel) {
     return this.openRequests.getChannelById(channel.channelId);
   },
 
@@ -782,7 +803,7 @@ NetworkObserver.prototype = {
    * @return object
    *         The new HTTP activity object.
    */
-  createOrGetActivityObject: function(channel) {
+  createOrGetActivityObject(channel) {
     let httpActivity = this._findActivityObject(channel);
     if (!httpActivity) {
       const win = NetworkHelper.getWindowForRequest(channel);
@@ -790,9 +811,9 @@ NetworkObserver.prototype = {
 
       httpActivity = {
         id: gSequenceId(),
-        channel: channel,
+        channel,
         // see _onRequestBodySent()
-        charset: charset,
+        charset,
         sentBody: null,
         url: channel.URI.spec,
         headersSize: null,
@@ -869,7 +890,7 @@ NetworkObserver.prototype = {
    * @param object httpActivity
    *        The HTTP activity object we are tracking.
    */
-  _setupResponseListener: function(httpActivity, fromCache) {
+  _setupResponseListener(httpActivity, fromCache) {
     const channel = httpActivity.channel;
     channel.QueryInterface(Ci.nsITraceableChannel);
 
@@ -918,7 +939,7 @@ NetworkObserver.prototype = {
    * @param object httpActivity
    *        The HTTP activity object we are working with.
    */
-  _onRequestBodySent: function(httpActivity) {
+  _onRequestBodySent(httpActivity) {
     // Return early if we don't need the request body, or if we've
     // already found it.
     if (httpActivity.discardRequestBody || httpActivity.sentBody !== null) {
@@ -964,7 +985,7 @@ NetworkObserver.prototype = {
    * @param string extraStringData
    *        The uncached response headers.
    */
-  _onResponseHeader: function(httpActivity, extraStringData) {
+  _onResponseHeader(httpActivity, extraStringData) {
     // extraStringData contains the uncached response headers. The first line
     // contains the response status (e.g. HTTP/1.1 200 OK).
     //
@@ -1027,7 +1048,7 @@ NetworkObserver.prototype = {
    * @param object httpActivity
    *        The HTTP activity object we work with.
    */
-  _onTransactionClose: function(httpActivity) {
+  _onTransactionClose(httpActivity) {
     if (httpActivity.owner) {
       const result = this._setupHarTimings(httpActivity);
       const serverTimings = this._extractServerTimings(httpActivity.channel);
@@ -1041,7 +1062,7 @@ NetworkObserver.prototype = {
     }
   },
 
-  _getBlockedTiming: function(timings) {
+  _getBlockedTiming(timings) {
     if (timings.STATUS_RESOLVING && timings.STATUS_CONNECTING_TO) {
       return timings.STATUS_RESOLVING.first - timings.REQUEST_HEADER.first;
     } else if (timings.STATUS_SENDING_TO) {
@@ -1051,7 +1072,7 @@ NetworkObserver.prototype = {
     return -1;
   },
 
-  _getDnsTiming: function(timings) {
+  _getDnsTiming(timings) {
     if (timings.STATUS_RESOLVING && timings.STATUS_RESOLVED) {
       return timings.STATUS_RESOLVED.last - timings.STATUS_RESOLVING.first;
     }
@@ -1059,7 +1080,7 @@ NetworkObserver.prototype = {
     return -1;
   },
 
-  _getConnectTiming: function(timings) {
+  _getConnectTiming(timings) {
     if (timings.STATUS_CONNECTING_TO && timings.STATUS_CONNECTED_TO) {
       return (
         timings.STATUS_CONNECTED_TO.last - timings.STATUS_CONNECTING_TO.first
@@ -1069,7 +1090,7 @@ NetworkObserver.prototype = {
     return -1;
   },
 
-  _getReceiveTiming: function(timings) {
+  _getReceiveTiming(timings) {
     if (timings.RESPONSE_START && timings.RESPONSE_COMPLETE) {
       return timings.RESPONSE_COMPLETE.last - timings.RESPONSE_START.first;
     }
@@ -1077,7 +1098,7 @@ NetworkObserver.prototype = {
     return -1;
   },
 
-  _getWaitTiming: function(timings) {
+  _getWaitTiming(timings) {
     if (timings.RESPONSE_START) {
       return (
         timings.RESPONSE_START.first -
@@ -1088,7 +1109,7 @@ NetworkObserver.prototype = {
     return -1;
   },
 
-  _getSslTiming: function(timings) {
+  _getSslTiming(timings) {
     if (timings.STATUS_TLS_STARTING && timings.STATUS_TLS_ENDING) {
       return timings.STATUS_TLS_ENDING.last - timings.STATUS_TLS_STARTING.first;
     }
@@ -1096,7 +1117,7 @@ NetworkObserver.prototype = {
     return -1;
   },
 
-  _getSendTiming: function(timings) {
+  _getSendTiming(timings) {
     if (timings.STATUS_SENDING_TO) {
       return timings.STATUS_SENDING_TO.last - timings.STATUS_SENDING_TO.first;
     } else if (timings.REQUEST_HEADER && timings.REQUEST_BODY_SENT) {
@@ -1106,7 +1127,7 @@ NetworkObserver.prototype = {
     return -1;
   },
 
-  _getDataFromTimedChannel: function(timedChannel) {
+  _getDataFromTimedChannel(timedChannel) {
     const lookUpArr = [
       "tcpConnectEndTime",
       "connectStartTime",
@@ -1141,7 +1162,7 @@ NetworkObserver.prototype = {
     }, {});
   },
 
-  _getSecureConnectionStartTimeInfo: function(timings) {
+  _getSecureConnectionStartTimeInfo(timings) {
     let secureConnectionStartTime = 0;
     let secureConnectionStartTimeRelative = false;
 
@@ -1164,7 +1185,7 @@ NetworkObserver.prototype = {
     };
   },
 
-  _getStartSendingTimeInfo: function(timings, connectStartTimeTc) {
+  _getStartSendingTimeInfo(timings, connectStartTimeTc) {
     let startSendingTime = 0;
     let startSendingTimeRelative = false;
 
@@ -1202,7 +1223,7 @@ NetworkObserver.prototype = {
    *         - timings - the HAR timings object.
    */
 
-  _setupHarTimings: function(httpActivity, fromCache) {
+  _setupHarTimings(httpActivity, fromCache) {
     if (fromCache) {
       // If it came from the browser cache, we have no timing
       // information and these should all be 0
@@ -1336,7 +1357,7 @@ NetworkObserver.prototype = {
     };
   },
 
-  _extractServerTimings: function(channel) {
+  _extractServerTimings(channel) {
     if (!channel || !channel.serverTiming) {
       return null;
     }
@@ -1355,11 +1376,11 @@ NetworkObserver.prototype = {
     return serverTimings;
   },
 
-  _convertTimeToMs: function(timing) {
+  _convertTimeToMs(timing) {
     return Math.max(Math.round(timing / 1000), -1);
   },
 
-  _calculateOffsetAndTotalTime: function(
+  _calculateOffsetAndTotalTime(
     harTimings,
     secureConnectionStartTime,
     startSendingTimeRelative,
@@ -1405,11 +1426,11 @@ NetworkObserver.prototype = {
 
     return {
       total: totalTime,
-      offsets: offsets,
+      offsets,
     };
   },
 
-  _sendRequestBody: function(httpActivity) {
+  _sendRequestBody(httpActivity) {
     if (httpActivity.sentBody !== null) {
       const limit = Services.prefs.getIntPref(
         "devtools.netmonitor.requestBodyLimit"
@@ -1420,17 +1441,25 @@ NetworkObserver.prototype = {
       }
       httpActivity.owner.addRequestPostData({
         text: httpActivity.sentBody,
-        size: size,
+        size,
       });
       httpActivity.sentBody = null;
     }
+  },
+
+  /*
+   * Clears all open requests and responses
+   */
+  clear() {
+    this.openRequests.clear();
+    this.openResponses.clear();
   },
 
   /**
    * Suspend observer activity. This is called when the Network monitor actor stops
    * listening.
    */
-  destroy: function() {
+  destroy() {
     if (Services.appinfo.processType != Ci.nsIXULRuntime.PROCESS_TYPE_CONTENT) {
       gActivityDistributor.removeObserver(this);
       Services.obs.removeObserver(
@@ -1465,6 +1494,7 @@ NetworkObserver.prototype = {
     this.filters = null;
     this._throttler = null;
     this._decodedCertificateCache.clear();
+    this.clear();
   },
 };
 

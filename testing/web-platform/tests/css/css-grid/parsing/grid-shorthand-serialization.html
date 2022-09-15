@@ -12,20 +12,61 @@
 <body>
 <script>
   let element = document.createElement('div');
-  const autoFlowRows = "auto-flow auto / 100px 100px";
-  element.style.grid = autoFlowRows;
   test(() => {
+    const autoFlowRows = "auto-flow auto / 100px 100px";
+    element.style.grid = autoFlowRows;
     assert_equals(element.style.grid, autoFlowRows, autoFlowRows + " must be serialized via `grid` property");
     assert_equals(element.style.cssText, "grid: " + autoFlowRows + ";", autoFlowRows + " must be serialized via `cssText`");
     assert_equals(element.style.gridTemplateAreas, "none");
   }, "Serialization without grid-template-areas");
 
-  const gridTemplateAreasValue = '"one two" "three four"';
-  element.style.gridTemplateAreas = gridTemplateAreasValue;
   test(() => {
+    const gridTemplateAreasValue = '"one two" "three four"';
+    element.style.gridTemplateAreas = gridTemplateAreasValue;
     assert_equals(element.style.grid, "", "grid shorthand must not be serialized when grid-template-areas and grid-auto-flow/rows are both set");
     assert_equals(element.style.gridTemplateAreas, gridTemplateAreasValue);
     assert_equals(element.style.gridAutoFlow, "row");
     assert_equals(element.style.gridAutoRows, "auto");
   }, "Serialization with grid-template-areas");
+
+  test(() => {
+    const template = "30px 40px / 50px 60px";
+    element.style.grid = template;
+    element.style.gridAutoFlow = "column";
+
+    assert_equals(element.style.grid, "", "grid shorthand must not be serialized when it doesn't roundtrip");
+    assert_equals(element.style.gridTemplate, template);
+    assert_equals(element.style.gridAutoFlow, "column");
+    let expected_declarations = [
+      "grid-template: 30px 40px / 50px 60px;",
+      "grid-auto-rows: auto;",
+      "grid-auto-columns: auto;",
+      "grid-auto-flow: column;"
+    ];
+    let cssText = element.style.cssText;
+    expected_declarations.forEach(decl => {
+      assert_true(cssText.indexOf(decl) !== -1, `cssText ('${cssText}') must contain '${decl}'`);
+    });
+  }, "Serialization with grid-auto-flow");
+
+  test(() => {
+    let element = document.createElement('div');
+    const shorthand = "auto-flow / 10px";
+    element.style.grid = shorthand;
+    element.style.gridTemplateRows = "20px";
+
+    assert_equals(element.style.grid, "", "grid shorthand must not be serialized when it doesn't roundtrip");
+    assert_equals(element.style.gridTemplate, "20px / 10px");
+
+    let expected_declarations = [
+      "grid-template: 20px / 10px;",
+      "grid-auto-flow: row;",
+      "grid-auto-columns: auto;",
+      "grid-auto-rows: auto;",
+    ];
+    let cssText = element.style.cssText;
+    expected_declarations.forEach(decl => {
+      assert_true(cssText.indexOf(decl) !== -1, `cssText ('${cssText}') must contain '${decl}'`);
+    });
+  }, "Serialization with grid-auto-flow and template rows/columns");
 </script>

@@ -10,10 +10,9 @@ const { GeckoViewModule } = ChromeUtils.import(
   "resource://gre/modules/GeckoViewModule.jsm"
 );
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const lazy = {};
 
@@ -44,6 +43,10 @@ const DISPLAY_MODE_BROWSER = 0;
 const DISPLAY_MODE_MINIMAL_UI = 1;
 const DISPLAY_MODE_STANDALONE = 2;
 const DISPLAY_MODE_FULLSCREEN = 3;
+
+// This needs to match GeckoSessionSettings.java
+const VIEWPORT_MODE_MOBILE = 0;
+const VIEWPORT_MODE_DESKTOP = 1;
 
 // Handles GeckoSession settings.
 class GeckoViewSettings extends GeckoViewModule {
@@ -77,6 +80,7 @@ class GeckoViewSettings extends GeckoViewModule {
     this.sessionContextId = settings.sessionContextId;
     this.suspendMediaWhenInactive = settings.suspendMediaWhenInactive;
     this.allowJavascript = settings.allowJavascript;
+    this.viewportMode = settings.viewportMode;
     this.useTrackingProtection = !!settings.useTrackingProtection;
 
     // When the page is loading from the main process (e.g. from an extension
@@ -110,6 +114,11 @@ class GeckoViewSettings extends GeckoViewModule {
 
   set useTrackingProtection(aUse) {
     this.browsingContext.useTrackingProtection = aUse;
+  }
+
+  set viewportMode(aViewportMode) {
+    this.browsingContext.forceDesktopViewport =
+      aViewportMode == VIEWPORT_MODE_DESKTOP;
   }
 
   get userAgentMode() {

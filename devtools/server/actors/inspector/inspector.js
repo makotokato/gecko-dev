@@ -50,8 +50,6 @@
  * we connect it up through its parents.
  */
 
-const Services = require("Services");
-
 const { setTimeout } = require("resource://gre/modules/Timer.jsm");
 const protocol = require("devtools/shared/protocol");
 const { LongStringActor } = require("devtools/server/actors/string");
@@ -102,7 +100,7 @@ const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
  * inspector-related actors, including the walker.
  */
 exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
-  initialize: function(conn, targetActor) {
+  initialize(conn, targetActor) {
     protocol.Actor.prototype.initialize.call(this, conn);
     this.targetActor = targetActor;
 
@@ -111,7 +109,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
     this.destroyEyeDropper = this.destroyEyeDropper.bind(this);
   },
 
-  destroy: function() {
+  destroy() {
     protocol.Actor.prototype.destroy.call(this);
     this.destroyEyeDropper();
 
@@ -126,7 +124,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
     return this.targetActor.window;
   },
 
-  getWalker: function(options = {}) {
+  getWalker(options = {}) {
     if (this._walkerPromise) {
       return this._walkerPromise;
     }
@@ -172,7 +170,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
     return this._walkerPromise;
   },
 
-  getPageStyle: function() {
+  getPageStyle() {
     if (this._pageStylePromise) {
       return this._pageStylePromise;
     }
@@ -185,7 +183,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
     return this._pageStylePromise;
   },
 
-  getCompatibility: function() {
+  getCompatibility() {
     if (this._compatibility) {
       return this._compatibility;
     }
@@ -206,7 +204,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
    * @return {Highlighter} The highlighter actor instance or null if the
    * typeName passed doesn't match any available highlighter
    */
-  getHighlighterByType: async function(typeName) {
+  async getHighlighterByType(typeName) {
     if (isTypeRegistered(typeName)) {
       const highlighterActor = CustomHighlighterActor(this, typeName);
       if (highlighterActor.instance.isReady) {
@@ -229,7 +227,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
    * is important as the resizing occurs server-side so that image-data being
    * transfered in the longstring back to the client will be that much smaller
    */
-  getImageDataFromURL: function(url, maxDim) {
+  getImageDataFromURL(url, maxDim) {
     const img = new this.window.Image();
     img.src = url;
 
@@ -250,7 +248,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
    * used instead.
    * @return {String} url.
    */
-  resolveRelativeURL: function(url, node) {
+  resolveRelativeURL(url, node) {
     const document = InspectorActorUtils.isNodeDead(node)
       ? this.window.document
       : InspectorActorUtils.nodeDocument(node.rawNode);
@@ -267,7 +265,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
    * Create an instance of the eye-dropper highlighter and store it on this._eyeDropper.
    * Note that for now, a new instance is created every time to deal with page navigation.
    */
-  createEyeDropper: function() {
+  createEyeDropper() {
     this.destroyEyeDropper();
     this._highlighterEnv = new HighlighterEnvironment();
     this._highlighterEnv.initFromTargetActor(this.targetActor);
@@ -278,7 +276,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
   /**
    * Destroy the current eye-dropper highlighter instance.
    */
-  destroyEyeDropper: function() {
+  destroyEyeDropper() {
     if (this._eyeDropper) {
       this.cancelPickColorFromPage();
       this._eyeDropper.destroy();
@@ -294,7 +292,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
    * cancels the picker.
    * @param {Object} options
    */
-  pickColorFromPage: async function(options) {
+  async pickColorFromPage(options) {
     await this.createEyeDropper();
     this._eyeDropper.show(this.window.document.documentElement, options);
     this._eyeDropper.once("selected", this._onColorPicked);
@@ -307,7 +305,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
    * highlighter is for the user to click in the page and select a color. If you need to
    * dismiss the eye-dropper programatically instead, use this method.
    */
-  cancelPickColorFromPage: function() {
+  cancelPickColorFromPage() {
     if (this._eyeDropper) {
       this._eyeDropper.hide();
       this._eyeDropper.off("selected", this._onColorPicked);
@@ -322,7 +320,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
    * It is impossible to detect the feature programmatically as some document types simply
    * don't render the canvasFrame without throwing any error.
    */
-  supportsHighlighters: function() {
+  supportsHighlighters() {
     const doc = this.targetActor.window.document;
     const ns = doc.documentElement.namespaceURI;
 
@@ -339,11 +337,11 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
     return true;
   },
 
-  _onColorPicked: function(color) {
+  _onColorPicked(color) {
     this.emit("color-picked", color);
   },
 
-  _onColorPickCanceled: function() {
+  _onColorPickCanceled() {
     this.emit("color-pick-canceled");
   },
 });

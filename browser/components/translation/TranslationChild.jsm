@@ -6,12 +6,11 @@
 
 var EXPORTED_SYMBOLS = ["TranslationChild"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const lazy = {};
 ChromeUtils.defineModuleGetter(
   lazy,
   "LanguageDetector",
-  "resource:///modules/translation/LanguageDetector.jsm"
+  "resource://gre/modules/translation/LanguageDetector.jsm"
 );
 
 const STATE_OFFER = 0;

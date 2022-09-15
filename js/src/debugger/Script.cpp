@@ -26,15 +26,19 @@
 #include "gc/ZoneAllocator.h"  // for AddCellMemory
 #include "js/CallArgs.h"       // for CallArgs, CallArgsFromVp
 #include "js/friend/ErrorMessages.h"  // for GetErrorMessage, JSMSG_*
+#include "js/GCVariant.h"             // for GCVariant
 #include "js/HeapAPI.h"               // for GCCellPtr
 #include "js/RootingAPI.h"            // for Rooted
 #include "js/Wrapper.h"               // for UncheckedUnwrap
 #include "vm/ArrayObject.h"           // for ArrayObject
 #include "vm/BytecodeUtil.h"          // for GET_JUMP_OFFSET
+#include "vm/Compartment.h"           // for JS::Compartment
+#include "vm/EnvironmentObject.h"     // for EnvironmentCoordinateNameSlow
 #include "vm/GlobalObject.h"          // for GlobalObject
 #include "vm/JSContext.h"             // for JSContext, ReportValueError
 #include "vm/JSFunction.h"            // for JSFunction
 #include "vm/JSObject.h"              // for RequireObject, JSObject
+#include "vm/JSScript.h"              // for BaseScript
 #include "vm/ObjectOperations.h"      // for DefineDataProperty, HasOwnProperty
 #include "vm/PlainObject.h"           // for js::PlainObject
 #include "vm/Realm.h"                 // for AutoRealm
@@ -586,6 +590,35 @@ static bool EnsureScriptOffsetIsValid(JSContext* cx, JSScript* script,
   JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                             JSMSG_DEBUG_BAD_OFFSET);
   return false;
+}
+
+static bool IsGeneratorSlotInitialization(JSScript* script, size_t offset,
+                                          JSContext* cx) {
+  jsbytecode* pc = script->offsetToPC(offset);
+  if (JSOp(*pc) != JSOp::SetAliasedVar) {
+    return false;
+  }
+
+  PropertyName* name = EnvironmentCoordinateNameSlow(script, pc);
+  return name == cx->names().dotGenerator;
+}
+
+static bool EnsureBreakpointIsAllowed(JSContext* cx, JSScript* script,
+                                      size_t offset) {
+  // Disallow breakpoint for `JSOp::SetAliasedVar` after `JSOp::Generator`.
+  // Those 2 instructions are supposed to be atomic, and nothing should happen
+  // in between them.
+  //
+  // Hitting a breakpoint there breaks the assumption around the existence of
+  // the frame's `GeneratorInfo`.
+  // (see `DebugAPI::slowPathOnNewGenerator` and `DebuggerFrame::create`)
+  if (IsGeneratorSlotInitialization(script, offset, cx)) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_DEBUG_BREAKPOINT_NOT_ALLOWED);
+    return false;
+  }
+
+  return true;
 }
 
 template <bool OnlyOffsets>
@@ -1484,9 +1517,12 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::InitHiddenElemSetter:
     case JSOp::SpreadCall:
     case JSOp::Call:
+    case JSOp::CallContent:
     case JSOp::CallIgnoresRv:
     case JSOp::CallIter:
+    case JSOp::CallContentIter:
     case JSOp::New:
+    case JSOp::NewContent:
     case JSOp::Eval:
     case JSOp::StrictEval:
     case JSOp::Int8:
@@ -1614,10 +1650,21 @@ bool DebuggerScript::CallData::getEffectfulOffsets() {
     return false;
   }
   for (BytecodeRange r(cx, script); !r.empty(); r.popFront()) {
-    if (BytecodeIsEffectful(r.frontOpcode())) {
-      if (!NewbornArrayPush(cx, result, NumberValue(r.frontOffset()))) {
-        return false;
-      }
+    if (!BytecodeIsEffectful(r.frontOpcode())) {
+      continue;
+    }
+
+    size_t offset = r.frontOffset();
+    if (IsGeneratorSlotInitialization(script, offset, cx)) {
+      // This is engine-internal operation and not visible outside the
+      // currently executing frame.
+      //
+      // Also this offset is not allowed for setting breakpoint.
+      continue;
+    }
+
+    if (!NewbornArrayPush(cx, result, NumberValue(offset))) {
+      return false;
     }
   }
 
@@ -1952,6 +1999,10 @@ struct DebuggerScript::SetBreakpointMatcher {
     }
 
     if (!EnsureScriptOffsetIsValid(cx_, script, offset_)) {
+      return false;
+    }
+
+    if (!EnsureBreakpointIsAllowed(cx_, script, offset_)) {
       return false;
     }
 

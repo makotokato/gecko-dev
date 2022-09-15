@@ -14,9 +14,8 @@
 
 var EXPORTED_SYMBOLS = ["ExtensionTestCommon", "MockExtension"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -227,9 +226,9 @@ class MockExtension {
       });
   }
 
-  terminateBackground() {
+  terminateBackground(...args) {
     return this._extensionPromise.then(extension => {
-      return extension.terminateBackground();
+      return extension.terminateBackground(...args);
     });
   }
 

@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/* eslint-env mozilla/process-script */
+
 "use strict";
 
 /**
@@ -17,8 +19,6 @@
  * in `Services.cpmm.sharedData` object or send a message manager message via `Services.cpmm`.
  * Also, this module is only loaded, on-demand from process-helper if devtools are watching for process targets.
  */
-
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const SHARED_DATA_KEY_NAME = "DevTools:watchedPerWatcher";
 
@@ -46,11 +46,11 @@ class ContentProcessStartup {
     }
   }
 
-  destroy() {
+  destroy(options) {
     this.removeListeners();
 
     for (const [, connectionInfo] of this._connections) {
-      connectionInfo.connection.close();
+      connectionInfo.connection.close(options);
     }
     this._connections.clear();
   }
@@ -133,7 +133,7 @@ class ContentProcessStartup {
         );
         break;
       case "debug:destroy-process-script":
-        this.destroy();
+        this.destroy(msg.data.options);
         break;
       default:
         throw new Error(`Unsupported message name ${msg.name}`);
@@ -170,7 +170,7 @@ class ContentProcessStartup {
       const { connectionPrefix, targets } = sessionData;
       // This is where we only do something significant only if DevTools are opened
       // and requesting to create target actor for content processes
-      if (targets.includes("process")) {
+      if (targets?.includes("process")) {
         this.createTargetActor(watcherActorID, connectionPrefix, sessionData);
       }
     }
@@ -215,8 +215,8 @@ class ContentProcessStartup {
     const prefix =
       parentConnectionPrefix + "contentProcess" + Services.appinfo.processID;
     //TODO: probably merge content-process.jsm with this module
-    const { initContentProcessTarget } = ChromeUtils.import(
-      "resource://devtools/server/startup/content-process.jsm"
+    const { initContentProcessTarget } = ChromeUtils.importESModule(
+      "resource://devtools/server/startup/content-process.sys.mjs"
     );
     const { actor, connection } = initContentProcessTarget({
       target: Services.cpmm,

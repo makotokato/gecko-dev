@@ -4,8 +4,6 @@
 
 "use strict";
 
-const { Services } = require("resource://gre/modules/Services.jsm");
-
 loader.lazyRequireGetter(this, "InspectorUtils", "InspectorUtils");
 loader.lazyRequireGetter(
   this,

@@ -27,7 +27,9 @@
 #include "builtin/Array.h"
 #include "builtin/Eval.h"
 #include "builtin/ModuleObject.h"
+#include "builtin/Object.h"
 #include "builtin/Promise.h"
+#include "gc/GC.h"
 #include "jit/AtomicOperations.h"
 #include "jit/BaselineJIT.h"
 #include "jit/Jit.h"
@@ -59,7 +61,7 @@
 #include "vm/SharedStencil.h"  // GCThingIndex
 #include "vm/StringType.h"
 #include "vm/ThrowMsgKind.h"  // ThrowMsgKind
-#include "vm/TraceLogging.h"
+#include "vm/Time.h"
 #ifdef ENABLE_RECORD_TUPLE
 #  include "vm/RecordType.h"
 #  include "vm/TupleType.h"
@@ -181,13 +183,51 @@ void js::GetNonSyntacticGlobalThis(JSContext* cx, HandleObject envChain,
   }
 }
 
-bool js::Debug_CheckSelfHosted(JSContext* cx, HandleValue fun) {
-#ifndef DEBUG
+#ifdef DEBUG
+static bool IsSelfHostedOrKnownBuiltinCtor(JSFunction* fun, JSContext* cx) {
+  if (fun->isSelfHostedOrIntrinsic()) {
+    return true;
+  }
+
+  // GetBuiltinConstructor in ArrayGroupToMap
+  if (fun == cx->global()->maybeGetConstructor(JSProto_Map)) {
+    return true;
+  }
+
+  // GetBuiltinConstructor in intlFallbackSymbol
+  if (fun == cx->global()->maybeGetConstructor(JSProto_Symbol)) {
+    return true;
+  }
+
+  // ConstructorForTypedArray in MergeSortTypedArray
+  if (fun == cx->global()->maybeGetConstructor(JSProto_Int8Array) ||
+      fun == cx->global()->maybeGetConstructor(JSProto_Uint8Array) ||
+      fun == cx->global()->maybeGetConstructor(JSProto_Int16Array) ||
+      fun == cx->global()->maybeGetConstructor(JSProto_Uint16Array) ||
+      fun == cx->global()->maybeGetConstructor(JSProto_Int32Array) ||
+      fun == cx->global()->maybeGetConstructor(JSProto_Uint32Array) ||
+      fun == cx->global()->maybeGetConstructor(JSProto_Float32Array) ||
+      fun == cx->global()->maybeGetConstructor(JSProto_Float64Array) ||
+      fun == cx->global()->maybeGetConstructor(JSProto_Uint8ClampedArray) ||
+      fun == cx->global()->maybeGetConstructor(JSProto_BigInt64Array) ||
+      fun == cx->global()->maybeGetConstructor(JSProto_BigUint64Array)) {
+    return true;
+  }
+
+  return false;
+}
+#endif  // DEBUG
+
+bool js::Debug_CheckSelfHosted(JSContext* cx, HandleValue funVal) {
+#ifdef DEBUG
+  JSFunction* fun = &UncheckedUnwrap(&funVal.toObject())->as<JSFunction>();
+  MOZ_ASSERT(IsSelfHostedOrKnownBuiltinCtor(fun, cx),
+             "functions directly called inside self-hosted JS must be one of "
+             "selfhosted function, self-hosted intrinsic, or known built-in "
+             "constructor");
+#else
   MOZ_CRASH("self-hosted checks should only be done in Debug builds");
 #endif
-
-  RootedObject funObj(cx, UncheckedUnwrap(&fun.toObject()));
-  MOZ_ASSERT(funObj->as<JSFunction>().isSelfHostedOrIntrinsic());
 
   // This is purely to police self-hosted code. There is no actual operation.
   return true;
@@ -398,9 +438,6 @@ bool js::RunScript(JSContext* cx, RunState& state) {
 STATIC_PRECONDITION_ASSUME(ubound(args.argv_) >= argc)
 MOZ_ALWAYS_INLINE bool CallJSNative(JSContext* cx, Native native,
                                     CallReason reason, const CallArgs& args) {
-  TraceLoggerThread* logger = TraceLoggerForCurrentThread(cx);
-  AutoTraceLog traceLog(logger, TraceLogger_Call);
-
   AutoCheckRecursionLimit recursion(cx);
   if (!recursion.check(cx)) {
     return false;
@@ -467,7 +504,8 @@ MOZ_ALWAYS_INLINE bool CallJSNativeConstructor(JSContext* cx, Native native,
  *       this step already!
  */
 bool js::InternalCallOrConstruct(JSContext* cx, const CallArgs& args,
-                                 MaybeConstruct construct, CallReason reason) {
+                                 MaybeConstruct construct,
+                                 CallReason reason /* = CallReason::Call */) {
   MOZ_ASSERT(args.length() <= ARGS_LENGTH_MAX);
 
   unsigned skipForCallee = args.length() + 1 + (construct == CONSTRUCT);
@@ -559,7 +597,7 @@ static bool CalleeNeedsOuterizedThisObject(const Value& callee) {
 }
 
 static bool InternalCall(JSContext* cx, const AnyInvokeArgs& args,
-                         CallReason reason = CallReason::Call) {
+                         CallReason reason) {
   MOZ_ASSERT(args.array() + args.length() == args.end(),
              "must pass calling arguments to a calling attempt");
 
@@ -575,8 +613,9 @@ static bool InternalCall(JSContext* cx, const AnyInvokeArgs& args,
   return InternalCallOrConstruct(cx, args, NO_CONSTRUCT, reason);
 }
 
-bool js::CallFromStack(JSContext* cx, const CallArgs& args) {
-  return InternalCall(cx, static_cast<const AnyInvokeArgs&>(args));
+bool js::CallFromStack(JSContext* cx, const CallArgs& args,
+                       CallReason reason /* = CallReason::Call */) {
+  return InternalCall(cx, static_cast<const AnyInvokeArgs&>(args), reason);
 }
 
 // ES7 rev 0c1bd3004329336774cbc90de727cd0cf5f11e93
@@ -611,7 +650,8 @@ bool js::Call(JSContext* cx, HandleValue fval, HandleValue thisv,
   return true;
 }
 
-static bool InternalConstruct(JSContext* cx, const AnyConstructArgs& args) {
+static bool InternalConstruct(JSContext* cx, const AnyConstructArgs& args,
+                              CallReason reason = CallReason::Call) {
   MOZ_ASSERT(args.array() + args.length() + 1 == args.end(),
              "must pass constructing arguments to a construction attempt");
   MOZ_ASSERT(!FunctionClass.getConstruct());
@@ -634,7 +674,7 @@ static bool InternalConstruct(JSContext* cx, const AnyConstructArgs& args) {
       return CallJSNativeConstructor(cx, fun->native(), args);
     }
 
-    if (!InternalCallOrConstruct(cx, args, CONSTRUCT)) {
+    if (!InternalCallOrConstruct(cx, args, CONSTRUCT, reason)) {
       return false;
     }
 
@@ -671,13 +711,15 @@ static bool StackCheckIsConstructorCalleeNewTarget(JSContext* cx,
   return true;
 }
 
-bool js::ConstructFromStack(JSContext* cx, const CallArgs& args) {
+bool js::ConstructFromStack(JSContext* cx, const CallArgs& args,
+                            CallReason reason /* CallReason::Call */) {
   if (!StackCheckIsConstructorCalleeNewTarget(cx, args.calleev(),
                                               args.newTarget())) {
     return false;
   }
 
-  return InternalConstruct(cx, static_cast<const AnyConstructArgs&>(args));
+  return InternalConstruct(cx, static_cast<const AnyConstructArgs&>(args),
+                           reason);
 }
 
 bool js::Construct(JSContext* cx, HandleValue fval,
@@ -2077,11 +2119,6 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
   RootedScript script(cx);
   SET_SCRIPT(REGS.fp()->script());
 
-  TraceLoggerThread* logger = TraceLoggerForCurrentThread(cx);
-  TraceLoggerEvent scriptEvent(TraceLogger_Scripts, script);
-  TraceLogStartEvent(logger, scriptEvent);
-  TraceLogStartEvent(logger, TraceLogger_Interpreter);
-
   /*
    * Pool of rooters for use in this interpreter frame. References to these
    * are used for local variables within interpreter cases. This avoids
@@ -2290,9 +2327,6 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       if (activation.entryFrame() != REGS.fp()) {
         // Stop the engine. (No details about which engine exactly, could be
         // interpreter, Baseline or IonMonkey.)
-        TraceLogStopEvent(logger, TraceLogger_Engine);
-        TraceLogStopEvent(logger, TraceLogger_Scripts);
-
         if (MOZ_LIKELY(!frameHalfInitialized)) {
           interpReturnOK =
               DebugAPI::onLeaveFrame(cx, REGS.fp(), REGS.pc, interpReturnOK);
@@ -3226,7 +3260,7 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
           goto error;
         }
       } else {
-        if (!CallFromStack(cx, args)) {
+        if (!CallFromStack(cx, args, CallReason::Call)) {
           goto error;
         }
       }
@@ -3275,16 +3309,23 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     END_CASE(SpreadCall)
 
     CASE(New)
+    CASE(NewContent)
     CASE(Call)
+    CASE(CallContent)
     CASE(CallIgnoresRv)
     CASE(CallIter)
+    CASE(CallContentIter)
     CASE(SuperCall) {
       static_assert(JSOpLength_Call == JSOpLength_New,
                     "call and new must be the same size");
+      static_assert(JSOpLength_Call == JSOpLength_CallContent,
+                    "call and call-content must be the same size");
       static_assert(JSOpLength_Call == JSOpLength_CallIgnoresRv,
                     "call and call-ignores-rv must be the same size");
       static_assert(JSOpLength_Call == JSOpLength_CallIter,
                     "call and calliter must be the same size");
+      static_assert(JSOpLength_Call == JSOpLength_CallContentIter,
+                    "call and call-content-iter must be the same size");
       static_assert(JSOpLength_Call == JSOpLength_SuperCall,
                     "call and supercall must be the same size");
 
@@ -3292,9 +3333,10 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
         cx->geckoProfiler().updatePC(cx, script, REGS.pc);
       }
 
+      JSOp op = JSOp(*REGS.pc);
       MaybeConstruct construct = MaybeConstruct(
-          JSOp(*REGS.pc) == JSOp::New || JSOp(*REGS.pc) == JSOp::SuperCall);
-      bool ignoresReturnValue = JSOp(*REGS.pc) == JSOp::CallIgnoresRv;
+          op == JSOp::New || op == JSOp::NewContent || op == JSOp::SuperCall);
+      bool ignoresReturnValue = op == JSOp::CallIgnoresRv;
       unsigned argStackSlots = GET_ARGC(REGS.pc) + construct;
 
       MOZ_ASSERT(REGS.stackDepth() >= 2u + GET_ARGC(REGS.pc));
@@ -3312,17 +3354,24 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
           (!construct && maybeFun->isClassConstructor()) ||
           cx->insideDebuggerEvaluationWithOnNativeCallHook) {
         if (construct) {
-          if (!ConstructFromStack(cx, args)) {
+          CallReason reason = op == JSOp::NewContent ? CallReason::CallContent
+                                                     : CallReason::Call;
+          if (!ConstructFromStack(cx, args, reason)) {
             goto error;
           }
         } else {
-          if (JSOp(*REGS.pc) == JSOp::CallIter &&
+          if ((op == JSOp::CallIter || op == JSOp::CallContentIter) &&
               args.calleev().isPrimitive()) {
             MOZ_ASSERT(args.length() == 0, "thisv must be on top of the stack");
             ReportValueError(cx, JSMSG_NOT_ITERABLE, -1, args.thisv(), nullptr);
             goto error;
           }
-          if (!CallFromStack(cx, args)) {
+
+          CallReason reason =
+              (op == JSOp::CallContent || op == JSOp::CallContentIter)
+                  ? CallReason::CallContent
+                  : CallReason::Call;
+          if (!CallFromStack(cx, args, reason)) {
             goto error;
           }
         }
@@ -3385,12 +3434,6 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       }
 
       SET_SCRIPT(REGS.fp()->script());
-
-      {
-        TraceLoggerEvent event(TraceLogger_Scripts, script);
-        TraceLogStartEvent(logger, event);
-        TraceLogStartEvent(logger, TraceLogger_Interpreter);
-      }
 
       if (!REGS.fp()->prologue(cx)) {
         goto prologue_error;
@@ -4197,6 +4240,13 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     END_CASE(DebugLeaveLexicalEnv)
 
     CASE(FreshenLexicalEnv) {
+#ifdef DEBUG
+      Scope* scope = script->getScope(REGS.pc);
+      auto envChain = REGS.fp()->environmentChain();
+      auto* envScope = &envChain->as<BlockLexicalEnvironmentObject>().scope();
+      MOZ_ASSERT(scope == envScope);
+#endif
+
       if (MOZ_UNLIKELY(cx->realm()->isDebuggee())) {
         DebugEnvironments::onPopLexical(cx, REGS.fp(), REGS.pc);
       }
@@ -4208,6 +4258,13 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     END_CASE(FreshenLexicalEnv)
 
     CASE(RecreateLexicalEnv) {
+#ifdef DEBUG
+      Scope* scope = script->getScope(REGS.pc);
+      auto envChain = REGS.fp()->environmentChain();
+      auto* envScope = &envChain->as<BlockLexicalEnvironmentObject>().scope();
+      MOZ_ASSERT(scope == envScope);
+#endif
+
       if (MOZ_UNLIKELY(cx->realm()->isDebuggee())) {
         DebugEnvironments::onPopLexical(cx, REGS.fp(), REGS.pc);
       }
@@ -4326,11 +4383,6 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
           cx->enterRealmOf(generatorScript);
         }
         SET_SCRIPT(generatorScript);
-
-        TraceLoggerThread* logger = TraceLoggerForCurrentThread(cx);
-        TraceLoggerEvent scriptEvent(TraceLogger_Scripts, script);
-        TraceLogStartEvent(logger, scriptEvent);
-        TraceLogStartEvent(logger, TraceLogger_Interpreter);
 
         if (!probes::EnterScript(cx, generatorScript,
                                  generatorScript->function(), REGS.fp())) {
@@ -4591,9 +4643,6 @@ exit:
   }
 
   gc::MaybeVerifyBarriers(cx, true);
-
-  TraceLogStopEvent(logger, TraceLogger_Engine);
-  TraceLogStopEvent(logger, scriptEvent);
 
   /*
    * This path is used when it's guaranteed the method can be finished

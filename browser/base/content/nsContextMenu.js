@@ -193,6 +193,7 @@ class nsContextMenu {
     this.isDesignMode = context.isDesignMode;
     this.inFrame = context.inFrame;
     this.inPDFViewer = context.inPDFViewer;
+    this.inPDFEditor = context.inPDFEditor;
     this.inSrcdocFrame = context.inSrcdocFrame;
     this.inSyntheticDoc = context.inSyntheticDoc;
     this.inTabBrowser = context.inTabBrowser;
@@ -226,6 +227,8 @@ class nsContextMenu {
     this.onTextInput = context.onTextInput;
     this.onVideo = context.onVideo;
 
+    this.pdfEditorStates = context.pdfEditorStates;
+
     this.target = context.target;
     this.targetIdentifier = context.targetIdentifier;
 
@@ -239,6 +242,8 @@ class nsContextMenu {
 
     this.inSyntheticDoc = context.inSyntheticDoc;
     this.inAboutDevtoolsToolbox = context.inAboutDevtoolsToolbox;
+
+    this.isSponsoredLink = context.isSponsoredLink;
 
     // Everything after this isn't sent directly from ContextMenu
     if (this.target) {
@@ -338,6 +343,7 @@ class nsContextMenu {
     this.initViewSourceItems();
     this.initScreenshotItem();
     this.initPasswordControlItems();
+    this.initPDFItems();
 
     this.showHideSeparators(aXulMenu);
     if (!aXulMenu.showHideSeparators) {
@@ -348,6 +354,64 @@ class nsContextMenu {
         this.showHideSeparators(aXulMenu);
       };
     }
+  }
+
+  initPDFItems() {
+    for (const id of [
+      "context-pdfjs-undo",
+      "context-pdfjs-redo",
+      "context-sep-pdfjs-redo",
+      "context-pdfjs-cut",
+      "context-pdfjs-copy",
+      "context-pdfjs-paste",
+      "context-pdfjs-delete",
+      "context-pdfjs-selectall",
+      "context-sep-pdfjs-selectall",
+    ]) {
+      this.showItem(id, this.inPDFEditor);
+    }
+
+    if (!this.inPDFEditor) {
+      return;
+    }
+
+    const {
+      isEmpty,
+      hasSomethingToUndo,
+      hasSomethingToRedo,
+      hasSelectedEditor,
+    } = this.pdfEditorStates;
+
+    const hasEmptyClipboard = !Services.clipboard.hasDataMatchingFlavors(
+      ["application/pdfjs"],
+      Ci.nsIClipboard.kGlobalClipboard
+    );
+
+    this.setItemAttr("context-pdfjs-undo", "disabled", !hasSomethingToUndo);
+    this.setItemAttr("context-pdfjs-redo", "disabled", !hasSomethingToRedo);
+    this.setItemAttr(
+      "context-sep-pdfjs-redo",
+      "disabled",
+      !hasSomethingToUndo && !hasSomethingToRedo
+    );
+    this.setItemAttr(
+      "context-pdfjs-cut",
+      "disabled",
+      isEmpty || !hasSelectedEditor
+    );
+    this.setItemAttr(
+      "context-pdfjs-copy",
+      "disabled",
+      isEmpty || !hasSelectedEditor
+    );
+    this.setItemAttr("context-pdfjs-paste", "disabled", hasEmptyClipboard);
+    this.setItemAttr(
+      "context-pdfjs-delete",
+      "disabled",
+      isEmpty || !hasSelectedEditor
+    );
+    this.setItemAttr("context-pdfjs-selectall", "disabled", isEmpty);
+    this.setItemAttr("context-sep-pdfjs-selectall", "disabled", isEmpty);
   }
 
   initOpenItems() {
@@ -551,7 +615,9 @@ class nsContextMenu {
     // (or is in a frame), or a canvas. If this isn't an image, check
     // if there is a background image.
     let showViewImage =
-      (this.onImage && (!this.inSyntheticDoc || this.inFrame)) || this.onCanvas;
+      ((this.onImage && (!this.inSyntheticDoc || this.inFrame)) ||
+        this.onCanvas) &&
+      !this.inPDFViewer;
     let showBGImage =
       this.hasBGImage &&
       !this.hasMultipleBGImages &&
@@ -567,7 +633,10 @@ class nsContextMenu {
     this.showItem("context-viewimage", showViewImage || showBGImage);
 
     // Save image depends on having loaded its content.
-    this.showItem("context-saveimage", this.onLoadedImage || this.onCanvas);
+    this.showItem(
+      "context-saveimage",
+      (this.onLoadedImage || this.onCanvas) && !this.inPDFEditor
+    );
 
     // Copy image contents depends on whether we're on an image.
     // Note: the element doesn't exist on all platforms, but showItem() takes
@@ -580,7 +649,9 @@ class nsContextMenu {
     // Performing text recognition only works on images, and if the feature is enabled.
     this.showItem(
       "context-imagetext",
-      this.onImage && TEXT_RECOGNITION_ENABLED
+      this.onImage &&
+        Services.appinfo.isTextRecognitionSupported &&
+        TEXT_RECOGNITION_ENABLED
     );
 
     // Send media URL (but not for canvas, since it's a big data: URL)
@@ -689,7 +760,7 @@ class nsContextMenu {
   }
 
   initMiscItems() {
-    // Use "Bookmark This Link" if on a link.
+    // Use "Bookmark Link…" if on a link.
     let bookmarkPage = document.getElementById("context-bookmarkpage");
     this.showItem(
       bookmarkPage,
@@ -871,6 +942,7 @@ class nsContextMenu {
     this.showItem("context-cut", this.onTextInput);
     this.showItem("context-copy", this.isContentSelected || this.onTextInput);
     this.showItem("context-paste", this.onTextInput);
+    this.showItem("context-paste-no-formatting", this.isDesignMode);
     this.showItem("context-delete", this.onTextInput);
     this.showItem(
       "context-selectall",
@@ -879,7 +951,8 @@ class nsContextMenu {
         this.onImage ||
         this.onVideo ||
         this.onAudio ||
-        this.inSyntheticDoc
+        this.inSyntheticDoc ||
+        this.inPDFEditor
       ) || this.isDesignMode
     );
 
@@ -1323,9 +1396,31 @@ class nsContextMenu {
     return params;
   }
 
+  _getGlobalHistoryOptions() {
+    if (this.isSponsoredLink) {
+      return {
+        globalHistoryOptions: { triggeringSponsoredURL: this.linkURL },
+      };
+    } else if (this.browser.hasAttribute("triggeringSponsoredURL")) {
+      return {
+        globalHistoryOptions: {
+          triggeringSponsoredURL: this.browser.getAttribute(
+            "triggeringSponsoredURL"
+          ),
+          triggeringSponsoredURLVisitTimeMS: this.browser.getAttribute(
+            "triggeringSponsoredURLVisitTimeMS"
+          ),
+        },
+      };
+    }
+    return {};
+  }
+
   // Open linked-to URL in a new window.
   openLink() {
-    openLinkIn(this.linkURL, "window", this._openLinkInParameters());
+    const params = this._getGlobalHistoryOptions();
+
+    openLinkIn(this.linkURL, "window", this._openLinkInParameters(params));
   }
 
   // Open linked-to URL in a new private window.
@@ -1341,6 +1436,7 @@ class nsContextMenu {
   openLinkInTab(event) {
     let params = {
       userContextId: parseInt(event.target.getAttribute("data-usercontextid")),
+      ...this._getGlobalHistoryOptions(),
     };
 
     openLinkIn(this.linkURL, "tab", this._openLinkInParameters(params));
@@ -1400,6 +1496,18 @@ class nsContextMenu {
         "contextMenu"
       );
     }
+  }
+
+  pdfJSCmd(name) {
+    if (["cut", "copy", "paste"].includes(name)) {
+      const cmd = `cmd_${name}`;
+      document.commandDispatcher.getControllerForCommand(cmd).doCommand(cmd);
+      if (Cu.isInAutomation) {
+        this.browser.sendMessageToActor("PDFJS:Editing", { name }, "Pdfjs");
+      }
+      return;
+    }
+    this.browser.sendMessageToActor("PDFJS:Editing", { name }, "Pdfjs");
   }
 
   // View Partial Source
@@ -2141,7 +2249,9 @@ class nsContextMenu {
   }
 
   addDictionaries() {
-    var uri = formatURL("browser.dictionaries.download.url", true);
+    var uri = Services.urlFormatter.formatURLPref(
+      "browser.dictionaries.download.url"
+    );
 
     var locale = "-";
     try {
@@ -2224,7 +2334,22 @@ class nsContextMenu {
   }
 
   getImageText() {
-    this.actor.getImageText(this.targetIdentifier);
+    let dialogBox = gBrowser.getTabDialogBox(this.browser);
+    const imageTextResult = this.actor.getImageText(this.targetIdentifier);
+    TelemetryStopwatch.start(
+      "TEXT_RECOGNITION_API_PERFORMANCE",
+      imageTextResult
+    );
+    const { dialog } = dialogBox.open(
+      "chrome://browser/content/textrecognition/textrecognition.html",
+      {
+        features: "resizable=no",
+        modalType: Services.prompt.MODAL_TYPE_CONTENT,
+      },
+      imageTextResult,
+      () => dialog.resizeVertically(),
+      openLinkIn
+    );
   }
 
   drmLearnMore(aEvent) {

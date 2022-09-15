@@ -172,7 +172,7 @@ NS_IMPL_CYCLE_COLLECTION(ScriptLoader, mNonAsyncExternalScriptInsertedRequests,
                          mXSLTRequests, mParserBlockingRequest,
                          mBytecodeEncodingQueue, mPreloads,
                          mPendingChildLoaders, mModuleLoader,
-                         mWebExtModuleLoaders)
+                         mWebExtModuleLoaders, mShadowRealmModuleLoaders)
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(ScriptLoader)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(ScriptLoader)
@@ -277,6 +277,13 @@ void ScriptLoader::RegisterContentScriptModuleLoader(ModuleLoader* aLoader) {
   MOZ_ASSERT(aLoader->GetScriptLoader() == this);
 
   mWebExtModuleLoaders.AppendElement(aLoader);
+}
+
+void ScriptLoader::RegisterShadowRealmModuleLoader(ModuleLoader* aLoader) {
+  MOZ_ASSERT(aLoader);
+  MOZ_ASSERT(aLoader->GetScriptLoader() == this);
+
+  mShadowRealmModuleLoaders.AppendElement(aLoader);
 }
 
 // Collect telemtry data about the cache information, and the kind of source
@@ -781,8 +788,6 @@ bool ScriptLoader::PreloadURIComparator::Equals(const PreloadInfo& aPi,
 static bool CSPAllowsInlineScript(nsIScriptElement* aElement,
                                   Document* aDocument) {
   nsCOMPtr<nsIContentSecurityPolicy> csp = aDocument->GetCsp();
-  nsresult rv = NS_OK;
-
   if (!csp) {
     // no CSP --> allow
     return true;
@@ -803,8 +808,8 @@ static bool CSPAllowsInlineScript(nsIScriptElement* aElement,
       aElement->GetParserCreated() != mozilla::dom::NOT_FROM_PARSER;
 
   bool allowInlineScript = false;
-  rv = csp->GetAllowsInline(
-      nsIContentSecurityPolicy::SCRIPT_SRC_DIRECTIVE, nonce, parserCreated,
+  nsresult rv = csp->GetAllowsInline(
+      nsIContentSecurityPolicy::SCRIPT_SRC_ELEM_DIRECTIVE, nonce, parserCreated,
       scriptContent, nullptr /* nsICSPEventListener */, u""_ns,
       aElement->GetScriptLineNumber(), aElement->GetScriptColumnNumber(),
       &allowInlineScript);
@@ -1641,6 +1646,7 @@ nsresult ScriptLoader::AttemptAsyncScriptCompile(ScriptLoadRequest* aRequest,
   auto signalOOM = mozilla::MakeScopeExit(
       [&aRequest]() { aRequest->GetScriptLoadContext()->mRunnable = nullptr; });
 
+  // The conditions should match ScriptLoadContext::MaybeCancelOffThreadScript.
   if (aRequest->IsBytecode()) {
     JS::DecodeOptions decodeOptions(options);
     aRequest->GetScriptLoadContext()->mOffThreadToken =
@@ -1671,6 +1677,20 @@ nsresult ScriptLoader::AttemptAsyncScriptCompile(ScriptLoadRequest* aRequest,
     aRequest->GetScriptLoadContext()->mOffThreadToken = token;
   } else {
     MOZ_ASSERT(aRequest->IsTextSource());
+
+    if (ShouldApplyDelazifyStrategy(aRequest)) {
+      ApplyDelazifyStrategy(&options);
+      mTotalFullParseSize +=
+          aRequest->ScriptTextLength() > 0
+              ? static_cast<uint32_t>(aRequest->ScriptTextLength())
+              : 0;
+
+      LOG(
+          ("ScriptLoadRequest (%p): non-on-demand-only Parsing Enabled for "
+           "url=%s mTotalFullParseSize=%u",
+           aRequest, aRequest->mURI->GetSpecOrDefault().get(),
+           mTotalFullParseSize));
+    }
 
     MaybeSourceText maybeSource;
     nsresult rv = aRequest->GetScriptSource(cx, &maybeSource);
@@ -1999,20 +2019,6 @@ nsresult ScriptLoader::FillCompileOptionsForRequest(
 
   aOptions->allocateInstantiationStorage = true;
 
-  if (ShouldApplyDelazifyStrategy(aRequest)) {
-    ApplyDelazifyStrategy(aOptions);
-    mTotalFullParseSize +=
-        aRequest->ScriptTextLength() > 0
-            ? static_cast<uint32_t>(aRequest->ScriptTextLength())
-            : 0;
-  } else {
-    // If we cannot apply the delazification strategy set in the preference, due
-    // to failure of the preconditions, then we default to the strategy which
-    // minimize the memory impact at runtime.
-    aOptions->setEagerDelazificationStrategy(
-        JS::DelazificationOption::OnDemandOnly);
-  }
-
   return NS_OK;
 }
 
@@ -2038,7 +2044,7 @@ bool ScriptLoader::ShouldCacheBytecode(ScriptLoadRequest* aRequest) {
   bool hasSourceLengthMin = false;
   bool hasFetchCountMin = false;
   size_t sourceLengthMin = 100;
-  int32_t fetchCountMin = 4;
+  uint32_t fetchCountMin = 4;
 
   LOG(("ScriptLoadRequest (%p): Bytecode-cache: strategy = %d.", aRequest,
        strategy));
@@ -2087,7 +2093,7 @@ bool ScriptLoader::ShouldCacheBytecode(ScriptLoadRequest* aRequest) {
   // bytecode-cache optimization, such that we do not waste time on entry which
   // are going to be dropped soon.
   if (hasFetchCountMin) {
-    int32_t fetchCount = 0;
+    uint32_t fetchCount = 0;
     if (NS_FAILED(aRequest->mCacheInfo->GetCacheTokenFetchCount(&fetchCount))) {
       LOG(("ScriptLoadRequest (%p): Bytecode-cache: Cannot get fetchCount.",
            aRequest));
@@ -2212,7 +2218,8 @@ nsresult ScriptLoader::CompileOrDecodeClassicScript(
     if (aRequest->GetScriptLoadContext()->mOffThreadToken) {
       LOG(("ScriptLoadRequest (%p): Decode Bytecode & Join and Execute",
            aRequest));
-      rv = aExec.JoinDecode(&aRequest->GetScriptLoadContext()->mOffThreadToken);
+      rv = aExec.JoinOffThread(
+          &aRequest->GetScriptLoadContext()->mOffThreadToken);
     } else {
       LOG(("ScriptLoadRequest (%p): Decode Bytecode and Execute", aRequest));
       AUTO_PROFILER_MARKER_TEXT("BytecodeDecodeMainThread", JS,
@@ -2239,7 +2246,8 @@ nsresult ScriptLoader::CompileOrDecodeClassicScript(
          "Execute",
          aRequest));
     MOZ_ASSERT(aRequest->IsTextSource());
-    rv = aExec.JoinCompile(&aRequest->GetScriptLoadContext()->mOffThreadToken);
+    rv =
+        aExec.JoinOffThread(&aRequest->GetScriptLoadContext()->mOffThreadToken);
   } else {
     // Main thread parsing (inline and small scripts)
     LOG(("ScriptLoadRequest (%p): Compile And Exec", aRequest));
@@ -2679,6 +2687,12 @@ bool ScriptLoader::HasPendingDynamicImports() const {
   }
 
   for (ModuleLoader* loader : mWebExtModuleLoaders) {
+    if (loader->HasPendingDynamicImports()) {
+      return true;
+    }
+  }
+
+  for (ModuleLoader* loader : mShadowRealmModuleLoaders) {
     if (loader->HasPendingDynamicImports()) {
       return true;
     }
@@ -3241,26 +3255,6 @@ static bool IsInternalURIScheme(nsIURI* uri) {
 
 bool ScriptLoader::ShouldApplyDelazifyStrategy(ScriptLoadRequest* aRequest) {
   // Full parse everything if negative.
-  if (!aRequest->IsTextSource()) {
-    // Delazification strategy is only used while processing source input, as
-    // the bytecode cache already contains delazified functions.
-    return false;
-  }
-
-  if (aRequest->IsModuleRequest()) {
-    // Module do not yet support concurrent off-thread delazification.
-    // (see Bug 1760334)
-    return false;
-  }
-
-  auto logEnabled = MakeScopeExit([&] {
-    LOG(
-        ("ScriptLoadRequest (%p): non-on-demand-only Parsing Enabled for "
-         "url=%s mTotalFullParseSize=%u",
-         aRequest, aRequest->mURI->GetSpecOrDefault().get(),
-         mTotalFullParseSize));
-  });
-
   if (StaticPrefs::dom_script_loader_delazification_max_size() < 0) {
     return true;
   }
@@ -3268,7 +3262,6 @@ bool ScriptLoader::ShouldApplyDelazifyStrategy(ScriptLoadRequest* aRequest) {
   // Be conservative on machines with 2GB or less of memory.
   if (PhysicalSizeOfMemoryInGB() <=
       StaticPrefs::dom_script_loader_delazification_min_mem()) {
-    logEnabled.release();
     return false;
   }
 
@@ -3283,7 +3276,6 @@ bool ScriptLoader::ShouldApplyDelazifyStrategy(ScriptLoadRequest* aRequest) {
     return true;
   }
 
-  logEnabled.release();
   if (LOG_ENABLED()) {
     nsCString url = aRequest->mURI->GetSpecOrDefault();
     LOG(
@@ -3519,6 +3511,10 @@ void ScriptLoader::ParsingComplete(bool aTerminated) {
   }
 
   for (ModuleLoader* loader : mWebExtModuleLoaders) {
+    loader->CancelAndClearDynamicImports();
+  }
+
+  for (ModuleLoader* loader : mShadowRealmModuleLoaders) {
     loader->CancelAndClearDynamicImports();
   }
 

@@ -1,20 +1,5 @@
-use nix::{
-    errno::Errno,
-    poll::{PollFlags, poll, PollFd},
-    unistd::{write, pipe}
-};
-
-macro_rules! loop_while_eintr {
-    ($poll_expr: expr) => {
-        loop {
-            match $poll_expr {
-                Ok(nfds) => break nfds,
-                Err(Errno::EINTR) => (),
-                Err(e) => panic!("{}", e)
-            }
-        }
-    }
-}
+use nix::poll::{PollFlags, poll, PollFd};
+use nix::unistd::{write, pipe};
 
 #[test]
 fn test_poll() {
@@ -22,7 +7,7 @@ fn test_poll() {
     let mut fds = [PollFd::new(r, PollFlags::POLLIN)];
 
     // Poll an idle pipe.  Should timeout
-    let nfds = loop_while_eintr!(poll(&mut fds, 100));
+    let nfds = poll(&mut fds, 100).unwrap();
     assert_eq!(nfds, 0);
     assert!(!fds[0].revents().unwrap().contains(PollFlags::POLLIN));
 
@@ -52,31 +37,14 @@ fn test_ppoll() {
     let mut fds = [PollFd::new(r, PollFlags::POLLIN)];
 
     // Poll an idle pipe.  Should timeout
-    let sigset = SigSet::empty();
-    let nfds = loop_while_eintr!(ppoll(&mut fds, Some(timeout), sigset));
+    let nfds = ppoll(&mut fds, timeout, SigSet::empty()).unwrap();
     assert_eq!(nfds, 0);
     assert!(!fds[0].revents().unwrap().contains(PollFlags::POLLIN));
 
     write(w, b".").unwrap();
 
     // Poll a readable pipe.  Should return an event.
-    let nfds = ppoll(&mut fds, Some(timeout), SigSet::empty()).unwrap();
+    let nfds = ppoll(&mut fds, timeout, SigSet::empty()).unwrap();
     assert_eq!(nfds, 1);
     assert!(fds[0].revents().unwrap().contains(PollFlags::POLLIN));
-}
-
-#[test]
-fn test_pollfd_fd() {
-    use std::os::unix::io::AsRawFd;
-
-    let pfd = PollFd::new(0x1234, PollFlags::empty());
-    assert_eq!(pfd.as_raw_fd(), 0x1234);
-}
-
-#[test]
-fn test_pollfd_events() {
-    let mut pfd = PollFd::new(-1, PollFlags::POLLIN);
-    assert_eq!(pfd.events(), PollFlags::POLLIN);
-    pfd.set_events(PollFlags::POLLOUT);
-    assert_eq!(pfd.events(), PollFlags::POLLOUT);
 }

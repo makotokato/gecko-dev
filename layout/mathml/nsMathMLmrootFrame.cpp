@@ -7,6 +7,7 @@
 #include "nsMathMLmrootFrame.h"
 
 #include "mozilla/PresShell.h"
+#include "mozilla/StaticPrefs_mathml.h"
 #include "nsLayoutUtils.h"
 #include "nsPresContext.h"
 #include <algorithm>
@@ -46,6 +47,18 @@ void nsMathMLmrootFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
   mSqrChar.SetComputedStyle(Style());
 }
 
+bool nsMathMLmrootFrame::ShouldUseRowFallback() {
+  if (!StaticPrefs::mathml_error_message_layout_for_invalid_markup_disabled()) {
+    return false;
+  }
+  nsIFrame* baseFrame = mFrames.FirstChild();
+  if (!baseFrame) {
+    return true;
+  }
+  nsIFrame* indexFrame = baseFrame->GetNextSibling();
+  return !indexFrame || indexFrame->GetNextSibling();
+}
+
 NS_IMETHODIMP
 nsMathMLmrootFrame::TransmitAutomaticData() {
   // 1. The REC says:
@@ -68,6 +81,8 @@ void nsMathMLmrootFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   /////////////
   // paint the content we are square-rooting
   nsMathMLContainerFrame::BuildDisplayList(aBuilder, aLists);
+
+  if (ShouldUseRowFallback()) return;
 
   /////////////
   // paint the sqrt symbol
@@ -98,7 +113,8 @@ void nsMathMLmrootFrame::GetRadicalXOffsets(nscoord aIndexWidth,
   nscoord xHeight = aFontMetrics->XHeight();
   nscoord indexRadicalKern = NSToCoordRound(1.35f * xHeight);
   nscoord oneDevPixel = aFontMetrics->AppUnitsPerDevPixel();
-  gfxFont* mathFont = aFontMetrics->GetThebesFontGroup()->GetFirstMathFont();
+  RefPtr<gfxFont> mathFont =
+      aFontMetrics->GetThebesFontGroup()->GetFirstMathFont();
   if (mathFont) {
     indexRadicalKern = mathFont->MathTable()->Constant(
         gfxMathTable::RadicalKernAfterDegree, oneDevPixel);
@@ -141,6 +157,13 @@ void nsMathMLmrootFrame::Reflow(nsPresContext* aPresContext,
                                 ReflowOutput& aDesiredSize,
                                 const ReflowInput& aReflowInput,
                                 nsReflowStatus& aStatus) {
+  if (ShouldUseRowFallback()) {
+    ReportChildCountError();
+    nsMathMLContainerFrame::Reflow(aPresContext, aDesiredSize, aReflowInput,
+                                   aStatus);
+    return;
+  }
+
   MarkInReflow();
   MOZ_ASSERT(aStatus.IsEmpty(), "Caller should pass a fresh reflow status!");
 
@@ -186,11 +209,12 @@ void nsMathMLmrootFrame::Reflow(nsPresContext* aPresContext,
     count++;
     childFrame = childFrame->GetNextSibling();
   }
+  // FIXME: Bug 1788223: Remove this code when the preference
+  // mathml.error_message_layout_for_invalid_markup.disabled no longer needed.
   if (2 != count) {
     // report an error, encourage people to get their markups in order
     ReportChildCountError();
     ReflowError(drawTarget, aDesiredSize);
-    NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aDesiredSize);
     // Call DidReflow() for the child frames we successfully did reflow.
     DidReflowChildren(mFrames.FirstChild(), childFrame);
     return;
@@ -267,7 +291,7 @@ void nsMathMLmrootFrame::Reflow(nsPresContext* aPresContext,
   // the index is raised by some fraction of the height
   // of the radical, see \mroot macro in App. B, TexBook
   float raiseIndexPercent = 0.6f;
-  gfxFont* mathFont = fm->GetThebesFontGroup()->GetFirstMathFont();
+  RefPtr<gfxFont> mathFont = fm->GetThebesFontGroup()->GetFirstMathFont();
   if (mathFont) {
     raiseIndexPercent = mathFont->MathTable()->Constant(
         gfxMathTable::RadicalDegreeBottomRaisePercent);
@@ -330,13 +354,17 @@ void nsMathMLmrootFrame::Reflow(nsPresContext* aPresContext,
 
   mReference.x = 0;
   mReference.y = aDesiredSize.BlockStartAscent();
-
-  NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aDesiredSize);
 }
 
 /* virtual */
 void nsMathMLmrootFrame::GetIntrinsicISizeMetrics(gfxContext* aRenderingContext,
                                                   ReflowOutput& aDesiredSize) {
+  if (ShouldUseRowFallback()) {
+    nsMathMLContainerFrame::GetIntrinsicISizeMetrics(aRenderingContext,
+                                                     aDesiredSize);
+    return;
+  }
+
   nsIFrame* baseFrame = mFrames.FirstChild();
   nsIFrame* indexFrame = nullptr;
   if (baseFrame) indexFrame = baseFrame->GetNextSibling();

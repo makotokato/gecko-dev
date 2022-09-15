@@ -6,7 +6,6 @@
 
 const EXPORTED_SYMBOLS = ["WebNavigation", "WebNavigationManager"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -18,11 +17,9 @@ ChromeUtils.defineModuleGetter(
   "BrowserWindowTracker",
   "resource:///modules/BrowserWindowTracker.jsm"
 );
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "UrlbarUtils",
-  "resource:///modules/UrlbarUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
+});
 ChromeUtils.defineModuleGetter(
   lazy,
   "WebNavigationFrames",

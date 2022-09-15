@@ -1,7 +1,5 @@
 "use strict";
-/* eslint-env mozilla/frame-script */
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCShellContentUtils } = ChromeUtils.import(
   "resource://testing-common/XPCShellContentUtils.jsm"
 );
@@ -31,6 +29,7 @@ server.registerPathHandler(childFramePath, (request, response) => {
 });
 
 function childFrameScript() {
+  /* eslint-env mozilla/frame-script */
   "use strict";
 
   let { MockFilePicker } = ChromeUtils.import(

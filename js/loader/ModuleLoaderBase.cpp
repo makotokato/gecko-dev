@@ -24,6 +24,7 @@
 #include "mozilla/dom/ScriptLoadContext.h"
 #include "mozilla/CycleCollectedJSContext.h"  // nsAutoMicroTask
 #include "mozilla/Preferences.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "nsContentUtils.h"
 #include "nsICacheInfoChannel.h"  // nsICacheInfoChannel
 #include "nsNetUtil.h"            // NS_NewURI
@@ -75,23 +76,7 @@ void ModuleLoaderBase::EnsureModuleHooksInitialized() {
   JS::SetScriptPrivateReferenceHooks(rt, HostAddRefTopLevelScript,
                                      HostReleaseTopLevelScript);
   JS::SetSupportedAssertionsHook(rt, HostGetSupportedImportAssertions);
-
-  Preferences::RegisterCallbackAndCall(DynamicImportPrefChangedCallback,
-                                       "javascript.options.dynamicImport",
-                                       (void*)nullptr);
-}
-
-// static
-void ModuleLoaderBase::DynamicImportPrefChangedCallback(const char* aPrefName,
-                                                        void* aClosure) {
-  bool enabled = Preferences::GetBool(aPrefName);
-  JS::ModuleDynamicImportHook hook =
-      enabled ? HostImportModuleDynamically : nullptr;
-
-  AutoJSAPI jsapi;
-  jsapi.Init();
-  JSRuntime* rt = JS_GetRuntime(jsapi.cx());
-  JS::SetModuleDynamicImportHook(rt, hook);
+  JS::SetModuleDynamicImportHook(rt, HostImportModuleDynamically);
 }
 
 // 8.1.3.8.1 HostResolveImportedModule(referencingModule, moduleRequest)
@@ -157,6 +142,84 @@ JSObject* ModuleLoaderBase::HostResolveImportedModule(
 }
 
 // static
+bool ModuleLoaderBase::ImportMetaResolve(JSContext* cx, unsigned argc,
+                                         Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  RootedValue modulePrivate(
+      cx, js::GetFunctionNativeReserved(&args.callee(), ModulePrivateSlot));
+
+  // https://html.spec.whatwg.org/#hostgetimportmetaproperties
+  // Step 4.1. Set specifier to ? ToString(specifier).
+  //
+  // https://tc39.es/ecma262/#sec-tostring
+  RootedValue v(cx, args.get(ImportMetaResolveSpecifierArg));
+  RootedString specifier(cx, JS::ToString(cx, v));
+  if (!specifier) {
+    return false;
+  }
+
+  // Step 4.2, 4.3 are implemented in ImportMetaResolveImpl.
+  RootedString url(cx, ImportMetaResolveImpl(cx, modulePrivate, specifier));
+  if (!url) {
+    return false;
+  }
+
+  // Step 4.4. Return the serialization of url.
+  args.rval().setString(url);
+  return true;
+}
+
+// static
+JSString* ModuleLoaderBase::ImportMetaResolveImpl(
+    JSContext* aCx, JS::Handle<JS::Value> aReferencingPrivate,
+    JS::Handle<JSString*> aSpecifier) {
+  RootedString urlString(aCx);
+
+  {
+    // ModuleScript should only live in this block, otherwise it will be a GC
+    // hazard
+    RefPtr<ModuleScript> script =
+        static_cast<ModuleScript*>(aReferencingPrivate.toPrivate());
+    MOZ_ASSERT(script->IsModuleScript());
+    MOZ_ASSERT(JS::GetModulePrivate(script->ModuleRecord()) ==
+               aReferencingPrivate);
+
+    RefPtr<ModuleLoaderBase> loader = GetCurrentModuleLoader(aCx);
+    if (!loader) {
+      return nullptr;
+    }
+
+    nsAutoJSString specifier;
+    if (!specifier.init(aCx, aSpecifier)) {
+      return nullptr;
+    }
+
+    auto result = loader->ResolveModuleSpecifier(script, specifier);
+    if (result.isErr()) {
+      JS::Rooted<JS::Value> error(aCx);
+      nsresult rv = HandleResolveFailure(aCx, script, specifier,
+                                         result.unwrapErr(), 0, 0, &error);
+      if (NS_FAILED(rv)) {
+        JS_ReportOutOfMemory(aCx);
+        return nullptr;
+      }
+
+      JS_SetPendingException(aCx, error);
+
+      return nullptr;
+    }
+
+    nsCOMPtr<nsIURI> uri = result.unwrap();
+    nsAutoCString url;
+    MOZ_ALWAYS_SUCCEEDS(uri->GetAsciiSpec(url));
+
+    urlString.set(JS_NewStringCopyZ(aCx, url.get()));
+  }
+
+  return urlString;
+}
+
+// static
 bool ModuleLoaderBase::HostPopulateImportMeta(
     JSContext* aCx, JS::Handle<JS::Value> aReferencingPrivate,
     JS::Handle<JSObject*> aMetaObject) {
@@ -176,8 +239,28 @@ bool ModuleLoaderBase::HostPopulateImportMeta(
     return false;
   }
 
-  return JS_DefineProperty(aCx, aMetaObject, "url", urlString,
-                           JSPROP_ENUMERATE);
+  // https://html.spec.whatwg.org/#import-meta-url
+  if (!JS_DefineProperty(aCx, aMetaObject, "url", urlString,
+                         JSPROP_ENUMERATE)) {
+    return false;
+  }
+
+  // https://html.spec.whatwg.org/#import-meta-resolve
+  // Define 'resolve' function on the import.meta object.
+  JSFunction* resolveFunc = js::DefineFunctionWithReserved(
+      aCx, aMetaObject, "resolve", ImportMetaResolve, ImportMetaResolveNumArgs,
+      JSPROP_ENUMERATE);
+  if (!resolveFunc) {
+    return false;
+  }
+
+  // Store the 'active script' of the meta object into the function slot.
+  // https://html.spec.whatwg.org/#active-script
+  RootedObject resolveFuncObj(aCx, JS_GetFunctionObject(resolveFunc));
+  js::SetFunctionNativeReserved(resolveFuncObj, ModulePrivateSlot,
+                                aReferencingPrivate);
+
+  return true;
 }
 
 // static
@@ -597,16 +680,23 @@ nsresult ModuleLoaderBase::HandleResolveFailure(
   return NS_OK;
 }
 
+// Helper for getting import maps pref across main thread and workers
+bool ImportMapsEnabled() {
+  if (NS_IsMainThread()) {
+    return mozilla::StaticPrefs::dom_importMaps_enabled();
+  }
+  return false;
+}
+
 ResolveResult ModuleLoaderBase::ResolveModuleSpecifier(
     LoadedScript* aScript, const nsAString& aSpecifier) {
-  bool importMapsEnabled = Preferences::GetBool("dom.importMaps.enabled");
   // If import map is enabled, forward to the updated 'Resolve a module
   // specifier' algorithm defined in Import maps spec.
   //
   // Once import map is enabled by default,
   // ModuleLoaderBase::ResolveModuleSpecifier should be replaced by
   // ImportMap::ResolveModuleSpecifier.
-  if (importMapsEnabled) {
+  if (ImportMapsEnabled()) {
     return ImportMap::ResolveModuleSpecifier(mImportMap.get(), mLoader, aScript,
                                              aSpecifier);
   }
@@ -624,13 +714,13 @@ ResolveResult ModuleLoaderBase::ResolveModuleSpecifier(
   }
 
   if (rv != NS_ERROR_MALFORMED_URI) {
-    return Err(ResolveError::ModuleResolveFailure);
+    return Err(ResolveError::Failure);
   }
 
   if (!StringBeginsWith(aSpecifier, u"/"_ns) &&
       !StringBeginsWith(aSpecifier, u"./"_ns) &&
       !StringBeginsWith(aSpecifier, u"../"_ns)) {
-    return Err(ResolveError::ModuleResolveFailure);
+    return Err(ResolveError::FailureMayBeBare);
   }
 
   // Get the document's base URL if we don't have a referencing script here.
@@ -646,7 +736,7 @@ ResolveResult ModuleLoaderBase::ResolveModuleSpecifier(
     return WrapNotNull(uri);
   }
 
-  return Err(ResolveError::ModuleResolveFailure);
+  return Err(ResolveError::Failure);
 }
 
 nsresult ModuleLoaderBase::ResolveRequestedModules(
@@ -891,6 +981,11 @@ ModuleLoaderBase::~ModuleLoaderBase() {
 
 void ModuleLoaderBase::Shutdown() {
   MOZ_ASSERT(mFetchingModules.IsEmpty());
+
+  for (const auto& entry : mFetchedModules) {
+    entry.GetData()->Shutdown();
+  }
+
   mFetchedModules.Clear();
   mGlobalObject = nullptr;
   mEventTarget = nullptr;
@@ -980,7 +1075,7 @@ bool ModuleLoaderBase::InstantiateModuleGraph(ModuleLoadRequest* aRequest) {
     return true;
   }
 
-  if (!JS::ModuleInstantiate(jsapi.cx(), module)) {
+  if (!JS::ModuleLink(jsapi.cx(), module)) {
     LOG(("ScriptLoadRequest (%p): Instantiate failed", aRequest));
     MOZ_ASSERT(jsapi.HasException());
     JS::RootedValue exception(jsapi.cx());
@@ -1047,7 +1142,8 @@ nsresult ModuleLoaderBase::EvaluateModule(ModuleLoadRequest* aRequest) {
   MOZ_ASSERT(aRequest->mLoader == this);
 
   mozilla::nsAutoMicroTask mt;
-  mozilla::dom::AutoEntryScript aes(mGlobalObject, "EvaluateModule", true);
+  mozilla::dom::AutoEntryScript aes(mGlobalObject, "EvaluateModule",
+                                    NS_IsMainThread());
 
   return EvaluateModuleInContext(aes.cx(), aRequest,
                                  JS::ReportModuleErrorsAsync);

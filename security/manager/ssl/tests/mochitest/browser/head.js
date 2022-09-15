@@ -45,10 +45,8 @@ function pemToBase64(pem) {
  *         A promise that will resolve with a handle to the certificate.
  */
 function readCertificate(filename, trustString) {
-  return OS.File.read(getTestFilePath(filename)).then(
-    data => {
-      let decoder = new TextDecoder();
-      let pem = decoder.decode(data);
+  return IOUtils.readUTF8(getTestFilePath(filename)).then(
+    pem => {
       let certdb = Cc["@mozilla.org/security/x509certdb;1"].getService(
         Ci.nsIX509CertDB
       );

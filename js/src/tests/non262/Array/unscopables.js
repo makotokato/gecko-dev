@@ -26,6 +26,8 @@ let expectedKeys = ["at",
 		    "fill",
 		    "find",
 		    "findIndex",
+		    "findLast",
+		    "findLastIndex",
 		    "flat",
 		    "flatMap",
 		    "includes",
@@ -40,12 +42,8 @@ if (typeof getRealmConfiguration === "undefined") {
   var getRealmConfiguration = SpecialPowers.Cu.getJSTestingFunctions().getRealmConfiguration;
 }
 
-if (getRealmConfiguration().enableArrayFindLast) {
-    expectedKeys.push("findLast", "findLastIndex");
-}
-
 if (!getBuildConfiguration().release_or_beta && getRealmConfiguration().enableArrayGrouping) {
-    expectedKeys.push("groupBy", "groupByToMap");
+    expectedKeys.push("group", "groupToMap");
 }
 
 if (getBuildConfiguration()['change-array-by-copy'] && getRealmConfiguration().enableChangeArrayByCopy) {

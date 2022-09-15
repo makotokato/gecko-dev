@@ -33,7 +33,6 @@
 #include "mozilla/EndianUtils.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Maybe.h"
-#include "mozilla/RangedPtr.h"
 #include "mozilla/ScopeExit.h"
 
 #include <algorithm>
@@ -64,7 +63,6 @@
 #include "vm/SavedFrame.h"
 #include "vm/SharedArrayObject.h"
 #include "vm/TypedArrayObject.h"
-#include "vm/WrapperObject.h"
 #include "wasm/WasmJS.h"
 
 #include "vm/Compartment-inl.h"
@@ -72,6 +70,8 @@
 #include "vm/InlineCharBuffer-inl.h"
 #include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
+#include "vm/ObjectOperations-inl.h"
+#include "vm/Realm-inl.h"
 
 using namespace js;
 
@@ -85,7 +85,6 @@ using mozilla::BitwiseCast;
 using mozilla::Maybe;
 using mozilla::NativeEndian;
 using mozilla::NumbersAreIdentical;
-using mozilla::RangedPtr;
 
 // When you make updates here, make sure you consider whether you need to bump
 // the value of JS_STRUCTURED_CLONE_VERSION in js/public/StructuredClone.h.  You
@@ -1918,7 +1917,16 @@ bool JSStructuredCloneWriter::traverseError(HandleObject obj) {
 
   // Non-standard: Serialize |cause|. Because this property
   // might be missing we also write "hasCause" later.
-  Rooted<Maybe<Value>> cause(cx, unwrapped->getCause());
+  RootedId causeId(cx, NameToId(cx->names().cause));
+  Rooted<Maybe<PropertyDescriptor>> causeDesc(cx);
+  if (!GetOwnPropertyDescriptor(cx, obj, causeId, &causeDesc)) {
+    return false;
+  }
+
+  Rooted<Maybe<Value>> cause(cx);
+  if (causeDesc.isSome() && causeDesc->isDataDescriptor()) {
+    cause = mozilla::Some(causeDesc->value());
+  }
   if (!cx->compartment()->wrap(cx, &cause)) {
     return false;
   }
@@ -3792,14 +3800,10 @@ bool JSStructuredCloneReader::read(MutableHandleValue vp, size_t nbytes) {
 #endif
 
   JSRuntime* rt = context()->runtime();
-  rt->addTelemetry(JS_TELEMETRY_DESERIALIZE_BYTES,
-                   static_cast<uint32_t>(std::min(nbytes, size_t(MAX_UINT32))));
-  rt->addTelemetry(
-      JS_TELEMETRY_DESERIALIZE_ITEMS,
-      static_cast<uint32_t>(std::min(numItemsRead, size_t(MAX_UINT32))));
+  rt->metrics().DESERIALIZE_BYTES(nbytes);
+  rt->metrics().DESERIALIZE_ITEMS(numItemsRead);
   mozilla::TimeDuration elapsed = mozilla::TimeStamp::Now() - startTime;
-  rt->addTelemetry(JS_TELEMETRY_DESERIALIZE_US,
-                   static_cast<uint32_t>(elapsed.ToMicroseconds()));
+  rt->metrics().DESERIALIZE_US(elapsed);
 
   return true;
 }

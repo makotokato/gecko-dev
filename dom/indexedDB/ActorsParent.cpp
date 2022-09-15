@@ -34,7 +34,6 @@
 #include "IndexedDatabaseManager.h"
 #include "KeyPath.h"
 #include "MainThreadUtils.h"
-#include "PermissionRequestBase.h"
 #include "ProfilerHelpers.h"
 #include "ReportInternalError.h"
 #include "SafeRefPtr.h"
@@ -1943,7 +1942,7 @@ class DatabaseOperationBase : public Runnable,
   template <typename KeyTransformation>
   static nsresult MaybeBindKeyToStatement(
       const Key& aKey, mozIStorageStatement* aStatement,
-      const nsCString& aParameterName,
+      const nsACString& aParameterName,
       const KeyTransformation& aKeyTransformation);
 
   template <typename KeyTransformation>
@@ -2168,7 +2167,7 @@ class WaitForTransactionsHelper final : public Runnable {
   } mState;
 
  public:
-  WaitForTransactionsHelper(const nsCString& aDatabaseId,
+  WaitForTransactionsHelper(const nsACString& aDatabaseId,
                             nsIRunnable* aCallback)
       : Runnable("dom::indexedDB::WaitForTransactionsHelper"),
         mDatabaseId(aDatabaseId),
@@ -2448,7 +2447,7 @@ class Database final
       nsTArray<nsString>&& aObjectStoreNames, const Mode& aMode) override;
 
   PBackgroundMutableFileParent* AllocPBackgroundMutableFileParent(
-      const nsString& aName, const nsString& aType) override;
+      const nsAString& aName, const nsAString& aType) override;
 
   bool DeallocPBackgroundMutableFileParent(
       PBackgroundMutableFileParent* aActor) override;
@@ -2709,7 +2708,7 @@ class TransactionBase : public AtomicSafeRefCounted<TransactionBase> {
 
   uint64_t TransactionId() const { return *mTransactionId; }
 
-  const nsCString& DatabaseId() const { return mDatabaseId; }
+  const nsACString& DatabaseId() const { return mDatabaseId; }
 
   Mode GetMode() const { return mMode; }
 
@@ -2987,7 +2986,7 @@ class VersionChangeTransaction final
 
   mozilla::ipc::IPCResult RecvRenameObjectStore(
       const IndexOrObjectStoreId& aObjectStoreId,
-      const nsString& aName) override;
+      const nsAString& aName) override;
 
   mozilla::ipc::IPCResult RecvCreateIndex(
       const IndexOrObjectStoreId& aObjectStoreId,
@@ -2999,7 +2998,7 @@ class VersionChangeTransaction final
 
   mozilla::ipc::IPCResult RecvRenameIndex(
       const IndexOrObjectStoreId& aObjectStoreId,
-      const IndexOrObjectStoreId& aIndexId, const nsString& aName) override;
+      const IndexOrObjectStoreId& aIndexId, const nsAString& aName) override;
 
   PBackgroundIDBRequestParent* AllocPBackgroundIDBRequestParent(
       const RequestParams& aParams) override;
@@ -3106,15 +3105,6 @@ class FactoryOp
     // if permission is granted.
     Initial,
 
-    // Sending a permission challenge message to the child on the PBackground
-    // thread. Next step is PermissionRetry.
-    PermissionChallenge,
-
-    // Retrying permission check after a challenge on the main thread. Next step
-    // is either SendingResults if permission is denied or FinishOpen
-    // if permission is granted.
-    PermissionRetry,
-
     // Ensuring quota manager is created and opening directory on the
     // PBackground thread. Next step is either SendingResults if quota manager
     // is not available or DirectoryOpenPending if quota manager is available.
@@ -3192,7 +3182,7 @@ class FactoryOp
   FlippedOnce<false> mInPrivateBrowsing;
 
  public:
-  const nsCString& Origin() const {
+  const nsACString& Origin() const {
     AssertIsOnOwningThread();
 
     return mOriginMetadata.mOrigin;
@@ -3204,7 +3194,7 @@ class FactoryOp
     return !mDatabaseFilePath.IsEmpty();
   }
 
-  const nsString& DatabaseFilePath() const {
+  const nsAString& DatabaseFilePath() const {
     AssertIsOnOwningThread();
     MOZ_ASSERT(!mDatabaseFilePath.IsEmpty());
 
@@ -3235,12 +3225,6 @@ class FactoryOp
   }
 
   nsresult Open();
-
-  nsresult ChallengePermission();
-
-  void PermissionRetry();
-
-  nsresult RetryCheckPermission();
 
   nsresult DirectoryOpen();
 
@@ -3287,13 +3271,11 @@ class FactoryOp
   // IPDL methods.
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
-  mozilla::ipc::IPCResult RecvPermissionRetry() final;
-
   virtual void SendBlockedNotification() = 0;
 
  private:
-  mozilla::Result<PermissionRequestBase::PermissionValue, nsresult>
-  CheckPermission(ContentParent* aContentParent);
+  mozilla::Result<PermissionValue, nsresult> CheckPermission(
+      ContentParent* aContentParent);
 
   static bool CheckAtLeastOneAppHasPermission(
       ContentParent* aContentParent, const nsACString& aPermissionString);
@@ -4407,8 +4389,8 @@ class IndexCursorBase : public CursorBase {
     nsCString mContinueToQuery;
     nsCString mContinuePrimaryKeyQuery;
 
-    const nsCString& GetContinueQuery(const bool hasContinueKey,
-                                      const bool hasContinuePrimaryKey) const {
+    const nsACString& GetContinueQuery(const bool hasContinueKey,
+                                       const bool hasContinuePrimaryKey) const {
       return hasContinuePrimaryKey ? mContinuePrimaryKeyQuery
              : hasContinueKey      ? mContinueToQuery
                                    : mContinueQuery;
@@ -4429,8 +4411,8 @@ class ObjectStoreCursorBase : public CursorBase {
     nsCString mContinueQuery;
     nsCString mContinueToQuery;
 
-    const nsCString& GetContinueQuery(const bool hasContinueKey,
-                                      const bool hasContinuePrimaryKey) const {
+    const nsACString& GetContinueQuery(const bool hasContinueKey,
+                                       const bool hasContinuePrimaryKey) const {
       MOZ_ASSERT(!hasContinuePrimaryKey);
       return hasContinueKey ? mContinueToQuery : mContinueQuery;
     }
@@ -4630,7 +4612,7 @@ class CursorOpBaseHelperBase {
   void PopulateExtraResponses(mozIStorageStatement* aStmt,
                               uint32_t aMaxExtraCount,
                               const size_t aInitialResponseSize,
-                              const nsCString& aOperation,
+                              const nsACString& aOperation,
                               Key* const aOptPreviousSortKey);
 
  protected:
@@ -4689,7 +4671,7 @@ class ObjectStoreOpenOpHelper : protected CommonOpenOpHelper<CursorType> {
   using CommonOpenOpHelper<CursorType>::AppendConditionClause;
 
   void PrepareKeyConditionClauses(const nsACString& aDirectionClause,
-                                  const nsCString& aQueryStart);
+                                  const nsACString& aQueryStart);
 };
 
 template <IDBCursorType CursorType>
@@ -4826,8 +4808,8 @@ class Utils final : public PBackgroundIndexedDBUtilsParent {
   mozilla::ipc::IPCResult RecvDeleteMe() override;
 
   mozilla::ipc::IPCResult RecvGetFileReferences(
-      const PersistenceType& aPersistenceType, const nsCString& aOrigin,
-      const nsString& aDatabaseName, const int64_t& aFileId, int32_t* aRefCnt,
+      const PersistenceType& aPersistenceType, const nsACString& aOrigin,
+      const nsAString& aDatabaseName, const int64_t& aFileId, int32_t* aRefCnt,
       int32_t* aDBRefCnt, bool* aResult) override;
 };
 
@@ -5281,7 +5263,7 @@ Maintenance::DirectoryInfo::DirectoryInfo(
   MOZ_ASSERT(!mFullOriginMetadata->mOrigin.IsEmpty());
 #ifdef DEBUG
   MOZ_ASSERT(!mDatabasePaths->IsEmpty());
-  for (const nsString& databasePath : *mDatabasePaths) {
+  for (const nsAString& databasePath : *mDatabasePaths) {
     MOZ_ASSERT(!databasePath.IsEmpty());
   }
 #endif
@@ -5328,7 +5310,7 @@ class DatabaseMaintenance final : public Runnable {
   DatabaseMaintenance(Maintenance* aMaintenance, DirectoryLock* aDirectoryLock,
                       PersistenceType aPersistenceType,
                       const OriginMetadata& aOriginMetadata,
-                      const nsString& aDatabasePath,
+                      const nsAString& aDatabasePath,
                       const Maybe<CipherKey>& aMaybeKey)
       : Runnable("dom::indexedDB::DatabaseMaintenance"),
         mMaintenance(aMaintenance),
@@ -5343,7 +5325,7 @@ class DatabaseMaintenance final : public Runnable {
     mDirectoryLockId = mDirectoryLock->Id();
   }
 
-  const nsString& DatabasePath() const { return mDatabasePath; }
+  const nsAString& DatabasePath() const { return mDatabasePath; }
 
   void WaitForCompletion(nsIRunnable* aCallback) {
     AssertIsOnBackgroundThread();
@@ -6353,7 +6335,7 @@ constexpr nsLiteralCString GetComparisonOperatorString(
   return ""_ns;
 }
 
-nsAutoCString GetKeyClause(const nsCString& aColumnName,
+nsAutoCString GetKeyClause(const nsACString& aColumnName,
                            const ComparisonOperator aComparisonOperator,
                            const nsLiteralCString& aStmtParamName) {
   return aColumnName + " "_ns +
@@ -6625,7 +6607,7 @@ nsresult DispatchAndReturnFileReferences(
 class DeserializeIndexValueHelper final : public Runnable {
  public:
   DeserializeIndexValueHelper(int64_t aIndexID, const KeyPath& aKeyPath,
-                              bool aMultiEntry, const nsCString& aLocale,
+                              bool aMultiEntry, const nsACString& aLocale,
                               StructuredCloneReadInfoParent& aCloneReadInfo,
                               nsTArray<IndexUpdateInfo>& aUpdateInfoArray)
       : Runnable("DeserializeIndexValueHelper"),
@@ -6748,7 +6730,7 @@ class DeserializeIndexValueHelper final : public Runnable {
 
 auto DeserializeIndexValueToUpdateInfos(
     int64_t aIndexID, const KeyPath& aKeyPath, bool aMultiEntry,
-    const nsCString& aLocale, StructuredCloneReadInfoParent& aCloneReadInfo) {
+    const nsACString& aLocale, StructuredCloneReadInfoParent& aCloneReadInfo) {
   MOZ_ASSERT(!NS_IsMainThread());
 
   using ArrayType = AutoTArray<IndexUpdateInfo, 32>;
@@ -7974,7 +7956,7 @@ uint64_t ConnectionPool::Start(
 
   auto& blockingTransactions = dbInfo->mBlockingTransactions;
 
-  for (const nsString& objectStoreName : aObjectStoreNames) {
+  for (const nsAString& objectStoreName : aObjectStoreNames) {
     TransactionInfoPair* blockInfo =
         blockingTransactions.GetOrInsertNew(objectStoreName);
 
@@ -8070,7 +8052,7 @@ void ConnectionPool::WaitForDatabasesToComplete(
 
   bool mayRunCallbackImmediately = true;
 
-  for (const nsCString& databaseId : aDatabaseIds) {
+  for (const nsACString& databaseId : aDatabaseIds) {
     MOZ_ASSERT(!databaseId.IsEmpty());
 
     if (CloseDatabaseWhenIdleInternal(databaseId)) {
@@ -10129,8 +10111,8 @@ mozilla::ipc::IPCResult Database::RecvPBackgroundIDBTransactionConstructor(
 }
 
 Database::PBackgroundMutableFileParent*
-Database::AllocPBackgroundMutableFileParent(const nsString& aName,
-                                            const nsString& aType) {
+Database::AllocPBackgroundMutableFileParent(const nsAString& aName,
+                                            const nsAString& aType) {
   MOZ_CRASH(
       "PBackgroundMutableFileParent actors should be constructed "
       "manually!");
@@ -11440,7 +11422,7 @@ mozilla::ipc::IPCResult VersionChangeTransaction::RecvDeleteObjectStore(
 }
 
 mozilla::ipc::IPCResult VersionChangeTransaction::RecvRenameObjectStore(
-    const IndexOrObjectStoreId& aObjectStoreId, const nsString& aName) {
+    const IndexOrObjectStoreId& aObjectStoreId, const nsAString& aName) {
   AssertIsOnBackgroundThread();
 
   if (NS_WARN_IF(!aObjectStoreId)) {
@@ -11620,7 +11602,7 @@ mozilla::ipc::IPCResult VersionChangeTransaction::RecvDeleteIndex(
 
 mozilla::ipc::IPCResult VersionChangeTransaction::RecvRenameIndex(
     const IndexOrObjectStoreId& aObjectStoreId,
-    const IndexOrObjectStoreId& aIndexId, const nsString& aName) {
+    const IndexOrObjectStoreId& aIndexId, const nsAString& aName) {
   AssertIsOnBackgroundThread();
 
   if (NS_WARN_IF(!aObjectStoreId)) {
@@ -12552,7 +12534,7 @@ nsresult QuotaClient::UpgradeStorageFrom1_0To2_0(nsIFile* aDirectory) {
   QM_TRY(CollectEachInRange(
       subdirsToProcess,
       [&databaseFilenames = databaseFilenames,
-       aDirectory](const nsString& subdirName) -> Result<Ok, nsresult> {
+       aDirectory](const nsAString& subdirName) -> Result<Ok, nsresult> {
         // If the directory has the correct suffix then it should exist in
         // databaseFilenames.
         nsDependentSubstring subdirNameBase;
@@ -12716,7 +12698,8 @@ nsresult QuotaClient::GetUsageForOriginInternal(
         subdirsToProcess,
         [&directory, &obsoleteFilenames = obsoleteFilenames,
          &databaseFilenames = databaseFilenames, aPersistenceType,
-         &aOriginMetadata](const nsString& subdirName) -> Result<Ok, nsresult> {
+         &aOriginMetadata](
+            const nsAString& subdirName) -> Result<Ok, nsresult> {
           // The directory must have the correct suffix.
           nsDependentSubstring subdirNameBase;
           QM_TRY(QM_OR_ELSE_WARN(
@@ -13715,7 +13698,7 @@ nsresult Maintenance::BeginDatabaseMaintenance() {
   for (DirectoryInfo& directoryInfo : mDirectoryInfos) {
     RefPtr<DirectoryLock> directoryLock;
 
-    for (const nsString& databasePath : *directoryInfo.mDatabasePaths) {
+    for (const nsAString& databasePath : *directoryInfo.mDatabasePaths) {
       if (Helper::IsSafeToRunMaintenance(databasePath)) {
         if (!directoryLock) {
           directoryLock = mDirectoryLock->SpecializeForClient(
@@ -14397,7 +14380,7 @@ uint64_t DatabaseOperationBase::ReinterpretDoubleAsUInt64(double aDouble) {
 template <typename KeyTransformation>
 nsresult DatabaseOperationBase::MaybeBindKeyToStatement(
     const Key& aKey, mozIStorageStatement* const aStatement,
-    const nsCString& aParameterName,
+    const nsACString& aParameterName,
     const KeyTransformation& aKeyTransformation) {
   MOZ_ASSERT(!IsOnBackgroundThread());
   MOZ_ASSERT(aStatement);
@@ -15019,7 +15002,7 @@ mozilla::ipc::IPCResult MutableFile::RecvGetFileId(int64_t* aFileId) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(mFileInfo);
 
-  if (NS_WARN_IF(!IndexedDatabaseManager::InTestingMode())) {
+  if (NS_WARN_IF(!StaticPrefs::dom_indexedDB_testing())) {
     return IPC_FAIL(this, "IndexedDB must be in testing mode!");
   }
 
@@ -15126,14 +15109,6 @@ void FactoryOp::StringifyState(nsACString& aResult) const {
       aResult.AppendLiteral("Initial");
       return;
 
-    case State::PermissionChallenge:
-      aResult.AppendLiteral("PermissionChallenge");
-      return;
-
-    case State::PermissionRetry:
-      aResult.AppendLiteral("PermissionRetry");
-      return;
-
     case State::FinishOpen:
       aResult.AppendLiteral("FinishOpen");
       return;
@@ -15210,11 +15185,10 @@ nsresult FactoryOp::Open() {
 
   QM_TRY_INSPECT(const auto& permission, CheckPermission(contentParent));
 
-  MOZ_ASSERT(permission == PermissionRequestBase::kPermissionAllowed ||
-             permission == PermissionRequestBase::kPermissionDenied ||
-             permission == PermissionRequestBase::kPermissionPrompt);
+  MOZ_ASSERT(permission == PermissionValue::kPermissionAllowed ||
+             permission == PermissionValue::kPermissionDenied);
 
-  if (permission == PermissionRequestBase::kPermissionDenied) {
+  if (permission == PermissionValue::kPermissionDenied) {
     return NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR;
   }
 
@@ -15242,13 +15216,7 @@ nsresult FactoryOp::Open() {
   mDatabaseId.Append('*');
   mDatabaseId.Append(NS_ConvertUTF16toUTF8(metadata.name()));
 
-  if (permission == PermissionRequestBase::kPermissionPrompt) {
-    mState = State::PermissionChallenge;
-    MOZ_ALWAYS_SUCCEEDS(mOwningEventTarget->Dispatch(this, NS_DISPATCH_NORMAL));
-    return NS_OK;
-  }
-
-  MOZ_ASSERT(permission == PermissionRequestBase::kPermissionAllowed);
+  MOZ_ASSERT(permission == PermissionValue::kPermissionAllowed);
 
   if (mInPrivateBrowsing) {
     const auto lockedPrivateBrowsingInfoHashtable =
@@ -15268,69 +15236,6 @@ nsresult FactoryOp::Open() {
       return keyOrErr.unwrap();
     });
   }
-
-  mState = State::FinishOpen;
-  MOZ_ALWAYS_SUCCEEDS(mOwningEventTarget->Dispatch(this, NS_DISPATCH_NORMAL));
-
-  return NS_OK;
-}
-
-nsresult FactoryOp::ChallengePermission() {
-  AssertIsOnOwningThread();
-  MOZ_ASSERT(mState == State::PermissionChallenge);
-
-  const PrincipalInfo& principalInfo = mCommonParams.principalInfo();
-  MOZ_ASSERT(principalInfo.type() == PrincipalInfo::TContentPrincipalInfo);
-
-  if (NS_WARN_IF(!SendPermissionChallenge(principalInfo))) {
-    return NS_ERROR_FAILURE;
-  }
-
-  mWaitingForPermissionRetry = true;
-
-  return NS_OK;
-}
-
-void FactoryOp::PermissionRetry() {
-  AssertIsOnOwningThread();
-  MOZ_ASSERT(mState == State::PermissionChallenge);
-
-  mContentParent = BackgroundParent::GetContentParent(Manager()->Manager());
-
-  mState = State::PermissionRetry;
-
-  mWaitingForPermissionRetry = false;
-
-  MOZ_ALWAYS_SUCCEEDS(NS_DispatchToMainThread(this));
-}
-
-nsresult FactoryOp::RetryCheckPermission() {
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(mState == State::PermissionRetry);
-  MOZ_ASSERT(mCommonParams.principalInfo().type() ==
-             PrincipalInfo::TContentPrincipalInfo);
-
-  // Move this to the stack now to ensure that we release it on this thread.
-  const RefPtr<ContentParent> contentParent = std::move(mContentParent);
-
-  if (NS_WARN_IF(QuotaClient::IsShuttingDownOnNonBackgroundThread()) ||
-      !OperationMayProceed()) {
-    IDB_REPORT_INTERNAL_ERR();
-    return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
-  }
-
-  QM_TRY_INSPECT(const auto& permission, CheckPermission(contentParent));
-
-  MOZ_ASSERT(permission == PermissionRequestBase::kPermissionAllowed ||
-             permission == PermissionRequestBase::kPermissionDenied ||
-             permission == PermissionRequestBase::kPermissionPrompt);
-
-  if (permission == PermissionRequestBase::kPermissionDenied ||
-      permission == PermissionRequestBase::kPermissionPrompt) {
-    return NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR;
-  }
-
-  MOZ_ASSERT(permission == PermissionRequestBase::kPermissionAllowed);
 
   mState = State::FinishOpen;
   MOZ_ALWAYS_SUCCEEDS(mOwningEventTarget->Dispatch(this, NS_DISPATCH_NORMAL));
@@ -15456,10 +15361,10 @@ void FactoryOp::FinishSendResults() {
   mFactory = nullptr;
 }
 
-Result<PermissionRequestBase::PermissionValue, nsresult>
-FactoryOp::CheckPermission(ContentParent* aContentParent) {
+Result<PermissionValue, nsresult> FactoryOp::CheckPermission(
+    ContentParent* aContentParent) {
   MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(mState == State::Initial || mState == State::PermissionRetry);
+  MOZ_ASSERT(mState == State::Initial);
 
   const PrincipalInfo& principalInfo = mCommonParams.principalInfo();
   if (principalInfo.type() != PrincipalInfo::TSystemPrincipalInfo) {
@@ -15545,7 +15450,7 @@ FactoryOp::CheckPermission(ContentParent* aContentParent) {
       mEnforcingQuota = false;
     }
 
-    return PermissionRequestBase::kPermissionAllowed;
+    return PermissionValue::kPermissionAllowed;
   }
 
   MOZ_ASSERT(principalInfo.type() == PrincipalInfo::TContentPrincipalInfo);
@@ -15556,26 +15461,21 @@ FactoryOp::CheckPermission(ContentParent* aContentParent) {
   QM_TRY_UNWRAP(auto principalMetadata,
                 QuotaManager::GetInfoFromPrincipal(principal));
 
-  QM_TRY_INSPECT(const auto& permission,
-                 ([persistenceType, &origin = principalMetadata.mOrigin,
-                   &principal = *principal]()
-                      -> mozilla::Result<PermissionRequestBase::PermissionValue,
-                                         nsresult> {
-                   if (persistenceType == PERSISTENCE_TYPE_PERSISTENT) {
-                     if (QuotaManager::IsOriginInternal(origin)) {
-                       return PermissionRequestBase::kPermissionAllowed;
-                     }
-#ifdef IDB_MOBILE
-                     return Err(NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR);
-#else
-                     return PermissionRequestBase::GetCurrentPermission(
-                         principal);
-#endif
-                   }
-                   return PermissionRequestBase::kPermissionAllowed;
-                 })());
+  QM_TRY_INSPECT(
+      const auto& permission,
+      ([persistenceType, &origin = principalMetadata.mOrigin,
+        &principal =
+            *principal]() -> mozilla::Result<PermissionValue, nsresult> {
+        if (persistenceType == PERSISTENCE_TYPE_PERSISTENT) {
+          if (QuotaManager::IsOriginInternal(origin)) {
+            return PermissionValue::kPermissionAllowed;
+          }
+          return Err(NS_ERROR_DOM_INDEXEDDB_NOT_ALLOWED_ERR);
+        }
+        return PermissionValue::kPermissionAllowed;
+      })());
 
-  if (permission != PermissionRequestBase::kPermissionDenied &&
+  if (permission != PermissionValue::kPermissionDenied &&
       State::Initial == mState) {
     mOriginMetadata = {std::move(principalMetadata), persistenceType};
 
@@ -15730,14 +15630,6 @@ FactoryOp::Run() {
       QM_TRY(MOZ_TO_RESULT(Open()), NS_OK, handleError);
       break;
 
-    case State::PermissionChallenge:
-      QM_TRY(MOZ_TO_RESULT(ChallengePermission()), NS_OK, handleError);
-      break;
-
-    case State::PermissionRetry:
-      QM_TRY(MOZ_TO_RESULT(RetryCheckPermission()), NS_OK, handleError);
-      break;
-
     case State::FinishOpen:
       QM_TRY(MOZ_TO_RESULT(FinishOpen()), NS_OK, handleError);
       break;
@@ -15812,32 +15704,6 @@ void FactoryOp::ActorDestroy(ActorDestroyReason aWhy) {
   AssertIsOnBackgroundThread();
 
   NoteActorDestroyed();
-
-  // Assume ActorDestroy can happen at any time, so we can't probe the current
-  // state since mState can be modified on any thread (only one thread at a time
-  // based on the state machine).  However we can use mWaitingForPermissionRetry
-  // which is only touched on the owning thread.  If mWaitingForPermissionRetry
-  // is true, we can also modify mState since we are guaranteed that there are
-  // no pending runnables which would probe mState to decide what code needs to
-  // run (there shouldn't be any running runnables on other threads either).
-
-  if (mWaitingForPermissionRetry) {
-    PermissionRetry();
-  }
-
-  // We don't have to handle the case when mWaitingForPermissionRetry is not
-  // true since it means that either nothing has been initialized yet, so
-  // nothing to cleanup or there are pending runnables that will detect that the
-  // actor has been destroyed and cleanup accordingly.
-}
-
-mozilla::ipc::IPCResult FactoryOp::RecvPermissionRetry() {
-  AssertIsOnOwningThread();
-  MOZ_ASSERT(!IsActorDestroyed());
-
-  PermissionRetry();
-
-  return IPC_OK();
 }
 
 OpenDatabaseOp::OpenDatabaseOp(SafeRefPtr<Factory> aFactory,
@@ -15892,7 +15758,7 @@ nsresult OpenDatabaseOp::DoDatabaseWork() {
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
   }
 
-  const nsString& databaseName = mCommonParams.metadata().name();
+  const nsAString& databaseName = mCommonParams.metadata().name();
   const PersistenceType persistenceType =
       mCommonParams.metadata().persistenceType();
 
@@ -16299,7 +16165,7 @@ nsresult OpenDatabaseOp::LoadDatabaseInformation(
                 const nsCString& systemLocale =
                     IndexedDatabaseManager::GetLocale();
                 if (!systemLocale.IsEmpty() && isAutoLocale &&
-                    !indexedLocale.EqualsASCII(systemLocale.get())) {
+                    !indexedLocale.Equals(systemLocale)) {
                   QM_TRY(MOZ_TO_RESULT(UpdateLocaleAwareIndex(
                       aConnection, indexMetadata->mCommonMetadata,
                       systemLocale)));
@@ -17091,7 +16957,7 @@ nsresult DeleteDatabaseOp::DoDatabaseWork() {
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
   }
 
-  const nsString& databaseName = mCommonParams.metadata().name();
+  const nsAString& databaseName = mCommonParams.metadata().name();
   const PersistenceType persistenceType =
       mCommonParams.metadata().persistenceType();
 
@@ -20695,7 +20561,7 @@ CursorOpBaseHelperBase<CursorType>::PopulateResponseFromStatement(
 template <IDBCursorType CursorType>
 void CursorOpBaseHelperBase<CursorType>::PopulateExtraResponses(
     mozIStorageStatement* const aStmt, const uint32_t aMaxExtraCount,
-    const size_t aInitialResponseSize, const nsCString& aOperation,
+    const size_t aInitialResponseSize, const nsACString& aOperation,
     Key* const aOptPreviousSortKey) {
   mOp.AssertIsOnConnectionThread();
 
@@ -20744,7 +20610,8 @@ void CursorOpBaseHelperBase<CursorType>::PopulateExtraResponses(
             "%.0s Dropping too large (%" PRIu32 "/%zu)",
             IDB_LOG_ID_STRING(mOp.mBackgroundChildLoggingId),
             mOp.mTransactionLoggingSerialNumber, mOp.mLoggingSerialNumber,
-            aOperation.get(), extraCount, accumulatedResponseSize);
+            PromiseFlatCString(aOperation).get(), extraCount,
+            accumulatedResponseSize);
 
         break;
       }
@@ -20761,7 +20628,7 @@ void CursorOpBaseHelperBase<CursorType>::PopulateExtraResponses(
       "%.0s Populated (%" PRIu32 "/%" PRIu32 ")",
       IDB_LOG_ID_STRING(mOp.mBackgroundChildLoggingId),
       mOp.mTransactionLoggingSerialNumber, mOp.mLoggingSerialNumber,
-      aOperation.get(), extraCount, aMaxExtraCount);
+      PromiseFlatCString(aOperation).get(), extraCount, aMaxExtraCount);
 }
 
 template <IDBCursorType CursorType>
@@ -20800,7 +20667,7 @@ void Cursor<CursorType>::SetOptionalKeyRange(
 
 template <IDBCursorType CursorType>
 void ObjectStoreOpenOpHelper<CursorType>::PrepareKeyConditionClauses(
-    const nsACString& aDirectionClause, const nsCString& aQueryStart) {
+    const nsACString& aDirectionClause, const nsACString& aQueryStart) {
   const bool isIncreasingOrder = IsIncreasingOrder(GetCursor().mDirection);
 
   nsAutoCString keyRangeClause;
@@ -21428,8 +21295,8 @@ mozilla::ipc::IPCResult Utils::RecvDeleteMe() {
 }
 
 mozilla::ipc::IPCResult Utils::RecvGetFileReferences(
-    const PersistenceType& aPersistenceType, const nsCString& aOrigin,
-    const nsString& aDatabaseName, const int64_t& aFileId, int32_t* aRefCnt,
+    const PersistenceType& aPersistenceType, const nsACString& aOrigin,
+    const nsAString& aDatabaseName, const int64_t& aFileId, int32_t* aRefCnt,
     int32_t* aDBRefCnt, bool* aResult) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aRefCnt);
@@ -21445,8 +21312,8 @@ mozilla::ipc::IPCResult Utils::RecvGetFileReferences(
     return IPC_FAIL(this, "No QuotaManager active!");
   }
 
-  if (NS_WARN_IF(!IndexedDatabaseManager::InTestingMode())) {
-    return IPC_FAIL(this, "IndexedDatabaseManager is not InTestingMode!");
+  if (NS_WARN_IF(!StaticPrefs::dom_indexedDB_testing())) {
+    return IPC_FAIL(this, "IndexedDB is not in testing mode!");
   }
 
   if (NS_WARN_IF(!IsValidPersistenceType(aPersistenceType))) {
@@ -21473,13 +21340,6 @@ mozilla::ipc::IPCResult Utils::RecvGetFileReferences(
   }
 
   return IPC_OK();
-}
-
-void PermissionRequestHelper::OnPromptComplete(
-    PermissionValue aPermissionValue) {
-  MOZ_ASSERT(NS_IsMainThread());
-
-  mResolver(aPermissionValue);
 }
 
 #ifdef DEBUG

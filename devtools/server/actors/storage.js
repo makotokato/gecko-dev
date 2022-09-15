@@ -8,7 +8,6 @@ const { Cc, Ci, Cu, CC } = require("chrome");
 const protocol = require("devtools/shared/protocol");
 const { LongStringActor } = require("devtools/server/actors/string");
 const { DevToolsServer } = require("devtools/server/devtools-server");
-const Services = require("Services");
 const { isWindowIncluded } = require("devtools/shared/layout/utils");
 const specs = require("devtools/shared/specs/storage");
 const { parseItemValue } = require("devtools/shared/storage/utils");
@@ -23,7 +22,7 @@ loader.lazyGetter(this, "ExtensionStorageIDB", () => {
 loader.lazyRequireGetter(
   this,
   "getAddonIdForWindowGlobal",
-  "devtools/server/actors/watcher/browsing-context-helpers.jsm",
+  "devtools/server/actors/watcher/browsing-context-helpers.sys.mjs",
   true
 );
 
@@ -144,7 +143,7 @@ var StorageActors = {};
  */
 StorageActors.defaults = function(typeName, observationTopics) {
   return {
-    typeName: typeName,
+    typeName,
 
     get conn() {
       return this.storageActor.conn;
@@ -332,7 +331,7 @@ StorageActors.defaults = function(typeName, observationTopics) {
 
       return {
         actor: this.actorID,
-        hosts: hosts,
+        hosts,
         traits: this._getTraits(),
       };
     },
@@ -399,7 +398,7 @@ StorageActors.defaults = function(typeName, observationTopics) {
       const sortOn = options.sortOn || "name";
 
       const toReturn = {
-        offset: offset,
+        offset,
         total: 0,
         data: [],
       };
@@ -888,7 +887,7 @@ StorageActors.createActor(
           "debug:storage-cookie-request-parent",
           {
             method: methodName,
-            args: args,
+            args,
           }
         );
 
@@ -1269,7 +1268,7 @@ exports.setupParentProcessForCookies = function({ mm, prefix }) {
     try {
       mm.sendAsyncMessage("debug:storage-cookie-request-child", {
         method: methodName,
-        args: args,
+        args,
       });
     } catch (e) {
       // We may receive a NS_ERROR_NOT_INITIALIZED if the target window has
@@ -1611,7 +1610,7 @@ const extensionStorageHelpers = {
       "debug:storage-extensionStorage-request-child",
       {
         method: "backToChild",
-        args: args,
+        args,
       }
     );
   },
@@ -1721,7 +1720,7 @@ const extensionStorageHelpers = {
       "debug:storage-extensionStorage-request-parent",
       {
         method: methodName,
-        args: args,
+        args,
       }
     );
 
@@ -2176,7 +2175,7 @@ StorageActors.createActor(
 
       return {
         actor: this.actorID,
-        hosts: hosts,
+        hosts,
         traits: this._getTraits(),
       };
     },
@@ -2714,7 +2713,7 @@ StorageActors.createActor(
 
       return {
         actor: this.actorID,
-        hosts: hosts,
+        hosts,
         traits: this._getTraits(),
       };
     },
@@ -2808,7 +2807,7 @@ StorageActors.createActor(
 
         mm.sendAsyncMessage("debug:storage-indexedDB-request-parent", {
           method: methodName,
-          args: args,
+          args,
         });
 
         return promise;
@@ -2852,7 +2851,7 @@ var indexedDBHelpers = {
   backToChild(...args) {
     Services.mm.broadcastAsyncMessage("debug:storage-indexedDB-request-child", {
       method: "backToChild",
-      args: args,
+      args,
     });
   },
 
@@ -2888,7 +2887,7 @@ var indexedDBHelpers = {
     });
   },
 
-  splitNameAndStorage: function(name) {
+  splitNameAndStorage(name) {
     const lastOpenBracketIndex = name.lastIndexOf("(");
     const lastCloseBracketIndex = name.lastIndexOf(")");
     const delta = lastCloseBracketIndex - lastOpenBracketIndex - 1;
@@ -2933,9 +2932,9 @@ var indexedDBHelpers = {
    * Opens an indexed db connection for the given `principal` and
    * database `name`.
    */
-  openWithPrincipal: function(principal, name, storage) {
+  openWithPrincipal(principal, name, storage) {
     return indexedDBForStorage.openForPrincipal(principal, name, {
-      storage: storage,
+      storage,
     });
   },
 
@@ -2943,7 +2942,7 @@ var indexedDBHelpers = {
     const result = new Promise(resolve => {
       const { name, storage } = this.splitNameAndStorage(dbName);
       const request = indexedDBForStorage.deleteForPrincipal(principal, name, {
-        storage: storage,
+        storage,
       });
 
       request.onsuccess = () => {
@@ -3082,7 +3081,7 @@ var indexedDBHelpers = {
       });
     }
 
-    if (files.length > 0) {
+    if (files.length) {
       for (const { file, storage } of files) {
         const name = await this.getNameFromDatabaseFile(file);
         if (name) {
@@ -3186,7 +3185,7 @@ var indexedDBHelpers = {
     // will throw. Thus we retry for some time to see if lock is removed.
     while (!connection && retryCount++ < 25) {
       try {
-        connection = await Sqlite.openConnection({ path: path });
+        connection = await Sqlite.openConnection({ path });
       } catch (ex) {
         // Continuously retrying is overkill. Waiting for 100ms before next try
         await sleep(100);
@@ -3227,7 +3226,7 @@ var indexedDBHelpers = {
           dbs.push(db.toObject());
         }
       }
-      return this.backToChild("getValuesForHost", { dbs: dbs });
+      return this.backToChild("getValuesForHost", { dbs });
     }
 
     const [db2, objectStore, id] = name;
@@ -3247,7 +3246,7 @@ var indexedDBHelpers = {
         }
       }
       return this.backToChild("getValuesForHost", {
-        objectStores: objectStores,
+        objectStores,
       });
     }
     // Get either all entries from the object store, or a particular id
@@ -3258,14 +3257,14 @@ var indexedDBHelpers = {
       db2,
       storage,
       {
-        objectStore: objectStore,
-        id: id,
+        objectStore,
+        id,
         index: options.index,
         offset: options.offset,
         size: options.size,
       }
     );
-    return this.backToChild("getValuesForHost", { result: result });
+    return this.backToChild("getValuesForHost", { result });
   },
 
   /**
@@ -3321,7 +3320,7 @@ var indexedDBHelpers = {
           const count = event2.target.result;
           objectsSize.push({
             key: host + dbName + objectStore + index,
-            count: count,
+            count,
           });
 
           if (!offset) {
@@ -3344,8 +3343,8 @@ var indexedDBHelpers = {
               if (!cursor || data.length >= size) {
                 db.close();
                 resolve({
-                  data: data,
-                  objectsSize: objectsSize,
+                  data,
+                  objectsSize,
                 });
                 return;
               }
@@ -3823,7 +3822,7 @@ const StorageActor = protocol.ActorClassWithSpec(specs.storageSpec, {
 
       for (const host in data) {
         if (
-          data[host].length == 0 &&
+          !data[host].length &&
           this.boundUpdate.added &&
           this.boundUpdate.added[storeType] &&
           this.boundUpdate.added[storeType][host]
@@ -3831,7 +3830,7 @@ const StorageActor = protocol.ActorClassWithSpec(specs.storageSpec, {
           delete this.boundUpdate.added[storeType][host];
         }
         if (
-          data[host].length == 0 &&
+          !data[host].length &&
           this.boundUpdate.changed &&
           this.boundUpdate.changed[storeType] &&
           this.boundUpdate.changed[storeType][host]

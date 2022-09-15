@@ -114,6 +114,7 @@ EXPORTS.mozilla.dom += [
     "HTMLUnknownElement.h",
     "HTMLVideoElement.h",
     "ImageDocument.h",
+    "MediaDocument.h",
     "MediaError.h",
     "nsBrowserElement.h",
     "PlayPromise.h",
@@ -214,10 +215,6 @@ UNIFIED_SOURCES += [
     "TimeRanges.cpp",
     "ValidityState.cpp",
     "VideoDocument.cpp",
-]
-
-XPCOM_MANIFESTS += [
-    "components.conf",
 ]
 
 include("/ipc/chromium/chromium-config.mozbuild")

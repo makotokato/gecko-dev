@@ -7,9 +7,6 @@
 // This is loaded into chrome windows with the subscript loader. Wrap in
 // a block to prevent accidentally leaking globals onto `window`.
 {
-  const { Services } = ChromeUtils.import(
-    "resource://gre/modules/Services.jsm"
-  );
   const { AppConstants } = ChromeUtils.import(
     "resource://gre/modules/AppConstants.jsm"
   );
@@ -761,10 +758,23 @@
 
     advanceSelectedTab(aDir, aWrap) {
       let startTab = this.ariaFocusedItem || this.selectedItem;
-      let newTab = this.findNextTab(startTab, {
-        direction: aDir,
-        wrap: aWrap,
-      });
+      let newTab = null;
+
+      // Handle keyboard navigation for a hidden tab that can be selected, like the Firefox View tab,
+      // which has a random placement in this.allTabs.
+      if (startTab.hidden) {
+        if (aDir == 1) {
+          newTab = this.allTabs.find(tab => !tab.hidden);
+        } else {
+          newTab = this.allTabs.findLast(tab => !tab.hidden);
+        }
+      } else {
+        newTab = this.findNextTab(startTab, {
+          direction: aDir,
+          wrap: aWrap,
+        });
+      }
+
       if (newTab && newTab != startTab) {
         this._selectNewTab(newTab, aDir, aWrap);
       }

@@ -190,7 +190,7 @@ enum class DeviceFamily : uint8_t {
   NvidiaBlockD3D9Layers,
   RadeonX1000,
   RadeonCaicos,
-  RadeonBlockNoVideoCopy,
+  RadeonBlockZeroVideoCopy,
   Geforce7300GT,
   Nvidia310M,
   Nvidia8800GTS,
@@ -460,6 +460,9 @@ inline bool SplitDriverVersion(const char* aSource, char* aAStr, char* aBStr,
   // Add last terminator.
   MOZ_ASSERT(destIdx < 4 && destPos <= 4);
   dest[destIdx][destPos] = 0;
+  for (int unusedDestIdx = destIdx + 1; unusedDestIdx < 4; unusedDestIdx++) {
+    dest[unusedDestIdx][0] = 0;
+  }
 
   if (destIdx != 3) {
     return false;

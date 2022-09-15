@@ -20,8 +20,9 @@ static {{ foreign_callback_internals }}: uniffi::ForeignCallbackInternals = unif
 
 #[doc(hidden)]
 #[no_mangle]
-pub extern "C" fn {{ cbi.ffi_init_callback().name() }}(callback: uniffi::ForeignCallback) {
+pub extern "C" fn {{ cbi.ffi_init_callback().name() }}(callback: uniffi::ForeignCallback, _: &mut uniffi::RustCallStatus) {
     {{ foreign_callback_internals }}.set_callback(callback);
+    // The call status should be initialized to CALL_SUCCESS, so no need to modify it.
 }
 
 // Make an implementation which will shell out to the foreign language.
@@ -41,11 +42,11 @@ impl Drop for {{ trait_impl }} {
 
 uniffi::deps::static_assertions::assert_impl_all!({{ trait_impl }}: Send);
 
-impl {{ trait_name }} for {{ trait_impl }} {
+impl r#{{ trait_name }} for {{ trait_impl }} {
     {%- for meth in cbi.methods() %}
 
     {#- Method declaration #}
-    fn {{ meth.name() -}}
+    fn r#{{ meth.name() -}}
     ({% call rs::arg_list_decl_with_prefix("&self", meth) %})
     {%- match meth.return_type() %}
     {%- when Some with (return_type) %} -> {{ return_type.borrow()|type_rs }}
@@ -61,7 +62,7 @@ impl {{ trait_name }} for {{ trait_impl }} {
         let mut args_buf = Vec::new();
         {% endif -%}
         {%- for arg in meth.arguments() %}
-        {{ arg.type_().borrow()|ffi_converter }}::write({{ arg.name() }}, &mut args_buf);
+        {{ arg.type_().borrow()|ffi_converter }}::write(r#{{ arg.name() }}, &mut args_buf);
         {%- endfor -%}
         let args_rbuf = uniffi::RustBuffer::from_vec(args_buf);
 
@@ -99,7 +100,7 @@ impl {{ trait_name }} for {{ trait_impl }} {
 
 unsafe impl uniffi::FfiConverter for {{ trait_impl }} {
     // This RustType allows for rust code that inputs this type as a Box<dyn CallbackInterfaceTrait> param
-    type RustType = Box<dyn {{ trait_name }}>;
+    type RustType = Box<dyn r#{{ trait_name }}>;
     type FfiType = u64;
 
     // Lower and write are tricky to implement because we have a dyn trait as our type.  There's

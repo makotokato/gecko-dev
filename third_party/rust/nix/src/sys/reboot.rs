@@ -1,8 +1,9 @@
 //! Reboot/shutdown or enable/disable Ctrl-Alt-Delete.
 
-use crate::Result;
-use crate::errno::Errno;
-use std::convert::Infallible;
+use {Error, Result};
+use errno::Errno;
+use libc;
+use void::Void;
 use std::mem::drop;
 
 libc_enum! {
@@ -11,7 +12,6 @@ libc_enum! {
     /// See [`set_cad_enabled()`](fn.set_cad_enabled.html) for
     /// enabling/disabling Ctrl-Alt-Delete.
     #[repr(i32)]
-    #[non_exhaustive]
     pub enum RebootMode {
         RB_HALT_SYSTEM,
         RB_KEXEC,
@@ -22,11 +22,11 @@ libc_enum! {
     }
 }
 
-pub fn reboot(how: RebootMode) -> Result<Infallible> {
+pub fn reboot(how: RebootMode) -> Result<Void> {
     unsafe {
         libc::reboot(how as libc::c_int)
     };
-    Err(Errno::last())
+    Err(Error::Sys(Errno::last()))
 }
 
 /// Enable or disable the reboot keystroke (Ctrl-Alt-Delete).

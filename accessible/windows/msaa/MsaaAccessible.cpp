@@ -489,6 +489,16 @@ static already_AddRefed<IDispatch> GetProxiedAccessibleInSubtree(
   return disp.forget();
 }
 
+static bool IsInclusiveDescendantOf(DocAccessible* aAncestor,
+                                    DocAccessible* aDescendant) {
+  for (DocAccessible* doc = aDescendant; doc; doc = doc->ParentDocument()) {
+    if (doc == aAncestor) {
+      return true;
+    }
+  }
+  return false;
+}
+
 already_AddRefed<IAccessible> MsaaAccessible::GetIAccessibleFor(
     const VARIANT& aVarChild, bool* aIsDefunct) {
   if (aVarChild.vt != VT_I4) return nullptr;
@@ -602,9 +612,8 @@ already_AddRefed<IAccessible> MsaaAccessible::GetIAccessibleFor(
       }
       for (DocAccessibleParent* remoteDoc : *remoteDocs) {
         LocalAccessible* outerDoc = remoteDoc->OuterDocOfRemoteBrowser();
-        if (!outerDoc || outerDoc->Document() != localDoc) {
-          // The OuterDoc isn't inside our document, so this isn't a
-          // descendant.
+        if (!outerDoc ||
+            !IsInclusiveDescendantOf(localDoc, outerDoc->Document())) {
           continue;
         }
         child = GetAccessibleInSubtree(remoteDoc, id);
@@ -786,6 +795,10 @@ ITypeInfo* MsaaAccessible::GetTI(LCID lcid) {
 
 /* static */
 MsaaAccessible* MsaaAccessible::GetFrom(Accessible* aAcc) {
+  if (!aAcc) {
+    return nullptr;
+  }
+
   if (RemoteAccessible* remoteAcc = aAcc->AsRemote()) {
     return reinterpret_cast<MsaaAccessible*>(remoteAcc->GetWrapper());
   }
@@ -849,8 +862,8 @@ MsaaAccessible::QueryInterface(REFIID iid, void** ppv) {
       return E_NOINTERFACE;
     }
     *ppv = static_cast<IEnumVARIANT*>(new ChildrenEnumVariant(this));
-  } else if (IID_ISimpleDOMNode == iid && localAcc) {
-    if (!localAcc->HasOwnContent() && !localAcc->IsDoc()) {
+  } else if (IID_ISimpleDOMNode == iid) {
+    if (mAcc->IsDoc() || (localAcc && !localAcc->HasOwnContent())) {
       return E_NOINTERFACE;
     }
 
@@ -1222,12 +1235,12 @@ MsaaAccessible::get_accKeyboardShortcut(
                                                pszKeyboardShortcut);
   }
 
-  LocalAccessible* localAcc = LocalAcc();
-  if (!localAcc) {
-    return E_NOTIMPL;  // XXX Not supported for RemoteAccessible yet.
+  KeyBinding keyBinding = mAcc->AccessKey();
+  if (keyBinding.IsEmpty()) {
+    if (LocalAccessible* localAcc = mAcc->AsLocal()) {
+      keyBinding = localAcc->KeyboardShortcut();
+    }
   }
-  KeyBinding keyBinding = localAcc->AccessKey();
-  if (keyBinding.IsEmpty()) keyBinding = localAcc->KeyboardShortcut();
 
   nsAutoString shortcut;
   keyBinding.ToString(shortcut);
@@ -1254,15 +1267,9 @@ MsaaAccessible::get_accFocus(
   if (!mAcc) {
     return CO_E_OBJNOTCONNECTED;
   }
-  LocalAccessible* localAcc = LocalAcc();
-  if (!localAcc) {
-    return E_NOTIMPL;  // XXX Not supported for RemoteAccessible yet.
-  }
-
   // Return the current IAccessible child that has focus
-  LocalAccessible* focusedAccessible = localAcc->FocusedChild();
-
-  if (focusedAccessible == localAcc) {
+  Accessible* focusedAccessible = mAcc->FocusedChild();
+  if (focusedAccessible == mAcc) {
     pvarChild->vt = VT_I4;
     pvarChild->lVal = CHILDID_SELF;
   } else if (focusedAccessible) {
@@ -1598,10 +1605,7 @@ MsaaAccessible::accNavigate(
   pvarEndUpAt->vt = VT_EMPTY;
 
   if (xpRelation) {
-    if (mAcc->IsRemote()) {
-      return E_NOTIMPL;  // XXX Not supported for RemoteAccessible yet.
-    }
-    Relation rel = mAcc->AsLocal()->RelationByType(*xpRelation);
+    Relation rel = mAcc->RelationByType(*xpRelation);
     navAccessible = rel.Next();
   }
 

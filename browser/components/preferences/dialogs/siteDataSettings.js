@@ -8,7 +8,6 @@
 var { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
-var { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 ChromeUtils.defineModuleGetter(
   this,
@@ -42,7 +41,7 @@ let gSiteDataSettings = {
     function addColumnItem(l10n, flexWidth, tooltipText) {
       let box = document.createXULElement("hbox");
       box.className = "item-box";
-      box.setAttribute("flex", flexWidth);
+      box.setAttribute("style", `-moz-box-flex: ${flexWidth}`);
       let label = document.createXULElement("label");
       label.setAttribute("crop", "end");
       if (l10n) {

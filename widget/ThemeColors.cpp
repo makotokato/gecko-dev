@@ -6,6 +6,7 @@
 #include "ThemeColors.h"
 
 #include "mozilla/RelativeLuminanceUtils.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPrefs_widget.h"
 #include "ThemeDrawing.h"
 #include "nsNativeTheme.h"
@@ -84,10 +85,12 @@ struct ColorPalette {
 };
 
 static nscolor GetAccentColor(bool aBackground, ColorScheme aScheme) {
+  auto useStandins = LookAndFeel::UseStandins(
+      !StaticPrefs::widget_non_native_theme_use_theme_accent());
   return ColorPalette::EnsureOpaque(
       LookAndFeel::Color(aBackground ? LookAndFeel::ColorID::Accentcolor
                                      : LookAndFeel::ColorID::Accentcolortext,
-                         aScheme, LookAndFeel::UseStandins::No));
+                         aScheme, useStandins));
 }
 
 static ColorPalette sDefaultLightPalette = ColorPalette::Default();
@@ -178,7 +181,8 @@ ColorScheme ThemeColors::ColorSchemeForWidget(const nsIFrame* aFrame,
   if (StaticPrefs::widget_disable_dark_scrollbar()) {
     return ColorScheme::Light;
   }
-  return nsNativeTheme::IsDarkBackground(const_cast<nsIFrame*>(aFrame))
+  return nsNativeTheme::IsDarkBackgroundForScrollbar(
+             const_cast<nsIFrame*>(aFrame))
              ? ColorScheme::Dark
              : ColorScheme::Light;
 }

@@ -9,7 +9,6 @@
 // ⚠️ This should only be used for getting data for objects using CanvasFrameAnonymousContentHelper,
 // that we can't get directly from tests.
 const { Ci, Cc } = require("chrome");
-const Services = require("Services");
 const { getRect, getAdjustedQuads } = require("devtools/shared/layout/utils");
 
 // Set up a dummy environment so that EventUtils works. We need to be careful to
@@ -27,7 +26,6 @@ Services.scriptloader.loadSubScript(
   EventUtils
 );
 
-var ChromeUtils = require("ChromeUtils");
 const { TestUtils } = ChromeUtils.import(
   "resource://testing-common/TestUtils.jsm"
 );
@@ -62,7 +60,7 @@ function getHighlighterCanvasFrameHelper(conn, actorID) {
   if (
     highlighter._highlighters &&
     Array.isArray(highlighter._highlighters) &&
-    highlighter._highlighters.length > 0
+    highlighter._highlighters.length
   ) {
     highlighter = highlighter._highlighters[0];
   }
@@ -187,7 +185,7 @@ var highlighterTestSpec = protocol.generateActorSpec({
 });
 
 var HighlighterTestActor = protocol.ActorClassWithSpec(highlighterTestSpec, {
-  initialize: function(conn, targetActor, options) {
+  initialize(conn, targetActor, options) {
     protocol.Actor.prototype.initialize.call(this, conn);
     this.conn = conn;
     this.targetActor = targetActor;
@@ -204,7 +202,7 @@ var HighlighterTestActor = protocol.ActorClassWithSpec(highlighterTestSpec, {
    *   are considered matching an iframe, so that we can query element
    *   within deep iframes.
    */
-  _querySelector: function(selector) {
+  _querySelector(selector) {
     let document = this.content.document;
     if (Array.isArray(selector)) {
       const fullSelector = selector.join(" >> ");
@@ -253,7 +251,7 @@ var HighlighterTestActor = protocol.ActorClassWithSpec(highlighterTestSpec, {
    * - {String} actorID The highlighter actor ID
    * @return {String} The value, if found, null otherwise
    */
-  getHighlighterAttribute: function(nodeID, name, actorID) {
+  getHighlighterAttribute(nodeID, name, actorID) {
     const helper = getHighlighterCanvasFrameHelper(this.conn, actorID);
 
     if (!helper) {
@@ -270,7 +268,7 @@ var HighlighterTestActor = protocol.ActorClassWithSpec(highlighterTestSpec, {
    * @param {String} actorID The highlighter actor ID
    * @return {String} The textcontent value
    */
-  getHighlighterNodeTextContent: function(nodeID, actorID) {
+  getHighlighterNodeTextContent(nodeID, actorID) {
     let value;
     const helper = getHighlighterCanvasFrameHelper(this.conn, actorID);
     if (helper) {
@@ -285,7 +283,7 @@ var HighlighterTestActor = protocol.ActorClassWithSpec(highlighterTestSpec, {
    * @return {Number} The number of box-model highlighters created, or null if the
    * SelectorHighlighter was not found.
    */
-  getSelectorHighlighterBoxNb: function(actorID) {
+  getSelectorHighlighterBoxNb(actorID) {
     const highlighter = this.conn.getActor(actorID);
     const { _highlighter: h } = highlighter;
     if (!h || !h._highlighters) {
@@ -302,7 +300,7 @@ var HighlighterTestActor = protocol.ActorClassWithSpec(highlighterTestSpec, {
    * @param {String} the new value for the attribute
    * @param {String} actorID The highlighter actor ID
    */
-  changeHighlightedNodeWaitForUpdate: function(name, value, actorID) {
+  changeHighlightedNodeWaitForUpdate(name, value, actorID) {
     return new Promise(resolve => {
       const highlighter = this.conn.getActor(actorID);
       const { _highlighter: h } = highlighter;
@@ -739,10 +737,10 @@ class HighlighterTestFront extends protocol.FrontClassWithSpec(
 
     return {
       visible: !hidden,
-      x1: x1,
-      y1: y1,
-      x2: x2,
-      y2: y2,
+      x1,
+      y1,
+      x2,
+      y2,
     };
   }
 

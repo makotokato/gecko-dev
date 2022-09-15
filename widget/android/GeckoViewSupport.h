@@ -91,6 +91,8 @@ class GeckoViewSupport final
 
   void OnShowDynamicToolbar() const;
 
+  void OnUpdateSessionStore(mozilla::jni::Object::Param aBundle);
+
   void PassExternalResponse(java::WebResponse::Param aResponse);
 
   void AttachMediaSessionController(
@@ -106,8 +108,9 @@ class GeckoViewSupport final
     disposer->Run();
   }
 
-  void PrintToPdf(const java::GeckoSession::Window::LocalRef& inst,
-                  jni::Object::Param aStream);
+  MOZ_CAN_RUN_SCRIPT void PrintToPdf(
+      const java::GeckoSession::Window::LocalRef& inst,
+      jni::Object::Param aStream);
 };
 
 }  // namespace widget

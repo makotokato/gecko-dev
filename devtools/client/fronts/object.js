@@ -141,9 +141,16 @@ class ObjectFront extends FrontClassWithSpec(objectSpec) {
    */
   enumEntries() {
     if (
-      !["Map", "WeakMap", "Set", "WeakSet", "Storage"].includes(
-        this._grip.class
-      )
+      ![
+        "Headers",
+        "Map",
+        "WeakMap",
+        "Set",
+        "WeakSet",
+        "Storage",
+        "URLSearchParams",
+        "FormData",
+      ].includes(this._grip.class)
     ) {
       console.error(
         "enumEntries is only valid for Map/Set/Storage-like grips."

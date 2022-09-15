@@ -3,11 +3,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { Log } = ChromeUtils.import("resource://gre/modules/Log.jsm");
+const { clearTimeout, setTimeout } = ChromeUtils.import(
+  "resource://gre/modules/Timer.jsm"
+);
 
 const lazy = {};
 
@@ -327,6 +329,54 @@ var GeckoViewUtils = {
   },
 
   /**
+   * Return promise for waiting for finishing PanZoomState.
+   *
+   * @param aWindow a DOM window.
+   * @return promise
+   */
+  waitForPanZoomState(aWindow) {
+    return new Promise((resolve, reject) => {
+      if (
+        !aWindow?.windowUtils.asyncPanZoomEnabled ||
+        !Services.prefs.getBoolPref("apz.zoom-to-focused-input.enabled")
+      ) {
+        // No zoomToFocusedInput.
+        resolve();
+        return;
+      }
+
+      let timerId = 0;
+
+      const panZoomState = (aSubject, aTopic, aData) => {
+        if (timerId != 0) {
+          // aWindow may be dead object now.
+          try {
+            clearTimeout(timerId);
+          } catch (e) {}
+          timerId = 0;
+        }
+
+        if (aData === "NOTHING") {
+          Services.obs.removeObserver(panZoomState, "PanZoom:StateChange");
+          resolve();
+        }
+      };
+
+      Services.obs.addObserver(panZoomState, "PanZoom:StateChange");
+
+      // "GeckoView:ZoomToInput" has the timeout as 500ms when window isn't
+      // resized (it means on-screen-keyboard is already shown).
+      // So after up to 500ms, APZ event is sent. So we need to wait for more
+      // 500ms.
+      timerId = setTimeout(() => {
+        // PanZoom state isn't changed. zoomToFocusedInput will return error.
+        Services.obs.removeObserver(panZoomState, "PanZoom:StateChange");
+        reject();
+      }, 600);
+    });
+  },
+
+  /**
    * Add logging functions to the specified scope that forward to the given
    * Log.jsm logger. Currently "debug" and "warn" functions are supported. To
    * log something, call the function through a template literal:
@@ -428,6 +478,35 @@ var GeckoViewUtils = {
     }
 
     aLogger[aLevel.toLowerCase()](strs, ...aExprs);
+  },
+
+  /**
+   * Checks whether the principal is supported for permissions.
+   *
+   * @param {nsIPrincipal} principal
+   *        The principal to check.
+   *
+   * @return {boolean} if the principal is supported.
+   */
+  isSupportedPermissionsPrincipal(principal) {
+    if (!principal) {
+      return false;
+    }
+    if (!(principal instanceof Ci.nsIPrincipal)) {
+      throw new Error(
+        "Argument passed as principal is not an instance of Ci.nsIPrincipal"
+      );
+    }
+    return this.isSupportedPermissionsScheme(principal.scheme);
+  },
+
+  /**
+   * Checks whether we support managing permissions for a specific scheme.
+   * @param {string} scheme - Scheme to test.
+   * @returns {boolean} Whether the scheme is supported.
+   */
+  isSupportedPermissionsScheme(scheme) {
+    return ["http", "https", "moz-extension", "file"].includes(scheme);
   },
 };
 

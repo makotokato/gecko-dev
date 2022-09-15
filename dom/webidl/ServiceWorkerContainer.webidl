@@ -8,7 +8,7 @@
  *
  */
 
-[Func="ServiceWorkerContainer::IsEnabled",
+[Func="ServiceWorkersEnabled",
  Exposed=Window]
 interface ServiceWorkerContainer : EventTarget {
   // FIXME(nsm):
@@ -32,7 +32,6 @@ interface ServiceWorkerContainer : EventTarget {
   void startMessages();
 
   attribute EventHandler oncontrollerchange;
-  attribute EventHandler onerror;
   attribute EventHandler onmessage;
   attribute EventHandler onmessageerror;
 };

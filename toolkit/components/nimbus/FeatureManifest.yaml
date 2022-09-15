@@ -6,10 +6,18 @@
 
 "no-feature-firefox-desktop":
   description: A dummy feature for experiments that target no feature.
+  owner: barret@mozilla.com
+  applications:
+    - firefox-desktop
+    - firefox-desktop-background-task
   hasExposure: false
   variables: {}
 testFeature:
   description: Test only feature
+  owner: barret@mozilla.com
+  applications:
+    - firefox-desktop
+    - firefox-desktop-background-task
   hasExposure: false
   isEarlyStartup: true
   variables:
@@ -22,6 +30,7 @@ testFeature:
       description: Int pref used by platform API tests
 search:
   description: The Search Services
+  owner: search-and-suggest-program@mozilla.com
   hasExposure: false
   variables:
     experiment:
@@ -35,6 +44,7 @@ search:
       description: Query parameters values for search engine configurations.
 urlbar:
   description: The Address Bar
+  owner: search-and-suggest-program@mozilla.com
   hasExposure: true
   exposureDescription: >-
     The timing of the exposure event depends on the experiment, but generally
@@ -81,6 +91,10 @@ urlbar:
       type: boolean
       fallbackPref: browser.urlbar.merino.enabled
       description: Whether Merino is enabled as a quick suggest source
+    merinoEndpointURL:
+      type: string
+      fallbackPref: browser.urlbar.merino.endpointURL
+      description: The Merino endpoint URL, not including parameters.
     merinoTimeoutMs:
       type: int
       fallbackPref: browser.urlbar.merino.timeoutMs
@@ -155,6 +169,7 @@ urlbar:
         negative index is relative to the end of the group
 aboutwelcome:
   description: "The about:welcome page"
+  owner: omc@mozilla.com
   hasExposure: true
   exposureDescription: >-
     Exposure is sent once per browsing session when the about:welcome URL is
@@ -190,8 +205,14 @@ aboutwelcome:
     transitions:
       type: boolean
       description: Enable transition effect between screens
+    templateMR:
+      type: boolean
+      fallbackPref: browser.aboutwelcome.templateMR
+      description: >-
+        Should users see the MR 50-50 split template?
 moreFromMozilla:
   description: "New page on about:preferences to suggest more Mozilla products"
+  owner: omc@mozilla.com
   hasExposure: true
   exposureDescription: >-
     Exposure is sent once per browsing session when the about:preferences URL is
@@ -207,6 +228,7 @@ moreFromMozilla:
       description: UI template used to display Mozilla products. Possible values simple, advanced. Default is simple.
 abouthomecache:
   description: "The startup about:home cache."
+  owner: omc@mozilla.com
   hasExposure: false
   isEarlyStartup: true
   variables:
@@ -216,6 +238,7 @@ abouthomecache:
       description: Is the feature enabled?
 newtab:
   description: "The about:newtab page"
+  owner: omc@mozilla.com
   hasExposure: true
   exposureDescription: >-
     Exposure is sent once per browsing session when the first newtab page loads
@@ -238,6 +261,7 @@ newtab:
       description: Enable the Contile integration for Sponsored Top Sites
 pocketNewtab:
   description: The Pocket section in newtab
+  owner: sdowne@getpocket.com
   hasExposure: false
   isEarlyStartup: true
   variables:
@@ -261,17 +285,6 @@ pocketNewtab:
       type: boolean
       fallbackPref: browser.newtabpage.activity-stream.discoverystream.fourCardLayout.enabled
       description: Enable four Pocket cards per row.
-    loadMore:
-      type: boolean
-      fallbackPref: browser.newtabpage.activity-stream.discoverystream.loadMore.enabled
-      description: A button to load more stories at the bottom of the Pocket section.
-    lastCardMessageEnabled:
-      type: boolean
-      fallbackPref: >-
-        browser.newtabpage.activity-stream.discoverystream.lastCardMessage.enabled
-      description: >-
-        The last card in the Pocket section is a message that they are currently
-        at the end of the list of stories.
     newFooterSection:
       type: boolean
       fallbackPref: >-
@@ -284,12 +297,24 @@ pocketNewtab:
       description: >-
         A save to Pocket button inside the card, shown on the card thumbnail, on
         hover.
+    saveToPocketCardRegions:
+      type: string
+      fallbackPref: >-
+        browser.newtabpage.activity-stream.discoverystream.saveToPocketCardRegions
+      description: >-
+        CSV string of regions that support the save to Pocket button inside the card.
     hideDescriptions:
       type: boolean
       fallbackPref: >-
         browser.newtabpage.activity-stream.discoverystream.hideDescriptions.enabled
       description: >-
         Hide or display descriptions for Pocket stories on newtab.
+    hideDescriptionsRegions:
+      type: string
+      fallbackPref: >-
+        browser.newtabpage.activity-stream.discoverystream.hideDescriptionsRegions
+      description: >-
+        CSV string of regions that hide descriptions for Pocket stories on newtab.
     compactGrid:
       type: boolean
       fallbackPref: >-
@@ -335,6 +360,12 @@ pocketNewtab:
       description: >-
         Updates the Pocket section header and title to say "Editor’s Picks", if used with
         essentialReadsHeader, creates a second section 2 rows down for editorsPicksHeader.
+    recentSavesEnabled:
+      type: boolean
+      fallbackPref: >-
+        browser.newtabpage.activity-stream.discoverystream.recentSaves.enabled
+      description: >-
+        Updates the Pocket section with a new header and 1 row of recently saved Pocket stories.
     readTime:
       type: boolean
       fallbackPref: >-
@@ -367,13 +398,10 @@ pocketNewtab:
         Enables Pocket sponsored content personalization.
 saveToPocket:
   description: The save to Pocket feature
+  owner: sdowne@getpocket.com
   hasExposure: false
   isEarlyStartup: true
   variables:
-    layoutRefresh:
-      type: boolean
-      fallbackPref: extensions.pocket.refresh.layout.enabled
-      description: Enable the new Pocket panels.
     emailButton:
       type: boolean
       fallbackPref: extensions.pocket.refresh.emailButton.enabled
@@ -384,6 +412,7 @@ saveToPocket:
       description: Hides the recently saved section in the home panel.
 password-autocomplete:
   description: A special autocomplete UI for password fields.
+  owner: sgalich@mozilla.com
   hasExposure: false
   variables:
     directMigrateSingleProfile:
@@ -391,6 +420,7 @@ password-autocomplete:
       description: Enable direct migration?
 shellService:
   description: "Interface with OS, e.g., pinning and set default"
+  owner: desktop-integrations@mozilla.com
   hasExposure: false
   isEarlyStartup: true
   variables:
@@ -414,6 +444,7 @@ shellService:
         Reader or Nitro PDF.
 upgradeDialog:
   description: The dialog shown for major upgrades
+  owner: omc@mozilla.com
   hasExposure: false
   isEarlyStartup: true
   variables:
@@ -423,6 +454,7 @@ upgradeDialog:
       description: Is the feature enabled?
 readerMode:
   description: Firefox Reader Mode
+  owner: sdowne@getpocket.com
   hasExposure: false
   isEarlyStartup: true
   variables:
@@ -434,6 +466,7 @@ readerMode:
         CTA)
 tcpPreferences:
   description: "Toggles the Total Cookie Protection section in about:preferences"
+  owner: tihuang@mozilla.com
   hasExposure: false
   isEarlyStartup: false
   variables:
@@ -443,6 +476,7 @@ tcpPreferences:
       description: "Turn on the section in about:preferences"
 tcpByDefault:
   description: "Enables TCP by default by updating the default pref value of network.cookie.cookieBehavior."
+  owner: tihuang@mozilla.com
   hasExposure: false
   isEarlyStartup: true
   variables:
@@ -450,56 +484,75 @@ tcpByDefault:
       type: boolean
       description: "Enables TCP by default"
 cfr:
-  description: "Doorhanger message template for Messaging System"
+  description: "A Firefox Messaging System message for the cfr message channel"
+  owner: omc@mozilla.com
   hasExposure: true
   exposureDescription: "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
   isEarlyStartup: false
   schema:
-    uri: "resource://activity-stream/schemas/CFR/ExtensionDoorhanger.schema.json"
-    path: "browser/components/newtab/content-src/asrouter/templates/CFR/templates/ExtensionDoorhanger.schema.json"
+    uri: "resource://activity-stream/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/newtab/content-src/asrouter/schemas/MessagingExperiment.schema.json"
   variables: {}
 "moments-page":
-  description: "Message with URL data for Messaging System"
+  description: "A Firefox Messaging System message for the moments-page message channel"
+  owner: omc@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
   isEarlyStartup: false
   schema:
-    uri: "resource://activity-stream/schemas/OnboardingMessage/UpdateAction.schema.json"
-    path: "browser/components/newtab/content-src/asrouter/templates/OnboardingMessage/UpdateAction.schema.json"
+    uri: "resource://activity-stream/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/newtab/content-src/asrouter/schemas/MessagingExperiment.schema.json"
   variables: {}
 infobar:
-  description: "Message template for Messaging System"
+  description: "A Firefox Messaging system message for the infobar message channel"
+  owner: omc@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
   isEarlyStartup: false
   schema:
-    uri: "resource://activity-stream/schemas/CFR/InfoBar.schema.json"
-    path: "browser/components/newtab/content-src/asrouter/templates/CFR/templates/InfoBar.schema.json"
+    uri: "resource://activity-stream/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/newtab/content-src/asrouter/schemas/MessagingExperiment.schema.json"
   variables: {}
 spotlight:
-  description: "Modal message template for Messaging System"
+  description: "A Firefox Messaging System message for the spotlight message channel"
+  owner: omc@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
   isEarlyStartup: false
   schema:
-    uri: "resource://activity-stream/schemas/OnboardingMessage/Spotlight.schema.json"
-    path: "browser/components/newtab/content-src/asrouter/templates/OnboardingMessage/Spotlight.schema.json"
+    uri: "resource://activity-stream/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/newtab/content-src/asrouter/schemas/MessagingExperiment.schema.json"
   variables: {}
 pbNewtab:
-  description: Message shown on the PB newtab for Messaging System
+  description: "A Firefox Messaging System message for the pbNewtab message channel"
+  owner: omc@mozilla.com
   hasExposure: true
   exposureDescription: >-
     Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched.
   isEarlyStartup: false
   schema:
-    uri: "resource://activity-stream/schemas/PBNewtab/NewtabPromoMessage.schema.json"
-    path: "browser/components/newtab/content-src/asrouter/templates/PBNewtab/NewtabPromoMessage.schema.json"
+    uri: "resource://activity-stream/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/newtab/content-src/asrouter/schemas/MessagingExperiment.schema.json"
+  variables: {}
+backgroundTaskMessage:
+  description: "A Firefox Messaging System message for the background task message channel"
+  owner: nalexander@mozilla.com
+  applications:
+    - firefox-desktop-background-task
+  hasExposure: true
+  exposureDescription: >-
+    Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched.
+  isEarlyStartup: false
+  schema:
+    uri: "resource://activity-stream/schemas/BackgroundTaskMessagingExperiment.schema.json"
+    path: "browser/components/newtab/content-src/asrouter/schemas/BackgroundTaskMessagingExperiment.schema.json"
   variables: {}
 syncAfterTabChange:
   description: "Schedule a sync after any tab change"
+  owner: sync-team@mozilla.com
   hasExposure: false
   isEarlyStartup: false
   variables:
@@ -508,8 +561,12 @@ syncAfterTabChange:
       fallbackPref: "services.sync.syncedTabs.syncDelayAfterTabChange"
       description: >-
         "How long to wait (in milliseconds) to schedule a sync after tab change"
+    syncDelayAfterTabChangeOverride:
+      type: boolean
+      description: Whether to override the pref in case we need to lengthen or diable the increased sync
 pictureinpicture:
   description: Message for first time Picture-in-Picture users
+  owner: nbaumgardner@mozilla.com
   hasExposure: true
   exposureDescription: Exposure is sent when a user hovers over a video and Picture-in-Picture has not been used before
   variables:
@@ -524,9 +581,48 @@ pictureinpicture:
       description: Whether to show the first time PiP toggle or show the PiP icon only
 glean:
   description: "The Glean data collection SDK within Firefox Desktop"
+  owner: glean-team@mozilla.com
   hasExposure: false
   variables:
     newtabPingEnabled:
       type: "boolean"
       fallbackPref: "browser.newtabpage.ping.enabled"
       description: "Whether to submit the 'newtab' ping"
+majorRelease2022:
+  description: Major Release 2022
+  owner: firefoxview@mozilla.com
+  hasExposure: false
+  isEarlyStartup: true
+  variables:
+    feltPrivacyPBMDarkTheme:
+      type: boolean
+      fallbackPref: "browser.theme.dark-private-windows"
+      description: "Use dark theme variant for PBM windows. This is only supported if the theme sets darkTheme data."
+    feltPrivacyPBMNewIndicator:
+      type: boolean
+      fallbackPref: "browser.privatebrowsing.enable-new-indicator"
+      description: "Enables the new private browsing indicator."
+    feltPrivacyPBMNewLogo:
+      type: boolean
+      fallbackPref: "browser.privatebrowsing.enable-new-logo"
+      description: "Enables the new about:privatebrowsing logo."
+    feltPrivacyShowPreferencesSection:
+      type: boolean
+      fallbackPref: "browser.privacySegmentation.preferences.show"
+      description: "Controls visibility of the privacy segmentation preferences section."
+    feltPrivacyWindowSeparation:
+      type: boolean
+      fallbackPref: "browser.privateWindowSeparation.enabled"
+      description: "Whether or not private browsing windows use a separate icon in the Windows taskbar"
+    colorwayCloset:
+      type: boolean
+      fallbackPref: "browser.theme.colorway-closet"
+      description: "Whether or not to show the colorway closet modal"
+    firefoxView:
+      type: boolean
+      fallbackPref: "browser.tabs.firefox-view"
+      description: "Whether or not to show the firefox view tab"
+    onboarding:
+      type: boolean
+      fallbackPref: "browser.majorrelease.onboarding"
+      description: "Whether or not to use the MR2022 onboarding settings."

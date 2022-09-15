@@ -5,6 +5,12 @@
 /* import-globals-from extensionControlled.js */
 /* import-globals-from preferences.js */
 
+const lazy = {};
+
+ChromeUtils.defineESModuleGetters(lazy, {
+  SearchUIUtils: "resource:///modules/SearchUIUtils.sys.mjs",
+});
+
 Preferences.addAll([
   { id: "browser.search.suggest.enabled", type: "bool" },
   { id: "browser.urlbar.suggest.searches", type: "bool" },
@@ -35,10 +41,7 @@ var gSearchPane = {
       document.getElementById("addEnginesBox").hidden = true;
     } else {
       let addEnginesLink = document.getElementById("addEngines");
-      let searchEnginesURL = Services.wm.getMostRecentWindow(
-        "navigator:browser"
-      ).BrowserSearch.searchEnginesURL;
-      addEnginesLink.setAttribute("href", searchEnginesURL);
+      addEnginesLink.setAttribute("href", lazy.SearchUIUtils.searchEnginesURL);
     }
 
     window.addEventListener("click", this);
@@ -744,7 +747,7 @@ EngineStore.prototype = {
       }
     }
 
-    Services.search.resetToOriginalDefaultEngine();
+    Services.search.resetToAppDefaultEngine();
     gSearchPane.showRestoreDefaults(false);
     gSearchPane.buildDefaultEngineDropDowns();
     return added;
@@ -843,12 +846,17 @@ EngineView.prototype = {
   },
 
   isEngineSelectedAndRemovable() {
+    let defaultEngine = Services.search.defaultEngine;
+    let defaultPrivateEngine = Services.search.defaultPrivateEngine;
     // We don't allow the last remaining engine to be removed, thus the
     // `this.lastEngineIndex != 0` check.
+    // We don't allow the default engine to be removed.
     return (
       this.selectedIndex != -1 &&
       this.lastEngineIndex != 0 &&
-      !this._getLocalShortcut(this.selectedIndex)
+      !this._getLocalShortcut(this.selectedIndex) &&
+      this.selectedEngine.name != defaultEngine.name &&
+      this.selectedEngine.name != defaultPrivateEngine.name
     );
   },
 

@@ -212,14 +212,8 @@ gfxFontCache::~gfxFontCache() {
     mWordCacheExpirationTimer = nullptr;
   }
 
-  // Expire everything that has a zero refcount, so we don't leak them.
-  AgeAllGenerations();
-  // All fonts should be gone.
-  NS_WARNING_ASSERTION(mFonts.Count() == 0,
-                       "Fonts still alive while shutting down gfxFontCache");
-  // Note that we have to delete everything through the expiration
-  // tracker, since there might be fonts not in the hashtable but in
-  // the tracker.
+  // Expire everything manually so we don't leak them.
+  Flush();
 }
 
 bool gfxFontCache::HashEntry::KeyEquals(const KeyTypePointer aKey) const {
@@ -231,9 +225,9 @@ bool gfxFontCache::HashEntry::KeyEquals(const KeyTypePointer aKey) const {
            aKey->mUnicodeRangeMap->Equals(fontUnicodeRangeMap)));
 }
 
-gfxFont* gfxFontCache::Lookup(const gfxFontEntry* aFontEntry,
-                              const gfxFontStyle* aStyle,
-                              const gfxCharacterMap* aUnicodeRangeMap) {
+already_AddRefed<gfxFont> gfxFontCache::Lookup(
+    const gfxFontEntry* aFontEntry, const gfxFontStyle* aStyle,
+    const gfxCharacterMap* aUnicodeRangeMap) {
   MutexAutoLock lock(mMutex);
 
   Key key(aFontEntry, aStyle, aUnicodeRangeMap);
@@ -241,87 +235,94 @@ gfxFont* gfxFontCache::Lookup(const gfxFontEntry* aFontEntry,
 
   Telemetry::Accumulate(Telemetry::FONT_CACHE_HIT, entry != nullptr);
 
-  return entry ? entry->mFont : nullptr;
+  if (!entry) {
+    return nullptr;
+  }
+
+  RefPtr<gfxFont> font = entry->mFont;
+  MarkUsedLocked(font, lock);
+  return font.forget();
 }
 
-void gfxFontCache::AddNew(gfxFont* aFont) {
-  gfxFont* oldFont;
-  {
-    MutexAutoLock lock(mMutex);
+already_AddRefed<gfxFont> gfxFontCache::MaybeInsert(RefPtr<gfxFont>&& aFont) {
+  MOZ_ASSERT(aFont);
+  MutexAutoLock lock(mMutex);
 
-    Key key(aFont->GetFontEntry(), aFont->GetStyle(),
-            aFont->GetUnicodeRangeMap());
-    HashEntry* entry = mFonts.PutEntry(key);
-    if (!entry) {
-      return;
-    }
-    oldFont = entry->mFont;
-    entry->mFont = aFont;
+  Key key(aFont->GetFontEntry(), aFont->GetStyle(),
+          aFont->GetUnicodeRangeMap());
+  HashEntry* entry = mFonts.PutEntry(key);
+  if (!entry) {
+    return aFont.forget();
+  }
+
+  // If it is null, then we are inserting a new entry. Otherwise we are
+  // attempting to replace an existing font, probably due to a thread race, in
+  // which case stick with the original font.
+  if (!entry->mFont) {
+    entry->mFont = std::move(aFont);
+    AddObjectLocked(entry->mFont, lock);
     // Assert that we can find the entry we just put in (this fails if the key
     // has a NaN float value in it, e.g. 'sizeAdjust').
     MOZ_ASSERT(entry == mFonts.GetEntry(key));
+  } else {
+    MarkUsedLocked(entry->mFont, lock);
   }
 
-  // If someone's asked us to replace an existing font entry, then that's a
-  // bit weird, but let it happen, and expire the old font if it's not used.
-  if (oldFont && oldFont->GetExpirationState()->IsTracked()) {
-    // if oldFont == aFont, recount should be > 0,
-    // so we shouldn't be here.
-    NS_ASSERTION(aFont != oldFont, "new font is tracked for expiry!");
-    NotifyExpired(oldFont);
-  }
-}
-
-void gfxFontCache::NotifyReleased(gfxFont* aFont) {
-  if (NS_FAILED(AddObject(aFont))) {
-    // We couldn't track it for some reason. Kill it now.
-    DestroyFont(aFont);
-  }
-  // Note that we might have fonts that aren't in the hashtable, perhaps because
-  // of OOM adding to the hashtable or because someone did an AddNew where
-  // we already had a font. These fonts are added to the expiration tracker
-  // anyway, even though Lookup can't resurrect them. Eventually they will
-  // expire and be deleted.
+  return do_AddRef(entry->mFont);
 }
 
 void gfxFontCache::NotifyExpiredLocked(gfxFont* aFont, const AutoLock& aLock) {
-  aFont->ClearCachedWords();
+  // If there are outstanding references to the font outside the cache, we
+  // should just mark it as used.
+  if (aFont->GetRefCount() > 1) {
+    MarkUsedLocked(aFont, aLock);
+    return;
+  }
+
+  // We should have the last reference to the font.
   RemoveObjectLocked(aFont, aLock);
-  DestroyFontLocked(aFont);
-}
-
-void gfxFontCache::NotifyExpired(gfxFont* aFont) {
-  aFont->ClearCachedWords();
-  RemoveObject(aFont);
-  DestroyFont(aFont);
-}
-
-void gfxFontCache::DestroyFontLocked(gfxFont* aFont) {
   Key key(aFont->GetFontEntry(), aFont->GetStyle(),
           aFont->GetUnicodeRangeMap());
   HashEntry* entry = mFonts.GetEntry(key);
-  if (entry && entry->mFont == aFont) {
-    mFonts.RemoveEntry(entry);
+  if (!entry || entry->mFont != aFont) {
+    MOZ_ASSERT_UNREACHABLE("Invalid font?");
+    return;
   }
-  NS_ASSERTION(aFont->GetRefCount() == 0,
-               "Destroying with non-zero ref count!");
-  MutexAutoUnlock unlock(mMutex);
-  delete aFont;
+
+  mTrackerDiscard.AppendElement(std::move(entry->mFont));
+  mFonts.RemoveEntry(entry);
 }
 
-void gfxFontCache::DestroyFont(gfxFont* aFont) {
+void gfxFontCache::NotifyHandlerEnd() {
+  nsTArray<RefPtr<gfxFont>> discard;
   {
     MutexAutoLock lock(mMutex);
-    Key key(aFont->GetFontEntry(), aFont->GetStyle(),
-            aFont->GetUnicodeRangeMap());
-    HashEntry* entry = mFonts.GetEntry(key);
-    if (entry && entry->mFont == aFont) {
-      mFonts.RemoveEntry(entry);
-    }
+    discard = std::move(mTrackerDiscard);
   }
-  NS_ASSERTION(aFont->GetRefCount() == 0,
-               "Destroying with non-zero ref count!");
-  delete aFont;
+  DestroyDiscard(discard);
+}
+
+void gfxFontCache::DestroyDiscard(nsTArray<RefPtr<gfxFont>>& aDiscard) {
+  for (auto& font : aDiscard) {
+    NS_ASSERTION(font->GetRefCount() == 1,
+                 "Destroying with refs outside cache!");
+    font->ClearCachedWords();
+  }
+  aDiscard.Clear();
+}
+
+void gfxFontCache::Flush() {
+  nsTHashtable<HashEntry> discard;
+  {
+    MutexAutoLock lock(mMutex);
+    for (auto iter = mFonts.Iter(); !iter.Done(); iter.Next()) {
+      HashEntry* entry = static_cast<HashEntry*>(iter.Get());
+      RemoveObjectLocked(entry->mFont, lock);
+    }
+    MOZ_ASSERT(IsEmptyLocked(lock),
+               "Cache tracker still has fonts after flush!");
+    discard = std::move(mFonts);
+  }
 }
 
 /*static*/
@@ -1222,8 +1223,10 @@ static const hb_tag_t defaultFeatures[] = {
     HB_TAG('v', 'e', 'r', 't'), HB_TAG('v', 'j', 'm', 'o')};
 
 void gfxFont::CheckForFeaturesInvolvingSpace() const {
-  auto setInitializedFlag =
-      MakeScopeExit([&]() { mFontEntry->mHasSpaceFeaturesInitialized = true; });
+  gfxFontEntry::SpaceFeatures flags = gfxFontEntry::SpaceFeatures::None;
+
+  auto setFlags =
+      MakeScopeExit([&]() { mFontEntry->mHasSpaceFeatures = flags; });
 
   bool log = LOG_FONTINIT_ENABLED();
   TimeStamp start;
@@ -1231,14 +1234,12 @@ void gfxFont::CheckForFeaturesInvolvingSpace() const {
     start = TimeStamp::Now();
   }
 
-  bool result = false;
-
   uint32_t spaceGlyph = GetSpaceGlyph();
   if (!spaceGlyph) {
     return;
   }
 
-  hb_face_t* face = GetFontEntry()->GetHBFace();
+  auto face(GetFontEntry()->GetHBFace());
 
   // GSUB lookups - examine per script
   if (hb_ot_layout_has_substitution(face)) {
@@ -1291,7 +1292,7 @@ void gfxFont::CheckForFeaturesInvolvingSpace() const {
             !sScriptTagToCode->Get(scriptTags[i], &s)) {
           continue;
         }
-        result = true;
+        flags = flags | gfxFontEntry::SpaceFeatures::HasFeatures;
         uint32_t index = static_cast<uint32_t>(s) >> 5;
         uint32_t bit = static_cast<uint32_t>(s) & 0x1f;
         if (isDefaultFeature) {
@@ -1312,46 +1313,48 @@ void gfxFont::CheckForFeaturesInvolvingSpace() const {
   }
 
   // GPOS lookups - distinguish kerning from non-kerning features
-  mFontEntry->mHasSpaceFeaturesKerning = false;
-  mFontEntry->mHasSpaceFeaturesNonKerning = false;
-
   if (canUseWordCache && hb_ot_layout_has_positioning(face)) {
     bool hasKerning = false, hasNonKerning = false;
     HasLookupRuleWithGlyph(face, HB_OT_TAG_GPOS, hasNonKerning,
                            HB_TAG('k', 'e', 'r', 'n'), hasKerning, spaceGlyph);
-    if (hasKerning || hasNonKerning) {
-      result = true;
+    if (hasKerning) {
+      flags |= gfxFontEntry::SpaceFeatures::HasFeatures |
+               gfxFontEntry::SpaceFeatures::Kerning;
     }
-    mFontEntry->mHasSpaceFeaturesKerning = hasKerning;
-    mFontEntry->mHasSpaceFeaturesNonKerning = hasNonKerning;
+    if (hasNonKerning) {
+      flags |= gfxFontEntry::SpaceFeatures::HasFeatures |
+               gfxFontEntry::SpaceFeatures::NonKerning;
+    }
   }
-
-  hb_face_destroy(face);
-  mFontEntry->mHasSpaceFeatures = result;
 
   if (MOZ_UNLIKELY(log)) {
     TimeDuration elapsed = TimeStamp::Now() - start;
-    LOG_FONTINIT(
-        ("(fontinit-spacelookups) font: %s - "
-         "subst default: %8.8x %8.8x %8.8x %8.8x "
-         "subst non-default: %8.8x %8.8x %8.8x %8.8x "
-         "kerning: %s non-kerning: %s time: %6.3f\n",
-         mFontEntry->Name().get(), mFontEntry->mDefaultSubSpaceFeatures[3],
-         mFontEntry->mDefaultSubSpaceFeatures[2],
-         mFontEntry->mDefaultSubSpaceFeatures[1],
-         mFontEntry->mDefaultSubSpaceFeatures[0],
-         mFontEntry->mNonDefaultSubSpaceFeatures[3],
-         mFontEntry->mNonDefaultSubSpaceFeatures[2],
-         mFontEntry->mNonDefaultSubSpaceFeatures[1],
-         mFontEntry->mNonDefaultSubSpaceFeatures[0],
-         (mFontEntry->mHasSpaceFeaturesKerning ? "true" : "false"),
-         (mFontEntry->mHasSpaceFeaturesNonKerning ? "true" : "false"),
-         elapsed.ToMilliseconds()));
+    LOG_FONTINIT((
+        "(fontinit-spacelookups) font: %s - "
+        "subst default: %8.8x %8.8x %8.8x %8.8x "
+        "subst non-default: %8.8x %8.8x %8.8x %8.8x "
+        "kerning: %s non-kerning: %s time: %6.3f\n",
+        mFontEntry->Name().get(), mFontEntry->mDefaultSubSpaceFeatures[3],
+        mFontEntry->mDefaultSubSpaceFeatures[2],
+        mFontEntry->mDefaultSubSpaceFeatures[1],
+        mFontEntry->mDefaultSubSpaceFeatures[0],
+        mFontEntry->mNonDefaultSubSpaceFeatures[3],
+        mFontEntry->mNonDefaultSubSpaceFeatures[2],
+        mFontEntry->mNonDefaultSubSpaceFeatures[1],
+        mFontEntry->mNonDefaultSubSpaceFeatures[0],
+        (mFontEntry->mHasSpaceFeatures & gfxFontEntry::SpaceFeatures::Kerning
+             ? "true"
+             : "false"),
+        (mFontEntry->mHasSpaceFeatures & gfxFontEntry::SpaceFeatures::NonKerning
+             ? "true"
+             : "false"),
+        elapsed.ToMilliseconds()));
   }
 }
 
 bool gfxFont::HasSubstitutionRulesWithSpaceLookups(Script aRunScript) const {
-  NS_ASSERTION(GetFontEntry()->mHasSpaceFeaturesInitialized,
+  NS_ASSERTION(GetFontEntry()->mHasSpaceFeatures !=
+                   gfxFontEntry::SpaceFeatures::Uninitialized,
                "need to initialize space lookup flags");
   NS_ASSERTION(aRunScript < Script::NUM_SCRIPT_CODES, "weird script code");
   if (aRunScript == Script::INVALID || aRunScript >= Script::NUM_SCRIPT_CODES) {
@@ -1398,24 +1401,26 @@ tainted_boolean_hint gfxFont::SpaceMayParticipateInShaping(
   // require us to re-check the tables; however, the actual check is done
   // by gfxFont because not all font entry subclasses know how to create
   // a harfbuzz face for introspection.
-  if (!mFontEntry->mHasSpaceFeaturesInitialized) {
+  gfxFontEntry::SpaceFeatures flags = mFontEntry->mHasSpaceFeatures;
+  if (flags == gfxFontEntry::SpaceFeatures::Uninitialized) {
     CheckForFeaturesInvolvingSpace();
+    flags = mFontEntry->mHasSpaceFeatures;
   }
 
-  if (!mFontEntry->mHasSpaceFeatures) {
+  if (!(flags & gfxFontEntry::SpaceFeatures::HasFeatures)) {
     return false;
   }
 
   // if font has substitution rules or non-kerning positioning rules
   // that involve spaces, bypass
   if (HasSubstitutionRulesWithSpaceLookups(aRunScript) ||
-      mFontEntry->mHasSpaceFeaturesNonKerning) {
+      (flags & gfxFontEntry::SpaceFeatures::NonKerning)) {
     return true;
   }
 
   // if kerning explicitly enabled/disabled via font-feature-settings or
   // font-kerning and kerning rules use spaces, only bypass when enabled
-  if (mKerningSet && mFontEntry->mHasSpaceFeaturesKerning) {
+  if (mKerningSet && (flags & gfxFontEntry::SpaceFeatures::Kerning)) {
     return mKerningEnabled;
   }
 
@@ -2028,8 +2033,7 @@ void gfxFont::DrawOneGlyph(uint32_t aGlyphID, const gfx::Point& aPt,
       }
     }
 
-    if (fontParams.haveColorGlyphs &&
-        !gfxPlatform::GetPlatform()->HasNativeColrFontSupport() &&
+    if (fontParams.haveColorGlyphs && !UseNativeColrFontSupport() &&
         RenderColorGlyph(runParams.dt, runParams.context, textDrawer,
                          fontParams.scaledFont, fontParams.drawOptions, devPt,
                          aGlyphID)) {
@@ -2464,60 +2468,37 @@ bool gfxFont::RenderSVGGlyph(gfxContext* aContext,
 
 bool gfxFont::RenderColorGlyph(DrawTarget* aDrawTarget, gfxContext* aContext,
                                layout::TextDrawTarget* aTextDrawer,
-                               mozilla::gfx::ScaledFont* scaledFont,
-                               mozilla::gfx::DrawOptions aDrawOptions,
-                               const mozilla::gfx::Point& aPoint,
-                               uint32_t aGlyphId) const {
-  AutoTArray<uint16_t, 8> layerGlyphs;
-  AutoTArray<mozilla::gfx::DeviceColor, 8> layerColors;
+                               ScaledFont* aScaledFont,
+                               DrawOptions aDrawOptions, const Point& aPoint,
+                               uint32_t aGlyphId) {
+  auto currentColor = [=]() {
+    DeviceColor ctxColor;
+    return aContext->GetDeviceColor(ctxColor)
+               ? sRGBColor::FromABGR(ctxColor.ToABGR())
+               : sRGBColor::OpaqueBlack();
+  };
 
-  mozilla::gfx::DeviceColor defaultColor;
-  if (!aContext->GetDeviceColor(defaultColor)) {
-    defaultColor = ToDeviceColor(mozilla::gfx::sRGBColor::OpaqueBlack());
-  }
-  if (!GetFontEntry()->GetColorLayersInfo(aGlyphId, defaultColor, layerGlyphs,
-                                          layerColors)) {
-    return false;
-  }
-
-  // Default to opaque rendering (non-webrender applies alpha with a layer)
-  float alpha = 1.0;
-  if (aTextDrawer) {
-    // defaultColor is the one that comes from CSS, so it has transparency info.
-    bool hasComplexTransparency = 0.f < defaultColor.a && defaultColor.a < 1.f;
-    if (hasComplexTransparency && layerGlyphs.Length() > 1) {
-      // WebRender doesn't support drawing multi-layer transparent color-glyphs,
-      // as it requires compositing all the layers before applying transparency.
-      // (pretend to succeed, output doesn't matter, we will emit a blob)
-      aTextDrawer->FoundUnsupportedFeature();
-      return true;
+  if (const auto* paintGraph =
+          COLRFonts::GetGlyphPaintGraph(GetFontEntry()->GetCOLR(), aGlyphId)) {
+    const auto* hbShaper = GetHarfBuzzShaper();
+    if (hbShaper && hbShaper->IsInitialized()) {
+      return COLRFonts::PaintGlyphGraph(
+          GetFontEntry()->GetCOLR(), hbShaper->GetHBFont(), paintGraph,
+          aDrawTarget, aTextDrawer, aScaledFont, aDrawOptions, currentColor(),
+          aPoint, aGlyphId, mFUnitsConvFactor);
     }
-
-    // If we get here, then either alpha is 0 or 1, or there's only one layer
-    // which shouldn't have composition issues. In all of these cases, applying
-    // transparency directly to the glyph should work perfectly fine.
-    //
-    // Note that we must still emit completely transparent emoji, because they
-    // might be wrapped in a shadow that uses the text run's glyphs.
-    alpha = defaultColor.a;
   }
 
-  for (uint32_t layerIndex = 0; layerIndex < layerGlyphs.Length();
-       layerIndex++) {
-    Glyph glyph;
-    glyph.mIndex = layerGlyphs[layerIndex];
-    glyph.mPosition = aPoint;
-
-    mozilla::gfx::GlyphBuffer buffer;
-    buffer.mGlyphs = &glyph;
-    buffer.mNumGlyphs = 1;
-
-    mozilla::gfx::DeviceColor layerColor = layerColors[layerIndex];
-    layerColor.a *= alpha;
-    aDrawTarget->FillGlyphs(scaledFont, buffer, ColorPattern(layerColor),
-                            aDrawOptions);
+  if (const auto* layers =
+          COLRFonts::GetGlyphLayers(GetFontEntry()->GetCOLR(), aGlyphId)) {
+    auto face(GetFontEntry()->GetHBFace());
+    bool ok = COLRFonts::PaintGlyphLayers(
+        GetFontEntry()->GetCOLR(), face, layers, aDrawTarget, aTextDrawer,
+        aScaledFont, aDrawOptions, currentColor(), aPoint);
+    return ok;
   }
-  return true;
+
+  return false;
 }
 
 bool gfxFont::HasColorGlyphFor(uint32_t aCh, uint32_t aNextCh) {
@@ -2542,7 +2523,9 @@ bool gfxFont::HasColorGlyphFor(uint32_t aCh, uint32_t aNextCh) {
     return false;
   }
   // Check if there is a COLR/CPAL or SVG glyph for this ID.
-  if (fe->TryGetColorGlyphs() && fe->HasColorLayersForGlyph(gid)) {
+  if (fe->TryGetColorGlyphs() &&
+      (COLRFonts::GetGlyphPaintGraph(fe->GetCOLR(), gid) ||
+       COLRFonts::GetGlyphLayers(fe->GetCOLR(), gid))) {
     return true;
   }
   if (fe->TryGetSVGData(this) && fe->HasSVGGlyph(gid)) {
@@ -2567,18 +2550,202 @@ static bool NeedsGlyphExtents(gfxFont* aFont, const gfxTextRun* aTextRun) {
 
 bool gfxFont::IsSpaceGlyphInvisible(DrawTarget* aRefDrawTarget,
                                     const gfxTextRun* aTextRun) {
-  if (!mFontEntry->mSpaceGlyphIsInvisibleInitialized &&
+  gfxFontEntry::LazyFlag flag = mFontEntry->mSpaceGlyphIsInvisible;
+  if (flag == gfxFontEntry::LazyFlag::Uninitialized &&
       GetAdjustedSize() >= 1.0) {
     gfxGlyphExtents* extents =
         GetOrCreateGlyphExtents(aTextRun->GetAppUnitsPerDevUnit());
     gfxRect glyphExtents;
-    mFontEntry->mSpaceGlyphIsInvisible =
-        extents->GetTightGlyphExtentsAppUnits(this, aRefDrawTarget,
-                                              GetSpaceGlyph(), &glyphExtents) &&
-        glyphExtents.IsEmpty();
-    mFontEntry->mSpaceGlyphIsInvisibleInitialized = true;
+    flag = extents->GetTightGlyphExtentsAppUnits(
+               this, aRefDrawTarget, GetSpaceGlyph(), &glyphExtents) &&
+                   glyphExtents.IsEmpty()
+               ? gfxFontEntry::LazyFlag::Yes
+               : gfxFontEntry::LazyFlag::No;
+    mFontEntry->mSpaceGlyphIsInvisible = flag;
   }
-  return mFontEntry->mSpaceGlyphIsInvisible;
+  return flag == gfxFontEntry::LazyFlag::Yes;
+}
+
+bool gfxFont::MeasureGlyphs(const gfxTextRun* aTextRun, uint32_t aStart,
+                            uint32_t aEnd, BoundingBoxType aBoundingBoxType,
+                            DrawTarget* aRefDrawTarget, Spacing* aSpacing,
+                            gfxGlyphExtents* aExtents, bool aIsRTL,
+                            bool aNeedsGlyphExtents, RunMetrics& aMetrics,
+                            gfxFloat* aAdvanceMin, gfxFloat* aAdvanceMax) {
+  const gfxTextRun::CompressedGlyph* charGlyphs =
+      aTextRun->GetCharacterGlyphs();
+  double x = 0;
+  if (aSpacing) {
+    x += aSpacing[0].mBefore;
+  }
+  uint32_t spaceGlyph = GetSpaceGlyph();
+  bool allGlyphsInvisible = true;
+
+  AutoReadLock lock(aExtents->mLock);
+
+  for (uint32_t i = aStart; i < aEnd; ++i) {
+    const gfxTextRun::CompressedGlyph* glyphData = &charGlyphs[i];
+    if (glyphData->IsSimpleGlyph()) {
+      double advance = glyphData->GetSimpleAdvance();
+      uint32_t glyphIndex = glyphData->GetSimpleGlyph();
+      if (allGlyphsInvisible) {
+        if (glyphIndex != spaceGlyph) {
+          allGlyphsInvisible = false;
+        } else {
+          gfxFontEntry::LazyFlag flag = mFontEntry->mSpaceGlyphIsInvisible;
+          if (flag == gfxFontEntry::LazyFlag::Uninitialized &&
+              GetAdjustedSize() >= 1.0) {
+            gfxRect glyphExtents;
+            flag = aExtents->GetTightGlyphExtentsAppUnitsLocked(
+                       this, aRefDrawTarget, spaceGlyph, &glyphExtents) &&
+                           glyphExtents.IsEmpty()
+                       ? gfxFontEntry::LazyFlag::Yes
+                       : gfxFontEntry::LazyFlag::No;
+            mFontEntry->mSpaceGlyphIsInvisible = flag;
+          }
+          if (flag == gfxFontEntry::LazyFlag::No) {
+            allGlyphsInvisible = false;
+          }
+        }
+      }
+      // Only get the real glyph horizontal extent if we were asked
+      // for the tight bounding box or we're in quality mode
+      if (aBoundingBoxType != LOOSE_INK_EXTENTS || aNeedsGlyphExtents) {
+        uint16_t extentsWidth =
+            aExtents->GetContainedGlyphWidthAppUnitsLocked(glyphIndex);
+        if (extentsWidth != gfxGlyphExtents::INVALID_WIDTH &&
+            aBoundingBoxType == LOOSE_INK_EXTENTS) {
+          UnionRange(x, aAdvanceMin, aAdvanceMax);
+          UnionRange(x + extentsWidth, aAdvanceMin, aAdvanceMax);
+        } else {
+          gfxRect glyphRect;
+          if (!aExtents->GetTightGlyphExtentsAppUnitsLocked(
+                  this, aRefDrawTarget, glyphIndex, &glyphRect)) {
+            glyphRect = gfxRect(0, aMetrics.mBoundingBox.Y(), advance,
+                                aMetrics.mBoundingBox.Height());
+          }
+          if (aIsRTL) {
+            // In effect, swap left and right sidebearings of the glyph, for
+            // proper accumulation of potentially-overlapping glyph rects.
+            glyphRect.MoveToX(advance - glyphRect.XMost());
+          }
+          glyphRect.MoveByX(x);
+          aMetrics.mBoundingBox = aMetrics.mBoundingBox.Union(glyphRect);
+        }
+      }
+      x += advance;
+    } else {
+      allGlyphsInvisible = false;
+      uint32_t glyphCount = glyphData->GetGlyphCount();
+      if (glyphCount > 0) {
+        const gfxTextRun::DetailedGlyph* details =
+            aTextRun->GetDetailedGlyphs(i);
+        NS_ASSERTION(details != nullptr,
+                     "detailedGlyph record should not be missing!");
+        uint32_t j;
+        for (j = 0; j < glyphCount; ++j, ++details) {
+          uint32_t glyphIndex = details->mGlyphID;
+          double advance = details->mAdvance;
+          gfxRect glyphRect;
+          if (glyphData->IsMissing() ||
+              !aExtents->GetTightGlyphExtentsAppUnitsLocked(
+                  this, aRefDrawTarget, glyphIndex, &glyphRect)) {
+            // We might have failed to get glyph extents due to
+            // OOM or something
+            glyphRect = gfxRect(0, -aMetrics.mAscent, advance,
+                                aMetrics.mAscent + aMetrics.mDescent);
+          }
+          if (aIsRTL) {
+            // Swap left/right sidebearings of the glyph, because we're doing
+            // mirrored measurement.
+            glyphRect.MoveToX(advance - glyphRect.XMost());
+            // Move to current x position, mirroring any x-offset amount.
+            glyphRect.MoveByX(x - details->mOffset.x);
+          } else {
+            glyphRect.MoveByX(x + details->mOffset.x);
+          }
+          glyphRect.MoveByY(details->mOffset.y);
+          aMetrics.mBoundingBox = aMetrics.mBoundingBox.Union(glyphRect);
+          x += advance;
+        }
+      }
+    }
+    if (aSpacing) {
+      double space = aSpacing[i - aStart].mAfter;
+      if (i + 1 < aEnd) {
+        space += aSpacing[i + 1 - aStart].mBefore;
+      }
+      x += space;
+    }
+  }
+
+  aMetrics.mAdvanceWidth = x;
+  return allGlyphsInvisible;
+}
+
+bool gfxFont::MeasureGlyphs(const gfxTextRun* aTextRun, uint32_t aStart,
+                            uint32_t aEnd, BoundingBoxType aBoundingBoxType,
+                            DrawTarget* aRefDrawTarget, Spacing* aSpacing,
+                            bool aIsRTL, RunMetrics& aMetrics) {
+  const gfxTextRun::CompressedGlyph* charGlyphs =
+      aTextRun->GetCharacterGlyphs();
+  double x = 0;
+  if (aSpacing) {
+    x += aSpacing[0].mBefore;
+  }
+  uint32_t spaceGlyph = GetSpaceGlyph();
+  bool allGlyphsInvisible = true;
+
+  for (uint32_t i = aStart; i < aEnd; ++i) {
+    const gfxTextRun::CompressedGlyph* glyphData = &charGlyphs[i];
+    if (glyphData->IsSimpleGlyph()) {
+      double advance = glyphData->GetSimpleAdvance();
+      uint32_t glyphIndex = glyphData->GetSimpleGlyph();
+      if (allGlyphsInvisible &&
+          (glyphIndex != spaceGlyph ||
+           !IsSpaceGlyphInvisible(aRefDrawTarget, aTextRun))) {
+        allGlyphsInvisible = false;
+      }
+      x += advance;
+    } else {
+      allGlyphsInvisible = false;
+      uint32_t glyphCount = glyphData->GetGlyphCount();
+      if (glyphCount > 0) {
+        const gfxTextRun::DetailedGlyph* details =
+            aTextRun->GetDetailedGlyphs(i);
+        NS_ASSERTION(details != nullptr,
+                     "detailedGlyph record should not be missing!");
+        uint32_t j;
+        for (j = 0; j < glyphCount; ++j, ++details) {
+          double advance = details->mAdvance;
+          gfxRect glyphRect(0, -aMetrics.mAscent, advance,
+                            aMetrics.mAscent + aMetrics.mDescent);
+          if (aIsRTL) {
+            // Swap left/right sidebearings of the glyph, because we're doing
+            // mirrored measurement.
+            glyphRect.MoveToX(advance - glyphRect.XMost());
+            // Move to current x position, mirroring any x-offset amount.
+            glyphRect.MoveByX(x - details->mOffset.x);
+          } else {
+            glyphRect.MoveByX(x + details->mOffset.x);
+          }
+          glyphRect.MoveByY(details->mOffset.y);
+          aMetrics.mBoundingBox = aMetrics.mBoundingBox.Union(glyphRect);
+          x += advance;
+        }
+      }
+    }
+    if (aSpacing) {
+      double space = aSpacing[i - aStart].mAfter;
+      if (i + 1 < aEnd) {
+        space += aSpacing[i + 1 - aStart].mBefore;
+      }
+      x += space;
+    }
+  }
+
+  aMetrics.mAdvanceWidth = x;
+  return allGlyphsInvisible;
 }
 
 gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
@@ -2649,8 +2816,6 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
   }
 
   gfxFloat advanceMin = 0, advanceMax = 0;
-  const gfxTextRun::CompressedGlyph* charGlyphs =
-      aTextRun->GetCharacterGlyphs();
   bool isRTL = aTextRun->IsRightToLeft();
   bool needsGlyphExtents = NeedsGlyphExtents(this, aTextRun);
   gfxGlyphExtents* extents =
@@ -2659,110 +2824,32 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
        MOZ_UNLIKELY(GetStyle()->AdjustedSizeMustBeZero()))
           ? nullptr
           : GetOrCreateGlyphExtents(aTextRun->GetAppUnitsPerDevUnit());
-  double x = 0;
-  if (aSpacing) {
-    x += aSpacing[0].mBefore;
-  }
-  uint32_t spaceGlyph = GetSpaceGlyph();
-  bool allGlyphsInvisible = true;
-  uint32_t i;
-  for (i = aStart; i < aEnd; ++i) {
-    const gfxTextRun::CompressedGlyph* glyphData = &charGlyphs[i];
-    if (glyphData->IsSimpleGlyph()) {
-      double advance = glyphData->GetSimpleAdvance();
-      uint32_t glyphIndex = glyphData->GetSimpleGlyph();
-      if (glyphIndex != spaceGlyph ||
-          !IsSpaceGlyphInvisible(aRefDrawTarget, aTextRun)) {
-        allGlyphsInvisible = false;
-      }
-      // Only get the real glyph horizontal extent if we were asked
-      // for the tight bounding box or we're in quality mode
-      if ((aBoundingBoxType != LOOSE_INK_EXTENTS || needsGlyphExtents) &&
-          extents) {
-        uint16_t extentsWidth =
-            extents->GetContainedGlyphWidthAppUnits(glyphIndex);
-        if (extentsWidth != gfxGlyphExtents::INVALID_WIDTH &&
-            aBoundingBoxType == LOOSE_INK_EXTENTS) {
-          UnionRange(x, &advanceMin, &advanceMax);
-          UnionRange(x + extentsWidth, &advanceMin, &advanceMax);
-        } else {
-          gfxRect glyphRect;
-          if (!extents->GetTightGlyphExtentsAppUnits(this, aRefDrawTarget,
-                                                     glyphIndex, &glyphRect)) {
-            glyphRect = gfxRect(0, metrics.mBoundingBox.Y(), advance,
-                                metrics.mBoundingBox.Height());
-          }
-          if (isRTL) {
-            // In effect, swap left and right sidebearings of the glyph, for
-            // proper accumulation of potentially-overlapping glyph rects.
-            glyphRect.MoveToX(advance - glyphRect.XMost());
-          }
-          glyphRect.MoveByX(x);
-          metrics.mBoundingBox = metrics.mBoundingBox.Union(glyphRect);
-        }
-      }
-      x += advance;
-    } else {
-      allGlyphsInvisible = false;
-      uint32_t glyphCount = glyphData->GetGlyphCount();
-      if (glyphCount > 0) {
-        const gfxTextRun::DetailedGlyph* details =
-            aTextRun->GetDetailedGlyphs(i);
-        NS_ASSERTION(details != nullptr,
-                     "detailedGlyph record should not be missing!");
-        uint32_t j;
-        for (j = 0; j < glyphCount; ++j, ++details) {
-          uint32_t glyphIndex = details->mGlyphID;
-          double advance = details->mAdvance;
-          gfxRect glyphRect;
-          if (glyphData->IsMissing() || !extents ||
-              !extents->GetTightGlyphExtentsAppUnits(this, aRefDrawTarget,
-                                                     glyphIndex, &glyphRect)) {
-            // We might have failed to get glyph extents due to
-            // OOM or something
-            glyphRect = gfxRect(0, -metrics.mAscent, advance,
-                                metrics.mAscent + metrics.mDescent);
-          }
-          if (isRTL) {
-            // Swap left/right sidebearings of the glyph, because we're doing
-            // mirrored measurement.
-            glyphRect.MoveToX(advance - glyphRect.XMost());
-            // Move to current x position, mirroring any x-offset amount.
-            glyphRect.MoveByX(x - details->mOffset.x);
-          } else {
-            glyphRect.MoveByX(x + details->mOffset.x);
-          }
-          glyphRect.MoveByY(details->mOffset.y);
-          metrics.mBoundingBox = metrics.mBoundingBox.Union(glyphRect);
-          x += advance;
-        }
-      }
-    }
-    // Every other glyph type is ignored
-    if (aSpacing) {
-      double space = aSpacing[i - aStart].mAfter;
-      if (i + 1 < aEnd) {
-        space += aSpacing[i + 1 - aStart].mBefore;
-      }
-      x += space;
-    }
+
+  bool allGlyphsInvisible;
+  if (extents) {
+    allGlyphsInvisible = MeasureGlyphs(
+        aTextRun, aStart, aEnd, aBoundingBoxType, aRefDrawTarget, aSpacing,
+        extents, isRTL, needsGlyphExtents, metrics, &advanceMin, &advanceMax);
+  } else {
+    allGlyphsInvisible =
+        MeasureGlyphs(aTextRun, aStart, aEnd, aBoundingBoxType, aRefDrawTarget,
+                      aSpacing, isRTL, metrics);
   }
 
   if (allGlyphsInvisible) {
     metrics.mBoundingBox.SetEmpty();
-  } else {
-    if (aBoundingBoxType == LOOSE_INK_EXTENTS) {
-      UnionRange(x, &advanceMin, &advanceMax);
-      gfxRect fontBox(advanceMin, -metrics.mAscent, advanceMax - advanceMin,
-                      metrics.mAscent + metrics.mDescent);
-      metrics.mBoundingBox = metrics.mBoundingBox.Union(fontBox);
-    }
+  } else if (aBoundingBoxType == LOOSE_INK_EXTENTS) {
+    UnionRange(metrics.mAdvanceWidth, &advanceMin, &advanceMax);
+    gfxRect fontBox(advanceMin, -metrics.mAscent, advanceMax - advanceMin,
+                    metrics.mAscent + metrics.mDescent);
+    metrics.mBoundingBox = metrics.mBoundingBox.Union(fontBox);
   }
 
   if (isRTL) {
     // Reverse the effect of having swapped each glyph's sidebearings, to get
     // the correct sidebearings of the merged bounding box.
-    metrics.mBoundingBox.MoveToX(x - metrics.mBoundingBox.XMost());
+    metrics.mBoundingBox.MoveToX(metrics.mAdvanceWidth -
+                                 metrics.mBoundingBox.XMost());
   }
 
   // If the font may be rendered with a fake-italic effect, we need to allow
@@ -2795,8 +2882,6 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
     metrics.mDescent += baselineOffset;
     metrics.mBoundingBox.MoveByY(baselineOffset);
   }
-
-  metrics.mAdvanceWidth = x;
 
   return metrics;
 }
@@ -2848,12 +2933,13 @@ static char16_t IsBoundarySpace(char16_t aChar, char16_t aNextChar) {
 #  define GFX_MAYBE_UNUSED
 #endif
 
-template <typename T>
-gfxShapedWord* gfxFont::GetShapedWord(
+template <typename T, typename Func>
+bool gfxFont::ProcessShapedWordInternal(
     DrawTarget* aDrawTarget, const T* aText, uint32_t aLength, uint32_t aHash,
     Script aRunScript, nsAtom* aLanguage, bool aVertical,
     int32_t aAppUnitsPerDevUnit, gfx::ShapedTextFlags aFlags,
-    RoundingFlags aRounding, gfxTextPerfMetrics* aTextPerf GFX_MAYBE_UNUSED) {
+    RoundingFlags aRounding, gfxTextPerfMetrics* aTextPerf GFX_MAYBE_UNUSED,
+    Func aCallback) {
   CacheHashKey key(aText, aLength, aHash, aRunScript, aLanguage,
                    aAppUnitsPerDevUnit, aFlags, aRounding);
   {
@@ -2870,7 +2956,8 @@ gfxShapedWord* gfxFont::GetShapedWord(
           aTextPerf->current.wordCacheHit++;
         }
 #endif
-        return sw;
+        aCallback(sw);
+        return true;
       }
     }
   }
@@ -2884,7 +2971,7 @@ gfxShapedWord* gfxFont::GetShapedWord(
                             aAppUnitsPerDevUnit, aFlags, aRounding);
   if (!sw) {
     NS_WARNING("failed to create gfxShapedWord - expect missing text");
-    return nullptr;
+    return false;
   }
   DebugOnly<bool> ok = ShapeText(aDrawTarget, aText, 0, aLength, aRunScript,
                                  aLanguage, aVertical, aRounding, sw);
@@ -2909,7 +2996,7 @@ gfxShapedWord* gfxFont::GetShapedWord(
     if (!entry) {
       NS_WARNING("failed to create word cache entry - expect missing text");
       delete sw;
-      return nullptr;
+      return false;
     }
 
     // It's unlikely, but maybe another thread got there before us...
@@ -2923,7 +3010,8 @@ gfxShapedWord* gfxFont::GetShapedWord(
         aTextPerf->current.wordCacheHit++;
       }
 #endif
-      return sw;
+      aCallback(sw);
+      return true;
     }
 
     entry->mShapedWord.reset(sw);
@@ -2933,18 +3021,12 @@ gfxShapedWord* gfxFont::GetShapedWord(
       aTextPerf->current.wordCacheMiss++;
     }
 #endif
+    aCallback(sw);
   }
 
   gfxFontCache::GetCache()->RunWordCacheExpirationTimer();
-
-  return sw;
+  return true;
 }
-
-template gfxShapedWord* gfxFont::GetShapedWord(
-    DrawTarget* aDrawTarget, const uint8_t* aText, uint32_t aLength,
-    uint32_t aHash, Script aRunScript, nsAtom* aLanguage, bool aVertical,
-    int32_t aAppUnitsPerDevUnit, gfx::ShapedTextFlags aFlags,
-    RoundingFlags aRounding, gfxTextPerfMetrics* aTextPerf);
 
 bool gfxFont::CacheHashEntry::KeyEquals(const KeyTypePointer aKey) const {
   const gfxShapedWord* sw = mShapedWord.get();
@@ -2981,6 +3063,17 @@ bool gfxFont::CacheHashEntry::KeyEquals(const KeyTypePointer aKey) const {
                "didn't expect 8-bit text here");
   return (0 == memcmp(sw->TextUnicode(), aKey->mText.mDouble,
                       aKey->mLength * sizeof(char16_t)));
+}
+
+bool gfxFont::ProcessSingleSpaceShapedWord(
+    DrawTarget* aDrawTarget, bool aVertical, int32_t aAppUnitsPerDevUnit,
+    gfx::ShapedTextFlags aFlags, RoundingFlags aRounding,
+    const std::function<void(gfxShapedWord*)>& aCallback) {
+  static const uint8_t space = ' ';
+  return ProcessShapedWordInternal(
+      aDrawTarget, &space, 1, gfxShapedWord::HashMix(0, ' '), Script::LATIN,
+      /* aLanguage = */ nullptr, aVertical, aAppUnitsPerDevUnit, aFlags,
+      aRounding, nullptr, aCallback);
 }
 
 bool gfxFont::ShapeText(DrawTarget* aDrawTarget, const uint8_t* aText,
@@ -3324,12 +3417,13 @@ bool gfxFont::SplitAndInitTextRun(
           wordFlags |= gfx::ShapedTextFlags::TEXT_IS_8BIT;
         }
       }
-      gfxShapedWord* sw = GetShapedWord(
+      bool processed = ProcessShapedWordInternal(
           aDrawTarget, aString + wordStart, length, hash, aRunScript, aLanguage,
-          vertical, appUnitsPerDevUnit, wordFlags, rounding, tp);
-      if (sw) {
-        aTextRun->CopyGlyphDataFrom(sw, aRunStart + wordStart);
-      } else {
+          vertical, appUnitsPerDevUnit, wordFlags, rounding, tp,
+          [&](gfxShapedWord* aShapedWord) {
+            aTextRun->CopyGlyphDataFrom(aShapedWord, aRunStart + wordStart);
+          });
+      if (!processed) {
         return false;  // failed, presumably out of memory?
       }
     }
@@ -3347,16 +3441,17 @@ bool gfxFont::SplitAndInitTextRun(
         // Avoid tautological-constant-out-of-range-compare in 8-bit:
         DebugOnly<char16_t> boundary16 = boundary;
         NS_ASSERTION(boundary16 < 256, "unexpected boundary!");
-        gfxShapedWord* sw = GetShapedWord(
+        bool processed = ProcessShapedWordInternal(
             aDrawTarget, &boundary, 1, gfxShapedWord::HashMix(0, boundary),
             aRunScript, aLanguage, vertical, appUnitsPerDevUnit,
-            flags | gfx::ShapedTextFlags::TEXT_IS_8BIT, rounding, tp);
-        if (sw) {
-          aTextRun->CopyGlyphDataFrom(sw, aRunStart + i);
-          if (boundary == ' ') {
-            aTextRun->GetCharacterGlyphs()[aRunStart + i].SetIsSpace();
-          }
-        } else {
+            flags | gfx::ShapedTextFlags::TEXT_IS_8BIT, rounding, tp,
+            [&](gfxShapedWord* aShapedWord) {
+              aTextRun->CopyGlyphDataFrom(aShapedWord, aRunStart + i);
+              if (boundary == ' ') {
+                aTextRun->GetCharacterGlyphs()[aRunStart + i].SetIsSpace();
+              }
+            });
+        if (!processed) {
           return false;
         }
       }
@@ -3581,7 +3676,7 @@ bool gfxFont::InitFakeSmallCapsRun(
                               aSyntheticUpper);
 }
 
-gfxFont* gfxFont::GetSmallCapsFont() const {
+already_AddRefed<gfxFont> gfxFont::GetSmallCapsFont() const {
   gfxFontStyle style(*GetStyle());
   style.size *= SMALL_CAPS_SCALE_FACTOR;
   style.variantCaps = NS_FONT_VARIANT_CAPS_NORMAL;
@@ -3589,7 +3684,8 @@ gfxFont* gfxFont::GetSmallCapsFont() const {
   return fe->FindOrMakeFont(&style, mUnicodeRangeMap);
 }
 
-gfxFont* gfxFont::GetSubSuperscriptFont(int32_t aAppUnitsPerDevPixel) const {
+already_AddRefed<gfxFont> gfxFont::GetSubSuperscriptFont(
+    int32_t aAppUnitsPerDevPixel) const {
   gfxFontStyle style(*GetStyle());
   style.AdjustForSubSuperscript(aAppUnitsPerDevPixel);
   gfxFontEntry* fe = GetFontEntry();
@@ -3597,18 +3693,19 @@ gfxFont* gfxFont::GetSubSuperscriptFont(int32_t aAppUnitsPerDevPixel) const {
 }
 
 gfxGlyphExtents* gfxFont::GetOrCreateGlyphExtents(int32_t aAppUnitsPerDevUnit) {
+  uint32_t readCount;
   {
     AutoReadLock lock(mLock);
-    uint32_t i, count = mGlyphExtentsArray.Length();
-    for (i = 0; i < count; ++i) {
+    readCount = mGlyphExtentsArray.Length();
+    for (uint32_t i = 0; i < readCount; ++i) {
       if (mGlyphExtentsArray[i]->GetAppUnitsPerDevUnit() == aAppUnitsPerDevUnit)
         return mGlyphExtentsArray[i].get();
     }
   }
   AutoWriteLock lock(mLock);
   // Re-check in case of race.
-  uint32_t i, count = mGlyphExtentsArray.Length();
-  for (i = 0; i < count; ++i) {
+  uint32_t count = mGlyphExtentsArray.Length();
+  for (uint32_t i = readCount; i < count; ++i) {
     if (mGlyphExtentsArray[i]->GetAppUnitsPerDevUnit() == aAppUnitsPerDevUnit)
       return mGlyphExtentsArray[i].get();
   }
@@ -3633,6 +3730,24 @@ void gfxFont::SetupGlyphExtents(DrawTarget* aDrawTarget, uint32_t aGlyphID,
         aGlyphID, gfxRect(svgBounds.X() * d2a, svgBounds.Y() * d2a,
                           svgBounds.Width() * d2a, svgBounds.Height() * d2a));
     return;
+  }
+
+  if (mFontEntry->TryGetColorGlyphs() && mFontEntry->mCOLR &&
+      COLRFonts::GetColrTableVersion(mFontEntry->mCOLR) == 1) {
+    auto* shaper = GetHarfBuzzShaper();
+    if (shaper && shaper->IsInitialized()) {
+      RefPtr scaledFont = GetScaledFont(aDrawTarget);
+      Rect r = COLRFonts::GetColorGlyphBounds(
+          mFontEntry->mCOLR, shaper->GetHBFont(), aGlyphID, aDrawTarget,
+          scaledFont, mFUnitsConvFactor);
+      if (!r.IsEmpty()) {
+        gfxFloat d2a = aExtents->GetAppUnitsPerDevUnit();
+        aExtents->SetTightGlyphExtents(
+            aGlyphID, gfxRect(r.X() * d2a, r.Y() * d2a, r.Width() * d2a,
+                              r.Height() * d2a));
+        return;
+      }
+    }
   }
 
   gfxRect bounds;
@@ -4308,15 +4423,12 @@ bool gfxFont::TryGetMathTable() {
     return !!mMathTable;
   }
 
-  hb_face_t* face = GetFontEntry()->GetHBFace();
-  if (face) {
-    if (hb_ot_math_has_data(face)) {
-      auto* mathTable = new gfxMathTable(face, GetAdjustedSize());
-      if (!mMathTable.compareExchange(nullptr, mathTable)) {
-        delete mathTable;
-      }
+  auto face(GetFontEntry()->GetHBFace());
+  if (hb_ot_math_has_data(face)) {
+    auto* mathTable = new gfxMathTable(face, GetAdjustedSize());
+    if (!mMathTable.compareExchange(nullptr, mathTable)) {
+      delete mathTable;
     }
-    hb_face_destroy(face);
   }
   mMathInitialized = true;
 

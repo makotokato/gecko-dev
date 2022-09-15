@@ -17,7 +17,7 @@
 
 using namespace mozilla::a11y;
 
-StaticRefPtr<HyperTextAccessibleWrap> ia2AccessibleText::sLastTextChangeAcc;
+HyperTextAccessibleBase* ia2AccessibleText::sLastTextChangeAcc = nullptr;
 StaticAutoPtr<nsString> ia2AccessibleText::sLastTextChangeString;
 uint32_t ia2AccessibleText::sLastTextChangeStart = 0;
 uint32_t ia2AccessibleText::sLastTextChangeEnd = 0;
@@ -154,9 +154,9 @@ ia2AccessibleText::get_offsetAtPoint(long aX, long aY,
           ? nsIAccessibleCoordinateType::COORDTYPE_SCREEN_RELATIVE
           : nsIAccessibleCoordinateType::COORDTYPE_PARENT_RELATIVE;
 
-  auto [textAcc, hr] = LocalTextAcc();
+  HyperTextAccessibleBase* textAcc = TextAcc();
   if (!textAcc) {
-    return hr;
+    return CO_E_OBJNOTCONNECTED;
   }
 
   *aOffset = textAcc->OffsetAtPoint(aX, aY, geckoCoordType);
@@ -464,12 +464,12 @@ AccessibleTextBoundary ia2AccessibleText::GetGeckoTextBoundary(
 }
 
 void ia2AccessibleText::InitTextChangeData() {
-  ClearOnShutdown(&sLastTextChangeAcc);
   ClearOnShutdown(&sLastTextChangeString);
 }
 
-void ia2AccessibleText::UpdateTextChangeData(HyperTextAccessibleWrap* aAcc,
-                                             bool aInsert, const nsString& aStr,
+void ia2AccessibleText::UpdateTextChangeData(HyperTextAccessibleBase* aAcc,
+                                             bool aInsert,
+                                             const nsAString& aStr,
                                              int32_t aStart, uint32_t aLen) {
   if (!sLastTextChangeString) sLastTextChangeString = new nsString();
 

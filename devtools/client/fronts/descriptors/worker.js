@@ -15,6 +15,7 @@ const { TargetMixin } = require("devtools/client/fronts/targets/target-mixin");
 const {
   DescriptorMixin,
 } = require("devtools/client/fronts/descriptors/descriptor-mixin");
+const DESCRIPTOR_TYPES = require("devtools/client/fronts/descriptors/descriptor-types");
 
 class WorkerDescriptorFront extends DescriptorMixin(
   TargetMixin(FrontClassWithSpec(workerDescriptorSpec))
@@ -24,6 +25,8 @@ class WorkerDescriptorFront extends DescriptorMixin(
 
     this.traits = {};
   }
+
+  descriptorType = DESCRIPTOR_TYPES.WORKER;
 
   form(json) {
     this.actorID = json.actor;
@@ -79,12 +82,6 @@ class WorkerDescriptorFront extends DescriptorMixin(
     this._attach = (async () => {
       if (this.isDestroyedOrBeingDestroyed()) {
         return this;
-      }
-
-      // @backward-compat { version 102 } WorkerDescriptor no longer implement attach method
-      //                  We can stop calling attach once 102 is the release channel.
-      if (!this.traits.doNotAttach) {
-        await super.attach();
       }
 
       if (this.isServiceWorker) {

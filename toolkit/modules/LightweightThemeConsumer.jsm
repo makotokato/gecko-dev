@@ -4,10 +4,8 @@
 
 var EXPORTED_SYMBOLS = ["LightweightThemeConsumer"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const { AppConstants } = ChromeUtils.import(
@@ -30,6 +28,11 @@ ChromeUtils.defineModuleGetter(
   lazy,
   "PrivateBrowsingUtils",
   "resource://gre/modules/PrivateBrowsingUtils.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  lazy,
+  "NimbusFeatures",
+  "resource://nimbus/ExperimentAPI.jsm"
 );
 
 // Whether the content and chrome areas should always use the same color
@@ -262,9 +265,8 @@ LightweightThemeConsumer.prototype = {
 
       // If enabled, apply the dark theme variant to private browsing windows.
       if (
-        !Services.prefs.getBoolPref(
-          "browser.theme.dark-private-windows",
-          false
+        !lazy.NimbusFeatures.majorRelease2022.getVariable(
+          "feltPrivacyPBMDarkTheme"
         ) ||
         !lazy.PrivateBrowsingUtils.isWindowPrivate(this._win) ||
         lazy.PrivateBrowsingUtils.permanentPrivateBrowsing

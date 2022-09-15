@@ -28,6 +28,8 @@
 #  include "jit/loong64/CodeGenerator-loong64.h"
 #elif defined(JS_CODEGEN_RISCV64)
 #  include "jit/riscv64/CodeGenerator-riscv64.h"
+#elif defined(JS_CODEGEN_WASM32)
+#  include "jit/wasm32/CodeGenerator-wasm32.h"
 #elif defined(JS_CODEGEN_NONE)
 #  include "jit/none/CodeGenerator-none.h"
 #else
@@ -324,8 +326,7 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                                    Register scratch, OutOfLineTestObject* ool);
 
   void emitStoreElementTyped(const LAllocation* value, MIRType valueType,
-                             MIRType elementType, Register elements,
-                             const LAllocation* index);
+                             Register elements, const LAllocation* index);
 
   // Bailout if an element about to be written to is a hole.
   void emitStoreHoleCheck(Register elements, const LAllocation* index,

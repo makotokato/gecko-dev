@@ -27,7 +27,7 @@ describe("MultiStageAboutWelcomeProton module", () => {
       assert.ok(wrapper.exists());
     });
 
-    it("should render section left for corner positioned screens", () => {
+    it("should render secondary section for corner positioned screens", () => {
       const SCREEN_PROPS = {
         content: {
           position: "corner",
@@ -38,11 +38,59 @@ describe("MultiStageAboutWelcomeProton module", () => {
       const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
       assert.ok(wrapper.exists());
       assert.equal(wrapper.find(".welcome-text h1").text(), "test title");
-      assert.equal(wrapper.find(".section-left h1").text(), "test subtitle");
+      assert.equal(
+        wrapper.find(".section-secondary h1").text(),
+        "test subtitle"
+      );
       assert.equal(wrapper.find("main").prop("pos"), "corner");
     });
 
-    it("should render with no section left for center positioned screens", () => {
+    it("should render secondary section with content background for split positioned screens", () => {
+      const BACKGROUND_URL =
+        "chrome://activity-stream/content/data/content/assets/proton-bkg.avif";
+      const SCREEN_PROPS = {
+        content: {
+          position: "split",
+          background: `url(${BACKGROUND_URL}) var(--mr-secondary-position) no-repeat`,
+          split_narrow_bkg_position: "10px",
+          title: "test title",
+        },
+      };
+      const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
+      assert.ok(wrapper.exists());
+      assert.ok(
+        wrapper
+          .find("div.section-secondary")
+          .prop("style")
+          .background.includes("--mr-secondary-position")
+      );
+      assert.ok(
+        wrapper.find("div.section-secondary").prop("style")[
+          "--mr-secondary-background-position-y"
+        ],
+        "10px"
+      );
+    });
+
+    it("should render with secondary section for split positioned screens", () => {
+      const SCREEN_PROPS = {
+        content: {
+          position: "split",
+          title: "test title",
+          hero_text: "test subtitle",
+        },
+      };
+      const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
+      assert.ok(wrapper.exists());
+      assert.equal(wrapper.find(".welcome-text h1").text(), "test title");
+      assert.equal(
+        wrapper.find(".section-secondary h1").text(),
+        "test subtitle"
+      );
+      assert.equal(wrapper.find("main").prop("pos"), "split");
+    });
+
+    it("should render with no secondary section for center positioned screens", () => {
       const SCREEN_PROPS = {
         content: {
           position: "center",
@@ -51,9 +99,28 @@ describe("MultiStageAboutWelcomeProton module", () => {
       };
       const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
       assert.ok(wrapper.exists());
-      assert.equal(wrapper.find(".section-left").exists(), false);
+      assert.equal(wrapper.find(".section-secondary").exists(), false);
       assert.equal(wrapper.find(".welcome-text h1").text(), "test title");
       assert.equal(wrapper.find("main").prop("pos"), "center");
+    });
+
+    it("should render action buttons container with dual-action-buttons class", () => {
+      const SCREEN_PROPS = {
+        content: {
+          position: "split",
+          title: "test title",
+          dual_action_buttons: true,
+          primary_button: {
+            label: "test primary button",
+          },
+          secondary_button: {
+            label: "test secondary button",
+          },
+        },
+      };
+      const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
+      assert.ok(wrapper.exists());
+      assert.ok(wrapper.find(".dual-action-buttons").text());
     });
   });
 
@@ -154,6 +221,69 @@ describe("MultiStageAboutWelcomeProton module", () => {
       assert.notProperty(data.screens[0].content, "help_text");
     });
   });
+
+  describe("AboutWelcomeDefaults for MR split template proton", () => {
+    // Pass true as argument for templateMR parameter
+    const getData = () => AboutWelcomeDefaults.getDefaults(true);
+    beforeEach(() => {
+      sandbox.stub(global.Services.prefs, "getBoolPref").returns(true);
+    });
+
+    it("should use 'split' position template by default", async () => {
+      const data = await getData();
+      assert.propertyVal(data.screens[0].content, "position", "split");
+    });
+
+    it("should not include noodles by default", async () => {
+      const data = await getData();
+      assert.notProperty(data.screens[0].content, "has_noodles");
+    });
+  });
+
+  describe("AboutWelcomeDefaults prepareMobileDownload", () => {
+    const TEST_CONTENT = {
+      templateMR: true,
+      screens: [
+        {
+          id: "AW_MOBILE_DOWNLOAD",
+          content: {
+            title: "test",
+            hero_image: {
+              url: "https://example.com/test.svg",
+            },
+            cta_paragraph: {
+              text: {},
+              action: {},
+            },
+          },
+        },
+      ],
+    };
+    it("should not set url for default qrcode svg", async () => {
+      sandbox.stub(AppConstants, "isChinaRepack").returns(false);
+      const data = await AboutWelcomeDefaults.prepareContentForReact(
+        TEST_CONTENT
+      );
+      assert.propertyVal(
+        data.screens[0].content.hero_image,
+        "url",
+        "https://example.com/test.svg"
+      );
+    });
+    it("should set url for cn qrcode svg", async () => {
+      sandbox.stub(AppConstants, "isChinaRepack").returns(true);
+      const data = await AboutWelcomeDefaults.prepareContentForReact(
+        TEST_CONTENT
+      );
+      assert.propertyVal(data, "templateMR", true);
+      assert.propertyVal(
+        data.screens[0].content.hero_image,
+        "url",
+        "https://example.com/test-cn.svg"
+      );
+    });
+  });
+
   describe("AboutWelcomeDefaults prepareContentForReact", () => {
     it("should not set action without screens", async () => {
       const data = await AboutWelcomeDefaults.prepareContentForReact({
@@ -267,6 +397,18 @@ describe("MultiStageAboutWelcomeProton module", () => {
         { id: "hello" },
         { id: "world" },
       ]);
+    });
+
+    it("should not render action buttons if a primary and secondary button does not exist", async () => {
+      const SCREEN_PROPS = {
+        content: {
+          title: "test title",
+          subtitle: "test subtitle",
+        },
+      };
+      const wrapper = mount(<MultiStageProtonScreen {...SCREEN_PROPS} />);
+      assert.ok(wrapper.exists());
+      assert.equal(wrapper.find(".action-buttons").exists(), false);
     });
   });
 });

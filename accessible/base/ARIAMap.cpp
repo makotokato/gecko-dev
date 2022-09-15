@@ -1152,6 +1152,15 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     kGenericAccType,
     kNoReqStates
   },
+  { // subscript
+    nsGkAtoms::subscript,
+    roles::SUBSCRIPT,
+    kUseMapRole,
+    eNoValue,
+    eNoAction,
+    eNoLiveAttr,
+    kGenericAccType
+  },
   { // suggestion
     nsGkAtoms::suggestion,
     roles::SUGGESTION,
@@ -1160,6 +1169,15 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoAction,
     eNoLiveAttr,
     kGenericAccType,
+  },
+  { // superscript
+    nsGkAtoms::superscript,
+    roles::SUPERSCRIPT,
+    kUseMapRole,
+    eNoValue,
+    eNoAction,
+    eNoLiveAttr,
+    kGenericAccType
   },
   { // switch
     nsGkAtoms::svgSwitch,
@@ -1384,7 +1402,7 @@ static const AttrCharacteristics gWAIUnivAttrMap[] = {
   {nsGkAtoms::aria_posinset,          ATTR_BYPASSOBJ                               }, /* handled via groupPosition */
   {nsGkAtoms::aria_pressed,           ATTR_BYPASSOBJ | ATTR_VALTOKEN               },
   {nsGkAtoms::aria_readonly,          ATTR_BYPASSOBJ | ATTR_VALTOKEN               },
-  {nsGkAtoms::aria_relevant,          ATTR_BYPASSOBJ                 | ATTR_GLOBAL },
+  {nsGkAtoms::aria_relevant,          ATTR_GLOBAL                                  },
   {nsGkAtoms::aria_required,          ATTR_BYPASSOBJ | ATTR_VALTOKEN               },
   {nsGkAtoms::aria_rowcount,          ATTR_VALINT                                  },
   {nsGkAtoms::aria_rowindex,          ATTR_VALINT                                  },

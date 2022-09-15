@@ -12,12 +12,10 @@
 #include "nsError.h"
 #include "nsXPCOM.h"
 
+using mozilla::GenericPromise;
 using mozilla::LogLevel;
 
-static mozilla::LazyLogModule sBaseClipboardLog("BaseClipboard");
-
-nsBaseClipboard::nsBaseClipboard()
-    : mEmptyingForSetData(false), mIgnoreEmptyNotification(false) {}
+nsBaseClipboard::nsBaseClipboard() : mEmptyingForSetData(false) {}
 
 nsBaseClipboard::~nsBaseClipboard() {
   EmptyClipboard(kSelectionClipboard);
@@ -36,11 +34,10 @@ NS_IMETHODIMP nsBaseClipboard::SetData(nsITransferable* aTransferable,
                                        int32_t aWhichClipboard) {
   NS_ASSERTION(aTransferable, "clipboard given a null transferable");
 
-  MOZ_LOG(sBaseClipboardLog, LogLevel::Debug, ("%s", __FUNCTION__));
+  CLIPBOARD_LOG("%s", __FUNCTION__);
 
   if (aTransferable == mTransferable && anOwner == mClipboardOwner) {
-    MOZ_LOG(sBaseClipboardLog, LogLevel::Debug,
-            ("%s: skipping update.", __FUNCTION__));
+    CLIPBOARD_LOG("%s: skipping update.", __FUNCTION__);
     return NS_OK;
   }
   bool selectClipPresent;
@@ -53,8 +50,7 @@ NS_IMETHODIMP nsBaseClipboard::SetData(nsITransferable* aTransferable,
 
   mEmptyingForSetData = true;
   if (NS_FAILED(EmptyClipboard(aWhichClipboard))) {
-    MOZ_LOG(sBaseClipboardLog, LogLevel::Debug,
-            ("%s: emptying clipboard failed.", __FUNCTION__));
+    CLIPBOARD_LOG("%s: emptying clipboard failed.", __FUNCTION__);
   }
   mEmptyingForSetData = false;
 
@@ -63,11 +59,12 @@ NS_IMETHODIMP nsBaseClipboard::SetData(nsITransferable* aTransferable,
 
   nsresult rv = NS_ERROR_FAILURE;
   if (mTransferable) {
+    mIgnoreEmptyNotification = true;
     rv = SetNativeClipboardData(aWhichClipboard);
+    mIgnoreEmptyNotification = false;
   }
   if (NS_FAILED(rv)) {
-    MOZ_LOG(sBaseClipboardLog, LogLevel::Debug,
-            ("%s: setting native clipboard data failed.", __FUNCTION__));
+    CLIPBOARD_LOG("%s: setting native clipboard data failed.", __FUNCTION__);
   }
 
   return rv;
@@ -81,7 +78,7 @@ NS_IMETHODIMP nsBaseClipboard::GetData(nsITransferable* aTransferable,
                                        int32_t aWhichClipboard) {
   NS_ASSERTION(aTransferable, "clipboard given a null transferable");
 
-  MOZ_LOG(sBaseClipboardLog, LogLevel::Debug, ("%s", __FUNCTION__));
+  CLIPBOARD_LOG("%s", __FUNCTION__);
 
   bool selectClipPresent;
   SupportsSelectionClipboard(&selectClipPresent);
@@ -97,9 +94,18 @@ NS_IMETHODIMP nsBaseClipboard::GetData(nsITransferable* aTransferable,
   return NS_ERROR_FAILURE;
 }
 
+RefPtr<GenericPromise> nsBaseClipboard::AsyncGetData(
+    nsITransferable* aTransferable, int32_t aWhichClipboard) {
+  nsresult rv = GetData(aTransferable, aWhichClipboard);
+  if (NS_FAILED(rv)) {
+    return GenericPromise::CreateAndReject(rv, __func__);
+  }
+
+  return GenericPromise::CreateAndResolve(true, __func__);
+}
+
 NS_IMETHODIMP nsBaseClipboard::EmptyClipboard(int32_t aWhichClipboard) {
-  MOZ_LOG(sBaseClipboardLog, LogLevel::Debug,
-          ("%s: clipboard=%i", __FUNCTION__, aWhichClipboard));
+  CLIPBOARD_LOG("%s: clipboard=%i", __FUNCTION__, aWhichClipboard);
 
   bool selectClipPresent;
   SupportsSelectionClipboard(&selectClipPresent);
@@ -109,7 +115,9 @@ NS_IMETHODIMP nsBaseClipboard::EmptyClipboard(int32_t aWhichClipboard) {
       aWhichClipboard != kGlobalClipboard)
     return NS_ERROR_FAILURE;
 
-  if (mIgnoreEmptyNotification) return NS_OK;
+  if (mIgnoreEmptyNotification) {
+    return NS_OK;
+  }
 
   if (mClipboardOwner) {
     mClipboardOwner->LosingOwnership(mTransferable);
@@ -126,6 +134,21 @@ nsBaseClipboard::HasDataMatchingFlavors(const nsTArray<nsCString>& aFlavorList,
                                         bool* outResult) {
   *outResult = true;  // say we always do.
   return NS_OK;
+}
+
+RefPtr<DataFlavorsPromise> nsBaseClipboard::AsyncHasDataMatchingFlavors(
+    const nsTArray<nsCString>& aFlavorList, int32_t aWhichClipboard) {
+  nsTArray<nsCString> results;
+  for (const auto& flavor : aFlavorList) {
+    bool hasMatchingFlavor = false;
+    nsresult rv = HasDataMatchingFlavors(AutoTArray<nsCString, 1>{flavor},
+                                         aWhichClipboard, &hasMatchingFlavor);
+    if (NS_SUCCEEDED(rv) && hasMatchingFlavor) {
+      results.AppendElement(flavor);
+    }
+  }
+
+  return DataFlavorsPromise::CreateAndResolve(std::move(results), __func__);
 }
 
 NS_IMETHODIMP

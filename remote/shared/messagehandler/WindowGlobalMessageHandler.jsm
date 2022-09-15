@@ -6,20 +6,9 @@
 
 const EXPORTED_SYMBOLS = ["WindowGlobalMessageHandler"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
-);
-
-const { MessageHandler } = ChromeUtils.import(
+const { ContextDescriptorType, MessageHandler } = ChromeUtils.import(
   "chrome://remote/content/shared/messagehandler/MessageHandler.jsm"
 );
-
-const lazy = {};
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  ContextDescriptorType:
-    "chrome://remote/content/shared/messagehandler/MessageHandler.jsm",
-});
 
 /**
  * A WindowGlobalMessageHandler is dedicated to debugging a single window
@@ -29,10 +18,12 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
  * MessageHandler network.
  */
 class WindowGlobalMessageHandler extends MessageHandler {
+  #innerWindowId;
+
   constructor() {
     super(...arguments);
 
-    this._innerWindowId = this._context.window.windowGlobalChild.innerWindowId;
+    this.#innerWindowId = this.context.window.windowGlobalChild.innerWindowId;
   }
 
   /**
@@ -68,11 +59,11 @@ class WindowGlobalMessageHandler extends MessageHandler {
   }
 
   get innerWindowId() {
-    return this._innerWindowId;
+    return this.#innerWindowId;
   }
 
   get window() {
-    return this._context.window;
+    return this.context.window;
   }
 
   async applyInitialSessionDataItems(sessionDataItems) {
@@ -97,7 +88,7 @@ class WindowGlobalMessageHandler extends MessageHandler {
 
       // Don't apply session data if the module is not present
       // for the destination.
-      if (!this._moduleCache.hasModule(moduleName, destination)) {
+      if (!this.moduleCache.hasModule(moduleName, destination)) {
         return Promise.resolve();
       }
 
@@ -120,8 +111,8 @@ class WindowGlobalMessageHandler extends MessageHandler {
 
     // With the session data applied the handler is now ready to be used.
     this.emitEvent("window-global-handler-created", {
-      contextId: this._contextId,
-      innerWindowId: this._innerWindowId,
+      contextId: this.contextId,
+      innerWindowId: this.#innerWindowId,
     });
   }
 
@@ -133,10 +124,9 @@ class WindowGlobalMessageHandler extends MessageHandler {
 
   _matchesContext(contextDescriptor) {
     return (
-      contextDescriptor.type === lazy.ContextDescriptorType.All ||
-      (contextDescriptor.type ===
-        lazy.ContextDescriptorType.TopBrowsingContext &&
-        contextDescriptor.id === this._context.browserId)
+      contextDescriptor.type === ContextDescriptorType.All ||
+      (contextDescriptor.type === ContextDescriptorType.TopBrowsingContext &&
+        contextDescriptor.id === this.context.browserId)
     );
   }
 }

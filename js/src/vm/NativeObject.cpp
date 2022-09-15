@@ -8,23 +8,18 @@
 
 #include "mozilla/Casting.h"
 #include "mozilla/CheckedInt.h"
-#include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 
 #include <algorithm>
 #include <iterator>
 
-#include "debugger/DebugAPI.h"
-#include "gc/Marking.h"
 #include "gc/MaybeRooted.h"
-#include "js/CharacterEncoding.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
-#include "js/Result.h"
 #include "js/Value.h"
-#include "util/Memory.h"
 #include "vm/EqualityOperations.h"  // js::SameValue
 #include "vm/GetterSetter.h"        // js::GetterSetter
+#include "vm/Interpreter.h"         // js::CallGetter, js::CallSetter
 #include "vm/PlainObject.h"         // js::PlainObject
 #include "vm/TypedArrayObject.h"
 
@@ -35,18 +30,13 @@
 #endif
 
 #include "gc/Nursery-inl.h"
-#include "vm/ArrayObject-inl.h"
-#include "vm/BytecodeLocation-inl.h"
-#include "vm/EnvironmentObject-inl.h"
 #include "vm/JSObject-inl.h"
-#include "vm/JSScript-inl.h"
 #include "vm/Shape-inl.h"
 
 using namespace js;
 
 using JS::AutoCheckCannotGC;
 using mozilla::CheckedInt;
-using mozilla::DebugOnly;
 using mozilla::PodCopy;
 using mozilla::RoundUpPow2;
 
@@ -236,23 +226,6 @@ mozilla::Maybe<PropertyInfo> js::NativeObject::lookupPure(jsid id) {
   return mozilla::Nothing();
 }
 
-bool NativeObject::ensureSlotsForDictionaryObject(JSContext* cx,
-                                                  uint32_t span) {
-  MOZ_ASSERT(inDictionaryMode());
-
-  size_t oldSpan = dictionaryModeSlotSpan();
-  if (oldSpan == span) {
-    return true;
-  }
-
-  if (!updateSlotsForSpan(cx, oldSpan, span)) {
-    return false;
-  }
-
-  setDictionaryModeSlotSpan(span);
-  return true;
-}
-
 bool NativeObject::growSlots(JSContext* cx, uint32_t oldCapacity,
                              uint32_t newCapacity) {
   MOZ_ASSERT(newCapacity > oldCapacity);
@@ -300,6 +273,20 @@ bool NativeObject::growSlots(JSContext* cx, uint32_t oldCapacity,
 
   MOZ_ASSERT(hasDynamicSlots());
   return true;
+}
+
+bool NativeObject::growSlotsForNewSlot(JSContext* cx, uint32_t numFixed,
+                                       uint32_t slot) {
+  MOZ_ASSERT(slotSpan() == slot);
+  MOZ_ASSERT(shape()->numFixedSlots() == numFixed);
+  MOZ_ASSERT(slot >= numFixed);
+
+  uint32_t newCapacity = calculateDynamicSlots(numFixed, slot + 1, getClass());
+
+  uint32_t oldCapacity = numDynamicSlots();
+  MOZ_ASSERT(oldCapacity < newCapacity);
+
+  return growSlots(cx, oldCapacity, newCapacity);
 }
 
 bool NativeObject::allocateSlots(JSContext* cx, uint32_t newCapacity) {
@@ -384,8 +371,6 @@ void NativeObject::shrinkSlots(JSContext* cx, uint32_t oldCapacity,
   MOZ_ASSERT(newCapacity < oldCapacity);
   MOZ_ASSERT(oldCapacity == getSlotsHeader()->capacity());
 
-  uint32_t dictionarySpan = getSlotsHeader()->dictionarySlotSpan();
-
   ObjectSlots* oldHeaderSlots = ObjectSlots::fromSlots(slots_);
   MOZ_ASSERT(oldHeaderSlots->capacity() == oldCapacity);
 
@@ -395,11 +380,14 @@ void NativeObject::shrinkSlots(JSContext* cx, uint32_t oldCapacity,
     size_t nbytes = ObjectSlots::allocSize(oldCapacity);
     RemoveCellMemory(this, nbytes, MemoryUse::ObjectSlots);
     FreeSlots(cx, this, oldHeaderSlots, nbytes);
-    setEmptyDynamicSlots(dictionarySpan);
+    // dictionarySlotSpan is initialized to the correct value by the callers.
+    setEmptyDynamicSlots(0);
     return;
   }
 
   MOZ_ASSERT_IF(!is<ArrayObject>(), newCapacity >= SLOT_CAPACITY_MIN);
+
+  uint32_t dictionarySpan = getSlotsHeader()->dictionarySlotSpan();
 
   uint32_t newAllocated = ObjectSlots::allocCount(newCapacity);
 
@@ -793,6 +781,8 @@ bool NativeObject::growElements(JSContext* cx, uint32_t reqCapacity) {
     if (getDenseCapacity() >= reqCapacity) {
       return true;
     }
+    // moveShiftedElements() may have changed the number of shifted elements;
+    // update `numShifted` accordingly.
     numShifted = getElementsHeader()->numShiftedElements();
 
     // If |reqCapacity + numShifted| overflows, we just move all shifted
@@ -810,13 +800,20 @@ bool NativeObject::growElements(JSContext* cx, uint32_t reqCapacity) {
 
   uint32_t newAllocated = 0;
   if (is<ArrayObject>() && !as<ArrayObject>().lengthIsWritable()) {
-    MOZ_ASSERT(reqCapacity <= as<ArrayObject>().length());
-    MOZ_ASSERT(reqCapacity <= MAX_DENSE_ELEMENTS_COUNT);
     // Preserve the |capacity <= length| invariant for arrays with
     // non-writable length.  See also js::ArraySetLength which initially
     // enforces this requirement.
+    MOZ_ASSERT(reqCapacity <= as<ArrayObject>().length());
+    // Adding to reqCapacity must not overflow uint32_t.
+    MOZ_ASSERT(reqCapacity <= MAX_DENSE_ELEMENTS_COUNT);
+
+    // Then, add the header and shifted elements sizes to the new capacity
+    // to get the overall amount to allocate.
     newAllocated = reqCapacity + numShifted + ObjectElements::VALUES_PER_HEADER;
   } else {
+    // For arrays with writable length, and all non-Array objects, call
+    // `NativeObject::goodElementsAllocationAmount()` to determine the
+    // amount to allocate from the the requested capacity and existing length.
     if (!goodElementsAllocationAmount(cx, reqCapacity + numShifted,
                                       getElementsHeader()->length,
                                       &newAllocated)) {
@@ -824,8 +821,14 @@ bool NativeObject::growElements(JSContext* cx, uint32_t reqCapacity) {
     }
   }
 
+  // newAllocated now contains the size of the buffer we need to allocate;
+  // subtract off the header and shifted elements size to get the new capacity
   uint32_t newCapacity =
       newAllocated - ObjectElements::VALUES_PER_HEADER - numShifted;
+  // If the new capacity isn't strictly greater than the old capacity, then this
+  // method shouldn't have been called; if the new capacity doesn't satisfy
+  // what was requested, then one of the calculations above must have been
+  // wrong.
   MOZ_ASSERT(newCapacity > oldCapacity && newCapacity >= reqCapacity);
 
   // If newCapacity exceeds MAX_DENSE_ELEMENTS_COUNT, the array should become
@@ -839,35 +842,56 @@ bool NativeObject::growElements(JSContext* cx, uint32_t reqCapacity) {
   HeapSlot* newHeaderSlots;
   uint32_t oldAllocated = 0;
   if (hasDynamicElements()) {
+    // If the object has dynamic elements, then we might be able to resize the
+    // buffer in-place.
+
+    // First, check that adding to oldCapacity won't overflow uint32_t
     MOZ_ASSERT(oldCapacity <= MAX_DENSE_ELEMENTS_COUNT);
+    // Then, add the header and shifted elements sizes to get the overall size
+    // of the existing buffer
     oldAllocated = oldCapacity + ObjectElements::VALUES_PER_HEADER + numShifted;
 
+    // Finally, try to resize the buffer.
     newHeaderSlots = ReallocateObjectBuffer<HeapSlot>(
         cx, this, oldHeaderSlots, oldAllocated, newAllocated);
     if (!newHeaderSlots) {
-      return false;  // Leave elements at its old size.
+      return false;  // If the resizing failed, then we leave elements at its
+                     // old size.
     }
   } else {
+    // If the object has fixed elements, then we always need to allocate a new
+    // buffer, because if we've reached this code, then the requested capacity
+    // is greater than the existing inline space available within the object
     newHeaderSlots = AllocateObjectBuffer<HeapSlot>(cx, this, newAllocated);
     if (!newHeaderSlots) {
       return false;  // Leave elements at its old size.
     }
+
+    // Copy the initialized elements into the new buffer,
     PodCopy(newHeaderSlots, oldHeaderSlots,
             ObjectElements::VALUES_PER_HEADER + initlen + numShifted);
   }
 
+  // If the object already had dynamic elements, then we have to account
+  // for freeing the old elements buffer.
   if (oldAllocated) {
     RemoveCellMemory(this, oldAllocated * sizeof(HeapSlot),
                      MemoryUse::ObjectElements);
   }
 
   ObjectElements* newheader = reinterpret_cast<ObjectElements*>(newHeaderSlots);
+  // Update the elements pointer to point to the new elements buffer.
   elements_ = newheader->elements() + numShifted;
+
+  // Clear the "fixed elements" flag, because if this code has been reached,
+  // this object now has dynamic elements.
   getElementsHeader()->flags &= ~ObjectElements::FIXED;
   getElementsHeader()->capacity = newCapacity;
 
+  // Poison the uninitialized portion of the new elements buffer.
   Debug_SetSlotRangeToCrashOnTouch(elements_ + initlen, newCapacity - initlen);
 
+  // Account for allocating the new elements buffer.
   AddCellMemory(this, newAllocated * sizeof(HeapSlot),
                 MemoryUse::ObjectElements);
 
@@ -996,7 +1020,22 @@ bool NativeObject::allocDictionarySlot(JSContext* cx, Handle<NativeObject*> obj,
 
   *slotp = slotSpan;
 
-  return obj->ensureSlotsForDictionaryObject(cx, slotSpan + 1);
+  uint32_t numFixed = obj->numFixedSlots();
+  if (slotSpan < numFixed) {
+    obj->initFixedSlot(slotSpan, UndefinedValue());
+    obj->setDictionaryModeSlotSpan(slotSpan + 1);
+    return true;
+  }
+
+  uint32_t dynamicSlotIndex = slotSpan - numFixed;
+  if (dynamicSlotIndex >= obj->numDynamicSlots()) {
+    if (MOZ_UNLIKELY(!obj->growSlotsForNewSlot(cx, numFixed, slotSpan))) {
+      return false;
+    }
+  }
+  obj->initDynamicSlot(numFixed, slotSpan, UndefinedValue());
+  obj->setDictionaryModeSlotSpan(slotSpan + 1);
+  return true;
 }
 
 void NativeObject::freeDictionarySlot(uint32_t slot) {
@@ -1104,7 +1143,7 @@ static bool WouldDefinePastNonwritableLength(ArrayObject* arr, uint32_t index) {
 static bool ChangeProperty(JSContext* cx, Handle<NativeObject*> obj,
                            HandleId id, HandleObject getter,
                            HandleObject setter, PropertyFlags flags,
-                           PropertyResult* existing) {
+                           PropertyResult* existing, uint32_t* slotOut) {
   MOZ_ASSERT(existing);
 
   Rooted<GetterSetter*> gs(cx);
@@ -1128,18 +1167,17 @@ static bool ChangeProperty(JSContext* cx, Handle<NativeObject*> obj,
     }
   }
 
-  uint32_t slot;
   if (existing->isNativeProperty()) {
-    if (!NativeObject::changeProperty(cx, obj, id, flags, &slot)) {
+    if (!NativeObject::changeProperty(cx, obj, id, flags, slotOut)) {
       return false;
     }
   } else {
-    if (!NativeObject::addProperty(cx, obj, id, flags, &slot)) {
+    if (!NativeObject::addProperty(cx, obj, id, flags, slotOut)) {
       return false;
     }
   }
 
-  obj->setSlot(slot, PrivateGCThingValue(gs));
+  obj->setSlot(*slotOut, PrivateGCThingValue(gs));
   return true;
 }
 
@@ -1203,6 +1241,7 @@ static MOZ_ALWAYS_INLINE bool AddOrChangeProperty(
     }
   }
 
+  uint32_t slot;
   if constexpr (AddOrChange == IsAddOrChange::Add) {
     if (desc.isAccessorDescriptor()) {
       Rooted<GetterSetter*> gs(
@@ -1210,13 +1249,11 @@ static MOZ_ALWAYS_INLINE bool AddOrChangeProperty(
       if (!gs) {
         return false;
       }
-      uint32_t slot;
       if (!NativeObject::addProperty(cx, obj, id, flags, &slot)) {
         return false;
       }
       obj->initSlot(slot, PrivateGCThingValue(gs));
     } else {
-      uint32_t slot;
       if (!NativeObject::addProperty(cx, obj, id, flags, &slot)) {
         return false;
       }
@@ -1225,11 +1262,10 @@ static MOZ_ALWAYS_INLINE bool AddOrChangeProperty(
   } else {
     if (desc.isAccessorDescriptor()) {
       if (!ChangeProperty(cx, obj, id, desc.getter(), desc.setter(), flags,
-                          existing)) {
+                          existing, &slot)) {
         return false;
       }
     } else {
-      uint32_t slot;
       if (existing->isNativeProperty()) {
         if (!NativeObject::changeProperty(cx, obj, id, flags, &slot)) {
           return false;
@@ -1243,6 +1279,8 @@ static MOZ_ALWAYS_INLINE bool AddOrChangeProperty(
     }
   }
 
+  MOZ_ASSERT(slot < obj->slotSpan());
+
   // Clear any existing dense index after adding a sparse indexed property,
   // and investigate converting the object to dense indexes.
   if (id.isInt()) {
@@ -1252,14 +1290,22 @@ static MOZ_ALWAYS_INLINE bool AddOrChangeProperty(
     } else {
       obj->removeDenseElementForSparseIndex(index);
     }
-    DenseElementResult edResult =
-        NativeObject::maybeDensifySparseElements(cx, obj);
-    if (edResult == DenseElementResult::Failure) {
-      return false;
-    }
-    if (edResult == DenseElementResult::Success) {
-      MOZ_ASSERT(!desc.isAccessorDescriptor());
-      return CallAddPropertyHookDense(cx, obj, index, desc.value());
+    // Only try to densify sparse elements if the property we just added/changed
+    // is in the last slot. This avoids a perf cliff in pathological cases: in
+    // maybeDensifySparseElements we densify if the slot span is a power-of-two,
+    // but if we get slots from the free list, the slot span will stay the same
+    // until the free list is empty. This means we'd get quadratic behavior by
+    // trying to densify for each sparse element we add. See bug 1782487.
+    if (slot == obj->slotSpan() - 1) {
+      DenseElementResult edResult =
+          NativeObject::maybeDensifySparseElements(cx, obj);
+      if (edResult == DenseElementResult::Failure) {
+        return false;
+      }
+      if (edResult == DenseElementResult::Success) {
+        MOZ_ASSERT(!desc.isAccessorDescriptor());
+        return CallAddPropertyHookDense(cx, obj, index, desc.value());
+      }
     }
   }
 
@@ -1298,7 +1344,7 @@ bool js::AddSlotAndCallAddPropHook(JSContext* cx, Handle<NativeObject*> obj,
   MOZ_ASSERT(!id.isInt());
 
   uint32_t slot = newShape->lastProperty().slot();
-  if (!obj->setShapeAndUpdateSlotsForNewSlot(cx, newShape, slot)) {
+  if (!obj->setShapeAndAddNewSlot(cx, newShape, slot)) {
     return false;
   }
   obj->initSlot(slot, v);
@@ -1807,16 +1853,18 @@ static bool DefineNonexistentProperty(JSContext* cx, Handle<NativeObject*> obj,
   return result.succeed();
 }
 
-bool js::AddOrUpdateSparseElementHelper(JSContext* cx, Handle<ArrayObject*> obj,
+bool js::AddOrUpdateSparseElementHelper(JSContext* cx,
+                                        Handle<NativeObject*> obj,
                                         int32_t int_id, HandleValue v,
                                         bool strict) {
+  MOZ_ASSERT(obj->is<ArrayObject>() || obj->is<PlainObject>());
+
+  // This helper doesn't handle the case where the index is a dense element.
+  MOZ_ASSERT(int_id >= 0);
+  MOZ_ASSERT(!obj->containsDenseElement(int_id));
+
   MOZ_ASSERT(PropertyKey::fitsInInt(int_id));
   RootedId id(cx, PropertyKey::Int(int_id));
-
-  // This helper doesn't handle the case where the index may be in the dense
-  // elements
-  MOZ_ASSERT(int_id >= 0);
-  MOZ_ASSERT(uint32_t(int_id) >= obj->getDenseInitializedLength());
 
   // First decide if this is an add or an update. Because the IC guards have
   // already ensured this exists exterior to the dense array range, and the
@@ -1826,7 +1874,8 @@ bool js::AddOrUpdateSparseElementHelper(JSContext* cx, Handle<ArrayObject*> obj,
   PropMap* map = obj->shape()->lookup(cx, id, &index);
 
   // If we didn't find the property, we're on the add path: delegate to
-  // AddOrChangeProperty.
+  // AddOrChangeProperty. This will add either a sparse element or a dense
+  // element.
   if (map == nullptr) {
     Rooted<PropertyDescriptor> desc(
         cx, PropertyDescriptor::Data(v, {JS::PropertyAttribute::Configurable,
@@ -2089,8 +2138,14 @@ static inline bool GeneralizedGetProperty(JSContext* cx, JSObject* obj, jsid id,
   return GetPropertyNoGC(cx, obj, receiver, id, vp.address());
 }
 
-bool js::GetSparseElementHelper(JSContext* cx, Handle<ArrayObject*> obj,
+bool js::GetSparseElementHelper(JSContext* cx, Handle<NativeObject*> obj,
                                 int32_t int_id, MutableHandleValue result) {
+  MOZ_ASSERT(obj->is<ArrayObject>() || obj->is<PlainObject>());
+
+  // This helper doesn't handle the case where the index is a dense element.
+  MOZ_ASSERT(int_id >= 0);
+  MOZ_ASSERT(!obj->containsDenseElement(int_id));
+
   // Indexed properties can not exist on the prototype chain.
   MOZ_ASSERT(!PrototypeMayHaveIndexedProperties(obj));
 

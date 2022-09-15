@@ -9,11 +9,9 @@ var EXPORTED_SYMBOLS = ["ClickHandlerParent", "MiddleMousePasteHandlerParent"];
 
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PlacesUIUtils",
-  "resource:///modules/PlacesUIUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  PlacesUIUtils: "resource:///modules/PlacesUIUtils.sys.mjs",
+});
 ChromeUtils.defineModuleGetter(
   lazy,
   "PrivateBrowsingUtils",
@@ -118,6 +116,17 @@ class ClickHandlerParent extends JSWindowActorParent {
       // The child ensures that untrusted events have a valid user activation.
       hasValidUserGestureActivation: true,
     };
+
+    if (data.globalHistoryOptions) {
+      params.globalHistoryOptions = data.globalHistoryOptions;
+    } else {
+      params.globalHistoryOptions = {
+        triggeringSponsoredURL: browser.getAttribute("triggeringSponsoredURL"),
+        triggeringSponsoredURLVisitTimeMS: browser.getAttribute(
+          "triggeringSponsoredURLVisitTimeMS"
+        ),
+      };
+    }
 
     // The new tab/window must use the same userContextId.
     if (data.originAttributes.userContextId) {

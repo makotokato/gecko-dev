@@ -6,10 +6,9 @@
 
 var EXPORTED_SYMBOLS = ["HomePage"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const lazy = {};
 
@@ -59,7 +58,7 @@ function getHomepagePref(useDefault) {
 }
 
 /**
- * HomePage provides tools to keep try of the current homepage, and the
+ * HomePage provides tools to keep track of the current homepage, and the
  * applications's default homepage. It includes tools to insure that certain
  * urls are ignored. As a result, all set/get requests for the homepage
  * preferences should be routed through here.

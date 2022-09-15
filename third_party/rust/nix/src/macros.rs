@@ -48,7 +48,7 @@ macro_rules! libc_bitflags {
             )+
         }
     ) => {
-        ::bitflags::bitflags! {
+        bitflags! {
             $(#[$outer])*
             pub struct $BitFlags: $T {
                 $(
@@ -81,113 +81,86 @@ macro_rules! libc_bitflags {
 /// }
 /// ```
 macro_rules! libc_enum {
-    // Exit rule.
+    // (non-pub) Exit rule.
     (@make_enum
-        name: $BitFlags:ident,
         {
-            $v:vis
+            name: $BitFlags:ident,
             attrs: [$($attrs:tt)*],
             entries: [$($entries:tt)*],
         }
     ) => {
         $($attrs)*
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        $v enum $BitFlags {
+        enum $BitFlags {
             $($entries)*
         }
     };
 
-    // Exit rule including TryFrom
+    // (pub) Exit rule.
     (@make_enum
-        name: $BitFlags:ident,
         {
-            $v:vis
+            pub,
+            name: $BitFlags:ident,
             attrs: [$($attrs:tt)*],
             entries: [$($entries:tt)*],
-            from_type: $repr:path,
-            try_froms: [$($try_froms:tt)*]
         }
     ) => {
         $($attrs)*
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        $v enum $BitFlags {
+        pub enum $BitFlags {
             $($entries)*
         }
-        impl ::std::convert::TryFrom<$repr> for $BitFlags {
-            type Error = $crate::Error;
-            #[allow(unused_doc_comments)]
-            fn try_from(x: $repr) -> $crate::Result<Self> {
-                match x {
-                    $($try_froms)*
-                    _ => Err($crate::Error::EINVAL)
-                }
-            }
-        }
     };
 
-    // Done accumulating.
+    // (non-pub) Done accumulating.
     (@accumulate_entries
-        name: $BitFlags:ident,
         {
-            $v:vis
+            name: $BitFlags:ident,
             attrs: $attrs:tt,
         },
-        $entries:tt,
-        $try_froms:tt;
+        $entries:tt;
     ) => {
         libc_enum! {
             @make_enum
-            name: $BitFlags,
             {
-                $v
+                name: $BitFlags,
                 attrs: $attrs,
                 entries: $entries,
             }
         }
     };
 
-    // Done accumulating and want TryFrom
+    // (pub) Done accumulating.
     (@accumulate_entries
-        name: $BitFlags:ident,
         {
-            $v:vis
+            pub,
+            name: $BitFlags:ident,
             attrs: $attrs:tt,
-            from_type: $repr:path,
         },
-        $entries:tt,
-        $try_froms:tt;
+        $entries:tt;
     ) => {
         libc_enum! {
             @make_enum
-            name: $BitFlags,
             {
-                $v
+                pub,
+                name: $BitFlags,
                 attrs: $attrs,
                 entries: $entries,
-                from_type: $repr,
-                try_froms: $try_froms
             }
         }
     };
 
     // Munch an attr.
     (@accumulate_entries
-        name: $BitFlags:ident,
         $prefix:tt,
-        [$($entries:tt)*],
-        [$($try_froms:tt)*];
+        [$($entries:tt)*];
         #[$attr:meta] $($tail:tt)*
     ) => {
         libc_enum! {
             @accumulate_entries
-            name: $BitFlags,
             $prefix,
             [
                 $($entries)*
-                #[$attr]
-            ],
-            [
-                $($try_froms)*
                 #[$attr]
             ];
             $($tail)*
@@ -196,47 +169,32 @@ macro_rules! libc_enum {
 
     // Munch last ident if not followed by a comma.
     (@accumulate_entries
-        name: $BitFlags:ident,
         $prefix:tt,
-        [$($entries:tt)*],
-        [$($try_froms:tt)*];
+        [$($entries:tt)*];
         $entry:ident
     ) => {
         libc_enum! {
             @accumulate_entries
-            name: $BitFlags,
             $prefix,
             [
                 $($entries)*
                 $entry = libc::$entry,
-            ],
-            [
-                $($try_froms)*
-                libc::$entry => Ok($BitFlags::$entry),
             ];
         }
     };
 
     // Munch an ident; covers terminating comma case.
     (@accumulate_entries
-        name: $BitFlags:ident,
         $prefix:tt,
-        [$($entries:tt)*],
-        [$($try_froms:tt)*];
-        $entry:ident,
-        $($tail:tt)*
+        [$($entries:tt)*];
+        $entry:ident, $($tail:tt)*
     ) => {
         libc_enum! {
             @accumulate_entries
-            name: $BitFlags,
             $prefix,
             [
                 $($entries)*
                 $entry = libc::$entry,
-            ],
-            [
-                $($try_froms)*
-                libc::$entry => Ok($BitFlags::$entry),
             ];
             $($tail)*
         }
@@ -244,68 +202,63 @@ macro_rules! libc_enum {
 
     // Munch an ident and cast it to the given type; covers terminating comma.
     (@accumulate_entries
-        name: $BitFlags:ident,
         $prefix:tt,
-        [$($entries:tt)*],
-        [$($try_froms:tt)*];
-        $entry:ident as $ty:ty,
-        $($tail:tt)*
+        [$($entries:tt)*];
+        $entry:ident as $ty:ty, $($tail:tt)*
     ) => {
         libc_enum! {
             @accumulate_entries
-            name: $BitFlags,
             $prefix,
             [
                 $($entries)*
                 $entry = libc::$entry as $ty,
-            ],
-            [
-                $($try_froms)*
-                libc::$entry as $ty => Ok($BitFlags::$entry),
             ];
             $($tail)*
         }
     };
 
-    // Entry rule.
+    // (non-pub) Entry rule.
     (
         $(#[$attr:meta])*
-        $v:vis enum $BitFlags:ident {
+        enum $BitFlags:ident {
             $($vals:tt)*
         }
     ) => {
         libc_enum! {
             @accumulate_entries
-            name: $BitFlags,
             {
-                $v
+                name: $BitFlags,
                 attrs: [$(#[$attr])*],
             },
-            [],
             [];
             $($vals)*
         }
     };
 
-    // Entry rule including TryFrom
+    // (pub) Entry rule.
     (
         $(#[$attr:meta])*
-        $v:vis enum $BitFlags:ident {
+        pub enum $BitFlags:ident {
             $($vals:tt)*
         }
-        impl TryFrom<$repr:path>
     ) => {
         libc_enum! {
             @accumulate_entries
-            name: $BitFlags,
             {
-                $v
+                pub,
+                name: $BitFlags,
                 attrs: [$(#[$attr])*],
-                from_type: $repr,
             },
-            [],
             [];
             $($vals)*
         }
     };
+}
+
+/// A Rust version of the familiar C `offset_of` macro.  It returns the byte
+/// offset of `field` within struct `ty`
+macro_rules! offset_of {
+    ($ty:ty, $field:ident) => {
+        &(*(0 as *const $ty)).$field as *const _ as usize
+    }
 }

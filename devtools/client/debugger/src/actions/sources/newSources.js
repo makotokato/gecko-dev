@@ -65,6 +65,8 @@ function loadSourceMaps(cx, sources) {
         throw error;
       }
     }
+
+    return [];
   };
 }
 
@@ -136,7 +138,8 @@ function checkSelectedSource(cx, sourceId) {
     if (rawPendingUrl === source.url) {
       if (isPrettyURL(pendingUrl)) {
         const prettySource = await dispatch(togglePrettyPrint(cx, source.id));
-        return dispatch(checkPendingBreakpoints(cx, prettySource.id));
+        dispatch(checkPendingBreakpoints(cx, prettySource.id));
+        return;
       }
 
       await dispatch(
@@ -185,7 +188,7 @@ function restoreBlackBoxedSources(cx, sources) {
   return async ({ dispatch, getState }) => {
     const currentRanges = getBlackBoxRanges(getState());
 
-    if (Object.keys(currentRanges).length == 0) {
+    if (!Object.keys(currentRanges).length) {
       return;
     }
 
@@ -246,7 +249,7 @@ export function newGeneratedSource(sourceInfo) {
 
 export function newGeneratedSources(sourceResources) {
   return async ({ dispatch, getState, client }) => {
-    if (sourceResources.length == 0) {
+    if (!sourceResources.length) {
       return [];
     }
 
@@ -273,7 +276,12 @@ export function newGeneratedSources(sourceResources) {
       // We are sometimes notified about a new source multiple times if we
       // request a new source list and also get a source event from the server.
       if (!hasSourceActor(getState(), actorId)) {
-        newSourceActors.push(createSourceActor(sourceResource));
+        newSourceActors.push(
+          createSourceActor(
+            sourceResource,
+            getSource(getState(), id) || newSourcesObj[id]
+          )
+        );
       }
 
       resultIds.push(id);

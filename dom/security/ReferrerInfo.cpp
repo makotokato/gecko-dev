@@ -11,12 +11,14 @@
 #include "nsIObjectInputStream.h"
 #include "nsIObjectOutputStream.h"
 #include "nsIOService.h"
+#include "nsIPipe.h"
 #include "nsIURL.h"
 
 #include "nsWhitespaceTokenizer.h"
 #include "nsAlgorithm.h"
 #include "nsContentUtils.h"
 #include "nsCharSeparatedTokenizer.h"
+#include "nsStreamUtils.h"
 #include "ReferrerInfo.h"
 
 #include "mozilla/BasePrincipal.h"
@@ -25,6 +27,7 @@
 #include "mozilla/net/HttpBaseChannel.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/RequestBinding.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/StorageAccess.h"
 #include "mozilla/StyleSheet.h"
@@ -233,9 +236,13 @@ ReferrerPolicy ReferrerInfo::GetDefaultReferrerPolicy(nsIHttpChannel* aChannel,
     nsCOMPtr<nsICookieJarSettings> cjs;
     Unused << loadInfo->GetCookieJarSettings(getter_AddRefs(cjs));
     if (!cjs) {
+      bool shouldResistFingerprinting =
+          nsContentUtils::ShouldResistFingerprinting(aChannel);
       cjs = aPrivateBrowsing
-                ? net::CookieJarSettings::Create(CookieJarSettings::ePrivate)
-                : net::CookieJarSettings::Create(CookieJarSettings::eRegular);
+                ? net::CookieJarSettings::Create(CookieJarSettings::ePrivate,
+                                                 shouldResistFingerprinting)
+                : net::CookieJarSettings::Create(CookieJarSettings::eRegular,
+                                                 shouldResistFingerprinting);
     }
 
     // We only check if the channel is isolated if it's in the parent process
@@ -431,9 +438,9 @@ bool ReferrerInfo::ShouldSetNullOriginHeader(net::HttpBaseChannel* aChannel,
   // This code should not really be here, but we always need to send an Origin
   // header for CORS requests that aren't GET or HEAD. Also see the comment
   // in nsHttpChannel::SetOriginHeader.
-  uint32_t corsMode = nsIHttpChannelInternal::CORS_MODE_NO_CORS;
-  MOZ_ALWAYS_SUCCEEDS(aChannel->GetCorsMode(&corsMode));
-  if (corsMode == nsIHttpChannelInternal::CORS_MODE_CORS) {
+  RequestMode requestMode = RequestMode::No_cors;
+  MOZ_ALWAYS_SUCCEEDS(aChannel->GetRequestMode(&requestMode));
+  if (requestMode == RequestMode::Cors) {
     return false;
   }
 
@@ -1444,6 +1451,101 @@ nsresult ReferrerInfo::ComputeReferrer(nsIHttpChannel* aChannel) {
 
 /* ===== nsISerializable implementation ====== */
 
+nsresult ReferrerInfo::ReadTailDataBeforeGecko100(
+    const uint32_t& aData, nsIObjectInputStream* aInputStream) {
+  MOZ_ASSERT(aInputStream);
+
+  nsCOMPtr<nsIInputStream> reader;
+  nsCOMPtr<nsIOutputStream> writer;
+
+  // We need to create a new pipe in order to read the aData and the rest of
+  // the input stream together in the old format. This would also help us with
+  // handling big endian correctly.
+  nsresult rv = NS_NewPipe(getter_AddRefs(reader), getter_AddRefs(writer));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  nsCOMPtr<nsIBinaryOutputStream> binaryPipeWriter =
+      NS_NewObjectOutputStream(writer);
+
+  // Write back the aData so that we can read bytes from it and handle big
+  // endian correctly.
+  rv = binaryPipeWriter->Write32(aData);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  nsCOMPtr<nsIBinaryInputStream> binaryPipeReader =
+      NS_NewObjectInputStream(reader);
+
+  rv = binaryPipeReader->ReadBoolean(&mSendReferrer);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  bool isComputed;
+  rv = binaryPipeReader->ReadBoolean(&isComputed);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  // We need to handle the following string if isComputed is true.
+  if (isComputed) {
+    // Comsume the following 2 bytes from the input stream. They are the half
+    // part of the length prefix of the following string.
+    uint16_t data;
+    rv = aInputStream->Read16(&data);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    // Write the bytes to the pipe so that we can read the length of the string.
+    rv = binaryPipeWriter->Write16(data);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    uint32_t length;
+    rv = binaryPipeReader->Read32(&length);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    // Consume the string body from the input stream.
+    nsAutoCString computedReferrer;
+    rv = NS_ConsumeStream(aInputStream, length, computedReferrer);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+    mComputedReferrer.emplace(computedReferrer);
+
+    // Read the remaining two bytes and write to the pipe.
+    uint16_t remain;
+    rv = aInputStream->Read16(&remain);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    rv = binaryPipeWriter->Write16(remain);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+  }
+
+  rv = binaryPipeReader->ReadBoolean(&mInitialized);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  rv = binaryPipeReader->ReadBoolean(&mOverridePolicyByDefault);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  return NS_OK;
+}
+
 NS_IMETHODIMP
 ReferrerInfo::Read(nsIObjectInputStream* aStream) {
   bool nonNull;
@@ -1483,6 +1585,19 @@ ReferrerInfo::Read(nsIObjectInputStream* aStream) {
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
+
+  // See https://bugzilla.mozilla.org/show_bug.cgi?id=1784045#c6 for more
+  // details.
+  //
+  // We need to differentiate the old format and the new format here in order
+  // to be able to read both formats. The check here helps us with verifying
+  // which format it is.
+  if (MOZ_UNLIKELY(originalPolicy > 0xFF)) {
+    mOriginalPolicy = mPolicy;
+
+    return ReadTailDataBeforeGecko100(originalPolicy, aStream);
+  }
+
   mOriginalPolicy = ReferrerPolicyIDLToReferrerPolicy(
       static_cast<nsIReferrerInfo::ReferrerPolicyIDL>(originalPolicy));
 

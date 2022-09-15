@@ -59,11 +59,7 @@ bool CSSClipPathInstance::HitTestBasicShapeOrPathClip(nsIFrame* aFrame,
                                                       const gfxPoint& aPoint) {
   const auto& clipPathStyle = aFrame->StyleSVGReset()->mClipPath;
   MOZ_ASSERT(!clipPathStyle.IsNone(), "unexpected none value");
-  // In the future CSSClipPathInstance may handle <clipPath> references as
-  // well. For the time being return early.
-  if (clipPathStyle.IsUrl()) {
-    return false;
-  }
+  MOZ_ASSERT(!clipPathStyle.IsUrl(), "unexpected url value");
 
   CSSClipPathInstance instance(aFrame, clipPathStyle);
 
@@ -214,11 +210,12 @@ already_AddRefed<Path> CSSClipPathInstance::CreateClipPathInset(
   nscoord appUnitsPerDevPixel =
       mTargetFrame->PresContext()->AppUnitsPerDevPixel();
 
-  nsRect insetRect = ShapeUtils::ComputeInsetRect(basicShape, aRefBox);
+  const nsRect insetRect = ShapeUtils::ComputeInsetRect(basicShape, aRefBox);
   const Rect insetRectPixels = NSRectToRect(insetRect, appUnitsPerDevPixel);
   nscoord appUnitsRadii[8];
 
-  if (ShapeUtils::ComputeInsetRadii(basicShape, aRefBox, appUnitsRadii)) {
+  if (ShapeUtils::ComputeInsetRadii(basicShape, aRefBox, insetRect,
+                                    appUnitsRadii)) {
     RectCornerRadii corners;
     nsCSSRendering::ComputePixelRadii(appUnitsRadii, appUnitsPerDevPixel,
                                       &corners);

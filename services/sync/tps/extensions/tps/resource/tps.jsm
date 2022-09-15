@@ -23,10 +23,9 @@ var EXPORTED_SYMBOLS = [
   "Windows",
 ];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -35,6 +34,10 @@ const { PromiseUtils } = ChromeUtils.import(
 );
 
 const lazy = {};
+
+ChromeUtils.defineESModuleGetters(lazy, {
+  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+});
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   Authentication: "resource://tps/auth/fxaccounts.jsm",
@@ -47,8 +50,6 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   JsonSchema: "resource://gre/modules/JsonSchema.jsm",
   Log: "resource://gre/modules/Log.jsm",
   Logger: "resource://tps/logger.jsm",
-  OS: "resource://gre/modules/osfile.jsm",
-  PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
   SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
   Svc: "resource://services-sync/util.js",
   SyncTelemetry: "resource://services-sync/telemetry.js",
@@ -1007,7 +1008,8 @@ var TPS = {
   _getFileRelativeToSourceRoot(testFileURL, relativePath) {
     let file = lazy.fileProtocolHandler.getFileFromURLSpec(testFileURL);
     let root = file.parent.parent.parent.parent.parent; // <root>/services/sync/tests/tps/test_foo.js // <root>/services/sync/tests/tps // <root>/services/sync/tests // <root>/services/sync // <root>/services // <root>
-    root.appendRelativePath(lazy.OS.Path.normalize(relativePath));
+    root.appendRelativePath(relativePath);
+    root.normalize();
     return root;
   },
 

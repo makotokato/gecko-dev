@@ -32,20 +32,14 @@
 #include "js/UbiNode.h"
 #include "js/UniquePtr.h"
 #include "js/Utility.h"
-#include "util/StructuredSpewer.h"
 #include "util/TrailingArray.h"
-#include "vm/BigIntType.h"
 #include "vm/BytecodeIterator.h"
 #include "vm/BytecodeLocation.h"
 #include "vm/BytecodeUtil.h"
-#include "vm/JSAtom.h"
 #include "vm/NativeObject.h"
-#include "vm/ScopeKind.h"  // ScopeKind
-#include "vm/Shape.h"
 #include "vm/SharedImmutableStringsCache.h"
 #include "vm/SharedStencil.h"  // js::GCThingIndex, js::SourceExtent, js::SharedImmutableScriptData, MemberInitializers
 #include "vm/StencilEnums.h"   // SourceRetrievable
-#include "vm/Time.h"
 
 namespace JS {
 struct ScriptSourceInfo;
@@ -55,10 +49,13 @@ class SourceText;
 
 namespace js {
 
+class ErrorContext;
 class ScriptSource;
 
 class VarScope;
 class LexicalScope;
+
+class Sprinter;
 
 namespace coverage {
 class LCovSource;
@@ -645,7 +642,7 @@ class ScriptSource {
       js_delete(this);
     }
   }
-  [[nodiscard]] bool initFromOptions(JSContext* cx,
+  [[nodiscard]] bool initFromOptions(JSContext* cx, ErrorContext* ec,
                                      const JS::ReadOnlyCompileOptions& options);
 
   /**
@@ -654,8 +651,10 @@ class ScriptSource {
    */
   static constexpr size_t MinimumCompressibleLength = 256;
 
-  SharedImmutableString getOrCreateStringZ(JSContext* cx, UniqueChars&& str);
+  SharedImmutableString getOrCreateStringZ(JSContext* cx, ErrorContext* ec,
+                                           UniqueChars&& str);
   SharedImmutableTwoByteString getOrCreateStringZ(JSContext* cx,
+                                                  ErrorContext* ec,
                                                   UniqueTwoByteChars&& str);
 
  private:
@@ -670,7 +669,7 @@ class ScriptSource {
 
   // Assign source data from |srcBuf| to this recently-created |ScriptSource|.
   template <typename Unit>
-  [[nodiscard]] bool assignSource(JSContext* cx,
+  [[nodiscard]] bool assignSource(JSContext* cx, ErrorContext* ec,
                                   const JS::ReadOnlyCompileOptions& options,
                                   JS::SourceText<Unit>& srcBuf);
 
@@ -994,14 +993,19 @@ class ScriptSource {
   const char* filename() const {
     return filename_ ? filename_.chars() : nullptr;
   }
-  [[nodiscard]] bool setFilename(JSContext* cx, const char* filename);
+  [[nodiscard]] bool setFilename(JSContext* cx, ErrorContext* ec,
+                                 const char* filename);
   [[nodiscard]] bool setFilename(JSContext* cx, UniqueChars&& filename);
+  [[nodiscard]] bool setFilename(JSContext* cx, ErrorContext* ec,
+                                 UniqueChars&& filename);
 
   const char* introducerFilename() const {
     return introducerFilename_ ? introducerFilename_.chars() : filename();
   }
   [[nodiscard]] bool setIntroducerFilename(JSContext* cx, const char* filename);
-  [[nodiscard]] bool setIntroducerFilename(JSContext* cx,
+  [[nodiscard]] bool setIntroducerFilename(JSContext* cx, ErrorContext* ec,
+                                           const char* filename);
+  [[nodiscard]] bool setIntroducerFilename(JSContext* cx, ErrorContext* ec,
                                            UniqueChars&& filename);
 
   bool hasIntroductionType() const { return introductionType_; }
@@ -1013,14 +1017,20 @@ class ScriptSource {
   uint32_t id() const { return id_; }
 
   // Display URLs
-  [[nodiscard]] bool setDisplayURL(JSContext* cx, const char16_t* url);
+  [[nodiscard]] bool setDisplayURL(JSContext* cx, ErrorContext* ec,
+                                   const char16_t* url);
   [[nodiscard]] bool setDisplayURL(JSContext* cx, UniqueTwoByteChars&& url);
+  [[nodiscard]] bool setDisplayURL(JSContext* cx, ErrorContext* ec,
+                                   UniqueTwoByteChars&& url);
   bool hasDisplayURL() const { return bool(displayURL_); }
   const char16_t* displayURL() { return displayURL_.chars(); }
 
   // Source maps
-  [[nodiscard]] bool setSourceMapURL(JSContext* cx, const char16_t* url);
+  [[nodiscard]] bool setSourceMapURL(JSContext* cx, ErrorContext* ec,
+                                     const char16_t* url);
   [[nodiscard]] bool setSourceMapURL(JSContext* cx, UniqueTwoByteChars&& url);
+  [[nodiscard]] bool setSourceMapURL(JSContext* cx, ErrorContext* ec,
+                                     UniqueTwoByteChars&& url);
   bool hasSourceMapURL() const { return bool(sourceMapURL_); }
   const char16_t* sourceMapURL() { return sourceMapURL_.chars(); }
 
@@ -1399,6 +1409,8 @@ class alignas(uintptr_t) PrivateScriptData final : public TrailingArray {
 // NOTE: Scripts may be directly created with bytecode and skip the lazy script
 //       form. This is always the case for top-level scripts.
 class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
+  friend class js::gc::CellAllocator;
+
  public:
   // Pointer to baseline->method()->raw(), ion->method()->raw(), a wasm jit
   // entry, the JIT's EnterInterpreter stub, or the lazy link stub. Must be
@@ -1706,7 +1718,7 @@ class JSScript : public js::BaseScript {
 
   jsbytecode* lastPC() const {
     jsbytecode* pc = codeEnd() - js::JSOpLength_RetRval;
-    MOZ_ASSERT(JSOp(*pc) == JSOp::RetRval);
+    MOZ_ASSERT(JSOp(*pc) == JSOp::RetRval || JSOp(*pc) == JSOp::Return);
     return pc;
   }
 
@@ -2114,6 +2126,28 @@ class JSScript : public js::BaseScript {
     void holdScript(JS::HandleFunction fun);
     void dropScript();
   };
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+ public:
+  struct DumpOptions {
+    bool recursive = false;
+    bool runtimeData = false;
+  };
+
+  void dump(JSContext* cx);
+  void dumpRecursive(JSContext* cx);
+
+  static bool dump(JSContext* cx, JS::Handle<JSScript*> script,
+                   DumpOptions& options, js::Sprinter* sp);
+  static bool dumpSrcNotes(JSContext* cx, JS::Handle<JSScript*> script,
+                           js::Sprinter* sp);
+  static bool dumpTryNotes(JSContext* cx, JS::Handle<JSScript*> script,
+                           js::Sprinter* sp);
+  static bool dumpScopeNotes(JSContext* cx, JS::Handle<JSScript*> script,
+                             js::Sprinter* sp);
+  static bool dumpGCThings(JSContext* cx, JS::Handle<JSScript*> script,
+                           js::Sprinter* sp);
+#endif
 };
 
 namespace js {

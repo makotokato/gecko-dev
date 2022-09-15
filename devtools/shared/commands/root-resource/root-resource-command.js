@@ -147,7 +147,7 @@ class RootResourceCommand {
       }
     }
     this._watchers = this._watchers.filter(entry => {
-      return entry.resources.length > 0;
+      return !!entry.resources.length;
     });
 
     for (const resource of resources) {
@@ -170,12 +170,7 @@ class RootResourceCommand {
       cachedResource => !resourceTypes.includes(cachedResource.resourceType)
     );
 
-    if (
-      resourceTypes.length &&
-      // @backward-compat { version 103 } The clearResources functionality was added in 103 and
-      // not supported in old servers.
-      this.rootFront.traits.supportsClearResources
-    ) {
+    if (resourceTypes.length) {
       this.rootFront.clearResources(resourceTypes);
     }
   }
@@ -251,7 +246,7 @@ class RootResourceCommand {
       if (!resources.includes(resourceType)) {
         continue;
       }
-      if (pendingEvents.length > 0) {
+      if (pendingEvents.length) {
         const lastEvent = pendingEvents[pendingEvents.length - 1];
         if (lastEvent.callbackType == callbackType) {
           lastEvent.updates.push(update);
@@ -320,7 +315,7 @@ class RootResourceCommand {
     const existingResources = this._cache.filter(resource =>
       resourceTypes.includes(resource.resourceType)
     );
-    if (existingResources.length > 0) {
+    if (existingResources.length) {
       await onAvailable(existingResources, { areExistingResources: true });
     }
   }

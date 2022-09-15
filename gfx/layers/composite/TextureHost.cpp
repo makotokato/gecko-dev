@@ -18,7 +18,8 @@
 #include "mozilla/layers/ISurfaceAllocator.h"  // for ISurfaceAllocator
 #include "mozilla/layers/ImageBridgeParent.h"  // for ImageBridgeParent
 #include "mozilla/layers/LayersSurfaces.h"     // for SurfaceDescriptor, etc
-#include "mozilla/layers/TextureHostOGL.h"     // for TextureHostOGL
+#include "mozilla/layers/RemoteTextureMap.h"
+#include "mozilla/layers/TextureHostOGL.h"  // for TextureHostOGL
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/layers/TextureClient.h"
 #include "mozilla/layers/GPUVideoTextureHost.h"
@@ -40,16 +41,16 @@
 #include "gfxUtils.h"
 #include "IPDLActor.h"
 
-#ifdef MOZ_ENABLE_D3D10_LAYER
-#  include "../d3d11/CompositorD3D11.h"
-#endif
-
 #ifdef XP_MACOSX
 #  include "../opengl/MacIOSurfaceTextureHostOGL.h"
 #endif
 
 #ifdef XP_WIN
+#  include "../d3d11/CompositorD3D11.h"
 #  include "mozilla/layers/TextureD3D11.h"
+#  ifdef MOZ_WMF_MEDIA_ENGINE
+#    include "mozilla/layers/DcompSurfaceImage.h"
+#  endif
 #endif
 
 #if 0
@@ -100,6 +101,9 @@ class TextureParent : public ParentActor<PTextureParent> {
 static bool WrapWithWebRenderTextureHost(ISurfaceAllocator* aDeallocator,
                                          LayersBackend aBackend,
                                          TextureFlags aFlags) {
+  if (!aDeallocator) {
+    return false;
+  }
   if ((aFlags & TextureFlags::SNAPSHOT) ||
       (!aDeallocator->UsesImageBridge() &&
        !aDeallocator->AsCompositorBridgeParentBase())) {
@@ -207,6 +211,12 @@ already_AddRefed<TextureHost> TextureHost::Create(
     case SurfaceDescriptor::TSurfaceDescriptorDXGIYCbCr:
       result = CreateTextureHostD3D11(aDesc, aDeallocator, aBackend, aFlags);
       break;
+#  ifdef MOZ_WMF_MEDIA_ENGINE
+    case SurfaceDescriptor::TSurfaceDescriptorDcompSurface:
+      result =
+          CreateTextureHostDcompSurface(aDesc, aDeallocator, aBackend, aFlags);
+      break;
+#  endif
 #endif
     case SurfaceDescriptor::TSurfaceDescriptorRecorded: {
       const SurfaceDescriptorRecorded& desc =
@@ -236,8 +246,7 @@ already_AddRefed<TextureHost> TextureHost::Create(
 
   if (result && WrapWithWebRenderTextureHost(aDeallocator, aBackend, aFlags)) {
     MOZ_ASSERT(aExternalImageId.isSome());
-    result =
-        new WebRenderTextureHost(aDesc, aFlags, result, aExternalImageId.ref());
+    result = new WebRenderTextureHost(aFlags, result, aExternalImageId.ref());
   }
 
   if (result) {
@@ -302,7 +311,7 @@ already_AddRefed<TextureHost> CreateBackendIndependentTextureHost(
           break;
         }
         case MemoryOrShmem::Tuintptr_t: {
-          if (!aDeallocator->IsSameProcess()) {
+          if (aDeallocator && !aDeallocator->IsSameProcess()) {
             NS_ERROR(
                 "A client process is trying to peek at our address space using "
                 "a MemoryTexture!");
@@ -335,8 +344,9 @@ already_AddRefed<TextureHost> CreateBackendIndependentTextureHost(
   return result.forget();
 }
 
-TextureHost::TextureHost(TextureFlags aFlags)
+TextureHost::TextureHost(TextureHostType aType, TextureFlags aFlags)
     : AtomicRefCountedWithFinalize("TextureHost"),
+      mTextureHostType(aType),
       mActor(nullptr),
       mFlags(aFlags),
       mCompositableCount(0),
@@ -350,6 +360,9 @@ TextureHost::~TextureHost() {
     // be destroyed by now. But we will hit assertions if we don't ReadUnlock
     // before destroying the lock itself.
     ReadUnlock();
+  }
+  if (mDestroyedCallback) {
+    mDestroyedCallback();
   }
 }
 
@@ -439,7 +452,7 @@ TextureSource::TextureSource() : mCompositableCount(0) {}
 TextureSource::~TextureSource() = default;
 BufferTextureHost::BufferTextureHost(const BufferDescriptor& aDesc,
                                      TextureFlags aFlags)
-    : TextureHost(aFlags), mLocked(false) {
+    : TextureHost(TextureHostType::Buffer, aFlags), mLocked(false) {
   mDescriptor = aDesc;
   switch (mDescriptor.type()) {
     case BufferDescriptor::TYCbCrDescriptor: {

@@ -81,7 +81,7 @@ void nsPageContentFrame::Reflow(nsPresContext* aPresContext,
 
     // XXXbz this screws up percentage padding (sets padding to zero
     // in the percentage padding case)
-    kidReflowInput.mStylePadding->GetPadding(padding);
+    frame->StylePadding()->GetPadding(padding);
 
     // This is for shrink-to-fit, and therefore we want to use the
     // scrollable overflow, since the purpose of shrink to fit is to
@@ -166,8 +166,6 @@ void nsPageContentFrame::Reflow(nsPresContext* aPresContext,
 
     mRemainingOverflow = std::max(remainingOverflow, 0);
   }
-
-  NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aReflowOutput);
 }
 
 using PageAndOffset = std::pair<nsPageContentFrame*, nscoord>;

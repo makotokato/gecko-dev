@@ -62,7 +62,9 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/JSWindowActorChild.h"
+#include "mozilla/dom/ImageDocument.h"
 #include "mozilla/dom/LoadURIOptionsBinding.h"
+#include "mozilla/dom/MediaDocument.h"
 #include "mozilla/dom/MessageManagerBinding.h"
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/Nullable.h"
@@ -164,8 +166,6 @@ using namespace mozilla::layout;
 using namespace mozilla::widget;
 using mozilla::layers::GeckoContentController;
 
-NS_IMPL_ISUPPORTS(ContentListener, nsIDOMEventListener)
-
 static const char BEFORE_FIRST_PAINT[] = "before-first-paint";
 
 static uint32_t sConsecutiveTouchMoveCount = 0;
@@ -206,15 +206,6 @@ bool BrowserChild::UpdateFrame(const RepaintRequest& aRequest) {
     return true;
   }
   return true;
-}
-
-NS_IMETHODIMP
-ContentListener::HandleEvent(Event* aEvent) {
-  RemoteDOMEvent remoteEvent;
-  remoteEvent.mEvent = aEvent;
-  NS_ENSURE_STATE(remoteEvent.mEvent);
-  mBrowserChild->SendEvent(remoteEvent);
-  return NS_OK;
 }
 
 class BrowserChild::DelayedDeleteRunnable final : public Runnable,
@@ -519,7 +510,7 @@ nsresult BrowserChild::Init(mozIDOMWindowProxy* aParent,
 
   mIPCOpen = true;
 
-  if constexpr (SessionStoreUtils::NATIVE_LISTENER) {
+  if (StaticPrefs::browser_sessionstore_platform_collection_AtStartup()) {
     mSessionStoreChild = SessionStoreChild::GetOrCreate(mBrowsingContext);
   }
 
@@ -660,7 +651,7 @@ NS_IMETHODIMP
 BrowserChild::SetLinkStatus(const nsAString& aStatusText) {
   // We can only send the status after the ipc machinery is set up
   if (IPCOpen()) {
-    SendSetLinkStatus(nsString(aStatusText));
+    SendSetLinkStatus(aStatusText);
   }
   return NS_OK;
 }
@@ -1035,7 +1026,8 @@ nsresult BrowserChild::CloneDocumentTreeIntoSelf(
 
   RefPtr<Document> clone;
   {
-    AutoPrintEventDispatcher dispatcher(*sourceDocument);
+    AutoPrintEventDispatcher dispatcher(*sourceDocument, printSettings,
+                                        /* aIsTop = */ false);
     nsAutoScriptBlocker scriptBlocker;
     bool hasInProcessCallbacks = false;
     clone = sourceDocument->CreateStaticClone(ourDocShell, cv, printSettings,
@@ -1327,6 +1319,25 @@ mozilla::ipc::IPCResult BrowserChild::RecvSetIsUnderHiddenEmbedderElement(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult BrowserChild::RecvUpdateRemoteStyle(
+    const StyleImageRendering& aImageRendering) {
+  BrowsingContext* context = GetBrowsingContext();
+  if (!context) {
+    return IPC_OK();
+  }
+
+  Document* document = context->GetDocument();
+  if (!document) {
+    return IPC_OK();
+  }
+
+  if (document->IsImageDocument()) {
+    document->AsImageDocument()->UpdateRemoteStyle(aImageRendering);
+  }
+
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult BrowserChild::RecvDynamicToolbarMaxHeightChanged(
     const ScreenIntCoord& aHeight) {
 #if defined(MOZ_WIDGET_ANDROID)
@@ -1473,13 +1484,19 @@ bool BrowserChild::NotifyAPZStateChange(
     const layers::GeckoContentController::APZStateChange& aChange,
     const int& aArg) {
   mAPZEventState->ProcessAPZStateChange(aViewId, aChange, aArg);
+  nsCOMPtr<nsIObserverService> observerService =
+      mozilla::services::GetObserverService();
   if (aChange ==
       layers::GeckoContentController::APZStateChange::eTransformEnd) {
     // This is used by tests to determine when the APZ is done doing whatever
     // it's doing. XXX generify this as needed when writing additional tests.
-    nsCOMPtr<nsIObserverService> observerService =
-        mozilla::services::GetObserverService();
     observerService->NotifyObservers(nullptr, "APZ:TransformEnd", nullptr);
+    observerService->NotifyObservers(nullptr, "PanZoom:StateChange",
+                                     u"NOTHING");
+  } else if (aChange ==
+             layers::GeckoContentController::APZStateChange::eTransformBegin) {
+    observerService->NotifyObservers(nullptr, "PanZoom:StateChange",
+                                     u"PANNING");
   }
   return true;
 }
@@ -2199,17 +2216,17 @@ mozilla::ipc::IPCResult BrowserChild::RecvNormalPrioritySelectionEvent(
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvInsertText(
-    const nsString& aStringToInsert) {
+    const nsAString& aStringToInsert) {
   // Use normal event path to reach focused document.
   WidgetContentCommandEvent localEvent(true, eContentCommandInsertText,
                                        mPuppetWidget);
-  localEvent.mString = Some(aStringToInsert);
+  localEvent.mString = Some(nsString(aStringToInsert));
   DispatchWidgetEventViaAPZ(localEvent);
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvNormalPriorityInsertText(
-    const nsString& aStringToInsert) {
+    const nsAString& aStringToInsert) {
   return RecvInsertText(aStringToInsert);
 }
 
@@ -2225,7 +2242,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvPasteTransferable(
 
   rv = nsContentUtils::IPCTransferableToTransferable(
       aDataTransfer, aIsPrivateData, aRequestingPrincipal, aContentPolicyType,
-      true /* aAddDataFlavor */, trans, this);
+      true /* aAddDataFlavor */, trans);
   NS_ENSURE_SUCCESS(rv, IPC_OK());
 
   nsCOMPtr<nsIDocShell> ourDocShell = do_GetInterface(WebNavigation());
@@ -2256,8 +2273,8 @@ bool BrowserChild::DeallocPDocAccessibleChild(
 }
 #endif
 
-PColorPickerChild* BrowserChild::AllocPColorPickerChild(const nsString&,
-                                                        const nsString&) {
+PColorPickerChild* BrowserChild::AllocPColorPickerChild(const nsAString&,
+                                                        const nsAString&) {
   MOZ_CRASH("unused");
   return nullptr;
 }
@@ -2268,7 +2285,7 @@ bool BrowserChild::DeallocPColorPickerChild(PColorPickerChild* aColorPicker) {
   return true;
 }
 
-PFilePickerChild* BrowserChild::AllocPFilePickerChild(const nsString&,
+PFilePickerChild* BrowserChild::AllocPFilePickerChild(const nsAString&,
                                                       const int16_t&) {
   MOZ_CRASH("unused");
   return nullptr;
@@ -2295,19 +2312,8 @@ RefPtr<VsyncMainChild> BrowserChild::GetVsyncChild() {
   return mVsyncChild;
 }
 
-mozilla::ipc::IPCResult BrowserChild::RecvActivateFrameEvent(
-    const nsString& aType, const bool& capture) {
-  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
-  NS_ENSURE_TRUE(window, IPC_OK());
-  nsCOMPtr<EventTarget> chromeHandler = window->GetChromeEventHandler();
-  NS_ENSURE_TRUE(chromeHandler, IPC_OK());
-  RefPtr<ContentListener> listener = new ContentListener(this);
-  chromeHandler->AddEventListener(aType, listener, capture);
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult BrowserChild::RecvLoadRemoteScript(
-    const nsString& aURL, const bool& aRunInGlobalScope) {
+    const nsAString& aURL, const bool& aRunInGlobalScope) {
   if (!InitBrowserChildMessageManager())
     // This can happen if we're half-destroyed.  It's not a fatal
     // error.
@@ -2325,7 +2331,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvLoadRemoteScript(
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvAsyncMessage(
-    const nsString& aMessage, const ClonedMessageData& aData) {
+    const nsAString& aMessage, const ClonedMessageData& aData) {
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING("BrowserChild::RecvAsyncMessage",
                                              OTHER, aMessage);
   MMPrinter::Print("BrowserChild::RecvAsyncMessage", aMessage, aData);
@@ -2528,13 +2534,14 @@ mozilla::ipc::IPCResult BrowserChild::RecvPrint(
   printSettingsSvc->DeserializeToPrintSettings(aPrintData, printSettings);
   {
     IgnoredErrorResult rv;
-    outerWindow->Print(
-        printSettings,
-        static_cast<RemotePrintJobChild*>(aPrintData.remotePrintJobChild()),
-        /* aListener = */ nullptr,
-        /* aWindowToCloneInto = */ nullptr, nsGlobalWindowOuter::IsPreview::No,
-        nsGlobalWindowOuter::IsForWindowDotPrint::No,
-        /* aPrintPreviewCallback = */ nullptr, rv);
+    RefPtr printJob =
+        static_cast<RemotePrintJobChild*>(aPrintData.remotePrintJobChild());
+    outerWindow->Print(printSettings, printJob,
+                       /* aListener = */ nullptr,
+                       /* aWindowToCloneInto = */ nullptr,
+                       nsGlobalWindowOuter::IsPreview::No,
+                       nsGlobalWindowOuter::IsForWindowDotPrint::No,
+                       /* aPrintPreviewCallback = */ nullptr, rv);
     if (NS_WARN_IF(rv.Failed())) {
       return IPC_OK();
     }
@@ -2813,7 +2820,7 @@ void BrowserChild::InitRenderingState(
       lm->SetLayersObserverEpoch(mLayersObserverEpoch);
     }
   } else {
-    NS_WARNING("Fallback to BasicLayerManager");
+    NS_WARNING("Fallback to FallbackRenderer");
     mLayersConnected = Some(false);
   }
 
@@ -3084,19 +3091,18 @@ void BrowserChild::DidRequestComposite(const TimeStamp& aCompositeReqStart,
   }
 
   nsDocShell* docShell = static_cast<nsDocShell*>(docShellComPtr.get());
-  RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
 
-  if (timelines && timelines->HasConsumer(docShell)) {
+  if (TimelineConsumers::HasConsumer(docShell)) {
     // Since we're assuming that it's impossible for content JS to directly
     // trigger a synchronous paint, we can avoid capturing a stack trace here,
     // which means we won't run into JS engine reentrancy issues like bug
     // 1310014.
-    timelines->AddMarkerForDocShell(
+    TimelineConsumers::AddMarkerForDocShell(
         docShell, "CompositeForwardTransaction", aCompositeReqStart,
         MarkerTracingType::START, MarkerStackRequest::NO_STACK);
-    timelines->AddMarkerForDocShell(docShell, "CompositeForwardTransaction",
-                                    aCompositeReqEnd, MarkerTracingType::END,
-                                    MarkerStackRequest::NO_STACK);
+    TimelineConsumers::AddMarkerForDocShell(
+        docShell, "CompositeForwardTransaction", aCompositeReqEnd,
+        MarkerTracingType::END, MarkerStackRequest::NO_STACK);
   }
 }
 
@@ -3115,8 +3121,6 @@ void BrowserChild::ClearCachedResources() {
     }
   }
 }
-
-void BrowserChild::InvalidateLayers() { MOZ_ASSERT(mPuppetWidget); }
 
 void BrowserChild::SchedulePaint() {
   nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
@@ -3192,8 +3196,6 @@ void BrowserChild::ReinitRendering() {
 }
 
 void BrowserChild::ReinitRenderingForDeviceReset() {
-  InvalidateLayers();
-
   RefPtr<WebRenderLayerManager> lm =
       mPuppetWidget->GetWindowRenderer()->AsWebRender();
   if (lm) {
@@ -3236,12 +3238,6 @@ mozilla::ipc::IPCResult BrowserChild::RecvUIResolutionChanged(
   if (aDpi > 0) {
     mPuppetWidget->UpdateBackingScaleCache(aDpi, aRounding, aScale);
   }
-  nsCOMPtr<Document> document(GetTopLevelDocument());
-  RefPtr<nsPresContext> presContext =
-      document ? document->GetPresContext() : nullptr;
-  if (presContext) {
-    presContext->UIResolutionChangedSync();
-  }
 
   ScreenIntSize screenSize = GetInnerSize();
   if (mHasValidInnerSize && oldScreenSize != screenSize) {
@@ -3255,6 +3251,13 @@ mozilla::ipc::IPCResult BrowserChild::RecvUIResolutionChanged(
     mPuppetWidget->Resize(screenRect.x + mClientOffset.x + mChromeOffset.x,
                           screenRect.y + mClientOffset.y + mChromeOffset.y,
                           screenSize.width, screenSize.height, true);
+  }
+
+  nsCOMPtr<Document> document(GetTopLevelDocument());
+  RefPtr<nsPresContext> presContext =
+      document ? document->GetPresContext() : nullptr;
+  if (presContext) {
+    presContext->UIResolutionChangedSync();
   }
 
   return IPC_OK();

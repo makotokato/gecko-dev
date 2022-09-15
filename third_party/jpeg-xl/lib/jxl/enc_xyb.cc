@@ -22,79 +22,23 @@
 #include "lib/jxl/color_management.h"
 #include "lib/jxl/enc_bit_writer.h"
 #include "lib/jxl/enc_image_bundle.h"
+#include "lib/jxl/fast_math-inl.h"
 #include "lib/jxl/fields.h"
 #include "lib/jxl/image_bundle.h"
 #include "lib/jxl/image_ops.h"
 #include "lib/jxl/opsin_params.h"
 #include "lib/jxl/transfer_functions-inl.h"
+
 HWY_BEFORE_NAMESPACE();
 namespace jxl {
 namespace HWY_NAMESPACE {
 
 // These templates are not found via ADL.
-using hwy::HWY_NAMESPACE::ShiftRight;
-
-// Returns cbrt(x) + add with 6 ulp max error.
-// Modified from vectormath_exp.h, Apache 2 license.
-// https://www.agner.org/optimize/vectorclass.zip
-template <class V>
-V CubeRootAndAdd(const V x, const V add) {
-  const HWY_FULL(float) df;
-  const HWY_FULL(int32_t) di;
-
-  const auto kExpBias = Set(di, 0x54800000);  // cast(1.) + cast(1.) / 3
-  const auto kExpMul = Set(di, 0x002AAAAA);   // shifted 1/3
-  const auto k1_3 = Set(df, 1.0f / 3);
-  const auto k4_3 = Set(df, 4.0f / 3);
-
-  const auto xa = x;  // assume inputs never negative
-  const auto xa_3 = k1_3 * xa;
-
-  // Multiply exponent by -1/3
-  const auto m1 = BitCast(di, xa);
-  // Special case for 0. 0 is represented with an exponent of 0, so the
-  // "kExpBias - 1/3 * exp" below gives the wrong result. The IfThenZeroElse()
-  // sets those values as 0, which prevents having NaNs in the computations
-  // below.
-  const auto m2 =
-      IfThenZeroElse(m1 == Zero(di), kExpBias - (ShiftRight<23>(m1)) * kExpMul);
-  auto r = BitCast(df, m2);
-
-  // Newton-Raphson iterations
-  for (int i = 0; i < 3; i++) {
-    const auto r2 = r * r;
-    r = NegMulAdd(xa_3, r2 * r2, k4_3 * r);
-  }
-  // Final iteration
-  auto r2 = r * r;
-  r = MulAdd(k1_3, NegMulAdd(xa, r2 * r2, r), r);
-  r2 = r * r;
-  r = MulAdd(r2, x, add);
-
-  return r;
-}
-
-// Ensures infinity norm is bounded.
-void TestCubeRoot() {
-  const HWY_FULL(float) d;
-  float max_err = 0.0f;
-  for (uint64_t x5 = 0; x5 < 2000000; x5++) {
-    const float x = x5 * 1E-5f;
-    const float expected = cbrtf(x);
-    HWY_ALIGN float approx[MaxLanes(d)];
-    Store(CubeRootAndAdd(Set(d, x), Zero(d)), d, approx);
-
-    // All lanes are same
-    for (size_t i = 1; i < Lanes(d); ++i) {
-      JXL_ASSERT(std::abs(approx[0] - approx[i]) <= 1.2E-7f);
-    }
-
-    const float err = std::abs(approx[0] - expected);
-    max_err = std::max(max_err, err);
-  }
-  // printf("max err %e\n", max_err);
-  JXL_ASSERT(max_err < 8E-7f);
-}
+using hwy::HWY_NAMESPACE::Add;
+using hwy::HWY_NAMESPACE::Mul;
+using hwy::HWY_NAMESPACE::MulAdd;
+using hwy::HWY_NAMESPACE::Sub;
+using hwy::HWY_NAMESPACE::ZeroIfNegative;
 
 // 4x3 matrix * 3x1 SIMD vectors
 template <class V>
@@ -124,8 +68,8 @@ void StoreXYB(const V r, V g, const V b, float* JXL_RESTRICT valx,
               float* JXL_RESTRICT valy, float* JXL_RESTRICT valz) {
   const HWY_FULL(float) d;
   const V half = Set(d, 0.5f);
-  Store(half * (r - g), d, valx);
-  Store(half * (r + g), d, valy);
+  Store(Mul(half, Sub(r, g)), d, valx);
+  Store(Mul(half, Add(r, g)), d, valy);
   Store(b, d, valz);
 }
 
@@ -354,10 +298,10 @@ Status RgbToYcbcr(const ImageF& r_plane, const ImageF& g_plane,
   const auto kB = Set(df, 0.114f);
   const auto kAmpR = Set(df, 0.701f);
   const auto kAmpB = Set(df, 0.886f);
-  const auto kDiffR = kAmpR + kR;
-  const auto kDiffB = kAmpB + kB;
-  const auto kNormR = Set(df, 1.0f) / (kAmpR + kG + kB);
-  const auto kNormB = Set(df, 1.0f) / (kR + kG + kAmpB);
+  const auto kDiffR = Add(kAmpR, kR);
+  const auto kDiffB = Add(kAmpB, kB);
+  const auto kNormR = Div(Set(df, 1.0f), (Add(kAmpR, Add(kG, kB))));
+  const auto kNormB = Div(Set(df, 1.0f), (Add(kR, Add(kG, kAmpB))));
 
   constexpr size_t kGroupArea = kGroupDim * kGroupDim;
   const size_t lines_per_group = DivCeil(kGroupArea, xsize);
@@ -376,15 +320,15 @@ Status RgbToYcbcr(const ImageF& r_plane, const ImageF& g_plane,
         const auto r = Load(df, r_row + x);
         const auto g = Load(df, g_row + x);
         const auto b = Load(df, b_row + x);
-        const auto r_base = r * kR;
-        const auto r_diff = r * kDiffR;
-        const auto g_base = g * kG;
-        const auto b_base = b * kB;
-        const auto b_diff = b * kDiffB;
-        const auto y_base = r_base + g_base + b_base;
-        const auto y_vec = y_base - k128;
-        const auto cb_vec = (b_diff - y_base) * kNormB;
-        const auto cr_vec = (r_diff - y_base) * kNormR;
+        const auto r_base = Mul(r, kR);
+        const auto r_diff = Mul(r, kDiffR);
+        const auto g_base = Mul(g, kG);
+        const auto b_base = Mul(b, kB);
+        const auto b_diff = Mul(b, kDiffB);
+        const auto y_base = Add(r_base, Add(g_base, b_base));
+        const auto y_vec = Sub(y_base, k128);
+        const auto cb_vec = Mul(Sub(b_diff, y_base), kNormB);
+        const auto cr_vec = Mul(Sub(r_diff, y_base), kNormR);
         Store(y_vec, df, y_row + x);
         Store(cb_vec, df, cb_row + x);
         Store(cr_vec, df, cr_row + x);
@@ -409,6 +353,18 @@ const ImageBundle* ToXYB(const ImageBundle& in, ThreadPool* pool,
   return HWY_DYNAMIC_DISPATCH(ToXYB)(in, pool, xyb, cms, linear_storage);
 }
 
+void ScaleXYB(Image3F* opsin) {
+  jxl::SubtractFrom(opsin->Plane(1), &opsin->Plane(2));
+  for (size_t y = 0; y < opsin->ysize(); y++) {
+    for (size_t c = 0; c < 3; ++c) {
+      float* row = opsin->PlaneRow(c, y);
+      for (size_t x = 0; x < opsin->xsize(); x++) {
+        row[x] = (row[x] + kScaledXYBOffset[c]) * kScaledXYBScale[c];
+      }
+    }
+  }
+}
+
 HWY_EXPORT(RgbToYcbcr);
 Status RgbToYcbcr(const ImageF& r_plane, const ImageF& g_plane,
                   const ImageF& b_plane, ImageF* y_plane, ImageF* cb_plane,
@@ -416,9 +372,6 @@ Status RgbToYcbcr(const ImageF& r_plane, const ImageF& g_plane,
   return HWY_DYNAMIC_DISPATCH(RgbToYcbcr)(r_plane, g_plane, b_plane, y_plane,
                                           cb_plane, cr_plane, pool);
 }
-
-HWY_EXPORT(TestCubeRoot);
-void TestCubeRoot() { return HWY_DYNAMIC_DISPATCH(TestCubeRoot)(); }
 
 // DEPRECATED
 Image3F OpsinDynamicsImage(const Image3B& srgb8, const JxlCmsInterface& cms) {

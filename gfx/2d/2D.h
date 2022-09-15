@@ -677,6 +677,8 @@ class SourceSurface : public SupportsThreadSafeWeakPtr<SourceSurface> {
       case SurfaceType::DATA_ALIGNED:
       case SurfaceType::DATA_SHARED_WRAPPER:
       case SurfaceType::DATA_MAPPED:
+      case SurfaceType::SKIA:
+      case SurfaceType::WEBGL:
         return true;
       default:
         return false;
@@ -709,7 +711,7 @@ class SourceSurface : public SupportsThreadSafeWeakPtr<SourceSurface> {
  protected:
   friend class StoredPattern;
 
-  UserData mUserData;
+  ThreadSafeUserData mUserData;
 };
 
 class DataSourceSurface : public SourceSurface {
@@ -1090,11 +1092,11 @@ class SharedFTFace : public external::AtomicRefCounted<SharedFTFace> {
    * If no owner is given, then the user should avoid modifying any state on
    * the face so as not to invalidate the prior owner's modification.
    */
-  bool Lock(const void* aOwner = nullptr) CAPABILITY_ACQUIRE(mLock) {
+  bool Lock(const void* aOwner = nullptr) MOZ_CAPABILITY_ACQUIRE(mLock) {
     mLock.Lock();
     return !aOwner || mLastLockOwner.exchange(aOwner) == aOwner;
   }
-  void Unlock() CAPABILITY_RELEASE(mLock) { mLock.Unlock(); }
+  void Unlock() MOZ_CAPABILITY_RELEASE(mLock) { mLock.Unlock(); }
 
   /** Should be called when a lock owner is destroyed so that we don't have
    * a dangling pointer to a destroyed owner.
@@ -1239,7 +1241,7 @@ class ScaledFont : public SupportsThreadSafeWeakPtr<ScaledFont> {
   explicit ScaledFont(const RefPtr<UnscaledFont>& aUnscaledFont)
       : mUnscaledFont(aUnscaledFont), mSyntheticObliqueAngle(0.0f) {}
 
-  UserData mUserData;
+  ThreadSafeUserData mUserData;
   RefPtr<UnscaledFont> mUnscaledFont;
   Float mSyntheticObliqueAngle;
 

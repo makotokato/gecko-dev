@@ -7,10 +7,8 @@
 // writes its state file.
 
 const EXPECTED_ENTRIES = 5;
-const EXPECTED_HSTS_COLUMNS = 4;
+const EXPECTED_HSTS_COLUMNS = 3;
 var gProfileDir = null;
-
-const NON_ISSUED_KEY_HASH = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
 // For reference, the format of the state file is a list of:
 // <domain name> <expiration time in milliseconds>,<sts status>,<includeSubdomains>
@@ -110,8 +108,7 @@ function run_test() {
     SSService.processHeader(
       uris[uriIndex],
       maxAge + includeSubdomains,
-      secInfo,
-      Ci.nsISiteSecurityService.SOURCE_ORGANIC_REQUEST
+      secInfo
     );
   }
 

@@ -4,7 +4,6 @@
 
 var EXPORTED_SYMBOLS = ["PasswordEngine", "LoginRec", "PasswordValidator"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { Collection, CryptoWrapper } = ChromeUtils.import(
   "resource://services-sync/record.js"
 );
@@ -260,7 +259,7 @@ PasswordStore.prototype = {
     let logins = Services.logins.searchLogins(prop);
     await Async.promiseYield(); // Yield back to main thread after synchronous operation.
 
-    if (logins.length > 0) {
+    if (logins.length) {
       this._log.trace(logins.length + " items matching " + id + " found.");
       return logins[0];
     }

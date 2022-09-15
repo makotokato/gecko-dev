@@ -323,7 +323,7 @@ var promiseForEachSessionRestoreFile = async function(cb) {
       });
     } catch (ex) {
       // Ignore missing files
-      if (!(ex instanceof DOMException && ex.name == "NotFoundError")) {
+      if (!(DOMException.isInstance(ex) && ex.name == "NotFoundError")) {
         throw ex;
       }
     }
@@ -745,4 +745,11 @@ function addNonCoopTask(aFile, aTest, aUrlRoot) {
   }
   Object.defineProperty(taskToBeAdded, "name", { value: aTest.name });
   add_task(taskToBeAdded);
+}
+
+async function openAndCloseTab(window, url) {
+  let tab = BrowserTestUtils.addTab(window.gBrowser, url);
+  await promiseBrowserLoaded(tab.linkedBrowser, true, url);
+  await TabStateFlusher.flush(tab.linkedBrowser);
+  await promiseRemoveTabAndSessionState(tab);
 }

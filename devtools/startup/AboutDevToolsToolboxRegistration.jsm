@@ -7,8 +7,6 @@
 // Register about:devtools-toolbox which allows to open a devtools toolbox
 // in a Firefox tab or a custom html iframe in browser.html
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 const { nsIAboutModule } = Ci;
 
 function AboutDevtoolsToolbox() {}
@@ -21,13 +19,13 @@ AboutDevtoolsToolbox.prototype = {
 
   QueryInterface: ChromeUtils.generateQI([nsIAboutModule]),
 
-  newChannel: function(uri, loadInfo) {
+  newChannel(uri, loadInfo) {
     const chan = Services.io.newChannelFromURIWithLoadInfo(this.uri, loadInfo);
     chan.owner = Services.scriptSecurityManager.getSystemPrincipal();
     return chan;
   },
 
-  getURIFlags: function(uri) {
+  getURIFlags(uri) {
     return (
       nsIAboutModule.ALLOW_SCRIPT |
       nsIAboutModule.ENABLE_INDEXED_DB |
@@ -35,7 +33,7 @@ AboutDevtoolsToolbox.prototype = {
     );
   },
 
-  getChromeURI: function(_uri) {
+  getChromeURI(_uri) {
     return this.uri;
   },
 };

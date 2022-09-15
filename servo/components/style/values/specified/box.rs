@@ -8,11 +8,10 @@ use crate::custom_properties::Name as CustomPropertyName;
 use crate::parser::{Parse, ParserContext};
 use crate::properties::{LonghandId, PropertyDeclarationId};
 use crate::properties::{PropertyId, ShorthandId};
-use crate::values::generics::box_::AnimationIterationCount as GenericAnimationIterationCount;
-use crate::values::generics::box_::Perspective as GenericPerspective;
-use crate::values::generics::box_::{GenericVerticalAlign, VerticalAlignKeyword};
+use crate::values::generics::box_::{GenericAnimationIterationCount, GenericPerspective, GenericLineClamp};
+use crate::values::generics::box_::{GenericContainIntrinsicSize, GenericVerticalAlign, VerticalAlignKeyword};
 use crate::values::specified::length::{LengthPercentage, NonNegativeLength};
-use crate::values::specified::{AllowQuirks, Number};
+use crate::values::specified::{AllowQuirks, Number, Integer};
 use crate::values::{CustomIdent, KeyframesName, TimelineName};
 use crate::Atom;
 use cssparser::Parser;
@@ -23,14 +22,7 @@ use style_traits::{SpecifiedValueInfo, StyleParseErrorKind, ToCss};
 
 #[cfg(feature = "gecko")]
 fn moz_display_values_enabled(context: &ParserContext) -> bool {
-    context.in_ua_or_chrome_sheet() ||
-        static_prefs::pref!("layout.css.xul-display-values.content.enabled")
-}
-
-#[cfg(feature = "gecko")]
-fn moz_box_display_values_enabled(context: &ParserContext) -> bool {
-    context.in_ua_or_chrome_sheet() ||
-        static_prefs::pref!("layout.css.xul-box-display-values.content.enabled")
+    context.in_ua_or_chrome_sheet()
 }
 
 #[cfg(not(feature = "servo-layout-2020"))]
@@ -332,6 +324,8 @@ impl Display {
             DisplayInside::Flex => true,
             #[cfg(feature = "gecko")]
             DisplayInside::Grid => true,
+            #[cfg(feature = "gecko")]
+            DisplayInside::MozBox => true,
             _ => false,
         }
     }
@@ -370,7 +364,7 @@ impl Display {
                 };
                 Display::from3(DisplayOutside::Block, inside, self.is_list_item())
             },
-            DisplayOutside::Block | DisplayOutside::None => *self,
+            DisplayOutside::Block | DisplayOutside::XUL | DisplayOutside::None => *self,
             #[cfg(any(feature = "servo-layout-2013", feature = "gecko"))]
             _ => Display::Block,
         }
@@ -600,9 +594,9 @@ impl Parse for Display {
             #[cfg(feature = "gecko")]
             "-webkit-inline-box" => Display::WebkitInlineBox,
             #[cfg(feature = "gecko")]
-            "-moz-box" if moz_box_display_values_enabled(context) => Display::MozBox,
+            "-moz-box" if moz_display_values_enabled(context) => Display::MozBox,
             #[cfg(feature = "gecko")]
-            "-moz-inline-box" if moz_box_display_values_enabled(context) => Display::MozInlineBox,
+            "-moz-inline-box" if moz_display_values_enabled(context) => Display::MozInlineBox,
             #[cfg(feature = "gecko")]
             "-moz-deck" if moz_display_values_enabled(context) => Display::MozDeck,
             #[cfg(feature = "gecko")]
@@ -649,6 +643,12 @@ impl SpecifiedValueInfo for Display {
         ]);
     }
 }
+
+/// A specified value for the `contain-intrinsic-size` property.
+pub type ContainIntrinsicSize = GenericContainIntrinsicSize<NonNegativeLength>;
+
+/// A specified value for the `line-clamp` property.
+pub type LineClamp = GenericLineClamp<Integer>;
 
 /// A specified value for the `vertical-align` property.
 pub type VerticalAlign = GenericVerticalAlign<LengthPercentage>;
@@ -1453,6 +1453,43 @@ bitflags! {
     }
 }
 
+impl Parse for ContainIntrinsicSize {
+    /// none | <length> | auto <length>
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self, ParseError<'i>> {
+
+        if let Ok(l) = input.try_parse(|i| NonNegativeLength::parse(context, i))
+        {
+            return Ok(Self::Length(l));
+        }
+
+        if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+            let l = NonNegativeLength::parse(context, input)?;
+            return Ok(Self::AutoLength(l));
+        }
+
+        input.expect_ident_matching("none")?;
+        Ok(Self::None)
+    }
+}
+
+impl Parse for LineClamp {
+    /// none | <positive-integer>
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self, ParseError<'i>> {
+        if let Ok(i) = input.try_parse(|i| crate::values::specified::PositiveInteger::parse(context, i))
+        {
+            return Ok(Self(i.0))
+        }
+        input.expect_ident_matching("none")?;
+        Ok(Self::none())
+    }
+}
+
 /// https://drafts.csswg.org/css-contain-2/#content-visibility
 #[cfg_attr(feature = "servo", derive(Deserialize, Serialize))]
 #[derive(
@@ -1528,9 +1565,10 @@ impl Parse for ContainerName {
         if first.eq_ignore_ascii_case("none") {
             return Ok(Self::none())
         }
-        idents.push(CustomIdent::from_ident(location, first, &["none"])?);
+        const DISALLOWED_CONTAINER_NAMES: &'static [&'static str] = &["none", "not", "or", "and"];
+        idents.push(CustomIdent::from_ident(location, first, DISALLOWED_CONTAINER_NAMES)?);
         while let Ok(ident) = input.try_parse(|input| input.expect_ident_cloned()) {
-            idents.push(CustomIdent::from_ident(location, &ident, &["none"])?);
+            idents.push(CustomIdent::from_ident(location, &ident, DISALLOWED_CONTAINER_NAMES)?);
         }
         Ok(ContainerName(idents.into()))
     }

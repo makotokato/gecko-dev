@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { webrtcUI } = ChromeUtils.import("resource:///modules/webrtcUI.jsm");
 
 const BUNDLE_URL = "chrome://browser/locale/webrtcIndicator.properties";
@@ -112,7 +111,7 @@ function onPopupMenuShowing(event) {
   }
   if (activeStreams.length) {
     let index = activeStreams.length - 1;
-    webrtcUI.showSharingDoorhanger(activeStreams[index]);
+    webrtcUI.showSharingDoorhanger(activeStreams[index], event);
     event.preventDefault();
     return;
   }
@@ -134,7 +133,7 @@ function onPopupMenuHiding(event) {
 }
 
 function onPopupMenuCommand(event) {
-  webrtcUI.showSharingDoorhanger(event.target.stream);
+  webrtcUI.showSharingDoorhanger(event.target.stream, event);
 }
 
 function onFirefoxButtonClick(event) {

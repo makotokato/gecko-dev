@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use inherent::inherent;
+use std::sync::Arc;
 
 use glean::traits::Boolean;
 
@@ -16,7 +17,7 @@ use crate::private::MetricId;
 /// Records a simple true or false value.
 #[derive(Clone)]
 pub enum BooleanMetric {
-    Parent(glean::private::BooleanMetric),
+    Parent(Arc<glean::private::BooleanMetric>),
     Child(BooleanMetricIpc),
 }
 #[derive(Clone, Debug)]
@@ -28,7 +29,7 @@ impl BooleanMetric {
         if need_ipc() {
             BooleanMetric::Child(BooleanMetricIpc)
         } else {
-            BooleanMetric::Parent(glean::private::BooleanMetric::new(meta))
+            BooleanMetric::Parent(Arc::new(glean::private::BooleanMetric::new(meta)))
         }
     }
 
@@ -95,14 +96,9 @@ impl Boolean for BooleanMetric {
     /// # Returns
     ///
     /// The number of errors reported.
-    pub fn test_get_num_recorded_errors<'a, S: Into<Option<&'a str>>>(
-        &self,
-        error: glean::ErrorType,
-        ping_name: S,
-    ) -> i32 {
-        let ping_name = ping_name.into().map(|s| s.to_string());
+    pub fn test_get_num_recorded_errors(&self, error: glean::ErrorType) -> i32 {
         match self {
-            BooleanMetric::Parent(p) => p.test_get_num_recorded_errors(error, ping_name),
+            BooleanMetric::Parent(p) => p.test_get_num_recorded_errors(error),
             BooleanMetric::Child(_) => panic!(
                 "Cannot get the number of recorded errors for boolean metric in non-parent process!"
             ),

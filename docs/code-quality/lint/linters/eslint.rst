@@ -47,19 +47,47 @@ My editor doesn't understand a new global I've just added (e.g. to a content fil
 
 * This is a limitation which is a mixture of our ESLint setup and how we share globals across files.
 * Restarting your editor should pick up the new globals.
-* You can always double check via `./mach lint --linter eslint <file path>` on the command line.
+* You can always double check via ``./mach lint --linter eslint <file path>`` on the command line.
+
+I'm adding tests, how do I set up the right configuration?
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Please note we prefer the tests to be in named directories as this makes it
+easier to identify the types of tests developers are working with. Additionally,
+it is not possible to scope ESLint rules to individual files based on .ini
+files without a build step that would break editors, or an expensive loading
+cycle.
+
+* If the directory path of the tests is one of the `known ones`_, then ESLint will
+  do the right thing for that test type. This is the preferred option.
+
+  * For example placing xpcshell-tests in ``browser/components/foo/test/unit/``
+    will set up ESLint correctly.
+
+* If you really can't match the directory name, e.g. like the
+  ``browser/base/content/tests/*``, then you'll need to add a new entry in
+  :searchfox:`.eslintrc-test-paths.js <.eslintrc-test-paths.js>`.
+
+Please do not add new cases of multiple types of tests within a single directory,
+this is `difficult for ESLint to handle`_. Currently this may cause:
+
+* Rules to be incorrectly applied to the wrong types of test file.
+* Extra definitions for globals in tests which means that the no undefined variables
+  rule does not get triggered in some cases.
+
+I'm using an ES module
+^^^^^^^^^^^^^^^^^^^^^^
+
+* Use a ``.mjs`` extension for the file. ESLint will pick this up and automatically
+  treat it as a module.
+* If it is a system module (e.g. component definition or other non-frontend code),
+  use a ``.sys.mjs`` extension.
 
 This code shouldn't be linted
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 * If it is a third-party piece of code, please add it to `ThirdPartyPaths.txt`_.
 * If it is pre-generated file or intentionally invalid, please add it to `.eslintignore`_
-
-I'm using an es6 module
-^^^^^^^^^^^^^^^^^^^^^^^
-
-* ESlint will need to be `informed that it is a module`_. You have to do this from
-  the configuration itself.
 
 I have valid code that is failing the ``no-undef`` rule or can't be parsed
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -69,7 +97,7 @@ I have valid code that is failing the ``no-undef`` rule or can't be parsed
 * If you are adding a new test directory, make sure its name matches one of the
   `patterns in .eslintrc.js`_. If you really can't match those, then you may need
   to add a separate `test specific .eslintrc.js file (example)`_.
-* If you are writing a frame script you may need to tell ESLint to use the `frame script environment`_:
+* If you are writing a script loaded into special environment (e.g. frame script) you may need to tell ESLint to use the `environment definitions`_ for each case:
 
   * ``/* eslint-env mozilla/frame-script */``
 
@@ -118,6 +146,8 @@ Sources
 .. _seek help: ../index.html#getting-help
 .. _patterns in .eslintrc.js: https://searchfox.org/mozilla-central/rev/9399e5832979755cd340383f4ca4069dd5fc7774/.eslintrc.js#24-38
 .. _test specific .eslintrc.js file (example): https://searchfox.org/mozilla-central/source/browser/base/content/test/about/.eslintrc.js
-.. _frame script environment: http://localhost:5500/code-quality/lint/linters/eslint-plugin-mozilla/environment.html#frame-script
+.. _environment definitions: ./eslint-plugin-mozilla/environment.html
 .. _Configuration (YAML): https://searchfox.org/mozilla-central/source/tools/lint/eslint.yml
 .. _Source: https://searchfox.org/mozilla-central/source/tools/lint/eslint/__init__.py
+.. _known ones: https://searchfox.org/mozilla-central/rev/287583a4a605eee8cd2d41381ffaea7a93d7b987/.eslintrc.js#24-40
+.. _difficult for ESLint to handle: https://bugzilla.mozilla.org/show_bug.cgi?id=1379669

@@ -83,7 +83,7 @@ template <typename T>
     response->SetAlternativeBody(alternativeBody.get());
   }
 
-  response->InitChannelInfo(aIPCResponse.metadata().channelInfo());
+  response->InitChannelInfo(aIPCResponse.metadata().securityInfo());
 
   if (aIPCResponse.metadata().principalInfo()) {
     response->SetPrincipalInfo(MakeUnique<mozilla::ipc::PrincipalInfo>(
@@ -126,10 +126,11 @@ InternalResponseMetadata InternalResponse::GetMetadata() {
 
   // Note: all the arguments are copied rather than moved, which would be more
   // efficient, because there's no move-friendly constructor generated.
+  nsCOMPtr<nsITransportSecurityInfo> securityInfo(mChannelInfo.SecurityInfo());
   return InternalResponseMetadata(
       mType, GetUnfilteredURLList(), GetUnfilteredStatus(),
       GetUnfilteredStatusText(), headersGuard, headers, mErrorCode,
-      GetAlternativeDataType(), mChannelInfo.AsIPCChannelInfo(), principalInfo);
+      GetAlternativeDataType(), securityInfo, principalInfo);
 }
 
 void InternalResponse::ToChildToParentInternalResponse(
@@ -196,6 +197,7 @@ SafeRefPtr<InternalResponse> InternalResponse::Clone(CloneType aCloneType) {
   clone->mPaddingSize = mPaddingSize;
 
   clone->mCacheInfoChannel = mCacheInfoChannel;
+  clone->mCredentialsMode = mCredentialsMode;
 
   if (mWrappedResponse) {
     clone->mWrappedResponse = mWrappedResponse->Clone(aCloneType);

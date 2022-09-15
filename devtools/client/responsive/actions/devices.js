@@ -4,7 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const asyncStorage = require("devtools/shared/async-storage");
 
 const {
@@ -87,7 +86,7 @@ module.exports = {
   // This function is only exported for testing purposes
   _loadPreferredDevices: loadPreferredDevices,
 
-  updatePreferredDevices: updatePreferredDevices,
+  updatePreferredDevices,
 
   addCustomDevice(device) {
     return async function({ dispatch }) {

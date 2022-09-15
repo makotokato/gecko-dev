@@ -38,7 +38,7 @@ use crate::selector_parser::PseudoElement;
 use servo_arc::{Arc, RawOffsetArc, UniqueArc};
 use std::mem::{forget, MaybeUninit};
 use std::{cmp, ops, ptr};
-use crate::values::{self, CustomIdent, Either, KeyframesName, None_};
+use crate::values::{self, CustomIdent, KeyframesName};
 use crate::values::computed::{Percentage, TransitionProperty};
 use crate::values::computed::BorderStyle;
 use crate::values::computed::font::FontSize;
@@ -984,7 +984,7 @@ fn static_assert() {
     ${impl_simple_copy('_moz_min_font_size_ratio', 'mMinFontSizeRatio')}
 </%self:impl_trait>
 
-<%def name="impl_copy_animation_or_transition_value(type, ident, gecko_ffi_name, member=None)">
+<%def name="impl_copy_animation_or_transition_value(type, ident, gecko_ffi_name)">
     #[allow(non_snake_case)]
     pub fn copy_${type}_${ident}_from(&mut self, other: &Self) {
         self.gecko.m${type.capitalize()}s.ensure_len(other.gecko.m${type.capitalize()}s.len());
@@ -997,11 +997,7 @@ fn static_assert() {
         );
 
         for (ours, others) in iter {
-            % if member:
-            ours.m${gecko_ffi_name}.${member} = others.m${gecko_ffi_name}.${member}.clone();
-            % else:
             ours.m${gecko_ffi_name} = others.m${gecko_ffi_name}.clone();
-            % endif
         }
     }
 
@@ -1056,14 +1052,14 @@ fn static_assert() {
 
         self.gecko.m${type.capitalize()}TimingFunctionCount = input_len as u32;
         for (gecko, servo) in self.gecko.m${type.capitalize()}s.iter_mut().take(input_len as usize).zip(v) {
-            gecko.mTimingFunction.mTiming = servo;
+            gecko.mTimingFunction = servo;
         }
     }
     ${impl_animation_or_transition_count(type, 'timing_function', 'TimingFunction')}
-    ${impl_copy_animation_or_transition_value(type, 'timing_function', "TimingFunction", "mTiming")}
+    ${impl_copy_animation_or_transition_value(type, 'timing_function', "TimingFunction")}
     pub fn ${type}_timing_function_at(&self, index: usize)
         -> longhands::${type}_timing_function::computed_value::SingleComputedValue {
-        self.gecko.m${type.capitalize()}s[index].mTimingFunction.mTiming.clone()
+        self.gecko.m${type.capitalize()}s[index].mTimingFunction.clone()
     }
 </%def>
 
@@ -1131,9 +1127,7 @@ fn static_assert() {
     ${impl_copy_animation_value(ident, gecko_ffi_name)}
 </%def>
 
-<% skip_box_longhands= """display
-                          clear
-                          -webkit-line-clamp""" %>
+<% skip_box_longhands= """display clear""" %>
 <%self:impl_trait style_struct_name="Box" skip_longhands="${skip_box_longhands}">
     #[inline]
     pub fn set_display(&mut self, v: longhands::display::computed_value::T) {
@@ -1173,28 +1167,6 @@ fn static_assert() {
         gecko_inexhaustive=True,
     ) %>
     ${impl_keyword('clear', 'mBreakType', clear_keyword)}
-
-    #[allow(non_snake_case)]
-    pub fn set__webkit_line_clamp(&mut self, v: longhands::_webkit_line_clamp::computed_value::T) {
-        self.gecko.mLineClamp = match v {
-            Either::First(n) => n.0 as u32,
-            Either::Second(None_) => 0,
-        };
-    }
-
-    ${impl_simple_copy('_webkit_line_clamp', 'mLineClamp')}
-
-    #[allow(non_snake_case)]
-    pub fn clone__webkit_line_clamp(&self) -> longhands::_webkit_line_clamp::computed_value::T {
-        match self.gecko.mLineClamp {
-            0 => Either::Second(None_),
-            n => {
-                debug_assert!(n <= std::i32::MAX as u32);
-                Either::First((n as i32).into())
-            }
-        }
-    }
-
 </%self:impl_trait>
 
 <%def name="simple_image_array_property(name, shorthand, field_name)">
@@ -1731,7 +1703,7 @@ mask-mode mask-repeat mask-clip mask-origin mask-composite mask-position-x mask-
 <% skip_ui_longhands = """animation-name animation-delay animation-duration
                           animation-direction animation-fill-mode
                           animation-play-state animation-iteration-count
-                          animation-timeline animation-timing-function
+                          animation-timing-function animation-composition animation-timeline
                           transition-duration transition-delay
                           transition-timing-function transition-property""" %>
 
@@ -1863,6 +1835,8 @@ mask-mode mask-repeat mask-clip mask-origin mask-composite mask-position-x mask-
             && self.gecko.mAnimationIterationCountCount == other.gecko.mAnimationIterationCountCount
             && self.gecko.mAnimationPlayStateCount == other.gecko.mAnimationPlayStateCount
             && self.gecko.mAnimationTimingFunctionCount == other.gecko.mAnimationTimingFunctionCount
+            && self.gecko.mAnimationCompositionCount == other.gecko.mAnimationCompositionCount
+            && self.gecko.mAnimationTimelineCount == other.gecko.mAnimationTimelineCount
             && unsafe { bindings::Gecko_StyleAnimationsEquals(&self.gecko.mAnimations, &other.gecko.mAnimations) }
     }
 
@@ -1907,6 +1881,8 @@ mask-mode mask-repeat mask-clip mask-origin mask-composite mask-position-x mask-
                              data.longhands_by_name["animation-fill-mode"].keyword)}
     ${impl_animation_keyword('play_state', 'PlayState',
                              data.longhands_by_name["animation-play-state"].keyword)}
+    ${impl_animation_keyword('composition', 'Composition',
+                             data.longhands_by_name["animation-composition"].keyword)}
 
     pub fn set_animation_iteration_count<I>(&mut self, v: I)
     where

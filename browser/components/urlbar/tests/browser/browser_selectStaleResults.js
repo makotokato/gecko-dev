@@ -7,11 +7,15 @@
 
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  UrlbarView: "resource:///modules/UrlbarView.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  UrlbarView: "resource:///modules/UrlbarView.sys.mjs",
 });
 
 add_task(async function init() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.urlbar.suggest.quickactions", false]],
+  });
+
   // Increase the timeout of the remove-stale-rows timer so that it doesn't
   // interfere with the tests.
   let originalRemoveStaleRowsTimeout = UrlbarView.removeStaleRowsTimeout;

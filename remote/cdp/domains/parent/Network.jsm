@@ -6,8 +6,6 @@
 
 var EXPORTED_SYMBOLS = ["Network"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 const { Domain } = ChromeUtils.import(
   "chrome://remote/content/cdp/domains/Domain.jsm"
 );
@@ -106,7 +104,7 @@ class Network extends Domain {
 
     // Retrieve host. Check domain first because it has precedence.
     let hostname = domain || "";
-    if (hostname.length == 0) {
+    if (!hostname.length) {
       const cookieURL = new URL(url);
       if (!["http:", "https:"].includes(cookieURL.protocol)) {
         throw new TypeError("An http or https url must be specified");
@@ -285,7 +283,7 @@ class Network extends Domain {
     let hostname = cookie.domain || "";
     let cookieURL;
     let schemeType = Ci.nsICookie.SCHEME_UNSET;
-    if (hostname.length == 0) {
+    if (!hostname.length) {
       try {
         cookieURL = new URL(cookie.url);
       } catch (e) {
@@ -398,10 +396,13 @@ class Network extends Domain {
 
   _onRequest(eventName, httpChannel, data) {
     const wrappedChannel = ChannelWrapper.get(httpChannel);
+    const urlFragment = httpChannel.URI.hasRef
+      ? "#" + httpChannel.URI.ref
+      : undefined;
 
     const request = {
-      url: httpChannel.URI.spec,
-      urlFragment: undefined,
+      url: httpChannel.URI.specIgnoringRef,
+      urlFragment,
       method: httpChannel.requestMethod,
       headers: headersAsObject(data.headers),
       postData: undefined,
@@ -414,7 +415,8 @@ class Network extends Domain {
     this.emit("Network.requestWillBeSent", {
       requestId: data.requestId,
       loaderId: data.loaderId,
-      documentURL: wrappedChannel.documentURL || httpChannel.URI.spec,
+      documentURL:
+        wrappedChannel.documentURL || httpChannel.URI.specIgnoringRef,
       request,
       timestamp: Date.now() / 1000,
       wallTime: undefined,

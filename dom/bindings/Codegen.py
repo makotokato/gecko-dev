@@ -571,13 +571,18 @@ def DOMClass(descriptor):
     else:
         wrapperCacheGetter = "nullptr"
 
+    if descriptor.hasOrdinaryObjectPrototype:
+        getProto = "JS::GetRealmObjectPrototypeHandle"
+    else:
+        getProto = "GetProtoObjectHandle"
+
     return fill(
         """
           { ${protoChain} },
           std::is_base_of_v<nsISupports, ${nativeType}>,
           ${hooks},
           FindAssociatedGlobalForNative<${nativeType}>::Get,
-          GetProtoObjectHandle,
+          ${getProto},
           GetCCParticipant<${nativeType}>::Get(),
           ${serializer},
           ${wrapperCacheGetter}
@@ -587,6 +592,7 @@ def DOMClass(descriptor):
         hooks=NativePropertyHooks(descriptor),
         serializer=serializer,
         wrapperCacheGetter=wrapperCacheGetter,
+        getProto=getProto,
     )
 
 
@@ -807,6 +813,8 @@ def InterfacePrototypeObjectProtoGetter(descriptor):
             protoGetter = "JS::GetRealmErrorPrototype"
         elif descriptor.interface.isIteratorInterface():
             protoGetter = "JS::GetRealmIteratorPrototype"
+        elif descriptor.interface.isAsyncIteratorInterface():
+            protoGetter = "JS::GetRealmAsyncIteratorPrototype"
         else:
             protoGetter = "JS::GetRealmObjectPrototype"
         protoHandleGetter = None
@@ -1466,10 +1474,13 @@ class CGHeaders(CGWrapper):
         # Now for non-callback descriptors make sure we include any
         # headers needed by Func declarations and other things like that.
         for desc in descriptors:
-            # If this is an iterator interface generated for a separate
-            # iterable interface, skip generating type includes, as we have
-            # what we need in IterableIterator.h
-            if desc.interface.isIteratorInterface():
+            # If this is an iterator or an async iterator interface generated
+            # for a separate iterable interface, skip generating type includes,
+            # as we have what we need in IterableIterator.h
+            if (
+                desc.interface.isIteratorInterface()
+                or desc.interface.isAsyncIteratorInterface()
+            ):
                 continue
 
             for m in desc.interface.members:
@@ -3619,8 +3630,10 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
 
         if self.descriptor.interface.ctor():
             constructArgs = methodLength(self.descriptor.interface.ctor())
+            isConstructorChromeOnly = isChromeOnly(self.descriptor.interface.ctor())
         else:
             constructArgs = 0
+            isConstructorChromeOnly = False
         if len(self.descriptor.interface.legacyFactoryFunctions) > 0:
             namedConstructors = "namedConstructors"
         else:
@@ -3681,7 +3694,7 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             JS::Heap<JSObject*>* interfaceCache = ${interfaceCache};
             dom::CreateInterfaceObjects(aCx, aGlobal, ${parentProto},
                                         ${protoClass}, protoCache,
-                                        ${constructorProto}, ${interfaceClass}, ${constructArgs}, ${namedConstructors},
+                                        ${constructorProto}, ${interfaceClass}, ${constructArgs}, ${isConstructorChromeOnly}, ${namedConstructors},
                                         interfaceCache,
                                         ${properties},
                                         ${chromeProperties},
@@ -3697,6 +3710,7 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             constructorProto=constructorProto,
             interfaceClass=interfaceClass,
             constructArgs=constructArgs,
+            isConstructorChromeOnly=toStringBool(isConstructorChromeOnly),
             namedConstructors=namedConstructors,
             interfaceCache=interfaceCache,
             properties=properties,
@@ -3883,9 +3897,11 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
         else:
             unforgeableHolderSetup = None
 
+        # FIXME Unclear whether this is needed for hasOrdinaryObjectPrototype
         if (
             self.descriptor.interface.isOnGlobalProtoChain()
             and needInterfacePrototypeObject
+            and not self.descriptor.hasOrdinaryObjectPrototype
         ):
             makeProtoPrototypeImmutable = CGGeneric(
                 fill(
@@ -4794,13 +4810,17 @@ class CGWrapGlobalMethod(CGAbstractMethod):
         else:
             unforgeable = ""
 
+        if self.descriptor.hasOrdinaryObjectPrototype:
+            getProto = "JS::GetRealmObjectPrototypeHandle"
+        else:
+            getProto = "GetProtoObjectHandle"
         return fill(
             """
             $*{assertions}
             MOZ_ASSERT(ToSupportsIsOnPrimaryInheritanceChain(aObject, aCache),
                        "nsISupports must be on our primary inheritance chain");
 
-            if (!CreateGlobal<${nativeType}, GetProtoObjectHandle>(aCx,
+            if (!CreateGlobal<${nativeType}, ${getProto}>(aCx,
                                              aObject,
                                              aCache,
                                              sClass.ToJSClass(),
@@ -4826,6 +4846,7 @@ class CGWrapGlobalMethod(CGAbstractMethod):
             """,
             assertions=AssertInheritanceChain(self.descriptor),
             nativeType=self.descriptor.nativeType,
+            getProto=getProto,
             properties=properties,
             chromeProperties=chromeProperties,
             failureCode=failureCode,
@@ -9498,6 +9519,7 @@ class CGPerSignatureCall(CGThing):
                         descriptor,
                         idlNode.maplikeOrSetlikeOrIterable,
                         idlNode.identifier.name,
+                        self.getArgumentNames(),
                     )
                 )
         elif idlNode.isAttr() and idlNode.type.isObservableArray():
@@ -9581,8 +9603,11 @@ class CGPerSignatureCall(CGThing):
 
         self.cgRoot = CGList(cgThings)
 
+    def getArgumentNames(self):
+        return ["arg" + str(i) for i in range(len(self.arguments))]
+
     def getArguments(self):
-        return [(a, "arg" + str(i)) for i, a in enumerate(self.arguments)]
+        return list(zip(self.arguments, self.getArgumentNames()))
 
     def processWebExtensionStubAttribute(self, idlNode, cgThings):
         nativeMethodName = "CallWebExtMethod"
@@ -12657,15 +12682,15 @@ class CGUnionStruct(CGThing):
             )
         ]
         destructorCases = [CGCase("eUninitialized", None)]
-        assignmentCases = [
-            CGCase(
-                "eUninitialized",
-                CGGeneric(
-                    "MOZ_ASSERT(mType == eUninitialized,\n"
-                    '           "We need to destroy ourselves?");\n'
-                ),
-            )
-        ]
+        assignmentCase = CGCase(
+            "eUninitialized",
+            CGGeneric(
+                "MOZ_ASSERT(mType == eUninitialized,\n"
+                '           "We need to destroy ourselves?");\n'
+            ),
+        )
+        assignmentCases = [assignmentCase]
+        moveCases = [assignmentCase]
         traceCases = []
         unionValues = []
         if self.type.hasNullableType:
@@ -12692,14 +12717,12 @@ class CGUnionStruct(CGThing):
                 )
             )
             destructorCases.append(CGCase("eNull", None))
-            assignmentCases.append(
-                CGCase(
-                    "eNull",
-                    CGGeneric(
-                        "MOZ_ASSERT(mType == eUninitialized);\n" "mType = eNull;\n"
-                    ),
-                )
+            assignmentCase = CGCase(
+                "eNull",
+                CGGeneric("MOZ_ASSERT(mType == eUninitialized);\n" "mType = eNull;\n"),
             )
+            assignmentCases.append(assignmentCase)
+            moveCases.append(assignmentCase)
             toJSValCases.append(
                 CGCase(
                     "eNull",
@@ -12869,6 +12892,16 @@ class CGUnionStruct(CGThing):
                     ),
                 )
             )
+            moveCases.append(
+                CGCase(
+                    "e" + vars["name"],
+                    CGGeneric(
+                        "mType = e%s;\n" % vars["name"]
+                        + "mValue.m%s.SetValue(std::move(aOther.mValue.m%s.Value()));\n"
+                        % (vars["name"], vars["name"])
+                    ),
+                )
+            )
             if self.ownsMembers and typeNeedsRooting(t):
                 if t.isObject():
                     traceCases.append(
@@ -12969,6 +13002,27 @@ class CGUnionStruct(CGThing):
                         body=traceBody,
                     )
                 )
+
+            op_body = CGList([])
+            op_body.append(CGSwitch("aOther.mType", moveCases))
+            constructors.append(
+                ClassConstructor(
+                    [Argument("%s&&" % selfName, "aOther")],
+                    visibility="public",
+                    body=op_body.define(),
+                )
+            )
+
+            methods.append(
+                ClassMethod(
+                    "operator=",
+                    "%s&" % selfName,
+                    [Argument("%s&&" % selfName, "aOther")],
+                    body="this->~%s();\nnew (this) %s (std::move(aOther));\nreturn *this;\n"
+                    % (selfName, selfName),
+                )
+            )
+
             if CGUnionStruct.isUnionCopyConstructible(self.type):
                 constructors.append(
                     ClassConstructor(
@@ -13360,6 +13414,9 @@ class ClassConstructor(ClassItem):
     bodyInHeader should be True if the body should be placed in the class
     declaration in the header.
 
+    default should be True if the definition of the constructor should be
+    `= default;`.
+
     visibility determines the visibility of the constructor (public,
     protected, private), defaults to private.
 
@@ -13376,6 +13433,7 @@ class ClassConstructor(ClassItem):
         args,
         inline=False,
         bodyInHeader=False,
+        default=False,
         visibility="private",
         explicit=False,
         constexpr=False,
@@ -13384,9 +13442,11 @@ class ClassConstructor(ClassItem):
     ):
         assert not (inline and constexpr)
         assert not (bodyInHeader and constexpr)
+        assert not (default and body)
         self.args = args
         self.inline = inline or bodyInHeader
-        self.bodyInHeader = bodyInHeader or constexpr
+        self.bodyInHeader = bodyInHeader or constexpr or default
+        self.default = default
         self.explicit = explicit
         self.constexpr = constexpr
         self.baseConstructors = baseConstructors or []
@@ -13395,12 +13455,13 @@ class ClassConstructor(ClassItem):
 
     def getDecorators(self, declaring):
         decorators = []
-        if self.explicit:
-            decorators.append("explicit")
-        if self.inline and declaring:
-            decorators.append("inline")
-        if self.constexpr and declaring:
-            decorators.append("constexpr")
+        if declaring:
+            if self.explicit:
+                decorators.append("explicit")
+            if self.inline:
+                decorators.append("inline")
+            if self.constexpr:
+                decorators.append("constexpr")
         if decorators:
             return " ".join(decorators) + " "
         return ""
@@ -13423,12 +13484,15 @@ class ClassConstructor(ClassItem):
     def declare(self, cgClass):
         args = ", ".join([a.declare() for a in self.args])
         if self.bodyInHeader:
-            body = (
-                self.getInitializationList(cgClass)
-                + "\n{\n"
-                + indent(self.getBody())
-                + "}\n"
-            )
+            if self.default:
+                body = " = default;\n"
+            else:
+                body = (
+                    self.getInitializationList(cgClass)
+                    + "\n{\n"
+                    + indent(self.getBody())
+                    + "}\n"
+                )
         else:
             body = ";\n"
 
@@ -16520,7 +16584,10 @@ class CGDescriptor(CGThing):
 
         # CGGetProtoObjectMethod and CGGetConstructorObjectMethod need
         # to come after CGCreateInterfaceObjectsMethod.
-        if descriptor.interface.hasInterfacePrototypeObject():
+        if (
+            descriptor.interface.hasInterfacePrototypeObject()
+            and not descriptor.hasOrdinaryObjectPrototype
+        ):
             cgThings.append(CGGetProtoObjectHandleMethod(descriptor))
             if descriptor.interface.hasChildInterfaces():
                 cgThings.append(CGGetProtoObjectMethod(descriptor))
@@ -17211,6 +17278,15 @@ class CGDictionary(CGThing):
             # compile instead of misbehaving.
             pass
 
+        ctors.append(
+            ClassConstructor(
+                [Argument("%s&&" % selfName, "aOther")],
+                default=True,
+                visibility="public",
+                baseConstructors=baseConstructors,
+            )
+        )
+
         if CGDictionary.isDictionaryCopyConstructible(d):
             disallowCopyConstruction = False
             # Note: gcc's -Wextra has a warning against not initializng our
@@ -17754,6 +17830,38 @@ class CGRegisterWorkletBindings(CGAbstractMethod):
         return CGList(lines, "\n").define()
 
 
+class CGRegisterShadowRealmBindings(CGAbstractMethod):
+    def __init__(self, config):
+        CGAbstractMethod.__init__(
+            self,
+            None,
+            "RegisterShadowRealmBindings",
+            "bool",
+            [Argument("JSContext*", "aCx"), Argument("JS::Handle<JSObject*>", "aObj")],
+        )
+        self.config = config
+
+    def definition_body(self):
+        descriptors = self.config.getDescriptors(
+            hasInterfaceObject=True, isExposedInShadowRealms=True, register=True
+        )
+        conditions = []
+        for desc in descriptors:
+            bindingNS = toBindingNamespace(desc.name)
+            condition = "!%s::GetConstructorObject(aCx)" % bindingNS
+            if desc.isExposedConditionally():
+                condition = (
+                    "%s::ConstructorEnabled(aCx, aObj) && " % bindingNS + condition
+                )
+            conditions.append(condition)
+        lines = [
+            CGIfWrapper(CGGeneric("return false;\n"), condition)
+            for condition in conditions
+        ]
+        lines.append(CGGeneric("return true;\n"))
+        return CGList(lines, "\n").define()
+
+
 def BindingNamesOffsetEnum(name):
     return CppKeywords.checkMethodName(name.replace(" ", "_"))
 
@@ -18013,7 +18121,10 @@ class CGForwardDeclarations(CGWrapper):
         for d in descriptors:
             # If this is a generated iterator interface, we only create these
             # in the generated bindings, and don't need to forward declare.
-            if d.interface.isIteratorInterface():
+            if (
+                d.interface.isIteratorInterface()
+                or d.interface.isAsyncIteratorInterface()
+            ):
                 continue
             builder.add(d.nativeType)
             if d.interface.isSerializable():
@@ -18111,7 +18222,10 @@ class CGBindingRoot(CGThing):
             d.isObject() for t in unionTypes for d in t.flatMemberTypes
         )
         bindingDeclareHeaders["mozilla/dom/IterableIterator.h"] = any(
-            d.interface.isIteratorInterface() or d.interface.isIterable()
+            d.interface.isIteratorInterface()
+            or d.interface.isAsyncIteratorInterface()
+            or d.interface.isIterable()
+            or d.interface.isAsyncIterable()
             for d in descriptors
         )
 
@@ -18187,7 +18301,9 @@ class CGBindingRoot(CGThing):
 
         def descriptorHasIteratorAlias(desc):
             def hasIteratorAlias(m):
-                return m.isMethod() and "@@iterator" in m.aliases
+                return m.isMethod() and (
+                    ("@@iterator" in m.aliases) or ("@@asyncIterator" in m.aliases)
+                )
 
             return any(hasIteratorAlias(m) for m in desc.interface.members)
 
@@ -19443,7 +19559,7 @@ class CGExampleClass(CGBindingImplClass):
             extradeclarations = (
                 "public:\n"
                 "  NS_DECL_CYCLE_COLLECTING_ISUPPORTS\n"
-                "  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(%s)\n"
+                "  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(%s)\n"
                 "\n" % self.nativeLeafName(descriptor)
             )
 
@@ -19894,11 +20010,11 @@ class CGJSImplClass(CGBindingImplClass):
             ]
             isupportsDecl = "NS_DECL_CYCLE_COLLECTING_ISUPPORTS\n"
             ccDecl = (
-                "NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(%s)\n" % descriptor.name
+                "NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(%s)\n" % descriptor.name
             )
             extradefinitions = fill(
                 """
-                NS_IMPL_CYCLE_COLLECTION_CLASS(${ifaceName})
+                NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(${ifaceName})
                 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(${ifaceName})
                   NS_IMPL_CYCLE_COLLECTION_UNLINK(mImpl)
                   NS_IMPL_CYCLE_COLLECTION_UNLINK(mParent)
@@ -19909,7 +20025,6 @@ class CGJSImplClass(CGBindingImplClass):
                   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mImpl)
                   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mParent)
                 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-                NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(${ifaceName})
                 NS_IMPL_CYCLE_COLLECTING_ADDREF(${ifaceName})
                 NS_IMPL_CYCLE_COLLECTING_RELEASE(${ifaceName})
                 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(${ifaceName})
@@ -21995,8 +22110,10 @@ class CGIterableMethodGenerator(CGGeneric):
     using CGCallGenerator.
     """
 
-    def __init__(self, descriptor, iterable, methodName):
+    def __init__(self, descriptor, iterable, methodName, args):
         if methodName == "forEach":
+            assert len(args) == 2
+
             CGGeneric.__init__(
                 self,
                 fill(
@@ -22030,18 +22147,43 @@ class CGIterableMethodGenerator(CGGeneric):
                 ),
             )
             return
+
+        if descriptor.interface.isIterable():
+            assert len(args) == 0
+
+            binding = descriptor.interface.identifier.name + "Iterator_Binding"
+            init = ""
+        else:
+            assert descriptor.interface.isAsyncIterable()
+
+            binding = descriptor.interface.identifier.name + "AsyncIterator_Binding"
+            init = fill(
+                """
+                {
+                  ErrorResult initError;
+                  self->InitAsyncIterator(result.get(), ${args}initError);
+                  if (initError.MaybeSetPendingException(cx, "Asynchronous iterator initialization steps for ${ifaceName} failed")) {
+                    return false;
+                  }
+                }
+                """,
+                args="".join(a + ", " for a in args),
+                ifaceName=descriptor.interface.identifier.name,
+            )
         CGGeneric.__init__(
             self,
             fill(
                 """
-            typedef ${iterClass} itrType;
-            RefPtr<itrType> result(new itrType(self,
-                                                 itrType::IterableIteratorType::${itrMethod},
-                                                 &${ifaceName}Iterator_Binding::Wrap));
-            """,
+                typedef ${iterClass} itrType;
+                RefPtr<itrType> result(new itrType(self,
+                                                   itrType::IteratorType::${itrMethod},
+                                                   &${binding}::Wrap));
+                $*{init}
+                """,
                 iterClass=iteratorNativeType(descriptor),
-                ifaceName=descriptor.interface.identifier.name,
                 itrMethod=methodName.title(),
+                binding=binding,
+                init=init,
             ),
         )
 
@@ -23082,6 +23224,33 @@ class GlobalGenRoots:
 
         # Add include guards.
         curr = CGIncludeGuard("RegisterWorkletBindings", curr)
+
+        # Done.
+        return curr
+
+    @staticmethod
+    def RegisterShadowRealmBindings(config):
+
+        curr = CGRegisterShadowRealmBindings(config)
+
+        # Wrap all of that in our namespaces.
+        curr = CGNamespace.build(["mozilla", "dom"], CGWrapper(curr, post="\n"))
+        curr = CGWrapper(curr, post="\n")
+
+        # Add the includes
+        defineIncludes = [
+            CGHeaders.getDeclarationFilename(desc.interface)
+            for desc in config.getDescriptors(
+                hasInterfaceObject=True, register=True, isExposedInShadowRealms=True
+            )
+        ]
+
+        curr = CGHeaders(
+            [], [], [], [], [], defineIncludes, "RegisterShadowRealmBindings", curr
+        )
+
+        # Add include guards.
+        curr = CGIncludeGuard("RegisterShadowRealmBindings", curr)
 
         # Done.
         return curr

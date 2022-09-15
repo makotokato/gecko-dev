@@ -30,12 +30,15 @@ var EXPORTED_SYMBOLS = ["DownloadsCommon"];
 
 // Globals
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const lazy = {};
+
+ChromeUtils.defineESModuleGetters(lazy, {
+  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+});
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   NetUtil: "resource://gre/modules/NetUtil.jsm",
@@ -43,7 +46,6 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   DownloadHistory: "resource://gre/modules/DownloadHistory.jsm",
   Downloads: "resource://gre/modules/Downloads.jsm",
   DownloadUtils: "resource://gre/modules/DownloadUtils.jsm",
-  PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
 });
 
@@ -1000,23 +1002,26 @@ DownloadsDataCtor.prototype = {
     }
 
     let shouldOpenDownloadsPanel =
-      openDownloadsListOnStart &&
       aType == "start" &&
       Services.prefs.getBoolPref(
         "browser.download.improvements_to_download_panel"
       ) &&
       DownloadsCommon.summarizeDownloads(this._downloads).numDownloading <= 1 &&
-      browserWin == Services.focus.activeWindow &&
       lazy.gAlwaysOpenPanel;
 
+    // For new downloads after the first one, don't show the panel
+    // automatically, but provide a visible notification in the topmost browser
+    // window, if the status indicator is already visible. Also ensure that if
+    // openDownloadsListOnStart = false is passed, we always skip opening the
+    // panel. That's because this will only be passed if the download is started
+    // without user interaction or if a dialog was previously opened in the
+    // process of the download (e.g. unknown content type dialog).
     if (
-      this.panelHasShownBefore &&
       aType != "error" &&
-      !shouldOpenDownloadsPanel
+      ((this.panelHasShownBefore && !shouldOpenDownloadsPanel) ||
+        !openDownloadsListOnStart ||
+        browserWin != Services.focus.activeWindow)
     ) {
-      // For new downloads after the first one, don't show the panel
-      // automatically, but provide a visible notification in the topmost
-      // browser window, if the status indicator is already visible.
       DownloadsCommon.log("Showing new download notification.");
       browserWin.DownloadsIndicatorView.showEventNotification(aType);
       return;

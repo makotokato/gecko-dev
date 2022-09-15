@@ -19,9 +19,9 @@ using mozilla::Nothing;
 
 ForOfEmitter::ForOfEmitter(BytecodeEmitter* bce,
                            const EmitterScope* headLexicalEmitterScope,
-                           bool allowSelfHostedIter, IteratorKind iterKind)
+                           SelfHostedIter selfHostedIter, IteratorKind iterKind)
     : bce_(bce),
-      allowSelfHostedIter_(allowSelfHostedIter),
+      selfHostedIter_(selfHostedIter),
       iterKind_(iterKind),
       headLexicalEmitterScope_(headLexicalEmitterScope) {}
 
@@ -39,18 +39,27 @@ bool ForOfEmitter::emitIterated() {
   return true;
 }
 
-bool ForOfEmitter::emitInitialize(uint32_t forPos) {
+bool ForOfEmitter::emitInitialize(uint32_t forPos,
+                                  bool isIteratorMethodOnStack) {
   MOZ_ASSERT(state_ == State::Iterated);
 
   tdzCacheForIteratedValue_.reset();
 
+  //                [stack] # if isIteratorMethodOnStack
+  //                [stack] ITERABLE ITERFN
+  //                [stack] # if isIteratorMethodOnStack
+  //                [stack] ITERABLE
+
   if (iterKind_ == IteratorKind::Async) {
-    if (!bce_->emitAsyncIterator()) {
+    // Don't support isIteratorMethodOnStack for async for now.
+    MOZ_ASSERT(!isIteratorMethodOnStack);
+
+    if (!bce_->emitAsyncIterator(selfHostedIter_)) {
       //            [stack] NEXT ITER
       return false;
     }
   } else {
-    if (!bce_->emitIterator()) {
+    if (!bce_->emitIterator(selfHostedIter_, isIteratorMethodOnStack)) {
       //            [stack] NEXT ITER
       return false;
     }
@@ -60,7 +69,7 @@ bool ForOfEmitter::emitInitialize(uint32_t forPos) {
   // stack.
 
   int32_t iterDepth = bce_->bytecodeSection().stackDepth();
-  loopInfo_.emplace(bce_, iterDepth, allowSelfHostedIter_, iterKind_);
+  loopInfo_.emplace(bce_, iterDepth, selfHostedIter_, iterKind_);
 
   if (!loopInfo_->emitLoopHead(bce_, Nothing())) {
     //              [stack] NEXT ITER
@@ -80,7 +89,8 @@ bool ForOfEmitter::emitInitialize(uint32_t forPos) {
                ScopeKind::Lexical);
 
     if (headLexicalEmitterScope_->hasEnvironment()) {
-      if (!bce_->emit1(JSOp::RecreateLexicalEnv)) {
+      if (!bce_->emitInternedScopeOp(headLexicalEmitterScope_->index(),
+                                     JSOp::RecreateLexicalEnv)) {
         //          [stack] NEXT ITER
         return false;
       }
@@ -107,7 +117,7 @@ bool ForOfEmitter::emitInitialize(uint32_t forPos) {
   }
 
   if (!bce_->emitIteratorNext(mozilla::Some(forPos), iterKind_,
-                              allowSelfHostedIter_)) {
+                              selfHostedIter_)) {
     //              [stack] NEXT ITER RESULT
     return false;
   }

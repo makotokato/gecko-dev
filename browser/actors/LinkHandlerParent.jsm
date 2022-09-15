@@ -6,15 +6,11 @@
 
 const EXPORTED_SYMBOLS = ["LinkHandlerParent"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PlacesUIUtils",
-  "resource:///modules/PlacesUIUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  PlacesUIUtils: "resource:///modules/PlacesUIUtils.sys.mjs",
+});
 
 let gTestListeners = new Set();
 
@@ -93,11 +89,7 @@ class LinkHandlerParent extends JSWindowActorParent {
         }
 
         if (win.BrowserSearch) {
-          win.BrowserSearch.addEngine(
-            browser,
-            aMsg.data.engine,
-            Services.io.newURI(aMsg.data.url)
-          );
+          win.BrowserSearch.addEngine(browser, aMsg.data.engine);
         }
         break;
     }

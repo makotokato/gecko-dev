@@ -757,14 +757,23 @@ let ThirdPartyCookies = new (class ThirdPartyCookies extends ProtectionCategory 
       case Ci.nsICookieService.BEHAVIOR_REJECT_FOREIGN:
         title = titleStringPrefix + "3rdParty.title";
         this.subViewHeading.hidden = true;
+        if (this.subViewHeading.nextSibling.nodeName == "toolbarseparator") {
+          this.subViewHeading.nextSibling.hidden = true;
+        }
         break;
       case Ci.nsICookieService.BEHAVIOR_REJECT:
         title = titleStringPrefix + "all.title";
         this.subViewHeading.hidden = true;
+        if (this.subViewHeading.nextSibling.nodeName == "toolbarseparator") {
+          this.subViewHeading.nextSibling.hidden = true;
+        }
         break;
       case Ci.nsICookieService.BEHAVIOR_LIMIT_FOREIGN:
         title = "protections.blocking.cookies.unvisited.title";
         this.subViewHeading.hidden = true;
+        if (this.subViewHeading.nextSibling.nodeName == "toolbarseparator") {
+          this.subViewHeading.nextSibling.hidden = true;
+        }
         break;
       case Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER:
       case Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN:
@@ -2166,7 +2175,7 @@ var gProtectionsHandler = {
       this._protectionsPopup,
       this._trackingProtectionIconContainer,
       {
-        position: "bottomcenter topleft",
+        position: "bottomleft topleft",
         triggerEvent: event,
       }
     ).catch(Cu.reportError);
@@ -2257,9 +2266,6 @@ var gProtectionsHandler = {
     )}\n`;
     body += `${ThirdPartyCookies.prefEnabled}: ${Services.prefs.getIntPref(
       ThirdPartyCookies.prefEnabled
-    )}\n`;
-    body += `network.cookie.lifetimePolicy: ${Services.prefs.getIntPref(
-      "network.cookie.lifetimePolicy"
     )}\n`;
     body += `privacy.annotate_channels.strict_list.enabled: ${Services.prefs.getBoolPref(
       "privacy.annotate_channels.strict_list.enabled"

@@ -11,6 +11,7 @@
 #include "ChildIterator.h"
 #include "ErrorReporter.h"
 #include "gfxFontFeatures.h"
+#include "gfxMathTable.h"
 #include "gfxTextRun.h"
 #include "imgLoader.h"
 #include "nsAnimationManager.h"
@@ -65,6 +66,7 @@
 #include "mozilla/RWLock.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/ElementInlines.h"
+#include "mozilla/dom/HTMLImageElement.h"
 #include "mozilla/dom/HTMLTableCellElement.h"
 #include "mozilla/dom/HTMLBodyElement.h"
 #include "mozilla/dom/HTMLSelectElement.h"
@@ -368,14 +370,15 @@ Gecko_GetHTMLPresentationAttrDeclarationBlock(const Element* aElement) {
 
 const StyleStrong<RawServoDeclarationBlock>*
 Gecko_GetExtraContentStyleDeclarations(const Element* aElement) {
-  if (!aElement->IsAnyOfHTMLElements(nsGkAtoms::td, nsGkAtoms::th)) {
-    return nullptr;
-  }
-  const HTMLTableCellElement* cell =
-      static_cast<const HTMLTableCellElement*>(aElement);
-  if (nsMappedAttributes* attrs =
-          cell->GetMappedAttributesInheritedFromTable()) {
-    return AsRefRawStrong(attrs->GetServoStyle());
+  if (const auto* cell = HTMLTableCellElement::FromNode(aElement)) {
+    if (nsMappedAttributes* attrs =
+            cell->GetMappedAttributesInheritedFromTable()) {
+      return AsRefRawStrong(attrs->GetServoStyle());
+    }
+  } else if (const auto* img = HTMLImageElement::FromNode(aElement)) {
+    if (const auto* attrs = img->GetMappedAttributesFromSource()) {
+      return AsRefRawStrong(attrs->GetServoStyle());
+    }
   }
   return nullptr;
 }
@@ -639,9 +642,8 @@ double Gecko_GetProgressFromComputedTiming(const ComputedTiming* aTiming) {
   return aTiming->mProgress.Value();
 }
 
-double Gecko_GetPositionInSegment(
-    const AnimationPropertySegment* aSegment, double aProgress,
-    ComputedTimingFunction::BeforeFlag aBeforeFlag) {
+double Gecko_GetPositionInSegment(const AnimationPropertySegment* aSegment,
+                                  double aProgress, bool aBeforeFlag) {
   MOZ_ASSERT(aSegment->mFromKey < aSegment->mToKey,
              "The segment from key should be less than to key");
 
@@ -651,8 +653,8 @@ double Gecko_GetPositionInSegment(
                              // denominator using double precision.
                              (double(aSegment->mToKey) - aSegment->mFromKey);
 
-  return ComputedTimingFunction::GetPortion(aSegment->mTimingFunction,
-                                            positionInSegment, aBeforeFlag);
+  return StyleComputedTimingFunction::GetPortion(
+      aSegment->mTimingFunction, positionInSegment, aBeforeFlag);
 }
 
 const RawServoAnimationValue* Gecko_AnimationGetBaseStyle(
@@ -1094,11 +1096,12 @@ enum class KeyframeInsertPosition {
   LastForOffset,
 };
 
-static Keyframe* GetOrCreateKeyframe(nsTArray<Keyframe>* aKeyframes,
-                                     float aOffset,
-                                     const nsTimingFunction* aTimingFunction,
-                                     KeyframeSearchDirection aSearchDirection,
-                                     KeyframeInsertPosition aInsertPosition) {
+static Keyframe* GetOrCreateKeyframe(
+    nsTArray<Keyframe>* aKeyframes, float aOffset,
+    const StyleComputedTimingFunction* aTimingFunction,
+    const CompositeOperationOrAuto aComposition,
+    KeyframeSearchDirection aSearchDirection,
+    KeyframeInsertPosition aInsertPosition) {
   MOZ_ASSERT(aKeyframes, "The keyframe array should be valid");
   MOZ_ASSERT(aTimingFunction, "The timing function should be valid");
   MOZ_ASSERT(aOffset >= 0. && aOffset <= 1.,
@@ -1108,14 +1111,15 @@ static Keyframe* GetOrCreateKeyframe(nsTArray<Keyframe>* aKeyframes,
   switch (aSearchDirection) {
     case KeyframeSearchDirection::Forwards:
       if (nsAnimationManager::FindMatchingKeyframe(
-              *aKeyframes, aOffset, *aTimingFunction, keyframeIndex)) {
+              *aKeyframes, aOffset, *aTimingFunction, aComposition,
+              keyframeIndex)) {
         return &(*aKeyframes)[keyframeIndex];
       }
       break;
     case KeyframeSearchDirection::Backwards:
-      if (nsAnimationManager::FindMatchingKeyframe(Reversed(*aKeyframes),
-                                                   aOffset, *aTimingFunction,
-                                                   keyframeIndex)) {
+      if (nsAnimationManager::FindMatchingKeyframe(
+              Reversed(*aKeyframes), aOffset, *aTimingFunction, aComposition,
+              keyframeIndex)) {
         return &(*aKeyframes)[aKeyframes->Length() - 1 - keyframeIndex];
       }
       keyframeIndex = aKeyframes->Length() - 1;
@@ -1125,36 +1129,42 @@ static Keyframe* GetOrCreateKeyframe(nsTArray<Keyframe>* aKeyframes,
   Keyframe* keyframe = aKeyframes->InsertElementAt(
       aInsertPosition == KeyframeInsertPosition::Prepend ? 0 : keyframeIndex);
   keyframe->mOffset.emplace(aOffset);
-  if (!aTimingFunction->IsLinear()) {
+  if (!aTimingFunction->IsLinearKeyword()) {
     keyframe->mTimingFunction.emplace(*aTimingFunction);
   }
+  keyframe->mComposite = aComposition;
 
   return keyframe;
 }
 
 Keyframe* Gecko_GetOrCreateKeyframeAtStart(
     nsTArray<Keyframe>* aKeyframes, float aOffset,
-    const nsTimingFunction* aTimingFunction) {
+    const StyleComputedTimingFunction* aTimingFunction,
+    const CompositeOperationOrAuto aComposition) {
   MOZ_ASSERT(aKeyframes->IsEmpty() ||
                  aKeyframes->ElementAt(0).mOffset.value() >= aOffset,
              "The offset should be less than or equal to the first keyframe's "
              "offset if there are exisiting keyframes");
 
-  return GetOrCreateKeyframe(aKeyframes, aOffset, aTimingFunction,
+  return GetOrCreateKeyframe(aKeyframes, aOffset, aTimingFunction, aComposition,
                              KeyframeSearchDirection::Forwards,
                              KeyframeInsertPosition::Prepend);
 }
 
 Keyframe* Gecko_GetOrCreateInitialKeyframe(
-    nsTArray<Keyframe>* aKeyframes, const nsTimingFunction* aTimingFunction) {
-  return GetOrCreateKeyframe(aKeyframes, 0., aTimingFunction,
+    nsTArray<Keyframe>* aKeyframes,
+    const StyleComputedTimingFunction* aTimingFunction,
+    const CompositeOperationOrAuto aComposition) {
+  return GetOrCreateKeyframe(aKeyframes, 0., aTimingFunction, aComposition,
                              KeyframeSearchDirection::Forwards,
                              KeyframeInsertPosition::LastForOffset);
 }
 
 Keyframe* Gecko_GetOrCreateFinalKeyframe(
-    nsTArray<Keyframe>* aKeyframes, const nsTimingFunction* aTimingFunction) {
-  return GetOrCreateKeyframe(aKeyframes, 1., aTimingFunction,
+    nsTArray<Keyframe>* aKeyframes,
+    const StyleComputedTimingFunction* aTimingFunction,
+    const CompositeOperationOrAuto aComposition) {
+  return GetOrCreateKeyframe(aKeyframes, 1., aTimingFunction, aComposition,
                              KeyframeSearchDirection::Backwards,
                              KeyframeInsertPosition::LastForOffset);
 }
@@ -1359,7 +1369,8 @@ void AssertIsMainThreadOrServoFontMetricsLocked() {
 GeckoFontMetrics Gecko_GetFontMetrics(const nsPresContext* aPresContext,
                                       bool aIsVertical,
                                       const nsStyleFont* aFont,
-                                      Length aFontSize, bool aUseUserFontSet) {
+                                      Length aFontSize, bool aUseUserFontSet,
+                                      bool aRetrieveMathScales) {
   AutoWriteLock guard(*sServoFFILock);
 
   // Getting font metrics can require some main thread only work to be
@@ -1378,9 +1389,18 @@ GeckoFontMetrics Gecko_GetFontMetrics(const nsPresContext* aPresContext,
 
   RefPtr<nsFontMetrics> fm = nsLayoutUtils::GetMetricsFor(
       presContext, aIsVertical, aFont, aFontSize, aUseUserFontSet);
-  const auto& metrics =
-      fm->GetThebesFontGroup()->GetFirstValidFont()->GetMetrics(
-          fm->Orientation());
+  RefPtr<gfxFont> font = fm->GetThebesFontGroup()->GetFirstValidFont();
+  const auto& metrics = font->GetMetrics(fm->Orientation());
+
+  float scriptPercentScaleDown = 0;
+  float scriptScriptPercentScaleDown = 0;
+  if (aRetrieveMathScales && font->TryGetMathTable()) {
+    scriptPercentScaleDown = static_cast<float>(
+        font->MathTable()->Constant(gfxMathTable::ScriptPercentScaleDown));
+    scriptScriptPercentScaleDown =
+        static_cast<float>(font->MathTable()->Constant(
+            gfxMathTable::ScriptScriptPercentScaleDown));
+  }
 
   int32_t d2a = aPresContext->AppUnitsPerDevPixel();
   auto ToLength = [](nscoord aLen) {
@@ -1390,7 +1410,9 @@ GeckoFontMetrics Gecko_GetFontMetrics(const nsPresContext* aPresContext,
           ToLength(NS_round(metrics.zeroWidth * d2a)),
           ToLength(NS_round(metrics.capHeight * d2a)),
           ToLength(NS_round(metrics.ideographicWidth * d2a)),
-          ToLength(NS_round(metrics.maxAscent * d2a))};
+          ToLength(NS_round(metrics.maxAscent * d2a)),
+          scriptPercentScaleDown,
+          scriptScriptPercentScaleDown};
 }
 
 NS_IMPL_THREADSAFE_FFI_REFCOUNTING(SheetLoadDataHolder, SheetLoadDataHolder);
@@ -1622,6 +1644,16 @@ const nsTArray<Element*>* Gecko_ShadowRoot_GetElementsWithId(
 bool Gecko_GetBoolPrefValue(const char* aPrefName) {
   MOZ_ASSERT(NS_IsMainThread());
   return Preferences::GetBool(aPrefName);
+}
+
+bool Gecko_IsFontFormatSupported(StyleFontFaceSourceFormatKeyword aFormat) {
+  return gfxPlatform::GetPlatform()->IsFontFormatSupported(
+      aFormat, StyleFontFaceSourceTechFlags::Empty());
+}
+
+bool Gecko_IsFontTechSupported(StyleFontFaceSourceTechFlags aFlag) {
+  return gfxPlatform::GetPlatform()->IsFontFormatSupported(
+      StyleFontFaceSourceFormatKeyword::None, aFlag);
 }
 
 bool Gecko_IsInServoTraversal() { return ServoStyleSet::IsInServoTraversal(); }

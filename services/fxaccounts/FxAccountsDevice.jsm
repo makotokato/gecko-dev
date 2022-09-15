@@ -3,10 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const {
@@ -14,6 +12,7 @@ const {
   ERRNO_DEVICE_SESSION_CONFLICT,
   ERRNO_UNKNOWN_DEVICE,
   ON_NEW_DEVICE_ID,
+  ON_DEVICELIST_UPDATED,
   ON_DEVICE_CONNECTED_NOTIFICATION,
   ON_DEVICE_DISCONNECTED_NOTIFICATION,
   ONVERIFIED_NOTIFICATION,
@@ -257,6 +256,7 @@ class FxAccountsDevice {
           lastFetch: this._fxai.now(),
           devices,
         };
+        Services.obs.notifyObservers(null, ON_DEVICELIST_UPDATED);
         return true;
       } finally {
         this._fetchAndCacheDeviceListPromise = null;

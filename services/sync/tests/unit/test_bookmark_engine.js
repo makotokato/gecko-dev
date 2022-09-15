@@ -1,13 +1,12 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { BookmarkHTMLUtils } = ChromeUtils.import(
-  "resource://gre/modules/BookmarkHTMLUtils.jsm"
+const { BookmarkHTMLUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/BookmarkHTMLUtils.sys.mjs"
 );
-const { BookmarkJSONUtils } = ChromeUtils.import(
-  "resource://gre/modules/BookmarkJSONUtils.jsm"
+const { BookmarkJSONUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/BookmarkJSONUtils.sys.mjs"
 );
-const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 const {
   Bookmark,
   BookmarkFolder,
@@ -472,8 +471,8 @@ async function test_restoreOrImport(engine, { replace }) {
     });
     _(`Get Firefox!: ${bmk1.guid}`);
 
-    let backupFilePath = OS.Path.join(
-      OS.Constants.Path.tmpDir,
+    let backupFilePath = PathUtils.join(
+      PathUtils.tempDir,
       `t_b_e_${Date.now()}.json`
     );
 

@@ -27,11 +27,12 @@
 #include "mozilla/CheckedInt.h"
 #include "mozilla/ContentIterator.h"
 #include "mozilla/dom/CharacterData.h"
+#include "mozilla/dom/ChildIterator.h"
+#include "mozilla/dom/DOMRect.h"
+#include "mozilla/dom/DOMStringList.h"
 #include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/dom/DocumentType.h"
 #include "mozilla/dom/RangeBinding.h"
-#include "mozilla/dom/DOMRect.h"
-#include "mozilla/dom/DOMStringList.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/Text.h"
 #include "mozilla/Maybe.h"
@@ -741,6 +742,15 @@ bool nsRange::IsPointComparableToRange(const nsINode& aContainer,
     return false;
   }
 
+  auto chromeOnlyAccess = mStart.Container()->ChromeOnlyAccess();
+  NS_ASSERTION(chromeOnlyAccess == mEnd.Container()->ChromeOnlyAccess(),
+               "Start and end of a range must be either both native anonymous "
+               "content or not.");
+  if (aContainer.ChromeOnlyAccess() != chromeOnlyAccess) {
+    aErrorResult.Throw(NS_ERROR_DOM_INVALID_NODE_TYPE_ERR);
+    return false;
+  }
+
   if (aContainer.NodeType() == nsINode::DOCUMENT_TYPE_NODE) {
     aErrorResult.Throw(NS_ERROR_DOM_INVALID_NODE_TYPE_ERR);
     return false;
@@ -776,21 +786,14 @@ int16_t nsRange::ComparePoint(const nsINode& aContainer, uint32_t aOffset,
 
   MOZ_ASSERT(point.IsSetAndValid());
 
-  Maybe<int32_t> order = nsContentUtils::ComparePoints(point, mStart);
-
-  // `order` must contain a value, because `IsPointComparableToRange()` was
-  // checked above.
-  if (*order <= 0) {
-    return *order;
+  if (Maybe<int32_t> order = nsContentUtils::ComparePoints(point, mStart);
+      order && *order <= 0) {
+    return int16_t(*order);
   }
-
-  order = nsContentUtils::ComparePoints(mEnd, point);
-  // `order` must contain a value, because `IsPointComparableToRange()` was
-  // checked above.
-  if (*order == -1) {
+  if (Maybe<int32_t> order = nsContentUtils::ComparePoints(mEnd, point);
+      order && *order == -1) {
     return 1;
   }
-
   return 0;
 }
 
@@ -2695,6 +2698,50 @@ static nsresult GetPartialTextRect(RectCallback* aCallback,
   return NS_OK;
 }
 
+static void CollectClientRectsForSubtree(
+    nsINode* aNode, RectCallback* aCollector, Sequence<nsString>* aTextList,
+    nsINode* aStartContainer, uint32_t aStartOffset, nsINode* aEndContainer,
+    uint32_t aEndOffset, bool aClampToEdge, bool aFlushLayout) {
+  auto* content = nsIContent::FromNode(aNode);
+  if (!content) {
+    return;
+  }
+
+  if (content->IsText()) {
+    if (aNode == aStartContainer) {
+      int32_t offset = aStartContainer == aEndContainer
+                           ? static_cast<int32_t>(aEndOffset)
+                           : content->AsText()->TextDataLength();
+      GetPartialTextRect(aCollector, aTextList, content,
+                         static_cast<int32_t>(aStartOffset), offset,
+                         aClampToEdge, aFlushLayout);
+      return;
+    }
+
+    if (aNode == aEndContainer) {
+      GetPartialTextRect(aCollector, aTextList, content, 0,
+                         static_cast<int32_t>(aEndOffset), aClampToEdge,
+                         aFlushLayout);
+      return;
+    }
+  }
+
+  if (aNode->IsElement() && aNode->AsElement()->IsDisplayContents()) {
+    FlattenedChildIterator childIter(content);
+
+    for (nsIContent* child = childIter.GetNextChild(); child;
+         child = childIter.GetNextChild()) {
+      CollectClientRectsForSubtree(child, aCollector, aTextList,
+                                   aStartContainer, aStartOffset, aEndContainer,
+                                   aEndOffset, aClampToEdge, aFlushLayout);
+    }
+  } else if (nsIFrame* frame = content->GetPrimaryFrame()) {
+    nsLayoutUtils::GetAllInFlowRectsAndTexts(
+        frame, nsLayoutUtils::GetContainingBlockForClientRect(frame),
+        aCollector, aTextList, nsLayoutUtils::RECTS_ACCOUNT_FOR_TRANSFORMS);
+  }
+}
+
 /* static */
 void nsRange::CollectClientRectsAndText(
     RectCallback* aCollector, Sequence<nsString>* aTextList, nsRange* aRange,
@@ -2756,31 +2803,10 @@ void nsRange::CollectClientRectsAndText(
   do {
     nsCOMPtr<nsINode> node = iter.GetCurrentNode();
     iter.Next();
-    nsCOMPtr<nsIContent> content = do_QueryInterface(node);
-    if (!content) continue;
-    if (content->IsText()) {
-      if (node == startContainer) {
-        int32_t offset = startContainer == endContainer
-                             ? static_cast<int32_t>(aEndOffset)
-                             : content->AsText()->TextDataLength();
-        GetPartialTextRect(aCollector, aTextList, content,
-                           static_cast<int32_t>(aStartOffset), offset,
-                           aClampToEdge, aFlushLayout);
-        continue;
-      } else if (node == endContainer) {
-        GetPartialTextRect(aCollector, aTextList, content, 0,
-                           static_cast<int32_t>(aEndOffset), aClampToEdge,
-                           aFlushLayout);
-        continue;
-      }
-    }
 
-    nsIFrame* frame = content->GetPrimaryFrame();
-    if (frame) {
-      nsLayoutUtils::GetAllInFlowRectsAndTexts(
-          frame, nsLayoutUtils::GetContainingBlockForClientRect(frame),
-          aCollector, aTextList, nsLayoutUtils::RECTS_ACCOUNT_FOR_TRANSFORMS);
-    }
+    CollectClientRectsForSubtree(node, aCollector, aTextList, aStartContainer,
+                                 aStartOffset, aEndContainer, aEndOffset,
+                                 aClampToEdge, aFlushLayout);
   } while (!iter.IsDone());
 }
 

@@ -6,8 +6,8 @@
 
 var EXPORTED_SYMBOLS = ["getModuleClass"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const modules = {
@@ -25,6 +25,8 @@ XPCOMUtils.defineLazyModuleGetters(modules.root, {
 });
 
 XPCOMUtils.defineLazyModuleGetters(modules["windowglobal-in-root"], {
+  browsingContext:
+    "chrome://remote/content/webdriver-bidi/modules/windowglobal-in-root/browsingContext.jsm",
   log:
     "chrome://remote/content/webdriver-bidi/modules/windowglobal-in-root/log.jsm",
 });

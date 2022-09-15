@@ -11,6 +11,8 @@ const URL = "/secrets/v1/secret/project/perftest/gecko/level-";
 const SECRET = "/perftest-login";
 const DEFAULT_SERVER = "https://firefox-ci-tc.services.mozilla.com";
 
+const SCM_LOGIN_SITES = ["facebook", "netflix"];
+
 /**
  * This function obtains the perftest secret from Taskcluster.
  *
@@ -339,8 +341,10 @@ module.exports = async function(context, commands) {
   let page_cycle_delay = context.options.browsertime.page_cycle_delay;
   let post_startup_delay = context.options.browsertime.post_startup_delay;
   let chimera_mode = context.options.browsertime.chimera;
+  let test_bytecode_cache = context.options.browsertime.test_bytecode_cache;
   let login_required = context.options.browsertime.loginRequired;
   let live_site = context.options.browsertime.liveSite;
+  let test_name = context.options.browsertime.testName;
 
   context.log.info(
     "Waiting for %d ms (post_startup_delay)",
@@ -352,9 +356,14 @@ module.exports = async function(context, commands) {
   // Login once before testing the test_url/secondary_url cycles
   // If the user has RAPTOR_LOGINS configured correctly, a local login pageload
   // test can be attempted. Otherwise if attempting it in CI, only sites with the
-  // associated MOZ_SCM_LEVEL will be attempted (e.g. Try = 1, autoland = 3)
-  // In addition, ensure login sequence is only attempted on live sites.
-  if (login_required == "True" && live_site == "True") {
+  // associated MOZ_SCM_LEVEL will be attempted (e.g. Try = 1, autoland = 3).
+  // In addition, ensure login sequence is only attempted on live sites and for sites
+  // that we have Taskcluster secrets for.
+  if (
+    login_required == "True" &&
+    live_site == "True" &&
+    SCM_LOGIN_SITES.includes(test_name)
+  ) {
     await perform_live_login(context, commands);
   }
 
@@ -391,7 +400,8 @@ module.exports = async function(context, commands) {
     await commands.measure.start(test_url);
 
     // Wait 20 seconds to populate bytecode cache
-    if (chimera_mode && !cached) {
+    if (test_bytecode_cache == "true" && chimera_mode == "true" && !cached) {
+      context.log.info("Waiting 20s to populate bytecode cache...");
       await commands.wait.byTime(20000);
       cached = true;
     }

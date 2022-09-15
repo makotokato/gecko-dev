@@ -18,6 +18,7 @@
 #include "jit/ScriptFromCalleeToken.h"
 #include "jit/VMFunctions.h"
 #include "js/friend/DumpFunctions.h"  // js::DumpObject, js::DumpValue
+#include "vm/JitActivation.h"
 
 #include "vm/JSScript-inl.h"
 
@@ -480,7 +481,7 @@ bool JSJitFrameIter::verifyReturnAddressUsingNativeToBytecodeMap() {
 #endif  // DEBUG
 
 JSJitProfilingFrameIterator::JSJitProfilingFrameIterator(JSContext* cx,
-                                                         void* pc) {
+                                                         void* pc, void* sp) {
   // If no profilingActivation is live, initialize directly to
   // end-of-iteration state.
   if (!cx->profilingActivation()) {
@@ -507,11 +508,16 @@ JSJitProfilingFrameIterator::JSJitProfilingFrameIterator(JSContext* cx,
   // Get the fp from the current profilingActivation
   fp_ = (uint8_t*)act->lastProfilingFrame();
 
+  // Use fp_ as endStackAddress_. For cases below where we know we're currently
+  // executing JIT code, we use the current stack pointer instead.
+  endStackAddress_ = fp_;
+
   // Profiler sampling must NOT be suppressed if we are here.
   MOZ_ASSERT(cx->isProfilerSamplingEnabled());
 
   // Try initializing with sampler pc
   if (tryInitWithPC(pc)) {
+    endStackAddress_ = sp;
     return;
   }
 
@@ -519,6 +525,7 @@ JSJitProfilingFrameIterator::JSJitProfilingFrameIterator(JSContext* cx,
   JitcodeGlobalTable* table =
       cx->runtime()->jitRuntime()->getJitcodeGlobalTable();
   if (tryInitWithTable(table, pc, /* forLastCallSite = */ false)) {
+    endStackAddress_ = sp;
     return;
   }
 
@@ -555,6 +562,7 @@ static inline ReturnType GetPreviousRawFrame(CommonFrameLayout* frame) {
 
 JSJitProfilingFrameIterator::JSJitProfilingFrameIterator(
     CommonFrameLayout* fp) {
+  endStackAddress_ = fp;
   moveToNextFrame(fp);
 }
 

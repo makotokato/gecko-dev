@@ -15,11 +15,13 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   AMTelemetry: "resource://gre/modules/AddonManager.jsm",
   BuiltInThemes: "resource:///modules/BuiltInThemes.jsm",
   ClientID: "resource://gre/modules/ClientID.jsm",
+  ColorwayClosetOpener: "resource:///modules/ColorwayClosetOpener.jsm",
   DeferredTask: "resource://gre/modules/DeferredTask.jsm",
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
   ExtensionCommon: "resource://gre/modules/ExtensionCommon.jsm",
   ExtensionParent: "resource://gre/modules/ExtensionParent.jsm",
   ExtensionPermissions: "resource://gre/modules/ExtensionPermissions.jsm",
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
 });
 
@@ -38,10 +40,6 @@ XPCOMUtils.defineLazyGetter(this, "extensionStylesheets", () => {
     "resource://gre/modules/ExtensionParent.jsm"
   );
   return ExtensionParent.extensionStylesheets;
-});
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  ColorwayClosetOpener: "resource:///modules/ColorwayClosetOpener.jsm",
 });
 
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -66,11 +64,14 @@ XPCOMUtils.defineLazyPreferenceGetter(
   true
 );
 
+XPCOMUtils.defineLazyGetter(this, "COLORWAY_CLOSET_ENABLED", () => {
+  return NimbusFeatures.majorRelease2022.getVariable("colorwayCloset");
+});
+
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "COLORWAY_CLOSET_ENABLED",
-  "browser.theme.colorway-closet",
-  false
+  "ACTIVE_THEME_ID",
+  "extensions.activeThemeID"
 );
 
 const UPDATES_RECENT_TIMESPAN = 2 * 24 * 3600000; // 2 days (in milliseconds)
@@ -3677,6 +3678,31 @@ class ColorwayClosetCard extends HTMLElement {
     if (this.childElementCount === 0) {
       this.render();
     }
+
+    AddonManagerListenerHandler.addListener(this);
+  }
+
+  disconnectedCallback() {
+    AddonManagerListenerHandler.removeListener(this);
+  }
+
+  onEnabled(addon) {
+    if (addon.type !== "theme") {
+      return;
+    }
+
+    // Listen for changes to actively selected theme.
+    // Update button label for Colorway Closet card, according to
+    // whether or not a colorway theme from the active collection is
+    // currently enabled.
+    let colorwaysButton = document.querySelector("[action='open-colorways']");
+
+    document.l10n.setAttributes(
+      colorwaysButton,
+      BuiltInThemes.isColorwayFromCurrentCollection?.(addon.id)
+        ? "theme-colorways-button-colorway-enabled"
+        : "theme-colorways-button"
+    );
   }
 
   render() {
@@ -3702,7 +3728,7 @@ class ColorwayClosetCard extends HTMLElement {
       document.l10n.setAttributes(colorwayPreviewHeading, l10nId.title);
       document.l10n.setAttributes(
         colorwayPreviewSubHeading,
-        `${l10nId.title}-subheading`
+        `${l10nId.title}-short-description`
       );
     }
 
@@ -3721,30 +3747,41 @@ class ColorwayClosetCard extends HTMLElement {
   setCardContent(card) {
     card.querySelector(".addon-icon").hidden = true;
 
-    let preview = card.querySelector(".card-heading-image");
-    // TODO: Bug 1772855 - set preview.src for colorways card preview
-    preview.hidden = false;
+    const collection = BuiltInThemes.findActiveColorwayCollection?.();
+    if (!collection) {
+      return;
+    }
+
+    const preview = card.querySelector(".card-heading-image");
+    const { cardImagePath, expiry } = collection;
+    if (cardImagePath) {
+      preview.src = cardImagePath;
+    }
 
     let colorwayExpiryDateSpan = card.querySelector(
       "#colorways-expiry-date > span"
     );
-
-    const collection = BuiltInThemes.findActiveColorwayCollection?.();
-    if (collection) {
-      const { expiry } = collection;
-      document.l10n.setAttributes(
-        colorwayExpiryDateSpan,
-        "colorway-collection-expiry-date-span",
-        {
-          expiryDate: expiry.getTime(),
-        }
-      );
-    }
+    document.l10n.setAttributes(
+      colorwayExpiryDateSpan,
+      "colorway-collection-expiry-label",
+      {
+        expiryDate: expiry.getTime(),
+      }
+    );
 
     let colorwaysButton = card.querySelector("[action='open-colorways']");
+    document.l10n.setAttributes(
+      colorwaysButton,
+      BuiltInThemes.isColorwayFromCurrentCollection?.(ACTIVE_THEME_ID)
+        ? "theme-colorways-button-colorway-enabled"
+        : "theme-colorways-button"
+    );
+
     colorwaysButton.hidden = false;
     colorwaysButton.onclick = () => {
-      ColorwayClosetOpener.openModal();
+      ColorwayClosetOpener.openModal({
+        source: "aboutaddons",
+      });
     };
   }
 }
@@ -4832,7 +4869,7 @@ gViewController.defineView("list", async type => {
   ];
 
   if (type == "theme" && COLORWAY_CLOSET_ENABLED) {
-    MozXULElement.insertFTLIfNeeded("preview/colorwaycloset.ftl");
+    MozXULElement.insertFTLIfNeeded("browser/colorways.ftl");
 
     const hasActiveColorways = !!BuiltInThemes.findActiveColorwayCollection?.();
     sections.push({

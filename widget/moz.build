@@ -51,6 +51,10 @@ with Files("*NativeKeyBindings*"):
 
 toolkit = CONFIG["MOZ_WIDGET_TOOLKIT"]
 
+XPCOM_MANIFESTS += [
+    "components.conf",
+]
+
 if toolkit in ("android", "cocoa", "gtk", "uikit", "windows"):
     DIRS += [toolkit]
 
@@ -221,7 +225,6 @@ UNIFIED_SOURCES += [
     "nsClipboardHelper.cpp",
     "nsClipboardProxy.cpp",
     "nsColorPickerProxy.cpp",
-    "nsContentProcessWidgetFactory.cpp",
     "nsDragServiceProxy.cpp",
     "nsFilePickerProxy.cpp",
     "nsHTMLFormatConverter.cpp",
@@ -298,7 +301,6 @@ if CONFIG["MOZ_INSTRUMENT_EVENT_LOOP"]:
 
 EXPORTS.ipc = [
     "nsGUIEventIPC.h",
-    "nsTransferableIPC.h",
 ]
 
 if CONFIG["MOZ_X11"] or CONFIG["MOZ_WAYLAND"]:

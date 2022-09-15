@@ -52,7 +52,6 @@
 
 #include "nsDeckFrame.h"
 #include "nsLayoutUtils.h"
-#include "nsIStringBundle.h"
 #include "nsPresContext.h"
 #include "nsIFrame.h"
 #include "nsTextFrame.h"
@@ -88,6 +87,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
 #include "mozilla/dom/HTMLBodyElement.h"
+#include "mozilla/dom/HTMLLabelElement.h"
 #include "mozilla/dom/KeyboardEventBinding.h"
 #include "mozilla/dom/TreeWalker.h"
 #include "mozilla/dom/UserActivation.h"
@@ -466,15 +466,6 @@ bool LocalAccessible::NativelyUnavailable() const {
                                       nsGkAtoms::_true, eCaseMatters);
 }
 
-LocalAccessible* LocalAccessible::FocusedChild() {
-  LocalAccessible* focus = FocusMgr()->FocusedAccessible();
-  if (focus && (focus == this || focus->LocalParent() == this)) {
-    return focus;
-  }
-
-  return nullptr;
-}
-
 Accessible* LocalAccessible::ChildAtPoint(int32_t aX, int32_t aY,
                                           EWhichChildAtPoint aWhichChild) {
   Accessible* child = LocalChildAtPoint(aX, aY, aWhichChild);
@@ -653,28 +644,6 @@ nsIFrame* LocalAccessible::FindNearestAccessibleAncestorFrame() {
 nsRect LocalAccessible::ParentRelativeBounds() {
   nsIFrame* frame = GetFrame();
   if (frame && mContent) {
-    if (mContent->GetProperty(nsGkAtoms::hitregion) && mContent->IsElement()) {
-      // This is for canvas fallback content
-      // Find a canvas frame the found hit region is relative to.
-      nsIFrame* canvasFrame = frame->GetParent();
-      if (canvasFrame) {
-        canvasFrame = nsLayoutUtils::GetClosestFrameOfType(
-            canvasFrame, LayoutFrameType::HTMLCanvas);
-      }
-
-      if (canvasFrame) {
-        if (auto* canvas =
-                dom::HTMLCanvasElement::FromNode(canvasFrame->GetContent())) {
-          if (auto* context = canvas->GetCurrentContext()) {
-            nsRect bounds;
-            if (context->GetHitRegionRect(mContent->AsElement(), bounds)) {
-              return bounds;
-            }
-          }
-        }
-      }
-    }
-
     nsIFrame* boundingFrame = FindNearestAccessibleAncestorFrame();
     nsRect result = nsLayoutUtils::GetAllInFlowRectsUnion(frame, boundingFrame);
 
@@ -712,30 +681,6 @@ nsRect LocalAccessible::ParentRelativeBounds() {
 nsRect LocalAccessible::RelativeBounds(nsIFrame** aBoundingFrame) const {
   nsIFrame* frame = GetFrame();
   if (frame && mContent) {
-    if (mContent->GetProperty(nsGkAtoms::hitregion) && mContent->IsElement()) {
-      // This is for canvas fallback content
-      // Find a canvas frame the found hit region is relative to.
-      nsIFrame* canvasFrame = frame->GetParent();
-      if (canvasFrame) {
-        canvasFrame = nsLayoutUtils::GetClosestFrameOfType(
-            canvasFrame, LayoutFrameType::HTMLCanvas);
-      }
-
-      // make the canvas the bounding frame
-      if (canvasFrame) {
-        *aBoundingFrame = canvasFrame;
-        if (auto* canvas =
-                dom::HTMLCanvasElement::FromNode(canvasFrame->GetContent())) {
-          if (auto* context = canvas->GetCurrentContext()) {
-            nsRect bounds;
-            if (context->GetHitRegionRect(mContent->AsElement(), bounds)) {
-              return bounds;
-            }
-          }
-        }
-      }
-    }
-
     *aBoundingFrame = nsLayoutUtils::GetContainingBlockForClientRect(frame);
     nsRect unionRect = nsLayoutUtils::GetAllInFlowRectsUnion(
         frame, *aBoundingFrame, nsLayoutUtils::RECTS_ACCOUNT_FOR_TRANSFORMS);
@@ -958,9 +903,11 @@ nsresult LocalAccessible::HandleAccEvent(AccEvent* aEvent) {
           AccTextChangeEvent* event = downcast_accEvent(aEvent);
           const nsString& text = event->ModifiedText();
 #if defined(XP_WIN)
-          // On Windows, events for live region updates containing embedded
-          // objects require us to dispatch synchronous events.
-          bool sync = text.Contains(L'\xfffc') &&
+          // On Windows with the cache disabled, events for live region updates
+          // containing embedded objects require us to dispatch synchronous
+          // events.
+          bool sync = !StaticPrefs::accessibility_cache_enabled_AtStartup() &&
+                      text.Contains(L'\xfffc') &&
                       nsAccUtils::IsARIALive(aEvent->GetAccessible());
 #endif
           ipcDoc->SendTextChangeEvent(id, text, event->GetStartOffset(),
@@ -1171,7 +1118,7 @@ already_AddRefed<AccAttributes> LocalAccessible::NativeAttributes() {
   // container with the live region attribute. Inner nodes override outer nodes
   // within the same document. The inner nodes can be used to override live
   // region behavior on more general outer nodes.
-  nsAccUtils::SetLiveContainerAttributes(attributes, mContent);
+  nsAccUtils::SetLiveContainerAttributes(attributes, this);
 
   if (!mContent->IsElement()) return attributes.forget();
 
@@ -1378,6 +1325,7 @@ void LocalAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
   }
 
   if (aAttribute == nsGkAtoms::aria_describedby) {
+    mDoc->QueueCacheUpdate(this, CacheDomain::Relations);
     mDoc->FireDelayedEvent(nsIAccessibleEvent::EVENT_DESCRIPTION_CHANGE, this);
     if (aModType == dom::MutationEvent_Binding::MODIFICATION ||
         aModType == dom::MutationEvent_Binding::ADDITION) {
@@ -1393,6 +1341,10 @@ void LocalAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
   }
 
   if (aAttribute == nsGkAtoms::aria_labelledby) {
+    // We only queue cache updates for explicit relations. Implicit, reverse
+    // relations are handled in ApplyCache and stored in a map on the remote
+    // document itself.
+    mDoc->QueueCacheUpdate(this, CacheDomain::Relations);
     mDoc->FireDelayedEvent(nsIAccessibleEvent::EVENT_NAME_CHANGE, this);
     if (aModType == dom::MutationEvent_Binding::MODIFICATION ||
         aModType == dom::MutationEvent_Binding::ADDITION) {
@@ -1413,6 +1365,16 @@ void LocalAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
        aModType == dom::MutationEvent_Binding::REMOVAL)) {
     // The presence of aria-expanded adds an expand/collapse action.
     SendCache(CacheDomain::Actions, CacheUpdateType::Update);
+  }
+
+  if (aAttribute == nsGkAtoms::href) {
+    mDoc->QueueCacheUpdate(this, CacheDomain::Value);
+    mDoc->QueueCacheUpdate(this, CacheDomain::Relations);
+  }
+
+  if (aAttribute == nsGkAtoms::aria_controls ||
+      aAttribute == nsGkAtoms::aria_flowto) {
+    mDoc->QueueCacheUpdate(this, CacheDomain::Relations);
   }
 
   if (aAttribute == nsGkAtoms::alt &&
@@ -1466,6 +1428,10 @@ void LocalAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
     SendCache(CacheDomain::GroupInfo, CacheUpdateType::Update);
     return;
   }
+
+  if (aAttribute == nsGkAtoms::accesskey) {
+    mDoc->QueueCacheUpdate(this, CacheDomain::Actions);
+  }
 }
 
 void LocalAccessible::ARIAGroupPosition(int32_t* aLevel, int32_t* aSetSize,
@@ -1510,7 +1476,7 @@ uint64_t LocalAccessible::State() {
         // If focus is in a child of the tab panel surely the tab is selected!
         Relation rel = RelationByType(RelationType::LABEL_FOR);
         LocalAccessible* relTarget = nullptr;
-        while ((relTarget = rel.Next())) {
+        while ((relTarget = rel.LocalNext())) {
           if (relTarget->Role() == roles::PROPERTYPAGE &&
               FocusMgr()->IsFocusWithin(relTarget)) {
             state |= states::SELECTED;
@@ -1796,7 +1762,7 @@ role LocalAccessible::ARIATransformRole(role aRole) const {
       // Listbox is owned by a combobox
       Relation rel = RelationByType(RelationType::NODE_CHILD_OF);
       LocalAccessible* targetAcc = nullptr;
-      while ((targetAcc = rel.Next())) {
+      while ((targetAcc = rel.LocalNext())) {
         if (targetAcc->IsCombobox()) return roles::COMBOBOX_LIST;
       }
     }
@@ -2358,13 +2324,6 @@ void LocalAccessible::Shutdown() {
   // parent
   mStateFlags |= eIsDefunct;
 
-  // Usually, when a subtree is removed, we do this in
-  // DocAccessible::UncacheChildrenInSubtree. However, that won't get called
-  // when the document is shut down, so we handle that here.
-  if (StaticPrefs::accessibility_cache_enabled_AtStartup() && IsTable()) {
-    CachedTableAccessible::Invalidate(this);
-  }
-
   int32_t childCount = mChildren.Length();
   for (int32_t childIdx = 0; childIdx < childCount; childIdx++) {
     mChildren.ElementAt(childIdx)->UnbindFromParent();
@@ -2507,14 +2466,14 @@ void LocalAccessible::BindToParent(LocalAccessible* aParent,
   // a name/description provider is added to doc.
   Relation rel = RelationByType(RelationType::LABELLED_BY);
   LocalAccessible* relTarget = nullptr;
-  while ((relTarget = rel.Next())) {
+  while ((relTarget = rel.LocalNext())) {
     if (!relTarget->HasNameDependent()) {
       relTarget->ModifySubtreeContextFlags(eHasNameDependent, true);
     }
   }
 
   rel = RelationByType(RelationType::DESCRIBED_BY);
-  while ((relTarget = rel.Next())) {
+  while ((relTarget = rel.LocalNext())) {
     if (!relTarget->HasDescriptionDependent()) {
       relTarget->ModifySubtreeContextFlags(eHasDescriptionDependent, true);
     }
@@ -2535,11 +2494,38 @@ void LocalAccessible::BindToParent(LocalAccessible* aParent,
         table->GetHeaderCache().Clear();
       }
     }
+  } else if (IsTableRow() && aParent->IsTable() &&
+             StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    // This table might have previously been treated as a layout table. Now that
+    // a row has been added, it might have sufficient rows to be considered a
+    // data table.
+    mDoc->QueueCacheUpdate(aParent, CacheDomain::Table);
   }
+
+#if defined(XP_WIN)
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup() &&
+      aParent->HasOwnContent() && aParent->mContent->IsMathMLElement()) {
+    // For any change in a MathML subtree, update the innerHTML cache on the
+    // root math element.
+    for (LocalAccessible* acc = aParent; acc; acc = acc->LocalParent()) {
+      if (acc->HasOwnContent() &&
+          acc->mContent->IsMathMLElement(nsGkAtoms::math)) {
+        mDoc->QueueCacheUpdate(acc, CacheDomain::InnerHTML);
+      }
+    }
+  }
+#endif  // defined(XP_WIN)
 }
 
 // LocalAccessible protected
 void LocalAccessible::UnbindFromParent() {
+  // We do this here to handle document shutdown and an Accessible being moved.
+  // We do this for subtree removal in DocAccessible::UncacheChildrenInSubtree.
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup() &&
+      (IsTable() || IsTableCell())) {
+    CachedTableAccessible::Invalidate(this);
+  }
+
   mParent = nullptr;
   mIndexInParent = -1;
   mIndexOfEmbeddedChild = -1;
@@ -2966,7 +2952,7 @@ bool LocalAccessible::IsActiveDescendant(LocalAccessible** aWidget) const {
   selector.AppendPrintf(
       "[aria-activedescendant=\"%s\"]",
       NS_ConvertUTF16toUTF8(mContent->GetID()->GetUTF16String()).get());
-  ErrorResult er;
+  IgnoredErrorResult er;
 
   dom::Element* widgetElm =
       docOrShadowRoot->AsNode().QuerySelector(selector, er);
@@ -3180,6 +3166,7 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
     // 1. Accessible is an HTML input type that holds a number.
     // 2. Accessible has a numeric value and an aria-valuetext.
     // 3. Accessible is an HTML input type that holds text.
+    // 4. Accessible is a link, in which case value is the target URL.
     // ... for all other cases we divine the value remotely.
     bool cacheValueText = false;
     if (HasNumericValue()) {
@@ -3192,7 +3179,7 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
                         mContent->AsElement()->HasAttr(
                             kNameSpaceID_None, nsGkAtoms::aria_valuetext));
     } else {
-      cacheValueText = IsTextField();
+      cacheValueText = IsTextField() || IsHTMLLink();
     }
 
     if (cacheValueText) {
@@ -3507,6 +3494,13 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
         fields->SetAttribute(nsGkAtoms::longdesc, DeleteEntry());
       }
     }
+
+    KeyBinding accessKey = AccessKey();
+    if (!accessKey.IsEmpty()) {
+      fields->SetAttribute(nsGkAtoms::accesskey, accessKey.Serialize());
+    } else if (aUpdateType == CacheUpdateType::Update) {
+      fields->SetAttribute(nsGkAtoms::accesskey, DeleteEntry());
+    }
   }
 
   if (aCacheDomain & CacheDomain::Style) {
@@ -3583,6 +3577,52 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
       fields->SetAttribute(nsGkAtoms::aria, DeleteEntry());
     }
   }
+
+  if (aCacheDomain & CacheDomain::Relations && mContent) {
+    for (auto const& data : kRelationTypeAtoms) {
+      nsTArray<uint64_t> ids;
+      nsStaticAtom* const relAtom = data.mAtom;
+
+      Relation rel;
+      if (data.mType == RelationType::LABEL_FOR) {
+        // Labels are a special case -- we need to validate that the target of
+        // their `for` attribute is in fact labelable. DOM checks this when we
+        // call GetControl().
+        if (dom::HTMLLabelElement* labelEl =
+                dom::HTMLLabelElement::FromNode(mContent)) {
+          rel.AppendTarget(mDoc, labelEl->GetControl());
+        }
+      } else if (data.mType == RelationType::LINKS_TO) {
+        // This has no implicit relation, so it's safe to call RelationByType
+        // directly.
+        rel = RelationByType(RelationType::LINKS_TO);
+      } else {
+        // We use an IDRefsIterator here instead of calling RelationByType
+        // directly because we only want to cache explicit relations. Implicit
+        // relations will be computed and stored separately in the parent
+        // process.
+        rel.AppendIter(new IDRefsIterator(mDoc, mContent, relAtom));
+      }
+
+      while (LocalAccessible* acc = rel.LocalNext()) {
+        ids.AppendElement(acc->IsDoc() ? 0 : acc->ID());
+      }
+      if (ids.Length()) {
+        fields->SetAttribute(relAtom, std::move(ids));
+      } else if (aUpdateType == CacheUpdateType::Update) {
+        fields->SetAttribute(relAtom, DeleteEntry());
+      }
+    }
+  }
+
+#if defined(XP_WIN)
+  if (aCacheDomain & CacheDomain::InnerHTML && HasOwnContent() &&
+      mContent->IsMathMLElement(nsGkAtoms::math)) {
+    nsString innerHTML;
+    mContent->AsElement()->GetInnerHTML(innerHTML, IgnoreErrors());
+    fields->SetAttribute(nsGkAtoms::html, std::move(innerHTML));
+  }
+#endif  // defined(XP_WIN)
 
   if (aUpdateType == CacheUpdateType::Initial) {
     // Add fields which never change and thus only need to be included in the
@@ -3747,6 +3787,33 @@ void LocalAccessible::DOMNodeID(nsString& aID) const {
   }
 }
 
+void LocalAccessible::LiveRegionAttributes(nsAString* aLive,
+                                           nsAString* aRelevant,
+                                           Maybe<bool>* aAtomic,
+                                           nsAString* aBusy) const {
+  dom::Element* el = Elm();
+  if (!el) {
+    return;
+  }
+  if (aLive) {
+    el->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_live, *aLive);
+  }
+  if (aRelevant) {
+    el->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_relevant, *aRelevant);
+  }
+  if (aAtomic) {
+    // XXX We ignore aria-atomic="false", but this probably doesn't conform to
+    // the spec.
+    if (el->AttrValueIs(kNameSpaceID_None, nsGkAtoms::aria_atomic,
+                        nsGkAtoms::_true, eCaseMatters)) {
+      *aAtomic = Some(true);
+    }
+  }
+  if (aBusy) {
+    el->GetAttr(kNameSpaceID_None, nsGkAtoms::aria_busy, *aBusy);
+  }
+}
+
 void LocalAccessible::StaticAsserts() const {
   static_assert(
       eLastStateFlag <= (1 << kStateFlagsBits) - 1,
@@ -3754,86 +3821,6 @@ void LocalAccessible::StaticAsserts() const {
   static_assert(
       eLastContextFlag <= (1 << kContextFlagsBits) - 1,
       "LocalAccessible::mContextFlags was oversized by eLastContextFlag!");
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// KeyBinding class
-
-// static
-uint32_t KeyBinding::AccelModifier() {
-  switch (WidgetInputEvent::AccelModifier()) {
-    case MODIFIER_ALT:
-      return kAlt;
-    case MODIFIER_CONTROL:
-      return kControl;
-    case MODIFIER_META:
-      return kMeta;
-    case MODIFIER_OS:
-      return kOS;
-    default:
-      MOZ_CRASH("Handle the new result of WidgetInputEvent::AccelModifier()");
-      return 0;
-  }
-}
-
-void KeyBinding::ToPlatformFormat(nsAString& aValue) const {
-  nsCOMPtr<nsIStringBundle> keyStringBundle;
-  nsCOMPtr<nsIStringBundleService> stringBundleService =
-      mozilla::components::StringBundle::Service();
-  if (stringBundleService) {
-    stringBundleService->CreateBundle(
-        "chrome://global-platform/locale/platformKeys.properties",
-        getter_AddRefs(keyStringBundle));
-  }
-
-  if (!keyStringBundle) return;
-
-  nsAutoString separator;
-  keyStringBundle->GetStringFromName("MODIFIER_SEPARATOR", separator);
-
-  nsAutoString modifierName;
-  if (mModifierMask & kControl) {
-    keyStringBundle->GetStringFromName("VK_CONTROL", modifierName);
-
-    aValue.Append(modifierName);
-    aValue.Append(separator);
-  }
-
-  if (mModifierMask & kAlt) {
-    keyStringBundle->GetStringFromName("VK_ALT", modifierName);
-
-    aValue.Append(modifierName);
-    aValue.Append(separator);
-  }
-
-  if (mModifierMask & kShift) {
-    keyStringBundle->GetStringFromName("VK_SHIFT", modifierName);
-
-    aValue.Append(modifierName);
-    aValue.Append(separator);
-  }
-
-  if (mModifierMask & kMeta) {
-    keyStringBundle->GetStringFromName("VK_META", modifierName);
-
-    aValue.Append(modifierName);
-    aValue.Append(separator);
-  }
-
-  aValue.Append(mKey);
-}
-
-void KeyBinding::ToAtkFormat(nsAString& aValue) const {
-  nsAutoString modifierName;
-  if (mModifierMask & kControl) aValue.AppendLiteral("<Control>");
-
-  if (mModifierMask & kAlt) aValue.AppendLiteral("<Alt>");
-
-  if (mModifierMask & kShift) aValue.AppendLiteral("<Shift>");
-
-  if (mModifierMask & kMeta) aValue.AppendLiteral("<Meta>");
-
-  aValue.Append(mKey);
 }
 
 TableAccessibleBase* LocalAccessible::AsTableBase() {

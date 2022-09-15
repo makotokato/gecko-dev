@@ -34,8 +34,7 @@ const startupPhases = {
         "resource://gre/modules/ActorManagerParent.jsm",
         "resource://gre/modules/CustomElementsListener.jsm",
         "resource://gre/modules/MainProcessSingleton.jsm",
-        "resource://gre/modules/XPCOMUtils.jsm",
-        "resource://gre/modules/Services.jsm",
+        "resource://gre/modules/XPCOMUtils.sys.mjs",
       ]),
     },
   },
@@ -57,17 +56,15 @@ const startupPhases = {
   "before first paint": {
     denylist: {
       modules: new Set([
-        "chrome://webcompat/content/data/ua_overrides.jsm",
-        "chrome://webcompat/content/lib/ua_overrider.jsm",
         "resource:///modules/AboutNewTab.jsm",
         "resource:///modules/BrowserUsageTelemetry.jsm",
         "resource:///modules/ContentCrashHandlers.jsm",
         "resource:///modules/ShellService.jsm",
         "resource://gre/modules/NewTabUtils.jsm",
         "resource://gre/modules/PageThumbs.jsm",
-        "resource://gre/modules/PlacesUtils.jsm",
+        "resource://gre/modules/PlacesUtils.sys.mjs",
         "resource://gre/modules/Preferences.jsm",
-        "resource://gre/modules/SearchService.jsm",
+        "resource://gre/modules/SearchService.sys.mjs",
         "resource://gre/modules/Sqlite.jsm",
       ]),
       services: new Set(["@mozilla.org/browser/search-service;1"]),
@@ -83,21 +80,17 @@ const startupPhases = {
         "resource://gre/modules/Blocklist.jsm",
         // Bug 1391495 - BrowserWindowTracker.jsm is intermittently used.
         // "resource:///modules/BrowserWindowTracker.jsm",
-        "resource://gre/modules/BookmarkHTMLUtils.jsm",
-        "resource://gre/modules/Bookmarks.jsm",
+        "resource://gre/modules/BookmarkHTMLUtils.sys.mjs",
+        "resource://gre/modules/Bookmarks.sys.mjs",
         "resource://gre/modules/ContextualIdentityService.jsm",
-        "resource://gre/modules/CrashSubmit.jsm",
         "resource://gre/modules/FxAccounts.jsm",
         "resource://gre/modules/FxAccountsStorage.jsm",
-        "resource://gre/modules/PlacesBackups.jsm",
-        "resource://gre/modules/PlacesExpiration.jsm",
-        "resource://gre/modules/PlacesSyncUtils.jsm",
+        "resource://gre/modules/PlacesBackups.sys.mjs",
+        "resource://gre/modules/PlacesExpiration.sys.mjs",
+        "resource://gre/modules/PlacesSyncUtils.sys.mjs",
         "resource://gre/modules/PushComponents.jsm",
       ]),
-      services: new Set([
-        "@mozilla.org/browser/annotation-service;1",
-        "@mozilla.org/browser/nav-bookmarks-service;1",
-      ]),
+      services: new Set(["@mozilla.org/browser/nav-bookmarks-service;1"]),
     },
   },
 
@@ -125,6 +118,12 @@ if (
 ) {
   startupPhases["before profile selection"].allowlist.modules.add(
     "resource://gre/modules/XULStore.jsm"
+  );
+}
+
+if (AppConstants.MOZ_CRASHREPORTER) {
+  startupPhases["before handling user events"].denylist.modules.add(
+    "resource://gre/modules/CrashSubmit.jsm"
   );
 }
 
@@ -217,6 +216,29 @@ add_task(async function() {
           } else {
             record(false, message, undefined, getStack(scriptType, file));
           }
+        }
+      }
+
+      if (denylist.modules) {
+        let results = await PerfTestHelpers.throttledMapPromises(
+          denylist.modules,
+          async uri => ({
+            uri,
+            exists: await PerfTestHelpers.checkURIExists(uri),
+          })
+        );
+
+        for (let { uri, exists } of results) {
+          ok(exists, `denylist entry ${uri} for phase "${phase}" must exist`);
+        }
+      }
+
+      if (denylist.services) {
+        for (let contract of denylist.services) {
+          ok(
+            contract in Cc,
+            `denylist entry ${contract} for phase "${phase}" must exist`
+          );
         }
       }
     }

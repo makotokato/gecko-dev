@@ -28,7 +28,7 @@ use style::data::{self, ElementStyles};
 use style::dom::{ShowSubtreeData, TDocument, TElement, TNode};
 use style::driver;
 use style::error_reporting::{ContextualParseError, ParseErrorReporter};
-use style::font_face::{self, FontFaceSourceListComponent, Source};
+use style::font_face::{self, FontFaceSourceListComponent, FontFaceSourceFormat, Source};
 use style::font_metrics::{get_metrics_provider_for_product, FontMetricsProvider};
 use style::gecko::data::{GeckoStyleSheet, PerDocumentStyleData, PerDocumentStyleDataImpl};
 use style::gecko::restyle_damage::GeckoRestyleDamage;
@@ -57,7 +57,6 @@ use style::gecko_bindings::structs::nsChangeHint;
 use style::gecko_bindings::structs::nsCompatibility;
 use style::gecko_bindings::structs::nsStyleTransformMatrix::MatrixTransformOperator;
 use style::gecko_bindings::structs::nsTArray;
-use style::gecko_bindings::structs::nsTimingFunction;
 use style::gecko_bindings::structs::nsresult;
 use style::gecko_bindings::structs::CallerType;
 use style::gecko_bindings::structs::CompositeOperation;
@@ -104,7 +103,6 @@ use style::invalidation::element::restyle_hints::RestyleHint;
 use style::invalidation::stylesheets::RuleChangeKind;
 use style::media_queries::MediaList;
 use style::parser::{self, Parse, ParserContext};
-use style::piecewise_linear::PiecewiseLinearFunction;
 use style::properties::animated_properties::{AnimationValue, AnimationValueMap};
 use style::properties::{parse_one_declaration_into, parse_style_attribute};
 use style::properties::{ComputedValues, CountedUnknownProperty, Importance, NonCustomPropertyId};
@@ -138,8 +136,9 @@ use style::use_counters::UseCounters;
 use style::values::animated::{Animate, Procedure, ToAnimatedZero};
 use style::values::animated::color::AnimatedRGBA;
 use style::values::generics::color::ColorInterpolationMethod;
-use style::values::computed::easing::ComputedLinearStop;
+use style::values::generics::easing::BeforeFlag;
 use style::values::computed::font::{FontFamily, FontFamilyList, GenericFontFamily, FontWeight, FontStyle, FontStretch};
+use style::values::computed::easing::ComputedTimingFunction;
 use style::values::computed::{self, Context, ToComputedValue};
 use style::values::distance::ComputeSquaredDistance;
 use style::values::specified::gecko::IntersectionObserverRootMargin;
@@ -1090,7 +1089,7 @@ impl_basic_serde_funcs!(
 impl_basic_serde_funcs!(
     Servo_StyleComputedTimingFunction_Serialize,
     Servo_StyleComputedTimingFunction_Deserialize,
-    computed::easing::ComputedTimingFunction
+    ComputedTimingFunction
 );
 
 #[no_mangle]
@@ -2525,6 +2524,7 @@ pub extern "C" fn Servo_StyleRule_SetSelectorText(
             stylesheet_origin: contents.origin,
             namespaces: &namespaces,
             url_data: &url_data,
+            for_supports_rule: false,
         };
 
         let mut parser_input = ParserInput::new(&value_str);
@@ -2969,7 +2969,40 @@ pub extern "C" fn Servo_ContainerRule_GetConditionText(
     result: &mut nsACString,
 ) {
     read_locked_arc(rule, |rule: &ContainerRule| {
+        rule.condition.to_css(&mut CssWriter::new(result)).unwrap();
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_ContainerRule_GetContainerQuery(
+    rule: &RawServoContainerRule,
+    result: &mut nsACString,
+) {
+    read_locked_arc(rule, |rule: &ContainerRule| {
         rule.query_condition().to_css(&mut CssWriter::new(result)).unwrap();
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_ContainerRule_QueryContainerFor(
+    rule: &RawServoContainerRule,
+    element: &RawGeckoElement,
+) -> *const RawGeckoElement {
+    read_locked_arc(rule, |rule: &ContainerRule| {
+        rule.condition.find_container(GeckoElement(element)).map_or(ptr::null(), |result| result.element.0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_ContainerRule_GetContainerName(
+    rule: &RawServoContainerRule,
+    result: &mut nsACString,
+) {
+    read_locked_arc(rule, |rule: &ContainerRule| {
+        let name = rule.container_name();
+        if !name.is_none() {
+            name.to_css(&mut CssWriter::new(result)).unwrap();
+        }
     })
 }
 
@@ -3254,8 +3287,9 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetSources(
         };
         let len = sources.iter().fold(0, |acc, src| {
             acc + match *src {
-                // Each format hint takes one position in the array of mSrc.
-                Source::Url(ref url) => url.format_hints.len() + 1,
+                Source::Url(ref url) =>
+                    (if url.format_hint.is_some() { 2 } else { 1 }) +
+                    (if url.tech_flags.is_empty() { 0 } else { 1 }),
                 Source::Local(_) => 1,
             }
         });
@@ -3273,11 +3307,19 @@ pub unsafe extern "C" fn Servo_FontFaceRule_GetSources(
                 match *source {
                     Source::Url(ref url) => {
                         set_next(FontFaceSourceListComponent::Url(&url.url));
-                        for hint in url.format_hints.iter() {
-                            set_next(FontFaceSourceListComponent::FormatHint {
-                                length: hint.len(),
-                                utf8_bytes: hint.as_ptr(),
-                            });
+                        if let Some(hint) = &url.format_hint {
+                            match hint {
+                                FontFaceSourceFormat::Keyword(kw) =>
+                                    set_next(FontFaceSourceListComponent::FormatHintKeyword(*kw)),
+                                FontFaceSourceFormat::String(s) =>
+                                    set_next(FontFaceSourceListComponent::FormatHintString {
+                                        length: s.len(),
+                                        utf8_bytes: s.as_ptr(),
+                                }),
+                            }
+                        }
+                        if !url.tech_flags.is_empty() {
+                            set_next(FontFaceSourceListComponent::TechFlags(url.tech_flags));
                         }
                     },
                     Source::Local(ref name) => {
@@ -4207,20 +4249,22 @@ fn dump_properties_and_rules(cv: &ComputedValues, properties: &LonghandIdSet) {
 
 #[cfg(feature = "gecko_debug")]
 fn dump_rules(cv: &ComputedValues) {
-    println_stderr!("  Rules:");
+    println_stderr!("  Rules({:?}):", cv.pseudo());
     let global_style_data = &*GLOBAL_STYLE_DATA;
     let guard = global_style_data.shared_lock.read();
-    for rn in cv.rules().self_and_ancestors() {
-        if rn.importance().important() {
-            continue;
-        }
-        if let Some(d) = rn.style_source().and_then(|s| s.as_declarations()) {
-            println_stderr!("    [DeclarationBlock: {:?}]", d);
-        }
-        if let Some(r) = rn.style_source().and_then(|s| s.as_rule()) {
-            let mut s = nsCString::new();
-            r.read_with(&guard).to_css(&guard, &mut s).unwrap();
-            println_stderr!("    {}", s);
+    if let Some(rules) = cv.rules.as_ref() {
+        for rn in rules.self_and_ancestors() {
+            if rn.importance().important() {
+                continue;
+            }
+            if let Some(d) = rn.style_source().and_then(|s| s.as_declarations()) {
+                println_stderr!("    [DeclarationBlock: {:?}]", d);
+            }
+            if let Some(r) = rn.style_source().and_then(|s| s.as_rule()) {
+                let mut s = nsCString::new();
+                r.read_with(&guard).to_css(&guard, &mut s).unwrap();
+                println_stderr!("    {}", s);
+            }
         }
     }
 }
@@ -4386,7 +4430,7 @@ pub unsafe extern "C" fn Servo_ParseProperty(
 }
 
 #[no_mangle]
-pub extern "C" fn Servo_ParseEasing(easing: &nsACString, output: &mut nsTimingFunction) -> bool {
+pub extern "C" fn Servo_ParseEasing(easing: &nsACString, output: &mut ComputedTimingFunction) -> bool {
     use style::properties::longhands::transition_timing_function;
 
     let context = ParserContext::new(
@@ -4405,8 +4449,7 @@ pub extern "C" fn Servo_ParseEasing(easing: &nsACString, output: &mut nsTimingFu
         parser.parse_entirely(|p| transition_timing_function::single_value::parse(&context, p));
     match result {
         Ok(parsed_easing) => {
-            // We store as computed value in nsTimingFunction.
-            (*output).mTiming = parsed_easing.to_computed_value_without_context();
+            *output = parsed_easing.to_computed_value_without_context();
             true
         },
         Err(_) => false,
@@ -4414,8 +4457,8 @@ pub extern "C" fn Servo_ParseEasing(easing: &nsACString, output: &mut nsTimingFu
 }
 
 #[no_mangle]
-pub extern "C" fn Servo_SerializeEasing(easing: &nsTimingFunction, output: &mut nsACString) {
-    easing.mTiming.to_css(&mut CssWriter::new(output)).unwrap();
+pub extern "C" fn Servo_SerializeEasing(easing: &ComputedTimingFunction, output: &mut nsACString) {
+    easing.to_css(&mut CssWriter::new(output)).unwrap();
 }
 
 #[no_mangle]
@@ -5462,6 +5505,7 @@ pub extern "C" fn Servo_DeclarationBlock_SetAutoValue(
         MarginRight => auto,
         MarginBottom => auto,
         MarginLeft => auto,
+        AspectRatio => specified::AspectRatio::auto(),
     };
     write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
         decls.push(prop, Importance::Normal);
@@ -6225,7 +6269,7 @@ enum Offset {
 
 fn fill_in_missing_keyframe_values(
     all_properties: &LonghandIdSet,
-    timing_function: &nsTimingFunction,
+    timing_function: &ComputedTimingFunction,
     longhands_at_offset: &LonghandIdSet,
     offset: Offset,
     keyframes: &mut nsTArray<structs::Keyframe>,
@@ -6235,9 +6279,19 @@ fn fill_in_missing_keyframe_values(
         return;
     }
 
+    // Use auto for missing keyframes.
+    // FIXME: This may be a spec issue in css-animations-2 because the spec says the default
+    // keyframe-specific composite is replace, but web-animations-1 uses auto. Use auto now so we
+    // use the value of animation-composition of the element, for missing keyframes.
+    // https://github.com/w3c/csswg-drafts/issues/7476
+    let composition = structs::CompositeOperationOrAuto::Auto;
     let keyframe = match offset {
-        Offset::Zero => unsafe { Gecko_GetOrCreateInitialKeyframe(keyframes, timing_function) },
-        Offset::One => unsafe { Gecko_GetOrCreateFinalKeyframe(keyframes, timing_function) },
+        Offset::Zero => unsafe {
+            Gecko_GetOrCreateInitialKeyframe(keyframes, timing_function, composition)
+        },
+        Offset::One => unsafe {
+            Gecko_GetOrCreateFinalKeyframe(keyframes, timing_function, composition)
+        },
     };
 
     // Append properties that have not been set at this offset.
@@ -6259,9 +6313,12 @@ pub unsafe extern "C" fn Servo_StyleSet_GetKeyframesForName(
     element: &RawGeckoElement,
     style: &ComputedValues,
     name: *mut nsAtom,
-    inherited_timing_function: &nsTimingFunction,
+    inherited_timing_function: &ComputedTimingFunction,
     keyframes: &mut nsTArray<structs::Keyframe>,
 ) -> bool {
+    use style::gecko_bindings::structs::CompositeOperationOrAuto;
+    use style::properties::longhands::animation_composition::single_value::computed_value::T as Composition;
+
     debug_assert!(keyframes.len() == 0, "keyframes should be initially empty");
 
     let element = GeckoElement(element);
@@ -6295,20 +6352,27 @@ pub unsafe extern "C" fn Servo_StyleSet_GetKeyframesForName(
         }
 
         // Override timing_function if the keyframe has an animation-timing-function.
-        let timing_function = nsTimingFunction {
-            mTiming: match step.get_animation_timing_function(&guard) {
-                Some(val) => val.to_computed_value_without_context(),
-                None => (*inherited_timing_function).mTiming.clone(),
-            },
+        let timing_function = match step.get_animation_timing_function(&guard) {
+            Some(val) => val.to_computed_value_without_context(),
+            None => (*inherited_timing_function).clone(),
         };
 
-        // Look for an existing keyframe with the same offset and timing
-        // function or else add a new keyframe at the beginning of the keyframe
-        // array.
+        // Override composite operation if the keyframe has an animation-composition.
+        let composition =
+            step.get_animation_composition(&guard)
+                .map_or(CompositeOperationOrAuto::Auto, |val| match val {
+                    Composition::Replace => CompositeOperationOrAuto::Replace,
+                    Composition::Add => CompositeOperationOrAuto::Add,
+                    Composition::Accumulate => CompositeOperationOrAuto::Accumulate,
+                });
+
+        // Look for an existing keyframe with the same offset, timing function, and compsition, or
+        // else add a new keyframe at the beginning of the keyframe array.
         let keyframe = Gecko_GetOrCreateKeyframeAtStart(
             keyframes,
             step.start_percentage.0 as f32,
             &timing_function,
+            composition,
         );
 
         match step.value {
@@ -7505,26 +7569,6 @@ pub unsafe extern "C" fn Servo_InvalidateForViewportUnits(
 }
 
 #[no_mangle]
-pub extern "C" fn Servo_CreatePiecewiseLinearFunction(
-    entries: &style::OwnedSlice<ComputedLinearStop>,
-    result: &mut PiecewiseLinearFunction,
-) {
-    *result = PiecewiseLinearFunction::from_iter(
-        entries
-            .iter()
-            .map(ComputedLinearStop::to_piecewise_linear_build_parameters),
-    );
-}
-
-#[no_mangle]
-pub extern "C" fn Servo_PiecewiseLinearFunctionAt(
-    function: &PiecewiseLinearFunction,
-    progress: f32,
-) -> f32 {
-    function.at(progress)
-}
-
-#[no_mangle]
 pub extern "C" fn Servo_InterpolateColor(
     interpolation: &ColorInterpolationMethod,
     left: &AnimatedRGBA,
@@ -7539,4 +7583,13 @@ pub extern "C" fn Servo_InterpolateColor(
         1.0 - progress,
         /* normalize_weights = */ false,
     )
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_EasingFunctionAt(
+    easing_function: &ComputedTimingFunction,
+    progress: f64,
+    before_flag: BeforeFlag
+) -> f64 {
+    easing_function.calculate_output(progress, before_flag, 1e-7)
 }

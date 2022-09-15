@@ -17,8 +17,6 @@ namespace mozilla {
 // Forward declaration
 struct StaticXREAppData;
 
-#define ATTEMPTING_DEELEVATION_FLAG L"attempting-deelevation"
-
 /**
  * Determine whether or not the current process should be run as the launcher
  * process, and run if so. If we are not supposed to run as the launcher

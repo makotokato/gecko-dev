@@ -13,7 +13,6 @@
 
 // The following are not lazily loaded as they are needed during initialization.
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { createLazyLoaders } = ChromeUtils.import(
   "resource://devtools/client/performance-new/typescript-lazy-load.jsm.js"
 );
@@ -131,15 +130,7 @@ const presets = {
   "firefox-platform": {
     entries: 128 * 1024 * 1024,
     interval: 1,
-    features: [
-      "screenshots",
-      "js",
-      "leaf",
-      "stackwalk",
-      "cpu",
-      "java",
-      "processcpu",
-    ],
+    features: ["screenshots", "js", "stackwalk", "cpu", "java", "processcpu"],
     threads: [
       "GeckoMain",
       "Compositor",
@@ -162,7 +153,7 @@ const presets = {
   graphics: {
     entries: 128 * 1024 * 1024,
     interval: 1,
-    features: ["leaf", "stackwalk", "js", "cpu", "java", "processcpu"],
+    features: ["stackwalk", "js", "cpu", "java", "processcpu"],
     threads: [
       "GeckoMain",
       "Compositor",
@@ -190,7 +181,6 @@ const presets = {
     interval: 1,
     features: [
       "js",
-      "leaf",
       "stackwalk",
       "cpu",
       "audiocallbacktracing",
@@ -234,15 +224,7 @@ const presets = {
   networking: {
     entries: 128 * 1024 * 1024,
     interval: 1,
-    features: [
-      "screenshots",
-      "js",
-      "leaf",
-      "stackwalk",
-      "cpu",
-      "java",
-      "processcpu",
-    ],
+    features: ["screenshots", "js", "stackwalk", "cpu", "java", "processcpu"],
     threads: [
       "Compositor",
       "DNS Resolver",
@@ -263,6 +245,33 @@ const presets = {
       devtools: {
         label: "perftools-presets-networking-label",
         description: "perftools-presets-networking-description",
+      },
+    },
+  },
+  power: {
+    entries: 128 * 1024 * 1024,
+    interval: 10,
+    features: [
+      "screenshots",
+      "js",
+      "stackwalk",
+      "cpu",
+      "processcpu",
+      "nostacksampling",
+      "ipcmessages",
+      "markersallthreads",
+      "power",
+    ],
+    threads: ["GeckoMain", "Renderer"],
+    duration: 0,
+    l10nIds: {
+      popup: {
+        label: "profiler-popup-presets-power-label",
+        description: "profiler-popup-presets-power-description",
+      },
+      devtools: {
+        label: "perftools-presets-power-label",
+        description: "perftools-presets-power-description",
       },
     },
   },

@@ -183,6 +183,8 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
 
   virtual nsRect BoundsInAppUnits() const override;
 
+  virtual Relation RelationByType(RelationType aType) const override;
+
   virtual uint64_t State() override;
 
   virtual already_AddRefed<AccAttributes> Attributes() override;
@@ -193,11 +195,17 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
 
   virtual Maybe<float> Opacity() const override;
 
+  virtual void LiveRegionAttributes(nsAString* aLive, nsAString* aRelevant,
+                                    Maybe<bool>* aAtomic,
+                                    nsAString* aBusy) const override;
+
   virtual uint8_t ActionCount() const override;
 
   virtual void ActionNameAt(uint8_t aIndex, nsAString& aName) override;
 
   virtual bool DoAction(uint8_t aIndex) const override;
+
+  virtual KeyBinding AccessKey() const override;
 
   virtual void SelectionRanges(nsTArray<TextRange>* aRanges) const override;
 
@@ -249,6 +257,19 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
   DocAccessibleParent* AsDoc() const { return IsDoc() ? mDoc : nullptr; }
 
   void ApplyCache(CacheUpdateType aUpdateType, AccAttributes* aFields) {
+    const nsTArray<bool> relUpdatesNeeded = PreProcessRelations(aFields);
+    if (auto maybeViewportCache =
+            aFields->GetAttribute<nsTArray<uint64_t>>(nsGkAtoms::viewport)) {
+      // Updating the viewport cache means the offscreen state of this
+      // document's accessibles has changed. Update the HashSet we use for
+      // checking offscreen state here.
+      MOZ_ASSERT(IsDoc(),
+                 "Fetched the viewport cache from a non-doc accessible?");
+      for (auto id : *maybeViewportCache) {
+        AsDoc()->mOnScreenAccessibles.Insert(id);
+      }
+    }
+
     if (aUpdateType == CacheUpdateType::Initial) {
       mCachedFields = aFields;
     } else {
@@ -260,13 +281,16 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
         mCachedFields = new AccAttributes();
       }
       mCachedFields->Update(aFields);
-      if (IsTextLeaf()) {
-        Derived* parent = RemoteParent();
-        if (parent && parent->IsHyperText()) {
-          parent->InvalidateCachedHyperTextOffsets();
-        }
+    }
+
+    if (IsTextLeaf()) {
+      Derived* parent = RemoteParent();
+      if (parent && parent->IsHyperText()) {
+        parent->InvalidateCachedHyperTextOffsets();
       }
     }
+
+    PostProcessRelations(relUpdatesNeeded);
   }
 
   void UpdateStateCache(uint64_t aState, bool aEnabled) {
@@ -296,6 +320,26 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
                             uint32_t aLength = UINT32_MAX) override;
 
   virtual bool TableIsProbablyForLayout();
+
+  /**
+   * Iterates through each atom in kRelationTypeAtoms, checking to see
+   * if it is present in aFields. If it is present (or if aFields contains
+   * a DeleteEntry() for this atom) and mCachedFields is initialized,
+   * fetches the old rel targets and removes their existing reverse relations
+   * stored in mReverseRelations.
+   * Returns an array of bools where the ith array entry corresponds
+   * to whether or not the rel at the ith entry of kRelationTypeAtoms
+   * requires a post-processing update.
+   */
+  nsTArray<bool> PreProcessRelations(AccAttributes* aFields);
+
+  /**
+   * Takes in the array returned from PreProcessRelations.
+   * For each entry requiring an update, fetches the new relation
+   * targets stored in mCachedFields and appropriately
+   * updates their reverse relations in mReverseRelations.
+   */
+  void PostProcessRelations(const nsTArray<bool>& aToUpdate);
 
   uint32_t GetCachedTextLength();
   Maybe<const nsTArray<int32_t>&> GetCachedTextLines();
@@ -376,6 +420,9 @@ class RemoteAccessibleBase : public Accessible, public HyperTextAccessibleBase {
   friend HyperTextAccessibleBase;
   friend class xpcAccessible;
   friend class CachedTableCellAccessible;
+#ifdef XP_WIN
+  friend class sdnAccessible;
+#endif
 
   nsTArray<Derived*> mChildren;
   DocAccessibleParent* mDoc;

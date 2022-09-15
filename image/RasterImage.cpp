@@ -205,7 +205,11 @@ RasterImage::GetHeight(int32_t* aHeight) {
 }
 
 //******************************************************************************
-nsresult RasterImage::GetNativeSizes(nsTArray<IntSize>& aNativeSizes) const {
+void RasterImage::MediaFeatureValuesChangedAllDocuments(
+    const mozilla::MediaFeatureChange& aChange) {}
+
+//******************************************************************************
+nsresult RasterImage::GetNativeSizes(nsTArray<IntSize>& aNativeSizes) {
   if (mError) {
     return NS_ERROR_FAILURE;
   }
@@ -224,7 +228,7 @@ nsresult RasterImage::GetNativeSizes(nsTArray<IntSize>& aNativeSizes) const {
 }
 
 //******************************************************************************
-size_t RasterImage::GetNativeSizesLength() const {
+size_t RasterImage::GetNativeSizesLength() {
   if (mError || !LoadHasSize()) {
     return 0;
   }
@@ -593,7 +597,7 @@ RasterImage::IsImageContainerAvailable(WindowRenderer* aRenderer,
 NS_IMETHODIMP_(ImgDrawResult)
 RasterImage::GetImageProvider(WindowRenderer* aRenderer,
                               const gfx::IntSize& aSize,
-                              const Maybe<SVGImageContext>& aSVGContext,
+                              const SVGImageContext& aSVGContext,
                               const Maybe<ImageIntRegion>& aRegion,
                               uint32_t aFlags,
                               WebRenderImageProvider** aProvider) {
@@ -1351,10 +1355,10 @@ ImgDrawResult RasterImage::DrawInternal(DrawableSurface&& aSurface,
   IntSize finalSize = aSurface->GetSize();
   bool couldRedecodeForBetterFrame = false;
   if (finalSize != aSize.ToUnknownSize()) {
-    gfx::Size scale(double(aSize.width) / finalSize.width,
-                    double(aSize.height) / finalSize.height);
-    aContext->Multiply(gfxMatrix::Scaling(scale.width, scale.height));
-    region.Scale(1.0 / scale.width, 1.0 / scale.height);
+    gfx::MatrixScales scale(double(aSize.width) / finalSize.width,
+                            double(aSize.height) / finalSize.height);
+    aContext->Multiply(gfx::Matrix::Scaling(scale));
+    region.Scale(1.0 / scale.xScale, 1.0 / scale.yScale);
 
     couldRedecodeForBetterFrame = CanDownscaleDuringDecode(aSize, aFlags);
   }
@@ -1377,7 +1381,7 @@ NS_IMETHODIMP_(ImgDrawResult)
 RasterImage::Draw(gfxContext* aContext, const IntSize& aSize,
                   const ImageRegion& aRegion, uint32_t aWhichFrame,
                   SamplingFilter aSamplingFilter,
-                  const Maybe<SVGImageContext>& /*aSVGContext - ignored*/,
+                  const SVGImageContext& /*aSVGContext - ignored*/,
                   uint32_t aFlags, float aOpacity) {
   if (aWhichFrame > FRAME_MAX_VALUE) {
     return ImgDrawResult::BAD_ARGS;

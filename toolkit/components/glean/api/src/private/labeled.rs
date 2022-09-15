@@ -18,6 +18,7 @@ mod private {
         need_ipc, LabeledBooleanMetric, LabeledCounterMetric, LabeledStringMetric, MetricId,
     };
     use crate::private::CounterMetric;
+    use std::sync::Arc;
 
     /// The sealed trait.
     ///
@@ -25,7 +26,7 @@ mod private {
     /// as labeled types.
     pub trait Sealed {
         type GleanMetric: glean::private::AllowLabeled + Clone;
-        fn from_glean_metric(id: MetricId, metric: Self::GleanMetric, label: &str) -> Self;
+        fn from_glean_metric(id: MetricId, metric: Arc<Self::GleanMetric>, label: &str) -> Self;
     }
 
     // `LabeledMetric<LabeledBooleanMetric>` is possible.
@@ -33,7 +34,7 @@ mod private {
     // See [Labeled Booleans](https://mozilla.github.io/glean/book/user/metrics/labeled_booleans.html).
     impl Sealed for LabeledBooleanMetric {
         type GleanMetric = glean::private::BooleanMetric;
-        fn from_glean_metric(_id: MetricId, metric: Self::GleanMetric, _label: &str) -> Self {
+        fn from_glean_metric(_id: MetricId, metric: Arc<Self::GleanMetric>, _label: &str) -> Self {
             if need_ipc() {
                 // TODO: Instrument this error.
                 LabeledBooleanMetric::Child(crate::private::boolean::BooleanMetricIpc)
@@ -48,7 +49,7 @@ mod private {
     // See [Labeled Strings](https://mozilla.github.io/glean/book/user/metrics/labeled_strings.html).
     impl Sealed for LabeledStringMetric {
         type GleanMetric = glean::private::StringMetric;
-        fn from_glean_metric(_id: MetricId, metric: Self::GleanMetric, _label: &str) -> Self {
+        fn from_glean_metric(_id: MetricId, metric: Arc<Self::GleanMetric>, _label: &str) -> Self {
             if need_ipc() {
                 // TODO: Instrument this error.
                 LabeledStringMetric::Child(crate::private::string::StringMetricIpc)
@@ -63,7 +64,7 @@ mod private {
     // See [Labeled Counters](https://mozilla.github.io/glean/book/user/metrics/labeled_counters.html).
     impl Sealed for LabeledCounterMetric {
         type GleanMetric = glean::private::CounterMetric;
-        fn from_glean_metric(id: MetricId, metric: Self::GleanMetric, label: &str) -> Self {
+        fn from_glean_metric(id: MetricId, metric: Arc<Self::GleanMetric>, label: &str) -> Self {
             if need_ipc() {
                 LabeledCounterMetric::Child {
                     id,
@@ -158,8 +159,6 @@ where
     /// If an invalid label is used, the metric will be recorded in the special `OTHER_LABEL` label.
     pub fn get(&self, label: &str) -> U {
         let metric = self.core.get(label);
-        // FIXME(bug 1771888): Avoid the clone here.
-        let metric = (*metric).clone();
         U::from_glean_metric(self.id, metric, label)
     }
 
@@ -176,16 +175,11 @@ where
     /// # Returns
     ///
     /// The number of errors reported.
-    pub fn test_get_num_recorded_errors<'a, S: Into<Option<&'a str>>>(
-        &self,
-        error: ErrorType,
-        ping_name: S,
-    ) -> i32 {
+    pub fn test_get_num_recorded_errors(&self, error: ErrorType) -> i32 {
         if need_ipc() {
             panic!("Use of labeled metrics in IPC land not yet implemented!");
         } else {
-            let ping_name = ping_name.into().map(|s| s.to_string());
-            self.core.test_get_num_recorded_errors(error, ping_name)
+            self.core.test_get_num_recorded_errors(error)
         }
     }
 }
@@ -318,7 +312,7 @@ mod test {
 
         assert_eq!(
             1,
-            metric.test_get_num_recorded_errors(ErrorType::InvalidLabel, None)
+            metric.test_get_num_recorded_errors(ErrorType::InvalidLabel)
         );
     }
 
@@ -356,7 +350,7 @@ mod test {
 
         assert_eq!(
             0,
-            metric.test_get_num_recorded_errors(ErrorType::InvalidLabel, None)
+            metric.test_get_num_recorded_errors(ErrorType::InvalidLabel)
         );
     }
 }

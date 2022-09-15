@@ -8,7 +8,6 @@
 const { loader, require } = ChromeUtils.import(
   "resource://devtools/shared/loader/Loader.jsm"
 );
-const Services = require("Services");
 const xpcInspector = require("xpcInspector");
 const { DevToolsServer } = require("devtools/server/devtools-server");
 const { DevToolsClient } = require("devtools/client/devtools-client");
@@ -46,7 +45,7 @@ function scriptErrorLogLevel(message) {
 // Register a console listener, so console messages don't just disappear
 // into the ether.
 var listener = {
-  observe: function(message) {
+  observe(message) {
     let string;
     try {
       message.QueryInterface(Ci.nsIScriptError);

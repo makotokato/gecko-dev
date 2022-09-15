@@ -14,9 +14,8 @@
 
 const EXPORTED_SYMBOLS = ["LoginHelper"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const lazy = {};
 ChromeUtils.defineModuleGetter(
@@ -95,7 +94,7 @@ class ImportRowProcessor {
       });
 
       if (existingLogins.length) {
-        lazy.log.debug("maybeImportLogins: Found existing login with GUID");
+        lazy.log.debug("maybeImportLogins: Found existing login with GUID.");
         // There should only be one `guid` match.
         let existingLogin = existingLogins[0].QueryInterface(
           Ci.nsILoginMetaInfo
@@ -465,8 +464,7 @@ const LoginHelper = {
         false
       );
       lazy.log.debug(
-        "updateSignonPrefs, using pref value for testOnlyUserHasInteractedWithDocument",
-        this.testOnlyUserHasInteractedWithDocument
+        `Using pref value for testOnlyUserHasInteractedWithDocument ${this.testOnlyUserHasInteractedWithDocument}.`
       );
     } else {
       this.testOnlyUserHasInteractedWithDocument = null;
@@ -650,19 +648,31 @@ const LoginHelper = {
   getLoginOrigin(uriString, allowJS = false) {
     let realm = "";
     try {
+      const mozProxyRegex = /^moz-proxy:\/\//i;
+      const isMozProxy = !!uriString.match(mozProxyRegex);
+      if (isMozProxy) {
+        // Special handling because uri.displayHostPort throws on moz-proxy://
+        return (
+          "moz-proxy://" +
+          Services.io.newURI(uriString.replace(mozProxyRegex, "https://"))
+            .displayHostPort
+        );
+      }
+
       let uri = Services.io.newURI(uriString);
 
       if (allowJS && uri.scheme == "javascript") {
         return "javascript:";
       }
-      // TODO: Bug 1559205 - Add support for moz-proxy
 
       // Build this manually instead of using prePath to avoid including the userPass portion.
       realm = uri.scheme + "://" + uri.displayHostPort;
     } catch (e) {
       // bug 159484 - disallow url types that don't support a hostPort.
       // (although we handle "javascript:..." as a special case above.)
-      lazy.log.warn("Couldn't parse origin for", uriString, e);
+      lazy.log.warn(
+        `Couldn't parse specified uri ${uriString} with error ${e.name}`
+      );
       realm = null;
     }
 
@@ -1066,8 +1076,7 @@ const LoginHelper = {
 
     if (!preferredOriginScheme && resolveBy.includes("scheme")) {
       lazy.log.warn(
-        "dedupeLogins: Deduping with a scheme preference but couldn't " +
-          "get the preferred origin scheme."
+        "Deduping with a scheme preference but couldn't get the preferred origin scheme."
       );
     }
 
@@ -1129,7 +1138,7 @@ const LoginHelper = {
               }
 
               return loginURI.scheme == preferredOriginScheme;
-            } catch (ex) {
+            } catch (e) {
               // Some URLs aren't valid nsIURI (e.g. chrome://FirefoxAccounts)
               lazy.log.debug(
                 "dedupeLogins/shouldReplaceExisting: Error comparing schemes:",
@@ -1137,7 +1146,7 @@ const LoginHelper = {
                 login.origin,
                 "preferredOrigin:",
                 preferredOrigin,
-                ex
+                e.name
               );
             }
             break;
@@ -1311,7 +1320,8 @@ const LoginHelper = {
         fieldType == "email" ||
         fieldType == "url" ||
         fieldType == "tel" ||
-        fieldType == "number"
+        fieldType == "number" ||
+        fieldType == "search"
       )
     ) {
       return false;
@@ -1789,12 +1799,6 @@ const LoginHelper = {
     return browser;
   },
 };
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  LoginHelper,
-  "showInsecureFieldWarning",
-  "security.insecure_field_warning.contextual.enabled"
-);
 
 XPCOMUtils.defineLazyGetter(lazy, "log", () => {
   let processName =

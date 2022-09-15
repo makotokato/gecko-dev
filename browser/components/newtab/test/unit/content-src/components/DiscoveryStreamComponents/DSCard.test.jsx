@@ -4,7 +4,6 @@ import {
   DSSource,
   DefaultMeta,
   PlaceholderDSCard,
-  CTAButtonMeta,
 } from "content-src/components/DiscoveryStreamComponents/DSCard/DSCard";
 import {
   DSContextFooter,
@@ -14,6 +13,7 @@ import {
 import { actionCreators as ac, actionTypes as at } from "common/Actions.jsm";
 import { DSLinkMenu } from "content-src/components/DiscoveryStreamComponents/DSLinkMenu/DSLinkMenu";
 import React from "react";
+import { INITIAL_STATE } from "common/Reducers.jsm";
 import { SafeAnchor } from "content-src/components/DiscoveryStreamComponents/SafeAnchor/SafeAnchor";
 import { shallow, mount } from "enzyme";
 import { FluentOrText } from "content-src/components/FluentOrText/FluentOrText";
@@ -24,6 +24,7 @@ const DEFAULT_PROPS = {
   App: {
     isForStartupCache: false,
   },
+  DiscoveryStream: INITIAL_STATE.DiscoveryStream,
 };
 
 describe("<DSCard>", () => {
@@ -112,9 +113,17 @@ describe("<DSCard>", () => {
     assert.equal(contextFooter.find(".story-sponsored-label").text(), context);
   });
 
-  it("should render Sponsored Context for a spoc element", () => {
+  it("should render time to read", () => {
+    const discoveryStream = {
+      ...INITIAL_STATE.DiscoveryStream,
+      readTime: true,
+    };
     wrapper = mount(
-      <DSCard displayReadTime={true} time_to_read={4} {...DEFAULT_PROPS} />
+      <DSCard
+        time_to_read={4}
+        {...DEFAULT_PROPS}
+        DiscoveryStream={discoveryStream}
+      />
     );
     wrapper.setState({ isSeen: true });
     const defaultMeta = wrapper.find(DefaultMeta);
@@ -145,7 +154,7 @@ describe("<DSCard>", () => {
       assert.calledTwice(dispatch);
       assert.calledWith(
         dispatch,
-        ac.UserEvent({
+        ac.DiscoveryStreamUserEvent({
           event: "CLICK",
           source: "FOO",
           action_position: 1,
@@ -157,7 +166,7 @@ describe("<DSCard>", () => {
         ac.ImpressionStats({
           click: 0,
           source: "FOO",
-          tiles: [{ id: "fooidx", pos: 1 }],
+          tiles: [{ id: "fooidx", pos: 1, type: "organic" }],
           window_inner_width: 1000,
           window_inner_height: 900,
         })
@@ -172,7 +181,7 @@ describe("<DSCard>", () => {
       assert.calledTwice(dispatch);
       assert.calledWith(
         dispatch,
-        ac.UserEvent({
+        ac.DiscoveryStreamUserEvent({
           event: "CLICK",
           source: "FOO",
           action_position: 1,
@@ -184,7 +193,7 @@ describe("<DSCard>", () => {
         ac.ImpressionStats({
           click: 0,
           source: "FOO",
-          tiles: [{ id: "fooidx", pos: 1 }],
+          tiles: [{ id: "fooidx", pos: 1, type: "spoc" }],
           window_inner_width: 1000,
           window_inner_height: 900,
         })
@@ -206,7 +215,7 @@ describe("<DSCard>", () => {
       assert.calledTwice(dispatch);
       assert.calledWith(
         dispatch,
-        ac.UserEvent({
+        ac.DiscoveryStreamUserEvent({
           event: "CLICK",
           source: "FOO",
           action_position: 1,
@@ -218,7 +227,9 @@ describe("<DSCard>", () => {
         ac.ImpressionStats({
           click: 0,
           source: "FOO",
-          tiles: [{ id: "fooidx", pos: 1, shim: "click shim" }],
+          tiles: [
+            { id: "fooidx", pos: 1, shim: "click shim", type: "organic" },
+          ],
           window_inner_width: 1000,
           window_inner_height: 900,
         })
@@ -235,69 +246,6 @@ describe("<DSCard>", () => {
     it("should render Default Meta", () => {
       const default_meta = wrapper.find(DefaultMeta);
       assert.ok(default_meta.exists());
-    });
-
-    it("should not render cta-link for item with no cta", () => {
-      const meta = wrapper.find(DefaultMeta);
-      assert.notOk(meta.find(".cta-link").exists());
-    });
-
-    it("should not render cta-link by default when item has cta and cta_variant not link", () => {
-      wrapper.setProps({ cta: "test" });
-      const meta = wrapper.find(DefaultMeta);
-      assert.notOk(meta.find(".cta-link").exists());
-    });
-
-    it("should render cta-link by default when item has cta and cta_variant as link", () => {
-      wrapper.setProps({ cta: "test", cta_variant: "link" });
-      const meta = wrapper.find(DefaultMeta);
-      assert.equal(meta.find(".cta-link").text(), "test");
-    });
-
-    it("should not render cta-button for non spoc content", () => {
-      wrapper.setProps({ cta: "test", cta_variant: "button" });
-      const meta = wrapper.find(CTAButtonMeta);
-      assert.lengthOf(meta.find(".cta-button"), 0);
-    });
-
-    it("should render cta-button when item has cta and cta_variant is button and is spoc", () => {
-      wrapper.setProps({
-        cta: "test",
-        cta_variant: "button",
-        context: "Sponsored by Foo",
-      });
-      const meta = wrapper.find(CTAButtonMeta);
-      assert.equal(meta.find(".cta-button").text(), "test");
-    });
-
-    it("should not render Sponsored by label in footer for spoc item with cta_variant button", () => {
-      wrapper.setProps({
-        cta: "test",
-        context: "Sponsored by test",
-        cta_variant: "button",
-      });
-
-      assert.ok(wrapper.find(CTAButtonMeta).exists());
-      assert.notOk(wrapper.find(DSContextFooter).exists());
-    });
-
-    it("should render sponsor text as fluent element on top for spoc item and cta button variant", () => {
-      wrapper.setProps({
-        sponsor: "Test",
-        context: "Sponsored by test",
-        cta_variant: "button",
-      });
-
-      assert.ok(wrapper.find(CTAButtonMeta).exists());
-      const meta = wrapper.find(CTAButtonMeta);
-      assert.equal(
-        meta
-          .find(".source")
-          .children()
-          .at(0)
-          .type(),
-        FluentOrText
-      );
     });
   });
 
@@ -365,6 +313,7 @@ describe("<DSCard>", () => {
         App: {
           isForStartupCache: true,
         },
+        DiscoveryStream: INITIAL_STATE.DiscoveryStream,
       };
       wrapper = mount(<DSCard {...props} />);
     });
@@ -389,10 +338,11 @@ describe("<DSCard>", () => {
       );
       assert.calledWith(
         dispatch,
-        ac.UserEvent({
+        ac.DiscoveryStreamUserEvent({
           event: "SAVE_TO_POCKET",
           source: "CARDGRID_HOVER",
           action_position: 1,
+          value: { card_type: "organic" },
         })
       );
       assert.calledWith(

@@ -184,8 +184,10 @@ static bool LineHasVisibleInlineContent(nsLineBox* aLine) {
 static nsRect GetFrameTextArea(nsIFrame* aFrame,
                                nsDisplayListBuilder* aBuilder) {
   nsRect textArea;
-  if (aFrame->IsTextFrame()) {
-    textArea = aFrame->InkOverflowRect();
+  if (const nsTextFrame* textFrame = do_QueryFrame(aFrame)) {
+    if (!textFrame->IsEntirelyWhitespace()) {
+      textArea = aFrame->InkOverflowRect();
+    }
   } else if (aFrame->IsFrameOfType(nsIFrame::eLineParticipant)) {
     for (nsIFrame* kid : aFrame->PrincipalChildList()) {
       nsRect kidTextArea = GetFrameTextArea(kid, aBuilder);
@@ -788,8 +790,8 @@ nscoord nsBlockFrame::GetMinISize(gfxContext* aRenderingContext) {
     return mCachedMinISize;
   }
 
-  if (StyleDisplay()->GetContainSizeAxes().mIContained) {
-    mCachedMinISize = 0;
+  if (Maybe<nscoord> containISize = ContainIntrinsicISize()) {
+    mCachedMinISize = *containISize;
     return mCachedMinISize;
   }
 
@@ -878,8 +880,8 @@ nscoord nsBlockFrame::GetPrefISize(gfxContext* aRenderingContext) {
     return mCachedPrefISize;
   }
 
-  if (StyleDisplay()->GetContainSizeAxes().mIContained) {
-    mCachedPrefISize = 0;
+  if (Maybe<nscoord> containISize = ContainIntrinsicISize()) {
+    mCachedPrefISize = *containISize;
     return mCachedPrefISize;
   }
 
@@ -1137,13 +1139,70 @@ static LogicalSize CalculateContainingBlockSizeForAbsolutes(
  * This is used to determine whether to recurse into aFrame when applying
  * -webkit-line-clamp.
  */
-static nsBlockFrame* GetAsLineClampDescendant(nsIFrame* aFrame) {
-  if (nsBlockFrame* block = do_QueryFrame(aFrame)) {
+static const nsBlockFrame* GetAsLineClampDescendant(const nsIFrame* aFrame) {
+  if (const nsBlockFrame* block = do_QueryFrame(aFrame)) {
     if (!block->HasAllStateBits(NS_BLOCK_FORMATTING_CONTEXT_STATE_BITS)) {
       return block;
     }
   }
   return nullptr;
+}
+
+static nsBlockFrame* GetAsLineClampDescendant(nsIFrame* aFrame) {
+  return const_cast<nsBlockFrame*>(
+      GetAsLineClampDescendant(const_cast<const nsIFrame*>(aFrame)));
+}
+
+static bool IsLineClampRoot(const nsBlockFrame* aFrame) {
+  if (!aFrame->StyleDisplay()->mWebkitLineClamp) {
+    return false;
+  }
+
+  if (!aFrame->HasAllStateBits(NS_BLOCK_FORMATTING_CONTEXT_STATE_BITS)) {
+    return false;
+  }
+
+  if (StaticPrefs::layout_css_webkit_line_clamp_block_enabled()) {
+    return true;
+  }
+
+  // For now, -webkit-box is the only thing allowed to be a line-clamp root.
+  // Ideally we'd just make this work everywhere, but for now we're carrying
+  // this forward as a limitation on the legacy -webkit-line-clamp feature,
+  // since relaxing this limitation might create webcompat trouble.
+  auto origDisplay = [&] {
+    if (aFrame->Style()->GetPseudoType() == PseudoStyleType::scrolledContent) {
+      // If we're the anonymous block inside the scroll frame, we need to look
+      // at the original display of our parent frame.
+      MOZ_ASSERT(aFrame->GetParent());
+      const auto& parentDisp = *aFrame->GetParent()->StyleDisplay();
+      MOZ_ASSERT(parentDisp.mWebkitLineClamp ==
+                     aFrame->StyleDisplay()->mWebkitLineClamp,
+                 ":-moz-scrolled-content should inherit -webkit-line-clamp, "
+                 "via rule in UA stylesheet");
+      return parentDisp.mOriginalDisplay;
+    }
+    return aFrame->StyleDisplay()->mOriginalDisplay;
+  }();
+  return nsStyleDisplay::DisplayInside(origDisplay) ==
+         StyleDisplayInside::WebkitBox;
+}
+
+bool nsBlockFrame::IsInLineClampContext() const {
+  if (IsLineClampRoot(this)) {
+    return true;
+  }
+  const nsBlockFrame* cur = this;
+  while (GetAsLineClampDescendant(cur)) {
+    cur = do_QueryFrame(cur->GetParent());
+    if (!cur) {
+      return false;
+    }
+    if (IsLineClampRoot(cur)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1252,16 +1311,14 @@ static bool ClearLineClampEllipsis(nsBlockFrame* aFrame) {
 
 void nsBlockFrame::ClearLineClampEllipsis() { ::ClearLineClampEllipsis(this); }
 
-static bool IsLineClampItem(const ReflowInput& aReflowInput) {
-  return aReflowInput.mFlags.mApplyLineClamp ||
-         (aReflowInput.mParentReflowInput &&
-          aReflowInput.mParentReflowInput->mFrame->IsScrollFrame() &&
-          aReflowInput.mParentReflowInput->mFlags.mApplyLineClamp);
-}
-
 void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
                           const ReflowInput& aReflowInput,
                           nsReflowStatus& aStatus) {
+  if (GetInFlowParent() && GetInFlowParent()->IsContentHiddenForLayout()) {
+    FinishAndStoreOverflow(&aMetrics, aReflowInput.mStyleDisplay);
+    return;
+  }
+
   MarkInReflow();
   DO_GLOBAL_REFLOW_COUNT("nsBlockFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowInput, aMetrics, aStatus);
@@ -1318,7 +1375,7 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
     if (effectiveContentBoxBSize + blockDirExtras.BStartEnd(wm) <=
         aReflowInput.AvailableBSize()) {
       mutableReflowInput.emplace(aReflowInput);
-      mutableReflowInput->AvailableBSize() = NS_UNCONSTRAINEDSIZE;
+      mutableReflowInput->SetAvailableBSize(NS_UNCONSTRAINEDSIZE);
       reflowInput = mutableReflowInput.ptr();
     }
   }
@@ -1405,7 +1462,7 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
   // parent resizing.
   if (!HasAnyStateBits(NS_FRAME_IS_DIRTY) && reflowInput->mCBReflowInput &&
       reflowInput->mCBReflowInput->IsIResize() &&
-      reflowInput->mStyleText->mTextIndent.HasPercent() && !mLines.empty()) {
+      StyleText()->mTextIndent.HasPercent() && !mLines.empty()) {
     mLines.front()->MarkDirty();
   }
 
@@ -1516,7 +1573,7 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
   }
 
   // Clear any existing -webkit-line-clamp ellipsis.
-  if (IsLineClampItem(aReflowInput)) {
+  if (aReflowInput.mStyleDisplay->mWebkitLineClamp) {
     ClearLineClampEllipsis();
   }
 
@@ -1720,8 +1777,6 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
     printf("%s\n", buf);
   }
 #endif
-
-  NS_FRAME_SET_TRUNCATION(aStatus, (*reflowInput), aMetrics);
 }
 
 bool nsBlockFrame::CheckForCollapsedBEndMarginFromClearanceLine() {
@@ -1737,7 +1792,7 @@ bool nsBlockFrame::CheckForCollapsedBEndMarginFromClearanceLine() {
 }
 
 static nsLineBox* FindLineClampTarget(nsBlockFrame*& aFrame,
-                                      uint32_t aLineNumber) {
+                                      StyleLineClamp aLineNumber) {
   MOZ_ASSERT(aLineNumber > 0);
   MOZ_ASSERT(!aFrame->HasAnyStateBits(NS_BLOCK_HAS_LINE_CLAMP_ELLIPSIS),
              "Should have been removed earlier in nsBlockReflow::Reflow");
@@ -1792,43 +1847,22 @@ static nsLineBox* FindLineClampTarget(nsBlockFrame*& aFrame,
 }
 
 static nscoord ApplyLineClamp(const ReflowInput& aReflowInput,
-                              nsBlockFrame* aFrame, nscoord aContentBSize) {
-  // We only do the work of applying the -webkit-line-clamp value during the
-  // measuring bsize reflow.  Boxes affected by -webkit-line-clamp are always
-  // inflexible, so we will never need to select a different line to place the
-  // ellipsis on in the subsequent real reflow.
-  if (!IsLineClampItem(aReflowInput)) {
-    return aContentBSize;
+                              nsBlockFrame* aFrame,
+                              nscoord aContentBlockEndEdge) {
+  if (!IsLineClampRoot(aFrame)) {
+    return aContentBlockEndEdge;
   }
-
-  auto container =
-      static_cast<nsFlexContainerFrame*>(nsLayoutUtils::GetClosestFrameOfType(
-          aFrame, LayoutFrameType::FlexContainer));
-  MOZ_ASSERT(container,
-             "A flex item affected by -webkit-line-clamp must have an ancestor "
-             "flex container");
-
-  uint32_t lineClamp = container->GetLineClampValue();
-  if (lineClamp == 0) {
-    // -webkit-line-clamp is none or doesn't apply.
-    return aContentBSize;
-  }
-
-  MOZ_ASSERT(container->HasAnyStateBits(NS_STATE_FLEX_IS_EMULATING_LEGACY_BOX),
-             "Should only have an effective -webkit-line-clamp value if we "
-             "are in a legacy flex container");
-
+  auto lineClamp = aReflowInput.mStyleDisplay->mWebkitLineClamp;
   nsBlockFrame* frame = aFrame;
   nsLineBox* line = FindLineClampTarget(frame, lineClamp);
   if (!line) {
     // The number of lines did not exceed the -webkit-line-clamp value.
-    return aContentBSize;
+    return aContentBlockEndEdge;
   }
 
   // Mark the line as having an ellipsis so that TextOverflow will render it.
   line->SetHasLineClampEllipsis();
   frame->AddStateBits(NS_BLOCK_HAS_LINE_CLAMP_ELLIPSIS);
-  container->AddStateBits(NS_STATE_FLEX_HAS_LINE_CLAMP_ELLIPSIS);
 
   // Translate the b-end edge of the line up to aFrame's space.
   nscoord edge = line->BEnd();
@@ -1935,80 +1969,91 @@ void nsBlockFrame::ComputeFinalSize(const ReflowInput& aReflowInput,
     // calculated from aspect-ratio. i.e. Don't carry out block margin-end if it
     // is replaced by the block size from aspect-ratio and inline size.
     aMetrics.mCarriedOutBEndMargin.Zero();
-  } else if (!IsComboboxControlFrame() &&
-             aReflowInput.mStyleDisplay->GetContainSizeAxes().mBContained) {
-    // If we're size-containing in block axis and we don't have a specified
-    // block size, then our final size should actually be computed from only our
-    // border and padding, as though we were empty. Hence this case is a
-    // simplified version of the case below.
-    //
-    // NOTE: We exempt the nsComboboxControlFrame subclass from taking this
-    // special case, because comboboxes implicitly honors the size-containment
-    // behavior on its nsComboboxDisplayFrame child (which it shrinkwraps)
-    // rather than on the nsComboboxControlFrame. (Moreover, the DisplayFrame
-    // child doesn't even need any special content-size-ignoring behavior in
-    // its reflow method, because that method just resolves "auto" BSize values
-    // to one line-height rather than by measuring its contents' BSize.)
-    nscoord contentBSize = 0;
-    nscoord autoBSize =
-        aReflowInput.ApplyMinMaxBSize(contentBSize, aState.mConsumedBSize);
-    aMetrics.mCarriedOutBEndMargin.Zero();
-    autoBSize += borderPadding.BStartEnd(wm);
-    finalSize.BSize(wm) = autoBSize;
-  } else if (aState.mReflowStatus.IsInlineBreakBefore()) {
-    // Our parent is expected to push this frame to the next page/column so what
-    // size we set here doesn't really matter.
-    finalSize.BSize(wm) = aReflowInput.AvailableBSize();
-  } else if (aState.mReflowStatus.IsComplete()) {
-    nscoord contentBSize = blockEndEdgeOfChildren - borderPadding.BStart(wm);
-    nscoord lineClampedContentBSize =
-        ApplyLineClamp(aReflowInput, this, contentBSize);
-    nscoord autoBSize = aReflowInput.ApplyMinMaxBSize(lineClampedContentBSize,
-                                                      aState.mConsumedBSize);
-    if (autoBSize != contentBSize) {
-      // Our min-block-size, max-block-size, or -webkit-line-clamp value made
-      // our bsize change.  Don't carry out our kids' block-end margins.
-      aMetrics.mCarriedOutBEndMargin.Zero();
-    }
-    nscoord bSize = autoBSize + borderPadding.BStartEnd(wm);
-    if (MOZ_UNLIKELY(autoBSize > contentBSize &&
-                     bSize > aReflowInput.AvailableBSize() &&
-                     aReflowInput.AvailableBSize() != NS_UNCONSTRAINEDSIZE)) {
-      // Applying `min-size` made us overflow our available size.
-      // Clamp it and report that we're Incomplete, or BreakBefore if we have
-      // 'break-inside: avoid' that is applicable.
-      bSize = aReflowInput.AvailableBSize();
-      if (ShouldAvoidBreakInside(aReflowInput)) {
-        aState.mReflowStatus.SetInlineLineBreakBeforeAndReset();
-      } else {
-        aState.mReflowStatus.SetIncomplete();
-      }
-    }
-    finalSize.BSize(wm) = bSize;
   } else {
-    NS_ASSERTION(aReflowInput.AvailableBSize() != NS_UNCONSTRAINEDSIZE,
-                 "Shouldn't be incomplete if availableBSize is UNCONSTRAINED.");
-    nscoord bSize = std::max(aState.mBCoord, aReflowInput.AvailableBSize());
-    if (aReflowInput.AvailableBSize() == NS_UNCONSTRAINEDSIZE) {
-      // This should never happen, but it does. See bug 414255
-      bSize = aState.mBCoord;
-    }
-    const nscoord maxBSize = aReflowInput.ComputedMaxBSize();
-    if (maxBSize != NS_UNCONSTRAINEDSIZE &&
-        aState.mConsumedBSize + bSize - borderPadding.BStart(wm) > maxBSize) {
-      nscoord bEnd = std::max(0, maxBSize - aState.mConsumedBSize) +
-                     borderPadding.BStart(wm);
-      // Note that |borderPadding| has GetSkipSides applied, so we ask
-      // aReflowInput for the actual value we'd use on a last fragment here:
-      bEnd += aReflowInput.ComputedLogicalBorderPadding(wm).BEnd(wm);
-      if (bEnd <= aReflowInput.AvailableBSize()) {
-        // We actually fit after applying `max-size` so we should be
-        // Overflow-Incomplete instead.
-        bSize = bEnd;
-        aState.mReflowStatus.SetOverflowIncomplete();
+    Maybe<nscoord> containBSize = ContainIntrinsicBSize(
+        IsComboboxControlFrame() ? NS_UNCONSTRAINEDSIZE : 0);
+    if (containBSize && *containBSize != NS_UNCONSTRAINEDSIZE) {
+      // If we're size-containing in block axis and we don't have a specified
+      // block size, then our final size should actually be computed from only
+      // our border, padding and contain-intrinsic-block-size, ignoring the
+      // actual contents. Hence this case is a simplified version of the case
+      // below.
+      //
+      // NOTE: We exempt the nsComboboxControlFrame subclass from taking this
+      // special case when it has 'contain-intrinsic-block-size: none', because
+      // comboboxes implicitly honors the size-containment behavior on its
+      // nsComboboxDisplayFrame child (which it shrinkwraps) rather than on the
+      // nsComboboxControlFrame. (Moreover, the DisplayFrame child doesn't even
+      // need any special content-size-ignoring behavior in its reflow method,
+      // because that method just resolves "auto" BSize values to one
+      // line-height rather than by measuring its contents' BSize.)
+      nscoord contentBSize = *containBSize;
+      nscoord autoBSize =
+          aReflowInput.ApplyMinMaxBSize(contentBSize, aState.mConsumedBSize);
+      aMetrics.mCarriedOutBEndMargin.Zero();
+      autoBSize += borderPadding.BStartEnd(wm);
+      finalSize.BSize(wm) = autoBSize;
+    } else if (aState.mReflowStatus.IsInlineBreakBefore()) {
+      // Our parent is expected to push this frame to the next page/column so
+      // what size we set here doesn't really matter.
+      finalSize.BSize(wm) = aReflowInput.AvailableBSize();
+    } else if (aState.mReflowStatus.IsComplete()) {
+      const nscoord lineClampedContentBlockEndEdge =
+          ApplyLineClamp(aReflowInput, this, blockEndEdgeOfChildren);
+
+      const nscoord bpBStart = borderPadding.BStart(wm);
+      const nscoord contentBSize = blockEndEdgeOfChildren - bpBStart;
+      const nscoord lineClampedContentBSize =
+          lineClampedContentBlockEndEdge - bpBStart;
+
+      const nscoord autoBSize = aReflowInput.ApplyMinMaxBSize(
+          lineClampedContentBSize, aState.mConsumedBSize);
+      if (autoBSize != contentBSize) {
+        // Our min-block-size, max-block-size, or -webkit-line-clamp value made
+        // our bsize change.  Don't carry out our kids' block-end margins.
+        aMetrics.mCarriedOutBEndMargin.Zero();
       }
+      nscoord bSize = autoBSize + borderPadding.BStartEnd(wm);
+      if (MOZ_UNLIKELY(autoBSize > contentBSize &&
+                       bSize > aReflowInput.AvailableBSize() &&
+                       aReflowInput.AvailableBSize() != NS_UNCONSTRAINEDSIZE)) {
+        // Applying `min-size` made us overflow our available size.
+        // Clamp it and report that we're Incomplete, or BreakBefore if we have
+        // 'break-inside: avoid' that is applicable.
+        bSize = aReflowInput.AvailableBSize();
+        if (ShouldAvoidBreakInside(aReflowInput)) {
+          aState.mReflowStatus.SetInlineLineBreakBeforeAndReset();
+        } else {
+          aState.mReflowStatus.SetIncomplete();
+        }
+      }
+      finalSize.BSize(wm) = bSize;
+    } else {
+      NS_ASSERTION(
+          aReflowInput.AvailableBSize() != NS_UNCONSTRAINEDSIZE,
+          "Shouldn't be incomplete if availableBSize is UNCONSTRAINED.");
+      nscoord bSize = std::max(aState.mBCoord, aReflowInput.AvailableBSize());
+      if (aReflowInput.AvailableBSize() == NS_UNCONSTRAINEDSIZE) {
+        // This should never happen, but it does. See bug 414255
+        bSize = aState.mBCoord;
+      }
+      const nscoord maxBSize = aReflowInput.ComputedMaxBSize();
+      if (maxBSize != NS_UNCONSTRAINEDSIZE &&
+          aState.mConsumedBSize + bSize - borderPadding.BStart(wm) > maxBSize) {
+        nscoord bEnd = std::max(0, maxBSize - aState.mConsumedBSize) +
+                       borderPadding.BStart(wm);
+        // Note that |borderPadding| has GetSkipSides applied, so we ask
+        // aReflowInput for the actual value we'd use on a last fragment here:
+        bEnd += aReflowInput.ComputedLogicalBorderPadding(wm).BEnd(wm);
+        if (bEnd <= aReflowInput.AvailableBSize()) {
+          // We actually fit after applying `max-size` so we should be
+          // Overflow-Incomplete instead.
+          bSize = bEnd;
+          aState.mReflowStatus.SetOverflowIncomplete();
+        }
+      }
+      finalSize.BSize(wm) = bSize;
     }
-    finalSize.BSize(wm) = bSize;
   }
 
   if (IsTrueOverflowContainer()) {
@@ -2528,6 +2573,10 @@ static bool LinesAreEmpty(const nsLineList& aList) {
 }
 
 void nsBlockFrame::ReflowDirtyLines(BlockReflowState& aState) {
+  if (IsContentHiddenForLayout()) {
+    return;
+  }
+
   bool keepGoing = true;
   bool repositionViews = false;  // should we really need this?
   bool foundAnyClears = aState.mFloatBreakType != StyleClear::None;
@@ -2576,6 +2625,29 @@ void nsBlockFrame::ReflowDirtyLines(BlockReflowState& aState) {
   StyleClear inlineFloatBreakType = aState.mFloatBreakType;
 
   LineIterator line = LinesBegin(), line_end = LinesEnd();
+
+  // Determine if children of this frame could have breaks between them for
+  // page names.
+  //
+  // We need to check for paginated layout, the named-page pref, and if the
+  // available block-size is constrained.
+  //
+  // Note that we need to check for paginated layout as named-pages are only
+  // used during paginated reflow. We need to additionally check for
+  // unconstrained block-size to avoid introducing fragmentation breaks during
+  // "measuring" reflows within an overall paginated reflow, and to avoid
+  // fragmentation in monolithic containers like 'inline-block'.
+  //
+  // Because we can only break for named pages using Class A breakpoints, we
+  // also need to check that the block flow direction of the containing frame
+  // of these items (which is this block) is parallel to that of this page.
+  // See: https://www.w3.org/TR/css-break-3/#btw-blocks
+  const nsPresContext* const presCtx = aState.mPresContext;
+  const bool canBreakForPageNames =
+      aState.mReflowInput.AvailableBSize() != NS_UNCONSTRAINEDSIZE &&
+      presCtx->IsPaginated() && StaticPrefs::layout_css_named_pages_enabled() &&
+      presCtx->GetPresShell()->GetRootFrame()->GetWritingMode().IsVertical() ==
+          GetWritingMode().IsVertical();
 
   // Reflow the lines that are already ours
   for (; line != line_end; ++line, aState.AdvanceToNextLine()) {
@@ -2667,10 +2739,10 @@ void nsBlockFrame::ReflowDirtyLines(BlockReflowState& aState) {
     if (!line->IsDirty()) {
       const bool isPaginated =
           // Last column can be reflowed unconstrained during column balancing.
-          // Hence the additional GetPrevInFlow() and GetNextInFlow() as a
-          // fail-safe fallback.
+          // Hence the additional NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR bit check
+          // as a fail-safe fallback.
           aState.mReflowInput.AvailableBSize() != NS_UNCONSTRAINEDSIZE ||
-          GetPrevInFlow() || GetNextInFlow() ||
+          HasAnyStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR) ||
           // Table can also be reflowed unconstrained during printing.
           aState.mPresContext->IsPaginated();
       if (isPaginated) {
@@ -2724,10 +2796,41 @@ void nsBlockFrame::ReflowDirtyLines(BlockReflowState& aState) {
       const auto align = isLastLine ? StyleText()->TextAlignForLastLine()
                                     : StyleText()->mTextAlign;
       if (line->mWritingMode.IsVertical() || line->mWritingMode.IsBidiRTL() ||
-          !IsAlignedLeft(align,
-                         aState.mReflowInput.mStyleVisibility->mDirection,
+          !IsAlignedLeft(align, StyleVisibility()->mDirection,
                          StyleTextReset()->mUnicodeBidi, this)) {
         line->MarkDirty();
+      }
+    }
+
+    // Check for a page break caused by CSS named pages.
+    //
+    // We should break for named pages when two frames meet at a class A
+    // breakpoint, where the first frame has a different end page value to the
+    // second frame's start page value. canBreakForPageNames is true iff
+    // children of this frame can form class A breakpoints, and that we are not
+    // in a measurement reflow or in a monolithic container such as
+    // 'inline-block'.
+    //
+    // We specifically do not want to cause a page-break for named pages when
+    // we are at the top of a page. This would otherwise happen when the
+    // previous sibling is an nsPageBreakFrame, or all previous siblings on the
+    // current page are zero-height. The latter may not be per-spec, but is
+    // compatible with Chrome's implementation of named pages.
+    bool shouldBreakForPageName = false;
+    if (canBreakForPageNames && (!aState.mReflowInput.mFlags.mIsTopOfPage ||
+                                 !aState.IsAdjacentWithBStart())) {
+      const nsIFrame* const frame = line->mFirstChild;
+      if (const nsIFrame* prevFrame = frame->GetPrevSibling()) {
+        if (const nsIFrame::PageValues* const pageValues =
+                frame->GetProperty(nsIFrame::PageValuesProperty())) {
+          const nsIFrame::PageValues* const prevPageValues =
+              prevFrame->GetProperty(nsIFrame::PageValuesProperty());
+          if (prevPageValues &&
+              prevPageValues->mEndPageValue != pageValues->mStartPageValue) {
+            shouldBreakForPageName = true;
+            line->MarkDirty();
+          }
+        }
       }
     }
 
@@ -2778,9 +2881,18 @@ void nsBlockFrame::ReflowDirtyLines(BlockReflowState& aState) {
                    "Don't reflow blocks while willReflowAgain is true, reflow "
                    "of block abs-pos children depends on this");
 
-      // Reflow the dirty line. If it's an incremental reflow, then force
-      // it to invalidate the dirty area if necessary
-      ReflowLine(aState, line, &keepGoing);
+      if (shouldBreakForPageName) {
+        // Immediately fragment for page-name. It is possible we could break
+        // out of the loop right here, but this should make it more similar to
+        // what happens when reflow causes fragmentation.
+        keepGoing = false;
+        PushLines(aState, line.prev());
+        aState.mReflowStatus.SetIncomplete();
+      } else {
+        // Reflow the dirty line. If it's an incremental reflow, then force
+        // it to invalidate the dirty area if necessary
+        ReflowLine(aState, line, &keepGoing);
+      }
 
       if (aState.mReflowInput.WillReflowAgainForClearance()) {
         line->MarkDirty();
@@ -3534,7 +3646,7 @@ bool nsBlockFrame::ShouldApplyBStartMargin(BlockReflowState& aState,
     return true;
   }
 
-  if (!aState.IsAdjacentWithTop()) {
+  if (!aState.IsAdjacentWithBStart()) {
     // If we aren't at the start block-coordinate then something of non-zero
     // height must have been placed. Therefore the childs block-start margin
     // applies.
@@ -3904,8 +4016,8 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
 
       frameReflowStatus.Reset();
       brc.ReflowBlock(availSpace, applyBStartMargin, aState.mPrevBEndMargin,
-                      clearance, aState.IsAdjacentWithTop(), aLine.get(),
-                      *childReflowInput, frameReflowStatus, aState);
+                      clearance, aLine.get(), *childReflowInput,
+                      frameReflowStatus, aState);
 
       if (frameReflowStatus.IsInlineBreakBefore()) {
         // No need to retry this loop if there is a break opportunity before the
@@ -4048,7 +4160,7 @@ void nsBlockFrame::ReflowBlockFrame(BlockReflowState& aState,
       // Don't force the block to fit if it's impacted by a float. If it is,
       // then pushing it to the next page would give it more room. Note that
       // isImpacted doesn't include impact from the block's own floats.
-      bool forceFit = aState.IsAdjacentWithTop() && clearance <= 0 &&
+      bool forceFit = aState.IsAdjacentWithBStart() && clearance <= 0 &&
                       !floatAvailableSpace.HasFloats();
       nsCollapsingMargin collapsedBEndMargin;
       OverflowAreas overflowAreas;
@@ -6613,102 +6725,41 @@ const nsStyleText* nsBlockFrame::StyleTextForLineLayout() {
   return StyleText();
 }
 
-////////////////////////////////////////////////////////////////////////
-// Float support
-
-LogicalRect nsBlockFrame::AdjustFloatAvailableSpace(
-    BlockReflowState& aState, const LogicalRect& aFloatAvailableSpace) {
-  WritingMode wm = aState.mReflowInput.GetWritingMode();
-
-  nscoord availBSize = NS_UNCONSTRAINEDSIZE == aState.ContentBSize()
-                           ? NS_UNCONSTRAINEDSIZE
-                           : std::max(0, aState.ContentBEnd() - aState.mBCoord);
-
-  return LogicalRect(wm, aState.ContentIStart(), aState.ContentBStart(),
-                     aState.ContentISize(), availBSize);
-}
-
-nscoord nsBlockFrame::ComputeFloatISize(BlockReflowState& aState,
-                                        const LogicalRect& aFloatAvailableSpace,
-                                        nsIFrame* aFloat) {
-  MOZ_ASSERT(aFloat->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW),
-             "aFloat must be an out-of-flow frame");
-
-  // Reflow the float.
-  LogicalRect availSpace =
-      AdjustFloatAvailableSpace(aState, aFloatAvailableSpace);
-
-  WritingMode blockWM = aState.mReflowInput.GetWritingMode();
-  WritingMode floatWM = aFloat->GetWritingMode();
-  ReflowInput floatRS(aState.mPresContext, aState.mReflowInput, aFloat,
-                      availSpace.Size(blockWM).ConvertTo(floatWM, blockWM));
-
-  return floatRS.ComputedSizeWithMarginBorderPadding(blockWM).ISize(blockWM);
-}
-
-void nsBlockFrame::ReflowFloat(BlockReflowState& aState,
-                               const LogicalRect& aAdjustedAvailableSpace,
-                               nsIFrame* aFloat, LogicalMargin& aFloatMargin,
-                               LogicalMargin& aFloatOffsets,
-                               bool aFloatPushedDown,
+void nsBlockFrame::ReflowFloat(BlockReflowState& aState, ReflowInput& aFloatRI,
+                               nsIFrame* aFloat,
                                nsReflowStatus& aReflowStatus) {
+  MOZ_ASSERT(aReflowStatus.IsEmpty(),
+             "Caller should pass a fresh reflow status!");
   MOZ_ASSERT(aFloat->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW),
              "aFloat must be an out-of-flow frame");
 
-  // Reflow the float.
-  aReflowStatus.Reset();
-
   WritingMode wm = aState.mReflowInput.GetWritingMode();
-#ifdef NOISY_FLOAT
-  printf("Reflow Float %p in parent %p, availSpace(%d,%d,%d,%d)\n", aFloat,
-         this, aAdjustedAvailableSpace.IStart(wm),
-         aAdjustedAvailableSpace.BStart(wm), aAdjustedAvailableSpace.ISize(wm),
-         aAdjustedAvailableSpace.BSize(wm));
-#endif
-
-  ReflowInput floatRS(
-      aState.mPresContext, aState.mReflowInput, aFloat,
-      aAdjustedAvailableSpace.Size(wm).ConvertTo(aFloat->GetWritingMode(), wm));
-
-  // Normally the mIsTopOfPage state is copied from the parent reflow
-  // input.  However, when reflowing a float, if we've placed other
-  // floats that force this float *down* or *narrower*, we should unset
-  // the mIsTopOfPage state.
-  // FIXME: This is somewhat redundant with the |isAdjacentWithTop|
-  // variable below, which has the exact same effect.  Perhaps it should
-  // be merged into that, except that the test for narrowing here is not
-  // about adjacency with the top, so it seems misleading.
-  if (floatRS.mFlags.mIsTopOfPage &&
-      (aFloatPushedDown ||
-       aAdjustedAvailableSpace.ISize(wm) != aState.ContentISize())) {
-    floatRS.mFlags.mIsTopOfPage = false;
-  }
 
   // Setup a block reflow context to reflow the float.
   nsBlockReflowContext brc(aState.mPresContext, aState.mReflowInput);
-
-  // Reflow the float
-  bool isAdjacentWithTop = aState.IsAdjacentWithTop();
 
   nsIFrame* clearanceFrame = nullptr;
   do {
     nsCollapsingMargin margin;
     bool mayNeedRetry = false;
-    floatRS.mDiscoveredClearance = nullptr;
+    aFloatRI.mDiscoveredClearance = nullptr;
     // Only first in flow gets a block-start margin.
     if (!aFloat->GetPrevInFlow()) {
-      brc.ComputeCollapsedBStartMargin(floatRS, &margin, clearanceFrame,
+      brc.ComputeCollapsedBStartMargin(aFloatRI, &margin, clearanceFrame,
                                        &mayNeedRetry);
 
       if (mayNeedRetry && !clearanceFrame) {
-        floatRS.mDiscoveredClearance = &clearanceFrame;
+        aFloatRI.mDiscoveredClearance = &clearanceFrame;
         // We don't need to push the float manager state because the the block
         // has its own float manager that will be destroyed and recreated
       }
     }
 
-    brc.ReflowBlock(aAdjustedAvailableSpace, true, margin, 0, isAdjacentWithTop,
-                    nullptr, floatRS, aReflowStatus, aState);
+    // When reflowing a float, aSpace argument doesn't matter because we pass
+    // nullptr to aLine and we don't call nsBlockReflowContext::PlaceBlock()
+    // later.
+    brc.ReflowBlock(LogicalRect(wm), true, margin, 0, nullptr, aFloatRI,
+                    aReflowStatus, aState);
   } while (clearanceFrame);
 
   if (aFloat->IsLetterFrame()) {
@@ -6720,24 +6771,14 @@ void nsBlockFrame::ReflowFloat(BlockReflowState& aState,
     }
   }
 
-  if (!aReflowStatus.IsFullyComplete() && ShouldAvoidBreakInside(floatRS)) {
-    aReflowStatus.SetInlineLineBreakBeforeAndReset();
-  } else if (aReflowStatus.IsIncomplete() &&
-             (NS_UNCONSTRAINEDSIZE == aAdjustedAvailableSpace.BSize(wm))) {
-    // An incomplete reflow status means we should split the float
-    // if the height is constrained (bug 145305).
-    aReflowStatus.Reset();
-  }
+  NS_ASSERTION(aReflowStatus.IsFullyComplete() ||
+                   aFloatRI.AvailableBSize() != NS_UNCONSTRAINEDSIZE,
+               "The status can only be incomplete or overflow-incomplete if "
+               "the available block-size is constrained!");
 
   if (aReflowStatus.NextInFlowNeedsReflow()) {
     aState.mReflowStatus.SetNextInFlowNeedsReflow();
   }
-
-  // Capture the margin and offsets information for the caller
-  aFloatMargin =
-      // float margins don't collapse
-      floatRS.ComputedLogicalMargin(wm);
-  aFloatOffsets = floatRS.ComputedLogicalOffsets(wm);
 
   const ReflowOutput& metrics = brc.GetMetrics();
 
@@ -6754,14 +6795,7 @@ void nsBlockFrame::ReflowFloat(BlockReflowState& aState,
         aState.mPresContext, aFloat, aFloat->GetView(), metrics.InkOverflow(),
         ReflowChildFlags::NoMoveView);
   }
-  // Pass floatRS so the frame hierarchy can be used (redoFloatRS has the same
-  // hierarchy)
-  aFloat->DidReflow(aState.mPresContext, &floatRS);
-
-#ifdef NOISY_FLOAT
-  printf("end ReflowFloat %p, sized to %d,%d\n", aFloat, metrics.Width(),
-         metrics.Height());
-#endif
+  aFloat->DidReflow(aState.mPresContext, &aFloatRI);
 }
 
 StyleClear nsBlockFrame::FindTrailingClear() {
@@ -6830,7 +6864,8 @@ void nsBlockFrame::ReflowPushedFloats(BlockReflowState& aState,
     // the float doesn't get placed, we don't consider its overflow areas.
     // (Not-getting-placed means it didn't fit and we pushed it instead of
     // placing it, and its position could be stale.)
-    if (aState.FlowAndPlaceFloat(f)) {
+    if (aState.FlowAndPlaceFloat(f) ==
+        BlockReflowState::PlaceFloatResult::Placed) {
       ConsiderChildOverflow(aOverflowAreas, f);
     }
 

@@ -21,6 +21,7 @@ include protocol PCacheStorage;
 include protocol PCacheStreamControl;
 include protocol PClientManager;
 include protocol PEndpointForReport;
+include protocol PFileSystemManager;
 include protocol PFileSystemRequest;
 include protocol PGamepadEventChannel;
 include protocol PGamepadTestChannel;
@@ -40,6 +41,7 @@ include protocol PLockManager;
 include protocol PMIDIManager;
 include protocol PMIDIPort;
 include protocol PQuota;
+include protocol PSelectTLSClientAuthCert;
 include protocol PServiceWorker;
 include protocol PServiceWorkerContainer;
 include protocol PServiceWorkerManager;
@@ -73,6 +75,8 @@ using mozilla::dom::cache::Namespace
   from "mozilla/dom/cache/Types.h";
 
 using class mozilla::dom::SSCacheCopy from "mozilla/dom/PBackgroundSessionStorageCache.h";
+
+using mozilla::RemoteDecodeIn from "mozilla/RemoteDecoderManagerChild.h";
 
 namespace mozilla {
 namespace ipc {
@@ -118,6 +122,7 @@ sync protocol PBackground
   manages PMIDIManager;
   manages PMIDIPort;
   manages PQuota;
+  manages PSelectTLSClientAuthCert;
   manages PServiceWorker;
   manages PServiceWorkerContainer;
   manages PServiceWorkerManager;
@@ -183,6 +188,14 @@ parent:
   async PBackgroundSessionStorageService();
 
   async PBackgroundStorage(nsString profilePath, uint32_t privateBrowsingId);
+
+  /**
+   * Finish the setup of a new PFileSystemManager top level protocol.
+   */
+  async CreateFileSystemManagerParent(
+      PrincipalInfo principalInfo,
+      Endpoint<PFileSystemManagerParent> aParentEndpoint)
+      returns(nsresult rv);
 
   async PVsync();
 
@@ -265,6 +278,14 @@ parent:
 
   async PMediaTransport();
 
+  async PSelectTLSClientAuthCert(nsCString aHostName,
+                                 OriginAttributes aOriginAttributes,
+                                 int32_t aPort,
+                                 uint32_t aProviderFlags,
+                                 uint32_t aProviderTlsFlags,
+                                 ByteArray aServerCertBytes,
+                                 ByteArray[] aCANames);
+
   async PVerifySSLServerCert(ByteArray[] aPeerCertChain,
                              nsCString aHostName,
                              int32_t aPort,
@@ -278,7 +299,7 @@ parent:
   async EnsureRDDProcessAndCreateBridge()
       returns (nsresult rv, Endpoint<PRemoteDecoderManagerChild> aEndpoint);
 
-  async EnsureUtilityProcessAndCreateBridge()
+  async EnsureUtilityProcessAndCreateBridge(RemoteDecodeIn aLocation)
       returns (nsresult rv, Endpoint<PRemoteDecoderManagerChild> aEndpoint);
 
   async PWebSocketConnection(uint32_t aListenerId);

@@ -432,7 +432,7 @@ void nsFloatManager::PopState(SavedState* aState) {
   mFloats.TruncateLength(aState->mFloatInfoCount);
 }
 
-nscoord nsFloatManager::GetLowestFloatTop() const {
+nscoord nsFloatManager::LowestFloatBStart() const {
   if (mPushedLeftFloatPastBreak || mPushedRightFloatPastBreak) {
     return nscoord_MAX;
   }
@@ -2522,14 +2522,14 @@ nsFloatManager::ShapeInfo::CreateInset(const StyleBasicShape& aBasicShape,
   // https://drafts.csswg.org/css-shapes-1/#funcdef-inset
   nsRect physicalShapeBoxRect =
       aShapeBoxRect.GetPhysicalRect(aWM, aContainerSize);
-  nsRect insetRect =
+  const nsRect insetRect =
       ShapeUtils::ComputeInsetRect(aBasicShape, physicalShapeBoxRect);
 
   nsRect logicalInsetRect = ConvertToFloatLogical(
       LogicalRect(aWM, insetRect, aContainerSize), aWM, aContainerSize);
   nscoord physicalRadii[8];
   bool hasRadii = ShapeUtils::ComputeInsetRadii(
-      aBasicShape, physicalShapeBoxRect, physicalRadii);
+      aBasicShape, physicalShapeBoxRect, insetRect, physicalRadii);
 
   // With a zero shape-margin, we will be able to use the fast constructor.
   if (aShapeMargin == 0) {

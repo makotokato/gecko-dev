@@ -8,17 +8,19 @@ from . import assert_base_entry, create_log
 @pytest.mark.asyncio
 @pytest.mark.parametrize("log_type", ["console_api_log", "javascript_error"])
 async def test_console_log_cached_messages(
-    bidi_session, current_session, wait_for_event, inline, log_type
+    bidi_session, wait_for_event, log_type, top_context
 ):
     # Unsubscribe in case previous tests subscribed to log.entryAdded
     await bidi_session.session.unsubscribe(events=["log.entryAdded"])
 
     # Refresh to make sure no events are cached for the current window global
     # from previous tests.
-    current_session.refresh()
+    await bidi_session.browsing_context.navigate(
+        context=top_context["context"], url=top_context["url"], wait="complete"
+    )
 
     # Log a message before subscribing
-    expected_text = create_log(current_session, inline, log_type, "cached_message")
+    expected_text = await create_log(bidi_session, top_context, log_type, "cached_message")
 
     # Track all received log.entryAdded events in the events array
     events = []
@@ -35,7 +37,7 @@ async def test_console_log_cached_messages(
     assert len(events) == 1
 
     # Check the log.entryAdded event received has the expected properties.
-    assert_base_entry(events[0], text=expected_text)
+    assert_base_entry(events[0], text=expected_text, context=top_context["context"])
 
     # Unsubscribe and re-subscribe
     await bidi_session.session.unsubscribe(events=["log.entryAdded"])
@@ -48,16 +50,16 @@ async def test_console_log_cached_messages(
     assert len(events) == 1
 
     on_entry_added = wait_for_event("log.entryAdded")
-    expected_text = create_log(current_session, inline, log_type, "live_message")
+    expected_text = await create_log(bidi_session, top_context, log_type, "live_message")
     await on_entry_added
 
     # Check that we only received the live message.
     assert len(events) == 2
-    assert_base_entry(events[1], text=expected_text)
+    assert_base_entry(events[1], text=expected_text, context=top_context["context"])
 
     # Unsubscribe, log a message and re-subscribe
     await bidi_session.session.unsubscribe(events=["log.entryAdded"])
-    expected_text = create_log(current_session, inline, log_type, "cached_message_2")
+    expected_text = await create_log(bidi_session, top_context, log_type, "cached_message_2")
 
     on_entry_added = wait_for_event("log.entryAdded")
     await bidi_session.session.subscribe(events=["log.entryAdded"])
@@ -65,7 +67,7 @@ async def test_console_log_cached_messages(
 
     # Check that only the newly cached event was emitted
     assert len(events) == 3
-    assert_base_entry(events[2], text=expected_text)
+    assert_base_entry(events[2], text=expected_text, context=top_context["context"])
 
     remove_listener()
 
@@ -73,14 +75,16 @@ async def test_console_log_cached_messages(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("log_type", ["console_api_log", "javascript_error"])
 async def test_console_log_cached_message_after_refresh(
-    bidi_session, current_session, wait_for_event, inline, log_type
+    bidi_session, wait_for_event, top_context, log_type
 ):
     # Unsubscribe in case previous tests subscribed to log.entryAdded
     await bidi_session.session.unsubscribe(events=["log.entryAdded"])
 
     # Refresh to make sure no events are cached for the current window global
     # from previous tests.
-    current_session.refresh()
+    await bidi_session.browsing_context.navigate(
+        context=top_context["context"], url=top_context["url"], wait="complete"
+    )
 
     # Track all received log.entryAdded events in the events array
     events = []
@@ -91,9 +95,11 @@ async def test_console_log_cached_message_after_refresh(
     remove_listener = bidi_session.add_event_listener("log.entryAdded", on_event)
 
     # Log a message, refresh, log another message and subscribe
-    create_log(current_session, inline, log_type, "missed_message")
-    current_session.refresh()
-    expected_text = create_log(current_session, inline, log_type, "cached_message")
+    await create_log(bidi_session, top_context, log_type, "missed_message")
+    await bidi_session.browsing_context.navigate(
+        context=top_context["context"], url=top_context["url"], wait="complete"
+    )
+    expected_text = await create_log(bidi_session, top_context, log_type, "cached_message")
 
     on_entry_added = wait_for_event("log.entryAdded")
     await bidi_session.session.subscribe(events=["log.entryAdded"])

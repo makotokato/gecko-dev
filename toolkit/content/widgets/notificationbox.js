@@ -7,10 +7,6 @@
 // This is loaded into chrome windows with the subscript loader. If you need to
 // define globals, wrap in a block to prevent leaking onto `window`.
 {
-  const { Services } = ChromeUtils.import(
-    "resource://gre/modules/Services.jsm"
-  );
-
   MozElements.NotificationBox = class NotificationBox {
     /**
      * Creates a new class to handle a notification box, but does not add any
@@ -418,13 +414,9 @@
       </hbox>
       <toolbarbutton ondblclick="event.stopPropagation();"
                      class="messageCloseButton close-icon tabbable"
-                     tooltiptext="&closeNotification.tooltip;"
+                     data-l10n-id="close-notification-message"
                      oncommand="this.parentNode.dismiss();"/>
       `;
-    }
-
-    static get entities() {
-      return ["chrome://global/locale/notification.dtd"];
     }
 
     constructor() {
@@ -437,6 +429,7 @@
     }
 
     connectedCallback() {
+      MozXULElement.insertFTLIfNeeded("toolkit/global/notification.ftl");
       this.appendChild(this.constructor.fragment);
 
       for (let [propertyName, selector] of [

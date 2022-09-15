@@ -4,6 +4,7 @@
 
 include "gfxipc/ShadowLayerUtils.h";
 include "mozilla/GfxMessageUtils.h";
+include "mozilla/layers/LayersMessageUtils.h";
 
 using gfxPoint from "gfxPoint.h";
 using nsIntRegion from "nsRegion.h";
@@ -18,9 +19,12 @@ using mozilla::gfx::ColorSpace2 from "mozilla/gfx/Types.h";
 using mozilla::gfx::SurfaceFormat from "mozilla/gfx/Types.h";
 using mozilla::gfx::IntRect from "mozilla/gfx/Rect.h";
 using mozilla::gfx::IntSize from "mozilla/gfx/Point.h";
+using mozilla::gfx::Matrix4x4 from "mozilla/gfx/Matrix.h";
 [MoveOnly] using mozilla::ipc::SharedMemoryBasic::Handle from "mozilla/ipc/SharedMemoryBasic.h";
 using gfxImageFormat from "gfxTypes.h";
 using mozilla::layers::MaybeVideoBridgeSource from "mozilla/layers/VideoBridgeUtils.h";
+using mozilla::layers::RemoteTextureId from "mozilla/layers/LayersTypes.h";
+using mozilla::layers::RemoteTextureOwnerId from "mozilla/layers/LayersTypes.h";
 
 namespace mozilla {
 namespace layers {
@@ -31,7 +35,7 @@ namespace layers {
   uint32_t arrayIndex;
   SurfaceFormat format;
   IntSize size;
-  YUVColorSpace yUVColorSpace;
+  ColorSpace2 colorSpace;
   ColorRange colorRange;
 };
 
@@ -77,7 +81,7 @@ namespace layers {
   IntSize size;
   SurfaceFormat format;
   bool continuous;
-  bool ignoreTransform;
+  Matrix4x4? transformOverride;
 };
 
 [Comparable] struct SurfaceDescriptorAndroidHardwareBuffer {
@@ -102,12 +106,18 @@ namespace layers {
   bool hasAlpha;
 };
 
+[Comparable] struct SurfaceDescriptorDcompSurface {
+  FileDescriptor handle;
+  IntSize size;
+  SurfaceFormat format;
+};
 
 [Comparable] union RemoteDecoderVideoSubDescriptor {
   SurfaceDescriptorD3D10;
   SurfaceDescriptorDXGIYCbCr;
   SurfaceDescriptorDMABuf;
   SurfaceDescriptorMacIOSurface;
+  SurfaceDescriptorDcompSurface;
   null_t;
 };
 
@@ -169,6 +179,11 @@ namespace layers {
   int64_t textureId;
 };
 
+[Comparable] struct SurfaceDescriptorRemoteTexture {
+  RemoteTextureId textureId;
+  RemoteTextureOwnerId ownerId;
+};
+
 [Comparable] union SurfaceDescriptor {
   SurfaceDescriptorBuffer;
   SurfaceDescriptorD3D10;
@@ -181,6 +196,8 @@ namespace layers {
   SurfaceDescriptorSharedGLTexture;
   SurfaceDescriptorGPUVideo;
   SurfaceDescriptorRecorded;
+  SurfaceDescriptorRemoteTexture;
+  SurfaceDescriptorDcompSurface;
   null_t;
 };
 

@@ -1,8 +1,6 @@
-/* eslint-env mozilla/frame-script */
+/* eslint-env mozilla/chrome-script */
 
 "use strict";
-
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 var observer = {
   observe(subject, topic, data) {

@@ -6,8 +6,8 @@
 
 // Wrap in a block to prevent leaking to window scope.
 {
-  XPCOMUtils.defineLazyModuleGetters(this, {
-    SearchOneOffs: "resource:///modules/SearchOneOffs.jsm",
+  ChromeUtils.defineESModuleGetters(this, {
+    SearchOneOffs: "resource:///modules/SearchOneOffs.sys.mjs",
   });
 
   /**
@@ -108,11 +108,11 @@
     static get markup() {
       return `
       <hbox class="search-panel-header search-panel-current-engine">
-        <image class="searchbar-engine-image"></image>
-        <label class="searchbar-engine-name" flex="1" crop="end" role="presentation"></label>
+        <image class="searchbar-engine-image"/>
+        <label class="searchbar-engine-name" flex="1" crop="end" role="presentation"/>
       </hbox>
       <menuseparator class="searchbar-separator"/>
-      <richlistbox class="autocomplete-richlistbox search-panel-tree" flex="1"></richlistbox>
+      <richlistbox class="autocomplete-richlistbox search-panel-tree"/>
       <menuseparator class="searchbar-separator"/>
       <hbox class="search-one-offs" is_searchbar="true"/>
     `;
@@ -202,7 +202,7 @@
         AppConstants.platform == "macosx" ? aEvent.metaKey : aEvent.ctrlKey;
       if (
         where == "tab" &&
-        aEvent instanceof MouseEvent &&
+        MouseEvent.isInstance(aEvent) &&
         (aEvent.button == 1 || modifier)
       ) {
         params.inBackground = true;

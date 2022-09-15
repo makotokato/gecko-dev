@@ -177,6 +177,13 @@ const PreflightBehavior = {
     "preflight-headers": "cors+pna",
   }),
 
+  // The preflight response should succeed and allow service-worker header.
+  // `uuid` should be a UUID that uniquely identifies the preflight request.
+  serviceWorkerSuccess: (uuid) => ({
+    "preflight-uuid": uuid,
+    "preflight-headers": "cors+pna+sw",
+  }),
+
   // The preflight response should succeed only if it is the first preflight.
   // `uuid` should be a UUID that uniquely identifies the preflight request.
   singlePreflight: (uuid) => ({
@@ -404,10 +411,10 @@ async function nestedWorkerScriptTest(t, { source, target, expected }) {
 async function sharedWorkerScriptTest(t, { source, target, expected }) {
   const sourceUrl = resolveUrl("resources/shared-worker-fetcher.html",
                                sourceResolveOptions(source));
-
   const targetUrl = preflightUrl(target);
   targetUrl.searchParams.append(
       "body", "onconnect = (e) => e.ports[0].postMessage({ loaded: true })")
+  targetUrl.searchParams.append("mime-type", "application/javascript")
 
   const iframe = await appendIframe(t, document, sourceUrl);
   const reply = futureMessage();

@@ -117,7 +117,7 @@ describe("Discovery Stream <TopicsWidget>", () => {
       );
       assert.calledWith(
         third,
-        ac.UserEvent({
+        ac.DiscoveryStreamUserEvent({
           event: "CLICK",
           source: "CARDGRID_WIDGET",
           action_position: 2,
@@ -171,7 +171,7 @@ describe("Discovery Stream <TopicsWidget>", () => {
       );
       assert.calledWith(
         third,
-        ac.UserEvent({
+        ac.DiscoveryStreamUserEvent({
           event: "CLICK",
           source: "CARDGRID_WIDGET",
           action_position: 2,
@@ -219,13 +219,13 @@ describe("Discovery Stream <TopicsWidget>", () => {
             },
             referrer: "https://getpocket.com/recommendations",
             url:
-              "https://getpocket.com/explore?utm_source=utmSource&utm_content=utmContent&utm_campaign=utmCampaign",
+              "https://getpocket.com/?utm_source=utmSource&utm_content=utmContent&utm_campaign=utmCampaign",
           },
         })
       );
       assert.calledWith(
         third,
-        ac.UserEvent({
+        ac.DiscoveryStreamUserEvent({
           event: "CLICK",
           source: "CARDGRID_WIDGET",
           action_position: 2,

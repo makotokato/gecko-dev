@@ -38,9 +38,10 @@ async function spyOnTelemetryButtonClicks(browser) {
   };
 }
 
-async function openAboutWelcome() {
+async function openAboutWelcome(templateMR = false) {
   await pushPrefs(
     // Speed up the tests by disabling transitions.
+    ["browser.aboutwelcome.templateMR", templateMR],
     ["browser.aboutwelcome.transitions", false],
     ["intl.multilingual.aboutWelcome.languageMismatchEnabled", true]
   );
@@ -740,4 +741,51 @@ add_task(async function test_aboutwelcome_languageSwitcher_cancelWaiting() {
 
   is(flushClickTelemetry().length, 0);
   sinon.assert.notCalled(mockable.setRequestedAppLocales);
+});
+
+/**
+ * Test MR About Welcome language mismatch screen
+ */
+add_task(async function test_aboutwelcome_languageSwitcher_MR() {
+  sandbox.restore();
+
+  const { resolveLangPacks, resolveInstaller } = mockAddonAndLocaleAPIs({
+    systemLocale: "es-ES",
+    appLocale: "en-US",
+  });
+
+  const { browser } = await openAboutWelcome(true);
+
+  info("Clicking the primary button to view language switching screen.");
+  await clickVisibleButton(browser, "button.primary");
+
+  resolveLangPacks(["es-AR"]);
+  await testScreenContent(
+    browser,
+    "Live language switching, asking for a language",
+    // Expected selectors:
+    [
+      `#mainContentHeader[data-l10n-id="mr2022-onboarding-live-language-text"]`,
+      `[data-l10n-id="mr2022-language-mismatch-subtitle"]`,
+      `.section-secondary [data-l10n-id="mr2022-onboarding-live-language-text"]`,
+      `[data-l10n-id="mr2022-onboarding-live-language-switch-to"]`,
+      `button.primary[value="primary_button"]`,
+      `button.secondary`,
+    ],
+    // Unexpected selectors:
+    [`[data-l10n-id="onboarding-live-language-header"]`]
+  );
+
+  await resolveInstaller();
+  await testScreenContent(
+    browser,
+    "Switched some to langpack (raw) strings after install",
+    // Expected selectors:
+    [`#mainContentHeader[data-l10n-id="mr2022-onboarding-live-language-text"]`],
+    // Unexpected selectors:
+    [
+      `.section-secondary [data-l10n-id="mr2022-onboarding-live-language-text"]`,
+      `[data-l10n-id="mr2022-onboarding-live-language-switch-to"]`,
+    ]
+  );
 });

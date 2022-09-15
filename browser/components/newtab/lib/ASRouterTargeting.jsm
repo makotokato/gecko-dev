@@ -6,9 +6,8 @@ const FXA_ENABLED_PREF = "identity.fxaccounts.enabled";
 const DISTRIBUTION_ID_PREF = "distribution.id";
 const DISTRIBUTION_ID_CHINA_REPACK = "MozillaOnline";
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
@@ -35,6 +34,8 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   HomePage: "resource:///modules/HomePage.jsm",
   AboutNewTab: "resource:///modules/AboutNewTab.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
+  BuiltInThemes: "resource:///modules/BuiltInThemes.jsm",
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
 });
 
 XPCOMUtils.defineLazyGetter(lazy, "fxAccounts", () => {
@@ -277,6 +278,18 @@ const QueryCache = {
       FRECENT_SITES_UPDATE_INTERVAL,
       ShellService
     ),
+    isDefaultBrowser: new CachedTargetingGetter(
+      "isDefaultBrowser",
+      null,
+      FRECENT_SITES_UPDATE_INTERVAL,
+      ShellService
+    ),
+    currentThemes: new CachedTargetingGetter(
+      "getAddonsByTypes",
+      ["theme"],
+      FRECENT_SITES_UPDATE_INTERVAL,
+      lazy.AddonManager // eslint-disable-line mozilla/valid-lazy
+    ),
   },
 };
 
@@ -449,6 +462,13 @@ const TargetingGetters = {
     return lazy.isXPIInstallEnabled;
   },
   get addonsInfo() {
+    let bts = Cc["@mozilla.org/backgroundtasks;1"]?.getService(
+      Ci.nsIBackgroundTasks
+    );
+    if (bts?.isBackgroundTaskMode) {
+      return { addons: {}, isFullData: true };
+    }
+
     return lazy.AddonManager.getActiveAddons(["extension", "service"]).then(
       ({ addons, fullData }) => {
         const info = {};
@@ -472,6 +492,13 @@ const TargetingGetters = {
     );
   },
   get searchEngines() {
+    const NONE = { installed: [], current: "" };
+    let bts = Cc["@mozilla.org/backgroundtasks;1"]?.getService(
+      Ci.nsIBackgroundTasks
+    );
+    if (bts?.isBackgroundTaskMode) {
+      return Promise.resolve(NONE);
+    }
     return new Promise(resolve => {
       // Note: calling init ensures this code is only executed after Search has been initialized
       Services.search
@@ -482,14 +509,11 @@ const TargetingGetters = {
             installed: engines.map(engine => engine.identifier),
           });
         })
-        .catch(() => resolve({ installed: [], current: "" }));
+        .catch(() => resolve(NONE));
     });
   },
   get isDefaultBrowser() {
-    try {
-      return ShellService.isDefaultBrowser();
-    } catch (e) {}
-    return null;
+    return QueryCache.getters.isDefaultBrowser.get().catch(() => null);
   },
   get devToolsOpenedCount() {
     return lazy.devtoolsSelfXSSCount;
@@ -611,6 +635,12 @@ const TargetingGetters = {
     return lazy.ClientEnvironment.userId;
   },
   get profileRestartCount() {
+    let bts = Cc["@mozilla.org/backgroundtasks;1"]?.getService(
+      Ci.nsIBackgroundTasks
+    );
+    if (bts?.isBackgroundTaskMode) {
+      return 0;
+    }
     // Counter starts at 1 when a profile is created, substract 1 so the value
     // returned matches expectations
     return (
@@ -649,6 +679,15 @@ const TargetingGetters = {
     );
   },
   get activeNotifications() {
+    let bts = Cc["@mozilla.org/backgroundtasks;1"]?.getService(
+      Ci.nsIBackgroundTasks
+    );
+    if (bts?.isBackgroundTaskMode) {
+      // This might need to hook into the alert service to enumerate relevant
+      // persistent native notifications.
+      return false;
+    }
+
     let window = lazy.BrowserWindowTracker.getTopWindow();
 
     // Technically this doesn't mean we have active notifications,
@@ -687,10 +726,109 @@ const TargetingGetters = {
   get doesAppNeedPrivatePin() {
     return QueryCache.getters.doesAppNeedPrivatePin.get();
   },
+
+  /**
+   * Is this invocation running in background task mode?
+   *
+   * @return {boolean} `true` if running in background task mode.
+   */
+  get isBackgroundTaskMode() {
+    let bts = Cc["@mozilla.org/backgroundtasks;1"]?.getService(
+      Ci.nsIBackgroundTasks
+    );
+    return !!bts?.isBackgroundTaskMode;
+  },
+
+  /**
+   * A non-empty task name if this invocation is running in background
+   * task mode, or `null` if this invocation is not running in
+   * background task mode.
+   *
+   * @return {string|null} background task name or `null`.
+   */
+  get backgroundTaskName() {
+    let bts = Cc["@mozilla.org/backgroundtasks;1"]?.getService(
+      Ci.nsIBackgroundTasks
+    );
+    return bts?.backgroundTaskName();
+  },
+
+  get userPrefersReducedMotion() {
+    let window = lazy.BrowserWindowTracker.getTopWindow();
+    return window?.matchMedia("(prefers-reduced-motion: reduce)")?.matches;
+  },
+  /**
+   * Is there an active Colorway collection?
+   * @return {boolean} `true` if an active collection exists.
+   */
+  get colorwaysActive() {
+    return !!lazy.BuiltInThemes.findActiveColorwayCollection();
+  },
+  /**
+   * Has the user enabled an active Colorway as their theme?
+   * @return {boolean} `true` if an active theme from the current
+   * collection is enabled.
+   */
+  get userEnabledActiveColorway() {
+    let bts = Cc["@mozilla.org/backgroundtasks;1"]?.getService(
+      Ci.nsIBackgroundTasks
+    );
+    if (bts?.isBackgroundTaskMode) {
+      return Promise.resolve(false);
+    }
+    return QueryCache.getters.currentThemes.get().then(themes => {
+      let themeId = themes.find(theme => theme.isActive)?.id;
+      return !!(
+        themeId && lazy.BuiltInThemes.isColorwayFromCurrentCollection(themeId)
+      );
+    });
+  },
+  /**
+   * Whether or not the user is in the Major Release 2022 holdback study.
+   */
+  get inMr2022Holdback() {
+    return (
+      lazy.NimbusFeatures.majorRelease2022.getVariable("onboarding") === false
+    );
+  },
 };
 
 const ASRouterTargeting = {
   Environment: TargetingGetters,
+
+  /**
+   * Snapshot the current targeting environment.
+   *
+   * Asynchronous getters are handled.  Getters that throw or reject
+   * are ignored.
+   *
+   * @param {object} target - the environment to snapshot.
+   * @return {object} snapshot of target with `environment` object and `version`
+   * integer.
+   */
+  async getEnvironmentSnapshot(target = ASRouterTargeting.Environment) {
+    // One promise for each named property.  Label promises with property name.
+    let promises = Object.keys(target).map(async name => [
+      name,
+      await target[name],
+    ]);
+
+    // Ignore properties that are rejected.
+    let results = await Promise.allSettled(promises);
+
+    let environment = {};
+    for (let result of results) {
+      if (result.status === "fulfilled") {
+        let [name, value] = result.value;
+        environment[name] = value;
+      }
+    }
+
+    // Should we need to migrate in the future.
+    const snapshot = { environment, version: 1 };
+
+    return snapshot;
+  },
 
   isTriggerMatch(trigger = {}, candidateMessageTrigger = {}) {
     if (trigger.id !== candidateMessageTrigger.id) {

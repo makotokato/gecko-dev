@@ -13,11 +13,11 @@
 # The last two are for use when there *is* a content title.
 # Variables:
 #  $content-title (String): the title of the web content.
-browser-main-window =
+browser-main-window-window-titles =
   .data-title-default = { -brand-full-name }
-  .data-title-private = { -brand-full-name } (Private Browsing)
+  .data-title-private = { -brand-full-name } Private Browsing
   .data-content-title-default = { $content-title } — { -brand-full-name }
-  .data-content-title-private = { $content-title } — { -brand-full-name } (Private Browsing)
+  .data-content-title-private = { $content-title } — { -brand-full-name } Private Browsing
 
 # These are the default window titles on macOS. The first two are for use when
 # there is no content title:
@@ -33,11 +33,11 @@ browser-main-window =
 #
 # Variables:
 #  $content-title (String): the title of the web content.
-browser-main-window-mac =
+browser-main-window-mac-window-titles =
   .data-title-default = { -brand-full-name }
-  .data-title-private = { -brand-full-name } — (Private Browsing)
+  .data-title-private = { -brand-full-name } — Private Browsing
   .data-content-title-default = { $content-title }
-  .data-content-title-private = { $content-title } — (Private Browsing)
+  .data-content-title-private = { $content-title } — Private Browsing
 
 # This gets set as the initial title, and is overridden as soon as we start
 # updating the titlebar based on loaded tabs or private browsing state.
@@ -45,7 +45,7 @@ browser-main-window-mac =
 # `browser-main-window` and `browser-main-window-mac`.
 browser-main-window-title = { -brand-full-name }
 
-private-browsing-shortcut-text = { -brand-short-name } Private Browsing
+private-browsing-shortcut-text-2 = { -brand-shortcut-name } Private Browsing
 
 ##
 
@@ -126,6 +126,7 @@ urlbar-tabtosearch-onboard = Select this shortcut to find what you need faster.
 urlbar-search-mode-bookmarks = Bookmarks
 urlbar-search-mode-tabs = Tabs
 urlbar-search-mode-history = History
+urlbar-search-mode-actions = Actions
 
 ##
 
@@ -166,10 +167,12 @@ urlbar-star-add-bookmark =
 
 ## Page Action Context Menu
 
-page-action-manage-extension =
+page-action-manage-extension2 =
     .label = Manage Extension…
-page-action-remove-extension =
+    .accesskey = E
+page-action-remove-extension2 =
     .label = Remove Extension
+    .accesskey = v
 
 ## Auto-hide Context Menu
 
@@ -232,6 +235,84 @@ search-one-offs-tabs =
     .tooltiptext = Tabs ({ $restrict })
 search-one-offs-history =
     .tooltiptext = History ({ $restrict })
+search-one-offs-actions =
+    .tooltiptext = Actions ({ $restrict })
+
+## QuickActions are shown in the urlbar as the user types a matching string
+## The -cmd- strings are comma separated list of keywords that will match
+## the action.
+
+# Opens the about:addons page in the home / recommendations section
+quickactions-addons = View Add-ons
+quickactions-cmd-addons2 = add-ons
+
+# Opens the bookmarks library window
+quickactions-bookmarks = View Bookmarks
+quickactions-cmd-bookmarks = bookmarks
+
+# Opens a SUMO article explaining how to clear history
+quickactions-clearhistory = Clear History
+quickactions-cmd-clearhistory = clear history
+
+# Opens about:downloads page
+quickactions-downloads = Open Downloads
+quickactions-cmd-downloads = downloads
+
+# Opens about:addons page in the extensions section
+quickactions-extensions = Manage extensions
+quickactions-cmd-extensions = extensions
+
+# Opens the devtools web inspector
+quickactions-inspector = Open Inspector
+quickactions-cmd-inspector = inspector, devtools
+
+# Opens about:logins
+quickactions-logins = View Logins
+quickactions-cmd-logins = logins, passwords
+
+# Opens about:addons page in the plugins section
+quickactions-plugins = Manage plugins
+quickactions-cmd-plugins = plugins
+
+# Opens the print dialog
+quickactions-print = Print
+quickactions-cmd-print = print
+
+# Opens a new private browsing window
+quickactions-private = Open Private Browsing Window
+quickactions-cmd-private = private browsing
+
+# Opens a SUMO article explaining how to refresh
+quickactions-refresh = Refresh { -brand-short-name }
+quickactions-cmd-refresh = refresh
+
+# Restarts the browser
+quickactions-restart = Restart { -brand-short-name }
+quickactions-cmd-restart = restart
+
+# Opens the screenshot tool
+quickactions-screenshot2 = Take a Screenshot
+quickactions-cmd-screenshot = screenshot
+
+# Opens about:preferences
+quickactions-settings = Open Settings
+quickactions-cmd-settings = settings, preferences, options
+
+# Opens about:addons page in the themes section
+quickactions-themes = Manage themes
+quickactions-cmd-themes = themes
+
+# Opens a SUMO article explaining how to update the browser
+quickactions-update = Update { -brand-short-name }
+quickactions-cmd-update = update
+
+# Opens the view-source UI with current pages source
+quickactions-viewsource = View Source
+quickactions-cmd-viewsource = view source, source
+
+# Tooltip text for the help button shown in the result.
+quickactions-learn-more =
+    .title = Learn more about Quick actions
 
 ## Bookmark Panel
 
@@ -461,6 +542,11 @@ urlbar-placeholder-search-mode-other-tabs =
   .placeholder = Enter search terms
   .aria-label = Search tabs
 
+# This placeholder is used when searching quick actions.
+urlbar-placeholder-search-mode-other-actions =
+  .placeholder = Enter search terms
+  .aria-label = Search actions
+
 # Variables
 #  $name (String): the name of the user's default search engine
 urlbar-placeholder-with-name =
@@ -539,6 +625,7 @@ urlbar-result-action-calculator-result = = { $result }
 urlbar-result-action-search-bookmarks = Search Bookmarks
 urlbar-result-action-search-history = Search History
 urlbar-result-action-search-tabs = Search Tabs
+urlbar-result-action-search-actions = Search Actions
 
 ## Labels shown above groups of urlbar results
 
@@ -553,6 +640,10 @@ urlbar-group-firefox-suggest =
 #  $engine (String): the name of the search engine providing the suggestions
 urlbar-group-search-suggestions =
   .label = { $engine } suggestions
+
+# A label shown above Quick Actions in the urlbar results.
+urlbar-group-quickactions =
+  .label = Quick Actions
 
 ## Full Screen and Pointer Lock UI
 
@@ -626,8 +717,8 @@ bookmarks-search =
   .label = Search bookmarks
 bookmarks-tools =
   .label = Bookmarking Tools
-bookmarks-bookmark-edit-panel =
-  .label = Edit this bookmark
+bookmarks-subview-edit-bookmark =
+  .label = Edit this bookmark…
 
 # The aria-label is a spoken label that should not include the word "toolbar" or
 # such, because screen readers already know that this container is a toolbar.
@@ -644,8 +735,8 @@ bookmarks-toolbar-placeholder-button =
   .label = Bookmarks toolbar items
 
 # "Bookmark" is a verb, as in "Add current tab to bookmarks".
-bookmarks-current-tab =
-  .label = Bookmark current tab
+bookmarks-subview-bookmark-tab =
+  .label = Bookmark current tab…
 
 ## Library Panel items
 
@@ -810,9 +901,6 @@ navbar-library =
 navbar-search =
     .title = Search
 
-navbar-accessibility-indicator =
-    .tooltiptext = Accessibility Features Enabled
-
 # Name for the tabs toolbar as spoken by screen readers. The word
 # "toolbar" is appended automatically and should not be included in
 # in the string
@@ -838,3 +926,12 @@ data-reporting-notification-message = { -brand-short-name } automatically sends 
 data-reporting-notification-button =
     .label = Choose What I Share
     .accesskey = C
+
+# Label for the indicator shown in the private browsing window titlebar.
+private-browsing-indicator-label = Private browsing
+
+## Unified extensions (toolbar) button
+
+unified-extensions-button =
+    .label = Extensions
+    .tooltiptext = Extensions

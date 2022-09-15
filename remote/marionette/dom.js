@@ -9,8 +9,8 @@ const EXPORTED_SYMBOLS = [
   "WebElementEventTarget",
 ];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -98,7 +98,7 @@ class WebElementEventTarget {
     for (let i = stack.length - 1; i >= 0; --i) {
       if (stack[i] === listener) {
         stack.splice(i, 1);
-        if (stack.length == 0) {
+        if (!stack.length) {
           this.mm.sendAsyncMessage("Marionette:DOM:RemoveEventListener", {
             type,
           });

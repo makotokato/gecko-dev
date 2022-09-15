@@ -4,7 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const {
   ACTIVITY_TYPE,
   EVENTS,
@@ -14,6 +13,8 @@ const FirefoxDataProvider = require("devtools/client/netmonitor/src/connector/fi
 const {
   getDisplayedTimingMarker,
 } = require("devtools/client/netmonitor/src/selectors/index");
+
+const { TYPES } = require("devtools/shared/commands/resource/resource-command");
 
 // Network throttling
 loader.lazyRequireGetter(
@@ -51,6 +52,13 @@ class Connector {
 
     this.networkFront = null;
   }
+
+  static NETWORK_RESOURCES = [
+    TYPES.NETWORK_EVENT,
+    TYPES.NETWORK_EVENT_STACKTRACE,
+    TYPES.WEBSOCKET,
+    TYPES.SERVER_SENT_EVENT,
+  ];
 
   get currentTarget() {
     return this.commands.targetCommand.targetFront;
@@ -97,8 +105,6 @@ class Connector {
       onAvailable: this.onTargetAvailable,
     });
 
-    const { TYPES } = this.toolbox.resourceCommand;
-
     await this.toolbox.resourceCommand.watchResources([TYPES.DOCUMENT_EVENT], {
       onAvailable: this.onResourceAvailable,
     });
@@ -129,7 +135,6 @@ class Connector {
       onAvailable: this.onTargetAvailable,
     });
 
-    const { TYPES } = this.toolbox.resourceCommand;
     this.toolbox.resourceCommand.unwatchResources([TYPES.DOCUMENT_EVENT], {
       onAvailable: this.onResourceAvailable,
     });
@@ -151,15 +156,20 @@ class Connector {
     this.dataProvider = null;
   }
 
+  clear() {
+    // Clear all the caches in the data provider
+    this.dataProvider.clear();
+
+    this.toolbox.resourceCommand.clearResources(Connector.NETWORK_RESOURCES);
+    this.emitForTests("clear-network-resources");
+
+    // Disable the realted network logs in the webconsole
+    this.toolbox.disableAllConsoleNetworkLogs();
+  }
+
   pause() {
-    const { resourceCommand } = this.toolbox;
-    return resourceCommand.unwatchResources(
-      [
-        resourceCommand.TYPES.NETWORK_EVENT,
-        resourceCommand.TYPES.NETWORK_EVENT_STACKTRACE,
-        resourceCommand.TYPES.WEBSOCKET,
-        resourceCommand.TYPES.SERVER_SENT_EVENT,
-      ],
+    return this.toolbox.resourceCommand.unwatchResources(
+      Connector.NETWORK_RESOURCES,
       {
         onAvailable: this.onResourceAvailable,
         onUpdated: this.onResourceUpdated,
@@ -168,15 +178,8 @@ class Connector {
   }
 
   resume(ignoreExistingResources = true) {
-    const { resourceCommand } = this.toolbox;
-
-    return resourceCommand.watchResources(
-      [
-        resourceCommand.TYPES.NETWORK_EVENT,
-        resourceCommand.TYPES.NETWORK_EVENT_STACKTRACE,
-        resourceCommand.TYPES.WEBSOCKET,
-        resourceCommand.TYPES.SERVER_SENT_EVENT,
-      ],
+    return this.toolbox.resourceCommand.watchResources(
+      Connector.NETWORK_RESOURCES,
       {
         onAvailable: this.onResourceAvailable,
         onUpdated: this.onResourceUpdated,
@@ -201,8 +204,6 @@ class Connector {
 
   async onResourceAvailable(resources, { areExistingResources }) {
     for (const resource of resources) {
-      const { TYPES } = this.toolbox.resourceCommand;
-
       if (resource.resourceType === TYPES.DOCUMENT_EVENT) {
         this.onDocEvent(resource, { areExistingResources });
         continue;
@@ -289,8 +290,6 @@ class Connector {
       if (!Services.prefs.getBoolPref(DEVTOOLS_ENABLE_PERSISTENT_LOG_PREF)) {
         this.actions.batchReset();
         this.actions.clearRequests();
-        // clean up all the dataProvider internal state
-        this.dataProvider.destroy();
       } else {
         // If the log is persistent, just clear all accumulated timing markers.
         this.actions.clearTimingMarkers();

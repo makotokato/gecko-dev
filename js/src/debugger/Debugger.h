@@ -34,6 +34,7 @@
 #include "gc/ZoneAllocator.h"       // for ZoneAllocPolicy
 #include "js/Debug.h"               // JS_DefineDebuggerObject
 #include "js/GCAPI.h"               // for GarbageCollectionEvent
+#include "js/GCVariant.h"           // for GCVariant
 #include "js/Proxy.h"               // for PropertyDescriptor
 #include "js/RootingAPI.h"          // for Handle
 #include "js/TracingAPI.h"          // for TraceRoot
@@ -776,15 +777,6 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   typedef DebuggerWeakMap<WasmInstanceObject, DebuggerSource>
       WasmInstanceSourceWeakMap;
   WasmInstanceSourceWeakMap wasmInstanceSources;
-
-  // Keep track of tracelogger last drained identifiers to know if there are
-  // lost events.
-#ifdef NIGHTLY_BUILD
-  uint32_t traceLoggerLastDrainedSize;
-  uint32_t traceLoggerLastDrainedIteration;
-#endif
-  uint32_t traceLoggerScriptedCallsLastDrainedSize;
-  uint32_t traceLoggerScriptedCallsLastDrainedIteration;
 
   class QueryBase;
   class ScriptQuery;

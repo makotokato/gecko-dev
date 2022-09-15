@@ -50,6 +50,7 @@ class ClientSource;
 class EventTarget;
 class SessionHistoryInfo;
 struct LoadingSessionHistoryInfo;
+struct Wireframe;
 }  // namespace dom
 namespace net {
 class LoadInfo;
@@ -738,6 +739,10 @@ class nsDocShell final : public nsDocLoader,
 
  public:
   // If wireframe collection is enabled, will attempt to gather the
+  // wireframe for the document.
+  mozilla::Maybe<mozilla::dom::Wireframe> GetWireframe();
+
+  // If wireframe collection is enabled, will attempt to gather the
   // wireframe for the document and stash it inside of the active history
   // entry. Returns true if wireframes were collected.
   bool CollectWireframe();
@@ -1356,10 +1361,6 @@ class nsDocShell final : public nsDocLoader,
   // This flag indicates whether or not the DocShell is currently executing an
   // nsIWebNavigation navigation method.
   bool mIsNavigating : 1;
-
-  // This flag indicates whether the media in this docshell should be suspended
-  // when the docshell is inactive.
-  bool mSuspendMediaWhenInactive : 1;
 
   // Whether we have a pending encoding autodetection request from the
   // menu for all encodings.

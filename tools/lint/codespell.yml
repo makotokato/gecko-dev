@@ -24,11 +24,10 @@ codespell:
         - intl/docs/
         - intl/locales/en-US/
         - js/src/doc/
-        - layout/tools/layout-debug/ui/locale/en-US/
+        - layout/tools/layout-debug/ui/content/layoutdebug.ftl
         - mobile/android/branding/
         - mobile/android/docs/
         - mobile/android/locales/en-US/
-        - mobile/locales/en-US/
         - netwerk/locales/en-US/
         - netwerk/docs/
         - python/docs/
@@ -59,6 +58,7 @@ codespell:
         - devtools/docs/contributor/tools/storage/
         - tools/lint/cpp/mingw-headers.txt
         - tools/lint/test/test_codespell.py
+        - docs/mots/index.rst
         - "**/package-lock.json"
     # List of extensions coming from:
     # tools/lint/{flake8,eslint}.yml

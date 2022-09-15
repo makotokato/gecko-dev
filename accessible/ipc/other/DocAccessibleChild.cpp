@@ -146,7 +146,7 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvRelationByType(
 
   auto type = static_cast<RelationType>(aType);
   Relation rel = acc->RelationByType(type);
-  while (LocalAccessible* target = rel.Next()) {
+  while (LocalAccessible* target = rel.LocalNext()) {
     aTargets->AppendElement(reinterpret_cast<uint64_t>(target->UniqueID()));
   }
 
@@ -157,7 +157,7 @@ static void AddRelation(LocalAccessible* aAcc, RelationType aType,
                         nsTArray<RelationTargets>* aTargets) {
   Relation rel = aAcc->RelationByType(aType);
   nsTArray<uint64_t> targets;
-  while (LocalAccessible* target = rel.Next()) {
+  while (LocalAccessible* target = rel.LocalNext()) {
     targets.AppendElement(reinterpret_cast<uint64_t>(target->UniqueID()));
   }
 
@@ -247,7 +247,7 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvScrollToPoint(
 }
 
 mozilla::ipc::IPCResult DocAccessibleChild::RecvAnnounce(
-    const uint64_t& aID, const nsString& aAnnouncement,
+    const uint64_t& aID, const nsAString& aAnnouncement,
     const uint16_t& aPriority) {
   LocalAccessible* acc = IdToAccessible(aID);
   if (acc) {
@@ -511,7 +511,7 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvText(const uint64_t& aID,
 }
 
 mozilla::ipc::IPCResult DocAccessibleChild::RecvReplaceText(
-    const uint64_t& aID, const nsString& aText) {
+    const uint64_t& aID, const nsAString& aText) {
   HyperTextAccessible* acc = IdToHyperTextAccessible(aID);
   if (acc && acc->IsTextRole()) {
     acc->ReplaceText(aText);
@@ -521,7 +521,7 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvReplaceText(
 }
 
 mozilla::ipc::IPCResult DocAccessibleChild::RecvInsertText(
-    const uint64_t& aID, const nsString& aText, const int32_t& aPosition,
+    const uint64_t& aID, const nsAString& aText, const int32_t& aPosition,
     bool* aValid) {
   HyperTextAccessible* acc = IdToHyperTextAccessible(aID);
   if (acc && acc->IsTextRole()) {
@@ -1350,20 +1350,6 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvAccessKey(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult DocAccessibleChild::RecvKeyboardShortcut(
-    const uint64_t& aID, uint32_t* aKey, uint32_t* aModifierMask) {
-  *aKey = 0;
-  *aModifierMask = 0;
-  LocalAccessible* acc = IdToAccessible(aID);
-  if (acc) {
-    KeyBinding kb = acc->KeyboardShortcut();
-    *aKey = kb.Key();
-    *aModifierMask = kb.ModifierMask();
-  }
-
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult DocAccessibleChild::RecvAtkKeyBinding(
     const uint64_t& aID, nsString* aResult) {
 #ifdef MOZ_ACCESSIBILITY_ATK
@@ -1427,50 +1413,6 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvStep(const uint64_t& aID,
     *aStep = acc->Step();
   }
 
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult DocAccessibleChild::RecvFocusedChild(
-    const uint64_t& aID, PDocAccessibleChild** aResultDoc,
-    uint64_t* aResultID) {
-  *aResultDoc = nullptr;
-  *aResultID = 0;
-  LocalAccessible* acc = IdToAccessible(aID);
-  if (!acc) {
-    return IPC_OK();
-  }
-
-  LocalAccessible* result = acc->FocusedChild();
-  if (result) {
-    // LocalAccessible::FocusedChild can return a LocalAccessible from any
-    // document, not just a descendant of the caller's document. Check that it
-    // is really a descendant.
-    DocAccessible* doc = result->Document();
-    if (!doc) {
-      MOZ_ASSERT_UNREACHABLE("Focused child is unbound from doc.");
-      return IPC_OK();
-    }
-
-    while (doc != mDoc) {
-      doc = doc->ParentDocument();
-      if (!doc) {
-        // result's document is not a descendant.
-        return IPC_OK();
-      }
-    }
-    DocAccessibleChild* resultDoc = result->Document()->IPCDoc();
-    // We've sent the constructor for this document to the parent process.
-    // However, because the constructor is async, the parent process might
-    // get the result of this (sync) method before it runs the constructor.
-    // If we send this document in this case, the parent process will crash.
-    // Therefore, we only do this if the parent process has explicitly told
-    // us that the document has been constructed there.
-    if (resultDoc && resultDoc->IsConstructedInParentProcess()) {
-      *aResultDoc = resultDoc;
-      *aResultID =
-          result->IsDoc() ? 0 : reinterpret_cast<uint64_t>(result->UniqueID());
-    }
-  }
   return IPC_OK();
 }
 

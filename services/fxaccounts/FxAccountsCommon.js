@@ -2,10 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { Preferences } = ChromeUtils.import(
   "resource://gre/modules/Preferences.jsm"
 );
@@ -89,6 +88,7 @@ exports.FXA_PUSH_SCOPE_ACCOUNT_UPDATE = "chrome://fxa-device-update";
 exports.ON_PROFILE_CHANGE_NOTIFICATION = "fxaccounts:profilechange"; // WebChannel
 exports.ON_ACCOUNT_STATE_CHANGE_NOTIFICATION = "fxaccounts:statechange";
 exports.ON_NEW_DEVICE_ID = "fxaccounts:new_device_id";
+exports.ON_DEVICELIST_UPDATED = "fxaccounts:devicelist_updated";
 
 // The common prefix for all commands.
 exports.COMMAND_PREFIX = "https://identity.mozilla.com/cmd/";
@@ -141,6 +141,7 @@ exports.COMMAND_SYNC_PREFERENCES = "fxaccounts:sync_preferences";
 exports.COMMAND_CHANGE_PASSWORD = "fxaccounts:change_password";
 exports.COMMAND_FXA_STATUS = "fxaccounts:fxa_status";
 exports.COMMAND_PAIR_PREFERENCES = "fxaccounts:pair_preferences";
+exports.COMMAND_FIREFOX_VIEW = "fxaccounts:firefox_view";
 
 // The pref branch where any prefs which relate to a specific account should
 // be stored. This branch will be reset on account signout and signin.

@@ -11,7 +11,6 @@ loader.lazyRequireGetter(
   "DevToolsUtils",
   "devtools/shared/DevToolsUtils"
 );
-loader.lazyRequireGetter(this, "ChromeUtils");
 loader.lazyRequireGetter(
   this,
   "NetUtil",
@@ -457,7 +456,7 @@ exports.isNativeAnonymous = isAnonymous;
  */
 function isTemplateElement(node) {
   return (
-    node.ownerGlobal && node instanceof node.ownerGlobal.HTMLTemplateElement
+    node.ownerGlobal && node.ownerGlobal.HTMLTemplateElement.isInstance(node)
   );
 }
 exports.isTemplateElement = isTemplateElement;

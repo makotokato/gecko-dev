@@ -1,10 +1,8 @@
-/* eslint-env mozilla/frame-script */
+/* eslint-env mozilla/process-script */
 
 "use strict";
 
 var Cm = Components.manager;
-
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 function AboutPage(aboutHost, chromeURL, uriFlags) {
   this.chromeURL = chromeURL;

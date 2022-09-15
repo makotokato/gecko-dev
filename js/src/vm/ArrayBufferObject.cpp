@@ -7,15 +7,11 @@
 #include "vm/ArrayBufferObject-inl.h"
 #include "vm/ArrayBufferObject.h"
 
-#include "mozilla/Alignment.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/CheckedInt.h"
 #include "mozilla/DebugOnly.h"
-#include "mozilla/FloatingPoint.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Maybe.h"
-#include "mozilla/PodOperations.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/TaggedAnonymousMemory.h"
 
@@ -26,6 +22,7 @@
 #  include <sys/mman.h>
 #endif
 #include <tuple>  // std::tuple
+#include <type_traits>
 #ifdef MOZ_VALGRIND
 #  include <valgrind/memcheck.h>
 #endif
@@ -33,8 +30,6 @@
 #include "jsnum.h"
 #include "jstypes.h"
 
-#include "builtin/Array.h"
-#include "builtin/DataViewObject.h"
 #include "gc/Barrier.h"
 #include "gc/Memory.h"
 #include "js/ArrayBuffer.h"
@@ -47,25 +42,19 @@
 #include "js/Wrapper.h"
 #include "util/WindowsWrapper.h"
 #include "vm/GlobalObject.h"
-#include "vm/Interpreter.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
 #include "vm/SharedArrayObject.h"
 #include "vm/Warnings.h"  // js::WarnNumberASCII
-#include "vm/WrapperObject.h"
 #include "wasm/WasmConstants.h"
 #include "wasm/WasmLog.h"
 #include "wasm/WasmModuleTypes.h"
 #include "wasm/WasmProcess.h"
-#include "wasm/WasmSignalHandlers.h"
 
 #include "gc/GCContext-inl.h"
 #include "gc/Marking-inl.h"
-#include "gc/Nursery-inl.h"
-#include "vm/JSAtom-inl.h"
 #include "vm/NativeObject-inl.h"
 #include "vm/Realm-inl.h"  // js::AutoRealm
-#include "vm/Shape-inl.h"
 
 using JS::ToInt32;
 
@@ -722,6 +711,9 @@ void WasmArrayRawBuffer::Release(void* mem) {
   MOZ_RELEASE_ASSERT(header->mappedSize() <= SIZE_MAX - gc::SystemPageSize());
   size_t mappedSizeWithHeader = header->mappedSize() + gc::SystemPageSize();
 
+  static_assert(std::is_trivially_destructible_v<WasmArrayRawBuffer>,
+                "no need to call the destructor");
+
   UnmapBufferMemory(header->indexType(), header->basePointer(),
                     mappedSizeWithHeader);
 }
@@ -857,7 +849,8 @@ bool js::CreateWasmBuffer(JSContext* cx, const wasm::MemoryDesc& memory,
       return false;
     }
     return CreateSpecificWasmBuffer<SharedArrayBufferObject,
-                                    SharedArrayRawBuffer>(cx, memory, buffer);
+                                    WasmSharedArrayRawBuffer>(cx, memory,
+                                                              buffer);
   }
   return CreateSpecificWasmBuffer<ArrayBufferObject, WasmArrayRawBuffer>(
       cx, memory, buffer);
@@ -1896,7 +1889,6 @@ JS_PUBLIC_API JSObject* JS::NewExternalArrayBuffer(
   CHECK_THREAD(cx);
 
   MOZ_ASSERT(data);
-  MOZ_ASSERT(nbytes > 0);
 
   using BufferContents = ArrayBufferObject::BufferContents;
 

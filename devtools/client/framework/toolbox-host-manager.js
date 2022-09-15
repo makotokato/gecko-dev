@@ -4,7 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const { LocalizationHelper } = require("devtools/shared/l10n");
 const L10N = new LocalizationHelper(
   "devtools/client/locales/toolbox.properties"
@@ -132,7 +131,7 @@ ToolboxHostManager.prototype = {
     return toolbox;
   },
 
-  setMinWidthWithZoom: function() {
+  setMinWidthWithZoom() {
     const zoomValue = parseFloat(Services.prefs.getCharPref(ZOOM_VALUE_PREF));
 
     if (isNaN(zoomValue)) {

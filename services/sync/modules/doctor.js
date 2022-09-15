@@ -11,7 +11,6 @@
 
 var EXPORTED_SYMBOLS = ["Doctor"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { Log } = ChromeUtils.import("resource://gre/modules/Log.jsm");
 const { Async } = ChromeUtils.import("resource://services-common/async.js");
 const { Observers } = ChromeUtils.import(
@@ -85,14 +84,12 @@ var Doctor = {
   },
 
   async _runValidators(engineInfos) {
-    if (Object.keys(engineInfos).length == 0) {
+    if (!Object.keys(engineInfos).length) {
       log.info("Skipping validation: no engines qualify");
       return;
     }
 
-    if (
-      Object.values(engineInfos).filter(i => i.maxRecords != -1).length != 0
-    ) {
+    if (Object.values(engineInfos).filter(i => i.maxRecords != -1).length) {
       // at least some of the engines have maxRecord restrictions which require
       // us to ask the server for the counts.
       let countInfo = await this._fetchCollectionCounts();

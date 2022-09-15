@@ -9,7 +9,6 @@
 /* eslint-disable no-throw-literal */
 
 const DebuggerNotificationObserver = require("DebuggerNotificationObserver");
-const Services = require("Services");
 const { Cr, Ci } = require("chrome");
 const { Pool } = require("devtools/shared/protocol/Pool");
 const { createValueGrip } = require("devtools/server/actors/object/utils");
@@ -80,7 +79,7 @@ function cacheReactionsForFrame(frame) {
     const reactions = frame.asyncPromise.getPromiseReactions();
     const existingReactions = PROMISE_REACTIONS.get(frame.asyncPromise);
     if (
-      reactions.length > 0 &&
+      reactions.length &&
       (!existingReactions || reactions.length > existingReactions.length)
     ) {
       PROMISE_REACTIONS.set(frame.asyncPromise, reactions);
@@ -726,7 +725,7 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
       return false;
     }
 
-    if (this._xhrBreakpoints.length > 0 && !this._observingNetwork) {
+    if (this._xhrBreakpoints.length && !this._observingNetwork) {
       this._observingNetwork = true;
       Services.obs.addObserver(
         this._onOpeningRequest,
@@ -945,8 +944,8 @@ const ThreadActor = ActorClassWithSpec(threadSpec, {
 
       packet.frame.where = {
         actor: sourceActor.actorID,
-        line: line,
-        column: column,
+        line,
+        column,
       };
       const pkt = onPacket(packet);
 

@@ -7,7 +7,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/SpinEventLoopUntil.h"
-#include "mozilla/JSONWriter.h"
+#include "mozilla/JSONStringWriteFuncs.h"
 
 #include "Database.h"
 
@@ -1273,6 +1273,13 @@ nsresult Database::InitSchema(bool* aDatabaseMigrated) {
 
       // Firefox 103 uses schema version 68
 
+      if (currentSchemaVersion < 69) {
+        rv = MigrateV69Up();
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+
+      // Firefox 104 uses schema version 69
+
       // Schema Upgrades must add migration code here.
       // >>> IMPORTANT! <<<
       // NEVER MIX UP SYNC AND ASYNC EXECUTION IN MIGRATORS, YOU MAY LOCK THE
@@ -2054,12 +2061,6 @@ nsresult Database::MigrateV50Up() {
   return NS_OK;
 }
 
-struct StringWriteFunc : public JSONWriteFunc {
-  nsCString& mCString;
-  explicit StringWriteFunc(nsCString& aCString) : mCString(aCString) {}
-  void Write(const Span<const char>& aStr) override { mCString.Append(aStr); }
-};
-
 nsresult Database::MigrateV51Up() {
   nsCOMPtr<mozIStorageStatement> stmt;
   nsresult rv = mMainConn->CreateStatement(
@@ -2077,8 +2078,8 @@ nsresult Database::MigrateV51Up() {
   rv = stmt->BindUTF8StringByName("anno_name"_ns, LAST_USED_ANNO);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsAutoCString json;
-  JSONWriter jw{MakeUnique<StringWriteFunc>(json)};
+  JSONStringWriteFunc<nsAutoCString> json;
+  JSONWriter jw{json};
   jw.StartArrayProperty(nullptr, JSONWriter::SingleLineStyle);
 
   bool hasAtLeastOne = false;
@@ -2104,7 +2105,7 @@ nsresult Database::MigrateV51Up() {
 
   rv = stmt->BindUTF8StringByName("key"_ns, LAST_USED_FOLDERS_META_KEY);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = stmt->BindUTF8StringByName("value"_ns, json);
+  rv = stmt->BindUTF8StringByName("value"_ns, json.StringCRef());
   NS_ENSURE_SUCCESS(rv, rv);
   rv = stmt->Execute();
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2567,6 +2568,25 @@ nsresult Database::MigrateV68Up() {
       "UPDATE moz_places_metadata_snapshots SET removed_reason = 0 "
       "WHERE removed_at IS NOT NULL AND removed_reason IS NULL"_ns);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
+}
+
+nsresult Database::MigrateV69Up() {
+  // Add source and annotation column to places table.
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = mMainConn->CreateStatement(
+      "SELECT source FROM moz_historyvisits"_ns, getter_AddRefs(stmt));
+  if (NS_FAILED(rv)) {
+    rv = mMainConn->ExecuteSimpleSQL(
+        "ALTER TABLE moz_historyvisits "
+        "ADD COLUMN source INTEGER DEFAULT 0 NOT NULL"_ns);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = mMainConn->ExecuteSimpleSQL(
+        "ALTER TABLE moz_historyvisits "
+        "ADD COLUMN triggeringPlaceId INTEGER"_ns);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
   return NS_OK;
 }

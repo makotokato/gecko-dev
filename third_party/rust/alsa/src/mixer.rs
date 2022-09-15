@@ -32,8 +32,8 @@ impl Mixer {
     pub fn find_selem(&self, id: &SelemId) -> Option<Selem> {
         let selem = unsafe { alsa::snd_mixer_find_selem(self.0, id.as_ptr()) };
 
-        if selem.is_null() { None }
-        else { Some(Selem(Elem {handle: selem, _mixer: self})) }
+        if selem == ptr::null_mut() { None }
+        else { Some(Selem(Elem {handle: selem, mixer: self})) }
     }
 
     pub fn open(nonblock: bool) -> Result<Mixer> {
@@ -112,24 +112,16 @@ impl ops::Add for MilliBel {
     fn add(self, rhs: Self) -> Self { MilliBel(self.0 + rhs.0) }
 }
 
-impl ops::AddAssign for MilliBel {
-    fn add_assign(&mut self, rhs: Self) { self.0 += rhs.0 }
-}
-
 impl ops::Sub for MilliBel {
     type Output = MilliBel;
     fn sub(self, rhs: Self) -> Self { MilliBel(self.0 - rhs.0) }
-}
-
-impl ops::SubAssign for MilliBel {
-    fn sub_assign(&mut self, rhs: Self) { self.0 -= rhs.0 }
 }
 
 /// Wraps [snd_mixer_elem_t](http://www.alsa-project.org/alsa-doc/alsa-lib/group___mixer.html)
 #[derive(Copy, Clone, Debug)]
 pub struct Elem<'a>{
     handle: *mut alsa::snd_mixer_elem_t,
-    _mixer: &'a Mixer
+    mixer: &'a Mixer
 }
 
 /// Iterator for all elements of mixer
@@ -153,7 +145,7 @@ impl<'a> Iterator for Iter<'a> {
             None
         } else {
             self.last_handle = elem;
-            Some(Elem { handle: elem, _mixer: self.mixer})
+            Some(Elem { handle: elem, mixer: self.mixer})
         }
     }
 
@@ -173,7 +165,7 @@ impl SelemId {
         s
     }
 
-    /// Returns an empty (zeroed) SelemId. This id is not a usable id and need to be initialized
+    /// Returns an empty (zeroed) SelemId. This id is not a useable id and need to be initialized
     /// like `SelemId::new()` does
     pub fn empty() -> SelemId {
         assert!(unsafe { alsa::snd_mixer_selem_id_sizeof() } as usize <= SELEM_ID_SIZE);
@@ -510,7 +502,7 @@ fn print_mixer_of_cards() {
                     print!("Playback = {} - {}", vmin, vmax);
                     print!(" ({} dB - {} dB)", mbmin.to_db(), mbmax.to_db());
                 }
-                println!();
+                println!("");
             }
 
             if selem.is_enumerated() {
@@ -520,7 +512,7 @@ fn print_mixer_of_cards() {
                 for v in SelemChannelId::all().iter().filter_map(|&v| selem.get_enum_item(v).ok()) {
                     print!("{}, ", selem.get_enum_item_name(v).unwrap());
                 }
-                println!();
+                println!("");
             }
 
             if selem.can_capture() {
@@ -528,7 +520,7 @@ fn print_mixer_of_cards() {
                 for channel in SelemChannelId::all() {
                     if selem.has_capture_channel(*channel) { print!("{}, ", channel) };
                 }
-                println!();
+                println!("");
                 print!("\t  Capture volumes: ");
                 for channel in SelemChannelId::all() {
                     if selem.has_capture_channel(*channel) { print!("{}: {} ({} dB), ", channel,
@@ -536,7 +528,7 @@ fn print_mixer_of_cards() {
                         match selem.get_capture_vol_db(*channel) {Ok(v) => format!("{}", v.to_db()), Err(_) => "n/a".to_string()}
                     );}
                 }
-                println!();
+                println!("");
             }
 
             if selem.can_playback() {
@@ -548,7 +540,7 @@ fn print_mixer_of_cards() {
                         if selem.has_playback_channel(*channel) { print!("{}, ", channel) };
                     }
                 }
-                println!();
+                println!("");
                 if selem.has_playback_volume() {
                     print!("\t  Playback volumes: ");
                     for channel in SelemChannelId::all() {
@@ -558,7 +550,7 @@ fn print_mixer_of_cards() {
                             match selem.get_playback_vol_db(*channel) {Ok(v) => format!("{}", v.to_db()), Err(_) => "n/a".to_string()}
                         );}
                     }
-                    println!();
+                    println!("");
                 }
             }
         }
@@ -580,7 +572,7 @@ fn get_and_set_playback_volume() {
 
     let old: i64 = selem.get_playback_volume(channel).unwrap();
     let new: i64 = rmax / 2;
-    assert_ne!(new, old);
+    assert!( new != old );
 
     println!("Changing volume of {} from {} to {}", channel, old, new);
     selem.set_playback_volume(channel, new).unwrap();
@@ -608,7 +600,7 @@ fn get_and_set_capture_volume() {
 
     let old: i64 = selem.get_capture_volume(channel).unwrap();
     let new: i64 = rmax / 2;
-    assert_ne!(new, old);
+    assert!( new != old );
 
     println!("Changing volume of {} from {} to {}", channel, old, new);
     selem.set_capture_volume(channel, new).unwrap();

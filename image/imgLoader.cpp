@@ -433,52 +433,50 @@ class imgMemoryReporter final : public nsIMemoryReporter {
         surfacePathPrefix.AppendLiteral("]");
       }
 
-      if (counter.Key().SVGContext()) {
-        const SVGImageContext& context = counter.Key().SVGContext().ref();
-        surfacePathPrefix.AppendLiteral(", svgContext:[ ");
-        if (context.GetViewportSize()) {
-          const CSSIntSize& size = context.GetViewportSize().ref();
-          surfacePathPrefix.AppendLiteral("viewport=(");
-          surfacePathPrefix.AppendInt(size.width);
-          surfacePathPrefix.AppendLiteral("x");
-          surfacePathPrefix.AppendInt(size.height);
-          surfacePathPrefix.AppendLiteral(") ");
-        }
-        if (context.GetPreserveAspectRatio()) {
-          nsAutoString aspect;
-          context.GetPreserveAspectRatio()->ToString(aspect);
-          surfacePathPrefix.AppendLiteral("preserveAspectRatio=(");
-          LossyAppendUTF16toASCII(aspect, surfacePathPrefix);
-          surfacePathPrefix.AppendLiteral(") ");
-        }
-        if (auto scheme = context.GetColorScheme()) {
-          surfacePathPrefix.AppendLiteral("colorScheme=");
-          surfacePathPrefix.AppendInt(int32_t(*scheme));
-          surfacePathPrefix.AppendLiteral(" ");
-        }
-        if (context.GetContextPaint()) {
-          const SVGEmbeddingContextPaint* paint = context.GetContextPaint();
-          surfacePathPrefix.AppendLiteral("contextPaint=(");
-          if (paint->GetFill()) {
-            surfacePathPrefix.AppendLiteral(" fill=");
-            surfacePathPrefix.AppendInt(paint->GetFill()->ToABGR(), 16);
-          }
-          if (paint->GetFillOpacity() != 1.0) {
-            surfacePathPrefix.AppendLiteral(" fillOpa=");
-            surfacePathPrefix.AppendFloat(paint->GetFillOpacity());
-          }
-          if (paint->GetStroke()) {
-            surfacePathPrefix.AppendLiteral(" stroke=");
-            surfacePathPrefix.AppendInt(paint->GetStroke()->ToABGR(), 16);
-          }
-          if (paint->GetStrokeOpacity() != 1.0) {
-            surfacePathPrefix.AppendLiteral(" strokeOpa=");
-            surfacePathPrefix.AppendFloat(paint->GetStrokeOpacity());
-          }
-          surfacePathPrefix.AppendLiteral(" ) ");
-        }
-        surfacePathPrefix.AppendLiteral("]");
+      const SVGImageContext& context = counter.Key().SVGContext();
+      surfacePathPrefix.AppendLiteral(", svgContext:[ ");
+      if (context.GetViewportSize()) {
+        const CSSIntSize& size = context.GetViewportSize().ref();
+        surfacePathPrefix.AppendLiteral("viewport=(");
+        surfacePathPrefix.AppendInt(size.width);
+        surfacePathPrefix.AppendLiteral("x");
+        surfacePathPrefix.AppendInt(size.height);
+        surfacePathPrefix.AppendLiteral(") ");
       }
+      if (context.GetPreserveAspectRatio()) {
+        nsAutoString aspect;
+        context.GetPreserveAspectRatio()->ToString(aspect);
+        surfacePathPrefix.AppendLiteral("preserveAspectRatio=(");
+        LossyAppendUTF16toASCII(aspect, surfacePathPrefix);
+        surfacePathPrefix.AppendLiteral(") ");
+      }
+      if (auto scheme = context.GetColorScheme()) {
+        surfacePathPrefix.AppendLiteral("colorScheme=");
+        surfacePathPrefix.AppendInt(int32_t(*scheme));
+        surfacePathPrefix.AppendLiteral(" ");
+      }
+      if (context.GetContextPaint()) {
+        const SVGEmbeddingContextPaint* paint = context.GetContextPaint();
+        surfacePathPrefix.AppendLiteral("contextPaint=(");
+        if (paint->GetFill()) {
+          surfacePathPrefix.AppendLiteral(" fill=");
+          surfacePathPrefix.AppendInt(paint->GetFill()->ToABGR(), 16);
+        }
+        if (paint->GetFillOpacity() != 1.0) {
+          surfacePathPrefix.AppendLiteral(" fillOpa=");
+          surfacePathPrefix.AppendFloat(paint->GetFillOpacity());
+        }
+        if (paint->GetStroke()) {
+          surfacePathPrefix.AppendLiteral(" stroke=");
+          surfacePathPrefix.AppendInt(paint->GetStroke()->ToABGR(), 16);
+        }
+        if (paint->GetStrokeOpacity() != 1.0) {
+          surfacePathPrefix.AppendLiteral(" strokeOpa=");
+          surfacePathPrefix.AppendFloat(paint->GetStrokeOpacity());
+        }
+        surfacePathPrefix.AppendLiteral(" ) ");
+      }
+      surfacePathPrefix.AppendLiteral("]");
 
       surfacePathPrefix.AppendLiteral(")/");
 
@@ -1416,7 +1414,7 @@ imgLoader::RemoveEntriesFromBaseDomainInAllProcesses(
   }
 
   for (auto* cp : ContentParent::AllProcesses(ContentParent::eLive)) {
-    Unused << cp->SendClearImageCacheFromBaseDomain(nsCString(aBaseDomain));
+    Unused << cp->SendClearImageCacheFromBaseDomain(aBaseDomain);
   }
 
   return RemoveEntriesInternal(nullptr, &aBaseDomain);
@@ -3167,7 +3165,8 @@ imgCacheValidator::OnStartRequest(nsIRequest* aRequest) {
   // because OnStartRequest got delivered more than once), just bail.
   if (!mRequest) {
     MOZ_ASSERT_UNREACHABLE("OnStartRequest delivered more than once?");
-    aRequest->Cancel(NS_BINDING_ABORTED);
+    aRequest->CancelWithReason(NS_BINDING_ABORTED,
+                               "OnStartRequest delivered more than once?"_ns);
     return NS_ERROR_FAILURE;
   }
 
@@ -3193,7 +3192,8 @@ imgCacheValidator::OnStartRequest(nsIRequest* aRequest) {
 
     if (isFromCache && sameURI) {
       // We don't need to load this any more.
-      aRequest->Cancel(NS_BINDING_ABORTED);
+      aRequest->CancelWithReason(NS_BINDING_ABORTED,
+                                 "imgCacheValidator::OnStartRequest"_ns);
       mNewRequest = nullptr;
 
       // Clear the validator before updating the proxies. The notifications may

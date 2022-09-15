@@ -104,13 +104,13 @@ class DocAccessibleParent : public RemoteAccessible,
       const bool& aIsAtEndOfLine, const int32_t& aGranularity) final;
 
   virtual mozilla::ipc::IPCResult RecvTextChangeEvent(
-      const uint64_t& aID, const nsString& aStr, const int32_t& aStart,
+      const uint64_t& aID, const nsAString& aStr, const int32_t& aStart,
       const uint32_t& aLen, const bool& aIsInsert,
       const bool& aFromUser) override;
 
 #if defined(XP_WIN)
   virtual mozilla::ipc::IPCResult RecvSyncTextChangeEvent(
-      const uint64_t& aID, const nsString& aStr, const int32_t& aStart,
+      const uint64_t& aID, const nsAString& aStr, const int32_t& aStart,
       const uint32_t& aLen, const bool& aIsInsert,
       const bool& aFromUser) override;
 
@@ -147,7 +147,7 @@ class DocAccessibleParent : public RemoteAccessible,
 
 #if !defined(XP_WIN)
   virtual mozilla::ipc::IPCResult RecvAnnouncementEvent(
-      const uint64_t& aID, const nsString& aAnnouncement,
+      const uint64_t& aID, const nsAString& aAnnouncement,
       const uint16_t& aPriority) override;
 #endif
 
@@ -317,7 +317,21 @@ class DocAccessibleParent : public RemoteAccessible,
 
   virtual void SelectionRanges(nsTArray<TextRange>* aRanges) const override;
 
+  virtual Accessible* FocusedChild() override;
+
   void URL(nsAString& aURL) const;
+
+  // Tracks cached reverse relations (ie. those not set explicitly by an
+  // attribute like aria-labelledby) for accessibles in this doc. This map is of
+  // the form: {accID, {relationType, [targetAccID, targetAccID, ...]}}
+  nsTHashMap<uint64_t, nsTHashMap<uint64_t, nsTArray<uint64_t>>>
+      mReverseRelations;
+
+  // Computed from the viewport cache, the accs referenced by these ids
+  // are currently on screen (making any acc not in this list offscreen).
+  nsTHashSet<uint64_t> mOnScreenAccessibles;
+
+  static DocAccessibleParent* GetFrom(dom::BrowsingContext* aBrowsingContext);
 
  private:
   ~DocAccessibleParent();

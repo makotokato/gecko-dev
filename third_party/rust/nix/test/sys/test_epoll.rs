@@ -1,5 +1,6 @@
 use nix::sys::epoll::{EpollCreateFlags, EpollFlags, EpollOp, EpollEvent};
 use nix::sys::epoll::{epoll_create1, epoll_ctl};
+use nix::Error;
 use nix::errno::Errno;
 
 #[test]
@@ -7,11 +8,11 @@ pub fn test_epoll_errno() {
     let efd = epoll_create1(EpollCreateFlags::empty()).unwrap();
     let result = epoll_ctl(efd, EpollOp::EpollCtlDel, 1, None);
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), Errno::ENOENT);
+    assert_eq!(result.unwrap_err(), Error::Sys(Errno::ENOENT));
 
     let result = epoll_ctl(efd, EpollOp::EpollCtlAdd, 1, None);
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), Errno::EINVAL);
+    assert_eq!(result.unwrap_err(), Error::Sys(Errno::EINVAL));
 }
 
 #[test]

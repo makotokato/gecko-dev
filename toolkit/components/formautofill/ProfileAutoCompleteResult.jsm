@@ -5,9 +5,8 @@
 "use strict";
 
 var EXPORTED_SYMBOLS = ["AddressResult", "CreditCardResult"];
-
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const lazy = {};
 
@@ -16,10 +15,10 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   FormAutofillUtils: "resource://autofill/FormAutofillUtils.jsm",
 });
 
-XPCOMUtils.defineLazyPreferenceGetter(
+XPCOMUtils.defineLazyGetter(
   lazy,
-  "insecureWarningEnabled",
-  "security.insecure_field_warning.contextual.enabled"
+  "l10n",
+  () => new Localization(["browser/preferences/formAutofill.ftl"], true)
 );
 
 class ProfileAutoCompleteResult {
@@ -382,9 +381,6 @@ class CreditCardResult extends ProfileAutoCompleteResult {
 
   _generateLabels(focusedFieldName, allFieldNames, profiles) {
     if (!this._isSecure) {
-      if (!lazy.insecureWarningEnabled) {
-        return [];
-      }
       let brandName = lazy.FormAutofillUtils.brandBundle.GetStringFromName(
         "brandShortName"
       );
@@ -426,14 +422,11 @@ class CreditCardResult extends ProfileAutoCompleteResult {
         // The card type is displayed visually using an image. For a11y, we need
         // to expose it as text. We do this using aria-label. However,
         // aria-label overrides the text content, so we must include that also.
-        let ccTypeName;
-        try {
-          ccTypeName = lazy.FormAutofillUtils.stringBundle.GetStringFromName(
-            `cardNetwork.${profile["cc-type"]}`
-          );
-        } catch (e) {
-          ccTypeName = null; // Unknown.
-        }
+        const ccType = profile["cc-type"];
+        const ccTypeL10nId = lazy.CreditCard.getNetworkL10nId(ccType);
+        const ccTypeName = ccTypeL10nId
+          ? lazy.l10n.formatValueSync(ccTypeL10nId)
+          : ccType ?? ""; // Unknown card type
         const ariaLabel = [ccTypeName, primaryAffix, primary, secondary]
           .filter(chunk => !!chunk) // Exclude empty chunks.
           .join(" ");
@@ -475,7 +468,7 @@ class CreditCardResult extends ProfileAutoCompleteResult {
 
   getStyleAt(index) {
     this._checkIndexBounds(index);
-    if (!this._isSecure && lazy.insecureWarningEnabled) {
+    if (!this._isSecure) {
       return "autofill-insecureWarning";
     }
 

@@ -1,14 +1,16 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
+ChromeUtils.defineESModuleGetters(this, {
+  PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
+});
+
 XPCOMUtils.defineLazyModuleGetters(this, {
   BackgroundPageThumbs: "resource://gre/modules/BackgroundPageThumbs.jsm",
   FileUtils: "resource://gre/modules/FileUtils.jsm",
   NewTabUtils: "resource://gre/modules/NewTabUtils.jsm",
-  OS: "resource://gre/modules/osfile.jsm",
   PageThumbs: "resource://gre/modules/PageThumbs.jsm",
   PageThumbsStorage: "resource://gre/modules/PageThumbs.jsm",
-  PlacesTestUtils: "resource://testing-common/PlacesTestUtils.jsm",
   SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
 });
 

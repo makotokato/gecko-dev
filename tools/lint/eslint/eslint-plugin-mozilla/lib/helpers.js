@@ -45,11 +45,15 @@ const callExpressionMultiDefinitions = [
   "XPCOMUtils.defineLazyModuleGetters(globalThis,",
   "XPCOMUtils.defineLazyServiceGetters(this,",
   "XPCOMUtils.defineLazyServiceGetters(globalThis,",
+  "ChromeUtils.defineESModuleGetters(this,",
+  "ChromeUtils.defineESModuleGetters(globalThis,",
   "loader.lazyRequireGetter(this,",
   "loader.lazyRequireGetter(globalThis,",
 ];
 
 const workerImportFilenameMatch = /(.*\/)*((.*?)\.jsm?)/;
+
+let xpidlData;
 
 module.exports = {
   get iniParser() {
@@ -61,6 +65,46 @@ module.exports = {
 
   get servicesData() {
     return require("./services.json");
+  },
+
+  /**
+   * Obtains xpidl data from the object directory specified in the
+   * environment.
+   *
+   * @returns {Map<string, object>}
+   *   A map of interface names to the interface details.
+   */
+  get xpidlData() {
+    let objdir;
+    if (process.env.MOZ_OBJDIR) {
+      objdir = `${process.env.MOZ_OBJDIR}/config/makefiles/xpidl/`;
+    } else if (process.env.TEST_XPIDLDIR) {
+      objdir = process.env.TEST_XPIDLDIR;
+    }
+    if (!objdir) {
+      throw new Error(
+        "This rule needs MOZ_OBJDIR defining in the environment. It must be a full build."
+      );
+    }
+    if (xpidlData) {
+      return xpidlData;
+    }
+    let files = fs.readdirSync(`${objdir}`);
+    // `Makefile` is an expected file in the directory.
+    if (files.length <= 1) {
+      throw new Error("Missing xpidl files, this rule needs a full build.");
+    }
+    xpidlData = new Map();
+    for (let file of files) {
+      if (!file.endsWith(".xpt")) {
+        continue;
+      }
+      let data = JSON.parse(fs.readFileSync(path.join(`${objdir}`, file)));
+      for (let details of data) {
+        xpidlData.set(details.name, details);
+      }
+    }
+    return xpidlData;
   },
 
   /**
@@ -186,7 +230,7 @@ module.exports = {
       },
 
       leave(node, parent) {
-        if (parents.length == 0) {
+        if (!parents.length) {
           throw new Error("Left more nodes than entered.");
         }
         parents.pop();
@@ -924,6 +968,25 @@ module.exports = {
       node.arguments[2].type == "Literal"
     ) {
       return node.arguments[2].value;
+    }
+    return null;
+  },
+
+  /**
+   * Returns property name from MemberExpression. Also accepts Identifier for consistency.
+   * @param {import("estree").MemberExpression | import("estree").Identifier} node
+   * @returns {string | null}
+   *
+   * @example `foo` gives "foo"
+   * @example `foo.bar` gives "bar"
+   * @example `foo.bar.baz` gives "baz"
+   */
+  maybeGetMemberPropertyName(node) {
+    if (node.type === "MemberExpression") {
+      return node.property.name;
+    }
+    if (node.type === "Identifier") {
+      return node.name;
     }
     return null;
   },

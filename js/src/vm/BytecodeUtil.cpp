@@ -15,16 +15,12 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/ReverseIterator.h"
 #include "mozilla/Sprintf.h"
-#include "mozilla/Vector.h"
 
-#include <algorithm>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
-#include <type_traits>
 
 #include "jsapi.h"
-#include "jsnum.h"
 #include "jstypes.h"
 
 #include "frontend/BytecodeCompiler.h"
@@ -40,7 +36,6 @@
 #include "js/Symbol.h"
 #include "util/DifferentialTesting.h"
 #include "util/Memory.h"
-#include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/BuiltinObjectKind.h"
 #include "vm/BytecodeIterator.h"  // for AllBytecodesIterable
@@ -52,6 +47,7 @@
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
+#include "vm/JSONPrinter.h"
 #include "vm/JSScript.h"
 #include "vm/Opcodes.h"
 #include "vm/Printer.h"
@@ -62,9 +58,7 @@
 
 #include "gc/GC-inl.h"
 #include "vm/BytecodeIterator-inl.h"
-#include "vm/BytecodeLocation-inl.h"
 #include "vm/JSContext-inl.h"
-#include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/Realm-inl.h"
 
@@ -1954,8 +1948,10 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
     case JSOp::NewTarget:
       return write("new.target");
     case JSOp::Call:
+    case JSOp::CallContent:
     case JSOp::CallIgnoresRv:
-    case JSOp::CallIter: {
+    case JSOp::CallIter:
+    case JSOp::CallContentIter: {
       uint16_t argc = GET_ARGC(pc);
       return decompilePCForStackOperand(pc, -int32_t(argc + 2)) &&
              write(argc ? "(...)" : "()");
@@ -2001,7 +1997,8 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
     case JSOp::StrictSpreadEval:
       return write("eval(...)");
 
-    case JSOp::New: {
+    case JSOp::New:
+    case JSOp::NewContent: {
       uint16_t argc = GET_ARGC(pc);
       return write("(new ") &&
              decompilePCForStackOperand(pc, -int32_t(argc + 3)) &&
@@ -2546,7 +2543,8 @@ static bool DecompileArgumentFromStack(JSContext* cx, int formalIndex,
 
   /* Don't handle getters, setters or calls from fun.call/fun.apply. */
   JSOp op = JSOp(*current);
-  if (op != JSOp::Call && op != JSOp::CallIgnoresRv && op != JSOp::New) {
+  if (op != JSOp::Call && op != JSOp::CallContent &&
+      op != JSOp::CallIgnoresRv && op != JSOp::New && op != JSOp::NewContent) {
     return true;
   }
 
@@ -2560,7 +2558,7 @@ static bool DecompileArgumentFromStack(JSContext* cx, int formalIndex,
     return false;
   }
 
-  bool pushedNewTarget = op == JSOp::New;
+  bool pushedNewTarget = op == JSOp::New || op == JSOp::NewContent;
   int formalStackIndex = parser.stackDepthAtPC(current) - GET_ARGC(current) -
                          pushedNewTarget + formalIndex;
   MOZ_ASSERT(formalStackIndex >= 0);

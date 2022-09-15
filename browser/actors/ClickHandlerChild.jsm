@@ -5,9 +5,8 @@
 
 var EXPORTED_SYMBOLS = ["ClickHandlerChild", "MiddleMousePasteHandlerChild"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -181,6 +180,13 @@ class ClickHandlerChild extends JSWindowActorChild {
       json.originPrincipal = ownerDoc.nodePrincipal;
       json.originStoragePrincipal = ownerDoc.effectiveStoragePrincipal;
       json.triggeringPrincipal = ownerDoc.nodePrincipal;
+
+      if (
+        (ownerDoc.URL === "about:newtab" || ownerDoc.URL === "about:home") &&
+        node.dataset.isSponsoredLink === "true"
+      ) {
+        json.globalHistoryOptions = { triggeringSponsoredURL: href };
+      }
 
       // If a link element is clicked with middle button, user wants to open
       // the link somewhere rather than pasting clipboard content.  Therefore,

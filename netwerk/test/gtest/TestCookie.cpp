@@ -89,8 +89,11 @@ void SetACookieInternal(nsICookieService* aCookieService, const char* aSpec,
                 nsIContentPolicy::TYPE_OTHER);
 
   nsCOMPtr<nsICookieJarSettings> cookieJarSettings =
-      aAllowed ? CookieJarSettings::Create(CookieJarSettings::eRegular)
-               : CookieJarSettings::GetBlockingAll();
+      aAllowed
+          ? CookieJarSettings::Create(CookieJarSettings::eRegular,
+                                      /* shouldResistFingerprinting */ false)
+          : CookieJarSettings::GetBlockingAll(
+                /* shouldResistFingerprinting */ false);
   MOZ_ASSERT(cookieJarSettings);
 
   nsCOMPtr<nsILoadInfo> loadInfo = dummyChannel->LoadInfo();
@@ -1056,4 +1059,30 @@ TEST(TestCookie, OnionSite)
              "test=onion-security4");
   GetACookieNoHttp(cookieService, "http://123456789abcdef.onion/", cookie);
   EXPECT_TRUE(CheckResult(cookie.get(), MUST_EQUAL, "test=onion-security4"));
+}
+
+TEST(TestCookie, HiddenPrefix)
+{
+  nsresult rv;
+  nsCString cookie;
+
+  nsCOMPtr<nsICookieService> cookieService =
+      do_GetService(kCookieServiceCID, &rv);
+  ASSERT_TRUE(NS_SUCCEEDED(rv));
+
+  SetACookie(cookieService, "http://hiddenprefix.test/", "=__Host-test=a");
+  GetACookie(cookieService, "http://hiddenprefix.test/", cookie);
+  EXPECT_TRUE(CheckResult(cookie.get(), MUST_BE_NULL));
+
+  SetACookie(cookieService, "http://hiddenprefix.test/", "=__Secure-test=a");
+  GetACookie(cookieService, "http://hiddenprefix.test/", cookie);
+  EXPECT_TRUE(CheckResult(cookie.get(), MUST_BE_NULL));
+
+  SetACookie(cookieService, "http://hiddenprefix.test/", "=__Host-check");
+  GetACookie(cookieService, "http://hiddenprefix.test/", cookie);
+  EXPECT_TRUE(CheckResult(cookie.get(), MUST_BE_NULL));
+
+  SetACookie(cookieService, "http://hiddenprefix.test/", "=__Secure-check");
+  GetACookie(cookieService, "http://hiddenprefix.test/", cookie);
+  EXPECT_TRUE(CheckResult(cookie.get(), MUST_BE_NULL));
 }

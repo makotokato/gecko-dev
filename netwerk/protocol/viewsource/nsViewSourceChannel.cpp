@@ -263,6 +263,20 @@ nsViewSourceChannel::GetStatus(nsresult* status) {
   return mChannel->GetStatus(status);
 }
 
+NS_IMETHODIMP nsViewSourceChannel::SetCanceledReason(
+    const nsACString& aReason) {
+  return nsIViewSourceChannel::SetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP nsViewSourceChannel::GetCanceledReason(nsACString& aReason) {
+  return nsIViewSourceChannel::GetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP nsViewSourceChannel::CancelWithReason(nsresult aStatus,
+                                                    const nsACString& aReason) {
+  return nsIViewSourceChannel::CancelWithReasonImpl(aStatus, aReason);
+}
+
 NS_IMETHODIMP
 nsViewSourceChannel::Cancel(nsresult status) {
   NS_ENSURE_TRUE(mChannel, NS_ERROR_FAILURE);
@@ -848,18 +862,6 @@ nsViewSourceChannel::ShouldStripRequestBodyHeader(const nsACString& aMethod,
 }
 
 NS_IMETHODIMP
-nsViewSourceChannel::GetAllowPipelining(bool* aAllowPipelining) {
-  return !mHttpChannel ? NS_ERROR_NULL_POINTER
-                       : mHttpChannel->GetAllowPipelining(aAllowPipelining);
-}
-
-NS_IMETHODIMP
-nsViewSourceChannel::SetAllowPipelining(bool aAllowPipelining) {
-  return !mHttpChannel ? NS_ERROR_NULL_POINTER
-                       : mHttpChannel->SetAllowPipelining(aAllowPipelining);
-}
-
-NS_IMETHODIMP
 nsViewSourceChannel::GetAllowSTS(bool* aAllowSTS) {
   return !mHttpChannel ? NS_ERROR_NULL_POINTER
                        : mHttpChannel->GetAllowSTS(aAllowSTS);
@@ -1054,6 +1056,11 @@ nsViewSourceChannel::LogMimeTypeMismatch(const nsACString& aMessageName,
                                            aContentType);
 }
 
+// FIXME: Should this forward to mHttpChannel? This was previously handled by a
+// default empty implementation.
+void nsViewSourceChannel::SetSource(
+    mozilla::UniquePtr<mozilla::ProfileChunkedBuffer> aSource) {}
+
 const nsTArray<mozilla::net::PreferredAlternativeDataTypeParams>&
 nsViewSourceChannel::PreferredAlternativeDataTypes() {
   if (mCacheInfoChannel) {
@@ -1079,6 +1086,11 @@ void nsViewSourceChannel::DoDiagnosticAssertWhenOnStopNotCalledOnDestroy() {
     mHttpChannelInternal->DoDiagnosticAssertWhenOnStopNotCalledOnDestroy();
   }
 }
+
+// FIXME: Should this forward to mHttpChannelInternal? This was previously
+// handled by a default empty implementation.
+void nsViewSourceChannel::SetConnectionInfo(
+    mozilla::net::nsHttpConnectionInfo* aInfo) {}
 
 // nsIChildChannel methods
 

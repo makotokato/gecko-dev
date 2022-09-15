@@ -365,6 +365,7 @@ imply_option("--build-backends", build_backend)
     "--help",
 )
 @imports("sys")
+@imports(_from="mozbuild.backend.clangd", _import="find_vscode_cmd")
 def build_backend_defaults(
     host,
     target,
@@ -395,6 +396,12 @@ def build_backend_defaults(
         and project not in ("mobile/android", "memory", "tools/update-programs")
     ):
         all_backends.append("VisualStudio")
+    if (
+        compile_environment
+        and find_vscode_cmd()
+        and project not in ("mobile/android", "memory", "tools/update-programs")
+    ):
+        all_backends.append("Clangd")
     return tuple(all_backends) or None
 
 
@@ -1035,8 +1042,8 @@ def config_status_deps(build_env, build_project):
         + extra_deps
         + [
             os.path.join(topsrcdir, "CLOBBER"),
-            os.path.join(topsrcdir, "configure.in"),
-            os.path.join(topsrcdir, "js", "src", "configure.in"),
+            os.path.join(topsrcdir, "configure"),
+            os.path.join(topsrcdir, "js", "src", "configure"),
             os.path.join(topsrcdir, "nsprpub", "configure"),
             os.path.join(topsrcdir, "config", "milestone.txt"),
             os.path.join(topsrcdir, "browser", "config", "version.txt"),

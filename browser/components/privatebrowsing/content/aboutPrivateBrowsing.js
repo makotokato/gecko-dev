@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* eslint-env mozilla/frame-script */
+/* eslint-env mozilla/remote-page */
 
 /**
  * Determines whether a given value is a fluent id or plain text and adds it to an element
@@ -40,7 +40,7 @@ async function renderInfo({
   infoIcon,
 } = {}) {
   const container = document.querySelector(".info");
-  if (infoEnabled === false) {
+  if (!infoEnabled) {
     container.remove();
     return;
   }
@@ -82,7 +82,6 @@ async function renderPromo({
   promoTitle,
   promoTitleEnabled,
   promoLinkText,
-  promoLinkUrl,
   promoLinkType,
   promoSectionStyle,
   promoHeader,
@@ -98,27 +97,23 @@ async function renderPromo({
     return false;
   }
 
-  const titleEl = document.getElementById("private-browsing-vpn-text");
-  let linkEl = document.getElementById("private-browsing-vpn-link");
+  const titleEl = document.getElementById("private-browsing-promo-text");
+  const linkEl = document.getElementById("private-browsing-promo-link");
   const promoHeaderEl = document.getElementById("promo-header");
   const infoContainerEl = document.querySelector(".info");
   const promoImageLargeEl = document.querySelector(".promo-image-large img");
   const promoImageSmallEl = document.querySelector(".promo-image-small img");
   const dismissBtn = document.querySelector("#dismiss-btn");
 
-  if (promoLinkType === "button") {
-    linkEl.classList.add("button");
+  if (promoLinkType === "link") {
+    linkEl.classList.remove("primary");
+    linkEl.classList.add("text-link", "promo-link");
   }
 
-  if (promoLinkUrl) {
-    linkEl.setAttribute("href", promoLinkUrl);
-    linkEl.setAttribute("target", "_blank");
-    linkEl.addEventListener("click", () => {
-      window.PrivateBrowsingRecordClick("promo_link");
-    });
-  } else if (promoButton?.action) {
+  if (promoButton?.action) {
     linkEl.addEventListener("click", async event => {
       event.preventDefault();
+
       // Record promo click telemetry and set metrics as allow for spotlight
       // modal opened on promo click if user is enrolled in an experiment
       let isExperiment = window.PrivateBrowsingRecordClick("promo_link");
@@ -133,7 +128,7 @@ async function renderPromo({
       await RPMSendQuery("SpecialMessageActionDispatch", promoButton.action);
     });
   } else {
-    // If the link is undefined, remove the promo completely
+    // If the action doesn't exist, remove the promo completely
     container.remove();
     return false;
   }
@@ -281,6 +276,11 @@ document.addEventListener("DOMContentLoaded", function() {
       });
     return;
   }
+
+  let newLogoEnabled = window.PrivateBrowsingEnableNewLogo();
+  document
+    .getElementById("about-private-browsing-logo")
+    .toggleAttribute("legacy", !newLogoEnabled);
 
   // We don't do this setup until now, because we don't want to record any impressions until we're
   // sure we're actually running a private window, not just about:privatebrowsing in a normal window.

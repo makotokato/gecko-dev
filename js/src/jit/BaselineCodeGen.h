@@ -41,8 +41,6 @@ class BaselineCodeGen {
 
   typename Handler::FrameInfoT& frame;
 
-  js::Vector<CodeOffset> traceLoggerToggleOffsets_;
-
   // Shared epilogue code to return to the caller.
   NonAssertingLabel return_;
 
@@ -68,7 +66,8 @@ class BaselineCodeGen {
 #endif
 
   template <typename... HandlerArgs>
-  explicit BaselineCodeGen(JSContext* cx, HandlerArgs&&... args);
+  explicit BaselineCodeGen(JSContext* cx, TempAllocator& alloc,
+                           HandlerArgs&&... args);
 
   template <typename T>
   void pushArg(const T& t) {
@@ -185,8 +184,6 @@ class BaselineCodeGen {
   [[nodiscard]] bool emitNextIC();
   [[nodiscard]] bool emitInterruptCheck();
   [[nodiscard]] bool emitWarmUpCounterIncrement();
-  [[nodiscard]] bool emitTraceLoggerResume(Register script,
-                                           AllocatableGeneralRegisterSet& regs);
 
 #define EMIT_OP(op, ...) bool emit_##op();
   FOR_EACH_OPCODE(EMIT_OP)
@@ -263,9 +260,6 @@ class BaselineCodeGen {
   template <typename F>
   [[nodiscard]] bool initEnvironmentChainHelper(const F& initFunctionEnv);
   [[nodiscard]] bool initEnvironmentChain();
-
-  [[nodiscard]] bool emitTraceLoggerEnter();
-  [[nodiscard]] bool emitTraceLoggerExit();
 
   [[nodiscard]] bool emitHandleCodeCoverageAtPrologue();
 
@@ -378,8 +372,6 @@ class BaselineCompiler final : private BaselineCompilerCodeGen {
   DebugTrapEntryVector debugTrapEntries_;
 
   CodeOffset profilerPushToggleOffset_;
-
-  CodeOffset traceLoggerScriptTextIdOffset_;
 
 #if defined(JS_ION_PERF)
   BaselinePerfSpewer perfSpewer_;
@@ -515,7 +507,7 @@ class BaselineInterpreterGenerator final : private BaselineInterpreterCodeGen {
   uint32_t debugTrapHandlerOffset_ = 0;
 
  public:
-  explicit BaselineInterpreterGenerator(JSContext* cx);
+  explicit BaselineInterpreterGenerator(JSContext* cx, TempAllocator& alloc);
 
   [[nodiscard]] bool generate(BaselineInterpreter& interpreter);
 

@@ -59,6 +59,11 @@ bool nsTransitionManager::UpdateTransitions(dom::Element* aElement,
     return false;
   }
 
+  if (aNewStyle.StyleDisplay()->mDisplay == StyleDisplay::None) {
+    StopAnimationsForElement(aElement, aPseudoType);
+    return false;
+  }
+
   CSSTransitionCollection* collection =
       CSSTransitionCollection::GetAnimationCollection(aElement, aPseudoType);
   return DoUpdateTransitions(*aNewStyle.StyleUIReset(), aElement, aPseudoType,
@@ -437,10 +442,10 @@ bool nsTransitionManager::ConsiderInitiatingTransition(
       duration, delay, 1.0 /* iteration count */,
       dom::PlaybackDirection::Normal, dom::FillMode::Backwards);
 
-  const nsTimingFunction& tf =
+  const StyleComputedTimingFunction& tf =
       aStyle.GetTransitionTimingFunction(transitionIdx);
-  if (!tf.IsLinear()) {
-    timing.SetTimingFunction(Some(ComputedTimingFunction(tf)));
+  if (!tf.IsLinearKeyword()) {
+    timing.SetTimingFunction(Some(tf));
   }
 
   KeyframeEffectParams effectOptions;

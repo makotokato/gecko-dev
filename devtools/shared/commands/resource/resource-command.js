@@ -4,7 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
 const { throttle } = require("devtools/shared/throttle");
 
 const BROWSERTOOLBOX_FISSION_ENABLED = "devtools.browsertoolbox.fission";
@@ -101,12 +100,7 @@ class ResourceCommand {
     const resourcesToClear = resourceTypes.filter(resourceType =>
       this.hasResourceCommandSupport(resourceType)
     );
-    if (
-      resourcesToClear.length &&
-      // @backward-compat { version 103 } The clearResources functionality was added in 103 and
-      // not supported in old servers.
-      this.targetCommand.hasTargetWatcherSupport("supportsClearResources")
-    ) {
+    if (resourcesToClear.length) {
       this.watcherFront.clearResources(resourcesToClear);
     }
   }
@@ -299,7 +293,7 @@ class ResourceCommand {
     }
     this._watchers = this._watchers.filter(entry => {
       // Remove entries entirely if it isn't watching for any resource type
-      return entry.resources.length > 0;
+      return !!entry.resources.length;
     });
 
     // Stop listening to all resources for which we removed the last watcher
@@ -360,6 +354,18 @@ class ResourceCommand {
       onAvailable,
     });
     return { onResource: promise };
+  }
+
+  /**
+   * Check if there are any watchers for the specified resource.
+   *
+   * @param {String} resourceType
+   *         One of ResourceCommand.TYPES
+   * @return {Boolean}
+   *         If the resources type is beibg watched.
+   */
+  isResourceWatched(resourceType) {
+    return this._listenedResources.has(resourceType);
   }
 
   /**
@@ -434,10 +440,13 @@ class ResourceCommand {
   /**
    * Method called by the TargetCommand for each already existing or target which has just been created.
    *
-   * @param {Front} targetFront
+   * @param {Object} arg
+   * @param {Front} arg.targetFront
    *        The Front of the target that is available.
    *        This Front inherits from TargetMixin and is typically
    *        composed of a WindowGlobalTargetFront or ContentProcessTargetFront.
+   * @param {Boolean} arg.isTargetSwitching
+   *         true when the new target was created because of a target switching.
    */
   async _onTargetAvailable({ targetFront, isTargetSwitching }) {
     const resources = [];
@@ -567,9 +576,13 @@ class ResourceCommand {
 
   /**
    * Method called by the TargetCommand when a target has just been destroyed
-   * See _onTargetAvailable for arguments, they are the same.
+   * @param {Object} arg
+   * @param {Front} arg.targetFront
+   *        The Front of the target that was destroyed
+   * @param {Boolean} arg.isModeSwitching
+   *         true when this is called as the result of a change to the devtools.browsertoolbox.scope pref.
    */
-  _onTargetDestroyed({ targetFront }) {
+  _onTargetDestroyed({ targetFront, isModeSwitching }) {
     // Clear the map of legacy listeners for this target.
     this._existingLegacyListeners.set(targetFront, []);
     this._offTargetFrontListeners.delete(targetFront);
@@ -578,6 +591,8 @@ class ResourceCommand {
     // Top level BrowsingContext target will be purge via DOCUMENT_EVENT will-navigate events.
     // If we were to clean resources from target-destroyed, we will clear resources
     // happening between will-navigate and target-destroyed. Typically the navigation request
+    // At the moment, isModeSwitching can only be true when targetFront.isTopLevel isn't true,
+    // so we don't need to add a specific check for isModeSwitching.
     if (!targetFront.isTopLevel || !targetFront.isBrowsingContext) {
       for (const [key, resource] of this._cache) {
         if (resource.targetFront === targetFront) {
@@ -587,10 +602,19 @@ class ResourceCommand {
       }
     }
 
-    //TODO: Is there a point in doing anything else?
-    //
-    // We could remove the available/destroyed event, but as the target is destroyed
-    // its listeners will be destroyed anyway.
+    // Purge "available" pendingEvents for resources from the destroyed target when switching
+    // mode as we want to ignore those.
+    if (isModeSwitching) {
+      for (const watcherEntry of this._watchers) {
+        for (const pendingEvent of watcherEntry.pendingEvents) {
+          if (pendingEvent.callbackType == "available") {
+            pendingEvent.updates = pendingEvent.updates.filter(
+              update => update.targetFront !== targetFront
+            );
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -811,7 +835,7 @@ class ResourceCommand {
         continue;
       }
       // If we receive a new event of the same type, accumulate the new update in the last event
-      if (pendingEvents.length > 0) {
+      if (pendingEvents.length) {
         const lastEvent = pendingEvents[pendingEvents.length - 1];
         if (lastEvent.callbackType == callbackType) {
           lastEvent.updates.push(update);
@@ -1022,7 +1046,7 @@ class ResourceCommand {
         existingResources.push(resource);
       }
     }
-    if (existingResources.length > 0) {
+    if (existingResources.length) {
       await onAvailable(existingResources, { areExistingResources: true });
     }
   }

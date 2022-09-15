@@ -9,10 +9,9 @@
 
 var EXPORTED_SYMBOLS = ["BrowserWindowTracker"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const lazy = {};
 
@@ -213,6 +212,17 @@ const BrowserWindowTracker = {
 
   track(window) {
     return WindowHelper.addWindow(window);
+  },
+
+  getBrowserById(browserId) {
+    for (let win of BrowserWindowTracker.orderedWindows) {
+      for (let tab of win.gBrowser.visibleTabs) {
+        if (tab.linkedPanel && tab.linkedBrowser.browserId === browserId) {
+          return tab.linkedBrowser;
+        }
+      }
+    }
+    return null;
   },
 
   // For tests only, this function will remove this window from the list of

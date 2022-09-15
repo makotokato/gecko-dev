@@ -59,7 +59,6 @@ form {
 
 :host([data-editing]) .edit-button,
 :host([data-editing]) .copy-button,
-:host([data-is-new-login].no-logins) .cancel-button,
 :host([data-is-new-login]) .delete-button,
 :host([data-is-new-login]) .origin-saved-value,
 :host([data-is-new-login]) .meta-info,
@@ -183,11 +182,13 @@ input[type = "url"]:focus:-moz-ui-invalid:not(:placeholder-shown) ~ .tooltip-con
 .arrow-box {
   position: relative;
   padding: 12px;
-	background: var(--in-content-box-background);
+	background-color: var(--in-content-box-background);
 	border: 1px solid var(--in-content-border-color);
+  border-radius: 4px;
 }
 
-.arrow-box::after, .arrow-box::before {
+.arrow-box::before,
+.arrow-box::after {
   inset-inline-end: 100%;
   top: 40px; /* This allows the arrow to stay in the correct position, even if the text length is changed */
 	border: solid transparent;
@@ -347,24 +348,13 @@ input[name="password"] {
 }
 
 .login-item-favicon {
-  width: 24px;
-}
-
-.login-item-favicon-wrapper {
   margin-inline-end: 12px;
   height: 24px;
   width: 24px;
   flex-shrink: 0;
-  background-image: url("chrome://global/skin/icons/defaultFavicon.svg");
-  background-repeat: no-repeat;
-  background-size: contain;
   -moz-context-properties: fill, fill-opacity;
   fill: currentColor;
   fill-opacity: 0.75;
-}
-
-.login-item-favicon-wrapper.hide-default-favicon {
-  background-image: none;
 }
 
 .vulnerable-alert,

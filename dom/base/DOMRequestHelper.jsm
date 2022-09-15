@@ -18,8 +18,6 @@
  */
 var EXPORTED_SYMBOLS = ["DOMRequestIpcHelper"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 function DOMRequestIpcHelper() {
   // _listeners keeps a list of messages for which we added a listener and the
   // kind of listener that we added (strong or weak). It's an object of this
@@ -81,9 +79,8 @@ DOMRequestIpcHelper.prototype = {
         if (!!aMsg.weakRef == this._listeners[name].weakRef) {
           this._listeners[name].count++;
           return;
-        } else {
-          throw Components.Exception("", Cr.NS_ERROR_FAILURE);
         }
+        throw Components.Exception("", Cr.NS_ERROR_FAILURE);
       }
 
       aMsg.weakRef
@@ -230,6 +227,7 @@ DOMRequestIpcHelper.prototype = {
     if (this._requests && this._requests[aId]) {
       return this._requests[aId];
     }
+    return undefined;
   },
 
   getPromiseResolver(aId) {
@@ -266,10 +264,7 @@ DOMRequestIpcHelper.prototype = {
   },
 
   _getRandomId() {
-    return Cc["@mozilla.org/uuid-generator;1"]
-      .getService(Ci.nsIUUIDGenerator)
-      .generateUUID()
-      .toString();
+    return Services.uuid.generateUUID().toString();
   },
 
   createRequest() {

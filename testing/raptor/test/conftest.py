@@ -97,6 +97,7 @@ def create_args():
         test="raptor-tp6-unittest",
         binary="path/to/binary",
         gecko_profile=False,
+        extra_profiler_run=False,
         debug_mode=False,
         page_cycles=None,
         page_timeout=None,
@@ -107,6 +108,8 @@ def create_args():
         cold=False,
         live_sites=False,
         enable_marionette_trace=False,
+        collect_perfstats=False,
+        chimera=False,
     )
 
     def inner(**kwargs):

@@ -436,7 +436,6 @@ class Field extends _pdf_object.PDFObject {
     this.buttonScaleHow = data.buttonScaleHow;
     this.ButtonScaleWhen = data.buttonScaleWhen;
     this.calcOrderIndex = data.calcOrderIndex;
-    this.charLimit = data.charLimit;
     this.comb = data.comb;
     this.commitOnSelChange = data.commitOnSelChange;
     this.currentValueIndices = data.currentValueIndices;
@@ -464,7 +463,6 @@ class Field extends _pdf_object.PDFObject {
     this.required = data.required;
     this.richText = data.richText;
     this.richValue = data.richValue;
-    this.rotation = data.rotation;
     this.style = data.style;
     this.submitName = data.submitName;
     this.textFont = data.textFont;
@@ -475,6 +473,7 @@ class Field extends _pdf_object.PDFObject {
     this._browseForFileToSubmit = data.browseForFileToSubmit || null;
     this._buttonCaption = null;
     this._buttonIcon = null;
+    this._charLimit = data.charLimit;
     this._children = null;
     this._currentValueIndices = data.currentValueIndices || 0;
     this._document = data.doc;
@@ -489,6 +488,7 @@ class Field extends _pdf_object.PDFObject {
     this._kidIds = data.kidIds || null;
     this._fieldType = (0, _common.getFieldType)(this._actions);
     this._siblings = data.siblings || null;
+    this._rotation = data.rotation || 0;
     this._globalEval = data.globalEval;
     this._appObjects = data.appObjects;
   }
@@ -554,6 +554,18 @@ class Field extends _pdf_object.PDFObject {
     this.fillColor = color;
   }
 
+  get charLimit() {
+    return this._charLimit;
+  }
+
+  set charLimit(limit) {
+    if (typeof limit !== "number") {
+      throw new Error("Invalid argument value");
+    }
+
+    this._charLimit = Math.max(0, Math.floor(limit));
+  }
+
   get numItems() {
     if (!this._isChoice) {
       throw new Error("Not a choice widget");
@@ -590,6 +602,26 @@ class Field extends _pdf_object.PDFObject {
 
   set page(_) {
     throw new Error("field.page is read-only");
+  }
+
+  get rotation() {
+    return this._rotation;
+  }
+
+  set rotation(angle) {
+    angle = Math.floor(angle);
+
+    if (angle % 90 !== 0) {
+      throw new Error("Invalid rotation: must be a multiple of 90");
+    }
+
+    angle %= 360;
+
+    if (angle < 0) {
+      angle += 360;
+    }
+
+    this._rotation = angle;
   }
 
   get textColor() {
@@ -1765,6 +1797,10 @@ class AForm {
     for (const cField of cFields) {
       const field = this._document.getField(cField);
 
+      if (!field) {
+        continue;
+      }
+
       const number = this.AFMakeNumber(field.value);
 
       if (number !== null) {
@@ -2055,17 +2091,12 @@ class App extends _pdf_object.PDFObject {
 
     this._timeoutIds.set(timeout, id);
 
-    if (this._timeoutIdsRegistry) {
-      this._timeoutIdsRegistry.register(timeout, id);
-    }
-
+    this._timeoutIdsRegistry?.register(timeout, id);
     return timeout;
   }
 
   _unregisterTimeout(timeout) {
-    if (this._timeoutIdsRegistry) {
-      this._timeoutIdsRegistry.unregister(timeout);
-    }
+    this._timeoutIdsRegistry?.unregister(timeout);
 
     const data = this._timeoutIds.get(timeout);
 
@@ -2649,10 +2680,7 @@ class EventDispatcher {
       } else if (id === "app" && baseEvent.name === "ResetForm") {
         for (const fieldId of baseEvent.ids) {
           const obj = this._objects[fieldId];
-
-          if (obj) {
-            obj.obj._reset();
-          }
+          obj?.obj._reset();
         }
       }
 
@@ -2725,6 +2753,7 @@ class EventDispatcher {
 
         source.obj._send({
           id: source.obj._id,
+          siblings: source.obj._siblings,
           value,
           selRange: [selStart, selEnd]
         });
@@ -2732,12 +2761,14 @@ class EventDispatcher {
     } else if (!event.willCommit) {
       source.obj._send({
         id: source.obj._id,
+        siblings: source.obj._siblings,
         value: savedChange.value,
         selRange: [savedChange.selStart, savedChange.selEnd]
       });
     } else {
       source.obj._send({
         id: source.obj._id,
+        siblings: source.obj._siblings,
         value: "",
         formattedValue: null,
         selRange: [0, 0]
@@ -2754,6 +2785,7 @@ class EventDispatcher {
       if (this.runActions(source, source, event, "Format")) {
         source.obj._send({
           id: source.obj._id,
+          siblings: source.obj._siblings,
           formattedValue: event.value?.toString?.()
         });
       }
@@ -2775,6 +2807,7 @@ class EventDispatcher {
 
       source.obj._send({
         id: source.obj._id,
+        siblings: source.obj._siblings,
         value: savedValue,
         formattedValue
       });
@@ -2783,6 +2816,7 @@ class EventDispatcher {
     } else if (didValidateRun) {
       source.obj._send({
         id: source.obj._id,
+        siblings: source.obj._siblings,
         value: "",
         formattedValue: null,
         selRange: [0, 0]
@@ -2866,6 +2900,7 @@ class EventDispatcher {
 
       target.obj._send({
         id: target.obj._id,
+        siblings: target.obj._siblings,
         value: savedValue,
         formattedValue
       });
@@ -3963,13 +3998,9 @@ class Doc extends _pdf_object.PDFObject {
   getPageTransition() {}
 
   getPrintParams() {
-    if (!this._printParams) {
-      this._printParams = new _print_params.PrintParams({
-        lastPage: this._numPages - 1
-      });
-    }
-
-    return this._printParams;
+    return this._printParams ||= new _print_params.PrintParams({
+      lastPage: this._numPages - 1
+    });
   }
 
   getSound() {}
@@ -4109,6 +4140,7 @@ class Doc extends _pdf_object.PDFObject {
 
       this._send({
         id: field.obj._id,
+        siblings: field.obj._siblings,
         value: field.obj.defaultValue,
         formattedValue: null,
         selRange: [0, 0]
@@ -5040,8 +5072,8 @@ Object.defineProperty(exports, "initSandbox", ({
 
 var _initialization = __w_pdfjs_require__(1);
 
-const pdfjsVersion = '2.15.129';
-const pdfjsBuild = 'be2dfe45f';
+const pdfjsVersion = '3.0.60';
+const pdfjsBuild = '493bb6500';
 })();
 
 /******/ 	return __webpack_exports__;

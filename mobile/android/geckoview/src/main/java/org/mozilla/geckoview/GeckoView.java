@@ -23,6 +23,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
+import android.util.Log;
 import android.util.SparseArray;
 import android.util.TypedValue;
 import android.view.DisplayCutout;
@@ -105,13 +106,26 @@ public class GeckoView extends FrameLayout {
       onGlobalLayout();
       if (GeckoView.this.mSurfaceWrapper != null) {
         final SurfaceViewWrapper wrapper = GeckoView.this.mSurfaceWrapper;
-        mDisplay.surfaceChanged(
-            new GeckoDisplay.SurfaceInfo.Builder(wrapper.getSurface())
-                .surfaceControl(wrapper.getSurfaceControl())
-                .size(wrapper.getWidth(), wrapper.getHeight())
-                .build());
-        mDisplay.setDynamicToolbarMaxHeight(mDynamicToolbarMaxHeight);
-        GeckoView.this.setActive(true);
+
+        // On some devices, we have seen that the Surface can become abandoned sometime in between
+        // the surfaceChanged callback and attempting to use the Surface here. In such cases,
+        // rendering in to the Surface will always fail, resulting in the user being presented a
+        // blank, unresponsive screen or the application crashing. To work around this, check
+        // whether the Surface is in such a state, and if so toggle the SurfaceView's visibility
+        // in order to request a new Surface. See bug 1772839.
+        final boolean isAbandoned = SurfaceViewWrapper.isSurfaceAbandoned(wrapper.getSurface());
+        if (isAbandoned && wrapper.getView().getVisibility() == View.VISIBLE) {
+          wrapper.getView().setVisibility(View.INVISIBLE);
+          wrapper.getView().setVisibility(View.VISIBLE);
+        } else {
+          mDisplay.surfaceChanged(
+              new GeckoDisplay.SurfaceInfo.Builder(wrapper.getSurface())
+                  .surfaceControl(wrapper.getSurfaceControl())
+                  .size(wrapper.getWidth(), wrapper.getHeight())
+                  .build());
+          mDisplay.setDynamicToolbarMaxHeight(mDynamicToolbarMaxHeight);
+          GeckoView.this.setActive(true);
+        }
       }
     }
 
@@ -435,6 +449,7 @@ public class GeckoView extends FrameLayout {
     final GeckoSession session = mSession;
     mSession.releaseDisplay(mDisplay.release());
     mSession.getOverscrollEdgeEffect().setInvalidationCallback(null);
+    mSession.getOverscrollEdgeEffect().setSession(null);
     mSession.getCompositorController().setFirstPaintCallback(null);
 
     if (mSession.getAccessibility().getView() == this) {
@@ -512,6 +527,7 @@ public class GeckoView extends FrameLayout {
 
     final Context context = getContext();
     session.getOverscrollEdgeEffect().setTheme(context);
+    session.getOverscrollEdgeEffect().setSession(session);
     session
         .getOverscrollEdgeEffect()
         .setInvalidationCallback(
@@ -924,7 +940,9 @@ public class GeckoView extends FrameLayout {
     }
   }
 
-  /** @return Whether or not Android autofill is enabled for this view. */
+  /**
+   * @return Whether or not Android autofill is enabled for this view.
+   */
   @TargetApi(26)
   public boolean getAutofillEnabled() {
     return mAutofillEnabled;
@@ -970,8 +988,13 @@ public class GeckoView extends FrameLayout {
         final @NonNull Autofill.Node prev,
         final @NonNull Autofill.NodeData data) {
       ensureAutofillManager();
-      if (mAutofillManager != null) {
+      if (mAutofillManager == null) {
+        return;
+      }
+      try {
         mAutofillManager.notifyViewExited(GeckoView.this, data.getId());
+      } catch (final SecurityException e) {
+        Log.e(LOGTAG, "Failed to call AutofillManager.notifyViewExited: ", e);
       }
     }
 
@@ -991,10 +1014,18 @@ public class GeckoView extends FrameLayout {
       Objects.requireNonNull(focusedData);
 
       ensureAutofillManager();
-      if (mAutofillManager != null) {
+      if (mAutofillManager == null) {
+        return;
+      }
+      try {
         mAutofillManager.notifyViewExited(GeckoView.this, focusedData.getId());
         mAutofillManager.notifyViewEntered(
             GeckoView.this, focusedData.getId(), displayRectForId(session, focused));
+      } catch (final SecurityException e) {
+        Log.e(
+            LOGTAG,
+            "Failed to call AutofillManager.notifyViewExited or AutofillManager.notifyViewEntered: ",
+            e);
       }
     }
 
@@ -1004,9 +1035,14 @@ public class GeckoView extends FrameLayout {
         final @NonNull Autofill.Node focused,
         final @NonNull Autofill.NodeData data) {
       ensureAutofillManager();
-      if (mAutofillManager != null) {
+      if (mAutofillManager == null) {
+        return;
+      }
+      try {
         mAutofillManager.notifyViewEntered(
             GeckoView.this, data.getId(), displayRectForId(session, focused));
+      } catch (final SecurityException e) {
+        Log.e(LOGTAG, "Failed to call AutofillManager.notifyViewEntered: ", e);
       }
     }
 
@@ -1022,18 +1058,28 @@ public class GeckoView extends FrameLayout {
         final @NonNull Autofill.Node node,
         final @NonNull Autofill.NodeData data) {
       ensureAutofillManager();
-      if (mAutofillManager != null) {
+      if (mAutofillManager == null) {
+        return;
+      }
+      try {
         mAutofillManager.notifyValueChanged(
             GeckoView.this, data.getId(), AutofillValue.forText(data.getValue()));
+      } catch (final SecurityException e) {
+        Log.e(LOGTAG, "Failed to call AutofillManager.notifyValueChanged: ", e);
       }
     }
 
     @Override
     public void onSessionCancel(final @NonNull GeckoSession session) {
       ensureAutofillManager();
-      if (mAutofillManager != null) {
+      if (mAutofillManager == null) {
+        return;
+      }
+      try {
         // This line seems necessary for auto-fill to work on the initial page.
         mAutofillManager.cancel();
+      } catch (final SecurityException e) {
+        Log.e(LOGTAG, "Failed to call AutofillManager.cancel: ", e);
       }
     }
 
@@ -1043,17 +1089,27 @@ public class GeckoView extends FrameLayout {
         final @NonNull Autofill.Node node,
         final @NonNull Autofill.NodeData data) {
       ensureAutofillManager();
-      if (mAutofillManager != null) {
+      if (mAutofillManager == null) {
+        return;
+      }
+      try {
         mAutofillManager.commit();
+      } catch (final SecurityException e) {
+        Log.e(LOGTAG, "Failed to call AutofillManager.commit: ", e);
       }
     }
 
     @Override
     public void onSessionStart(final @NonNull GeckoSession session) {
       ensureAutofillManager();
-      if (mAutofillManager != null) {
+      if (mAutofillManager == null) {
+        return;
+      }
+      try {
         // This line seems necessary for auto-fill to work on the initial page.
         mAutofillManager.cancel();
+      } catch (final SecurityException e) {
+        Log.e(LOGTAG, "Failed to call AutofillManager.cancel: ", e);
       }
     }
   }

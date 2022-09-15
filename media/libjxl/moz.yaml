@@ -2,7 +2,7 @@ schema: 1
 
 bugzilla:
   product: Core
-  component: "ImageLib"
+  component: "Graphics: ImageLib"
 
 origin:
   name: libjxl
@@ -10,9 +10,9 @@ origin:
 
   url: https://github.com/libjxl/libjxl
 
-  release: commit 318c592d98b97d103941b90d47107f06a10c71da (2022-03-21T20:44:46Z).
+  release: 3e0b08d4ee53a08f9b58739e088c5bdecebae74d (2022-09-09T11:59:45Z).
 
-  revision: 318c592d98b97d103941b90d47107f06a10c71da
+  revision: 3e0b08d4ee53a08f9b58739e088c5bdecebae74d
 
   license: Apache-2.0
 

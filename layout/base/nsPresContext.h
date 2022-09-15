@@ -267,7 +267,7 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
     return !!mPendingMediaFeatureValuesChange;
   }
 
-  inline nsCSSFrameConstructor* FrameConstructor();
+  inline nsCSSFrameConstructor* FrameConstructor() const;
 
   mozilla::AnimationEventDispatcher* AnimationEventDispatcher() {
     return mAnimationEventDispatcher;
@@ -345,7 +345,7 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   /**
    * Get medium of presentation
    */
-  const nsAtom* Medium() {
+  const nsAtom* Medium() const {
     MOZ_ASSERT(mMedium);
     return mMediaEmulationData.mMedium ? mMediaEmulationData.mMedium.get()
                                        : mMedium;
@@ -385,6 +385,7 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
            !PrefSheetPrefs().mUseDocumentColors;
   }
 
+  mozilla::ColorScheme DefaultBackgroundColorScheme() const;
   nscolor DefaultBackgroundColor() const;
 
   nsISupports* GetContainerWeak() const;
@@ -905,8 +906,6 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   // Is this presentation in a chrome docshell?
   bool IsChrome() const;
 
-  bool SuppressingResizeReflow() const { return mSuppressResizeReflow; }
-
   gfxUserFontSet* GetUserFontSet();
 
   // Should be called whenever the set of fonts available in the user
@@ -1084,6 +1083,16 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   void SetHasWarnedAboutTooLargeDashedOrDottedRadius() {
     mHasWarnedAboutTooLargeDashedOrDottedRadius = true;
   }
+
+  void RegisterContainerQueryFrame(nsIFrame* aFrame);
+  void UnregisterContainerQueryFrame(nsIFrame* aFrame);
+  bool HasContainerQueryFrames() const {
+    return !mContainerQueryFrames.IsEmpty();
+  }
+
+  void FinishedContainerQueryUpdate();
+
+  bool UpdateContainerQueryStyles();
 
   mozilla::intl::Bidi& GetBidiEngine();
 
@@ -1289,6 +1298,13 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   // that we can avoid repeatedly reporting the same font.
   nsTHashSet<nsCString> mBlockedFonts;
 
+  // The set of container query boxes currently in the document.
+  nsTHashSet<nsIFrame*> mContainerQueryFrames;
+  // The set of container query elements currently in the document that have
+  // been updated so far. This is necessary to avoid reentering on container
+  // query style changes which cause us to do frame reconstruction.
+  nsTHashSet<nsIContent*> mUpdatedContainerQueryContents;
+
   ScrollStyles mViewportScrollStyles;
 
   uint16_t mImageAnimationMode;
@@ -1345,10 +1361,6 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
 
   // Is the current mFontFeatureValuesLookup valid?
   unsigned mFontFeatureValuesDirty : 1;
-
-  // resize reflow is suppressed when the only change has been to zoom
-  // the document rather than to change the document's dimensions
-  unsigned mSuppressResizeReflow : 1;
 
   unsigned mIsVisual : 1;
 

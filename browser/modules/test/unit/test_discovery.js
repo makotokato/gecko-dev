@@ -2,13 +2,11 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-/* globals ChromeUtils, Assert, add_task */
 "use strict";
 
 // ClientID fails without...
 do_get_profile();
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { TestUtils } = ChromeUtils.import(
   "resource://testing-common/TestUtils.jsm"
 );

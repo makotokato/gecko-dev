@@ -7,6 +7,7 @@ use std::io::{self, Result};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
+use crossbeam_channel::{self, Receiver, Sender};
 use mio::{event::Event, Events, Interest, Poll, Registry, Token, Waker};
 use slab::Slab;
 
@@ -20,13 +21,6 @@ use crate::{
 
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
-
-#[cfg(windows)]
-use crate::duplicate_platform_handle;
-#[cfg(unix)]
-use crate::sys::cmsg;
-#[cfg(unix)]
-use crate::PlatformHandle;
 
 const WAKE_TOKEN: Token = Token(!0);
 
@@ -60,7 +54,7 @@ enum Request {
 #[derive(Clone, Debug)]
 pub struct EventLoopHandle {
     waker: Arc<Waker>,
-    requests_tx: mpsc::Sender<Request>,
+    requests_tx: Sender<Request>,
 }
 
 impl EventLoopHandle {
@@ -147,8 +141,8 @@ struct EventLoop {
     waker: Arc<Waker>,
     name: String,
     connections: Slab<Connection>,
-    requests_rx: mpsc::Receiver<Request>,
-    requests_tx: mpsc::Sender<Request>,
+    requests_rx: Receiver<Request>,
+    requests_tx: Sender<Request>,
 }
 
 const EVENT_LOOP_INITIAL_CLIENTS: usize = 64; // Initial client allocation, exceeding this will cause the connection slab to grow.
@@ -158,7 +152,7 @@ impl EventLoop {
     fn new(name: String) -> Result<EventLoop> {
         let poll = Poll::new()?;
         let waker = Arc::new(Waker::new(poll.registry(), WAKE_TOKEN)?);
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = crossbeam_channel::bounded(EVENT_LOOP_INITIAL_CLIENTS);
         let eventloop = EventLoop {
             poll,
             events: Events::with_capacity(EVENT_LOOP_EVENTS_PER_ITERATION),
@@ -608,16 +602,24 @@ where
         // Repeatedly call `decode` as long as it produces items, passing each produced item to the handler to action.
         #[allow(unused_mut)]
         while let Some(mut item) = self.codec.decode(&mut inbound.buf)? {
-            #[cfg(unix)]
-            item.receive_owned_message_handle(|| {
-                if let Some(handle) = self.extra_handle.take() {
-                    unsafe { handle.into_raw() }
-                } else {
-                    let handles = cmsg::decode_handles(&mut inbound.cmsg);
-                    self.extra_handle = handles.get(1).map(|h| PlatformHandle::new(*h));
-                    handles[0]
+            if item.has_associated_handle() {
+                // On Unix, dequeue a handle from the connection and update the item's handle.
+                #[cfg(unix)]
+                {
+                    let new = inbound
+                        .pop_handle()
+                        .expect("inbound handle expected for item");
+                    unsafe { item.set_local_handle(new.take()) };
                 }
-            });
+                // On Windows, the deserialized item contains the correct handle value, so
+                // convert it to an owned handle on the item.
+                #[cfg(windows)]
+                {
+                    assert!(inbound.pop_handle().is_none());
+                    unsafe { item.set_local_handle() };
+                }
+            }
+
             self.handler.consume(item)?;
         }
 
@@ -630,21 +632,25 @@ where
 
         // Repeatedly grab outgoing items from the handler, passing each to `encode` for serialization into `outbound`.
         while let Some(mut item) = self.handler.produce()? {
-            item.prepare_send_message_handle(|handle, _target| {
-                // On Unix, the handle is encoded into a cmsg buffer for out-of-band transport via sendmsg.
-                #[cfg(unix)]
-                {
-                    cmsg::encode_handle(&mut outbound.cmsg, handle);
-                    Ok(handle)
-                }
-                // On Windows, the handle is transferred by duplicating it into the target remote process during message send.
+            let handle = if item.has_associated_handle() {
+                #[allow(unused_mut)]
+                let mut handle = item.take_handle();
+                // On Windows, the handle is transferred by duplicating it into the target remote process.
                 #[cfg(windows)]
                 unsafe {
-                    duplicate_platform_handle(handle, Some(_target))
+                    item.set_remote_handle(handle.send_to_target()?);
                 }
-            })?;
+                Some(handle)
+            } else {
+                None
+            };
 
             self.codec.encode(item, &mut outbound.buf)?;
+            if let Some(handle) = handle {
+                // `outbound` retains ownership of the handle until the associated
+                // encoded item in `outbound.buf` is sent to the remote process.
+                outbound.push_handle(handle);
+            }
         }
         Ok(())
     }
@@ -653,8 +659,6 @@ where
 struct FramedDriver<T: Handler> {
     codec: LengthDelimitedCodec<T::Out, T::In>,
     handler: T,
-    #[cfg(unix)]
-    extra_handle: Option<PlatformHandle>,
 }
 
 impl<T: Handler> FramedDriver<T> {
@@ -662,8 +666,6 @@ impl<T: Handler> FramedDriver<T> {
         FramedDriver {
             codec: Default::default(),
             handler,
-            #[cfg(unix)]
-            extra_handle: None,
         }
     }
 }
@@ -823,7 +825,7 @@ mod test {
 
         // RPC message from client to server.
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        let response = response.wait().expect("client response");
+        let response = response.expect("client response");
         assert_eq!(response, TestClientMessage::TestResponse);
 
         // Explicit shutdown.
@@ -839,7 +841,7 @@ mod test {
 
         // RPC message from client to server.
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        let response = response.wait().expect("client response");
+        let response = response.expect("client response");
         assert_eq!(response, TestClientMessage::TestResponse);
 
         // Explicit shutdown.
@@ -854,7 +856,7 @@ mod test {
         drop(server);
 
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        response.wait().expect_err("sending on closed channel");
+        response.expect_err("sending on closed channel");
     }
 
     #[test]
@@ -864,7 +866,7 @@ mod test {
         drop(client);
 
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        response.wait().expect_err("sending on a closed channel");
+        response.expect_err("sending on a closed channel");
     }
 
     #[test]

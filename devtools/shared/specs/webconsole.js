@@ -57,7 +57,7 @@ const webconsoleSpecPrototype = {
       notes: Option(0, "nullable:string"),
       result: Option(0, "nullable:json"),
       startTime: Option(0, "number"),
-      timestamp: Option(0, "string"),
+      timestamp: Option(0, "number"),
       topLevelAwaitRejected: Option(0, "nullable:boolean"),
     },
     fileActivity: {
@@ -186,12 +186,14 @@ const webconsoleSpecPrototype = {
       },
       response: RetVal("console.autocomplete"),
     },
+
     /**
-     * Clear the cache of messages (page errors and console API calls) expects no response.
+     * Same as clearMessagesCache, but wait for the server response.
      */
-    clearMessagesCache: {
-      oneway: true,
+    clearMessagesCacheAsync: {
+      request: {},
     },
+
     /**
      * Get Web Console-related preferences on the server.
      *

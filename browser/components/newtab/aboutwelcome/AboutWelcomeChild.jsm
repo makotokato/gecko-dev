@@ -6,8 +6,8 @@
 
 const EXPORTED_SYMBOLS = ["AboutWelcomeChild"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -184,6 +184,10 @@ class AboutWelcomeChild extends JSWindowActorChild {
     Cu.exportFunction(this.AWSendToDeviceEmailsSupported.bind(this), window, {
       defineAs: "AWSendToDeviceEmailsSupported",
     });
+
+    Cu.exportFunction(this.AWNewScreen.bind(this), window, {
+      defineAs: "AWNewScreen",
+    });
   }
 
   /**
@@ -247,20 +251,29 @@ class AboutWelcomeChild extends JSWindowActorChild {
         "AWPage:GET_APP_AND_SYSTEM_LOCALE_INFO"
       );
     }
-    let defaults = lazy.AboutWelcomeDefaults.getDefaults();
-    // FeatureConfig (from prefs or experiments) has higher precendence
+
+    // The MR2022 onboarding variable overrides the about:welcome templateMR
+    // variable if enrolled.
+    const useMROnboarding = lazy.NimbusFeatures.majorRelease2022.getVariable(
+      "onboarding"
+    );
+    const useTemplateMR = useMROnboarding ?? featureConfig.templateMR;
+
+    // FeatureConfig (from experiments) has higher precendence
     // to defaults. But the `screens` property isn't defined we shouldn't
     // override the default with `null`
-    return Cu.cloneInto(
-      await lazy.AboutWelcomeDefaults.prepareContentForReact({
-        ...attributionData,
-        ...experimentMetadata,
-        ...defaults,
-        ...featureConfig,
-        screens: featureConfig.screens ?? defaults.screens,
-      }),
-      this.contentWindow
-    );
+    let defaults = lazy.AboutWelcomeDefaults.getDefaults(useTemplateMR);
+
+    const content = await lazy.AboutWelcomeDefaults.prepareContentForReact({
+      ...attributionData,
+      ...experimentMetadata,
+      ...defaults,
+      ...featureConfig,
+      templateMR: useTemplateMR,
+      screens: featureConfig.screens ?? defaults.screens,
+    });
+
+    return Cu.cloneInto(content, this.contentWindow);
   }
 
   AWGetFeatureConfig() {
@@ -317,10 +330,49 @@ class AboutWelcomeChild extends JSWindowActorChild {
     this.contentWindow.location.href = "about:home";
   }
 
-  AWEnsureLangPackInstalled(langPack) {
-    return this.sendQueryAndCloneForContent(
-      "AWPage:ENSURE_LANG_PACK_INSTALLED",
-      langPack
+  AWEnsureLangPackInstalled(negotiated, screenContent) {
+    const content = Cu.cloneInto(screenContent, {});
+    return this.wrapPromise(
+      this.sendQuery(
+        "AWPage:ENSURE_LANG_PACK_INSTALLED",
+        negotiated.langPack
+      ).then(() => {
+        const formatting = [];
+        const l10n = new Localization(
+          ["branding/brand.ftl", "browser/newtab/onboarding.ftl"],
+          false,
+          undefined,
+          // Use the system-ish then app then default locale.
+          [...negotiated.requestSystemLocales, "en-US"]
+        );
+
+        // Add the negotiated language name as args.
+        function addMessageArgsAndUseLangPack(obj) {
+          for (const value of Object.values(obj)) {
+            if (value?.string_id) {
+              value.args = {
+                ...value.args,
+                negotiatedLanguage: negotiated.langPackDisplayName,
+              };
+
+              // Expose fluent strings wanting lang pack as raw.
+              if (value.useLangPack) {
+                formatting.push(
+                  l10n.formatValue(value.string_id, value.args).then(raw => {
+                    delete value.string_id;
+                    value.raw = raw;
+                  })
+                );
+              }
+            }
+          }
+        }
+        addMessageArgsAndUseLangPack(content.languageSwitcher);
+        addMessageArgsAndUseLangPack(content);
+        return Promise.all(formatting).then(() =>
+          Cu.cloneInto(content, this.contentWindow)
+        );
+      })
     );
   }
 
@@ -342,6 +394,10 @@ class AboutWelcomeChild extends JSWindowActorChild {
     return this.wrapPromise(
       this.sendQuery("AWPage:SEND_TO_DEVICE_EMAILS_SUPPORTED")
     );
+  }
+
+  AWNewScreen(screenId) {
+    return this.wrapPromise(this.sendQuery("AWPage:NEW_SCREEN", screenId));
   }
 
   /**

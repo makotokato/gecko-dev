@@ -171,9 +171,7 @@ interface Element : Node {
 // https://html.spec.whatwg.org/#focus-management-apis
 dictionary FocusOptions {
   boolean preventScroll = false;
-  // Prevents the focus ring if this is not a text control / editable element.
-  [Func="nsContentUtils::IsCallerChromeOrErrorPage"]
-  boolean preventFocusRing = false;
+  boolean focusVisible;
 };
 
 interface mixin HTMLOrForeignElement {
@@ -201,10 +199,18 @@ dictionary ScrollIntoViewOptions : ScrollOptions {
   ScrollLogicalPosition inline = "nearest";
 };
 
+dictionary CheckVisibilityOptions {
+  boolean checkOpacity = false;
+  boolean checkVisibilityCSS = false;
+  [ChromeOnly] boolean flush = true;
+};
+
 // http://dev.w3.org/csswg/cssom-view/#extensions-to-the-element-interface
 partial interface Element {
   DOMRectList getClientRects();
   DOMRect getBoundingClientRect();
+
+  boolean checkVisibility(optional CheckVisibilityOptions options = {});
 
   // scrolling
   void scrollIntoView(optional (boolean or ScrollIntoViewOptions) arg = {});
@@ -396,6 +402,6 @@ dictionary SetHTMLOptions {
 };
 
 partial interface Element {
-  [UseCounter, Throws, Pref="dom.security.sanitizer.enabled"]
+  [SecureContext, UseCounter, Throws, Pref="dom.security.sanitizer.enabled"]
     void setHTML(DOMString aInnerHTML, optional SetHTMLOptions options = {});
 };

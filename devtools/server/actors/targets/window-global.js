@@ -22,8 +22,6 @@
  */
 
 var { Ci, Cu, Cr, Cc } = require("chrome");
-var Services = require("Services");
-const ChromeUtils = require("ChromeUtils");
 var { ActorRegistry } = require("devtools/server/actors/utils/actor-registry");
 var DevToolsUtils = require("devtools/shared/DevToolsUtils");
 var { assert } = DevToolsUtils;
@@ -33,8 +31,8 @@ var {
 var makeDebugger = require("devtools/server/actors/utils/make-debugger");
 const InspectorUtils = require("InspectorUtils");
 const Targets = require("devtools/server/actors/targets/index");
-const { TargetActorRegistry } = ChromeUtils.import(
-  "resource://devtools/server/actors/targets/target-actor-registry.jsm"
+const { TargetActorRegistry } = ChromeUtils.importESModule(
+  "resource://devtools/server/actors/targets/target-actor-registry.sys.mjs"
 );
 const { PrivateBrowsingUtils } = ChromeUtils.import(
   "resource://gre/modules/PrivateBrowsingUtils.jsm"
@@ -262,7 +260,7 @@ const windowGlobalTargetPrototype = {
    *          The Session Context to help know what is debugged.
    *          See devtools/server/actors/watcher/session-context.js
    */
-  initialize: function(
+  initialize(
     connection,
     {
       docShell,
@@ -602,7 +600,7 @@ const windowGlobalTargetPrototype = {
       // True for targets created by JSWindowActors, see constructor JSDoc.
       followWindowGlobalLifeCycle: this.followWindowGlobalLifeCycle,
       innerWindowId,
-      parentInnerWindowId: parentInnerWindowId,
+      parentInnerWindowId,
       topInnerWindowId: this.browsingContext.topWindowContext.innerWindowId,
       isTopLevelTarget: this.isTopLevelTarget,
       ignoreSubFrames: this.ignoreSubFrames,
@@ -658,8 +656,10 @@ const windowGlobalTargetPrototype = {
    * @params {Object} options
    * @params {Boolean} options.isTargetSwitching: Set to true when this is called during
    *         a target switch.
+   * @params {Boolean} options.isModeSwitching: Set to true true when this is called as the
+   *         result of a change to the devtools.browsertoolbox.scope pref.
    */
-  destroy({ isTargetSwitching = false } = {}) {
+  destroy({ isTargetSwitching = false, isModeSwitching = false } = {}) {
     // Avoid reentrancy. We will destroy the Transport when emitting "destroyed",
     // which will force destroying all actors.
     if (this.destroying) {
@@ -684,10 +684,10 @@ const windowGlobalTargetPrototype = {
     if (this.docShell) {
       this._unwatchDocShell(this.docShell);
 
-      // If this target is being destroyed as part of a target switch, we don't need to
-      // restore the configuration (this might cause the content page to be focused again
-      // and cause issues in tets).
-      if (!isTargetSwitching) {
+      // If this target is being destroyed as part of a target switch or a mode switch,
+      // we don't need to restore the configuration (this might cause the content page to
+      // be focused again, causing issues in tests and disturbing the user when switching modes).
+      if (!isTargetSwitching && !isModeSwitching) {
         this._restoreTargetConfiguration();
       }
     }
@@ -727,7 +727,7 @@ const windowGlobalTargetPrototype = {
 
     // Emit a last event before calling Actor.destroy
     // which will destroy the EventEmitter API
-    this.emit("destroyed");
+    this.emit("destroyed", { isTargetSwitching, isModeSwitching });
 
     Actor.prototype.destroy.call(this);
     TargetActorRegistry.unregisterTargetActor(this);
@@ -977,7 +977,7 @@ const windowGlobalTargetPrototype = {
         // Unfortunately docshell.isBeingDestroyed() doesn't return true...
         return d != this.docShell && this._isRootDocShell(d) && d.DOMWindow;
       });
-      if (rootDocShells.length > 0) {
+      if (rootDocShells.length) {
         const newRoot = rootDocShells[0];
         this._originalWindow = newRoot.DOMWindow;
         this._changeTopLevelDocument(this._originalWindow);
@@ -1067,7 +1067,7 @@ const windowGlobalTargetPrototype = {
     const windows = this._docShellsToWindows(docshells);
 
     // Do not send the `frameUpdate` event if the windows array is empty.
-    if (windows.length == 0) {
+    if (!windows.length) {
       return;
     }
 
@@ -1313,6 +1313,10 @@ const windowGlobalTargetPrototype = {
       }
     }
 
+    if (typeof options.customFormatters !== "undefined") {
+      this.customFormatters = options.customFormatters;
+    }
+
     if (!this.isTopLevelTarget) {
       // Following DevTools target options should only apply to the top target and be
       // propagated through the window global tree via the platform.
@@ -1540,8 +1544,8 @@ const windowGlobalTargetPrototype = {
     // This event is fired once the document is loaded,
     // after the load event, it's document ready-state is 'complete'.
     this.emit("navigate", {
-      window: window,
-      isTopLevel: isTopLevel,
+      window,
+      isTopLevel,
     });
 
     // We don't do anything for inner frames here.
@@ -1565,7 +1569,7 @@ const windowGlobalTargetPrototype = {
       url: this.url,
       title: this.title,
       state: "stop",
-      isFrameSwitching: isFrameSwitching,
+      isFrameSwitching,
     });
   },
 

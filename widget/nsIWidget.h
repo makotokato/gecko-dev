@@ -1999,6 +1999,11 @@ class nsIWidget : public nsISupports {
   virtual void ClearCachedWebrenderResources() {}
 
   /**
+   * Clear WebRender animation resources
+   */
+  virtual void ClearWebrenderAnimationResources() {}
+
+  /**
    * Request fast snapshot at RenderCompositor of WebRender.
    * Since readback of Windows DirectComposition is very slow.
    */
@@ -2115,6 +2120,11 @@ class nsIWidget : public nsISupports {
    */
   virtual void SetWindowButtonRect(WindowButtonType aButtonType,
                                    const LayoutDeviceIntRect& aClientRect) {}
+
+  virtual nsresult SetHiDPIMode(bool aHiDPI) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+  virtual nsresult RestoreHiDPIMode() { return NS_ERROR_NOT_IMPLEMENTED; }
 
  protected:
   // keep the list of children.  We also keep track of our siblings.

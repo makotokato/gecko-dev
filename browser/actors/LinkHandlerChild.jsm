@@ -6,8 +6,6 @@
 
 const EXPORTED_SYMBOLS = ["LinkHandlerChild"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 const lazy = {};
 
 ChromeUtils.defineModuleGetter(
@@ -159,7 +157,6 @@ class LinkHandlerChild extends JSWindowActorChild {
               let engine = { title: link.title, href: link.href };
               this.sendAsyncMessage("Link:AddSearch", {
                 engine,
-                url: link.ownerDocument.documentURI,
               });
               searchAdded = true;
             }

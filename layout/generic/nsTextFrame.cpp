@@ -1826,7 +1826,7 @@ static bool HasTerminalNewline(const nsTextFrame* aFrame) {
 static gfxFont::Metrics GetFirstFontMetrics(gfxFontGroup* aFontGroup,
                                             bool aVerticalMetrics) {
   if (!aFontGroup) return gfxFont::Metrics();
-  gfxFont* font = aFontGroup->GetFirstValidFont();
+  RefPtr<gfxFont> font = aFontGroup->GetFirstValidFont();
   return font->GetMetrics(aVerticalMetrics ? nsFontMetrics::eVertical
                                            : nsFontMetrics::eHorizontal);
 }
@@ -2242,6 +2242,11 @@ static already_AddRefed<gfxTextRun> GetHyphenTextRun(nsTextFrame* aTextFrame,
   const auto& hyphenateChar = aTextFrame->StyleText()->mHyphenateCharacter;
   gfx::ShapedTextFlags flags =
       nsLayoutUtils::GetTextRunOrientFlagsForStyle(aTextFrame->Style());
+  // Make the directionality of the hyphen run (in case it is multi-char) match
+  // the text frame.
+  if (aTextFrame->GetWritingMode().IsBidiRTL()) {
+    flags |= gfx::ShapedTextFlags::TEXT_IS_RTL;
+  }
   if (hyphenateChar.IsAuto()) {
     return fontGroup->MakeHyphenTextRun(dt, flags, appPerDev);
   }
@@ -2338,24 +2343,6 @@ already_AddRefed<gfxTextRun> BuildTextRunsScanner::BuildTextRunForFrames(
     } else if (mLineContainer->HasAnyStateBits(NS_FRAME_IS_IN_SINGLE_CHAR_MI)) {
       flags2 |= nsTextFrameUtils::Flags::IsSingleCharMi;
       anyMathMLStyling = true;
-      // Test for fontstyle attribute as StyleFont() may not be accurate
-      // To be consistent in terms of ignoring CSS style changes, fontweight
-      // gets checked too.
-      if (parent) {
-        nsIContent* content = parent->GetContent();
-        if (content && content->IsElement()) {
-          if (content->AsElement()->AttrValueIs(kNameSpaceID_None,
-                                                nsGkAtoms::fontstyle_,
-                                                u"normal"_ns, eCaseMatters)) {
-            mathFlags |= MathMLTextRunFactory::MATH_FONT_STYLING_NORMAL;
-          }
-          if (content->AsElement()->AttrValueIs(kNameSpaceID_None,
-                                                nsGkAtoms::fontweight_,
-                                                u"bold"_ns, eCaseMatters)) {
-            mathFlags |= MathMLTextRunFactory::MATH_FONT_WEIGHT_BOLD;
-          }
-        }
-      }
     }
     if (mLineContainer->HasAnyStateBits(TEXT_IS_IN_TOKEN_MATHML)) {
       // All MathML tokens except <mtext> use 'math' script.
@@ -4164,28 +4151,20 @@ void nsTextPaintStyle::InitCommonColors() {
     return;
   }
 
-  auto bgFrame = nsCSSRendering::FindNonTransparentBackgroundFrame(mFrame);
-  nscolor defaultBgColor = mPresContext->DefaultBackgroundColor();
-  nscolor bgColor = bgFrame.mFrame ? bgFrame.mFrame->GetVisitedDependentColor(
-                                         &nsStyleBackground::mBackgroundColor)
-                                   : defaultBgColor;
-
-  mFrameBackgroundColor = NS_ComposeColors(defaultBgColor, bgColor);
+  auto bgColor = nsCSSRendering::FindEffectiveBackgroundColor(mFrame);
+  mFrameBackgroundColor = bgColor.mColor;
 
   mSystemFieldForegroundColor =
       LookAndFeel::Color(LookAndFeel::ColorID::Fieldtext, mFrame);
   mSystemFieldBackgroundColor =
       LookAndFeel::Color(LookAndFeel::ColorID::Field, mFrame);
 
-  if (bgFrame.mIsThemed) {
+  if (bgColor.mIsThemed) {
     // Assume a native widget has sufficient contrast always
     mSufficientContrast = 0;
     mInitCommonColors = true;
     return;
   }
-
-  NS_ASSERTION(NS_GET_A(defaultBgColor) == 255,
-               "default background color is not opaque");
 
   nscolor defaultWindowBackgroundColor =
       LookAndFeel::Color(LookAndFeel::ColorID::Window, mFrame);
@@ -5649,10 +5628,11 @@ void nsTextFrame::UnionAdditionalOverflow(nsPresContext* aPresContext,
 
     bool useVerticalMetrics = verticalRun && mTextRun->UseCenterBaseline();
     nsFontMetrics* fontMetrics = aProvider.GetFontMetrics();
+    RefPtr<gfxFont> font =
+        fontMetrics->GetThebesFontGroup()->GetFirstValidFont();
     const gfxFont::Metrics& metrics =
-        fontMetrics->GetThebesFontGroup()->GetFirstValidFont()->GetMetrics(
-            useVerticalMetrics ? nsFontMetrics::eVertical
-                               : nsFontMetrics::eHorizontal);
+        font->GetMetrics(useVerticalMetrics ? nsFontMetrics::eVertical
+                                            : nsFontMetrics::eHorizontal);
 
     params.defaultLineThickness = metrics.underlineSize;
     params.lineSize.height = ComputeDecorationLineThickness(
@@ -6586,7 +6566,8 @@ void nsTextFrame::PaintTextSelectionDecorations(
     }
   }
 
-  gfxFont* firstFont = aParams.provider->GetFontGroup()->GetFirstValidFont();
+  RefPtr<gfxFont> firstFont =
+      aParams.provider->GetFontGroup()->GetFirstValidFont();
   bool verticalRun = mTextRun->IsVertical();
   bool useVerticalMetrics = verticalRun && mTextRun->UseCenterBaseline();
   bool rightUnderline = useVerticalMetrics && IsUnderlineRight(*Style());
@@ -7154,10 +7135,8 @@ void nsTextFrame::DrawTextRun(Range aRange, const gfx::Point& aTextBaselinePt,
       gfx::Point p(aTextBaselinePt);
       bool vertical = GetWritingMode().IsVertical();
       // For right-to-left text runs, the soft-hyphen is positioned at the left
-      // of the text, minus its own width
-      float shift =
-          mTextRun->GetDirection() * (*aParams.advanceWidth) -
-          (mTextRun->IsRightToLeft() ? hyphenTextRun->GetAdvanceWidth() : 0);
+      // of the text.
+      float shift = mTextRun->GetDirection() * (*aParams.advanceWidth);
       if (vertical) {
         p.y += shift;
       } else {
@@ -7421,6 +7400,18 @@ int16_t nsTextFrame::GetSelectionStatus(int16_t* aSelectionFlags) {
   return selectionValue;
 }
 
+bool nsTextFrame::IsEntirelyWhitespace() const {
+  const nsTextFragment& text = mContent->AsText()->TextFragment();
+  for (uint32_t index = 0; index < text.GetLength(); ++index) {
+    const char16_t ch = text.CharAt(index);
+    if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == 0xa0) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 /**
  * Compute the longest prefix of text whose width is <= aWidth. Return
  * the length of the prefix. Also returns the width of the prefix in aFitWidth.
@@ -7551,7 +7542,7 @@ bool nsTextFrame::CombineSelectionUnderlineRect(nsPresContext* aPresContext,
   nsRect givenRect = aRect;
 
   gfxFontGroup* fontGroup = GetInflatedFontGroupForFrame(this);
-  gfxFont* firstFont = fontGroup->GetFirstValidFont();
+  RefPtr<gfxFont> firstFont = fontGroup->GetFirstValidFont();
   WritingMode wm = GetWritingMode();
   bool verticalRun = wm.IsVertical();
   bool useVerticalMetrics = verticalRun && !wm.IsSideways();
@@ -9342,8 +9333,6 @@ void nsTextFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
   ReflowText(*aReflowInput.mLineLayout, aReflowInput.AvailableWidth(),
              aReflowInput.mRenderingContext->GetDrawTarget(), aMetrics,
              aStatus);
-
-  NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aMetrics);
 }
 
 #ifdef ACCESSIBILITY

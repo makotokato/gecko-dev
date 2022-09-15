@@ -109,11 +109,11 @@ def format_taskgraph(options, parameters, logfile=None):
     from taskgraph.parameters import parameters_loader
 
     if logfile:
-        oldhandler = logging.root.handlers[-1]
-        logging.root.removeHandler(oldhandler)
-
         handler = logging.FileHandler(logfile, mode="w")
-        handler.setFormatter(oldhandler.formatter)
+        if logging.root.handlers:
+            oldhandler = logging.root.handlers[-1]
+            logging.root.removeHandler(oldhandler)
+            handler.setFormatter(oldhandler.formatter)
         logging.root.addHandler(handler)
 
     if options["fast"]:
@@ -675,8 +675,8 @@ def action_callback(options):
 def test_action_callback(options):
     import taskgraph.parameters
     import gecko_taskgraph.actions
+    from taskgraph.config import load_graph_config
     from taskgraph.util import yaml
-    from gecko_taskgraph.config import load_graph_config
 
     def load_data(filename):
         with open(filename) as f:

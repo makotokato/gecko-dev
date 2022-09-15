@@ -216,7 +216,7 @@ function createContextMenu(event, message, webConsoleWrapper) {
       label: l10n.getStr("webconsole.menu.copyAllMessages.label"),
       accesskey: l10n.getStr("webconsole.menu.copyAllMessages.accesskey"),
       disabled: false,
-      click: async function() {
+      async click() {
         const outputText = await getUnvirtualizedConsoleOutputText(
           webConsoleWrapper
         );
@@ -313,8 +313,10 @@ async function getUnvirtualizedConsoleOutputText(webConsoleWrapper) {
     const ConsoleOutput = createFactory(
       require("devtools/client/webconsole/components/Output/ConsoleOutput")
     );
-    const { Provider } = require("devtools/client/shared/vendor/react-redux");
-    const ToolboxProvider = require("devtools/client/framework/store-provider");
+    const {
+      Provider,
+      createProvider,
+    } = require("devtools/client/shared/vendor/react-redux");
 
     const { parentNode, toolbox } = webConsoleWrapper;
     const doc = parentNode.ownerDocument;
@@ -340,8 +342,8 @@ async function getUnvirtualizedConsoleOutputText(webConsoleWrapper) {
         },
         toolbox
           ? createElement(
-              ToolboxProvider,
-              { store: toolbox.store },
+              createProvider(toolbox.commands.targetCommand.storeId),
+              { store: toolbox.commands.targetCommand.store },
               consoleOutput
             )
           : consoleOutput

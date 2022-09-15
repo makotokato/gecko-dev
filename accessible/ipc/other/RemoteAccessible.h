@@ -56,6 +56,7 @@ class RemoteAccessible : public RemoteAccessibleBase<RemoteAccessible> {
   virtual bool DoAction(uint8_t aIndex) const override;
   virtual uint8_t ActionCount() const override;
   virtual void ActionNameAt(uint8_t aIndex, nsAString& aName) override;
+  virtual KeyBinding AccessKey() const override;
 
   virtual void SelectedItems(nsTArray<Accessible*>* aSelectedItems) override;
   virtual uint32_t SelectedItemCount() override;
@@ -75,6 +76,12 @@ class RemoteAccessible : public RemoteAccessibleBase<RemoteAccessible> {
                          int32_t* aStartOffset, int32_t* aEndOffset);
 
   virtual bool TableIsProbablyForLayout() override;
+
+  /**
+   * Get all relations for this accessible.
+   */
+  void Relations(nsTArray<RelationType>* aTypes,
+                 nsTArray<nsTArray<RemoteAccessible*>>* aTargetSets) const;
 
  protected:
   explicit RemoteAccessible(DocAccessibleParent* aThisAsDoc)

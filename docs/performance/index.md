@@ -1,6 +1,6 @@
 # Performance
 
-This page explains how optimize the performance the Firefox code base
+This page explains how to optimize the performance of the Firefox code base.
 
 The [test documentation](/testing/perfdocs/index.rst)
 explains how to test for performance in Firefox.
@@ -29,6 +29,7 @@ explains how to use the Gecko profiler.
 
 ## Profiling and performance tools
 
+* [JIT Profiling with perf](jit_profiling_with_perf.md) Using perf to collect JIT profiles.
 * [Profiling with Instruments](profiling_with_instruments.md) How to use Apple's Instruments tool to profile Mozilla code.
 * [Profiling with xperf](profiling_with_xperf.md) How to use Microsoft's Xperf tool to profile Mozilla code.
 * [Profiling with Concurrency Visualizer](profiling_with_concurrency_visualizer.md) How to use Visual Studio's Concurrency Visualizer tool to profile Mozilla code.

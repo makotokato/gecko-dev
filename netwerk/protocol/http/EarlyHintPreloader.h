@@ -60,7 +60,7 @@ class EarlyHintPreloader final : public nsIStreamListener,
   // wasn't already issued and the LinkHeader can be parsed correctly.
   static void MaybeCreateAndInsertPreload(
       OngoingEarlyHints* aOngoingEarlyHints, const LinkHeader& aHeader,
-      nsIURI* aBaseURI, nsIPrincipal* aTriggeringPrincipal,
+      nsIURI* aBaseURI, nsIPrincipal* aPrincipal,
       nsICookieJarSettings* aCookieJarSettings);
 
   // Should be called by the preloader service when the preload is not needed
@@ -81,12 +81,12 @@ class EarlyHintPreloader final : public nsIStreamListener,
                                               bool aIsModule);
 
   // call to start the preload
-  nsresult OpenChannel(nsIPrincipal* aTriggeringPrincipal,
-                       nsSecurityFlags aSecurityFlags,
+  nsresult OpenChannel(nsIPrincipal* aPrincipal, nsSecurityFlags aSecurityFlags,
                        nsContentPolicyType aContentPolicyType,
                        nsIReferrerInfo* aReferrerInfo,
                        nsICookieJarSettings* aCookieJarSettings);
 
+  static void CollectResourcesTypeTelemetry(ASDestination aASDestination);
   // keep opening uri to not preload cross origins on redirects for now
   nsCOMPtr<nsIURI> mURI;
   nsCOMPtr<nsIChannel> mChannel;

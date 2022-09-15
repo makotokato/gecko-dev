@@ -12,12 +12,11 @@ const {
 const {
   SessionDataHelpers,
 } = require("devtools/server/actors/watcher/SessionDataHelpers.jsm");
-const {
-  isBrowsingContextPartOfContext,
-} = require("devtools/server/actors/watcher/browsing-context-helpers.jsm");
+const { isBrowsingContextPartOfContext } = ChromeUtils.importESModule(
+  "resource://devtools/server/actors/watcher/browsing-context-helpers.sys.mjs"
+);
 const { SUPPORTED_DATA } = SessionDataHelpers;
 const { TARGET_CONFIGURATION } = SUPPORTED_DATA;
-const Services = require("Services");
 
 // List of options supported by this target configuration actor.
 /* eslint sort-keys: "error" */
@@ -26,6 +25,8 @@ const SUPPORTED_OPTIONS = {
   cacheDisabled: true,
   // Enable color scheme simulation.
   colorSchemeSimulation: true,
+  // Enable custom formatters
+  customFormatters: true,
   // Set a custom user agent
   customUserAgent: true,
   // Enable JavaScript

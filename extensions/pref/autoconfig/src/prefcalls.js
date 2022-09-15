@@ -6,20 +6,12 @@
 
 /* globals gSandbox */
 
-const nsILDAPURL = Ci.nsILDAPURL;
-const LDAPURLContractID = "@mozilla.org/network/ldap-url;1";
-const nsILDAPSyncQuery = Ci.nsILDAPSyncQuery;
 const LDAPSyncQueryContractID = "@mozilla.org/ldapsyncquery;1";
 
 var gVersion;
 var gIsUTF8;
 
 function getPrefBranch() {
-  // NOTE: Import Services.jsm locally to avoid polluting the global variables
-  //       for non-sandbox case.
-  const { Services } = ChromeUtils.import(
-    "resource://gre/modules/Services.jsm"
-  );
   return Services.prefs.getBranch(null);
 }
 
@@ -45,9 +37,6 @@ function pref(prefName, value) {
 
 function defaultPref(prefName, value) {
   try {
-    const { Services } = ChromeUtils.import(
-      "resource://gre/modules/Services.jsm"
-    );
     var prefBranch = Services.prefs.getDefaultBranch(null);
     if (typeof value == "string") {
       if (gIsUTF8) {
@@ -141,16 +130,17 @@ function getLDAPAttributes(host, base, filter, attribs, isSecure) {
       "?sub?" +
       filter;
 
-    const { Services } = ChromeUtils.import(
-      "resource://gre/modules/Services.jsm"
-    );
+    // nsILDAP* are only defined in comm-central.
+    // eslint-disable-next-line mozilla/valid-ci-uses
     var url = Services.io.newURI(urlSpec).QueryInterface(Ci.nsILDAPURL);
 
     var ldapquery = Cc[LDAPSyncQueryContractID].createInstance(
-      nsILDAPSyncQuery
+      // eslint-disable-next-line mozilla/valid-ci-uses
+      Ci.nsILDAPSyncQuery
     );
     // default to LDAP v3
     if (!gVersion) {
+      // eslint-disable-next-line mozilla/valid-ci-uses
       gVersion = Ci.nsILDAPConnection.VERSION3;
     }
     // user supplied method
@@ -193,9 +183,6 @@ function getLDAPValue(str, key) {
 
 function displayError(funcname, message) {
   try {
-    const { Services } = ChromeUtils.import(
-      "resource://gre/modules/Services.jsm"
-    );
     var bundle = Services.strings.createBundle(
       "chrome://autoconfig/locale/autoconfig.properties"
     );

@@ -11,10 +11,9 @@
 
 var EXPORTED_SYMBOLS = ["ActorManagerParent"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -181,21 +180,6 @@ let JSWINDOWACTORS = {
     allFrames: true,
   },
 
-  ClipboardReadTextPaste: {
-    parent: {
-      moduleURI: "resource://gre/actors/ClipboardReadTextPasteParent.jsm",
-    },
-
-    child: {
-      moduleURI: "resource://gre/actors/ClipboardReadTextPasteChild.jsm",
-      events: {
-        MozClipboardReadTextPaste: {},
-      },
-    },
-
-    allFrames: true,
-  },
-
   Conduits: {
     parent: {
       moduleURI: "resource://gre/modules/ConduitsParent.jsm",
@@ -217,6 +201,21 @@ let JSWINDOWACTORS = {
     },
 
     allFrames: true,
+  },
+
+  CookieBanner: {
+    parent: {
+      moduleURI: "resource://gre/actors/CookieBannerParent.jsm",
+    },
+    child: {
+      moduleURI: "resource://gre/actors/CookieBannerChild.jsm",
+      events: {
+        DOMContentLoaded: {},
+      },
+    },
+
+    allFrames: true,
+    enablePreference: "cookiebanners.bannerClicking.enabled",
   },
 
   DateTimePicker: {
@@ -420,7 +419,7 @@ let JSWINDOWACTORS = {
   // 'ViewSource:LoadSource' or 'ViewSource:LoadSourceWithSelection'.
   ViewSource: {
     child: {
-      moduleURI: "resource://gre/actors/ViewSourceChild.jsm",
+      esModuleURI: "resource://gre/actors/ViewSourceChild.sys.mjs",
     },
 
     allFrames: true,
@@ -429,10 +428,10 @@ let JSWINDOWACTORS = {
   // This actor is for the view-source page itself.
   ViewSourcePage: {
     parent: {
-      moduleURI: "resource://gre/actors/ViewSourcePageParent.jsm",
+      esModuleURI: "resource://gre/actors/ViewSourcePageParent.sys.mjs",
     },
     child: {
-      moduleURI: "resource://gre/actors/ViewSourcePageChild.jsm",
+      esModuleURI: "resource://gre/actors/ViewSourcePageChild.sys.mjs",
       events: {
         pageshow: { capture: true },
         click: {},
@@ -513,10 +512,26 @@ if (!Services.prefs.getBoolPref("browser.pagedata.enabled", false)) {
   };
 }
 
-/**
- * Note that GeckoView has another implementation in mobile/android/actors.
- */
 if (AppConstants.platform != "android") {
+  // For GeckoView support see bug 1776829.
+  JSWINDOWACTORS.ClipboardReadPaste = {
+    parent: {
+      moduleURI: "resource://gre/actors/ClipboardReadPasteParent.jsm",
+    },
+
+    child: {
+      moduleURI: "resource://gre/actors/ClipboardReadPasteChild.jsm",
+      events: {
+        MozClipboardReadPaste: {},
+      },
+    },
+
+    allFrames: true,
+  };
+
+  /**
+   * Note that GeckoView has another implementation in mobile/android/actors.
+   */
   JSWINDOWACTORS.Select = {
     parent: {
       moduleURI: "resource://gre/actors/SelectParent.jsm",

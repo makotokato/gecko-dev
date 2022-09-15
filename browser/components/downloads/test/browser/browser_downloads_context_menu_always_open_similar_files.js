@@ -31,7 +31,7 @@ async function createDownloadFile() {
   }
   info("Created download directory: " + gDownloadDir);
   TestFiles.txt = await createDownloadedFile(
-    OS.Path.join(gDownloadDir, "downloaded.txt"),
+    PathUtils.join(gDownloadDir, "downloaded.txt"),
     "Test file"
   );
   info("Created downloaded text file at:" + TestFiles.txt.path);

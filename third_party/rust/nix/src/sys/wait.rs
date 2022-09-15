@@ -1,44 +1,28 @@
-//! Wait for a process to change status
-use crate::errno::Errno;
-use crate::sys::signal::Signal;
-use crate::unistd::Pid;
-use crate::Result;
-use cfg_if::cfg_if;
 use libc::{self, c_int};
-use std::convert::TryFrom;
+use Result;
+use errno::Errno;
+use unistd::Pid;
+
+use sys::signal::Signal;
 
 libc_bitflags!(
-    /// Controls the behavior of [`waitpid`].
     pub struct WaitPidFlag: c_int {
-        /// Do not block when there are no processes wishing to report status.
         WNOHANG;
-        /// Report the status of selected processes which are stopped due to a
-        /// [`SIGTTIN`](crate::sys::signal::Signal::SIGTTIN),
-        /// [`SIGTTOU`](crate::sys::signal::Signal::SIGTTOU),
-        /// [`SIGTSTP`](crate::sys::signal::Signal::SIGTSTP), or
-        /// [`SIGSTOP`](crate::sys::signal::Signal::SIGSTOP) signal.
         WUNTRACED;
-        /// Report the status of selected processes which have terminated.
         #[cfg(any(target_os = "android",
                   target_os = "freebsd",
                   target_os = "haiku",
                   target_os = "ios",
                   target_os = "linux",
-                  target_os = "redox",
                   target_os = "macos",
                   target_os = "netbsd"))]
         WEXITED;
-        /// Report the status of selected processes that have continued from a
-        /// job control stop by receiving a
-        /// [`SIGCONT`](crate::sys::signal::Signal::SIGCONT) signal.
         WCONTINUED;
-        /// An alias for WUNTRACED.
         #[cfg(any(target_os = "android",
                   target_os = "freebsd",
                   target_os = "haiku",
                   target_os = "ios",
                   target_os = "linux",
-                  target_os = "redox",
                   target_os = "macos",
                   target_os = "netbsd"))]
         WSTOPPED;
@@ -48,18 +32,16 @@ libc_bitflags!(
                   target_os = "haiku",
                   target_os = "ios",
                   target_os = "linux",
-                  target_os = "redox",
                   target_os = "macos",
                   target_os = "netbsd"))]
         WNOWAIT;
         /// Don't wait on children of other threads in this group
-        #[cfg(any(target_os = "android", target_os = "linux", target_os = "redox"))]
+        #[cfg(any(target_os = "android", target_os = "linux"))]
         __WNOTHREAD;
         /// Wait on all children, regardless of type
-        #[cfg(any(target_os = "android", target_os = "linux", target_os = "redox"))]
+        #[cfg(any(target_os = "android", target_os = "linux"))]
         __WALL;
-        /// Wait for "clone" children only.
-        #[cfg(any(target_os = "android", target_os = "linux", target_os = "redox"))]
+        #[cfg(any(target_os = "android", target_os = "linux"))]
         __WCLONE;
     }
 );
@@ -95,14 +77,14 @@ pub enum WaitStatus {
     /// field is the `PTRACE_EVENT_*` value of the event.
     ///
     /// [`nix::sys::ptrace`]: ../ptrace/index.html
-    /// [`ptrace`(2)]: https://man7.org/linux/man-pages/man2/ptrace.2.html
+    /// [`ptrace`(2)]: http://man7.org/linux/man-pages/man2/ptrace.2.html
     #[cfg(any(target_os = "linux", target_os = "android"))]
     PtraceEvent(Pid, Signal, c_int),
     /// The traced process was stopped by execution of a system call,
     /// and `PTRACE_O_TRACESYSGOOD` is in effect. See [`ptrace`(2)] for
     /// more information.
     ///
-    /// [`ptrace`(2)]: https://man7.org/linux/man-pages/man2/ptrace.2.html
+    /// [`ptrace`(2)]: http://man7.org/linux/man-pages/man2/ptrace.2.html
     #[cfg(any(target_os = "linux", target_os = "android"))]
     PtraceSyscall(Pid),
     /// The process was previously stopped but has resumed execution
@@ -122,7 +104,8 @@ impl WaitStatus {
     pub fn pid(&self) -> Option<Pid> {
         use self::WaitStatus::*;
         match *self {
-            Exited(p, _) | Signaled(p, _, _) | Stopped(p, _) | Continued(p) => Some(p),
+            Exited(p, _)  | Signaled(p, _, _) |
+                Stopped(p, _) | Continued(p) => Some(p),
             StillAlive => None,
             #[cfg(any(target_os = "android", target_os = "linux"))]
             PtraceEvent(p, _, _) | PtraceSyscall(p) => Some(p),
@@ -131,31 +114,31 @@ impl WaitStatus {
 }
 
 fn exited(status: i32) -> bool {
-    libc::WIFEXITED(status)
+    unsafe { libc::WIFEXITED(status) }
 }
 
 fn exit_status(status: i32) -> i32 {
-    libc::WEXITSTATUS(status)
+    unsafe { libc::WEXITSTATUS(status) }
 }
 
 fn signaled(status: i32) -> bool {
-    libc::WIFSIGNALED(status)
+    unsafe { libc::WIFSIGNALED(status) }
 }
 
 fn term_signal(status: i32) -> Result<Signal> {
-    Signal::try_from(libc::WTERMSIG(status))
+    Signal::from_c_int(unsafe { libc::WTERMSIG(status) })
 }
 
 fn dumped_core(status: i32) -> bool {
-    libc::WCOREDUMP(status)
+    unsafe { libc::WCOREDUMP(status) }
 }
 
 fn stopped(status: i32) -> bool {
-    libc::WIFSTOPPED(status)
+    unsafe { libc::WIFSTOPPED(status) }
 }
 
 fn stop_signal(status: i32) -> Result<Signal> {
-    Signal::try_from(libc::WSTOPSIG(status))
+    Signal::from_c_int(unsafe { libc::WSTOPSIG(status) })
 }
 
 #[cfg(any(target_os = "android", target_os = "linux"))]
@@ -164,7 +147,7 @@ fn syscall_stop(status: i32) -> bool {
     // of delivering SIGTRAP | 0x80 as the signal number for syscall
     // stops. This allows easily distinguishing syscall stops from
     // genuine SIGTRAP signals.
-    libc::WSTOPSIG(status) == libc::SIGTRAP | 0x80
+    unsafe { libc::WSTOPSIG(status) == libc::SIGTRAP | 0x80 }
 }
 
 #[cfg(any(target_os = "android", target_os = "linux"))]
@@ -173,7 +156,7 @@ fn stop_additional(status: i32) -> c_int {
 }
 
 fn continued(status: i32) -> bool {
-    libc::WIFCONTINUED(status)
+    unsafe { libc::WIFCONTINUED(status) }
 }
 
 impl WaitStatus {
@@ -227,9 +210,6 @@ impl WaitStatus {
     }
 }
 
-/// Wait for a process to change status
-///
-/// See also [waitpid(2)](https://pubs.opengroup.org/onlinepubs/9699919799/functions/waitpid.html)
 pub fn waitpid<P: Into<Option<Pid>>>(pid: P, options: Option<WaitPidFlag>) -> Result<WaitStatus> {
     use self::WaitStatus::*;
 
@@ -242,7 +222,7 @@ pub fn waitpid<P: Into<Option<Pid>>>(pid: P, options: Option<WaitPidFlag>) -> Re
 
     let res = unsafe {
         libc::waitpid(
-            pid.into().unwrap_or_else(|| Pid::from_raw(-1)).into(),
+            pid.into().unwrap_or(Pid::from_raw(-1)).into(),
             &mut status as *mut c_int,
             option_bits,
         )
@@ -254,9 +234,6 @@ pub fn waitpid<P: Into<Option<Pid>>>(pid: P, options: Option<WaitPidFlag>) -> Re
     }
 }
 
-/// Wait for any child process to change status or a signal is received.
-///
-/// See also [wait(2)](https://pubs.opengroup.org/onlinepubs/9699919799/functions/wait.html)
 pub fn wait() -> Result<WaitStatus> {
     waitpid(None, None)
 }

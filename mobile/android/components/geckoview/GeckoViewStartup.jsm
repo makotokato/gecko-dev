@@ -5,13 +5,12 @@
 
 var EXPORTED_SYMBOLS = ["GeckoViewStartup"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const { GeckoViewUtils } = ChromeUtils.import(
   "resource://gre/modules/GeckoViewUtils.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const lazy = {};
 
@@ -93,6 +92,22 @@ const JSWINDOWACTORS = {
     allFrames: true,
     messageManagerGroups: ["browsers"],
   },
+  GeckoViewClipboardPermission: {
+    parent: {
+      moduleURI: "resource:///actors/GeckoViewClipboardPermissionParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/GeckoViewClipboardPermissionChild.jsm",
+      events: {
+        MozClipboardReadPaste: {},
+        deactivate: { mozSystemGroup: true },
+        mousedown: { capture: true, mozSystemGroup: true },
+        mozvisualscroll: { mozSystemGroup: true },
+        pagehide: { capture: true, mozSystemGroup: true },
+      },
+    },
+    allFrames: true,
+  },
 };
 
 class GeckoViewStartup {
@@ -141,6 +156,16 @@ class GeckoViewStartup {
         ) {
           lazy.ActorManagerParent.addJSWindowActors(JSWINDOWACTORS);
           lazy.ActorManagerParent.addJSProcessActors(JSPROCESSACTORS);
+
+          if (Services.appinfo.sessionHistoryInParent) {
+            GeckoViewUtils.addLazyGetter(this, "GeckoViewSessionStore", {
+              module: "resource://gre/modules/GeckoViewSessionStore.jsm",
+              observers: [
+                "browsing-context-did-set-embedder",
+                "browsing-context-discarded",
+              ],
+            });
+          }
 
           GeckoViewUtils.addLazyGetter(this, "GeckoViewWebExtension", {
             module: "resource://gre/modules/GeckoViewWebExtension.jsm",

@@ -6,10 +6,9 @@
 
 var EXPORTED_SYMBOLS = ["UITour"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -1298,7 +1297,7 @@ var UITour = {
 
       tooltip.setAttribute("targetName", aAnchor.targetName);
 
-      let alignment = "bottomcenter topright";
+      let alignment = "bottomright topright";
       if (aAnchor.infoPanelPosition) {
         alignment = aAnchor.infoPanelPosition;
       }

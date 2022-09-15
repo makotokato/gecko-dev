@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const Services = require("Services");
 const {
   Component,
   createFactory,
@@ -69,6 +68,12 @@ loader.lazyRequireGetter(
 loader.lazyGetter(this, "GridElementWidthResizer", () =>
   createFactory(
     require("devtools/client/shared/components/splitter/GridElementWidthResizer")
+  )
+);
+
+loader.lazyGetter(this, "ChromeDebugToolbar", () =>
+  createFactory(
+    require("devtools/client/framework/components/ChromeDebugToolbar")
   )
 );
 
@@ -265,6 +270,17 @@ class App extends Component {
     input.addEventListener("keyup", pasteKeyUpHandler);
   }
 
+  renderChromeDebugToolbar() {
+    const { webConsoleUI } = this.props;
+    if (!webConsoleUI.isBrowserConsole || !webConsoleUI.fissionSupport) {
+      return null;
+    }
+    return ChromeDebugToolbar({
+      // This should always be true at this point
+      isBrowserConsole: webConsoleUI.isBrowserConsole,
+    });
+  }
+
   renderFilterBar() {
     const {
       closeSplitConsole,
@@ -438,6 +454,7 @@ class App extends Component {
   render() {
     const { webConsoleUI, editorMode, dispatch, inputEnabled } = this.props;
 
+    const chromeDebugToolbar = this.renderChromeDebugToolbar();
     const filterBar = this.renderFilterBar();
     const editorToolbar = this.renderEditorToolbar();
     const consoleOutput = this.renderConsoleOutput();
@@ -449,6 +466,7 @@ class App extends Component {
     const confirmDialog = this.renderConfirmDialog();
 
     return this.renderRootElement([
+      chromeDebugToolbar,
       filterBar,
       editorToolbar,
       dom.div(

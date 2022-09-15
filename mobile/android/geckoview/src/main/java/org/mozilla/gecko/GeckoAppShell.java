@@ -46,7 +46,6 @@ import android.os.PowerManager;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.text.TextUtils;
-import android.text.format.DateFormat;
 import android.util.Log;
 import android.view.ContextThemeWrapper;
 import android.view.Display;
@@ -61,6 +60,7 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Locale;
 import java.util.StringTokenizer;
+import org.jetbrains.annotations.NotNull;
 import org.mozilla.gecko.annotation.RobocopTarget;
 import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.util.HardwareCodecCapabilityUtils;
@@ -140,7 +140,7 @@ public class GeckoAppShell {
       }
       return false;
     }
-  };
+  }
 
   private static String sAppNotes;
   private static CrashHandler sCrashHandler;
@@ -179,6 +179,8 @@ public class GeckoAppShell {
   }
 
   private static volatile boolean locationHighAccuracyEnabled;
+  private static volatile boolean locationListeningRequested = false;
+  private static volatile boolean locationPaused = false;
 
   // See also HardwareUtils.LOW_MEMORY_THRESHOLD_MB.
   private static final int HIGH_MEMORY_DEVICE_THRESHOLD_MB = 768;
@@ -281,9 +283,23 @@ public class GeckoAppShell {
     return (location.hasAccuracy() && radius > 0) ? radius : 1001;
   }
 
+  private static Location determineReliableLocation(
+      @NotNull final Location locA, @NotNull final Location locB) {
+    // The 6 seconds were chosen arbitrarily
+    final long closeTime = 6000000000L;
+    final boolean isNearSameTime =
+        Math.abs((locA.getElapsedRealtimeNanos() - locB.getElapsedRealtimeNanos())) <= closeTime;
+    final boolean isAMoreAccurate = getLocationAccuracy(locA) < getLocationAccuracy(locB);
+    final boolean isAMoreRecent = locA.getElapsedRealtimeNanos() > locB.getElapsedRealtimeNanos();
+    if (isNearSameTime) {
+      return isAMoreAccurate ? locA : locB;
+    }
+    return isAMoreRecent ? locA : locB;
+  }
+
   // Permissions are explicitly checked when requesting content permission.
   @SuppressLint("MissingPermission")
-  private static Location getLastKnownLocation(final LocationManager lm) {
+  private static @Nullable Location getLastKnownLocation(final LocationManager lm) {
     Location lastKnownLocation = null;
     final List<String> providers = lm.getAllProviders();
 
@@ -297,28 +313,37 @@ public class GeckoAppShell {
         lastKnownLocation = location;
         continue;
       }
-
-      final long timeDiff = location.getTime() - lastKnownLocation.getTime();
-      if (timeDiff > 0
-          || (timeDiff == 0
-              && getLocationAccuracy(location) < getLocationAccuracy(lastKnownLocation))) {
-        lastKnownLocation = location;
-      }
+      lastKnownLocation = determineReliableLocation(lastKnownLocation, location);
     }
-
     return lastKnownLocation;
   }
 
+  // Toggles the location listeners on/off, which will then provide/stop location information
   @WrapForJNI(calledFrom = "gecko")
+  private static synchronized boolean enableLocationUpdates(final boolean enable) {
+    locationListeningRequested = enable;
+    final boolean canListen = updateLocationListeners();
+    if (!canListen && locationListeningRequested) {
+      // Didn't successfully start listener when requested
+      locationListeningRequested = false;
+    }
+    return canListen;
+  }
+
   // Permissions are explicitly checked when requesting content permission.
   @SuppressLint("MissingPermission")
-  private static synchronized boolean enableLocation(final boolean enable) {
+  private static synchronized boolean updateLocationListeners() {
+    final boolean shouldListen = locationListeningRequested && !locationPaused;
     final LocationManager lm = getLocationManager(getApplicationContext());
     if (lm == null) {
       return false;
     }
 
-    if (!enable) {
+    if (!shouldListen) {
+      // Could not complete request, because paused
+      if (locationListeningRequested) {
+        return false;
+      }
       lm.removeUpdates(sAndroidListeners);
       return true;
     }
@@ -328,9 +353,11 @@ public class GeckoAppShell {
       return false;
     }
 
-    final Location lastKnownLocation = getLastKnownLocation(lm);
-    if (lastKnownLocation != null) {
-      sAndroidListeners.onLocationChanged(lastKnownLocation);
+    if (!locationHighAccuracyEnabled) {
+      final Location lastKnownLocation = getLastKnownLocation(lm);
+      if (lastKnownLocation != null) {
+        sAndroidListeners.onLocationChanged(lastKnownLocation);
+      }
     }
 
     final Criteria criteria = new Criteria();
@@ -339,12 +366,8 @@ public class GeckoAppShell {
     criteria.setAltitudeRequired(false);
     if (locationHighAccuracyEnabled) {
       criteria.setAccuracy(Criteria.ACCURACY_FINE);
-      criteria.setCostAllowed(true);
-      criteria.setPowerRequirement(Criteria.POWER_HIGH);
     } else {
       criteria.setAccuracy(Criteria.ACCURACY_COARSE);
-      criteria.setCostAllowed(false);
-      criteria.setPowerRequirement(Criteria.POWER_LOW);
     }
 
     final String provider = lm.getBestProvider(criteria, true);
@@ -355,6 +378,16 @@ public class GeckoAppShell {
     final Looper l = Looper.getMainLooper();
     lm.requestLocationUpdates(provider, 100, 0.5f, sAndroidListeners, l);
     return true;
+  }
+
+  public static void pauseLocation() {
+    locationPaused = true;
+    updateLocationListeners();
+  }
+
+  public static void resumeLocation() {
+    locationPaused = false;
+    updateLocationListeners();
   }
 
   private static LocationManager getLocationManager(final Context context) {
@@ -1016,9 +1049,10 @@ public class GeckoAppShell {
     return lp.getDomains();
   }
 
+  @SuppressLint("ResourceType")
   @WrapForJNI(calledFrom = "gecko")
   private static int[] getSystemColors() {
-    // attrsAppearance[] must correspond to AndroidSystemColors structure in android/AndroidBridge.h
+    // attrsAppearance[] must correspond to AndroidSystemColors structure in android/nsLookAndFeel.h
     final int[] attrsAppearance = {
       android.R.attr.textColorPrimary,
       android.R.attr.textColorPrimaryInverse,
@@ -1039,8 +1073,7 @@ public class GeckoAppShell {
     final ContextThemeWrapper contextThemeWrapper =
         new ContextThemeWrapper(getApplicationContext(), android.R.style.TextAppearance);
 
-    final TypedArray appearance =
-        contextThemeWrapper.getTheme().obtainStyledAttributes(attrsAppearance);
+    final TypedArray appearance = contextThemeWrapper.obtainStyledAttributes(attrsAppearance);
 
     if (appearance != null) {
       for (int i = 0; i < appearance.getIndexCount(); i++) {
@@ -1147,6 +1180,7 @@ public class GeckoAppShell {
   }
 
   private static Context sApplicationContext;
+  private static Boolean sIs24HourFormat = true;
 
   @WrapForJNI
   public static Context getApplicationContext() {
@@ -1500,10 +1534,13 @@ public class GeckoAppShell {
     return locales;
   }
 
+  public static void setIs24HourFormat(final Boolean is24HourFormat) {
+    sIs24HourFormat = is24HourFormat;
+  }
+
   @WrapForJNI
   public static boolean getIs24HourFormat() {
-    final Context context = getApplicationContext();
-    return DateFormat.is24HourFormat(context);
+    return sIs24HourFormat;
   }
 
   @WrapForJNI

@@ -22,14 +22,14 @@
 #include "js/GCAPI.h"
 #include "vm/HelperThreads.h"
 #include "vm/Realm.h"
-#include "wasm/TypedObject.h"
+#include "wasm/WasmGcObject.h"
 
 #include "gc/Heap-inl.h"
 #include "gc/Marking-inl.h"
 #include "gc/PrivateIterators-inl.h"
+#include "gc/TraceMethods-inl.h"
 #include "gc/Zone-inl.h"
 #include "vm/GeckoProfiler-inl.h"
-#include "vm/JSContext-inl.h"
 
 using namespace js;
 using namespace js::gc;
@@ -441,12 +441,11 @@ MovingTracer::MovingTracer(JSRuntime* rt)
                         JS::WeakMapTraceAction::TraceKeysAndValues) {}
 
 template <typename T>
-inline T* MovingTracer::onEdge(T* thing) {
+inline void MovingTracer::onEdge(T** thingp, const char* name) {
+  T* thing = *thingp;
   if (thing->runtimeFromAnyThread() == runtime() && IsForwarded(thing)) {
-    thing = Forwarded(thing);
+    *thingp = Forwarded(thing);
   }
-
-  return thing;
 }
 
 void Zone::prepareForCompacting() {
@@ -881,11 +880,15 @@ void GCRuntime::clearRelocatedArenasWithoutUnlocking(Arena* arenaList,
                  JS_MOVED_TENURED_PATTERN, arena->getThingsSpan(),
                  MemCheckKind::MakeNoAccess);
 
-    // Don't count arenas as being freed by the GC if we purposely moved
-    // everything to new arenas, as that will already have allocated a similar
-    // number of arenas. This only happens for collections triggered by GC zeal.
+    // Don't count emptied arenas as being freed by the current GC:
+    //  - if we purposely moved everything to new arenas, as that will already
+    //    have allocated a similar number of arenas. (This only happens for
+    //    collections triggered by GC zeal.)
+    //  - if they were allocated since the start of the GC.
     bool allArenasRelocated = ShouldRelocateAllArenas(reason);
-    arena->zone->gcHeapSize.removeBytes(ArenaSize, !allArenasRelocated);
+    bool updateRetainedSize = !allArenasRelocated && !arena->isNewlyCreated();
+    arena->zone->gcHeapSize.removeBytes(ArenaSize, updateRetainedSize,
+                                        heapSize);
 
     // Release the arena but don't return it to the chunk yet.
     arena->release(lock);

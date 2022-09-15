@@ -90,6 +90,8 @@ const MessageState = overrides =>
         networkMessagesUpdateById: {},
         // Id of the last messages that was added.
         lastMessageId: null,
+        // List of the message ids which are disabled
+        disabledMessagesById: [],
       },
       overrides
     )
@@ -111,6 +113,7 @@ function cloneState(state) {
     mutableMessagesOrder: state.mutableMessagesOrder,
     currentGroup: state.currentGroup,
     lastMessageId: state.lastMessageId,
+    disabledMessagesById: [...state.disabledMessagesById],
   };
 }
 
@@ -263,7 +266,7 @@ function addMessage(newMessage, state, filtersState, prefsState, uiState) {
   const addedMessage = Object.freeze(newMessage);
 
   // If the new message isn't the "oldest" one, then we need to insert it at the right
-  // position in the message map.
+  // position in the message map.
   if (isUnsorted) {
     let newMessageIndex = 0;
     // This is can be on a hot path, so we're not using `findIndex`, which could be slow.
@@ -377,6 +380,7 @@ function messages(
     networkMessagesUpdateById,
     groupsById,
     visibleMessages,
+    disabledMessagesById,
   } = state;
 
   const { logLimit } = prefsState;
@@ -467,6 +471,37 @@ function messages(
         removedIds
       );
     }
+
+    case constants.TARGET_MESSAGES_REMOVE: {
+      const removedIds = [];
+      for (const [id, message] of mutableMessagesById) {
+        // Remove message from the target but not evaluations and their results, so
+        // 1. we're consistent with the filtering behavior, i.e. we never hide those
+        // 2. when switching mode from multiprocess to parent process and back to multi,
+        //    if we'd clear evaluations we wouldn't have a way to get them back, unlike
+        //    log messages and errors, which are still available in the server caches).
+        if (
+          message.targetFront == action.targetFront &&
+          message.type !== MESSAGE_TYPE.COMMAND &&
+          message.type !== MESSAGE_TYPE.RESULT
+        ) {
+          removedIds.push(id);
+        }
+      }
+
+      return removeMessagesFromState(
+        {
+          ...state,
+        },
+        removedIds
+      );
+    }
+
+    case constants.MESSAGES_DISABLE:
+      return {
+        ...state,
+        disabledMessagesById: [...disabledMessagesById, ...action.ids],
+      };
 
     case constants.MESSAGE_OPEN:
       const openState = { ...state };
@@ -737,7 +772,7 @@ function setVisibleMessages({
       // we track the message's ancestors and their state
       while (ancestorId) {
         ancestors.push({
-          ancestorId: ancestorId,
+          ancestorId,
           matchedFilters: matchedGroups.has(ancestorId),
           isOpen: messagesUiById.includes(ancestorId),
           isCurrentlyVisible: visibleMessages.includes(ancestorId),
@@ -827,7 +862,7 @@ function getNewCurrentGroup(currentGroup, groupsById, ignoredIds = []) {
   const parents = groupsById.get(currentGroup);
 
   // If there's at least one parent, make the first one the new currentGroup.
-  if (Array.isArray(parents) && parents.length > 0) {
+  if (Array.isArray(parents) && parents.length) {
     // If the found group must be ignored, let's search for its parent.
     if (ignoredIds.includes(parents[0])) {
       return getNewCurrentGroup(parents[0], groupsById, ignoredIds);
@@ -847,7 +882,7 @@ function getParentGroups(currentGroup, groupsById) {
 
     // As well as all its parents, if it has some.
     const parentGroups = groupsById.get(currentGroup);
-    if (Array.isArray(parentGroups) && parentGroups.length > 0) {
+    if (Array.isArray(parentGroups) && parentGroups.length) {
       groups = groups.concat(parentGroups);
     }
   }
@@ -945,7 +980,7 @@ function removeMessagesFromState(state, removedMessagesIds) {
     state.visibleMessages = visibleMessages;
   }
 
-  if (frontsToRelease.length > 0) {
+  if (frontsToRelease.length) {
     state.frontsToRelease = state.frontsToRelease.concat(frontsToRelease);
   }
 
@@ -969,11 +1004,18 @@ function removeMessagesFromState(state, removedMessagesIds) {
 
   removedMessagesIds.forEach(id => {
     state.mutableMessagesById.delete(id);
+
     state.mutableMessagesOrder.splice(
       state.mutableMessagesOrder.indexOf(id),
       1
     );
   });
+
+  if (state.disabledMessagesById.find(isInRemovedId)) {
+    state.disabledMessagesById = state.disabledMessagesById.filter(
+      id => !isInRemovedId(id)
+    );
+  }
 
   if (state.messagesUiById.find(isInRemovedId)) {
     state.messagesUiById = state.messagesUiById.filter(

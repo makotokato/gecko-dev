@@ -6,6 +6,14 @@
 // This file is loaded into the browser window scope.
 /* eslint-env mozilla/browser-window */
 
+const lazy = {};
+
+ChromeUtils.defineModuleGetter(
+  lazy,
+  "ExtensionParent",
+  "resource://gre/modules/ExtensionParent.jsm"
+);
+
 customElements.define(
   "addon-progress-notification",
   class MozAddonProgressNotification extends customElements.get(
@@ -262,14 +270,18 @@ var gXPInstallObserver = {
       return;
     }
 
-    const anchorID = "addons-notification-icon";
-
     // Make notifications persistent
     var options = {
       displayURI: installInfo.originatingURI,
       persistent: true,
       hideClose: true,
     };
+
+    if (gUnifiedExtensions.isEnabled) {
+      options.popupOptions = {
+        position: "bottomright topright",
+      };
+    }
 
     let acceptInstallation = () => {
       for (let install of installInfo.installs) {
@@ -414,7 +426,7 @@ var gXPInstallObserver = {
       browser,
       "addon-install-confirmation",
       messageString,
-      anchorID,
+      gUnifiedExtensions.getPopupAnchorID(browser, window),
       action,
       [secondaryAction],
       options
@@ -488,7 +500,6 @@ var gXPInstallObserver = {
       return;
     }
 
-    const anchorID = "addons-notification-icon";
     var messageString, action;
     var brandShortName = brandBundle.getString("brandShortName");
 
@@ -500,6 +511,12 @@ var gXPInstallObserver = {
       hideClose: true,
       timeout: Date.now() + 30000,
     };
+
+    if (gUnifiedExtensions.isEnabled) {
+      options.popupOptions = {
+        position: "bottomright topright",
+      };
+    }
 
     switch (aTopic) {
       case "addon-install-disabled": {
@@ -542,7 +559,7 @@ var gXPInstallObserver = {
           browser,
           notificationID,
           messageString,
-          anchorID,
+          gUnifiedExtensions.getPopupAnchorID(browser, window),
           action,
           secondaryActions,
           options
@@ -589,7 +606,7 @@ var gXPInstallObserver = {
           browser,
           notificationID,
           messageString,
-          anchorID,
+          gUnifiedExtensions.getPopupAnchorID(browser, window),
           null,
           null,
           options
@@ -720,7 +737,7 @@ var gXPInstallObserver = {
           browser,
           notificationID,
           messageString,
-          anchorID,
+          gUnifiedExtensions.getPopupAnchorID(browser, window),
           action,
           [dontAllowAction, neverAllowAction],
           options
@@ -785,7 +802,7 @@ var gXPInstallObserver = {
           browser,
           notificationID,
           messageString,
-          anchorID,
+          gUnifiedExtensions.getPopupAnchorID(browser, window),
           action,
           [secondaryAction],
           options
@@ -868,7 +885,7 @@ var gXPInstallObserver = {
             browser,
             notificationID,
             messageString,
-            anchorID,
+            gUnifiedExtensions.getPopupAnchorID(browser, window),
             action,
             null,
             options
@@ -942,7 +959,7 @@ var gXPInstallObserver = {
           browser,
           notificationID,
           messageString,
-          anchorID,
+          gUnifiedExtensions.getPopupAnchorID(browser, window),
           action,
           secondaryActions,
           options
@@ -1099,6 +1116,11 @@ var BrowserAddonUI = {
   },
 
   async reportAddon(addonId, reportEntryPoint) {
+    let addon = addonId && (await AddonManager.getAddonByID(addonId));
+    if (!addon) {
+      return;
+    }
+
     const win = await BrowserOpenAddonsMgr("addons://list/extension");
 
     win.openAbuseReport({ addonId, reportEntryPoint });
@@ -1128,5 +1150,365 @@ var BrowserAddonUI = {
         await this.reportAddon(addon.id, "uninstall");
       }
     }
+  },
+
+  async manageAddon(addonId, eventObject) {
+    let addon = addonId && (await AddonManager.getAddonByID(addonId));
+    if (!addon) {
+      return;
+    }
+
+    BrowserOpenAddonsMgr("addons://detail/" + encodeURIComponent(addon.id));
+    AMTelemetry.recordActionEvent({
+      object: eventObject,
+      action: "manage",
+      extra: { addonId: addon.id },
+    });
+  },
+};
+
+/**
+ * The `unified-extensions-item` custom element is used to manage an extension
+ * in the list of extensions, which is displayed when users click the unified
+ * extensions (toolbar) button.
+ *
+ * This custom element must be initialized with `setAddon()`:
+ *
+ * ```
+ * let item = document.createElement("unified-extensions-item");
+ * item.setAddon(addon);
+ * document.body.appendChild(item);
+ * ```
+ */
+customElements.define(
+  "unified-extensions-item",
+  class extends HTMLElement {
+    /**
+     * Set the add-on for this item. The item will be populated based on the
+     * add-on when it is rendered into the DOM.
+     *
+     * @param {AddonWrapper} addon The add-on to use.
+     */
+    setAddon(addon) {
+      this.addon = addon;
+    }
+
+    connectedCallback() {
+      if (this._openMenuButton) {
+        return;
+      }
+
+      const template = document.getElementById(
+        "unified-extensions-item-template"
+      );
+      this.appendChild(template.content.cloneNode(true));
+
+      this._actionButton = this.querySelector(
+        ".unified-extensions-item-action"
+      );
+      this._openMenuButton = this.querySelector(
+        ".unified-extensions-item-open-menu"
+      );
+
+      this._openMenuButton.addEventListener("blur", this);
+      this._openMenuButton.addEventListener("focus", this);
+
+      this.addEventListener("click", this);
+      this.addEventListener("mouseout", this);
+      this.addEventListener("mouseover", this);
+
+      this.render();
+    }
+
+    handleEvent(event) {
+      const { target } = event;
+
+      switch (event.type) {
+        case "click":
+          if (event.button !== 0) {
+            return;
+          }
+
+          if (target === this._openMenuButton) {
+            const popup = target.ownerDocument.getElementById(
+              "unified-extensions-context-menu"
+            );
+            popup.openPopup(
+              target,
+              "after_end",
+              0,
+              0,
+              true /* isContextMenu */,
+              false /* attributesOverride */,
+              event
+            );
+          } else if (target === this._actionButton) {
+            const extension = WebExtensionPolicy.getByID(this.addon.id)
+              ?.extension;
+            if (!extension) {
+              return;
+            }
+
+            const win = event.target.ownerGlobal;
+            const tab = win.gBrowser.selectedTab;
+
+            extension.tabManager.addActiveTabPermission(tab);
+            extension.tabManager.activateScripts(tab);
+          }
+          break;
+
+        case "blur":
+        case "mouseout":
+          if (target !== this._openMenuButton) {
+            return;
+          }
+          this.removeAttribute("secondary-button-hovered");
+          break;
+
+        case "focus":
+        case "mouseover":
+          if (target !== this._openMenuButton) {
+            return;
+          }
+          this.setAttribute("secondary-button-hovered", true);
+          break;
+      }
+    }
+
+    render() {
+      if (!this.addon) {
+        throw new Error(
+          "unified-extensions-item requires an add-on, forgot to call setAddon()?"
+        );
+      }
+
+      this.setAttribute("extension-id", this.addon.id);
+
+      this.querySelector(
+        ".unified-extensions-item-name"
+      ).textContent = this.addon.name;
+
+      const iconURL = AddonManager.getPreferredIconURL(this.addon, 32, window);
+      if (iconURL) {
+        this.querySelector(".unified-extensions-item-icon").setAttribute(
+          "src",
+          iconURL
+        );
+      }
+
+      this._openMenuButton.dataset.extensionId = this.addon.id;
+      this._openMenuButton.setAttribute(
+        "data-l10n-args",
+        JSON.stringify({ extensionName: this.addon.name })
+      );
+    }
+  }
+);
+
+// We must declare `gUnifiedExtensions` using `var` below to avoid a
+// "redeclaration" syntax error.
+var gUnifiedExtensions = {
+  _initialized: false,
+
+  init() {
+    if (this._initialized) {
+      return;
+    }
+
+    if (this.isEnabled) {
+      MozXULElement.insertFTLIfNeeded("preview/unifiedExtensions.ftl");
+
+      this._button = document.getElementById("unified-extensions-button");
+      // TODO: Bug 1778684 - Auto-hide button when there is no active extension.
+      this._button.hidden = false;
+    }
+
+    this._initialized = true;
+  },
+
+  get isEnabled() {
+    return Services.prefs.getBoolPref(
+      "extensions.unifiedExtensions.enabled",
+      false
+    );
+  },
+
+  getPopupAnchorID(aBrowser, aWindow) {
+    if (this.isEnabled) {
+      const anchorID = "unified-extensions-button";
+      const attr = anchorID + "popupnotificationanchor";
+
+      if (!aBrowser[attr]) {
+        // A hacky way of setting the popup anchor outside the usual url bar
+        // icon box, similar to how it was done for CFR.
+        // See: https://searchfox.org/mozilla-central/rev/847b64cc28b74b44c379f9bff4f415b97da1c6d7/toolkit/modules/PopupNotifications.jsm#42
+        aBrowser[attr] = aWindow.document.getElementById(
+          anchorID
+          // Anchor on the toolbar icon to position the popup right below the
+          // button.
+        ).firstElementChild;
+      }
+
+      return anchorID;
+    }
+
+    return "addons-notification-icon";
+  },
+
+  get button() {
+    return this._button;
+  },
+
+  /**
+   * Gets a list of active AddonWrapper instances of type "extension", sorted
+   * alphabetically based on add-on's names.
+   *
+   * @return {Array<AddonWrapper>} An array of active extensions.
+   */
+  async getActiveExtensions() {
+    // TODO: Bug 1778682 - Use a new method on `AddonManager` so that we get
+    // the same list of extensions as the one in `about:addons`.
+
+    // We only want to display active and visible extensions, and we want to
+    // list them alphabetically.
+    let addons = await AddonManager.getAddonsByTypes(["extension"]);
+    addons = addons.filter(addon => !addon.hidden && addon.isActive);
+    addons.sort((a1, a2) => a1.name.localeCompare(a2.name));
+
+    return addons;
+  },
+
+  handleEvent(event) {
+    switch (event.type) {
+      case "ViewShowing": {
+        this.onPanelViewShowing(event.target);
+        break;
+      }
+      case "ViewHiding": {
+        this.onPanelViewHiding(event.target);
+      }
+    }
+  },
+
+  async onPanelViewShowing(panelview) {
+    const list = panelview.querySelector(".unified-extensions-list");
+    const extensions = await this.getActiveExtensions();
+
+    for (const extension of extensions) {
+      const item = document.createElement("unified-extensions-item");
+      item.setAddon(extension);
+      list.appendChild(item);
+    }
+  },
+
+  onPanelViewHiding(panelview) {
+    const list = panelview.querySelector(".unified-extensions-list");
+    while (list.lastChild) {
+      list.lastChild.remove();
+    }
+  },
+
+  async togglePanel(aEvent) {
+    if (!CustomizationHandler.isCustomizing()) {
+      // The button should directly open `about:addons` when there is no active
+      // extension to show in the panel.
+      if ((await this.getActiveExtensions()).length === 0) {
+        await BrowserOpenAddonsMgr("addons://discover/");
+        return;
+      }
+
+      if (!this._listView) {
+        this._listView = PanelMultiView.getViewNode(
+          document,
+          "unified-extensions-view"
+        );
+        this._listView.addEventListener("ViewShowing", this);
+        this._listView.addEventListener("ViewHiding", this);
+
+        // Lazy-load the l10n strings.
+        document
+          .getElementById("unified-extensions-context-menu")
+          .querySelectorAll("[data-lazy-l10n-id]")
+          .forEach(el => {
+            el.setAttribute(
+              "data-l10n-id",
+              el.getAttribute("data-lazy-l10n-id")
+            );
+            el.removeAttribute("data-lazy-l10n-id");
+          });
+      }
+
+      if (this._button.open) {
+        PanelMultiView.hidePopup(this._listView.closest("panel"));
+        this._button.open = false;
+      } else {
+        PanelUI.showSubView("unified-extensions-view", this._button, aEvent);
+      }
+    }
+
+    // We always dispatch an event (useful for testing purposes).
+    window.dispatchEvent(new CustomEvent("UnifiedExtensionsTogglePanel"));
+  },
+
+  async updateContextMenu(menu, event) {
+    // When the context menu is open, `onpopupshowing` is called when menu
+    // items open sub-menus. We don't want to update the context menu in this
+    // case.
+    if (event.target.id !== "unified-extensions-context-menu") {
+      return;
+    }
+
+    const id = this._getExtensionId(menu);
+    const addon = await AddonManager.getAddonByID(id);
+
+    const removeButton = menu.querySelector(
+      ".unified-extensions-context-menu-remove-extension"
+    );
+    const reportButton = menu.querySelector(
+      ".unified-extensions-context-menu-report-extension"
+    );
+
+    reportButton.hidden = !gAddonAbuseReportEnabled;
+    removeButton.disabled = !(
+      addon.permissions & AddonManager.PERM_CAN_UNINSTALL
+    );
+
+    ExtensionsUI.originControlsMenu(menu, id);
+
+    // Ideally, we wouldn't do that because `browserActionFor()` will only be
+    // defined in `global` when at least one extension has required loading the
+    // `ext-browserAction` code.
+    const browserAction = lazy.ExtensionParent.apiManager.global.browserActionFor?.(
+      WebExtensionPolicy.getByID(id)?.extension
+    );
+    if (browserAction) {
+      browserAction.updateContextMenu(menu);
+    }
+  },
+
+  async manageExtension(menu) {
+    const id = this._getExtensionId(menu);
+
+    await this.togglePanel();
+    await BrowserAddonUI.manageAddon(id, "unifiedExtensions");
+  },
+
+  async removeExtension(menu) {
+    const id = this._getExtensionId(menu);
+
+    await this.togglePanel();
+    await BrowserAddonUI.removeAddon(id, "unifiedExtensions");
+  },
+
+  async reportExtension(menu) {
+    const id = this._getExtensionId(menu);
+
+    await this.togglePanel();
+    await BrowserAddonUI.reportAddon(id, "unified_context_menu");
+  },
+
+  _getExtensionId(menu) {
+    const { triggerNode } = menu;
+    return triggerNode.dataset.extensionId;
   },
 };

@@ -13,13 +13,13 @@ import attr
 import taskgraph
 from mozbuild.shellutil import quote as shell_quote
 from mozpack import path as mozpath
+from taskgraph.transforms.base import TransformSequence
+from taskgraph.util.schema import Schema, validate_schema
 from taskgraph.util.treeherder import join_symbol
 from voluptuous import Any, Extra, Optional, Required
 
 import gecko_taskgraph
-from .base import TransformSequence
 from ..util.cached_tasks import add_optimization
-from ..util.schema import Schema, validate_schema
 
 CACHE_TYPE = "content.v1"
 
@@ -123,13 +123,13 @@ def make_task(config, jobs):
         if alias:
             attributes["fetch-alias"] = alias
 
+        task_expires = "2 days" if attributes.get("cached_task") is False else expires
+
         task = {
             "attributes": attributes,
             "name": name,
             "description": job["description"],
-            "expires-after": "2 days"
-            if attributes.get("cached_task") is False
-            else expires,
+            "expires-after": task_expires,
             "label": "fetch-%s" % name,
             "run-on-projects": [],
             "treeherder": {
@@ -154,6 +154,7 @@ def make_task(config, jobs):
                         "type": "directory",
                         "name": artifact_prefix,
                         "path": "/builds/worker/artifacts",
+                        "expires-after": task_expires,
                     }
                 ],
             },

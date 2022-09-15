@@ -15,7 +15,7 @@
 #include "mozilla/Likely.h"              // for MOZ_UNLIKELY, MOZ_LIKELY
 #include "mozilla/Maybe.h"               // for Maybe
 #include "mozilla/OwningNonNull.h"       // for OwningNonNull
-#include "mozilla/TypeInState.h"         // for PropItem, StyleCache
+#include "mozilla/PendingStyles.h"       // for PendingStyle, PendingStyleCache
 #include "mozilla/RangeBoundary.h"       // for RawRangeBoundary, RangeBoundary
 #include "mozilla/SelectionState.h"      // for RangeUpdater, etc.
 #include "mozilla/StyleSheet.h"          // for StyleSheet
@@ -790,9 +790,6 @@ class EditorBase : public nsIEditor,
   struct MOZ_STACK_CLASS TopLevelEditSubActionData final {
     friend class AutoEditActionDataSetter;
 
-    // If we have created a new block element, set to it.
-    RefPtr<Element> mNewBlockElement;
-
     // Set selected range before edit.  Then, RangeUpdater keep modifying
     // the range while we're changing the DOM tree.
     RefPtr<RangeItem> mSelectedRange;
@@ -800,14 +797,14 @@ class EditorBase : public nsIEditor,
     // Computing changed range while we're handling sub actions.
     RefPtr<nsRange> mChangedRange;
 
-    // XXX In strict speaking, mCachedInlineStyles isn't enough to cache inline
-    //     styles because inline style can be specified with "style" attribute
-    //     and/or CSS in <style> elements or CSS files.  So, we need to look
-    //     for better implementation about this.
-    // FYI: Initialization cost of AutoStyleCacheArray is expensive and it is
-    //      not used by TextEditor so that we should construct it only when
-    //      we're an HTMLEditor.
-    Maybe<AutoStyleCacheArray> mCachedInlineStyles;
+    // XXX In strict speaking, mCachedPendingStyles isn't enough to cache
+    //     inline styles because inline style can be specified with "style"
+    //     attribute and/or CSS in <style> elements or CSS files.  So, we need
+    //     to look for better implementation about this.
+    // FYI: Initialization cost of AutoPendingStyleCacheArray is expensive and
+    //      it is not used by TextEditor so that we should construct it only
+    //      when we're an HTMLEditor.
+    Maybe<AutoPendingStyleCacheArray> mCachedPendingStyles;
 
     // If we tried to delete selection, set to true.
     bool mDidDeleteSelection;
@@ -882,11 +879,10 @@ class EditorBase : public nsIEditor,
       if (!mSelectedRange) {
         return;
       }
-      mNewBlockElement = nullptr;
       mSelectedRange->Clear();
       mChangedRange->Reset();
-      if (mCachedInlineStyles.isSome()) {
-        mCachedInlineStyles->Clear();
+      if (mCachedPendingStyles.isSome()) {
+        mCachedPendingStyles->Clear();
       }
       mDidDeleteSelection = false;
       mDidDeleteNonCollapsedRange = false;
@@ -2895,12 +2891,13 @@ class EditorBase : public nsIEditor,
   friend class MoveNodeTransaction;            // ToGenericNSResult
   friend class ParagraphStateAtSelection;      // AutoEditActionDataSetter,
                                                // ToGenericNSResult
+  friend class PendingStyles;                  // GetEditAction,
+                                               // GetFirstSelectionStartPoint,
+                                               // SelectionRef
   friend class ReplaceTextTransaction;  // AllowsTransactionsToChangeSelection,
                                         // CollapseSelectionTo, DoReplaceText,
                                         // RangeUpdaterRef
   friend class SplitNodeTransaction;    // ToGenericNSResult
-  friend class TypeInState;  // GetEditAction, GetFirstSelectionStartPoint,
-                             // SelectionRef
   friend class WhiteSpaceVisibilityKeeper;  // AutoTransactionsConserveSelection
   friend class nsIEditor;                   // mIsHTMLEditorClass
 

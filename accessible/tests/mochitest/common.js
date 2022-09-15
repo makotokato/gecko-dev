@@ -103,7 +103,6 @@ const MAX_TRIM_LENGTH = 100;
 /**
  * Services to determine if e10s is enabled.
  */
-var { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 /**
  * nsIAccessibilityService service.
@@ -811,7 +810,7 @@ function statesToString(aStates, aExtraStates) {
     str += list.item(index) + ", ";
   }
 
-  if (list.length != 0) {
+  if (list.length) {
     str += list.item(index);
   }
 

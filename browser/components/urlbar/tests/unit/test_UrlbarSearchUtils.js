@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { UrlbarSearchUtils } = ChromeUtils.import(
-  "resource:///modules/UrlbarSearchUtils.jsm"
+const { UrlbarSearchUtils } = ChromeUtils.importESModule(
+  "resource:///modules/UrlbarSearchUtils.sys.mjs"
 );
 
 let baconEngineExtension;
@@ -15,7 +15,7 @@ add_task(async function() {
   Services.prefs.setCharPref("browser.search.region", "US");
 
   Services.search.restoreDefaultEngines();
-  Services.search.resetToOriginalDefaultEngine();
+  Services.search.resetToAppDefaultEngine();
 });
 
 add_task(async function search_engine_match() {

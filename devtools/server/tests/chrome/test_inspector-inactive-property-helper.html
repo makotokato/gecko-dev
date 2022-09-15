@@ -11,7 +11,6 @@ SimpleTest.waitForExplicitFinish();
 
 (async function() {
   const { require } = ChromeUtils.import("resource://devtools/shared/loader/Loader.jsm");
-  const Services = require("Services");
   const { isPropertyUsed } = require("devtools/server/actors/utils/inactive-property-helper");
 
   const INACTIVE_CSS_PREF = "devtools.inspector.inactive.css.enabled";
@@ -41,6 +40,7 @@ SimpleTest.waitForExplicitFinish();
   // - {Boolean} isActive: should the property be active (isPropertyUsed `used` result).
   const testFiles = [
     "align-content.js",
+    "border-image.js",
     "flex-grid-item-properties.js",
     "float.js",
     "gap.js",
@@ -54,6 +54,7 @@ SimpleTest.waitForExplicitFinish();
     "vertical-align.js",
     "table.js",
     "text-overflow.js",
+    "width-height-ruby.js",
   ].map(file => `${FOLDER}/${file}`);
 
   // Import all the test cases

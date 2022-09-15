@@ -7,8 +7,9 @@
 #ifndef mozilla_dom_workers_scriptloader_h__
 #define mozilla_dom_workers_scriptloader_h__
 
-#include "mozilla/dom/ScriptLoadInfo.h"
+#include "js/loader/ScriptLoadRequest.h"
 #include "mozilla/dom/WorkerCommon.h"
+#include "mozilla/dom/WorkerRef.h"
 #include "mozilla/Maybe.h"
 #include "nsIContentPolicy.h"
 #include "nsStringFwd.h"
@@ -67,7 +68,7 @@ class NetworkLoadHandler;
  *    | new WorkerScriptLoader(..) |
  *    +----------------------------+
  *                |
- *                | Create the loader, along with the scriptLoadInfos
+ *                | Create the loader, along with the ScriptLoadRequests
  *                | call DispatchLoadScripts()
  *                | Create ScriptLoaderRunnable
  *                |
@@ -120,22 +121,47 @@ class WorkerScriptLoader final : public nsINamed {
   friend class ScriptExecutorRunnable;
   friend class CachePromiseHandler;
   friend class CacheLoadHandler;
+  friend class CacheCreator;
   friend class NetworkLoadHandler;
 
-  WorkerPrivate* const mWorkerPrivate;
+  using ScriptLoadRequest = JS::loader::ScriptLoadRequest;
+  using ScriptLoadRequestList = JS::loader::ScriptLoadRequestList;
+  using ScriptFetchOptions = JS::loader::ScriptFetchOptions;
+
+  RefPtr<ThreadSafeWorkerRef> mWorkerRef;
   UniquePtr<SerializedStackHolder> mOriginStack;
   nsString mOriginStackJSON;
   nsCOMPtr<nsIEventTarget> mSyncLoopTarget;
-  nsTArrayView<ScriptLoadInfo> mLoadInfos;
-  RefPtr<CacheCreator> mCacheCreator;
-  Maybe<ClientInfo> mClientInfo;
+  JS::loader::ScriptLoadRequestList mLoadingRequests;
+  JS::loader::ScriptLoadRequestList mLoadedRequests;
   Maybe<ServiceWorkerDescriptor> mController;
-  const bool mIsMainScript;
   WorkerScriptType mWorkerScriptType;
-  bool mCanceledMainThread;
+  Maybe<nsresult> mCancelMainThread;
   ErrorResult& mRv;
   bool mExecutionAborted = false;
   bool mMutedErrorFlag = false;
+
+  // Worker cancellation related Mutex
+  //
+  // Modified on the worker thread.
+  // It is ok to *read* this without a lock on the worker.
+  // Main thread must always acquire a lock.
+  bool mCleanedUp MOZ_GUARDED_BY(
+      mCleanUpLock);  // To specify if the cleanUp() has been done.
+
+  Mutex& CleanUpLock() MOZ_RETURN_CAPABILITY(mCleanUpLock) {
+    return mCleanUpLock;
+  }
+
+  bool CleanedUp() const MOZ_REQUIRES(mCleanUpLock) {
+    mCleanUpLock.AssertCurrentThreadOwns();
+    return mCleanedUp;
+  }
+
+  // Ensure the worker and the main thread won't race to access |mCleanedUp|.
+  // Should be a MutexSingleWriter, but that causes a lot of issues when you
+  // expose the lock via Lock().
+  Mutex mCleanUpLock;
 
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -143,37 +169,41 @@ class WorkerScriptLoader final : public nsINamed {
   WorkerScriptLoader(WorkerPrivate* aWorkerPrivate,
                      UniquePtr<SerializedStackHolder> aOriginStack,
                      nsIEventTarget* aSyncLoopTarget,
-                     nsTArray<ScriptLoadInfo> aLoadInfos,
-                     const Maybe<ClientInfo>& aClientInfo,
-                     const Maybe<ServiceWorkerDescriptor>& aController,
-                     bool aIsMainScript, WorkerScriptType aWorkerScriptType,
-                     ErrorResult& aRv);
+                     WorkerScriptType aWorkerScriptType, ErrorResult& aRv);
 
-  void CancelMainThreadWithBindingAborted() {
-    CancelMainThread(NS_BINDING_ABORTED);
-  }
+  void CancelMainThreadWithBindingAborted(
+      nsTArray<WorkerLoadContext*>&& aContextList);
+
+  void CreateScriptRequests(const nsTArray<nsString>& aScriptURLs,
+                            const mozilla::Encoding* aDocumentEncoding,
+                            bool aIsMainScript);
+
+  already_AddRefed<ScriptLoadRequest> CreateScriptLoadRequest(
+      const nsString& aScriptURL, const mozilla::Encoding* aDocumentEncoding,
+      bool aIsMainScript);
+
+  bool DispatchLoadScript(ScriptLoadRequest* aRequest);
 
   bool DispatchLoadScripts();
 
  protected:
   nsIURI* GetBaseURI();
 
-  void MaybeExecuteFinishedScripts(const ScriptLoadInfo& aLoadInfo);
+  nsIURI* GetInitialBaseURI();
+
+  void MaybeExecuteFinishedScripts(ScriptLoadRequest* aRequest);
+
+  void MaybeMoveToLoadedList(ScriptLoadRequest* aRequest);
 
   bool StoreCSP();
 
-  bool ProcessPendingRequests(JSContext* aCx,
-                              const Span<ScriptLoadInfo> aLoadInfosToExecute);
+  bool ProcessPendingRequests(JSContext* aCx);
 
-  nsresult OnStreamComplete(ScriptLoadInfo& aLoadInfo, nsresult aStatus);
-
-  // Are we loading the primary script, which is not a Debugger Script?
-  bool IsMainWorkerScript() const {
-    return mIsMainScript && mWorkerScriptType == WorkerScript;
+  bool AllScriptsExecuted() {
+    return mLoadingRequests.isEmpty() && mLoadedRequests.isEmpty();
   }
 
-  // Are we loading the primary script, regardless of the script type?
-  bool IsMainScript() const { return mIsMainScript; }
+  nsresult OnStreamComplete(ScriptLoadRequest* aRequest, nsresult aStatus);
 
   bool IsDebuggerScript() const { return mWorkerScriptType == DebuggerScript; }
 
@@ -183,20 +213,16 @@ class WorkerScriptLoader final : public nsINamed {
 
   Maybe<ServiceWorkerDescriptor>& GetController() { return mController; }
 
-  CacheCreator* GetCacheCreator() { return mCacheCreator; }
+  bool IsCancelled() { return mCancelMainThread.isSome(); }
 
-  bool IsCancelled() { return mCanceledMainThread; }
+  void CancelMainThread(nsresult aCancelResult,
+                        nsTArray<WorkerLoadContext*>* aContextList);
 
-  void CancelMainThread(nsresult aCancelResult);
+  nsresult LoadScripts(nsTArray<WorkerLoadContext*>&& aContextList);
 
-  void DeleteCache();
+  nsresult LoadScript(ScriptLoadRequest* aRequest);
 
-  nsresult LoadScripts();
-
-  nsresult LoadScript(ScriptLoadInfo& aLoadInfo);
-
-  void ShutdownScriptLoader(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
-                            bool aResult, bool aMutedError);
+  void ShutdownScriptLoader(bool aResult, bool aMutedError);
 
  private:
   ~WorkerScriptLoader() = default;
@@ -207,11 +233,17 @@ class WorkerScriptLoader final : public nsINamed {
     return NS_OK;
   }
 
-  void LoadingFinished(ScriptLoadInfo& aLoadInfo, nsresult aRv);
+  void TryShutdown();
 
-  void DispatchProcessPendingRequests();
+  nsTArray<WorkerLoadContext*> GetLoadingList();
 
-  bool EvaluateScript(JSContext* aCx, ScriptLoadInfo& aLoadInfo);
+  nsIGlobalObject* GetGlobal();
+
+  void LoadingFinished(ScriptLoadRequest* aRequest, nsresult aRv);
+
+  void DispatchMaybeMoveToLoadedList(ScriptLoadRequest* aRequest);
+
+  bool EvaluateScript(JSContext* aCx, ScriptLoadRequest* aRequest);
 
   void LogExceptionToConsole(JSContext* aCx, WorkerPrivate* aWorkerPrivate);
 };
@@ -236,7 +268,8 @@ void ReportLoadError(ErrorResult& aRv, nsresult aLoadResult,
 void LoadMainScript(WorkerPrivate* aWorkerPrivate,
                     UniquePtr<SerializedStackHolder> aOriginStack,
                     const nsAString& aScriptURL,
-                    WorkerScriptType aWorkerScriptType, ErrorResult& aRv);
+                    WorkerScriptType aWorkerScriptType, ErrorResult& aRv,
+                    const mozilla::Encoding* aDocumentEncoding);
 
 void Load(WorkerPrivate* aWorkerPrivate,
           UniquePtr<SerializedStackHolder> aOriginStack,

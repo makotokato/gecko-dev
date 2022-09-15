@@ -38,7 +38,7 @@ void CounterMetric::Add(int32_t aAmount) const {
 Result<Maybe<int32_t>, nsCString> CounterMetric::TestGetValue(
     const nsACString& aPingName) const {
   nsCString err;
-  if (fog_counter_test_get_error(mId, &aPingName, &err)) {
+  if (fog_counter_test_get_error(mId, &err)) {
     return Err(err);
   }
   if (!fog_counter_test_has_value(mId, &aPingName)) {
@@ -60,7 +60,7 @@ GleanCounter::Add(int32_t aAmount) {
 
 NS_IMETHODIMP
 GleanCounter::TestGetValue(const nsACString& aStorageName,
-                           JS::MutableHandleValue aResult) {
+                           JS::MutableHandle<JS::Value> aResult) {
   auto result = mCounter.TestGetValue(aStorageName);
   if (result.isErr()) {
     aResult.set(JS::UndefinedValue());

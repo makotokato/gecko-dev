@@ -57,6 +57,7 @@ class DOMString;
 class DebuggerNotificationManager;
 enum class EventCallbackDebuggerNotificationType : uint8_t;
 class EventHandlerNonNull;
+class FontFaceSet;
 class Function;
 class IDBFactory;
 class OnErrorEventHandlerNonNull;
@@ -155,8 +156,6 @@ class WorkerGlobalScopeBase : public DOMEventTargetHelper,
 
   uint64_t WindowID() const;
 
-  void NoteTerminating() { StartDying(); }
-
   // Usually global scope dies earlier than the WorkerPrivate, but if we see
   // it leak at least we can tell it to not carry away a dead pointer.
   void NoteWorkerTerminated() { mWorkerPrivate = nullptr; }
@@ -211,6 +210,8 @@ class WorkerGlobalScope : public WorkerGlobalScopeBase {
 
   using WorkerGlobalScopeBase::WorkerGlobalScopeBase;
 
+  void NoteTerminating();
+
   // nsIGlobalObject implementation
   RefPtr<ServiceWorkerRegistration> GetServiceWorkerRegistration(
       const ServiceWorkerRegistrationDescriptor& aDescriptor) const final;
@@ -233,6 +234,8 @@ class WorkerGlobalScope : public WorkerGlobalScopeBase {
   already_AddRefed<WorkerNavigator> Navigator();
 
   already_AddRefed<WorkerNavigator> GetExistingNavigator() const;
+
+  FontFaceSet* Fonts() final;
 
   void ImportScripts(JSContext* aCx, const Sequence<nsString>& aScriptURLs,
                      ErrorResult& aRv);
@@ -309,7 +312,8 @@ class WorkerGlobalScope : public WorkerGlobalScopeBase {
 
   bool IsSecureContext() const;
 
-  already_AddRefed<IDBFactory> GetIndexedDB(ErrorResult& aErrorResult);
+  already_AddRefed<IDBFactory> GetIndexedDB(JSContext* aCx,
+                                            ErrorResult& aErrorResult);
 
   already_AddRefed<cache::CacheStorage> GetCaches(ErrorResult& aRv);
 
@@ -347,6 +351,7 @@ class WorkerGlobalScope : public WorkerGlobalScopeBase {
   RefPtr<Crypto> mCrypto;
   RefPtr<WorkerLocation> mLocation;
   RefPtr<WorkerNavigator> mNavigator;
+  RefPtr<FontFaceSet> mFontFaceSet;
   RefPtr<Performance> mPerformance;
   RefPtr<IDBFactory> mIndexedDB;
   RefPtr<cache::CacheStorage> mCacheStorage;

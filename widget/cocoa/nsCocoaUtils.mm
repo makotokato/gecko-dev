@@ -409,7 +409,7 @@ nsresult nsCocoaUtils::CreateNSImageFromImageContainer(imgIContainer* aImage, ui
     RefPtr<gfxContext> context = gfxContext::CreateOrNull(drawTarget);
     MOZ_ASSERT(context);
 
-    Maybe<SVGImageContext> svgContext;
+    SVGImageContext svgContext;
     if (aPresContext && aComputedStyle) {
       SVGImageContext::MaybeStoreContextPaint(svgContext, *aPresContext, *aComputedStyle, aImage);
     }
@@ -754,6 +754,9 @@ bool nsCocoaUtils::HiDPIEnabled() {
 
   return sHiDPIEnabled;
 }
+
+// static
+void nsCocoaUtils::InvalidateHiDPIState() { sHiDPIPrefInitialized = false; }
 
 void nsCocoaUtils::GetCommandsFromKeyEvent(NSEvent* aEvent,
                                            nsTArray<KeyBindingsCommand>& aCommands) {

@@ -47,12 +47,11 @@ using dom::Promise;
 
 #define DEFAULT_CSP_PREF \
   "extensions.webextensions.default-content-security-policy"
-#define DEFAULT_DEFAULT_CSP \
-  "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+#define DEFAULT_DEFAULT_CSP "script-src 'self' 'wasm-unsafe-eval';"
 
 #define DEFAULT_CSP_PREF_V3 \
   "extensions.webextensions.default-content-security-policy.v3"
-#define DEFAULT_DEFAULT_CSP_V3 "script-src 'self'; object-src 'self';"
+#define DEFAULT_DEFAULT_CSP_V3 "script-src 'self';"
 
 #define OBS_TOPIC_PRELOAD_SCRIPT "web-extension-preload-content-script"
 #define OBS_TOPIC_LOAD_SCRIPT "web-extension-load-content-script"
@@ -357,8 +356,8 @@ nsresult ExtensionPolicyService::InjectContentScripts(
     MOZ_TRY(ExecuteContentScripts(jsapi.cx(), inner,
                                   GetScripts(RunAt::Document_start))
                 ->ThenWithCycleCollectedArgs(
-                    [](JSContext* aCx, JS::HandleValue aValue, ErrorResult& aRv,
-                       ExtensionPolicyService* aSelf,
+                    [](JSContext* aCx, JS::Handle<JS::Value> aValue,
+                       ErrorResult& aRv, ExtensionPolicyService* aSelf,
                        nsPIDOMWindowInner* aInner, Scripts&& aScripts) {
                       return aSelf->ExecuteContentScripts(aCx, aInner, aScripts)
                           .forget();
@@ -366,7 +365,7 @@ nsresult ExtensionPolicyService::InjectContentScripts(
                     this, inner, GetScripts(RunAt::Document_end))
                 .andThen([&](auto aPromise) {
                   return aPromise->ThenWithCycleCollectedArgs(
-                      [](JSContext* aCx, JS::HandleValue aValue,
+                      [](JSContext* aCx, JS::Handle<JS::Value> aValue,
                          ErrorResult& aRv, ExtensionPolicyService* aSelf,
                          nsPIDOMWindowInner* aInner, Scripts&& aScripts) {
                         return aSelf

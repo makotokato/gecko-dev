@@ -581,6 +581,12 @@ async function backupCerts() {
     return;
   }
 
+  Services.telemetry.keyedScalarSet(
+    "security.psm_ui_interaction",
+    "backup_client_auth_cert",
+    true
+  );
+
   var fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
   let [backupFileDialog, filePkcs12Spec] = await document.l10n.formatValues([
     { id: "choose-p12-backup-file-dialog" },
@@ -694,7 +700,7 @@ async function restoreCerts() {
         errorCode = certdb.importPKCS12File(fp.file, password.value);
         if (
           errorCode == Ci.nsIX509CertDB.ERROR_BAD_PASSWORD &&
-          password.value.length == 0
+          !password.value.length
         ) {
           // It didn't like empty string password, try no password.
           errorCode = certdb.importPKCS12File(fp.file, null);
@@ -790,7 +796,8 @@ async function addCACerts() {
   fp.open(rv => {
     if (rv == Ci.nsIFilePicker.returnOK) {
       certdb.importCertsFromFile(fp.file, Ci.nsIX509Cert.CA_CERT);
-      caTreeView.loadCerts(Ci.nsIX509Cert.CA_CERT);
+      let certcache = certdb.getCerts();
+      caTreeView.loadCertsFromCache(certcache, Ci.nsIX509Cert.CA_CERT);
       caTreeView.selection.clearSelection();
     }
   });

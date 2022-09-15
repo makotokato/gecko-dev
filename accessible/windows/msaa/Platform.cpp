@@ -179,7 +179,7 @@ void a11y::ProxyCaretMoveEvent(RemoteAccessible* aTarget,
                                nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED);
 }
 
-void a11y::ProxyTextChangeEvent(RemoteAccessible* aText, const nsString& aStr,
+void a11y::ProxyTextChangeEvent(RemoteAccessible* aText, const nsAString& aStr,
                                 int32_t aStart, uint32_t aLen, bool aInsert,
                                 bool) {
   uint32_t eventType = aInsert ? nsIAccessibleEvent::EVENT_TEXT_INSERTED
@@ -194,8 +194,11 @@ void a11y::ProxyTextChangeEvent(RemoteAccessible* aText, const nsString& aStr,
     return;
   }
 
-  // XXX Call ia2AccessibleText::UpdateTextChangeData once that works for
-  // RemoteAccessible.
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    MOZ_ASSERT(aText->IsHyperText());
+    ia2AccessibleText::UpdateTextChangeData(aText->AsHyperTextBase(), aInsert,
+                                            aStr, aStart, aLen);
+  }
   MsaaAccessible::FireWinEvent(aText, eventType);
 }
 

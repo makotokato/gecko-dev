@@ -96,6 +96,7 @@ class Event;
 class HTMLImageElement;
 class HTMLCanvasElement;
 class HTMLVideoElement;
+class ImageBitmap;
 class InspectorFontFace;
 class OffscreenCanvas;
 class Selection;
@@ -753,9 +754,13 @@ class nsLayoutUtils {
    * @return        Null, if there is no popup frame at the point, otherwise,
    *                returns top-most popup frame at the point.
    */
+  enum class GetPopupFrameForPointFlags : uint8_t {
+    OnlyReturnFramesWithWidgets = 0x1,
+  };
   static nsIFrame* GetPopupFrameForPoint(
       nsPresContext* aRootPresContext, nsIWidget* aWidget,
-      const mozilla::LayoutDeviceIntPoint& aPoint);
+      const mozilla::LayoutDeviceIntPoint& aPoint,
+      GetPopupFrameForPointFlags aFlags = GetPopupFrameForPointFlags(0));
 
   /**
    * Get container and offset if aEvent collapses Selection.
@@ -1939,7 +1944,7 @@ class nsLayoutUtils {
   static ImgDrawResult DrawSingleUnscaledImage(
       gfxContext& aContext, nsPresContext* aPresContext, imgIContainer* aImage,
       const SamplingFilter aSamplingFilter, const nsPoint& aDest,
-      const nsRect* aDirty, const mozilla::Maybe<SVGImageContext>& aSVGContext,
+      const nsRect* aDirty, const mozilla::SVGImageContext& aSVGContext,
       uint32_t aImageFlags, const nsRect* aSourceArea = nullptr);
 
   /**
@@ -1971,7 +1976,7 @@ class nsLayoutUtils {
   static ImgDrawResult DrawSingleImage(
       gfxContext& aContext, nsPresContext* aPresContext, imgIContainer* aImage,
       SamplingFilter aSamplingFilter, const nsRect& aDest, const nsRect& aDirty,
-      const mozilla::Maybe<SVGImageContext>& aSVGContext, uint32_t aImageFlags,
+      const mozilla::SVGImageContext& aSVGContext, uint32_t aImageFlags,
       const nsPoint* aAnchorPoint = nullptr,
       const nsRect* aSourceArea = nullptr);
 
@@ -2024,7 +2029,7 @@ class nsLayoutUtils {
       imgIContainer* aImage, nsIFrame* aForFrame,
       const LayoutDeviceRect& aDestRect, const LayoutDeviceRect& aFillRect,
       const StackingContextHelper& aSc, uint32_t aFlags,
-      mozilla::Maybe<SVGImageContext>& aSVGContext,
+      mozilla::SVGImageContext& aSVGContext,
       mozilla::Maybe<mozilla::image::ImageIntRegion>& aRegion);
 
   /**
@@ -2217,6 +2222,8 @@ class nsLayoutUtils {
     RefPtr<DrawTarget> target = nullptr;
     return SurfaceFromOffscreenCanvas(aOffscreenCanvas, aSurfaceFlags, target);
   }
+  static mozilla::SurfaceFromElementResult SurfaceFromImageBitmap(
+      mozilla::dom::ImageBitmap* aImageBitmap, uint32_t aSurfaceFlags);
 
   static mozilla::SurfaceFromElementResult SurfaceFromElement(
       mozilla::dom::Element* aElement,
@@ -2261,6 +2268,11 @@ class nsLayoutUtils {
   static mozilla::SurfaceFromElementResult SurfaceFromElement(
       mozilla::dom::HTMLCanvasElement* aElement, uint32_t aSurfaceFlags,
       RefPtr<DrawTarget>& aTarget);
+  static mozilla::SurfaceFromElementResult SurfaceFromElement(
+      mozilla::dom::HTMLCanvasElement* aElement, uint32_t aSurfaceFlags) {
+    RefPtr<DrawTarget> target = nullptr;
+    return SurfaceFromElement(aElement, aSurfaceFlags, target);
+  }
   static mozilla::SurfaceFromElementResult SurfaceFromElement(
       mozilla::dom::HTMLVideoElement* aElement, uint32_t aSurfaceFlags,
       RefPtr<DrawTarget>& aTarget);
@@ -3044,6 +3056,7 @@ class nsLayoutUtils {
 };
 
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(nsLayoutUtils::PaintFrameFlags)
+MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(nsLayoutUtils::GetPopupFrameForPointFlags)
 
 template <typename PointType, typename RectType, typename CoordType>
 /* static */ bool nsLayoutUtils::PointIsCloserToRect(

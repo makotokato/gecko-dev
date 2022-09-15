@@ -28,7 +28,6 @@
 #include "mozilla/layers/TextureClientSharedSurface.h"
 #include "mozilla/layers/WebRenderUserData.h"
 #include "mozilla/layers/WebRenderCanvasRenderer.h"
-#include "mozilla/Preferences.h"
 #include "mozilla/ResultVariant.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_webgl.h"
@@ -391,27 +390,61 @@ layers::TextureType ClientWebGLContext::GetTexTypeForSwapChain() const {
 }
 
 void ClientWebGLContext::Present(WebGLFramebufferJS* const xrFb,
-                                 const bool webvr) {
+                                 const bool webvr,
+                                 const webgl::SwapChainOptions& options) {
   const auto texType = GetTexTypeForSwapChain();
-  Present(xrFb, texType, webvr);
+  Present(xrFb, texType, webvr, options);
+}
+
+// Fill in remote texture ids to SwapChainOptions if async present is enabled.
+webgl::SwapChainOptions ClientWebGLContext::PrepareAsyncSwapChainOptions(
+    WebGLFramebufferJS* fb, bool webvr,
+    const webgl::SwapChainOptions& options) {
+  // Currently remote texture ids should only be set internally.
+  MOZ_ASSERT(!options.remoteTextureOwnerId.IsValid() &&
+             !options.remoteTextureId.IsValid());
+  auto& ownerId = fb ? fb->mRemoteTextureOwnerId : mRemoteTextureOwnerId;
+  auto& textureId = fb ? fb->mLastRemoteTextureId : mLastRemoteTextureId;
+  // Async present only works when out-of-process. It is not supported in WebVR.
+  // Allow it if it is either forced or if the pref is set.
+  if (!IsContextLost() && !mNotLost->inProcess && !webvr &&
+      (options.forceAsyncPresent ||
+       StaticPrefs::webgl_out_of_process_async_present())) {
+    if (!ownerId) {
+      ownerId = Some(layers::RemoteTextureOwnerId::GetNext());
+    }
+    textureId = Some(layers::RemoteTextureId::GetNext());
+    webgl::SwapChainOptions asyncOptions = options;
+    asyncOptions.remoteTextureOwnerId = *ownerId;
+    asyncOptions.remoteTextureId = *textureId;
+    return asyncOptions;
+  }
+  // Clear the current remote texture id so that we disable async.
+  textureId = Nothing();
+  return options;
 }
 
 void ClientWebGLContext::Present(WebGLFramebufferJS* const xrFb,
                                  const layers::TextureType type,
-                                 const bool webvr) {
+                                 const bool webvr,
+                                 const webgl::SwapChainOptions& options) {
   if (!mIsCanvasDirty && !xrFb) return;
   if (!xrFb) {
     mIsCanvasDirty = false;
   }
   CancelAutoFlush();
-  Run<RPROC(Present)>(xrFb ? xrFb->mId : 0, type, webvr);
+  webgl::SwapChainOptions asyncOptions =
+      PrepareAsyncSwapChainOptions(xrFb, webvr, options);
+  Run<RPROC(Present)>(xrFb ? xrFb->mId : 0, type, webvr, asyncOptions);
 }
 
 void ClientWebGLContext::CopyToSwapChain(
     WebGLFramebufferJS* const fb, const webgl::SwapChainOptions& options) {
   CancelAutoFlush();
   const auto texType = GetTexTypeForSwapChain();
-  Run<RPROC(CopyToSwapChain)>(fb ? fb->mId : 0, texType, options);
+  webgl::SwapChainOptions asyncOptions =
+      PrepareAsyncSwapChainOptions(fb, false, options);
+  Run<RPROC(CopyToSwapChain)>(fb ? fb->mId : 0, texType, asyncOptions);
 }
 
 void ClientWebGLContext::EndOfFrame() {
@@ -431,8 +464,23 @@ Maybe<layers::SurfaceDescriptor> ClientWebGLContext::GetFrontBuffer(
 
   const auto& child = mNotLost->outOfProcess;
   child->FlushPendingCmds();
+
   Maybe<layers::SurfaceDescriptor> ret;
+
+  // If valid remote texture data was set for async present, then use it.
+  const auto& ownerId = fb ? fb->mRemoteTextureOwnerId : mRemoteTextureOwnerId;
+  const auto& textureId = fb ? fb->mLastRemoteTextureId : mLastRemoteTextureId;
+  if (ownerId && textureId) {
+    if (StaticPrefs::webgl_out_of_process_async_present_force_sync()) {
+      // Request the front buffer from IPDL to cause a sync, even though we
+      // will continue to use the remote texture descriptor after.
+      (void)child->SendGetFrontBuffer(fb ? fb->mId : 0, vr, &ret);
+    }
+    return Some(layers::SurfaceDescriptorRemoteTexture(*textureId, *ownerId));
+  }
+
   if (!child->SendGetFrontBuffer(fb ? fb->mId : 0, vr, &ret)) return {};
+
   return ret;
 }
 
@@ -487,6 +535,9 @@ bool ClientWebGLContext::InitializeCanvasRenderer(
 
   const auto& options = *mInitialOptions;
   const auto& size = DrawingBufferSize();
+
+  if (IsContextLost()) return false;
+
   data.mIsOpaque = !options.alpha;
   data.mIsAlphaPremult = !options.alpha || options.premultipliedAlpha;
   data.mSize = {size.x, size.y};
@@ -695,8 +746,7 @@ bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
     ScopedGfxFeatureReporter reporter("IpcWebGL");
 
     auto* const cm = gfx::CanvasManagerChild::Get();
-    MOZ_ASSERT(cm);
-    if (!cm) {
+    if (NS_WARN_IF(!cm)) {
       return Err("!CanvasManagerChild::Get()");
     }
 
@@ -749,7 +799,7 @@ bool ClientWebGLContext::CreateHostContext(const uvec2& requestedSize) {
   {
     webgl::TypedQuad initVal;
     const float fData[4] = {0, 0, 0, 1};
-    memcpy(initVal.data, fData, sizeof(initVal.data));
+    memcpy(initVal.data.data(), fData, initVal.data.size());
     state.mGenericVertexAttribs.resize(limits.maxVertexAttribs, initVal);
   }
 
@@ -846,12 +896,10 @@ ClientWebGLContext::SetContextOptions(JSContext* cx,
   if (attributes.mAntialias.WasPassed()) {
     newOpts.antialias = attributes.mAntialias.Value();
   }
-
+  newOpts.ignoreColorSpace = true;
   if (attributes.mColorSpace.WasPassed()) {
-    newOpts.colorSpace = attributes.mColorSpace.Value();
-  }
-  if (StaticPrefs::gfx_color_management_native_srgb()) {
     newOpts.ignoreColorSpace = false;
+    newOpts.colorSpace = attributes.mColorSpace.Value();
   }
 
   // Don't do antialiasing if we've disabled MSAA.
@@ -2098,30 +2146,20 @@ void ClientWebGLContext::GetParameter(JSContext* cx, GLenum pname,
   // -
 
   if (!debug) {
-    const auto GetPref = [&](const char* const name) {
-      Maybe<std::string> ret;
-      nsCString overrideVal;
-      const auto res = Preferences::GetCString(name, overrideVal);
-      if (NS_SUCCEEDED(res) && overrideVal.Length() > 0) {
-        ret = Some(ToString(overrideVal));
-      }
-      return ret;
-    };
-
     const auto GetUnmaskedRenderer = [&]() {
-      auto ret = GetPref("webgl.override-unmasked-renderer");
-      if (!ret) {
-        ret = GetString(LOCAL_GL_RENDERER);
+      const auto prefLock = StaticPrefs::webgl_override_unmasked_renderer();
+      if (!prefLock->IsEmpty()) {
+        return Some(ToString(*prefLock));
       }
-      return ret;
+      return GetString(LOCAL_GL_RENDERER);
     };
 
     const auto GetUnmaskedVendor = [&]() {
-      auto ret = GetPref("webgl.override-unmasked-vendor");
-      if (!ret) {
-        ret = GetString(LOCAL_GL_VENDOR);
+      const auto prefLock = StaticPrefs::webgl_override_unmasked_vendor();
+      if (!prefLock->IsEmpty()) {
+        return Some(ToString(*prefLock));
       }
-      return ret;
+      return GetString(LOCAL_GL_VENDOR);
     };
 
     // -
@@ -2729,7 +2767,7 @@ void ClientWebGLContext::ClearBufferTv(const GLenum buffer,
   webgl::TypedQuad data;
   data.type = type;
 
-  auto dataSize = sizeof(data.data);
+  auto dataSize = data.data.size();
   switch (buffer) {
     case LOCAL_GL_COLOR:
       break;
@@ -2753,7 +2791,7 @@ void ClientWebGLContext::ClearBufferTv(const GLenum buffer,
     return;
   }
 
-  memcpy(data.data, view.begin().get() + byteOffset.value(), dataSize);
+  memcpy(data.data.data(), view.begin().get() + byteOffset.value(), dataSize);
   Run<RPROC(ClearBufferTv)>(buffer, drawBuffer, data);
 
   AfterDrawCall();
@@ -3292,12 +3330,13 @@ void ClientWebGLContext::BufferData(GLenum target,
   Run<RPROC(BufferData)>(target, RawBuffer<>(range), usage);
 }
 
-void ClientWebGLContext::RawBufferData(GLenum target,
-                                       const Range<const uint8_t>& srcData,
-                                       GLenum usage) {
+void ClientWebGLContext::RawBufferData(GLenum target, const uint8_t* srcBytes,
+                                       size_t srcLen, GLenum usage) {
   const FuncScope funcScope(*this, "bufferData");
 
-  Run<RPROC(BufferData)>(target, RawBuffer<>(srcData), usage);
+  const auto srcBuffer =
+      srcBytes ? RawBuffer<>({srcBytes, srcLen}) : RawBuffer<>(srcLen);
+  Run<RPROC(BufferData)>(target, srcBuffer, usage);
 }
 
 ////
@@ -4293,10 +4332,8 @@ void ClientWebGLContext::TexImage(uint8_t funcDims, GLenum imageTarget,
       MOZ_ASSERT(desc->sd);
       const auto byteCount = pShmem->Size<uint8_t>();
       const auto* const src = pShmem->get<uint8_t>();
-      const auto shmemType =
-          mozilla::ipc::SharedMemory::SharedMemoryType::TYPE_BASIC;
       mozilla::ipc::Shmem shmemForResend;
-      if (!child->AllocShmem(byteCount, shmemType, &shmemForResend)) {
+      if (!child->AllocShmem(byteCount, &shmemForResend)) {
         NS_WARNING("AllocShmem failed in TexImage");
         return;
       }
@@ -4310,11 +4347,35 @@ void ClientWebGLContext::TexImage(uint8_t funcDims, GLenum imageTarget,
   }
 }
 
-void ClientWebGLContext::RawTexImage(
-    uint32_t level, GLenum respecFormat, uvec3 offset,
-    const webgl::PackingInfo& pi, const webgl::TexUnpackBlobDesc& desc) const {
+void ClientWebGLContext::RawTexImage(uint32_t level, GLenum respecFormat,
+                                     uvec3 offset, const webgl::PackingInfo& pi,
+                                     webgl::TexUnpackBlobDesc&& desc) const {
   const FuncScope funcScope(*this, "tex(Sub)Image[23]D");
   if (IsContextLost()) return;
+  if (desc.sd) {
+    // Shmems are stored in Buffer surface descriptors. We need to ensure first
+    // that all queued commands are flushed and then send the Shmem over IPDL.
+    const auto& sd = *(desc.sd);
+    if (sd.type() == layers::SurfaceDescriptor::TSurfaceDescriptorBuffer &&
+        sd.get_SurfaceDescriptorBuffer().data().type() ==
+            layers::MemoryOrShmem::TShmem) {
+      const auto& inProcess = mNotLost->inProcess;
+      if (inProcess) {
+        inProcess->TexImage(level, respecFormat, offset, pi, desc);
+      } else {
+        const auto& child = mNotLost->outOfProcess;
+        child->FlushPendingCmds();
+        (void)child->SendTexImage(level, respecFormat, offset, pi,
+                                  std::move(desc));
+      }
+    } else {
+      NS_WARNING(
+          "RawTexImage with SurfaceDescriptor only supports "
+          "SurfaceDescriptorBuffer with Shmem");
+    }
+    return;
+  }
+
   Run<RPROC(TexImage)>(level, respecFormat, offset, pi, desc);
 }
 
@@ -4476,15 +4537,17 @@ void ClientWebGLContext::GetVertexAttrib(JSContext* cx, GLuint index,
       switch (attrib.type) {
         case webgl::AttribBaseType::Float:
           obj = dom::Float32Array::Create(
-              cx, this, 4, reinterpret_cast<const float*>(attrib.data));
+              cx, this, 4, reinterpret_cast<const float*>(attrib.data.data()));
           break;
         case webgl::AttribBaseType::Int:
           obj = dom::Int32Array::Create(
-              cx, this, 4, reinterpret_cast<const int32_t*>(attrib.data));
+              cx, this, 4,
+              reinterpret_cast<const int32_t*>(attrib.data.data()));
           break;
         case webgl::AttribBaseType::Uint:
           obj = dom::Uint32Array::Create(
-              cx, this, 4, reinterpret_cast<const uint32_t*>(attrib.data));
+              cx, this, 4,
+              reinterpret_cast<const uint32_t*>(attrib.data.data()));
           break;
         case webgl::AttribBaseType::Boolean:
           MOZ_CRASH("impossible");
@@ -4678,7 +4741,7 @@ void ClientWebGLContext::VertexAttrib4Tv(GLuint index, webgl::AttribBaseType t,
 
   auto& attrib = list[index];
   attrib.type = t;
-  memcpy(attrib.data, src.begin().get(), sizeof(attrib.data));
+  memcpy(attrib.data.data(), src.begin().get(), attrib.data.size());
 
   Run<RPROC(VertexAttrib4T)>(index, attrib);
 }
@@ -4848,10 +4911,10 @@ bool ClientWebGLContext::DoReadPixels(const webgl::ReadPixelsDesc& desc,
   if (!child->SendReadPixels(desc, dest.length(), &res)) {
     res = {};
   }
-  if (!res.byteStride) return false;
+  if (!res.byteStride || !res.shmem) return false;
   const auto& byteStride = res.byteStride;
   const auto& subrect = res.subrect;
-  const webgl::RaiiShmem shmem{child, res.shmem};
+  const webgl::RaiiShmem shmem{child, res.shmem.ref()};
   if (!shmem) {
     EnqueueError(LOCAL_GL_OUT_OF_MEMORY, "Failed to map in back buffer.");
     return false;
@@ -4859,11 +4922,12 @@ bool ClientWebGLContext::DoReadPixels(const webgl::ReadPixelsDesc& desc,
 
   const auto& shmemBytes = shmem.ByteRange();
 
-  uint8_t bpp;
-  if (!GetBytesPerPixel(desc.pi, &bpp)) {
-    MOZ_ASSERT(false);
+  const auto pii = webgl::PackingInfoInfo::For(desc.pi);
+  if (!pii) {
+    gfxCriticalError() << "ReadPixels: Bad " << desc.pi;
     return false;
   }
+  const auto bpp = pii->BytesPerPixel();
 
   const auto& packing = desc.packState;
   auto packRect = *uvec2::From(subrect.x, subrect.y);
@@ -4889,6 +4953,30 @@ bool ClientWebGLContext::DoReadPixels(const webgl::ReadPixelsDesc& desc,
   }
 
   return true;
+}
+
+bool ClientWebGLContext::DoReadPixels(const webgl::ReadPixelsDesc& desc,
+                                      const mozilla::ipc::Shmem& shmem) const {
+  const auto notLost =
+      mNotLost;  // Hold a strong-ref to prevent LoseContext=>UAF.
+  if (!notLost) return false;
+  const auto& inProcess = notLost->inProcess;
+  if (inProcess) {
+    const auto& shmemBytes = shmem.Range<uint8_t>();
+    inProcess->ReadPixelsInto(desc, shmemBytes);
+    return true;
+  }
+  const auto& child = notLost->outOfProcess;
+  child->FlushPendingCmds();
+  webgl::ReadPixelsResultIpc res = {};
+  // We assume the input is an unsafe shmem which won't be consumed by this
+  // request. Since SendReadPixels expects a Shmem rvalue, we must create a copy
+  // to provide it that can be consumed instead of the original descriptor.
+  mozilla::ipc::Shmem dest = shmem;
+  if (!child->SendReadPixels(desc, dest, &res)) {
+    res = {};
+  }
+  return res.byteStride > 0;
 }
 
 bool ClientWebGLContext::ReadPixels_SharedPrecheck(
@@ -5956,23 +6044,21 @@ void ClientWebGLContext::GetUniformIndices(
   const auto& res = GetLinkResult(prog);
   auto ret = nsTArray<GLuint>(uniformNames.Length());
 
-  std::unordered_map<std::string, size_t> retIdByName;
-  retIdByName.reserve(ret.Length());
+  for (const auto& queriedNameU16 : uniformNames) {
+    const auto queriedName = ToString(NS_ConvertUTF16toUTF8(queriedNameU16));
+    const auto impliedProperArrayQueriedName = queriedName + "[0]";
 
-  for (const auto i : IntegerRange(uniformNames.Length())) {
-    const auto& name = uniformNames[i];
-    auto nameU8 = ToString(NS_ConvertUTF16toUTF8(name));
-    retIdByName.insert({std::move(nameU8), i});
-    ret.AppendElement(LOCAL_GL_INVALID_INDEX);
-  }
-
-  GLuint i = 0;
-  for (const auto& cur : res.active.activeUniforms) {
-    const auto maybeRetId = MaybeFind(retIdByName, cur.name);
-    if (maybeRetId) {
-      ret[*maybeRetId] = i;
+    GLuint activeId = LOCAL_GL_INVALID_INDEX;
+    for (const auto i : IntegerRange(res.active.activeUniforms.size())) {
+      // O(N^2) ok for small N.
+      const auto& activeInfoForI = res.active.activeUniforms[i];
+      if (queriedName == activeInfoForI.name ||
+          impliedProperArrayQueriedName == activeInfoForI.name) {
+        activeId = i;
+        break;
+      }
     }
-    i += 1;
+    ret.AppendElement(activeId);
   }
 
   retval.SetValue(std::move(ret));

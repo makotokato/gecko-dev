@@ -6,9 +6,8 @@
 
 const EXPORTED_SYMBOLS = ["GeckoDriver"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const { element } = ChromeUtils.import(
@@ -19,7 +18,7 @@ const lazy = {};
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   Addon: "chrome://remote/content/marionette/addon.js",
-  AppInfo: "chrome://remote/content/marionette/appinfo.js",
+  AppInfo: "chrome://remote/content/shared/AppInfo.jsm",
   assert: "chrome://remote/content/shared/webdriver/Assert.jsm",
   atom: "chrome://remote/content/marionette/atom.js",
   browser: "chrome://remote/content/marionette/browser.js",
@@ -45,7 +44,6 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   modal: "chrome://remote/content/marionette/modal.js",
   navigate: "chrome://remote/content/marionette/navigate.js",
   permissions: "chrome://remote/content/marionette/permissions.js",
-  PollPromise: "chrome://remote/content/marionette/sync.js",
   pprint: "chrome://remote/content/shared/Format.jsm",
   print: "chrome://remote/content/shared/PDF.jsm",
   reftest: "chrome://remote/content/marionette/reftest.js",
@@ -64,7 +62,6 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   waitForObserverTopic: "chrome://remote/content/marionette/sync.js",
   WebDriverSession: "chrome://remote/content/shared/webdriver/Session.jsm",
   WebReference: "chrome://remote/content/marionette/element.js",
-  WebElementEventTarget: "chrome://remote/content/marionette/dom.js",
   windowManager: "chrome://remote/content/shared/WindowManager.jsm",
   WindowState: "chrome://remote/content/marionette/browser.js",
 });
@@ -89,6 +86,9 @@ const SUPPORTED_STRATEGIES = new Set([
 // Timeout used to abort fullscreen, maximize, and minimize
 // commands if no window manager is present.
 const TIMEOUT_NO_WINDOW_MANAGER = 5000;
+
+// Observer topic to wait for until the browser window is ready.
+const TOPIC_BROWSER_READY = "browser-delayed-startup-finished";
 
 /**
  * The Marionette WebDriver services provides a standard conforming
@@ -492,7 +492,7 @@ GeckoDriver.prototype.newSession = async function(cmd) {
     lazy.registerCommandsActor();
     lazy.enableEventsActor();
 
-    Services.obs.addObserver(this, "browser-delayed-startup-finished");
+    Services.obs.addObserver(this, TOPIC_BROWSER_READY);
   } catch (e) {
     throw new lazy.error.SessionNotCreatedError(e);
   }
@@ -545,7 +545,7 @@ GeckoDriver.prototype.handleEvent = function({ target, type }) {
 
 GeckoDriver.prototype.observe = function(subject, topic, data) {
   switch (topic) {
-    case "browser-delayed-startup-finished":
+    case TOPIC_BROWSER_READY:
       this.registerListenersForWindow(subject);
       break;
   }
@@ -2270,7 +2270,11 @@ GeckoDriver.prototype.deleteSession = function() {
     this.dialogObserver = null;
   }
 
-  Services.obs.removeObserver(this, "browser-delayed-startup-finished");
+  try {
+    Services.obs.removeObserver(this, TOPIC_BROWSER_READY);
+  } catch (e) {
+    lazy.logger.debug(`Failed to remove observer "${TOPIC_BROWSER_READY}"`);
+  }
 
   lazy.clearElementIdCache();
 
@@ -2444,19 +2448,16 @@ GeckoDriver.prototype.minimizeWindow = async function() {
 
   if (lazy.WindowState.from(win.windowState) != lazy.WindowState.Minimized) {
     let cb;
-    let observer = new lazy.WebElementEventTarget(
-      this.curBrowser.messageManager
-    );
     // Use a timed promise to abort if no window manager is present
     await new lazy.TimedPromise(
       resolve => {
         cb = new lazy.DebounceCallback(resolve);
-        observer.addEventListener("visibilitychange", cb);
+        win.addEventListener("sizemodechange", cb);
         win.minimize();
       },
       { throws: null, timeout: TIMEOUT_NO_WINDOW_MANAGER }
     );
-    observer.removeEventListener("visibilitychange", cb);
+    win.removeEventListener("sizemodechange", cb);
     await new lazy.IdlePromise(win);
   }
 
@@ -2793,7 +2794,7 @@ GeckoDriver.prototype.quit = async function(cmd) {
 
   let quitSeen;
   let mode = 0;
-  if (flags.length > 0) {
+  if (flags.length) {
     for (let k of flags) {
       lazy.assert.in(k, Ci.nsIAppStartup);
 
@@ -3222,19 +3223,23 @@ async function exitFullscreen(win) {
     { throws: null, timeout: TIMEOUT_NO_WINDOW_MANAGER }
   );
   win.removeEventListener("sizemodechange", cb);
+  await new lazy.IdlePromise(win);
 }
 
 async function restoreWindow(win) {
-  win.restore();
-  // Use a poll promise to abort if no window manager is present
-  await new lazy.PollPromise(
-    (resolve, reject) => {
-      if (lazy.WindowState.from(win.windowState) == lazy.WindowState.Normal) {
-        resolve();
-      } else {
-        reject();
-      }
+  let cb;
+  if (lazy.WindowState.from(win.windowState) == lazy.WindowState.Normal) {
+    return;
+  }
+  // Use a timed promise to abort if no window manager is present
+  await new lazy.TimedPromise(
+    resolve => {
+      cb = new lazy.DebounceCallback(resolve);
+      win.addEventListener("sizemodechange", cb);
+      win.restore();
     },
-    { timeout: TIMEOUT_NO_WINDOW_MANAGER }
+    { throws: null, timeout: TIMEOUT_NO_WINDOW_MANAGER }
   );
+  win.removeEventListener("sizemodechange", cb);
+  await new lazy.IdlePromise(win);
 }

@@ -6,9 +6,8 @@
 
 var EXPORTED_SYMBOLS = ["Marionette", "MarionetteFactory"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -296,7 +295,7 @@ class MarionetteContentProcess {
 
   get running() {
     let reply = Services.cpmm.sendSyncMessage("Marionette:IsRunning");
-    if (reply.length == 0) {
+    if (!reply.length) {
       lazy.logger.warn("No reply from parent process");
       return false;
     }

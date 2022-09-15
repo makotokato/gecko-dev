@@ -24,7 +24,7 @@ function loadShellExtension() {
   );
 }
 
-function registerObject() {
+async function registerObject() {
   const reg = Cc["@mozilla.org/windows-registry-key;1"].createInstance(
     Ci.nsIWindowsRegKey
   );
@@ -43,7 +43,7 @@ function registerObject() {
   );
 
   const moduleFullPath = getTestFilePath(kExtensionModuleName);
-  Assert.ok(OS.File.exists(moduleFullPath), "The module file exists.");
+  Assert.ok(await IOUtils.exists(moduleFullPath), "The module file exists.");
 
   inprocServer.writeStringValue("", moduleFullPath);
   inprocServer.writeStringValue("ThreadingModel", "Apartment");

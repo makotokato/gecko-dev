@@ -137,16 +137,16 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP PostMessageEvent::Run() {
       if (mCallerWindowID == 0) {
         rv = errorObject->Init(
             errorText, NS_ConvertUTF8toUTF16(mScriptLocation.value()), u""_ns,
-            0, 0, nsIScriptError::errorFlag, "DOM Window", mIsFromPrivateWindow,
-            mProvidedPrincipal->IsSystemPrincipal());
+            0, 0, nsIScriptError::errorFlag, "DOM Window"_ns,
+            mIsFromPrivateWindow, mProvidedPrincipal->IsSystemPrincipal());
       } else if (callerURI) {
         rv = errorObject->InitWithSourceURI(errorText, callerURI, u""_ns, 0, 0,
                                             nsIScriptError::errorFlag,
-                                            "DOM Window", mCallerWindowID);
+                                            "DOM Window"_ns, mCallerWindowID);
       } else {
         rv = errorObject->InitWithWindowID(
             errorText, NS_ConvertUTF8toUTF16(mScriptLocation.value()), u""_ns,
-            0, 0, nsIScriptError::errorFlag, "DOM Window", mCallerWindowID);
+            0, 0, nsIScriptError::errorFlag, "DOM Window"_ns, mCallerWindowID);
       }
       NS_ENSURE_SUCCESS(rv, rv);
 
@@ -164,6 +164,8 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP PostMessageEvent::Run() {
       do_QueryObject(targetWindow);
 
   JS::CloneDataPolicy cloneDataPolicy;
+  cloneDataPolicy.allowErrorStackFrames();
+
   MOZ_DIAGNOSTIC_ASSERT(targetWindow);
   if (mCallerAgentClusterId.isSome() && targetWindow->GetDocGroup() &&
       targetWindow->GetDocGroup()->AgentClusterId().Equals(
@@ -187,7 +189,13 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP PostMessageEvent::Run() {
     holder = &mHolder.ref<StructuredCloneHolder>();
   } else {
     MOZ_ASSERT(mHolder.constructed<ipc::StructuredCloneData>());
-    mHolder.ref<ipc::StructuredCloneData>().Read(cx, &messageData, rv);
+    // It's not possible to send shared objects over IPC so we have a different
+    // policy.
+    JS::CloneDataPolicy cloneDataPolicyIPC;
+    cloneDataPolicyIPC.allowErrorStackFrames();
+
+    mHolder.ref<ipc::StructuredCloneData>().Read(cx, &messageData,
+                                                 cloneDataPolicyIPC, rv);
     holder = &mHolder.ref<ipc::StructuredCloneData>();
   }
   if (NS_WARN_IF(rv.Failed())) {

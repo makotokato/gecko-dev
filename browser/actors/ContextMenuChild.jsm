@@ -8,9 +8,8 @@
 
 var EXPORTED_SYMBOLS = ["ContextMenuChild"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -168,8 +167,11 @@ class ContextMenuChild extends JSWindowActorChild {
         let img = lazy.ContentDOMReference.resolve(
           message.data.targetIdentifier
         );
-        img.recognizeCurrentImageText();
-        break;
+        const { direction } = this.contentWindow.getComputedStyle(img);
+
+        return img.recognizeCurrentImageText().then(results => {
+          return { results, direction };
+        });
       }
 
       case "ContextMenu:ToggleRevealPassword": {
@@ -893,6 +895,7 @@ class ContextMenuChild extends JSWindowActorChild {
     context.onSpellcheckable = false;
     context.onTextInput = false;
     context.onVideo = false;
+    context.inPDFEditor = false;
 
     // Remember the node and its owner document that was clicked
     // This may be modifed before sending to nsContextMenu
@@ -918,6 +921,10 @@ class ContextMenuChild extends JSWindowActorChild {
     context.inPDFViewer =
       context.target.ownerDocument.nodePrincipal.originNoSuffix ==
       "resource://pdf.js";
+    if (context.inPDFViewer) {
+      context.pdfEditorStates = context.target.ownerDocument.editorStates;
+      context.inPDFEditor = !!context.pdfEditorStates?.isEditing;
+    }
 
     // Check if we are in a synthetic document (stand alone image, video, etc.).
     context.inSyntheticDoc = context.target.ownerDocument.mozSyntheticDocument;
@@ -1093,6 +1100,8 @@ class ContextMenuChild extends JSWindowActorChild {
       context.onNumeric = (editFlags & lazy.SpellCheckHelper.NUMERIC) !== 0;
       context.onEditable = (editFlags & lazy.SpellCheckHelper.EDITABLE) !== 0;
       context.onPassword = (editFlags & lazy.SpellCheckHelper.PASSWORD) !== 0;
+      context.isDesignMode =
+        (editFlags & lazy.SpellCheckHelper.CONTENTEDITABLE) !== 0;
       context.passwordRevealed =
         context.onPassword && context.target.revealPassword;
       context.onSpellcheckable =
@@ -1176,6 +1185,11 @@ class ContextMenuChild extends JSWindowActorChild {
           context.onTelLink = context.linkProtocol == "tel";
           context.onMozExtLink = context.linkProtocol == "moz-extension";
           context.onSaveableLink = this._isLinkSaveable(context.link);
+
+          context.isSponsoredLink =
+            (elem.ownerDocument.URL === "about:newtab" ||
+              elem.ownerDocument.URL === "about:home") &&
+            elem.dataset.isSponsoredLink === "true";
 
           try {
             if (elem.download) {

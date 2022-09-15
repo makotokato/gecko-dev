@@ -10,9 +10,8 @@ var EXPORTED_SYMBOLS = ["WebSocketHandshake"];
 
 const CC = Components.Constructor;
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -303,6 +302,10 @@ async function upgrade(request, response) {
   response._powerSeized = true;
 
   const { transport, input, output } = response._connection;
+
+  lazy.logger.info(
+    `Perform WebSocket upgrade for incoming connection from ${transport.host}:${transport.port}`
+  );
 
   const headers = new Map();
   for (let [key, values] of Object.entries(request._headers._headers)) {

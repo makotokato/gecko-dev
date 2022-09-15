@@ -22,10 +22,9 @@ const { AppConstants } = ChromeUtils.import(
 const { ComponentUtils } = ChromeUtils.import(
   "resource://gre/modules/ComponentUtils.jsm"
 );
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { TestUtils } = ChromeUtils.import(
   "resource://testing-common/TestUtils.jsm"
 );
@@ -69,7 +68,9 @@ NewProcessSelector.prototype = {
 };
 
 let registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
-let selectorFactory = ComponentUtils._getFactory(NewProcessSelector);
+let selectorFactory = ComponentUtils.generateSingletonFactory(
+  NewProcessSelector
+);
 registrar.registerFactory(OUR_PROCESSSELECTOR_CID, "", null, selectorFactory);
 
 const kAboutPageRegistrationContentScript =
@@ -2434,6 +2435,25 @@ var BrowserTestUtils = {
   },
 
   /**
+   * Wait for the containing dialog with the id `window-modal-dialog` to become
+   * empty and close.
+   *
+   * @param  {HTMLDialogElement} dialog
+   *           The dialog to wait on.
+   * @return {Promise}
+   *           Resolves once the the dialog has closed
+   */
+  async waitForDialogClose(dialog) {
+    return this.waitForEvent(dialog, "close").then(() => {
+      return this.waitForMutationCondition(
+        dialog,
+        { childList: true, attributes: true },
+        () => !dialog.hasChildNodes() && !dialog.open
+      );
+    });
+  },
+
+  /**
    * Waits for the dialog to open, and clicks the specified button, and waits
    * for the dialog to close.
    *
@@ -2460,14 +2480,8 @@ var BrowserTestUtils = {
     if (!win.docShell.browsingContext.embedderElement) {
       return this.windowClosed(win);
     }
-    let container = win.top.document.getElementById("window-modal-dialog");
-    return this.waitForEvent(container, "close").then(() => {
-      return this.waitForMutationCondition(
-        container,
-        { childList: true, attributes: true },
-        () => !container.hasChildNodes() && !container.open
-      );
-    });
+    const dialog = win.top.document.getElementById("window-modal-dialog");
+    return this.waitForDialogClose(dialog);
   },
 
   /**

@@ -114,7 +114,7 @@ config = {
         },
         "msix-latest": {
             "product-name": "Firefox-esr-msix-latest-SSL",
-            "check_uptake": True,
+            "check_uptake": False,  # XXX enable when esr91 is EOL
             "platforms": [
                 "win",
                 "win64",

@@ -9,8 +9,8 @@
 
 const EXPORTED_SYMBOLS = ["LoginTestUtils"];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
@@ -18,8 +18,6 @@ const lazy = {};
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   RemoteSettings: "resource://services-settings/remote-settings.js",
 });
-
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 let { Assert: AssertCls } = ChromeUtils.import(
   "resource://testing-common/Assert.jsm"
@@ -35,8 +33,6 @@ const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
 const { FileTestUtils } = ChromeUtils.import(
   "resource://testing-common/FileTestUtils.jsm"
 );
-
-const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 
 const LoginInfo = Components.Constructor(
   "@mozilla.org/login-manager/loginInfo;1",
@@ -621,10 +617,7 @@ LoginTestUtils.file = {
    */
   async setupCsvFileWithLines(csvLines, extension = "csv") {
     let tmpFile = FileTestUtils.getTempFile(`firefox_logins.${extension}`);
-    await OS.File.writeAtomic(
-      tmpFile.path,
-      new TextEncoder().encode(csvLines.join("\r\n"))
-    );
+    await IOUtils.writeUTF8(tmpFile.path, csvLines.join("\r\n"));
     return tmpFile;
   },
 };

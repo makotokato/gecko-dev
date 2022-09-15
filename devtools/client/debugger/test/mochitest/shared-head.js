@@ -29,9 +29,9 @@ function createDebuggerContext(toolbox) {
   return {
     ...win.dbg,
     commands: toolbox.commands,
-    toolbox: toolbox,
-    win: win,
-    panel: panel,
+    toolbox,
+    win,
+    panel,
   };
 }
 
@@ -199,7 +199,7 @@ function waitForSelectedSource(dbg, sourceOrUrl) {
   const {
     getSelectedSource,
     getSelectedSourceTextContent,
-    hasSymbols,
+    getSymbols,
     getBreakableLines,
   } = dbg.selectors;
 
@@ -224,7 +224,7 @@ function waitForSelectedSource(dbg, sourceOrUrl) {
         }
       }
 
-      return hasSymbols(source) && getBreakableLines(source.id);
+      return getSymbols(source) && getBreakableLines(source.id);
     },
     "selected source"
   );
@@ -344,7 +344,7 @@ function _assertDebugLine(dbg, line, column) {
   ok(isVisibleInEditor(dbg, debugLine), "debug line is visible");
 
   const markedSpans = lineInfo.handle.markedSpans;
-  if (markedSpans && markedSpans.length > 0) {
+  if (markedSpans && markedSpans.length) {
     const hasExpectedDebugLine = markedSpans.some(
       span =>
         span.marker.className?.includes("debug-expression") &&
@@ -555,6 +555,28 @@ function isSelectedFrameSelected(dbg, state) {
   }
 
   return source.id == sourceId;
+}
+
+/**
+ * Checks to see if the frame is selected and the title is correct.
+ *
+ * @param {Object} dbg
+ * @param {Integer} index
+ * @param {String} title
+ */
+function isFrameSelected(dbg, index, title) {
+  const $frame = findElement(dbg, "frame", index);
+
+  const {
+    selectors: { getSelectedFrame, getCurrentThread },
+  } = dbg;
+
+  const frame = getSelectedFrame(getCurrentThread());
+
+  const elSelected = $frame.classList.contains("selected");
+  const titleSelected = frame.displayName == title;
+
+  return elSelected && titleSelected;
 }
 
 /**
@@ -1066,10 +1088,47 @@ async function assertScopes(dbg, items) {
   is(getScopeLabel(dbg, items.length + 1), "Window");
 }
 
+function findSourceTreeThreadByName(dbg, name) {
+  return [...findAllElements(dbg, "sourceTreeThreads")].find(el => {
+    return el.textContent.includes(name);
+  });
+}
+
 function findSourceNodeWithText(dbg, text) {
   return [...findAllElements(dbg, "sourceNodes")].find(el => {
     return el.textContent.includes(text);
   });
+}
+
+/**
+ * Assert the icon type used in the SourceTree for a given source
+ *
+ * @param {Object} dbg
+ * @param {String} sourceName
+ *        Name of the source displayed in the source tree
+ * @param {String} icon
+ *        Expected icon CSS classname
+ */
+function assertSourceIcon(dbg, sourceName, icon) {
+  const sourceItem = findSourceNodeWithText(dbg, sourceName);
+  ok(sourceItem, `Found the source item for ${sourceName}`);
+  is(
+    sourceItem.querySelector(".source-icon").className,
+    `img source-icon ${icon}`,
+    `The icon for ${sourceName} is correct`
+  );
+}
+
+async function expandSourceTree(dbg) {
+  // Click on expand all context menu for all top level "expandable items".
+  // If there is no project root, it will be thread items.
+  // But when there is a project root, it can be directory or group items.
+  // Select only expandable in order to ignore source items.
+  for (const rootNode of dbg.win.document.querySelectorAll(
+    ".sources-list > .managed-tree > .tree > .tree-node[data-expandable=true]"
+  )) {
+    await expandAllSourceNodes(dbg, rootNode);
+  }
 }
 
 async function expandAllSourceNodes(dbg, treeNode) {
@@ -1995,15 +2054,6 @@ async function waitForBreakableLine(dbg, source, lineNumber) {
   );
 }
 
-async function expandSourceTree(dbg) {
-  const rootNodes = dbg.win.document.querySelectorAll(
-    selectors.sourceTreeThreadsNodes
-  );
-  for (const rootNode of rootNodes) {
-    await expandAllSourceNodes(dbg, rootNode);
-  }
-}
-
 async function waitForSourceTreeThreadsCount(dbg, i) {
   info(`waiting for ${i} threads in the source tree`);
   await waitUntil(() => {
@@ -2054,10 +2104,10 @@ async function waitForSourcesInSourceTree(
         missingElements.push(source);
       }
     }
-    if (missingElements.length > 0) {
+    if (missingElements.length) {
       msg += "Missing elements: " + missingElements.join(", ") + "\n";
     }
-    if (displayedSources.length > 0) {
+    if (displayedSources.length) {
       msg += "Unexpected elements: " + displayedSources.join(", ");
     }
     throw new Error(msg);
@@ -2208,7 +2258,7 @@ async function findConsoleMessages(toolbox, query) {
 async function hasConsoleMessage({ toolbox }, msg) {
   return waitFor(async () => {
     const messages = await findConsoleMessages(toolbox, msg);
-    return messages.length > 0;
+    return !!messages.length;
   });
 }
 

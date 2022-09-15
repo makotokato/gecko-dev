@@ -9,7 +9,6 @@
  * editor tooltips that appear when clicking swatch based editors.
  */
 
-const Services = require("Services");
 const flags = require("devtools/shared/flags");
 const {
   VIEW_NODE_VALUE_TYPE,
@@ -109,7 +108,7 @@ TooltipsOverlay.prototype = {
    * Add the tooltips overlay to the view. This will start tracking mouse
    * movements and display tooltips when needed
    */
-  addToView: function() {
+  addToView() {
     if (this._isStarted || this._isDestroyed) {
       return;
     }
@@ -147,7 +146,7 @@ TooltipsOverlay.prototype = {
    * @param {String} name
    *        Identifier name for the tooltip
    */
-  getTooltip: function(name) {
+  getTooltip(name) {
     let tooltip = this._instances.get(name);
     if (tooltip) {
       return tooltip;
@@ -205,7 +204,7 @@ TooltipsOverlay.prototype = {
    * Remove the tooltips overlay from the view. This will stop tracking mouse
    * movements and displaying tooltips
    */
-  removeFromView: function() {
+  removeFromView() {
     if (!this._isStarted || this._isDestroyed) {
       return;
     }
@@ -227,7 +226,7 @@ TooltipsOverlay.prototype = {
    * @param {Object} nodeInfo
    * @return {String} The tooltip type to be shown, or null
    */
-  _getTooltipType: function({ type, value: prop }) {
+  _getTooltipType({ type, value: prop }) {
     let tooltipType = null;
 
     // Image preview tooltip
@@ -506,7 +505,7 @@ TooltipsOverlay.prototype = {
     await setVariableTooltip(this.getTooltip("previewTooltip"), doc, text);
   },
 
-  _onNewSelection: function() {
+  _onNewSelection() {
     for (const [, tooltip] of this._instances) {
       tooltip.hide();
     }
@@ -515,7 +514,7 @@ TooltipsOverlay.prototype = {
   /**
    * Destroy this overlay instance, removing it from the view
    */
-  destroy: function() {
+  destroy() {
     this.removeFromView();
 
     this.view.inspector.selection.off("new-node-front", this._onNewSelection);

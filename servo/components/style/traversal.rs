@@ -8,7 +8,7 @@ use crate::context::{ElementCascadeInputs, SharedStyleContext, StyleContext};
 use crate::data::{ElementData, ElementStyles};
 use crate::dom::{NodeInfo, OpaqueNode, TElement, TNode};
 use crate::invalidation::element::restyle_hints::RestyleHint;
-use crate::matching::{ChildCascadeRequirement, MatchMethods};
+use crate::matching::{ChildRestyleRequirement, MatchMethods};
 use crate::selector_parser::PseudoElement;
 use crate::sharing::StyleSharingTarget;
 use crate::style_resolver::{PseudoElementResolution, StyleResolverForElement};
@@ -268,26 +268,6 @@ pub trait DomTraversal<E: TElement>: Sync {
         false
     }
 
-    /// Returns true if we want to cull this subtree from the travesal.
-    fn should_cull_subtree(
-        &self,
-        context: &mut StyleContext<E>,
-        parent: E,
-        parent_data: &ElementData,
-    ) -> bool {
-        debug_assert!(
-            parent.has_current_styles_for_traversal(parent_data, context.shared.traversal_flags)
-        );
-
-        // If the parent computed display:none, we don't style the subtree.
-        if parent_data.styles.is_display_none() {
-            debug!("Parent {:?} is display:none, culling traversal", parent);
-            return true;
-        }
-
-        return false;
-    }
-
     /// Return the shared style context common to all worker threads.
     fn shared_context(&self) -> &SharedStyleContext;
 }
@@ -408,7 +388,7 @@ where
 #[inline]
 #[allow(unsafe_code)]
 pub fn recalc_style_at<E, D, F>(
-    traversal: &D,
+    _traversal: &D,
     traversal_data: &PerLevelTraversalData,
     context: &mut StyleContext<E>,
     element: E,
@@ -443,19 +423,19 @@ pub fn recalc_style_at<E, D, F>(
         data
     );
 
-    let mut child_cascade_requirement = ChildCascadeRequirement::CanSkipCascade;
+    let mut child_restyle_requirement = ChildRestyleRequirement::CanSkipCascade;
 
     // Compute style for this element if necessary.
     if compute_self {
-        child_cascade_requirement = compute_style(traversal_data, context, element, data);
+        child_restyle_requirement = compute_style(traversal_data, context, element, data);
 
         if element.is_in_native_anonymous_subtree() {
             // We must always cascade native anonymous subtrees, since they
             // may have pseudo-elements underneath that would inherit from the
             // closest non-NAC ancestor instead of us.
-            child_cascade_requirement = cmp::max(
-                child_cascade_requirement,
-                ChildCascadeRequirement::MustCascadeChildren,
+            child_restyle_requirement = cmp::max(
+                child_restyle_requirement,
+                ChildRestyleRequirement::MustCascadeChildren,
             );
         }
 
@@ -492,10 +472,10 @@ pub fn recalc_style_at<E, D, F>(
     let propagated_hint = data.hint.propagate(&flags);
 
     trace!(
-        "propagated_hint={:?}, cascade_requirement={:?}, \
+        "propagated_hint={:?}, restyle_requirement={:?}, \
          is_display_none={:?}, implementing_pseudo={:?}",
         propagated_hint,
-        child_cascade_requirement,
+        child_restyle_requirement,
         data.styles.is_display_none(),
         element.implemented_pseudo_element()
     );
@@ -520,16 +500,14 @@ pub fn recalc_style_at<E, D, F>(
     //  * We can't skip the cascade.
     //  * This is a servo non-incremental traversal.
     //
-    // Additionally, there are a few scenarios where we avoid traversing the
-    // subtree even if descendant styles are out of date. These cases are
-    // enumerated in should_cull_subtree().
+    // We only do this if we're not a display: none root, since in that case
+    // it's useless to style children.
     let mut traverse_children = has_dirty_descendants_for_this_restyle ||
         !propagated_hint.is_empty() ||
-        !child_cascade_requirement.can_skip_cascade() ||
+        !child_restyle_requirement.can_skip_cascade() ||
         is_servo_nonincremental_layout();
 
-    traverse_children =
-        traverse_children && !traversal.should_cull_subtree(context, element, &data);
+    traverse_children = traverse_children && !data.styles.is_display_none();
 
     // Examine our children, and enqueue the appropriate ones for traversal.
     if traverse_children {
@@ -538,7 +516,7 @@ pub fn recalc_style_at<E, D, F>(
             element,
             data,
             propagated_hint,
-            child_cascade_requirement,
+            child_restyle_requirement,
             is_initial_style,
             note_child,
         );
@@ -571,7 +549,7 @@ fn compute_style<E>(
     context: &mut StyleContext<E>,
     element: E,
     data: &mut ElementData,
-) -> ChildCascadeRequirement
+) -> ChildRestyleRequirement
 where
     E: TElement,
 {
@@ -756,7 +734,7 @@ fn note_children<E, D, F>(
     element: E,
     data: &ElementData,
     propagated_hint: RestyleHint,
-    cascade_requirement: ChildCascadeRequirement,
+    restyle_requirement: ChildRestyleRequirement,
     is_initial_style: bool,
     mut note_child: F,
 ) where
@@ -793,12 +771,12 @@ fn note_children<E, D, F>(
 
         if let Some(ref mut child_data) = child_data {
             let mut child_hint = propagated_hint;
-            match cascade_requirement {
-                ChildCascadeRequirement::CanSkipCascade => {},
-                ChildCascadeRequirement::MustCascadeDescendants => {
+            match restyle_requirement {
+                ChildRestyleRequirement::CanSkipCascade => {},
+                ChildRestyleRequirement::MustCascadeDescendants => {
                     child_hint |= RestyleHint::RECASCADE_SELF | RestyleHint::RECASCADE_DESCENDANTS;
                 },
-                ChildCascadeRequirement::MustCascadeChildrenIfInheritResetStyle => {
+                ChildRestyleRequirement::MustCascadeChildrenIfInheritResetStyle => {
                     use crate::computed_value_flags::ComputedValueFlags;
                     if child_data
                         .styles
@@ -809,9 +787,12 @@ fn note_children<E, D, F>(
                         child_hint |= RestyleHint::RECASCADE_SELF;
                     }
                 },
-                ChildCascadeRequirement::MustCascadeChildren => {
+                ChildRestyleRequirement::MustCascadeChildren => {
                     child_hint |= RestyleHint::RECASCADE_SELF;
                 },
+                ChildRestyleRequirement::MustMatchDescendants => {
+                    child_hint |= RestyleHint::restyle_subtree();
+                }
             }
 
             child_data.hint.insert(child_hint);

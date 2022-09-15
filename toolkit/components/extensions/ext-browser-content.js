@@ -1,20 +1,20 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* eslint-env mozilla/frame-script */
+
 "use strict";
 
-var { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+var { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   clearTimeout: "resource://gre/modules/Timer.jsm",
   ExtensionCommon: "resource://gre/modules/ExtensionCommon.jsm",
   setTimeout: "resource://gre/modules/Timer.jsm",
 });
-
-/* eslint-env mozilla/frame-script */
 
 // Minimum time between two resizes.
 const RESIZE_TIMEOUT = 100;
@@ -102,7 +102,12 @@ const BrowserListener = {
     switch (event.type) {
       case "DOMDocElementInserted":
         if (this.blockingPromise) {
-          event.target.blockParsing(this.blockingPromise);
+          const doc = event.target;
+          const policy = doc?.nodePrincipal?.addonPolicy;
+          event.target.blockParsing(this.blockingPromise).then(() => {
+            policy?.weakExtension?.get()?.untrackBlockedParsingDocument(doc);
+          });
+          policy?.weakExtension?.get()?.trackBlockedParsingDocument(doc);
         }
         break;
 

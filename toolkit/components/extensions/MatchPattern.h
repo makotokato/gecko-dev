@@ -191,7 +191,7 @@ class MOZ_STACK_CLASS CookieInfo final {
 
 class MatchPattern final : public nsISupports, public nsWrapperCache {
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(MatchPattern)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(MatchPattern)
 
   static already_AddRefed<MatchPattern> Constructor(
       dom::GlobalObject& aGlobal, const nsAString& aPattern,
@@ -222,7 +222,7 @@ class MatchPattern final : public nsISupports, public nsWrapperCache {
   nsISupports* GetParentObject() const { return mParent; }
 
   virtual JSObject* WrapObject(JSContext* aCx,
-                               JS::HandleObject aGivenProto) override;
+                               JS::Handle<JSObject*> aGivenProto) override;
 
  protected:
   virtual ~MatchPattern() = default;
@@ -265,7 +265,7 @@ class MatchPattern final : public nsISupports, public nsWrapperCache {
 
 class MatchPatternSet final : public nsISupports, public nsWrapperCache {
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(MatchPatternSet)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(MatchPatternSet)
 
   using ArrayType = nsTArray<RefPtr<MatchPattern>>;
 
@@ -301,7 +301,7 @@ class MatchPatternSet final : public nsISupports, public nsWrapperCache {
   nsISupports* GetParentObject() const { return mParent; }
 
   virtual JSObject* WrapObject(JSContext* aCx,
-                               JS::HandleObject aGivenProto) override;
+                               JS::Handle<JSObject*> aGivenProto) override;
 
  protected:
   virtual ~MatchPatternSet() = default;

@@ -27,7 +27,7 @@ add_task(async () => {
     // Check for FileIO in any of the background threads.
     if (thread.name.startsWith("BgIOThreadPool")) {
       const markers = getInflatedFileIOMarkers(thread, filename);
-      if (markers.length > 0) {
+      if (markers.length) {
         backgroundThread = thread;
         backgroundThreadFileIO = markers;
         break;
@@ -145,15 +145,7 @@ async function startProfilerAndTriggerFileIO({
   info("Remove the file");
   await removeFile(path);
 
-  // Pause the profiler as we don't need to collect more samples as we retrieve
-  // and serialize the profile.
-  // Don't await the pause, because each process will handle it before it
-  // receives the following `getProfileDataAsync()`.
-  Services.profiler.Pause();
-
-  const profile = await Services.profiler.getProfileDataAsync();
-  await Services.profiler.StopProfiler();
-  return profile;
+  return stopNowAndGetProfile();
 }
 
 async function fileExists(file) {

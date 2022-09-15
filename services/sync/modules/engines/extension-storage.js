@@ -9,10 +9,10 @@ var EXPORTED_SYMBOLS = [
   "ExtensionStorageEngineBridge",
 ];
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { BridgedEngine } = ChromeUtils.import(
+const { BridgedEngine, BridgeWrapperXPCOM } = ChromeUtils.import(
   "resource://services-sync/bridged_engine.js"
 );
 const { SyncEngine } = ChromeUtils.import(
@@ -73,8 +73,11 @@ function setEngineEnabled(enabled) {
 
 // A "bridged engine" to our webext-storage component.
 function ExtensionStorageEngineBridge(service) {
-  let bridge = lazy.StorageSyncService.getInterface(Ci.mozIBridgedSyncEngine);
-  BridgedEngine.call(this, bridge, "Extension-Storage", service);
+  this.component = lazy.StorageSyncService.getInterface(
+    Ci.mozIBridgedSyncEngine
+  );
+  BridgedEngine.call(this, "Extension-Storage", service);
+  this._bridge = new BridgeWrapperXPCOM(this.component);
 
   let app_services_logger = Cc["@mozilla.org/appservices/logger;1"].getService(
     Ci.mozIAppServicesLogger
@@ -92,7 +95,7 @@ ExtensionStorageEngineBridge.prototype = {
 
   _notifyPendingChanges() {
     return new Promise(resolve => {
-      this._bridge
+      this.component
         .QueryInterface(Ci.mozISyncedExtensionStorageArea)
         .fetchPendingSyncChanges({
           QueryInterface: ChromeUtils.generateQI([
@@ -127,7 +130,7 @@ ExtensionStorageEngineBridge.prototype = {
 
   _takeMigrationInfo() {
     return new Promise((resolve, reject) => {
-      this._bridge
+      this.component
         .QueryInterface(Ci.mozIExtensionStorageArea)
         .takeMigrationInfo({
           QueryInterface: ChromeUtils.generateQI([

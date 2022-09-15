@@ -16,6 +16,7 @@
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/Unused.h"
 #include "mozilla/a11y/Platform.h"
+#include "Relation.h"
 #include "RelationType.h"
 #include "mozilla/a11y/Role.h"
 #include "mozilla/StaticPrefs_accessibility.h"
@@ -108,20 +109,28 @@ static already_AddRefed<Interface> QueryInterface(
   return acc2.forget();
 }
 
-static RemoteAccessible* GetProxyFor(DocAccessibleParent* aDoc,
-                                     IUnknown* aCOMProxy) {
+static Maybe<uint64_t> GetIdFor(DocAccessibleParent* aDoc,
+                                IUnknown* aCOMProxy) {
   RefPtr<IGeckoCustom> custom;
   if (FAILED(aCOMProxy->QueryInterface(IID_IGeckoCustom,
                                        (void**)getter_AddRefs(custom)))) {
-    return nullptr;
+    return Nothing();
   }
 
   uint64_t id;
   if (FAILED(custom->get_ID(&id))) {
-    return nullptr;
+    return Nothing();
   }
 
-  return aDoc->GetAccessible(id);
+  return Some(id);
+}
+
+static RemoteAccessible* GetProxyFor(DocAccessibleParent* aDoc,
+                                     IUnknown* aCOMProxy) {
+  if (auto id = GetIdFor(aDoc, aCOMProxy)) {
+    return aDoc->GetAccessible(*id);
+  }
+  return nullptr;
 }
 
 ENameValueFlag RemoteAccessible::Name(nsString& aName) const {
@@ -269,6 +278,11 @@ nsIntRect RemoteAccessible::BoundsInCSSPixels() const {
 }
 
 void RemoteAccessible::Language(nsString& aLocale) {
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    // Not yet supported by the cache.
+    aLocale.Truncate();
+    return;
+  }
   aLocale.Truncate();
 
   RefPtr<IAccessible> acc;
@@ -390,11 +404,14 @@ already_AddRefed<AccAttributes> RemoteAccessible::Attributes() {
   return attrsObj.forget();
 }
 
-nsTArray<RemoteAccessible*> RemoteAccessible::RelationByType(
-    RelationType aType) const {
+Relation RemoteAccessible::RelationByType(RelationType aType) const {
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    return RemoteAccessibleBase<RemoteAccessible>::RelationByType(aType);
+  }
+
   RefPtr<IAccessible2_2> acc = QueryInterface<IAccessible2_2>(this);
   if (!acc) {
-    return nsTArray<RemoteAccessible*>();
+    return Relation();
   }
 
   _bstr_t relationType;
@@ -406,7 +423,7 @@ nsTArray<RemoteAccessible*> RemoteAccessible::RelationByType(
   }
 
   if (!relationType) {
-    return nsTArray<RemoteAccessible*>();
+    return Relation();
   }
 
   IUnknown** targets;
@@ -414,18 +431,20 @@ nsTArray<RemoteAccessible*> RemoteAccessible::RelationByType(
   HRESULT hr =
       acc->get_relationTargetsOfType(relationType, 0, &targets, &nTargets);
   if (FAILED(hr)) {
-    return nsTArray<RemoteAccessible*>();
+    return Relation();
   }
 
-  nsTArray<RemoteAccessible*> proxies;
+  nsTArray<uint64_t> ids;
   for (long idx = 0; idx < nTargets; idx++) {
     IUnknown* target = targets[idx];
-    proxies.AppendElement(GetProxyFor(Document(), target));
+    if (auto id = GetIdFor(Document(), target)) {
+      ids.AppendElement(*id);
+    }
     target->Release();
   }
   CoTaskMemFree(targets);
 
-  return proxies;
+  return Relation(new RemoteAccIterator(std::move(ids), Document()));
 }
 
 double RemoteAccessible::CurValue() const {
@@ -448,6 +467,10 @@ double RemoteAccessible::CurValue() const {
 }
 
 bool RemoteAccessible::SetCurValue(double aValue) {
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    // Not yet supported by the cache.
+    return false;
+  }
   RefPtr<IAccessibleValue> acc = QueryInterface<IAccessibleValue>(this);
   if (!acc) {
     return false;
@@ -517,6 +540,11 @@ static IA2TextBoundaryType GetIA2TextBoundary(
 
 int32_t RemoteAccessible::OffsetAtPoint(int32_t aX, int32_t aY,
                                         uint32_t aCoordinateType) {
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    return RemoteAccessibleBase<RemoteAccessible>::OffsetAtPoint(
+        aX, aY, aCoordinateType);
+  }
+
   RefPtr<IAccessibleText> acc = QueryInterface<IAccessibleText>(this);
   if (!acc) {
     return -1;
@@ -649,6 +677,10 @@ void RemoteAccessible::TextAtOffset(int32_t aOffset,
 
 bool RemoteAccessible::AddToSelection(int32_t aStartOffset,
                                       int32_t aEndOffset) {
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    // Not yet supported by the cache.
+    return false;
+  }
   RefPtr<IAccessibleText> acc = QueryInterface<IAccessibleText>(this);
   if (!acc) {
     return false;
@@ -659,6 +691,10 @@ bool RemoteAccessible::AddToSelection(int32_t aStartOffset,
 }
 
 bool RemoteAccessible::RemoveFromSelection(int32_t aSelectionNum) {
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    // Not yet supported by the cache.
+    return false;
+  }
   RefPtr<IAccessibleText> acc = QueryInterface<IAccessibleText>(this);
   if (!acc) {
     return false;
@@ -705,6 +741,10 @@ void RemoteAccessible::SetCaretOffset(int32_t aOffset) {
 void RemoteAccessible::ScrollSubstringTo(int32_t aStartOffset,
                                          int32_t aEndOffset,
                                          uint32_t aScrollType) {
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    // Not yet supported by the cache.
+    return;
+  }
   RefPtr<IAccessibleText> acc = QueryInterface<IAccessibleText>(this);
   if (!acc) {
     return;
@@ -722,6 +762,10 @@ void RemoteAccessible::ScrollSubstringToPoint(int32_t aStartOffset,
                                               int32_t aEndOffset,
                                               uint32_t aCoordinateType,
                                               int32_t aX, int32_t aY) {
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    // Not yet supported by the cache.
+    return;
+  }
   RefPtr<IAccessibleText> acc = QueryInterface<IAccessibleText>(this);
   if (!acc) {
     return;
@@ -744,6 +788,10 @@ void RemoteAccessible::ScrollSubstringToPoint(int32_t aStartOffset,
 }
 
 bool RemoteAccessible::IsLinkValid() {
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    // Not yet supported by the cache.
+    return false;
+  }
   RefPtr<IAccessibleHyperlink> acc = QueryInterface<IAccessibleHyperlink>(this);
   if (!acc) {
     return false;
@@ -759,6 +807,10 @@ bool RemoteAccessible::IsLinkValid() {
 
 uint32_t RemoteAccessible::AnchorCount(bool* aOk) {
   *aOk = false;
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    // Not yet supported by the cache.
+    return 0;
+  }
   RefPtr<IGeckoCustom> custom = QueryInterface<IGeckoCustom>(this);
   if (!custom) {
     return 0;
@@ -774,6 +826,10 @@ uint32_t RemoteAccessible::AnchorCount(bool* aOk) {
 }
 
 RemoteAccessible* RemoteAccessible::AnchorAt(uint32_t aIdx) {
+  if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    // Not yet supported by the cache.
+    return nullptr;
+  }
   RefPtr<IAccessibleHyperlink> link =
       QueryInterface<IAccessibleHyperlink>(this);
   if (!link) {

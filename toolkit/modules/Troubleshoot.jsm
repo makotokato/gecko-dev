@@ -7,7 +7,6 @@ var EXPORTED_SYMBOLS = ["Troubleshoot"];
 const { AddonManager } = ChromeUtils.import(
   "resource://gre/modules/AddonManager.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
@@ -36,6 +35,7 @@ const PREFS_FOR_DISPLAY = [
   "browser.download.lastDir.savePerSite",
   "browser.download.manager.addToRecentDocs",
   "browser.download.manager.resumeOnWakeDelay",
+  "browser.download.open_pdf_attachments_inline",
   "browser.download.preferred.",
   "browser.download.skipConfirmLaunchExecutable",
   "browser.download.start_downloads_in_tmp_dir",
@@ -776,6 +776,22 @@ var dataProviders = {
         .audioDevices(Ci.nsIDOMWindowUtils.AUDIO_INPUT)
         .QueryInterface(Ci.nsIArray)
     );
+
+    data.codecSupportInfo = "Unknown";
+
+    // We initialize gfxInfo here in the same way as in the media
+    // section -- should we break this out into a separate function?
+    try {
+      // nsIGfxInfo may not be implemented on some platforms.
+      var gfxInfo = Cc["@mozilla.org/gfx/info;1"].getService(Ci.nsIGfxInfo);
+
+      // Note: CodecSupportInfo is not populated until we have
+      // actually instantiated a PDM. We may want to add a button
+      // or some other means of allowing the user to manually
+      // instantiate a PDM to ensure that the data is available.
+      data.codecSupportInfo = gfxInfo.CodecSupportInfo;
+    } catch (e) {}
+
     done(data);
   },
 

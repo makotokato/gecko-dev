@@ -3,14 +3,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/* eslint-env mozilla/frame-script */
+
 "use strict";
 
 const { GeckoViewChildModule } = ChromeUtils.import(
   "resource://gre/modules/GeckoViewChildModule.jsm"
 );
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 XPCOMUtils.defineLazyModuleGetters(this, {
@@ -28,6 +29,7 @@ const DEFAULT_INTERVAL_MS = 1500;
 const TIMEOUT_DISABLED_PREF = "browser.sessionstore.debug.no_auto_updates";
 
 const PREF_INTERVAL = "browser.sessionstore.interval";
+const PREF_SESSION_COLLECTION = "browser.sessionstore.platform_collection";
 
 class Handler {
   constructor(store) {
@@ -599,12 +601,17 @@ class SessionStateAggregator extends GeckoViewChildModule {
     this.stateChangeNotifier = new StateChangeNotifier(this);
 
     this.handlers = [
-      new FormDataListener(this),
       new SessionHistoryListener(this),
-      new ScrollPositionListener(this),
       this.stateChangeNotifier,
       this.messageQueue,
     ];
+
+    if (!Services.prefs.getBoolPref(PREF_SESSION_COLLECTION, false)) {
+      this.handlers.push(
+        new FormDataListener(this),
+        new ScrollPositionListener(this)
+      );
+    }
 
     this.messageManager.addMessageListener("GeckoView:FlushSessionState", this);
   }

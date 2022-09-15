@@ -150,6 +150,24 @@ def enable_record_tuple(value):
 set_config("ENABLE_RECORD_TUPLE", enable_record_tuple)
 set_define("ENABLE_RECORD_TUPLE", enable_record_tuple)
 
+# Enable decorators
+# ===================================================
+option(
+    "--enable-decorators",
+    default=False,
+    help="Enable experimental JS Decorators support",
+)
+
+
+@depends("--enable-decorators")
+def enable_decorators(value):
+    if value:
+        return True
+
+
+set_config("ENABLE_DECORATORS", enable_decorators)
+set_define("ENABLE_DECORATORS", enable_decorators)
+
 # JIT support
 # =======================================================
 @depends(target, "--enable-record-tuple")
@@ -249,6 +267,7 @@ set_config("JS_CODEGEN_LOONG64", jit_codegen.loong64)
 set_config("JS_CODEGEN_RISCV64", jit_codegen.riscv64)
 set_config("JS_CODEGEN_X86", jit_codegen.x86)
 set_config("JS_CODEGEN_X64", jit_codegen.x64)
+set_config("JS_CODEGEN_WASM32", jit_codegen.wasm32)
 set_define("JS_CODEGEN_NONE", jit_codegen.none)
 set_define("JS_CODEGEN_ARM", jit_codegen.arm)
 set_define("JS_CODEGEN_ARM64", jit_codegen.arm64)
@@ -258,6 +277,7 @@ set_define("JS_CODEGEN_LOONG64", jit_codegen.loong64)
 set_define("JS_CODEGEN_RISCV64", jit_codegen.riscv64)
 set_define("JS_CODEGEN_X86", jit_codegen.x86)
 set_define("JS_CODEGEN_X64", jit_codegen.x64)
+set_define("JS_CODEGEN_WASM32", jit_codegen.wasm32)
 
 # Profiling
 # =======================================================
@@ -386,23 +406,6 @@ option(
 set_define(
     "JS_GC_SMALL_CHUNK_SIZE", depends(when="--enable-small-chunk-size")(lambda: True)
 )
-
-
-# Trace logging.
-# =======================================================
-@depends(milestone)
-def default_trace_logging(milestone):
-    return milestone.is_nightly
-
-
-option(
-    "--enable-trace-logging",
-    default=default_trace_logging,
-    help="{Enable|Disable} trace logging",
-)
-
-set_config("ENABLE_TRACE_LOGGING", depends_if("--enable-trace-logging")(lambda x: True))
-set_define("JS_TRACE_LOGGING", depends_if("--enable-trace-logging")(lambda x: True))
 
 
 # Enable breakpoint for artificial OOMs
@@ -582,47 +585,6 @@ def rust_simd(value, target):
 set_config("MOZ_RUST_SIMD", rust_simd)
 set_define("MOZ_RUST_SIMD", rust_simd)
 
-
-# Support for wasm code generation with Cranelift
-# ==============================================================
-
-option(
-    "--enable-cranelift",
-    default=False,
-    help="{Enable|Disable} Cranelift code generator for wasm",
-)
-
-
-@depends(
-    "--enable-cranelift",
-    "--enable-jit",
-    "--enable-simulator",
-    target,
-    target_is_windows,
-)
-def enable_cranelift(value, jit_enabled, simulator, target, is_windows):
-    if not value:
-        return
-
-    if not jit_enabled:
-        die("--enable-cranelift requires --enable-jit")
-
-    if not (
-        target.cpu == "aarch64"
-        or (target.cpu == "x86_64" and simulator and simulator[0] == "arm64")
-    ):
-        die("--enable-cranelift is only supported on arm64")
-
-    if is_windows:
-        die("--enable-cranelift is not supported on windows")
-
-    return True
-
-
-set_config("ENABLE_WASM_CRANELIFT", enable_cranelift)
-set_define("ENABLE_WASM_CRANELIFT", enable_cranelift)
-
-
 # Telemetry to measure compile time and generated-code runtime
 # ============================================================
 
@@ -738,9 +700,7 @@ set_define(
 
 # Support for WebAssembly shared memory and atomics.
 #
-# This affects the JS shell only and here to allow the use of
-# Cranelift in the shell.  Once Cranelift supports shared memory
-# and atomics it can go away.
+# This affects the JS shell only.
 # =====================================================
 
 option(
@@ -787,12 +747,9 @@ set_define("ENABLE_WASM_EXTENDED_CONST", wasm_extended_const)
 # =====================================================
 
 
-@depends("--enable-jit", "--enable-simulator", "--enable-cranelift", target)
-def default_wasm_simd(jit_enabled, simulator, cranelift_enabled, target):
+@depends("--enable-jit", "--enable-simulator", target)
+def default_wasm_simd(jit_enabled, simulator, target):
     if not jit_enabled:
-        return
-
-    if cranelift_enabled:
         return
 
     if simulator and (simulator[0] != "arm64"):
@@ -813,18 +770,14 @@ option(
     "--enable-wasm-simd",
     "--enable-jit",
     "--enable-simulator",
-    "--enable-cranelift",
     target,
 )
-def wasm_simd(value, jit_enabled, simulator, cranelift_enabled, target):
+def wasm_simd(value, jit_enabled, simulator, target):
     if not value:
         return
 
     if not jit_enabled:
         die("--enable-wasm-simd requires --enable-jit")
-
-    if cranelift_enabled:
-        die("--enable-wasm-simd is not supported for --enable-cranelift")
 
     if simulator and (simulator[0] != "arm64"):
         die("--enable-wasm-simd is not supported for simulators, except arm64")
@@ -909,41 +862,6 @@ def wasm_avx(value, wasm_simd_enabled, simulator, target):
 set_config("ENABLE_WASM_AVX", wasm_avx)
 set_define("ENABLE_WASM_AVX", wasm_avx)
 
-
-# Wormhole opcodes are Intel-only.  They are private to Firefox, but we need them for some
-# experiments on release and so they ride the trains.
-
-
-@depends("--enable-simulator", "--enable-wasm-simd", target)
-def default_wasm_simd_wormhole(simulator, wasm_simd, target):
-    if wasm_simd and target.cpu in ("x86", "x86_64") and not simulator:
-        return True
-
-
-option(
-    "--enable-wasm-simd-wormhole",
-    default=default_wasm_simd_wormhole,
-    help="{Enable|Disable} WebAssembly SIMD wormhole opcodes",
-)
-
-
-@depends(
-    "--enable-wasm-simd-wormhole", "--enable-wasm-simd", "--enable-simulator", target
-)
-def wasm_simd_wormhole(value, wasm_simd, simulator, target):
-    if not value:
-        return
-
-    if wasm_simd and target.cpu in ("x86", "x86_64") and not simulator:
-        return True
-
-    die("SIMD wormhole currently supported on native x86/x64 only, with --wasm-simd")
-
-
-set_config("ENABLE_WASM_SIMD_WORMHOLE", wasm_simd_wormhole)
-set_define("ENABLE_WASM_SIMD_WORMHOLE", wasm_simd_wormhole)
-
-
 # Support for WebAssembly relaxed SIMD
 # =====================================================
 
@@ -1005,11 +923,8 @@ set_define("ENABLE_WASM_MOZ_INTGEMM", wasm_moz_intgemm)
 # ===========================
 
 
-@depends(milestone.is_nightly, "--enable-cranelift", "--enable-simulator", target)
-def default_wasm_memory64(is_nightly, cranelift, simulator, target):
-    if cranelift:
-        return
-
+@depends(milestone.is_nightly, "--enable-simulator", target)
+def default_wasm_memory64(is_nightly, simulator, target):
     if target.cpu == "mips32":
         return
 
@@ -1027,13 +942,10 @@ option(
 )
 
 
-@depends("--enable-wasm-memory64", "--enable-cranelift", "--enable-simulator", target)
-def wasm_memory64(value, cranelift, simulator, target):
+@depends("--enable-wasm-memory64", "--enable-simulator", target)
+def wasm_memory64(value, simulator, target):
     if not value:
         return
-
-    if cranelift:
-        die("Memory64 is incompatible with Cranelift")
 
     if target.cpu == "mips32":
         die("Memory64 is incompatible with MIPS32 target")
@@ -1228,14 +1140,17 @@ set_define("_WASI_EMULATED_GETPID", True, when=is_wasi_target)
 
 # Enable change-array-by-copy
 # ===================================================
-def use_change_array_by_copy():
-    return False
+
+
+@depends(milestone.is_nightly)
+def use_change_array_by_copy(is_nightly):
+    return is_nightly
 
 
 option(
     "--enable-change-array-by-copy",
-    default=use_change_array_by_copy(),
-    help="{Enable|Disable} change-array-by-copy method pref/command-line option (disabled by default)",
+    default=use_change_array_by_copy,
+    help="{Enable|Disable} change-array-by-copy method pref/command-line option (disabled by default in Release-or-Beta)",
 )
 
 

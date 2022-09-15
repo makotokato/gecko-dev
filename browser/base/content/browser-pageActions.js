@@ -2,11 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "SearchUIUtils",
-  "resource:///modules/SearchUIUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  SearchUIUtils: "resource:///modules/SearchUIUtils.sys.mjs",
+});
 
 var BrowserPageActions = {
   _panelNode: null,
@@ -346,7 +344,7 @@ var BrowserPageActions = {
 
     let anchorNode = this.panelAnchorNodeForAction(action);
     PanelMultiView.openPopup(panelNode, anchorNode, {
-      position: "bottomcenter topright",
+      position: "bottomright topright",
       triggerEvent: event,
     }).catch(Cu.reportError);
   },
@@ -923,7 +921,7 @@ var BrowserPageActions = {
   showPanel(event = null) {
     this.panelNode.hidden = false;
     PanelMultiView.openPopup(this.panelNode, this.mainButtonNode, {
-      position: "bottomcenter topright",
+      position: "bottomright topright",
       triggerEvent: event,
     }).catch(Cu.reportError);
   },

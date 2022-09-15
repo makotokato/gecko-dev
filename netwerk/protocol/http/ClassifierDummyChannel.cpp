@@ -95,6 +95,11 @@ ClassifierDummyChannel::ClassifierDummyChannel(nsIURI* aURI,
   SetLoadInfo(aLoadInfo);
 }
 
+ClassifierDummyChannel::~ClassifierDummyChannel() {
+  NS_ReleaseOnMainThread("ClassifierDummyChannel::mLoadInfo",
+                         mLoadInfo.forget());
+}
+
 void ClassifierDummyChannel::AddClassificationFlags(
     uint32_t aClassificationFlags, bool aThirdParty) {
   if (aThirdParty) {
@@ -259,6 +264,20 @@ ClassifierDummyChannel::IsPending(bool* aRetval) {
 
 NS_IMETHODIMP
 ClassifierDummyChannel::GetStatus(nsresult* aStatus) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP ClassifierDummyChannel::SetCanceledReason(
+    const nsACString& aReason) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP ClassifierDummyChannel::GetCanceledReason(nsACString& aReason) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP ClassifierDummyChannel::CancelWithReason(
+    nsresult aStatus, const nsACString& aReason) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -560,12 +579,12 @@ ClassifierDummyChannel::SetCorsIncludeCredentials(
 }
 
 NS_IMETHODIMP
-ClassifierDummyChannel::GetCorsMode(uint32_t* aCorsMode) {
+ClassifierDummyChannel::GetRequestMode(dom::RequestMode* aRequestMode) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
-ClassifierDummyChannel::SetCorsMode(uint32_t aCorsMode) {
+ClassifierDummyChannel::SetRequestMode(dom::RequestMode aRequestMode) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -767,6 +786,7 @@ NS_IMETHODIMP ClassifierDummyChannel::IsThirdPartySocialTrackingResource(
 void ClassifierDummyChannel::DoDiagnosticAssertWhenOnStopNotCalledOnDestroy() {}
 
 NS_IMETHODIMP ClassifierDummyChannel::GetResponseEmbedderPolicy(
+    bool aIsOriginTrialCoepCredentiallessEnabled,
     nsILoadInfo::CrossOriginEmbedderPolicy* aOutPolicy) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -790,6 +810,9 @@ NS_IMETHODIMP
 ClassifierDummyChannel::SetEarlyHintObserver(nsIEarlyHintObserver* aObserver) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
+
+void ClassifierDummyChannel::SetConnectionInfo(
+    mozilla::net::nsHttpConnectionInfo* aInfo) {}
 
 }  // namespace net
 }  // namespace mozilla

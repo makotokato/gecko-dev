@@ -31,15 +31,12 @@ exports.WorkerTargetActor = TargetActorMixin(
      * @param {String} workerDebuggerData.id: The worker debugger id
      * @param {String} workerDebuggerData.url: The worker debugger url
      * @param {String} workerDebuggerData.type: The worker debugger type
+     * @param {Boolean} workerDebuggerData.workerConsoleApiMessagesDispatchedToMainThread:
+     *                  Value of the dom.worker.console.dispatch_events_to_main_thread pref
      * @param {Object} sessionContext: The Session Context to help know what is debugged.
      *                                 See devtools/server/actors/watcher/session-context.js
      */
-    initialize: function(
-      connection,
-      workerGlobal,
-      workerDebuggerData,
-      sessionContext
-    ) {
+    initialize(connection, workerGlobal, workerDebuggerData, sessionContext) {
       Actor.prototype.initialize.call(this, connection);
 
       // workerGlobal is needed by the console actor for evaluations.
@@ -48,6 +45,8 @@ exports.WorkerTargetActor = TargetActorMixin(
 
       this._workerDebuggerData = workerDebuggerData;
       this._sourcesManager = null;
+      this.workerConsoleApiMessagesDispatchedToMainThread =
+        workerDebuggerData.workerConsoleApiMessagesDispatchedToMainThread;
 
       this.makeDebugger = makeDebuggerUtil.bind(null, {
         findDebuggees: () => {
@@ -64,6 +63,12 @@ exports.WorkerTargetActor = TargetActorMixin(
 
       this.manage(this.threadActor);
       this.manage(this._consoleActor);
+    },
+
+    // Expose the worker URL to the thread actor.
+    // so that it can easily know what is the base URL of all worker scripts.
+    get workerUrl() {
+      return this._workerDebuggerData.url;
     },
 
     form() {

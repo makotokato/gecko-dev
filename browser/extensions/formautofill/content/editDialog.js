@@ -7,12 +7,6 @@
 
 "use strict";
 
-// eslint-disable-next-line no-unused-vars
-const { FormAutofill } = ChromeUtils.import(
-  "resource://autofill/FormAutofill.jsm"
-);
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 ChromeUtils.defineModuleGetter(
   this,
   "formAutofillStorage",
@@ -86,8 +80,8 @@ class AutofillEditDialog {
       }
       case "contextmenu": {
         if (
-          !(event.target instanceof HTMLInputElement) &&
-          !(event.target instanceof HTMLTextAreaElement)
+          !HTMLInputElement.isInstance(event.target) &&
+          !HTMLTextAreaElement.isInstance(event.target)
         ) {
           event.preventDefault();
         }
@@ -161,7 +155,10 @@ class EditAddressDialog extends AutofillEditDialog {
 
   localizeDocument() {
     if (this._record?.guid) {
-      this._elements.title.dataset.localization = "editAddressTitle";
+      document.l10n.setAttributes(
+        this._elements.title,
+        "autofill-edit-address-title"
+      );
     }
   }
 
@@ -194,7 +191,10 @@ class EditCreditCardDialog extends AutofillEditDialog {
 
   localizeDocument() {
     if (this._record?.guid) {
-      this._elements.title.dataset.localization = "editCreditCardTitle";
+      document.l10n.setAttributes(
+        this._elements.title,
+        "autofill-edit-card-title"
+      );
     }
   }
 
