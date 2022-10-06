@@ -39,6 +39,7 @@
 #include "nsSerializationHelper.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/PerformanceStorage.h"
+#include "mozilla/glean/GleanMetrics.h"
 #include "mozilla/ipc/InputStreamUtils.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/ipc/BackgroundUtils.h"
@@ -450,6 +451,14 @@ void HttpChannelChild::OnStartRequest(
   // gHttpHandler->OnExamineResponse(this);
 
   ResourceTimingStructArgsToTimingsStruct(aArgs.timing(), mTransactionTimings);
+
+  if (!mAsyncOpenTime.IsNull() &&
+      !aArgs.timing().transactionPending().IsNull()) {
+    TimeDuration asyncOpenToTransactionPending =
+        aArgs.timing().transactionPending() - mAsyncOpenTime;
+    glean::network::open_to_transaction_pending.AccumulateRawDuration(
+        asyncOpenToTransactionPending);
+  }
 
   StoreAllRedirectsSameOrigin(aArgs.allRedirectsSameOrigin());
 
@@ -1883,7 +1892,7 @@ HttpChannelChild::Resume() {
 //-----------------------------------------------------------------------------
 
 NS_IMETHODIMP
-HttpChannelChild::GetSecurityInfo(nsISupports** aSecurityInfo) {
+HttpChannelChild::GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) {
   NS_ENSURE_ARG_POINTER(aSecurityInfo);
   *aSecurityInfo = do_AddRef(mSecurityInfo).take();
   return NS_OK;

@@ -267,6 +267,10 @@ void CacheLoadHandler::Fail(nsresult aRv) {
   }
   mLoadContext->mCachePromise = nullptr;
 
+  if (mLoader->IsCancelled()) {
+    return;
+  }
+
   mLoader->LoadingFinished(mLoadContext->mRequest, aRv);
 }
 
@@ -405,8 +409,10 @@ void CacheLoadHandler::ResolvedCallback(JSContext* aCx,
     mLoadContext->mCacheStatus = WorkerLoadContext::Cached;
 
     if (mLoader->IsCancelled()) {
-      mLoadContext->GetCacheCreator()->DeleteCache(
-          mLoader->mCancelMainThread.ref());
+      auto cacheCreator = mLoadContext->GetCacheCreator();
+      if (cacheCreator) {
+        cacheCreator->DeleteCache(mLoader->GetCancelResult());
+      }
       return;
     }
 
@@ -478,8 +484,10 @@ CacheLoadHandler::OnStreamComplete(nsIStreamLoader* aLoader,
   MOZ_ASSERT(mPrincipalInfo);
 
   if (mLoader->IsCancelled()) {
-    mLoadContext->GetCacheCreator()->DeleteCache(
-        mLoader->mCancelMainThread.ref());
+    auto cacheCreator = mLoadContext->GetCacheCreator();
+    if (cacheCreator) {
+      cacheCreator->DeleteCache(mLoader->GetCancelResult());
+    }
     return NS_OK;
   }
 

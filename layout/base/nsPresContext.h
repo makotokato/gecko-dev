@@ -1058,23 +1058,7 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   bool HasEverBuiltInvisibleText() const { return mHasEverBuiltInvisibleText; }
   void SetBuiltInvisibleText() { mHasEverBuiltInvisibleText = true; }
 
-  bool UsesFontMetricDependentFontUnits() const {
-    return mUsesFontMetricDependentFontUnits;
-  }
-
-  void SetUsesFontMetricDependentFontUnits(bool aValue) {
-    mUsesFontMetricDependentFontUnits = aValue;
-  }
-
   bool IsDeviceSizePageSize();
-
-  bool HasWarnedAboutPositionedTableParts() const {
-    return mHasWarnedAboutPositionedTableParts;
-  }
-
-  void SetHasWarnedAboutPositionedTableParts() {
-    mHasWarnedAboutPositionedTableParts = true;
-  }
 
   bool HasWarnedAboutTooLargeDashedOrDottedRadius() const {
     return mHasWarnedAboutTooLargeDashedOrDottedRadius;
@@ -1350,12 +1334,6 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   // Are we currently drawing an SVG glyph?
   unsigned mIsGlyph : 1;
 
-  // Does the associated document use ex or ch units?
-  //
-  // TODO(emilio): It's a bit weird that this lives here but all the other
-  // relevant bits live in Device on the rust side.
-  unsigned mUsesFontMetricDependentFontUnits : 1;
-
   // Is the current mCounterStyleManager valid?
   unsigned mCounterStylesDirty : 1;
 
@@ -1363,8 +1341,6 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
   unsigned mFontFeatureValuesDirty : 1;
 
   unsigned mIsVisual : 1;
-
-  unsigned mHasWarnedAboutPositionedTableParts : 1;
 
   unsigned mHasWarnedAboutTooLargeDashedOrDottedRadius : 1;
 

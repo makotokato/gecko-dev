@@ -11,8 +11,8 @@
 var { Loader, Require, resolveURI, unload } = ChromeUtils.import(
   "resource://devtools/shared/loader/base-loader.js"
 );
-var { requireRawId } = ChromeUtils.import(
-  "resource://devtools/shared/loader/loader-plugin-raw.jsm"
+var { requireRawId } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/loader-plugin-raw.sys.mjs"
 );
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
@@ -132,9 +132,14 @@ function DevToolsLoader({
 
   this.require = Require(this.loader, { id: "devtools" });
 
+  // Services can't be imported from a Sandbox,
+  // so hand over a reference to builtin-modules.js (all all other modules)
+  // via the globals.
+  this.loader.globals.Services = Services;
+
   // Fetch custom pseudo modules and globals
   const { modules, globals } = this.require(
-    "devtools/shared/loader/builtin-modules"
+    "resource://devtools/shared/loader/builtin-modules.js"
   );
 
   // Register custom pseudo modules to the current loader instance
@@ -167,7 +172,6 @@ function DevToolsLoader({
   // let { loader } = ChromeUtils.import("resource://devtools/shared/loader/Loader.jsm");
   // loader.lazyGetter(...);
   this.lazyGetter = globals.loader.lazyGetter;
-  this.lazyImporter = globals.loader.lazyImporter;
   this.lazyServiceGetter = globals.loader.lazyServiceGetter;
   this.lazyRequireGetter = globals.loader.lazyRequireGetter;
 }

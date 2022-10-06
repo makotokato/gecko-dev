@@ -4,20 +4,20 @@
 
 "use strict";
 
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 
 loader.lazyRequireGetter(
   this,
   "gDevToolsBrowser",
-  "devtools/client/framework/devtools-browser",
+  "resource://devtools/client/framework/devtools-browser.js",
   true
 );
 
-loader.lazyRequireGetter(
-  this,
+const lazy = {};
+ChromeUtils.defineModuleGetter(
+  lazy,
   "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm",
-  true
+  "resource://gre/modules/PrivateBrowsingUtils.jsm"
 );
 
 /* A host should always allow this much space for the page to be displayed.
@@ -256,7 +256,7 @@ WindowHost.prototype = {
       // the owner window was passed in the host options.
       const owner =
         this.hostTab?.ownerGlobal || this.options?.browserContentToolboxOpener;
-      if (owner && PrivateBrowsingUtils.isWindowPrivate(owner)) {
+      if (owner && lazy.PrivateBrowsingUtils.isWindowPrivate(owner)) {
         flags += ",private";
       }
 
@@ -266,6 +266,13 @@ WindowHost.prototype = {
       // and non-fission frames. See Bug 1650963.
       if (this.hostTab && !this.hostTab.ownerGlobal.gFissionBrowser) {
         flags += ",non-fission";
+      }
+
+      // When debugging local Web Extension, the toolbox is opened in an
+      // always foremost top level window in order to be kept visible
+      // when interacting with the Firefox Window.
+      if (this.options?.alwaysOnTop) {
+        flags += ",alwaysontop";
       }
 
       const win = Services.ww.openWindow(

@@ -4,15 +4,15 @@
 
 "use strict";
 
-const { components, Ci, Cr, Cu, CC } = require("chrome");
-
 loader.lazyRequireGetter(
   this,
   "NetworkHelper",
-  "devtools/shared/webconsole/network-helper"
+  "resource://devtools/shared/webconsole/network-helper.js"
 );
 loader.lazyGetter(this, "debugJsModules", function() {
-  const { AppConstants } = require("resource://gre/modules/AppConstants.jsm");
+  const { AppConstants } = ChromeUtils.import(
+    "resource://gre/modules/AppConstants.jsm"
+  );
   return !!AppConstants.DEBUG_JS_MODULES;
 });
 
@@ -20,14 +20,14 @@ const {
   getTheme,
   addThemeObserver,
   removeThemeObserver,
-} = require("devtools/client/shared/theme");
+} = require("resource://devtools/client/shared/theme.js");
 
-const BinaryInput = CC(
+const BinaryInput = Components.Constructor(
   "@mozilla.org/binaryinputstream;1",
   "nsIBinaryInputStream",
   "setInputStream"
 );
-const BufferStream = CC(
+const BufferStream = Components.Constructor(
   "@mozilla.org/io/arraybuffer-input-stream;1",
   "nsIArrayBufferInputStream",
   "setData"
@@ -128,7 +128,7 @@ Converter.prototype = {
 
     // Initialize stuff.
     const win = NetworkHelper.getWindowForRequest(request);
-    if (!win || !components.isSuccessCode(request.status)) {
+    if (!win || !Components.isSuccessCode(request.status)) {
       return;
     }
 
@@ -154,7 +154,7 @@ Converter.prototype = {
 
   onStopRequest(request, statusCode) {
     // Flush data if we haven't been canceled.
-    if (components.isSuccessCode(statusCode)) {
+    if (Components.isSuccessCode(statusCode)) {
       this.decodeAndInsertBuffer(new ArrayBuffer(0), true);
     }
 

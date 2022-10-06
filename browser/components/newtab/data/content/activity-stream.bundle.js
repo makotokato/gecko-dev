@@ -6149,13 +6149,19 @@ class DSImage extends (external_React_default()).PureComponent {
         });
       } else {
         // We consider a failed to load img or source without an image as loaded.
-        classNames = `${classNames} loaded`; // Remove the img element if both sources fail. Render a placeholder instead.
-        // This only happens if the sources are invalid or all attempts to load it failed.
+        classNames = `${classNames} loaded`; // Remove the img element if we have no source. Render a placeholder instead.
+        // This only happens for recent saves without a source.
 
-        img = /*#__PURE__*/external_React_default().createElement(PlaceholderImage, {
-          urlKey: this.props.url,
-          titleKey: this.props.title
-        });
+        if (this.props.isRecentSave && !this.props.rawSource && !this.props.source) {
+          img = /*#__PURE__*/external_React_default().createElement(PlaceholderImage, {
+            urlKey: this.props.url,
+            titleKey: this.props.title
+          });
+        } else {
+          img = /*#__PURE__*/external_React_default().createElement("div", {
+            className: "broken-image"
+          });
+        }
       }
     }
 
@@ -7728,7 +7734,8 @@ class _DSCard extends (external_React_default()).PureComponent {
       rawSource: this.props.raw_image_src,
       sizes: this.dsImageSizes,
       url: this.props.url,
-      title: this.props.title
+      title: this.props.title,
+      isRecentSave: isRecentSave
     })), /*#__PURE__*/external_React_default().createElement(DefaultMeta, {
       source: this.props.source,
       title: this.props.title,
@@ -8133,7 +8140,24 @@ function RecentSavesContainer({
     return null;
   }
 
+  let queryParams = `?utm_source=${utmSource}`;
+
+  if (utmCampaign && utmContent) {
+    queryParams += `&utm_content=${utmContent}&utm_campaign=${utmCampaign}`;
+  }
+
   function renderCard(rec, index) {
+    const url = new URL(rec.url);
+    const urlSearchParams = new URLSearchParams(queryParams);
+
+    if (rec !== null && rec !== void 0 && rec.id && !url.href.match(/getpocket\.com\/read/)) {
+      url.href = `https://getpocket.com/read/${rec.id}`;
+    }
+
+    for (let [key, val] of urlSearchParams.entries()) {
+      url.searchParams.set(key, val);
+    }
+
     return /*#__PURE__*/external_React_default().createElement(DSCard, {
       key: `dscard-${(rec === null || rec === void 0 ? void 0 : rec.id) || index}`,
       id: rec.id,
@@ -8145,7 +8169,7 @@ function RecentSavesContainer({
       time_to_read: rec.time_to_read,
       title: rec.title,
       excerpt: rec.excerpt,
-      url: rec.url,
+      url: url.href,
       source: rec.domain,
       isRecentSave: true,
       dispatch: dispatch
@@ -8157,12 +8181,6 @@ function RecentSavesContainer({
       event: "CLICK",
       source: `${source}_VIEW_LIST`
     }));
-  }
-
-  let queryParams = `?utm_source=${utmSource}`;
-
-  if (utmCampaign && utmContent) {
-    queryParams += `&utm_content=${utmContent}&utm_campaign=${utmCampaign}`;
   }
 
   const recentSavesCards = []; // We fill the cards with a for loop over an inline map because

@@ -24,11 +24,14 @@
  */
 *|*:root {
   --animation-easing-function: cubic-bezier(.07, .95, 0, 1);
+  -moz-box-flex: 1;
 }
 
 :root {
   text-rendering: optimizeLegibility;
   -moz-control-character-visibility: visible;
+  width: 100%;
+  height: 100%;
 }
 
 :root:-moz-locale-dir(rtl) {
@@ -142,6 +145,15 @@ toolbar[mode="icons"] .toolbarbutton-text,
 toolbar[mode="text"] .toolbarbutton-icon,
 html|label.toolbarbutton-badge:empty {
   display: none;
+}
+
+.toolbarbutton-icon,
+.toolbarbutton-text,
+.toolbarbutton-badge-stack,
+.toolbarbutton-menu-dropmarker,
+.button-box {
+  /* Preserves legacy behavior */
+  pointer-events: none;
 }
 
 /********** button **********/
@@ -438,18 +450,34 @@ treechildren::-moz-tree-cell(ltr) {
   direction: ltr !important;
 }
 
-/********** deck & stack *********/
+/********** deck, tabpanels & stack *********/
 
-deck {
-  display: -moz-deck;
+tabpanels > *|*:not(:-moz-native-anonymous) {
+  /* tabpanels is special: we want to avoid displaying them, but we still want
+   * the hidden children to be accessible */
+  -moz-subtree-hidden-only-visually: 1;
 }
 
+deck > *|*:not(:-moz-native-anonymous) {
+  visibility: hidden;
+}
+
+tabpanels > .deck-selected,
+deck > .deck-selected {
+  -moz-subtree-hidden-only-visually: 0;
+  visibility: inherit;
+}
+
+tabpanels,
+deck,
 stack {
   display: grid;
   position: relative;
 }
 
-/* We shouldn't style native anonymous children like scrollbars or what not */
+/* We shouldn't style native anonymous children like scrollbars or what not. */
+tabpanels > *|*:not(:-moz-native-anonymous),
+deck > *|*:not(:-moz-native-anonymous),
 stack > *|*:not(:-moz-native-anonymous) {
   grid-area: 1 / 1;
   z-index: 0;
@@ -477,10 +505,6 @@ tabs {
 tab {
   -moz-box-align: center;
   -moz-box-pack: center;
-}
-
-tabpanels {
-  display: -moz-deck;
 }
 
 /********** tooltip *********/
@@ -623,6 +647,7 @@ richlistbox {
 /*********** findbar ************/
 findbar {
   overflow-x: hidden;
+  contain: inline-size;
 }
 
 /* Some elements that in HTML blocks should be inline-level by default */

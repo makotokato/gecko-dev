@@ -3720,7 +3720,7 @@ void PresShell::DoScrollContentIntoView() {
   NS_ASSERTION(mDidInitialize, "should have done initial reflow by now");
 
   nsIFrame* frame = mContentToScrollTo->GetPrimaryFrame();
-  if (!frame || frame->AncestorHidesContent()) {
+  if (!frame || frame->IsHiddenByContentVisibilityOnAnyAncestor()) {
     mContentToScrollTo->RemoveProperty(nsGkAtoms::scrolling);
     mContentToScrollTo = nullptr;
     return;
@@ -3799,7 +3799,7 @@ bool PresShell::ScrollFrameRectIntoView(nsIFrame* aFrame, const nsRect& aRect,
                                         ScrollAxis aHorizontal,
                                         ScrollFlags aScrollFlags,
                                         const nsIFrame* aTarget) {
-  if (aFrame->AncestorHidesContent()) {
+  if (aFrame->IsHiddenByContentVisibilityOnAnyAncestor()) {
     return false;
   }
 
@@ -3961,38 +3961,24 @@ void PresShell::ClearMouseCaptureOnView(nsView* aView) {
 }
 
 void PresShell::ClearMouseCapture() {
-  nsIContent* capturingContent = GetCapturingContent();
-  if (!capturingContent) {
-    AllowMouseCapture(false);
-    return;
-  }
-
   ReleaseCapturingContent();
   AllowMouseCapture(false);
 }
 
 void PresShell::ClearMouseCapture(nsIFrame* aFrame) {
-  MOZ_ASSERT(
-      aFrame && aFrame->GetParent() &&
-          aFrame->GetParent()->Type() == LayoutFrameType::Deck,
-      "This function should only be called with a child frame of <deck>");
+  MOZ_ASSERT(aFrame);
 
   nsIContent* capturingContent = GetCapturingContent();
   if (!capturingContent) {
-    AllowMouseCapture(false);
     return;
   }
 
   nsIFrame* capturingFrame = capturingContent->GetPrimaryFrame();
-  if (!capturingFrame) {
-    ReleaseCapturingContent();
-    AllowMouseCapture(false);
-    return;
-  }
-
-  if (nsLayoutUtils::IsAncestorFrameCrossDocInProcess(aFrame, capturingFrame)) {
-    ReleaseCapturingContent();
-    AllowMouseCapture(false);
+  const bool shouldClear =
+      !capturingFrame ||
+      nsLayoutUtils::IsAncestorFrameCrossDocInProcess(aFrame, capturingFrame);
+  if (shouldClear) {
+    ClearMouseCapture();
   }
 }
 
@@ -4371,10 +4357,12 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
       if (mDocument->HasAnimationController()) {
         mDocument->GetAnimationController()->FlushResampleRequests();
       }
+    }
 
-      if (aFlush.mFlushAnimations && mPresContext->EffectCompositor()) {
-        mPresContext->EffectCompositor()->PostRestyleForThrottledAnimations();
-      }
+    // The FlushResampleRequests() above flushed style changes.
+    if (MOZ_LIKELY(!mIsDestroying) && aFlush.mFlushAnimations &&
+        mPresContext->EffectCompositor()) {
+      mPresContext->EffectCompositor()->PostRestyleForThrottledAnimations();
     }
 
     // The FlushResampleRequests() above flushed style changes.
@@ -4653,20 +4641,11 @@ void PresShell::ReconstructFrames() {
     return;
   }
 
-  // Have to make sure that the content notifications are flushed before we
-  // start messing with the frame model; otherwise we can get content doubling.
-  //
-  // Also make sure that styles are flushed before calling into the frame
-  // constructor, since that's what it expects.
-  mDocument->FlushPendingNotifications(FlushType::Style);
-
-  if (mIsDestroying) {
-    return;
+  if (Element* root = mDocument->GetRootElement()) {
+    PostRecreateFramesFor(root);
   }
 
-  nsAutoCauseReflowNotifier crNotifier(this);
-  mFrameConstructor->ReconstructDocElementHierarchy(
-      nsCSSFrameConstructor::InsertionKind::Sync);
+  mDocument->FlushPendingNotifications(FlushType::Frames);
 }
 
 nsresult PresShell::RenderDocument(const nsRect& aRect,
@@ -5383,7 +5362,7 @@ void PresShell::AddCanvasBackgroundColorItem(
   // cases (it will usually be a viewport frame when we have a canvas frame in
   // the (sub)tree).
   if (!(aFlags & AddCanvasBackgroundColorFlags::ForceDraw) &&
-      !nsCSSRendering::IsCanvasFrame(aFrame)) {
+      !aFrame->IsViewportFrame() && !aFrame->IsPageContentFrame()) {
     return;
   }
 
@@ -11866,7 +11845,7 @@ void PresShell::EnsureReflowIfFrameHasHiddenContent(nsIFrame* aFrame) {
   nsIFrame* topmostFrameWithContentHidden = nullptr;
   for (nsIFrame* cur = aFrame->GetInFlowParent(); cur;
        cur = cur->GetInFlowParent()) {
-    if (cur->IsContentHidden()) {
+    if (cur->HidesContent()) {
       topmostFrameWithContentHidden = cur;
       mHiddenContentInForcedLayout.Insert(cur->GetContent());
     }

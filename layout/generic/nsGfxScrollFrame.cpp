@@ -584,9 +584,8 @@ bool nsHTMLScrollFrame::TryLayout(ScrollReflowInput& aState,
 
   // First, compute our inside-border size and scrollport size
   // XXXldb Can we depend more on ComputeSize here?
-  nsSize kidSize =
-      aState.mReflowInput.mStyleDisplay->GetContainSizeAxes().ContainSize(
-          aKidMetrics->PhysicalSize(), *aState.mReflowInput.mFrame);
+  nsSize kidSize = GetContainSizeAxes().ContainSize(
+      aKidMetrics->PhysicalSize(), *aState.mReflowInput.mFrame);
   const nsSize desiredInsideBorderSize = kidSize + scrollbarGutterSize;
   aState.mInsideBorderSize =
       ComputeInsideBorderSize(aState, desiredInsideBorderSize);
@@ -997,9 +996,8 @@ void nsHTMLScrollFrame::ReflowContents(ScrollReflowInput& aState,
        aState.mReflowedContentsWithVScrollbar) &&
       aState.mVScrollbar != ShowScrollbar::Always &&
       aState.mHScrollbar != ShowScrollbar::Always) {
-    nsSize kidSize =
-        aState.mReflowInput.mStyleDisplay->GetContainSizeAxes().ContainSize(
-            kidDesiredSize.PhysicalSize(), *aState.mReflowInput.mFrame);
+    nsSize kidSize = GetContainSizeAxes().ContainSize(
+        kidDesiredSize.PhysicalSize(), *aState.mReflowInput.mFrame);
     nsSize insideBorderSize = ComputeInsideBorderSize(aState, kidSize);
     nsRect scrolledRect = mHelper.GetUnsnappedScrolledRectInternal(
         kidDesiredSize.ScrollableOverflow(), insideBorderSize);
@@ -1578,7 +1576,7 @@ NS_IMPL_FRAMEARENA_HELPERS(nsXULScrollFrame)
 
 nsXULScrollFrame::nsXULScrollFrame(ComputedStyle* aStyle,
                                    nsPresContext* aPresContext, bool aIsRoot)
-    : nsBoxFrame(aStyle, aPresContext, kClassID, aIsRoot),
+    : nsBoxFrame(aStyle, aPresContext, kClassID),
       mHelper(ALLOW_THIS_IN_INITIALIZER_LIST(this), aIsRoot) {
   SetXULLayoutManager(nullptr);
 }

@@ -3055,9 +3055,9 @@ void ContentChild::ShutdownInternal() {
     SendShutdownPerfStats(PerfStats::CollectLocalPerfStatsJSON());
   }
 
-  // Start a timer that will insure we quickly exit after a reasonable
-  // period of time. Prevents shutdown hangs after our connection to the
-  // parent closes.
+  // Start a timer that will ensure we quickly exit after a reasonable period
+  // of time. Prevents shutdown hangs after our connection to the parent
+  // closes or when the parent is too busy to ever kill us.
   CrashReporter::AppendToCrashReportAnnotation(
       CrashReporter::Annotation::IPCShutdownState, "StartForceKillTimer"_ns);
   StartForceKillTimer();
@@ -3065,7 +3065,16 @@ void ContentChild::ShutdownInternal() {
   CrashReporter::AppendToCrashReportAnnotation(
       CrashReporter::Annotation::IPCShutdownState,
       "SendFinishShutdown (sending)"_ns);
+
+  // Notify the parent that we are done with shutdown. This is sent with high
+  // priority and will just flag we are done.
+  Unused << SendNotifyShutdownSuccess();
+
+  // Now tell the parent to actually destroy our channel which will make end
+  // our process. This is expected to be the last event the parent will
+  // ever process for this ContentChild.
   bool sent = SendFinishShutdown();
+
   CrashReporter::AppendToCrashReportAnnotation(
       CrashReporter::Annotation::IPCShutdownState,
       sent ? "SendFinishShutdown (sent)"_ns : "SendFinishShutdown (failed)"_ns);
@@ -4249,24 +4258,30 @@ mozilla::ipc::IPCResult ContentChild::RecvScriptError(
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvReportFrameTimingData(
-    uint64_t innerWindowId, const nsString& entryName,
+    const mozilla::Maybe<LoadInfoArgs>& loadInfoArgs, const nsString& entryName,
     const nsString& initiatorType, UniquePtr<PerformanceTimingData>&& aData) {
   if (!aData) {
     return IPC_FAIL(this, "aData should not be null");
   }
 
-  auto* innerWindow = nsGlobalWindowInner::GetInnerWindowWithId(innerWindowId);
-  if (!innerWindow) {
+  if (loadInfoArgs.isNothing()) {
+    return IPC_FAIL(this, "loadInfoArgs should not be null");
+  }
+
+  nsCOMPtr<nsILoadInfo> loadInfo;
+  nsresult rv = mozilla::ipc::LoadInfoArgsToLoadInfo(loadInfoArgs,
+                                                     getter_AddRefs(loadInfo));
+  if (NS_FAILED(rv)) {
+    MOZ_DIAGNOSTIC_ASSERT(false, "LoadInfoArgsToLoadInfo failed");
     return IPC_OK();
   }
 
-  mozilla::dom::Performance* performance = innerWindow->GetPerformance();
-  if (!performance) {
-    return IPC_OK();
+  // It is important to call LoadInfo::GetPerformanceStorage instead of simply
+  // getting the performance object via the innerWindowID in order to perform
+  // necessary cross origin checks.
+  if (PerformanceStorage* storage = loadInfo->GetPerformanceStorage()) {
+    storage->AddEntry(entryName, initiatorType, std::move(aData));
   }
-
-  performance->AsPerformanceStorage()->AddEntry(entryName, initiatorType,
-                                                std::move(aData));
   return IPC_OK();
 }
 

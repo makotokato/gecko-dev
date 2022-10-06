@@ -6,7 +6,7 @@
 const { addDebuggerToGlobal } = ChromeUtils.import(
   "resource://gre/modules/jsdebugger.jsm"
 );
-addDebuggerToGlobal(this);
+addDebuggerToGlobal(globalThis);
 
 /**
  * Ensure that sandboxes created via the Dev Tools loader respect the
@@ -21,7 +21,7 @@ function visible_loader() {
   const loader = new DevToolsLoader({
     invisibleToDebugger: false,
   });
-  loader.require("devtools/shared/indentation");
+  loader.require("resource://devtools/shared/indentation.js");
 
   const dbg = new Debugger();
   const sandbox = loader.loader.sharedGlobalSandbox;
@@ -38,7 +38,7 @@ function invisible_loader() {
   const loader = new DevToolsLoader({
     invisibleToDebugger: true,
   });
-  loader.require("devtools/shared/indentation");
+  loader.require("resource://devtools/shared/indentation.js");
 
   const dbg = new Debugger();
   const sandbox = loader.loader.sharedGlobalSandbox;

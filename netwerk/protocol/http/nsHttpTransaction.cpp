@@ -978,9 +978,11 @@ bool nsHttpTransaction::ProxyConnectFailed() { return mProxyConnectFailed; }
 
 bool nsHttpTransaction::DataSentToChildProcess() { return false; }
 
-already_AddRefed<nsISupports> nsHttpTransaction::SecurityInfo() {
+already_AddRefed<nsITransportSecurityInfo> nsHttpTransaction::SecurityInfo() {
   MutexAutoLock lock(mLock);
-  return do_AddRef(mTLSSocketControl);
+  nsCOMPtr<nsITransportSecurityInfo> securityInfo(
+      do_QueryInterface(mTLSSocketControl));
+  return securityInfo.forget();
 }
 
 bool nsHttpTransaction::HasStickyConnection() const {
@@ -1791,6 +1793,10 @@ nsresult nsHttpTransaction::Restart() {
 
   // Use TRANSACTION_RESTART_OTHERS as a catch-all.
   SetRestartReason(TRANSACTION_RESTART_OTHERS);
+
+  // Reset the IP family preferences, so the new connection can try to use
+  // another IPv4 or IPv6 address.
+  gHttpHandler->ConnMgr()->ResetIPFamilyPreference(mConnInfo);
 
   return gHttpHandler->InitiateTransaction(this, mPriority);
 }

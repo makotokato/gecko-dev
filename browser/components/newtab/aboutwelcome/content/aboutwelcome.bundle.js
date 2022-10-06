@@ -195,10 +195,17 @@ const MultiStageAboutWelcome = props => {
   } = props;
   const [index, setScreenIndex] = (0,react__WEBPACK_IMPORTED_MODULE_0__.useState)(props.startScreen);
   (0,react__WEBPACK_IMPORTED_MODULE_0__.useEffect)(() => {
-    // Send impression ping when respective screen first renders
+    const screenInitials = screens.map(({
+      id
+    }) => {
+      var _id$split$;
+
+      return id === null || id === void 0 ? void 0 : (_id$split$ = id.split("_")[1]) === null || _id$split$ === void 0 ? void 0 : _id$split$[0];
+    }).join(""); // Send impression ping when respective screen first renders
+
     screens.forEach((screen, order) => {
       if (index === order) {
-        _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_2__.AboutWelcomeUtils.sendImpressionTelemetry(`${props.message_id}_${order}_${screen.id}`);
+        _lib_aboutwelcome_utils__WEBPACK_IMPORTED_MODULE_2__.AboutWelcomeUtils.sendImpressionTelemetry(`${props.message_id}_${order}_${screen.id}_${screenInitials}`);
       }
     }); // Remember that a new screen has loaded for browser navigation
 
@@ -1070,12 +1077,12 @@ function Colorways(props) {
       colorwayName: label
     })
   }, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__.Localized, {
-    text: typeof label === "object" ? label : {}
+    text: typeof tooltip === "object" ? tooltip : {}
   }, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default().createElement("span", {
     className: "sr-only colorway label",
     id: `${id}-label`,
     "data-l10n-args": JSON.stringify({
-      colorwayName: label
+      colorwayName: tooltip
     })
   })), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__.Localized, {
     text: typeof label === "object" ? label : {}
@@ -1133,8 +1140,6 @@ const MarketplaceButtons = props => {
   })) : null);
 };
 const MobileDownloads = props => {
-  var _QRCode$image_overrid;
-
   const {
     QR_code: QRCode
   } = props.data;
@@ -1145,7 +1150,7 @@ const MobileDownloads = props => {
     "data-l10n-id": QRCode.alt_text.string_id ? QRCode.alt_text.string_id : null,
     className: "qr-code-image",
     alt: typeof QRCode.alt_text === "string" ? QRCode.alt_text : "",
-    src: ((_QRCode$image_overrid = QRCode.image_overrides) === null || _QRCode$image_overrid === void 0 ? void 0 : _QRCode$image_overrid[document.documentElement.lang]) ?? QRCode.image_url
+    src: QRCode.image_url
   }) : null, showEmailLink ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default().createElement("div", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default().createElement(_MSLocalized__WEBPACK_IMPORTED_MODULE_1__.Localized, {
     text: props.data.email.link_text
   }, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default().createElement("button", {
@@ -1442,7 +1447,7 @@ function LanguageSwitcher(props) {
   }) : // This is the localized name from the Intl.DisplayNames API.
   negotiatedLanguage === null || negotiatedLanguage === void 0 ? void 0 : negotiatedLanguage.langPackDisplayName)), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default().createElement("div", null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default().createElement("button", {
     type: "button",
-    className: "secondary",
+    className: "primary",
     value: "decline",
     onClick: event => {
       window.AWSetRequestedLocales(negotiatedLanguage.originalAppLocales);

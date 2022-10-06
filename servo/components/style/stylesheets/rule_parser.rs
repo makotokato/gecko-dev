@@ -13,22 +13,21 @@ use crate::properties::parse_property_declaration_list;
 use crate::selector_parser::{SelectorImpl, SelectorParser};
 use crate::shared_lock::{Locked, SharedRwLock};
 use crate::str::starts_with_ignore_ascii_case;
-use crate::stylesheets::container_rule::{ContainerRule, ContainerCondition};
+use crate::stylesheets::container_rule::{ContainerCondition, ContainerRule};
 use crate::stylesheets::document_rule::DocumentCondition;
 use crate::stylesheets::font_feature_values_rule::parse_family_name_list;
 use crate::stylesheets::import_rule::ImportLayer;
 use crate::stylesheets::keyframes_rule::parse_keyframe_list;
 use crate::stylesheets::layer_rule::{LayerBlockRule, LayerName, LayerStatementRule};
-use crate::stylesheets::scroll_timeline_rule::ScrollTimelineDescriptors;
 use crate::stylesheets::stylesheet::Namespaces;
 use crate::stylesheets::supports_rule::SupportsCondition;
 use crate::stylesheets::{
     viewport_rule, AllowImportRules, CorsMode, CssRule, CssRuleType, CssRules, DocumentRule,
     FontFeatureValuesRule, KeyframesRule, MediaRule, NamespaceRule, PageRule, PageSelectors,
-    RulesMutateError, ScrollTimelineRule, StyleRule, StylesheetLoader, SupportsRule, ViewportRule,
+    RulesMutateError, StyleRule, StylesheetLoader, SupportsRule, ViewportRule,
 };
 use crate::values::computed::font::FamilyName;
-use crate::values::{CssUrl, CustomIdent, KeyframesName, TimelineName};
+use crate::values::{CssUrl, CustomIdent, KeyframesName};
 use crate::{Namespace, Prefix};
 use cssparser::{
     AtRuleParser, BasicParseError, BasicParseErrorKind, CowRcStr, Parser, ParserState,
@@ -70,7 +69,7 @@ impl<'a> InsertRuleContext<'a> {
                     }
                 }
                 State::Body
-            }
+            },
             _ => State::Body,
         }
     }
@@ -207,8 +206,6 @@ pub enum AtRulePrelude {
     Namespace(Option<Prefix>, Namespace),
     /// A @layer rule prelude.
     Layer(Vec<LayerName>),
-    /// A @scroll-timeline rule prelude.
-    ScrollTimeline(TimelineName),
 }
 
 impl<'a, 'i> AtRuleParser<'i> for TopLevelRuleParser<'a> {
@@ -522,10 +519,6 @@ impl<'a, 'b, 'i> AtRuleParser<'i> for NestedRuleParser<'a, 'b> {
                 let cond = DocumentCondition::parse(self.context, input)?;
                 AtRulePrelude::Document(cond)
             },
-            "scroll-timeline" if static_prefs::pref!("layout.css.scroll-linked-animations.enabled") => {
-                let name = TimelineName::parse(self.context, input)?;
-                AtRulePrelude::ScrollTimeline(name)
-            },
             _ => return Err(input.new_custom_error(StyleParseErrorKind::UnsupportedAtRule(name.clone())))
         })
     }
@@ -655,15 +648,13 @@ impl<'a, 'b, 'i> AtRuleParser<'i> for NestedRuleParser<'a, 'b> {
                     },
                 ))))
             },
-            AtRulePrelude::Container(condition) => {
-                Ok(CssRule::Container(Arc::new(self.shared_lock.wrap(
-                    ContainerRule {
-                        condition,
-                        rules: self.parse_nested_rules(input, CssRuleType::Container),
-                        source_location: start.source_location(),
-                    },
-                ))))
-            },
+            AtRulePrelude::Container(condition) => Ok(CssRule::Container(Arc::new(
+                self.shared_lock.wrap(ContainerRule {
+                    condition,
+                    rules: self.parse_nested_rules(input, CssRuleType::Container),
+                    source_location: start.source_location(),
+                }),
+            ))),
             AtRulePrelude::Layer(names) => {
                 let name = match names.len() {
                     0 | 1 => names.into_iter().next(),
@@ -680,21 +671,6 @@ impl<'a, 'b, 'i> AtRuleParser<'i> for NestedRuleParser<'a, 'b> {
             AtRulePrelude::Import(..) | AtRulePrelude::Namespace(..) => {
                 // These rules don't have blocks.
                 Err(input.new_unexpected_token_error(cssparser::Token::CurlyBracketBlock))
-            },
-            AtRulePrelude::ScrollTimeline(name) => {
-                let context = ParserContext::new_with_rule_type(
-                    self.context,
-                    CssRuleType::ScrollTimeline,
-                    self.namespaces,
-                );
-
-                Ok(CssRule::ScrollTimeline(Arc::new(self.shared_lock.wrap(
-                    ScrollTimelineRule {
-                        name,
-                        descriptors: ScrollTimelineDescriptors::parse(&context, input)?,
-                        source_location: start.source_location(),
-                    },
-                ))))
             },
         }
     }

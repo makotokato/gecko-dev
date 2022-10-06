@@ -469,6 +469,8 @@ class ContentParent final : public PContentParent,
 
   mozilla::ipc::IPCResult RecvFinishShutdown();
 
+  mozilla::ipc::IPCResult RecvNotifyShutdownSuccess();
+
   void MaybeInvokeDragSession(BrowserParent* aParent);
 
   PContentPermissionRequestParent* AllocPContentPermissionRequestParent(
@@ -1071,8 +1073,9 @@ class ContentParent final : public PContentParent,
       const uint64_t& aInnerWindowId, const bool& aIsFromChromeContext);
 
   mozilla::ipc::IPCResult RecvReportFrameTimingData(
-      uint64_t innerWindowId, const nsAString& entryName,
-      const nsAString& initiatorType, UniquePtr<PerformanceTimingData>&& aData);
+      const mozilla::Maybe<LoadInfoArgs>& loadInfoArgs,
+      const nsAString& entryName, const nsAString& initiatorType,
+      UniquePtr<PerformanceTimingData>&& aData);
 
   mozilla::ipc::IPCResult RecvScriptErrorWithStack(
       const nsAString& aMessage, const nsAString& aSourceName,
@@ -1645,6 +1648,8 @@ class ContentParent final : public PContentParent,
 
   static uint32_t sMaxContentProcesses;
   static Maybe<TimeStamp> sLastContentProcessLaunch;
+
+  bool mIsNotifiedShutdownSuccess = false;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(ContentParent, NS_CONTENTPARENT_IID)

@@ -61,6 +61,14 @@ class DocAccessibleParent : public RemoteAccessible,
   void SetTopLevelInContentProcess() { mTopLevelInContentProcess = true; }
   bool IsTopLevelInContentProcess() const { return mTopLevelInContentProcess; }
 
+  /**
+   * Determine whether this is an out-of-process iframe document, embedded by a
+   * remote embedder document.
+   */
+  bool IsOOPIframeDoc() const {
+    return !mTopLevel && mTopLevelInContentProcess;
+  }
+
   bool IsShutdown() const { return mShutdown; }
 
   /**
@@ -326,10 +334,6 @@ class DocAccessibleParent : public RemoteAccessible,
   // the form: {accID, {relationType, [targetAccID, targetAccID, ...]}}
   nsTHashMap<uint64_t, nsTHashMap<uint64_t, nsTArray<uint64_t>>>
       mReverseRelations;
-
-  // Computed from the viewport cache, the accs referenced by these ids
-  // are currently on screen (making any acc not in this list offscreen).
-  nsTHashSet<uint64_t> mOnScreenAccessibles;
 
   static DocAccessibleParent* GetFrom(dom::BrowsingContext* aBrowsingContext);
 

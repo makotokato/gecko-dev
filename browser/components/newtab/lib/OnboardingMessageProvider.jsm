@@ -16,11 +16,14 @@ const { FeatureCalloutMessages } = ChromeUtils.import(
 
 const lazy = {};
 
+ChromeUtils.defineESModuleGetters(lazy, {
+  BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
+  BuiltInThemes: "resource:///modules/BuiltInThemes.sys.mjs",
+});
+
 XPCOMUtils.defineLazyModuleGetters(lazy, {
-  BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
-  ShellService: "resource:///modules/ShellService.jsm",
-  BuiltInThemes: "resource:///modules/BuiltInThemes.jsm",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
+  ShellService: "resource:///modules/ShellService.jsm",
 });
 
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -77,6 +80,56 @@ const BASE_MESSAGES = () => [
       cta_type: "OPEN_URL",
     },
     trigger: { id: "protectionsPanelOpen" },
+  },
+  {
+    id: "CFR_FIREFOX_VIEW",
+    groups: ["cfr"],
+    template: "cfr_doorhanger",
+    content: {
+      bucket_id: "CFR_FIREFOX_VIEW",
+      anchor_id: "firefox-view-button",
+      layout: "icon_and_message",
+      icon: "chrome://browser/content/cfr-lightning.svg",
+      icon_dark_theme: "chrome://browser/content/cfr-lightning-dark.svg",
+      icon_class: "cfr-doorhanger-small-icon",
+      heading_text: {
+        string_id: "firefoxview-cfr-header",
+      },
+      text: {
+        string_id: "firefoxview-cfr-body",
+      },
+      buttons: {
+        primary: {
+          label: {
+            string_id: "firefoxview-cfr-primarybutton",
+          },
+          action: {
+            type: "OPEN_FIREFOX_VIEW",
+            navigate: true,
+          },
+        },
+        secondary: [
+          {
+            label: {
+              string_id: "firefoxview-cfr-secondarybutton",
+            },
+            action: {
+              type: "CANCEL",
+            },
+          },
+        ],
+      },
+      skip_address_bar_notifier: true,
+    },
+    frequency: {
+      lifetime: 1,
+    },
+    trigger: {
+      id: "nthTabClosed",
+    },
+    // Avoid breaking existing tests that close tabs for now.
+    targeting:
+      "(currentDate|date - profileAgeCreated) / 86400000 >= 2 && tabsClosedCount >= 3 && 'browser.firefox-view.view-count'|preferenceValue == 0 && !'browser.newtabpage.activity-stream.asrouter.providers.cfr'|preferenceIsUserSet",
   },
   {
     id: "FX_MR_106_UPGRADE",
@@ -249,7 +302,7 @@ const BASE_MESSAGES = () => [
                     string_id: "mr2022-onboarding-colorway-label-default",
                   },
                   tooltip: {
-                    string_id: "mr2022-onboarding-colorway-tooltip-default",
+                    string_id: "mr2022-onboarding-colorway-tooltip-default2",
                   },
                   description: {
                     string_id: "mr2022-onboarding-colorway-description-default",
@@ -261,7 +314,7 @@ const BASE_MESSAGES = () => [
                     string_id: "mr2022-onboarding-colorway-label-playmaker",
                   },
                   tooltip: {
-                    string_id: "mr2022-onboarding-colorway-tooltip-playmaker",
+                    string_id: "mr2022-onboarding-colorway-tooltip-playmaker2",
                   },
                   description: {
                     string_id:
@@ -275,7 +328,7 @@ const BASE_MESSAGES = () => [
                   },
                   tooltip: {
                     string_id:
-                      "mr2022-onboarding-colorway-tooltip-expressionist",
+                      "mr2022-onboarding-colorway-tooltip-expressionist2",
                   },
                   description: {
                     string_id:
@@ -288,7 +341,7 @@ const BASE_MESSAGES = () => [
                     string_id: "mr2022-onboarding-colorway-label-visionary",
                   },
                   tooltip: {
-                    string_id: "mr2022-onboarding-colorway-tooltip-visionary",
+                    string_id: "mr2022-onboarding-colorway-tooltip-visionary2",
                   },
                   description: {
                     string_id:
@@ -301,7 +354,7 @@ const BASE_MESSAGES = () => [
                     string_id: "mr2022-onboarding-colorway-label-activist",
                   },
                   tooltip: {
-                    string_id: "mr2022-onboarding-colorway-tooltip-activist",
+                    string_id: "mr2022-onboarding-colorway-tooltip-activist2",
                   },
                   description: {
                     string_id:
@@ -314,7 +367,7 @@ const BASE_MESSAGES = () => [
                     string_id: "mr2022-onboarding-colorway-label-dreamer",
                   },
                   tooltip: {
-                    string_id: "mr2022-onboarding-colorway-tooltip-dreamer",
+                    string_id: "mr2022-onboarding-colorway-tooltip-dreamer2",
                   },
                   description: {
                     string_id: "mr2022-onboarding-colorway-description-dreamer",
@@ -326,7 +379,7 @@ const BASE_MESSAGES = () => [
                     string_id: "mr2022-onboarding-colorway-label-innovator",
                   },
                   tooltip: {
-                    string_id: "mr2022-onboarding-colorway-tooltip-innovator",
+                    string_id: "mr2022-onboarding-colorway-tooltip-innovator2",
                   },
                   description: {
                     string_id:
@@ -349,6 +402,7 @@ const BASE_MESSAGES = () => [
               label: {
                 string_id: "mr2022-onboarding-existing-colorway-checkbox-label",
               },
+              defaultValue: true,
               action: {
                 type: "CONFIGURE_HOMEPAGE",
                 data: { homePage: "default", newtab: "default" },
@@ -457,7 +511,7 @@ const BASE_MESSAGES = () => [
           },
         },
         {
-          id: "UPGRADE_PRIVACY_SEGMENTATION",
+          id: "UPGRADE_DATA_RECOMMENDATION",
           content: {
             position: "split",
             split_narrow_bkg_position: "-80px",
@@ -679,10 +733,6 @@ const BASE_MESSAGES = () => [
                           alt_text: {
                             string_id: "spotlight-focus-promo-qr-code",
                           },
-                          image_overrides: {
-                            de:
-                              "chrome://browser/content/assets/klar-qr-code.svg",
-                          },
                         },
                         marketplace_buttons: ["ios", "android"],
                       },
@@ -705,7 +755,9 @@ const BASE_MESSAGES = () => [
       ],
       lifetime: 12,
     },
-    targeting: "!(region in [ 'DE', 'AT', 'CH'] && localeLanguageCode == 'en')",
+    // Exclude the next 2 messages: 1) Klar for en 2) Klar for de
+    targeting:
+      "!(region in [ 'DE', 'AT', 'CH'] && localeLanguageCode == 'en') && localeLanguageCode != 'de'",
   },
   {
     id: "PB_NEWTAB_KLAR_PROMO",
@@ -785,6 +837,109 @@ const BASE_MESSAGES = () => [
                         QR_code: {
                           image_url:
                             "chrome://browser/content/assets/klar-qr-code.svg",
+                          alt_text: "Scan the QR code to get Firefox Klar",
+                        },
+                        marketplace_buttons: ["ios", "android"],
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+    priority: 2,
+    frequency: {
+      custom: [
+        {
+          cap: 3,
+          period: 604800000, // Max 3 per week
+        },
+      ],
+      lifetime: 12,
+    },
+    targeting: "region in [ 'DE', 'AT', 'CH'] && localeLanguageCode == 'en'",
+  },
+  {
+    id: "PB_NEWTAB_KLAR_PROMO_DE",
+    type: "default",
+    template: "pb_newtab",
+    groups: ["pbNewtab"],
+    content: {
+      infoBody: "fluent:about-private-browsing-info-description-simplified",
+      infoEnabled: true,
+      infoIcon: "chrome://global/skin/icons/indicator-private-browsing.svg",
+      infoLinkText: "fluent:about-private-browsing-learn-more-link",
+      infoTitle: "",
+      infoTitleEnabled: false,
+      promoEnabled: true,
+      promoType: "FOCUS",
+      promoHeader: "fluent:about-private-browsing-focus-promo-header-c",
+      promoImageLarge: "chrome://browser/content/assets/focus-promo.png",
+      promoLinkText: "fluent:about-private-browsing-focus-promo-cta",
+      promoLinkType: "button",
+      promoSectionStyle: "below-search",
+      promoTitle: "fluent:about-private-browsing-focus-promo-text-c",
+      promoTitleEnabled: true,
+      promoButton: {
+        action: {
+          type: "SHOW_SPOTLIGHT",
+          data: {
+            content: {
+              id: "FOCUS_PROMO",
+              template: "multistage",
+              modal: "tab",
+              backdrop: "transparent",
+              screens: [
+                {
+                  id: "DEFAULT_MODAL_UI",
+                  content: {
+                    logo: {
+                      imageURL:
+                        "chrome://browser/content/assets/focus-logo.svg",
+                      height: "48px",
+                    },
+                    title: {
+                      string_id: "spotlight-focus-promo-title",
+                    },
+                    subtitle: {
+                      string_id: "spotlight-focus-promo-subtitle",
+                    },
+                    dismiss_button: {
+                      action: {
+                        navigate: true,
+                      },
+                    },
+                    ios: {
+                      action: {
+                        data: {
+                          args:
+                            "https://app.adjust.com/a8bxj8j?campaign=firefox-desktop&adgroup=pb&creative=focus-omc172&redirect=https%3A%2F%2Fapps.apple.com%2Fde%2Fapp%2Fklar-by-firefox%2Fid1073435754",
+                          where: "tabshifted",
+                        },
+                        type: "OPEN_URL",
+                        navigate: true,
+                      },
+                    },
+                    android: {
+                      action: {
+                        data: {
+                          args:
+                            "https://app.adjust.com/a8bxj8j?campaign=firefox-desktop&adgroup=pb&creative=focus-omc172&redirect=https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Dorg.mozilla.klar",
+                          where: "tabshifted",
+                        },
+                        type: "OPEN_URL",
+                        navigate: true,
+                      },
+                    },
+                    tiles: {
+                      type: "mobile_downloads",
+                      data: {
+                        QR_code: {
+                          image_url:
+                            "chrome://browser/content/assets/klar-qr-code.svg",
                           alt_text: {
                             string_id: "spotlight-focus-promo-qr-code",
                           },
@@ -810,7 +965,7 @@ const BASE_MESSAGES = () => [
       ],
       lifetime: 12,
     },
-    targeting: "region in [ 'DE', 'AT', 'CH'] && localeLanguageCode == 'en'",
+    targeting: "localeLanguageCode == 'de'",
   },
   {
     id: "PB_NEWTAB_INFO_SECTION",
@@ -1071,7 +1226,7 @@ const OnboardingMessageProvider = {
 
     if (!showSegmentation) {
       removeScreens(screen =>
-        screen.id?.startsWith("UPGRADE_PRIVACY_SEGMENTATION")
+        screen.id?.startsWith("UPGRADE_DATA_RECOMMENDATION")
       );
     }
 

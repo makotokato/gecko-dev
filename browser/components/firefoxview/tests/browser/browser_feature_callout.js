@@ -3,12 +3,12 @@
 
 "use strict";
 
-const { ASRouter } = ChromeUtils.import(
+const { ASRouter, MessageLoaderUtils } = ChromeUtils.import(
   "resource://activity-stream/lib/ASRouter.jsm"
 );
 
-const { BuiltInThemes } = ChromeUtils.import(
-  "resource:///modules/BuiltInThemes.jsm"
+const { BuiltInThemes } = ChromeUtils.importESModule(
+  "resource:///modules/BuiltInThemes.sys.mjs"
 );
 
 const calloutId = "root";
@@ -49,6 +49,11 @@ const waitForCalloutRemoved = async doc => {
 const clickPrimaryButton = async doc => {
   doc.querySelector(primaryButtonSelector).click();
 };
+
+add_setup(async function() {
+  requestLongerTimeout(2);
+  registerCleanupFunction(() => ASRouter.resetMessageState());
+});
 
 add_task(async function feature_callout_renders_in_firefox_view() {
   await SpecialPowers.pushPrefEnv({
@@ -353,7 +358,6 @@ add_task(
     registerCleanupFunction(() => {
       Services.prefs.clearUserPref("browser.firefox-view.view-count");
       Services.prefs.clearUserPref("identity.fxaccounts.enabled");
-      ASRouter.resetMessageState();
     });
 
     const expectedUrl = await fxAccounts.constructor.config.promiseConnectAccountURI(
@@ -403,5 +407,148 @@ add_task(
     Services.prefs.clearUserPref("browser.firefox-view.view-count");
     Services.prefs.clearUserPref("identity.fxaccounts.enabled");
     ASRouter.resetMessageState();
+  }
+);
+
+add_task(async function test_firefox_view_spotlight_promo() {
+  // Prevent attempts to fetch CFR messages remotely.
+  const sandbox = sinon.createSandbox();
+  let remoteSettingsStub = sandbox.stub(
+    MessageLoaderUtils,
+    "_remoteSettingsLoader"
+  );
+  remoteSettingsStub.resolves([]);
+
+  await SpecialPowers.pushPrefEnv({
+    clear: [
+      [featureTourPref],
+      ["browser.newtabpage.activity-stream.asrouter.providers.cfr"],
+    ],
+  });
+  ASRouter.resetMessageState();
+
+  let dialogOpenPromise = BrowserTestUtils.promiseAlertDialogOpen(
+    null,
+    "chrome://browser/content/spotlight.html",
+    { isSubDialog: true }
+  );
+
+  await BrowserTestUtils.withNewTab(
+    {
+      gBrowser,
+      url: "about:firefoxview",
+    },
+    async browser => {
+      info("Waiting for the Fx View Spotlight promo to open");
+      let dialogBrowser = await dialogOpenPromise;
+      let primaryBtnSelector = ".action-buttons button.primary";
+      await TestUtils.waitForCondition(
+        () => dialogBrowser.document.querySelector("main.DEFAULT_MODAL_UI"),
+        `Should render main.DEFAULT_MODAL_UI`
+      );
+      await BrowserTestUtils.waitForCondition(
+        () => dialogBrowser.document.querySelector(primaryBtnSelector),
+        `waiting for selector ${primaryBtnSelector}`,
+        200, // interval
+        100 // maxTries
+      );
+      dialogBrowser.document.querySelector(primaryBtnSelector).click();
+
+      info("Fx View Spotlight promo clicked, entering feature tour");
+      const { document } = browser.contentWindow;
+
+      await waitForCalloutScreen(document, 1);
+      ok(
+        document.querySelector(calloutSelector),
+        "Feature Callout element exists"
+      );
+      info("Feature tour started");
+      await clickPrimaryButton(document);
+
+      await waitForCalloutScreen(document, 2);
+      ok(
+        document.querySelector(calloutSelector),
+        "Feature Callout element exists"
+      );
+      await clickPrimaryButton(document);
+
+      await waitForCalloutScreen(document, 3);
+      ok(
+        document.querySelector(calloutSelector),
+        "Feature Callout element exists"
+      );
+      await clickPrimaryButton(document);
+      await waitForCalloutRemoved(document);
+      ok(true, "Feature tour finished");
+    }
+  );
+
+  ok(remoteSettingsStub.called, "Tried to load CFR messages");
+  sandbox.restore();
+  ASRouter.resetMessageState();
+});
+
+add_task(async function feature_callout_returns_default_fxview_focus_to_top() {
+  await SpecialPowers.pushPrefEnv({
+    set: [[featureTourPref, defaultPrefValue]],
+  });
+
+  await BrowserTestUtils.withNewTab(
+    {
+      gBrowser,
+      url: "about:firefoxview",
+    },
+    async browser => {
+      const { document } = browser.contentWindow;
+      await waitForCalloutScreen(document, 1);
+
+      ok(
+        document.querySelector(calloutSelector),
+        "Feature Callout element exists"
+      );
+
+      document.querySelector(".dismiss-button").click();
+      await waitForCalloutRemoved(document);
+
+      ok(
+        document.activeElement.localName === "body",
+        "by default focus returns to the document body after callout closes"
+      );
+    }
+  );
+});
+
+add_task(
+  async function feature_callout_returns_moved_fxview_focus_to_previous() {
+    await SpecialPowers.pushPrefEnv({
+      set: [[featureTourPref, defaultPrefValue]],
+    });
+
+    await BrowserTestUtils.withNewTab(
+      {
+        gBrowser,
+        url: "about:firefoxview",
+      },
+      async browser => {
+        const { document } = browser.contentWindow;
+        await waitForCalloutScreen(document, 1);
+
+        // change focus to recently-closed-tabs-container
+        let recentlyClosedHeaderSection = document.querySelector(
+          "#recently-closed-tabs-header-section"
+        );
+        recentlyClosedHeaderSection.focus();
+
+        // close the callout dialog
+        document.querySelector(".dismiss-button").click();
+        await waitForCalloutRemoved(document);
+
+        // verify that the focus landed in the right place
+        ok(
+          document.activeElement.id === "recently-closed-tabs-header-section",
+          "when focus changes away from callout it reverts after callout closes"
+        );
+      }
+    );
   }
 );

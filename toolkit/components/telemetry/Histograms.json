@@ -1234,7 +1234,7 @@
     "low": 32768,
     "high": 16777216,
     "n_buckets": 100,
-    "description": "Total Memory Across All Processes (KB)",
+    "description": "Total Memory Across All Processes (KB) (inaccurate WRT shared memory. See MemoryTelemetry.cpp)",
     "releaseChannelCollection": "opt-out"
   },
   "MEMORY_DISTRIBUTION_AMONG_CONTENT": {
@@ -3055,6 +3055,17 @@
     "keyed": true,
     "description": "Count of the HTTP redirection that triggered by top-level document or by subresource, keyed by the URL scheme redirected to.",
     "labels": ["topLevel", "subresource"]
+  },
+  "NETWORK_ASYNC_OPEN_TO_TRANSACTION_PENDING_MS" :{
+    "record_in_processes": ["content"],
+    "products": [ "firefox", "fennec", "geckoview_streaming" ],
+    "alert_emails": ["necko@mozilla.com", "acreskey@mozilla.com"],
+    "bug_numbers": [1789468],
+    "expires_in_version": "never",
+    "kind": "linear",
+    "high": 5000,
+    "n_buckets": 50,
+    "description": "The time spent from HttpChannelChild::AsyncOpen to adding the transactionto the nsHttpConnectionMgr, in milliseconds"
   },
   "HTTP_AUTH_DIALOG_STATS_3": {
     "record_in_processes": ["main", "content"],
@@ -10122,16 +10133,6 @@
     "labels": ["unknown","javaScript","image", "audio", "video","text_plain","text_csv","text_xml","app_octet_stream","app_xml","app_json","text_json","text_html","empty","serviceworker_load","worker_load","importScript_load","script_load","same_origin","CORS_origin","cross_origin", "worklet_load"],
     "description": "Whether the script load has a MIME type of ...?  (unknown, javaScript, image, audio, video, text_plain, text_csv, text_xml, app_octet_stream, app_xml, app_json, text_json, text_html, empty). Whether the script load is from ...?  (serviceworker_load, worker_load, importSript_load, script_load). Whether the script load is of ...?  (same_origin, CORS_origin, cross_origin)"
   },
-  "SCRIPT_FILE_PROTOCOL_CORRECT_MIME": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox"],
-    "alert_emails": ["seceng-telemetry@mozilla.com"],
-    "bug_numbers": [1770395],
-    "expires_in_version": "107",
-    "releaseChannelCollection": "opt-out",
-    "kind": "boolean",
-    "description": "Script loaded from file:// has a correct MIME type."
-  },
   "NEWTAB_PAGE_ENABLED": {
     "record_in_processes": ["main", "content"],
     "products": ["firefox", "fennec"],
@@ -13926,11 +13927,11 @@
   "PWMGR_NUM_FORM_HAS_POSSIBLE_USERNAME_EVENT_PER_DOC": {
     "record_in_processes": ["content"],
     "products": ["firefox", "fennec"],
-    "expires_in_version": "108",
+    "expires_in_version": "114",
     "kind": "linear",
     "high": 21,
     "n_buckets" : 20,
-    "bug_numbers": [1708455],
+    "bug_numbers": [1708455, 1791929],
     "description": "The number of documents that receive >= bucket number 'DOMFormHasPossibleUsernameEvent' event",
     "alert_emails": ["passwords-dev@mozilla.org"],
     "releaseChannelCollection": "opt-out"

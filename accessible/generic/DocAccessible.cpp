@@ -14,7 +14,6 @@
 #include "nsAccCache.h"
 #include "nsAccessiblePivot.h"
 #include "nsAccUtils.h"
-#include "nsDeckFrame.h"
 #include "nsEventShell.h"
 #include "nsLayoutUtils.h"
 #include "nsTextEquivUtils.h"
@@ -45,6 +44,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/EditorBase.h"
 #include "mozilla/HTMLEditor.h"
+#include "mozilla/ipc/ProcessChild.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_accessibility.h"
 #include "mozilla/a11y/DocAccessibleParent.h"
@@ -1052,21 +1052,6 @@ LocalAccessible* DocAccessible::GetAccessibleOrContainer(
       return nullptr;
     }
 
-    // Check if node is in an unselected deck panel
-    if (aNoContainerIfPruned && currNode->IsXULElement()) {
-      if (nsIFrame* frame = currNode->AsContent()->GetPrimaryFrame()) {
-        nsDeckFrame* deckFrame = do_QueryFrame(frame->GetParent());
-        if (deckFrame && deckFrame->GetSelectedBox() != frame) {
-          // If deck is not a <tabpanels>, return null
-          nsIContent* parentFrameContent = deckFrame->GetContent();
-          if (!parentFrameContent ||
-              !parentFrameContent->IsXULElement(nsGkAtoms::tabpanels)) {
-            return nullptr;
-          }
-        }
-      }
-    }
-
     // Check if node is in zero-sized map
     if (aNoContainerIfPruned && currNode->IsHTMLElement(nsGkAtoms::map)) {
       if (nsIFrame* frame = currNode->AsContent()->GetPrimaryFrame()) {
@@ -1615,6 +1600,9 @@ void DocAccessible::DoInitialUpdate() {
     ParentDocument()->FireDelayedEvent(reorderEvent);
   }
 
+  if (ipc::ProcessChild::ExpectingShutdown()) {
+    return;
+  }
   if (IPCAccessibilityActive()) {
     DocAccessibleChild* ipcDoc = IPCDoc();
     MOZ_ASSERT(ipcDoc);

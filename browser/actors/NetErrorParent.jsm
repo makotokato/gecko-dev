@@ -22,11 +22,9 @@ const PREF_SSL_IMPACT_ROOTS = [
 
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "BrowserUtils",
-  "resource://gre/modules/BrowserUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
+});
 
 class CaptivePortalObserver {
   constructor(actor) {
@@ -176,9 +174,7 @@ class NetErrorParent extends JSWindowActorParent {
         return;
       }
 
-      let secInfo = request.channel.securityInfo.QueryInterface(
-        Ci.nsITransportSecurityInfo
-      );
+      let secInfo = request.channel.securityInfo;
       if (secInfo.errorCodeString != "SEC_ERROR_UNKNOWN_ISSUER") {
         return;
       }

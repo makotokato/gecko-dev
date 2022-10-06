@@ -19,7 +19,6 @@
 #include "mozilla/dom/BindContext.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/GeneratedImageContent.h"
-#include "mozilla/dom/HTMLDetailsElement.h"
 #include "mozilla/dom/HTMLSelectElement.h"
 #include "mozilla/dom/HTMLSharedListElement.h"
 #include "mozilla/dom/HTMLSummaryElement.h"
@@ -110,7 +109,6 @@
 #include "nsIScrollableFrame.h"
 #include "nsBackdropFrame.h"
 #include "nsTransitionManager.h"
-#include "DetailsFrame.h"
 
 #include "nsIPopupContainer.h"
 #ifdef ACCESSIBILITY
@@ -211,14 +209,6 @@ static FrameCtorDebugFlags gFlags[] = {
 
 //------------------------------------------------------------------
 
-nsContainerFrame* NS_NewRootBoxFrame(PresShell* aPresShell,
-                                     ComputedStyle* aStyle);
-
-nsContainerFrame* NS_NewDocElementBoxFrame(PresShell* aPresShell,
-                                           ComputedStyle* aStyle);
-
-nsIFrame* NS_NewDeckFrame(PresShell* aPresShell, ComputedStyle* aStyle);
-
 nsIFrame* NS_NewLeafBoxFrame(PresShell* aPresShell, ComputedStyle* aStyle);
 
 nsIFrame* NS_NewRangeFrame(PresShell* aPresShell, ComputedStyle* aStyle);
@@ -226,8 +216,6 @@ nsIFrame* NS_NewRangeFrame(PresShell* aPresShell, ComputedStyle* aStyle);
 nsIFrame* NS_NewImageBoxFrame(PresShell* aPresShell, ComputedStyle* aStyle);
 
 nsIFrame* NS_NewTextBoxFrame(PresShell* aPresShell, ComputedStyle* aStyle);
-
-nsIFrame* NS_NewButtonBoxFrame(PresShell* aPresShell, ComputedStyle* aStyle);
 
 nsIFrame* NS_NewSplitterFrame(PresShell* aPresShell, ComputedStyle* aStyle);
 
@@ -1425,6 +1413,11 @@ nsCSSFrameConstructor::AutoFrameConstructionPageName::
                "Page name should not have been set");
     return;
   }
+#ifdef DEBUG
+  MOZ_ASSERT(!aFrame->mWasVisitedByAutoFrameConstructionPageName,
+             "Frame should only have been visited once");
+  aFrame->mWasVisitedByAutoFrameConstructionPageName = true;
+#endif
 
   EnsureAutoPageName(aState, aFrame->GetParent());
   mNameToRestore = aState.mAutoPageNameValue;
@@ -1432,20 +1425,7 @@ nsCSSFrameConstructor::AutoFrameConstructionPageName::
   MOZ_ASSERT(mNameToRestore,
              "Page name should have been found by EnsureAutoPageName");
   MaybeApplyPageName(aState, aFrame->StylePage()->mPage);
-  // Ensure that the PageValuesProperty field has been created.
-  // Before layout.css.named_pages.enabled is prefed on by default, we should
-  // investigate making this property optional, and have a missing property
-  // indicate a default root page-name or an auto page-name.
-  //
-  // When we make this property optional, we should add a debug-only flag on
-  // nsIFrame to indicate it was visited by this logic, as currently we assert
-  // the existence of this property to validate that.
-  nsIFrame::PageValues* pageValues =
-      aFrame->GetProperty(nsIFrame::PageValuesProperty());
-  if (!pageValues) {
-    pageValues = new nsIFrame::PageValues();
-    aFrame->AddProperty(nsIFrame::PageValuesProperty(), pageValues);
-  }
+  aFrame->SetAutoPageValue(aState.mAutoPageNameValue);
 }
 
 nsCSSFrameConstructor::AutoFrameConstructionPageName::
@@ -1473,7 +1453,6 @@ nsCSSFrameConstructor::nsCSSFrameConstructor(Document* aDocument,
       mQuotesDirty(false),
       mCountersDirty(false),
       mIsDestroyingFrameTree(false),
-      mHasRootAbsPosContainingBlock(false),
       mAlwaysCreateFramesForIgnorableWhitespace(false) {
 #ifdef DEBUG
   static bool gFirstTime = true;
@@ -1778,7 +1757,8 @@ void nsCSSFrameConstructor::CreateGeneratedContentItem(
                  aPseudoElement == PseudoStyleType::marker,
              "unexpected aPseudoElement");
 
-  if (HasUAWidget(aOriginatingElement)) {
+  if (HasUAWidget(aOriginatingElement) &&
+      !aOriginatingElement.IsHTMLElement(nsGkAtoms::details)) {
     return;
   }
 
@@ -2402,14 +2382,12 @@ nsIFrame* nsCSSFrameConstructor::ConstructDocElementFrame(
   }
 
   nsFrameConstructorSaveState docElementContainingBlockAbsoluteSaveState;
-  if (mHasRootAbsPosContainingBlock) {
-    // Push the absolute containing block now so we can absolutely position
-    // the root element
-    mDocElementContainingBlock->AddStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
-    state.PushAbsoluteContainingBlock(
-        mDocElementContainingBlock, mDocElementContainingBlock,
-        docElementContainingBlockAbsoluteSaveState);
-  }
+  // Push the absolute containing block now so we can absolutely position
+  // the root element
+  mDocElementContainingBlock->AddStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN);
+  state.PushAbsoluteContainingBlock(mDocElementContainingBlock,
+                                    mDocElementContainingBlock,
+                                    docElementContainingBlockAbsoluteSaveState);
 
   // The rules from CSS 2.1, section 9.2.4, have already been applied
   // by the style system, so we can assume that display->mDisplay is
@@ -2431,14 +2409,7 @@ nsIFrame* nsCSSFrameConstructor::ConstructDocElementFrame(
 
   nsFrameConstructorSaveState absoluteSaveState;
 
-  // Check whether we need to build a XUL box or SVG root frame
-  if (aDocElement->IsXULElement()) {
-    contentFrame = NS_NewDocElementBoxFrame(mPresShell, computedStyle);
-    InitAndRestoreFrame(state, aDocElement, mDocElementContainingBlock,
-                        contentFrame);
-    frameList = {contentFrame, contentFrame};
-    processChildren = true;
-  } else if (aDocElement->IsSVGElement()) {
+  if (aDocElement->IsSVGElement()) {
     if (!aDocElement->IsSVGElement(nsGkAtoms::svg)) {
       return nullptr;
     }
@@ -2458,11 +2429,19 @@ nsIFrame* nsCSSFrameConstructor::ConstructDocElementFrame(
   } else if (display->mDisplay == StyleDisplay::Flex ||
              display->mDisplay == StyleDisplay::WebkitBox ||
              display->mDisplay == StyleDisplay::Grid ||
-             (display->mDisplay == StyleDisplay::MozBox &&
-              computedStyle->StyleVisibility()->EmulateMozBoxWithFlex())) {
-    auto func = display->mDisplay == StyleDisplay::Grid
-                    ? NS_NewGridContainerFrame
-                    : NS_NewFlexContainerFrame;
+             display->mDisplay == StyleDisplay::MozBox ||
+             display->mDisplay == StyleDisplay::MozPopup) {
+    auto func = [&] {
+      if (display->mDisplay == StyleDisplay::Grid) {
+        return NS_NewGridContainerFrame;
+      }
+      if ((display->mDisplay == StyleDisplay::MozBox ||
+           display->mDisplay == StyleDisplay::MozPopup) &&
+          !computedStyle->StyleVisibility()->EmulateMozBoxWithFlex()) {
+        return NS_NewBoxFrame;
+      }
+      return NS_NewFlexContainerFrame;
+    }();
     contentFrame = func(mPresShell, computedStyle);
     InitAndRestoreFrame(
         state, aDocElement,
@@ -2613,19 +2592,14 @@ void nsCSSFrameConstructor::SetUpDocElementContainingBlock(
   /*
     how the root frame hierarchy should look
 
-  Galley presentation, non-XUL, with scrolling:
+  Galley presentation, with scrolling:
 
       ViewportFrame [fixed-cb]
-        nsHTMLScrollFrame
+        nsHTMLScrollFrame (if needed)
           nsCanvasFrame [abs-cb]
             root element frame (nsBlockFrame, SVGOuterSVGFrame,
-                                nsTableWrapperFrame, nsPlaceholderFrame)
-
-  Galley presentation, XUL
-
-      ViewportFrame [fixed-cb]
-        nsRootBoxFrame
-          root element frame (nsDocElementBoxFrame)
+                                nsTableWrapperFrame, nsPlaceholderFrame,
+                                nsBoxFrame)
 
   Print presentation, non-XUL
 
@@ -2661,7 +2635,7 @@ void nsCSSFrameConstructor::SetUpDocElementContainingBlock(
     mRootElementFrame is "root element frame".  This is the primary frame for
       the root element.
     mDocElementContainingBlock is the parent of mRootElementFrame
-      (i.e. nsCanvasFrame or nsRootBoxFrame)
+      (i.e. nsCanvasFrame)
     mPageSequenceFrame is the nsPageSequenceFrame, or null if there isn't
       one
   */
@@ -2704,17 +2678,8 @@ void nsCSSFrameConstructor::SetUpDocElementContainingBlock(
       static_cast<nsContainerFrame*>(GetRootFrame());
   ComputedStyle* viewportPseudoStyle = viewportFrame->Style();
 
-  nsContainerFrame* rootFrame = nullptr;
-
-  if (aDocElement->IsXULElement()) {
-    // pass a temporary stylecontext, the correct one will be set later
-    rootFrame = NS_NewRootBoxFrame(mPresShell, viewportPseudoStyle);
-  } else {
-    // pass a temporary stylecontext, the correct one will be set later
-    rootFrame = NS_NewCanvasFrame(mPresShell, viewportPseudoStyle);
-    mHasRootAbsPosContainingBlock = true;
-  }
-
+  nsContainerFrame* rootFrame =
+      NS_NewCanvasFrame(mPresShell, viewportPseudoStyle);
   PseudoStyleType rootPseudo = PseudoStyleType::canvas;
   mDocElementContainingBlock = rootFrame;
 
@@ -2808,7 +2773,6 @@ void nsCSSFrameConstructor::SetUpDocElementContainingBlock(
     // The eventual parent of the document element frame.
     // XXX should this be set for every new page (in ConstructPageFrame)?
     mDocElementContainingBlock = canvasFrame;
-    mHasRootAbsPosContainingBlock = true;
   }
 
   if (viewportFrame->HasAnyStateBits(NS_FRAME_FIRST_REFLOW)) {
@@ -3209,20 +3173,18 @@ nsIFrame* nsCSSFrameConstructor::ConstructFieldSetFrame(
   return fieldsetFrame;
 }
 
-nsIFrame* nsCSSFrameConstructor::ConstructDetailsFrame(
+nsIFrame* nsCSSFrameConstructor::ConstructDetails(
     nsFrameConstructorState& aState, FrameConstructionItem& aItem,
     nsContainerFrame* aParentFrame, const nsStyleDisplay* aStyleDisplay,
     nsFrameList& aFrameList) {
   if (!aStyleDisplay->IsScrollableOverflow()) {
-    return ConstructNonScrollableBlockWithConstructor(
-        aState, aItem, aParentFrame, aStyleDisplay, aFrameList,
-        NS_NewDetailsFrame);
+    return ConstructNonScrollableBlock(aState, aItem, aParentFrame,
+                                       aStyleDisplay, aFrameList);
   }
 
-  // Build a scroll frame to wrap details frame if necessary.
-  return ConstructScrollableBlockWithConstructor(aState, aItem, aParentFrame,
-                                                 aStyleDisplay, aFrameList,
-                                                 NS_NewDetailsFrame);
+  // Build a scroll frame if necessary.
+  return ConstructScrollableBlock(aState, aItem, aParentFrame, aStyleDisplay,
+                                  aFrameList);
 }
 
 nsIFrame* nsCSSFrameConstructor::ConstructBlockRubyFrame(
@@ -3460,8 +3422,7 @@ nsCSSFrameConstructor::FindHTMLData(const Element& aElement,
       SIMPLE_TAG_CREATE(audio, NS_NewHTMLVideoFrame),
       SIMPLE_TAG_CREATE(progress, NS_NewProgressFrame),
       SIMPLE_TAG_CREATE(meter, NS_NewMeterFrame),
-      COMPLEX_TAG_CREATE(details,
-                         &nsCSSFrameConstructor::ConstructDetailsFrame)};
+      COMPLEX_TAG_CREATE(details, &nsCSSFrameConstructor::ConstructDetails)};
 
   return FindDataByTag(aElement, aStyle, sHTMLData, ArrayLength(sHTMLData));
 }
@@ -4108,11 +4069,6 @@ nsCSSFrameConstructor::FindXULTagData(const Element& aElement,
   MOZ_ASSERT(aElement.IsXULElement());
 
   static constexpr FrameConstructionDataByTag sXULTagData[] = {
-      SCROLLABLE_XUL_CREATE(thumb, NS_NewButtonBoxFrame),
-      SCROLLABLE_XUL_CREATE(checkbox, NS_NewButtonBoxFrame),
-      SCROLLABLE_XUL_CREATE(radio, NS_NewButtonBoxFrame),
-      SCROLLABLE_XUL_CREATE(toolbarpaletteitem, NS_NewBoxFrame),
-      SCROLLABLE_XUL_CREATE(treecolpicker, NS_NewButtonBoxFrame),
       SIMPLE_XUL_CREATE(image, NS_NewImageBoxFrame),
       SIMPLE_XUL_CREATE(spacer, NS_NewLeafBoxFrame),
       SIMPLE_XUL_CREATE(treechildren, NS_NewTreeBodyFrame),
@@ -4174,9 +4130,7 @@ nsCSSFrameConstructor::FindXULButtonData(const Element& aElement,
   }
 #endif
 
-  static constexpr FrameConstructionData sXULButtonData =
-      SCROLLABLE_XUL_FCDATA(NS_NewButtonBoxFrame);
-  return &sXULButtonData;
+  return nullptr;
 }
 
 /* static */
@@ -4503,7 +4457,8 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay& aDisplay,
       if (aMozBoxLayout == StyleMozBoxLayout::Legacy ||
           aElement.IsXULElement(nsGkAtoms::scrollcorner)) {
         static constexpr FrameConstructionData data =
-            SCROLLABLE_ABSPOS_CONTAINER_XUL_FCDATA(NS_NewBoxFrame);
+            SCROLLABLE_ABSPOS_CONTAINER_XUL_FCDATA(
+                ToCreationFunc(NS_NewBoxFrame));
         return &data;
       }
       [[fallthrough]];
@@ -4562,11 +4517,6 @@ nsCSSFrameConstructor::FindDisplayData(const nsStyleDisplay& aDisplay,
           FCDATA_DESIRED_PARENT_TYPE_TO_BITS(eTypeRuby));
       return &data;
     }
-    case StyleDisplayInside::MozDeck: {
-      static constexpr FrameConstructionData data =
-          SIMPLE_XUL_FCDATA(NS_NewDeckFrame);
-      return &data;
-    }
     case StyleDisplayInside::MozPopup: {
       static constexpr FrameConstructionData data(
           NS_NewMenuPopupFrame, FCDATA_DISALLOW_OUT_OF_FLOW | FCDATA_IS_POPUP |
@@ -4583,15 +4533,6 @@ nsIFrame* nsCSSFrameConstructor::ConstructScrollableBlock(
     nsFrameConstructorState& aState, FrameConstructionItem& aItem,
     nsContainerFrame* aParentFrame, const nsStyleDisplay* aDisplay,
     nsFrameList& aFrameList) {
-  return ConstructScrollableBlockWithConstructor(aState, aItem, aParentFrame,
-                                                 aDisplay, aFrameList,
-                                                 NS_NewBlockFormattingContext);
-}
-
-nsIFrame* nsCSSFrameConstructor::ConstructScrollableBlockWithConstructor(
-    nsFrameConstructorState& aState, FrameConstructionItem& aItem,
-    nsContainerFrame* aParentFrame, const nsStyleDisplay* aDisplay,
-    nsFrameList& aFrameList, BlockFrameCreationFunc aConstructor) {
   nsIContent* const content = aItem.mContent;
   ComputedStyle* const computedStyle = aItem.mComputedStyle;
 
@@ -4603,7 +4544,8 @@ nsIFrame* nsCSSFrameConstructor::ConstructScrollableBlockWithConstructor(
 
   // Create our block frame
   // pass a temporary stylecontext, the correct one will be set later
-  nsContainerFrame* scrolledFrame = aConstructor(mPresShell, computedStyle);
+  nsContainerFrame* scrolledFrame =
+      NS_NewBlockFormattingContext(mPresShell, computedStyle);
 
   // Make sure to AddChild before we call ConstructBlock so that we
   // end up before our descendants in fixed-pos lists as needed.
@@ -4626,14 +4568,6 @@ nsIFrame* nsCSSFrameConstructor::ConstructNonScrollableBlock(
     nsFrameConstructorState& aState, FrameConstructionItem& aItem,
     nsContainerFrame* aParentFrame, const nsStyleDisplay* aDisplay,
     nsFrameList& aFrameList) {
-  return ConstructNonScrollableBlockWithConstructor(
-      aState, aItem, aParentFrame, aDisplay, aFrameList, NS_NewBlockFrame);
-}
-
-nsIFrame* nsCSSFrameConstructor::ConstructNonScrollableBlockWithConstructor(
-    nsFrameConstructorState& aState, FrameConstructionItem& aItem,
-    nsContainerFrame* aParentFrame, const nsStyleDisplay* aDisplay,
-    nsFrameList& aFrameList, BlockFrameCreationFunc aConstructor) {
   ComputedStyle* const computedStyle = aItem.mComputedStyle;
 
   // We want a block formatting context root in paginated contexts for
@@ -4653,7 +4587,7 @@ nsIFrame* nsCSSFrameConstructor::ConstructNonScrollableBlockWithConstructor(
     }
   }
 
-  nsContainerFrame* newFrame = aConstructor(mPresShell, computedStyle);
+  nsContainerFrame* newFrame = NS_NewBlockFrame(mPresShell, computedStyle);
   newFrame->AddStateBits(flags);
   ConstructBlock(
       aState, aItem.mContent,
@@ -5280,35 +5214,6 @@ static bool ShouldSuppressFrameInSelect(const nsIContent* aParent,
   return true;
 }
 
-static bool ShouldSuppressFrameInNonOpenDetails(
-    const HTMLDetailsElement* aDetails, ComputedStyle* aComputedStyle,
-    const nsIContent& aChild) {
-  if (!aDetails || aDetails->Open()) {
-    return false;
-  }
-
-  if (aChild.GetParent() != aDetails) {
-    return true;
-  }
-
-  auto* summary = HTMLSummaryElement::FromNode(aChild);
-  if (summary && summary->IsMainSummary()) {
-    return false;
-  }
-
-  // Don't suppress NAC, unless it's a ::before, inside ::marker, or ::after.
-  if (aChild.IsRootOfNativeAnonymousSubtree() &&
-      !(aChild.IsGeneratedContentContainerForMarker() &&
-        aComputedStyle->StyleList()->mListStylePosition ==
-            NS_STYLE_LIST_STYLE_POSITION_INSIDE) &&
-      !aChild.IsGeneratedContentContainerForBefore() &&
-      !aChild.IsGeneratedContentContainerForAfter()) {
-    return false;
-  }
-
-  return true;
-}
-
 const nsCSSFrameConstructor::FrameConstructionData*
 nsCSSFrameConstructor::FindDataForContent(nsIContent& aContent,
                                           ComputedStyle& aStyle,
@@ -5458,16 +5363,6 @@ void nsCSSFrameConstructor::AddFrameConstructionItemsInternal(
     return;
   }
 
-  // When constructing a child of a non-open <details>, create only the frame
-  // for the main <summary> element, and skip other elements.  This only applies
-  // to things that are not roots of native anonymous subtrees (except for
-  // ::before and ::after); we always want to create "internal" anonymous
-  // content.
-  auto* const details = HTMLDetailsElement::FromNodeOrNull(parent);
-  if (ShouldSuppressFrameInNonOpenDetails(details, aComputedStyle, *aContent)) {
-    return;
-  }
-
   if (aContent->IsHTMLElement(nsGkAtoms::legend) && aParentFrame) {
     const nsFieldSetFrame* const fs = GetFieldSetFrameFor(aParentFrame);
     if (fs && !fs->GetLegend() && !aState.mHasRenderedLegend &&
@@ -5510,16 +5405,6 @@ void nsCSSFrameConstructor::AddFrameConstructionItemsInternal(
       !(bits & FCDATA_IS_TABLE_PART) && !(bits & FCDATA_IS_SVG_TEXT);
   if (canHavePageBreak && display.BreakBefore()) {
     AppendPageBreakItem(aContent, aItems);
-  }
-
-  if (details && details->Open()) {
-    const auto* const summary = HTMLSummaryElement::FromNode(aContent);
-    if (summary && summary->IsMainSummary()) {
-      // If details is open, the main summary needs to be rendered as if it is
-      // the first child, so add the item to the front of the item list.
-      item = aItems.PrependItem(this, data, aContent, do_AddRef(aComputedStyle),
-                                aSuppressWhiteSpaceOptimizations);
-    }
   }
 
   if (!item) {
@@ -5794,7 +5679,7 @@ nsContainerFrame* nsCSSFrameConstructor::GetAbsoluteContainingBlock(
   // It is possible for the search for the containing block to fail, because
   // no absolute container can be found in the parent chain.  In those cases,
   // we fall back to the document element's containing block.
-  return mHasRootAbsPosContainingBlock ? mDocElementContainingBlock : nullptr;
+  return mDocElementContainingBlock;
 }
 
 nsContainerFrame* nsCSSFrameConstructor::GetFloatContainingBlock(
@@ -7678,7 +7563,6 @@ bool nsCSSFrameConstructor::ContentRemoved(nsIContent* aChild,
       mRootElementStyleFrame = nullptr;
       mDocElementContainingBlock = nullptr;
       mPageSequenceFrame = nullptr;
-      mHasRootAbsPosContainingBlock = false;
     }
 
     if (haveFLS && mRootElementFrame) {
@@ -8141,9 +8025,6 @@ nsIFrame* nsCSSFrameConstructor::CreateContinuingFrame(
   } else if (LayoutFrameType::RubyTextContainer == frameType) {
     newFrame = NS_NewRubyTextContainerFrame(mPresShell, computedStyle);
     newFrame->Init(content, aParentFrame, aFrame);
-  } else if (LayoutFrameType::Details == frameType) {
-    newFrame = NS_NewDetailsFrame(mPresShell, computedStyle);
-    newFrame->Init(content, aParentFrame, aFrame);
   } else {
     MOZ_CRASH("unexpected frame type");
   }
@@ -8388,24 +8269,6 @@ bool nsCSSFrameConstructor::MaybeRecreateContainerForFrameRemoval(
     TRACE("Fieldset / Legend");
     RecreateFramesForContent(parent->GetContent(), InsertionKind::Async);
     return true;
-  }
-
-  if (parent && parent->IsDetailsFrame()) {
-    HTMLSummaryElement* summary =
-        HTMLSummaryElement::FromNode(aFrame->GetContent());
-    DetailsFrame* detailsFrame = static_cast<DetailsFrame*>(parent);
-
-    // Unlike adding summary element cases, we need to check children of the
-    // parent details frame since at this moment the summary element has been
-    // already removed from the parent details element's child list.
-    if (summary && detailsFrame->HasMainSummaryFrame(aFrame)) {
-      // When removing a summary, we should reframe the parent details frame to
-      // ensure that another summary is used or the default summary is
-      // generated.
-      TRACE("Details / Summary");
-      RecreateFramesForContent(parent->GetContent(), InsertionKind::Async);
-      return true;
-    }
   }
 
   // Now check for possibly needing to reconstruct due to a pseudo parent
@@ -9475,6 +9338,71 @@ static void VerifyGridFlexContainerChildren(nsIFrame* aParentFrame,
 #endif
 }
 
+static bool FrameHasOnlyPlaceholderPrevSiblings(const nsIFrame* aFrame) {
+  // Check for prev siblings, ignoring placeholder frames.
+  MOZ_ASSERT(aFrame, "frame must not be null");
+  const nsIFrame* prevSibling = aFrame;
+  do {
+    prevSibling = prevSibling->GetPrevSibling();
+  } while (prevSibling && prevSibling->IsPlaceholderFrame());
+  return !prevSibling;
+}
+
+static bool FrameHasOnlyPlaceholderNextSiblings(const nsIFrame* aFrame) {
+  // Check for next siblings, ignoring placeholder frames.
+  MOZ_ASSERT(aFrame, "frame must not be null");
+  const nsIFrame* nextSibling = aFrame;
+  do {
+    nextSibling = nextSibling->GetNextSibling();
+  } while (nextSibling && nextSibling->IsPlaceholderFrame());
+  return !nextSibling;
+}
+
+static void SetPageValues(nsIFrame* const aFrame,
+                          const nsAtom* const aAutoValue,
+                          const nsAtom* const aStartValue,
+                          const nsAtom* const aEndValue) {
+  MOZ_ASSERT(aAutoValue, "Auto page value should never be null");
+  MOZ_ASSERT(aStartValue || aEndValue, "Should not have called with no values");
+  nsIFrame::PageValues* pageValues =
+      aFrame->GetProperty(nsIFrame::PageValuesProperty());
+
+  if (aStartValue) {
+    if (aStartValue == aAutoValue) {
+      // If the page value struct already exists, set the start value to null
+      // to indicate the auto value.
+      if (pageValues) {
+        pageValues->mStartPageValue = nullptr;
+      }
+    } else {
+      // The start value is not auto, so we need to store it, creating the
+      // page values struct if it does not already exist.
+      if (!pageValues) {
+        pageValues = new nsIFrame::PageValues();
+        aFrame->SetProperty(nsIFrame::PageValuesProperty(), pageValues);
+      }
+      pageValues->mStartPageValue = aStartValue;
+    }
+  }
+  if (aEndValue) {
+    if (aEndValue == aAutoValue) {
+      // If the page value struct already exists, set the end value to null
+      // to indicate the auto value.
+      if (pageValues) {
+        pageValues->mEndPageValue = nullptr;
+      }
+    } else {
+      // The end value is not auto, so we need to store it, creating the
+      // page values struct if it does not already exist.
+      if (!pageValues) {
+        pageValues = new nsIFrame::PageValues();
+        aFrame->SetProperty(nsIFrame::PageValuesProperty(), pageValues);
+      }
+      pageValues->mEndPageValue = aEndValue;
+    }
+  }
+}
+
 inline void nsCSSFrameConstructor::ConstructFramesFromItemList(
     nsFrameConstructorState& aState, FrameConstructionItemList& aItems,
     nsContainerFrame* aParentFrame, bool aParentIsWrapperAnonBox,
@@ -9558,9 +9486,21 @@ inline void nsCSSFrameConstructor::ConstructFramesFromItemList(
     // Set the start/end page values while iterating the frame list, to walk
     // up the frame tree only once after iterating the frame list.
     // This also avoids extra property lookups on these frames.
+    MOZ_ASSERT(aState.mAutoPageNameValue == aParentFrame->GetAutoPageValue(),
+               "aState.mAutoPageNameValue should have been equivalent to "
+               "the auto value stored on our parent frame.");
+    // Even though we store null for page values that equal the "auto" resolved
+    // value on frames, we always want startPageValue/endPageValue to be the
+    // actual atoms reflecting the start/end values. This is because when we
+    // propagate the values up the frame tree, we will need to compare them to
+    // the auto value for each ancestor. This value might be different than the
+    // auto value for this frame.
     const nsAtom* startPageValue = nullptr;
     const nsAtom* endPageValue = nullptr;
     for (nsIFrame* f : aFrameList) {
+      if (f->IsPlaceholderFrame()) {
+        continue;
+      }
       // Resolve auto against the parent frame's used page name, which has been
       // determined and set on aState.mAutoPageNameValue. If this item is not
       // block-level then we use the value that auto resolves to.
@@ -9589,46 +9529,75 @@ inline void nsCSSFrameConstructor::ConstructFramesFromItemList(
               : aState.mAutoPageNameValue;
       nsIFrame::PageValues* pageValues =
           f->GetProperty(nsIFrame::PageValuesProperty());
-      if (!pageValues) {
-        pageValues = new nsIFrame::PageValues();
-        f->AddProperty(nsIFrame::PageValuesProperty(), pageValues);
+      // If this frame has any children, it will already have had its page
+      // values set at this point. However, if no page values have been set,
+      // we must ensure that the appropriate PageValuesProperty value has been
+      // set.
+      // If the page name is equal to the auto value, then PageValuesProperty
+      // should remain null to indicate that the start/end values are both
+      // equal to the auto value.
+      if (pageNameAtom != aState.mAutoPageNameValue && !pageValues) {
+        pageValues = new nsIFrame::PageValues{pageNameAtom, pageNameAtom};
+        f->SetProperty(nsIFrame::PageValuesProperty(), pageValues);
       }
-      MOZ_ASSERT(!pageValues->mStartPageValue == !pageValues->mEndPageValue,
-                 "Both or neither mStartPageValue and mEndPageValue should "
-                 "have been set");
-      if (!pageValues->mStartPageValue) {
-        pageValues->mStartPageValue = pageNameAtom;
-        pageValues->mEndPageValue = pageNameAtom;
-      }
+      // We don't want to use GetStartPageValue() or GetEndPageValue(), as each
+      // requires a property lookup which we can avoid here.
       if (!startPageValue) {
-        startPageValue = pageValues->mStartPageValue;
+        startPageValue = (pageValues && pageValues->mStartPageValue)
+                             ? pageValues->mStartPageValue.get()
+                             : aState.mAutoPageNameValue;
       }
-      endPageValue = pageValues->mEndPageValue;
+      endPageValue = (pageValues && pageValues->mEndPageValue)
+                         ? pageValues->mEndPageValue.get()
+                         : aState.mAutoPageNameValue;
+      MOZ_ASSERT(startPageValue && endPageValue,
+                 "Should have found start/end page value");
     }
     MOZ_ASSERT(!startPageValue == !endPageValue,
                "Should have set both or neither page values");
     if (startPageValue) {
-      // TODO: This is slightly incorrect! See Bug 1764437
-      // We should be waiting all of our descendent frames to be constructed.
-      //
-      // Alternatively, we could propagate this back up the frame tree after
-      // constructing this frame's first child, inspecting the parent frames
-      // and rewriting their first child page-name.
-      for (nsContainerFrame* frame = aParentFrame;
-           frame && frame->IsBlockFrameOrSubclass();
-           frame = frame->GetParent()) {
-        nsIFrame::PageValues* const parentPageValues =
-            frame->GetProperty(nsIFrame::PageValuesProperty());
-        // Propagate the start page value back up the frame tree.
-        // If the frame already has mStartPageValue set, then we are not a
-        // descendant of the frame's first child.
-        if (!parentPageValues) {
-          break;
+      // Walk up the frame tree from our parent frame, propagating start and
+      // end page values.
+      // As we go, if we find that, for a frame, we are not contributing one of
+      // the start/end page values, then our subtree will not contribute this
+      // value from that frame onward. startPageValue/endPageValue are set to
+      // null to indicate this.
+      // Stop iterating when we are not contributing either start or end
+      // values, when we hit the root frame (no parent), or when we find a
+      // frame that is not a block frame.
+      for (nsContainerFrame* ancestorFrame = aParentFrame;
+           (startPageValue || endPageValue) && ancestorFrame &&
+           ancestorFrame->IsBlockFrameOrSubclass();
+           ancestorFrame = ancestorFrame->GetParent()) {
+        MOZ_ASSERT(!ancestorFrame->GetPrevInFlow(),
+                   "Should not have fragmentation yet");
+        MOZ_ASSERT(ancestorFrame->mWasVisitedByAutoFrameConstructionPageName,
+                   "Frame should have been visited by "
+                   "AutoFrameConstructionPageName");
+        {
+          // Get what the auto value is, based on this frame's parent.
+          // For the root frame, `auto` resolves to the empty atom.
+          const nsContainerFrame* const parent = ancestorFrame->GetParent();
+          const nsAtom* const parentAuto = MOZ_LIKELY(parent)
+                                               ? parent->GetAutoPageValue()
+                                               : nsGkAtoms::_empty;
+          SetPageValues(ancestorFrame, parentAuto, startPageValue,
+                        endPageValue);
         }
-        if (!parentPageValues->mStartPageValue) {
-          parentPageValues->mStartPageValue = startPageValue;
+        // Once we stop contributing start/end values, we know there is a
+        // sibling subtree that contributed that value to our shared parent
+        // instead of our starting frame's subtree. This means once
+        // startPageValue/endPageValue becomes null, indicating that we are no
+        // longer contributing that page value, it should stay null and we no
+        // longer need to check for siblings in that direction.
+        if (startPageValue &&
+            !FrameHasOnlyPlaceholderPrevSiblings(ancestorFrame)) {
+          startPageValue = nullptr;
         }
-        parentPageValues->mEndPageValue = endPageValue;
+        if (endPageValue &&
+            !FrameHasOnlyPlaceholderNextSiblings(ancestorFrame)) {
+          endPageValue = nullptr;
+        }
       }
     }
   }
@@ -10588,9 +10557,7 @@ void nsCSSFrameConstructor::ConstructBlock(
   // clang-format on
 
   nsBlockFrame* blockFrame = do_QueryFrame(*aNewFrame);
-  MOZ_ASSERT(blockFrame &&
-                 (blockFrame->IsBlockFrame() || blockFrame->IsDetailsFrame()),
-             "not a block frame nor a details frame?");
+  MOZ_ASSERT(blockFrame && blockFrame->IsBlockFrame(), "not a block frame?");
 
   // Create column hierarchy if necessary.
   const bool needsColumn =
@@ -10691,9 +10658,8 @@ nsBlockFrame* nsCSSFrameConstructor::BeginBuildingColumns(
     nsFrameConstructorState& aState, nsIContent* aContent,
     nsContainerFrame* aParentFrame, nsContainerFrame* aColumnContent,
     ComputedStyle* aComputedStyle) {
-  MOZ_ASSERT(
-      aColumnContent->IsBlockFrame() || aColumnContent->IsDetailsFrame(),
-      "aColumnContent should either be a block frame or a details frame.");
+  MOZ_ASSERT(aColumnContent->IsBlockFrame(),
+             "aColumnContent should be a block frame.");
   MOZ_ASSERT(aComputedStyle->StyleColumn()->IsColumnContainerStyle(),
              "No need to build a column hierarchy!");
 
@@ -11279,17 +11245,6 @@ bool nsCSSFrameConstructor::WipeInsertionParent(nsContainerFrame* aFrame) {
     return true;
   }
 
-  // A <details> that's getting new children. When inserting
-  // elements into <details>, we reframe the <details> and let frame constructor
-  // move the main <summary> to the front when constructing the frame
-  // construction items.
-  if (auto* details =
-          HTMLDetailsElement::FromNodeOrNull(aFrame->GetContent())) {
-    TRACE("Details / Summary");
-    RecreateFramesForContent(details, InsertionKind::Async);
-    return true;
-  }
-
   // Reframe the multi-column container whenever elements insert/append
   // into it because we need to reconstruct column-span split.
   if (aFrame->IsColumnSetWrapperFrame()) {
@@ -11578,9 +11533,6 @@ bool nsCSSFrameConstructor::WipeContainingBlock(
 
   // Situation #5 is a frame in multicol subtree that's getting new children.
   if (aFrame->HasAnyStateBits(NS_FRAME_HAS_MULTI_COLUMN_ANCESTOR)) {
-    MOZ_ASSERT(!aFrame->IsDetailsFrame(),
-               "Inserting elements into <details> should have been reframed!");
-
     bool anyColumnSpanItems = false;
     for (FCItemIterator iter(aItems); !iter.IsDone(); iter.Next()) {
       if (iter.item().mComputedStyle->StyleColumn()->IsColumnSpanStyle()) {

@@ -6,8 +6,8 @@
 const { DevToolsLoader } = ChromeUtils.import(
   "resource://devtools/shared/loader/Loader.jsm"
 );
-const { DevToolsSocketStatus } = ChromeUtils.import(
-  "resource://devtools/shared/security/DevToolsSocketStatus.jsm"
+const { DevToolsSocketStatus } = ChromeUtils.importESModule(
+  "resource://devtools/shared/security/DevToolsSocketStatus.sys.mjs"
 );
 
 add_task(async function() {
@@ -80,7 +80,9 @@ function checkSocketStatus(expectedExcludeFalse, expectedExcludeTrue) {
 async function setupDevToolsServer({ fromBrowserToolbox }) {
   info("Create a separate loader instance for the DevToolsServer.");
   const loader = new DevToolsLoader();
-  const { DevToolsServer } = loader.require("devtools/server/devtools-server");
+  const { DevToolsServer } = loader.require(
+    "resource://devtools/server/devtools-server.js"
+  );
 
   DevToolsServer.init();
   DevToolsServer.registerAllActors();

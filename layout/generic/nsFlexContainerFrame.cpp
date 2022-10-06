@@ -57,6 +57,11 @@ static bool IsLegacyBox(const nsIFrame* aFlexContainer) {
       NS_STATE_FLEX_IS_EMULATING_LEGACY_WEBKIT_BOX);
 }
 
+static bool IsLegacyMozBox(const nsFlexContainerFrame* aFlexContainer) {
+  return aFlexContainer->HasAnyStateBits(
+      NS_STATE_FLEX_IS_EMULATING_LEGACY_MOZ_BOX);
+}
+
 // Returns the OrderState enum we should pass to CSSOrderAwareFrameIterator
 // (depending on whether aFlexContainer has
 // NS_STATE_FLEX_NORMAL_FLOW_CHILDREN_IN_CSS_ORDER state bit).
@@ -1272,36 +1277,30 @@ StyleAlignFlags nsFlexContainerFrame::CSSAlignmentForAbsPosChild(
   StyleAlignFlags alignment{0};
   StyleAlignFlags alignmentFlags{0};
   if (isMainAxis) {
+    // We're aligning in the main axis: align according to 'justify-content'.
+    // (We don't care about justify-self; it has no effect on children of flex
+    // containers, unless https://github.com/w3c/csswg-drafts/issues/7644
+    // changes that.)
     alignment = SimplifyAlignOrJustifyContentForOneItem(
         containerStylePos->mJustifyContent,
         /*aIsAlign = */ false);
   } else {
-    const StyleAlignFlags alignContent =
-        SimplifyAlignOrJustifyContentForOneItem(
-            containerStylePos->mAlignContent,
-            /*aIsAlign = */ true);
-    if (StyleFlexWrap::Nowrap != containerStylePos->mFlexWrap &&
-        alignContent != StyleAlignFlags::STRETCH) {
-      // Multi-line, align-content isn't stretch --> align-content determines
-      // this child's alignment in the cross axis.
-      alignment = alignContent;
-    } else {
-      // Single-line, or multi-line but the (one) line stretches to fill
-      // container. Respect align-self.
-      alignment = aChildRI.mStylePosition->UsedAlignSelf(Style())._0;
-      // Extract and strip align flag bits
-      alignmentFlags = alignment & StyleAlignFlags::FLAG_BITS;
-      alignment &= ~StyleAlignFlags::FLAG_BITS;
+    // We're aligning in the cross axis: align according to 'align-self'.
+    // (We don't care about align-content; it has no effect on abspos flex
+    // children, per https://github.com/w3c/csswg-drafts/issues/7596 )
+    alignment = aChildRI.mStylePosition->UsedAlignSelf(Style())._0;
+    // Extract and strip align flag bits
+    alignmentFlags = alignment & StyleAlignFlags::FLAG_BITS;
+    alignment &= ~StyleAlignFlags::FLAG_BITS;
 
-      if (alignment == StyleAlignFlags::NORMAL) {
-        // "the 'normal' keyword behaves as 'start' on replaced
-        // absolutely-positioned boxes, and behaves as 'stretch' on all other
-        // absolutely-positioned boxes."
-        // https://drafts.csswg.org/css-align/#align-abspos
-        alignment = aChildRI.mFrame->IsFrameOfType(nsIFrame::eReplaced)
-                        ? StyleAlignFlags::START
-                        : StyleAlignFlags::STRETCH;
-      }
+    if (alignment == StyleAlignFlags::NORMAL) {
+      // "the 'normal' keyword behaves as 'start' on replaced
+      // absolutely-positioned boxes, and behaves as 'stretch' on all other
+      // absolutely-positioned boxes."
+      // https://drafts.csswg.org/css-align/#align-abspos
+      alignment = aChildRI.mFrame->IsFrameOfType(nsIFrame::eReplaced)
+                      ? StyleAlignFlags::START
+                      : StyleAlignFlags::STRETCH;
     }
   }
 
@@ -1368,19 +1367,7 @@ FlexItem* nsFlexContainerFrame::GenerateFlexItemForChild(
       // If we get here, we're resolving the flex base size for a flex item, and
       // we fall into the flexbox spec section 9.2 step 3, substep C (if we have
       // a definite cross size) or E (if not).
-      if (aChildFrame->GetAspectRatio() ||
-          aChildFrame->IsFrameOfType(eReplacedSizing)) {
-        // FIXME: This is a workaround. Once bug 1670151 is fixed, aspect-ratio
-        // will be considered when resolving flex item's flex base size with the
-        // value 'max-content'. Replaced elements without preferred
-        // aspect-ratio, e.g. <svg> without viewBox nor aspect-ratio property,
-        // need this workaround since we still want to use replaced elements'
-        // intrinsic sizing rules in
-        // https://drafts.csswg.org/css-sizing-3/#intrinsic-sizes
-        styleFlexBaseSize.emplace(StyleSize::Auto());
-      } else {
-        styleFlexBaseSize.emplace(StyleSize::MaxContent());
-      }
+      styleFlexBaseSize.emplace(StyleSize::MaxContent());
     } else if (flexBasis.IsSize() && !flexBasis.IsAuto()) {
       // For all other non-'auto' flex-basis values, we just swap in the
       // flex-basis itself for the preferred main-size property.
@@ -1450,55 +1437,6 @@ FlexItem* nsFlexContainerFrame::GenerateFlexItemForChild(
       aAxisTracker, childWM, childRI.ComputedMaxISize(),
       childRI.ComputedMaxBSize());
 
-  // SPECIAL-CASE FOR WIDGET-IMPOSED SIZES
-  // Check if we're a themed widget, in which case we might have a minimum
-  // main & cross size imposed by our widget (which we can't go below), or
-  // (more severe) our widget might have only a single valid size.
-  bool isFixedSizeWidget = false;
-  const nsStyleDisplay* disp = aChildFrame->StyleDisplay();
-  if (aChildFrame->IsThemed(disp)) {
-    LayoutDeviceIntSize widgetMinSize;
-    bool canOverride = true;
-    PresContext()->Theme()->GetMinimumWidgetSize(PresContext(), aChildFrame,
-                                                 disp->EffectiveAppearance(),
-                                                 &widgetMinSize, &canOverride);
-
-    nscoord widgetMainMinSize = PresContext()->DevPixelsToAppUnits(
-        aAxisTracker.MainComponent(widgetMinSize));
-    nscoord widgetCrossMinSize = PresContext()->DevPixelsToAppUnits(
-        aAxisTracker.CrossComponent(widgetMinSize));
-
-    // GetMinimumWidgetSize() returns border-box. We need content-box, so
-    // subtract borderPadding.
-    const LogicalMargin bpInFlexWM =
-        childRI.ComputedLogicalBorderPadding(flexWM);
-    widgetMainMinSize -= aAxisTracker.MarginSizeInMainAxis(bpInFlexWM);
-    widgetCrossMinSize -= aAxisTracker.MarginSizeInCrossAxis(bpInFlexWM);
-    // ... (but don't let that push these min sizes below 0).
-    widgetMainMinSize = std::max(0, widgetMainMinSize);
-    widgetCrossMinSize = std::max(0, widgetCrossMinSize);
-
-    if (!canOverride) {
-      // Fixed-size widget: freeze our main-size at the widget's mandated size.
-      // (Set min and max main-sizes to that size, too, to keep us from
-      // clamping to any other size later on.)
-      flexBaseSize = mainMinSize = mainMaxSize = widgetMainMinSize;
-      tentativeCrossSize = crossMinSize = crossMaxSize = widgetCrossMinSize;
-      isFixedSizeWidget = true;
-    } else {
-      // Variable-size widget: ensure our min/max sizes are at least as large
-      // as the widget's mandated minimum size, so we don't flex below that.
-      mainMinSize = std::max(mainMinSize, widgetMainMinSize);
-      mainMaxSize = std::max(mainMaxSize, widgetMainMinSize);
-
-      if (tentativeCrossSize != NS_UNCONSTRAINEDSIZE) {
-        tentativeCrossSize = std::max(tentativeCrossSize, widgetCrossMinSize);
-      }
-      crossMinSize = std::max(crossMinSize, widgetCrossMinSize);
-      crossMaxSize = std::max(crossMaxSize, widgetCrossMinSize);
-    }
-  }
-
   // Construct the flex item!
   FlexItem* item = aLine.Items().EmplaceBack(
       childRI, flexGrow, flexShrink, flexBaseSize, mainMinSize, mainMaxSize,
@@ -1536,9 +1474,8 @@ FlexItem* nsFlexContainerFrame::GenerateFlexItemForChild(
   item->ResolveFlexBaseSizeFromAspectRatio(childRI);
 
   // If we're inflexible, we can just freeze to our hypothetical main-size
-  // up-front. Similarly, if we're a fixed-size widget, we only have one
-  // valid size, so we freeze to keep ourselves from flexing.
-  if (isFixedSizeWidget || (flexGrow == 0.0f && flexShrink == 0.0f)) {
+  // up-front.
+  if (flexGrow == 0.0f && flexShrink == 0.0f) {
     item->Freeze();
     if (flexBaseSize < mainMinSize) {
       item->SetWasMinClamped();
@@ -3653,10 +3590,9 @@ CrossAxisPositionTracker::CrossAxisPositionTracker(
   if (mPackingSpaceRemaining != 0) {
     if (mAlignContent.primary == StyleAlignFlags::BASELINE ||
         mAlignContent.primary == StyleAlignFlags::LAST_BASELINE) {
-      NS_WARNING(
-          "NYI: "
-          "align-items/align-self:left/right/self-start/self-end/baseline/"
-          "last baseline");
+      // TODO: Bug 1480850 will implement 'align-content: [first/last] baseline'
+      // for flexbox. Until then, behaves as if align-content is 'flex-start' by
+      // doing nothing.
     } else if (mAlignContent.primary == StyleAlignFlags::FLEX_START) {
       // All packing space should go at the end --> nothing to do here.
     } else if (mAlignContent.primary == StyleAlignFlags::FLEX_END) {
@@ -4056,37 +3992,6 @@ LogicalSide FlexboxAxisTracker::CrossAxisStartSide() const {
       CrossAxis(), IsCrossAxisReversed() ? eLogicalEdgeEnd : eLogicalEdgeStart);
 }
 
-bool nsFlexContainerFrame::ShouldUseMozBoxCollapseBehavior(
-    const nsStyleDisplay* aFlexStyleDisp) {
-  MOZ_ASSERT(StyleDisplay() == aFlexStyleDisp, "wrong StyleDisplay passed in");
-
-  // Quick filter to screen out *actual* (not-coopted-for-emulation)
-  // flex containers, using state bit:
-  if (!IsLegacyBox(this)) {
-    return false;
-  }
-
-  // Check our own display value:
-  if (aFlexStyleDisp->mDisplay == mozilla::StyleDisplay::MozBox ||
-      aFlexStyleDisp->mDisplay == mozilla::StyleDisplay::MozInlineBox) {
-    return true;
-  }
-
-  // Check our parent's display value, if we're an anonymous box (with a
-  // potentially-untrustworthy display value):
-  auto pseudoType = Style()->GetPseudoType();
-  if (pseudoType == PseudoStyleType::scrolledContent ||
-      pseudoType == PseudoStyleType::buttonContent) {
-    const nsStyleDisplay* disp = GetParent()->StyleDisplay();
-    if (disp->mDisplay == mozilla::StyleDisplay::MozBox ||
-        disp->mDisplay == mozilla::StyleDisplay::MozInlineBox) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 void nsFlexContainerFrame::GenerateFlexLines(
     const ReflowInput& aReflowInput, const nscoord aTentativeContentBoxMainSize,
     const nscoord aTentativeContentBoxCrossSize,
@@ -4141,8 +4046,7 @@ void nsFlexContainerFrame::GenerateFlexLines(
                        iter.ItemsAreAlreadyInOrder());
 
   bool prevItemRequestedBreakAfter = false;
-  const bool useMozBoxCollapseBehavior =
-      ShouldUseMozBoxCollapseBehavior(aReflowInput.mStyleDisplay);
+  const bool useMozBoxCollapseBehavior = IsLegacyMozBox(this);
 
   for (; !iter.AtEnd(); iter.Next()) {
     nsIFrame* childFrame = *iter;
@@ -4532,7 +4436,7 @@ void nsFlexContainerFrame::Reflow(nsPresContext* aPresContext,
                                   ReflowOutput& aReflowOutput,
                                   const ReflowInput& aReflowInput,
                                   nsReflowStatus& aStatus) {
-  if (GetInFlowParent() && GetInFlowParent()->IsContentHiddenForLayout()) {
+  if (IsHiddenByContentVisibilityOfInFlowParentForLayout()) {
     return;
   }
 
@@ -5202,7 +5106,7 @@ nsFlexContainerFrame::FlexLayoutResult nsFlexContainerFrame::DoFlexLayout(
   // constructor), we can create struts for any flex items with
   // "visibility: collapse" (and restart flex layout).
   if (aStruts.IsEmpty() &&  // (Don't make struts if we already did)
-      !ShouldUseMozBoxCollapseBehavior(aReflowInput.mStyleDisplay)) {
+      !IsLegacyMozBox(this)) {
     BuildStrutInfoFromCollapsedItems(flr.mLines, aStruts);
     if (!aStruts.IsEmpty()) {
       // Restart flex layout, using our struts.
@@ -5267,9 +5171,10 @@ std::tuple<nscoord, bool> nsFlexContainerFrame::ReflowChildren(
     const LogicalMargin& aBorderPadding,
     const nscoord aSumOfPrevInFlowsChildrenBlockSize,
     const FlexboxAxisTracker& aAxisTracker, FlexLayoutResult& aFlr) {
-  if (IsContentHiddenForLayout()) {
+  if (HidesContentForLayout()) {
     return {0, false};
   }
+
   // Before giving each child a final reflow, calculate the origin of the
   // flex container's content box (with respect to its border-box), so that
   // we can compute our flex item's final positions.
@@ -5476,7 +5381,7 @@ void nsFlexContainerFrame::PopulateReflowOutput(
     // as their baseline, or our content is hidden in which case, we'll use the
     // wrong baseline (but no big deal).
     NS_WARNING_ASSERTION(
-        IsContentHidden() || aLines[0].IsEmpty(),
+        HidesContentForLayout() || aLines[0].IsEmpty(),
         "Have flex items but didn't get an ascent - that's odd (or there are "
         "just gigantic sizes involved)");
     // Per spec, synthesize baseline from the flex container's content box
@@ -5723,8 +5628,7 @@ nscoord nsFlexContainerFrame::IntrinsicISize(gfxContext* aRenderingContext,
                                                     NS_UNCONSTRAINEDSIZE);
   }
 
-  const bool useMozBoxCollapseBehavior =
-      ShouldUseMozBoxCollapseBehavior(StyleDisplay());
+  const bool useMozBoxCollapseBehavior = IsLegacyMozBox(this);
 
   // The loop below sets aside space for a gap before each item besides the
   // first. This bool helps us handle that special-case.
@@ -5795,4 +5699,107 @@ nscoord nsFlexContainerFrame::GetPrefISize(gfxContext* aRenderingContext) {
   }
 
   return mCachedPrefISize;
+}
+
+int32_t nsFlexContainerFrame::GetNumLines() const {
+  // TODO(emilio, bug 1793251): Treating all row oriented frames as single-lines
+  // might not be great for flex-wrap'd containers, consider trying to do
+  // better? We probably would need to persist more stuff than we do after
+  // layout.
+  return FlexboxAxisInfo(this).mIsRowOriented ? 1 : mFrames.GetLength();
+}
+
+bool nsFlexContainerFrame::IsLineIteratorFlowRTL() {
+  FlexboxAxisInfo info(this);
+  if (info.mIsRowOriented) {
+    const bool isRtl = StyleVisibility()->mDirection == StyleDirection::Rtl;
+    return info.mIsMainAxisReversed != isRtl;
+  }
+  return false;
+}
+
+Result<nsILineIterator::LineInfo, nsresult> nsFlexContainerFrame::GetLine(
+    int32_t aLineNumber) {
+  if (aLineNumber < 0 || aLineNumber >= GetNumLines()) {
+    return Err(NS_ERROR_FAILURE);
+  }
+  FlexboxAxisInfo info(this);
+  LineInfo lineInfo;
+  if (info.mIsRowOriented) {
+    lineInfo.mLineBounds = GetRect();
+    lineInfo.mFirstFrameOnLine = mFrames.FirstChild();
+    // This isn't quite ideal for multi-line row flexbox, see bug 1793251.
+    lineInfo.mNumFramesOnLine = mFrames.GetLength();
+  } else {
+    // TODO(emilio, bug 1793322): Deal with column-reverse (mIsMainAxisReversed)
+    nsIFrame* f = mFrames.FrameAt(aLineNumber);
+    lineInfo.mLineBounds = f->GetRect();
+    lineInfo.mFirstFrameOnLine = f;
+    lineInfo.mNumFramesOnLine = 1;
+  }
+  return lineInfo;
+}
+
+int32_t nsFlexContainerFrame::FindLineContaining(nsIFrame* aFrame,
+                                                 int32_t aStartLine) {
+  const int32_t index = mFrames.IndexOf(aFrame);
+  if (index < 0) {
+    return -1;
+  }
+  const FlexboxAxisInfo info(this);
+  if (info.mIsRowOriented) {
+    return 0;
+  }
+  if (index < aStartLine) {
+    return -1;
+  }
+  return index;
+}
+
+NS_IMETHODIMP
+nsFlexContainerFrame::CheckLineOrder(int32_t aLine, bool* aIsReordered,
+                                     nsIFrame** aFirstVisual,
+                                     nsIFrame** aLastVisual) {
+  *aIsReordered = false;
+  *aFirstVisual = nullptr;
+  *aLastVisual = nullptr;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsFlexContainerFrame::FindFrameAt(int32_t aLineNumber, nsPoint aPos,
+                                  nsIFrame** aFrameFound,
+                                  bool* aPosIsBeforeFirstFrame,
+                                  bool* aPosIsAfterLastFrame) {
+  const auto wm = GetWritingMode();
+  const LogicalPoint pos(wm, aPos, GetSize());
+  const FlexboxAxisInfo info(this);
+
+  *aFrameFound = nullptr;
+  *aPosIsBeforeFirstFrame = true;
+  *aPosIsAfterLastFrame = false;
+
+  if (!info.mIsRowOriented) {
+    nsIFrame* f = mFrames.FrameAt(aLineNumber);
+    if (!f) {
+      return NS_OK;
+    }
+
+    auto rect = f->GetLogicalRect(wm, GetSize());
+    *aFrameFound = f;
+    *aPosIsBeforeFirstFrame = pos.I(wm) < rect.IStart(wm);
+    *aPosIsAfterLastFrame = pos.I(wm) > rect.IEnd(wm);
+    return NS_OK;
+  }
+
+  LineFrameFinder finder(aPos, GetSize(), GetWritingMode(),
+                         IsLineIteratorFlowRTL());
+  for (nsIFrame* f : mFrames) {
+    finder.Scan(f);
+    if (finder.IsDone()) {
+      break;
+    }
+  }
+  finder.Finish(aFrameFound, aPosIsBeforeFirstFrame, aPosIsAfterLastFrame);
+  return NS_OK;
 }

@@ -1005,7 +1005,7 @@ var gExtensionsNotifications = {
     const DEFAULT_EXTENSION_ICON =
       "chrome://mozapps/skin/extensions/extensionGeneric.svg";
     button.setAttribute("image", icon || DEFAULT_EXTENSION_ICON);
-    button.className = "addon-banner-item";
+    button.className = "addon-banner-item subviewbutton";
 
     button.addEventListener("command", callback);
     PanelUI.addonNotificationContainer.appendChild(button);
@@ -1213,7 +1213,7 @@ customElements.define(
       this._openMenuButton.addEventListener("blur", this);
       this._openMenuButton.addEventListener("focus", this);
 
-      this.addEventListener("click", this);
+      this.addEventListener("command", this);
       this.addEventListener("mouseout", this);
       this.addEventListener("mouseover", this);
 
@@ -1224,11 +1224,7 @@ customElements.define(
       const { target } = event;
 
       switch (event.type) {
-        case "click":
-          if (event.button !== 0) {
-            return;
-          }
-
+        case "command":
           if (target === this._openMenuButton) {
             const popup = target.ownerDocument.getElementById(
               "unified-extensions-context-menu"
@@ -1321,6 +1317,10 @@ var gUnifiedExtensions = {
       this._button = document.getElementById("unified-extensions-button");
       // TODO: Bug 1778684 - Auto-hide button when there is no active extension.
       this._button.hidden = false;
+
+      document
+        .getElementById("nav-bar")
+        .setAttribute("unifiedextensionsbuttonshown", true);
     }
 
     this._initialized = true;

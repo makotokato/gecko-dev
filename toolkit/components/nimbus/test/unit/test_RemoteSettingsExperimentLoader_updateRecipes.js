@@ -3,8 +3,8 @@
 const { ExperimentFakes } = ChromeUtils.import(
   "resource://testing-common/NimbusTestUtils.jsm"
 );
-const { FirstStartup } = ChromeUtils.import(
-  "resource://gre/modules/FirstStartup.jsm"
+const { FirstStartup } = ChromeUtils.importESModule(
+  "resource://gre/modules/FirstStartup.sys.mjs"
 );
 const { NimbusFeatures } = ChromeUtils.import(
   "resource://nimbus/ExperimentAPI.jsm"
@@ -378,8 +378,11 @@ add_task(async function test_updateRecipes_simpleFeatureInvalidAfterUpdate() {
       enabled: {
         type: "boolean",
       },
+      testSetString: {
+        type: "string",
+      },
     },
-    additionalProperties: false,
+    additionalProperties: true,
   };
 
   sinon.spy(loader, "updateRecipes");
@@ -418,7 +421,7 @@ add_task(async function test_updateRecipes_simpleFeatureInvalidAfterUpdate() {
   Assert.deepEqual(
     loader._generateVariablesOnlySchema.returnValues[0],
     EXPECTED_SCHEMA,
-    "should have generated a schema with two fields"
+    "should have generated a schema with three fields"
   );
 
   info("Replacing recipe with an invalid one");

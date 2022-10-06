@@ -253,14 +253,17 @@ XPCOMUtils.defineLazyServiceGetters(lazy, {
   gScreenManager: ["@mozilla.org/gfx/screenmanager;1", "nsIScreenManager"],
 });
 
+ChromeUtils.defineESModuleGetters(lazy, {
+  DevToolsShim: "chrome://devtools-startup/content/DevToolsShim.sys.mjs",
+  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
+});
+
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-  DevToolsShim: "chrome://devtools-startup/content/DevToolsShim.jsm",
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
   HomePage: "resource:///modules/HomePage.jsm",
   PrivacyFilter: "resource://gre/modules/sessionstore/PrivacyFilter.jsm",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
   RunState: "resource:///modules/sessionstore/RunState.jsm",
   SessionCookies: "resource:///modules/sessionstore/SessionCookies.jsm",
   SessionFile: "resource:///modules/sessionstore/SessionFile.jsm",
@@ -3981,12 +3984,12 @@ var SessionStoreInternal = {
     }
 
     if (
-      tabbrowser.selectedTab.hidden &&
+      tabbrowser.tabs.length > tabbrowser.visibleTabs.length &&
       tabbrowser.visibleTabs.length === removableTabs.length
     ) {
-      // If all the visible tabs are also removable and the selected tab is hidden, we will later remove the
-      // visible tabs causing the browser to automatically close because the only tab left is hidden.
-      // To prevent the browser from automatically closing, we will leave one other tab open.
+      // If all the visible tabs are also removable and the selected tab is hidden or removeable, we will later remove
+      // all "removable" tabs causing the browser to automatically close because the only tab left is hidden.
+      // To prevent the browser from automatically closing, we will leave one other visible tab open.
       removableTabs.shift();
     }
 

@@ -27,10 +27,10 @@ const { AppConstants } = ChromeUtils.import(
 let JSPROCESSACTORS = {
   AsyncPrefs: {
     parent: {
-      moduleURI: "resource://gre/modules/AsyncPrefs.jsm",
+      esModuleURI: "resource://gre/modules/AsyncPrefs.sys.mjs",
     },
     child: {
-      moduleURI: "resource://gre/modules/AsyncPrefs.jsm",
+      esModuleURI: "resource://gre/modules/AsyncPrefs.sys.mjs",
     },
   },
 
@@ -213,7 +213,9 @@ let JSWINDOWACTORS = {
         DOMContentLoaded: {},
       },
     },
-
+    // We only handle cookie banners for HTTP/S scheme. Avoid initializing
+    // actors for other schemes.
+    matches: ["https://*/*", "http://*/*"],
     allFrames: true,
     enablePreference: "cookiebanners.bannerClicking.enabled",
   },
@@ -332,10 +334,10 @@ let JSWINDOWACTORS = {
 
   PictureInPictureLauncher: {
     parent: {
-      moduleURI: "resource://gre/modules/PictureInPicture.jsm",
+      esModuleURI: "resource://gre/modules/PictureInPicture.sys.mjs",
     },
     child: {
-      moduleURI: "resource://gre/actors/PictureInPictureChild.jsm",
+      esModuleURI: "resource://gre/actors/PictureInPictureChild.sys.mjs",
       events: {
         MozTogglePictureInPicture: { capture: true },
       },
@@ -346,10 +348,10 @@ let JSWINDOWACTORS = {
 
   PictureInPicture: {
     parent: {
-      moduleURI: "resource://gre/modules/PictureInPicture.jsm",
+      esModuleURI: "resource://gre/modules/PictureInPicture.sys.mjs",
     },
     child: {
-      moduleURI: "resource://gre/actors/PictureInPictureChild.jsm",
+      esModuleURI: "resource://gre/actors/PictureInPictureChild.sys.mjs",
     },
 
     allFrames: true,
@@ -357,10 +359,10 @@ let JSWINDOWACTORS = {
 
   PictureInPictureToggle: {
     parent: {
-      moduleURI: "resource://gre/modules/PictureInPicture.jsm",
+      esModuleURI: "resource://gre/modules/PictureInPicture.sys.mjs",
     },
     child: {
-      moduleURI: "resource://gre/actors/PictureInPictureChild.jsm",
+      esModuleURI: "resource://gre/actors/PictureInPictureChild.sys.mjs",
       events: {
         UAWidgetSetupOrChange: {},
         contextmenu: { capture: true },

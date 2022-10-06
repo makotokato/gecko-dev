@@ -397,6 +397,7 @@ pref("browser.urlbar.suggest.calculator",           false);
 
 #if defined(EARLY_BETA_OR_EARLIER)
   // Enable QuickActions and its urlbar search mode button.
+  pref("browser.urlbar.quickactions.enabled", true);
   pref("browser.urlbar.suggest.quickactions", true);
   pref("browser.urlbar.shortcuts.quickactions", true);
   pref("browser.urlbar.quickactions.showPrefs", true);
@@ -1396,6 +1397,7 @@ pref("services.sync.prefs.sync.browser.newtabpage.activity-stream.section.highli
 pref("services.sync.prefs.sync.browser.newtabpage.enabled", true);
 pref("services.sync.prefs.sync.browser.newtabpage.pinned", true);
 pref("services.sync.prefs.sync.browser.offline-apps.notify", true);
+pref("services.sync.prefs.sync.browser.pdfjs.feature-tour", true);
 pref("services.sync.prefs.sync.browser.safebrowsing.downloads.enabled", true);
 pref("services.sync.prefs.sync.browser.safebrowsing.downloads.remote.block_potentially_unwanted", true);
 pref("services.sync.prefs.sync.browser.safebrowsing.malware.enabled", true);
@@ -2292,6 +2294,11 @@ pref("devtools.toolbox.zoomValue", "1");
 pref("devtools.toolbox.splitconsoleEnabled", false);
 pref("devtools.toolbox.splitconsoleHeight", 100);
 pref("devtools.toolbox.tabsOrder", "");
+// This is only used for local Web Extension debugging,
+// and allows to keep the window on top of all others,
+// so that you can debug the Firefox window, while keeping the devtools
+// always visible
+pref("devtools.toolbox.alwaysOnTop", true);
 
 // The fission pref for enabling the "Multiprocess Browser Toolbox", which will
 // make it possible to debug anything in Firefox (See Bug 1570639 for more information).
@@ -2713,6 +2720,17 @@ pref("browser.places.snapshots.expiration.userManaged.days", 420);
 
 // If the user has seen the Firefox View feature tour this value reflects the tour
 // message id, the id of the last screen they saw, and whether they completed the tour
-pref("browser.firefox-view.feature-tour", "{\"message\":\"FIREFOX_VIEW_FEATURE_TOUR\",\"screen\":\"FEATURE_CALLOUT_1\",\"complete\":false}");
+pref("browser.firefox-view.feature-tour", "{\"message\":\"FIREFOX_VIEW_FEATURE_TOUR\",\"screen\":\"FIREFOX_VIEW_SPOTLIGHT\",\"complete\":false}");
 // Number of times the user visited about:firefoxview
 pref("browser.firefox-view.view-count", 0);
+
+// If the user has seen the pdf.js feature tour this value reflects the tour
+// message id, the id of the last screen they saw, and whether they completed the tour
+pref("browser.pdfjs.feature-tour", "{\"message\":\"PDF_JS_FEATURE_TOUR\",\"screen\":\"\",\"complete\":false}");
+
+// Enables cookie banner handling in Nightly in Private Browsing Mode. See
+// StaticPrefList.yaml for a description of the prefs.
+#ifdef NIGHTLY_BUILD
+  pref("cookiebanners.service.mode.privateBrowsing", 1);
+  pref("cookiebanners.bannerClicking.enabled", true);
+#endif

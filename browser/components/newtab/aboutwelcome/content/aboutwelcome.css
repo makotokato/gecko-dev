@@ -67,10 +67,20 @@
 .onboardingContainer.featureCallout .screen[pos=callout] .section-main .main-content .steps {
   align-self: baseline;
   margin: -38px 30px -30px;
+  padding-block: 0;
 }
 .onboardingContainer.featureCallout .screen[pos=callout] .section-main .main-content .dismiss-button {
   margin-block: 25px -45px;
   z-index: 1;
+}
+@media (prefers-contrast) {
+  .onboardingContainer.featureCallout .screen[pos=callout] .section-main .main-content .dismiss-button {
+    background-color: var(--in-content-button-background);
+  }
+  .onboardingContainer.featureCallout .screen[pos=callout] .section-main .main-content .dismiss-button:hover {
+    background-color: var(--in-content-primary-button-background);
+    color: var(--in-content-primary-button-text-color);
+  }
 }
 .onboardingContainer.featureCallout .screen[pos=callout] .action-buttons {
   margin-block: 0 16px;
@@ -90,6 +100,16 @@
 }
 .onboardingContainer.featureCallout .screen[pos=callout] .action-buttons .primary:hover {
   background-color: var(--in-content-button-background-hover);
+}
+@media (prefers-contrast) {
+  .onboardingContainer.featureCallout .screen[pos=callout] .action-buttons .primary {
+    color: var(--in-content-button-text-color);
+    border: 1px solid var(--in-content-button-border-color);
+  }
+  .onboardingContainer.featureCallout .screen[pos=callout] .action-buttons .primary:hover {
+    background-color: var(--in-content-primary-button-background);
+    color: var(--in-content-primary-button-text-color);
+  }
 }
 .onboardingContainer.featureCallout .screen[pos=callout] .action-buttons .secondary-cta {
   float: inline-end;
@@ -150,26 +170,6 @@ html {
   height: 100%;
 }
 
-body {
-  --grey-subtitle-1: #696977;
-  --newtab-button-secondary-color: #0060DF;
-  --mr-welcome-background-color: #F8F6F4;
-  --mr-welcome-background-gradient: linear-gradient(0deg, rgba(144, 89, 255, 0.2) 0%, rgba(2, 144, 238, 0.2) 100%);
-  --mr-screen-background-color: #F8F6F4;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Ubuntu", "Helvetica Neue", sans-serif;
-  font-size: 16px;
-  position: relative;
-}
-@media (prefers-color-scheme: dark) {
-  body {
-    --grey-subtitle-1: #FFF;
-    --newtab-button-secondary-color: #FFF;
-    --mr-welcome-background-color: #333336;
-    --mr-welcome-background-gradient: linear-gradient(0deg, rgba(144, 89, 255, 0.3) 0%, rgba(2, 144, 238, 0.3) 100%);
-    --mr-screen-background-color: #62697A;
-  }
-}
-
 .dummy {
   background: var(--mr-welcome-background-color) var(--mr-welcome-background-gradient) var(--mr-secondary-position) var(--mr-screen-background-color);
 }
@@ -182,6 +182,7 @@ body {
 }
 :root[dialogroot] .onboardingContainer {
   height: 100%;
+  background-color: transparent;
 }
 :root[dialogroot] .onboardingContainer:dir(rtl) {
   transform: unset;
@@ -199,9 +200,31 @@ body {
 }
 
 .onboardingContainer {
+  --grey-subtitle-1: #696977;
+  --newtab-button-secondary-color: #0060DF;
+  --mr-welcome-background-color: #F8F6F4;
+  --mr-welcome-background-gradient: linear-gradient(0deg, rgba(144, 89, 255, 0.2) 0%, rgba(2, 144, 238, 0.2) 100%);
+  --mr-screen-background-color: #F8F6F4;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Ubuntu", "Helvetica Neue", sans-serif;
+  font-size: 16px;
+  position: relative;
   text-align: center;
   height: 100vh;
   --transition: 0.6s opacity, 0.6s scale, 0.6s rotate, 0.6s translate;
+}
+@media (prefers-color-scheme: dark) {
+  .onboardingContainer {
+    --grey-subtitle-1: #FFF;
+    --newtab-button-secondary-color: #FFF;
+    --mr-welcome-background-color: #333336;
+    --mr-welcome-background-gradient: linear-gradient(0deg, rgba(144, 89, 255, 0.3) 0%, rgba(2, 144, 238, 0.3) 100%);
+    --mr-screen-background-color: #62697A;
+  }
+}
+@media (prefers-contrast) {
+  .onboardingContainer {
+    --mr-screen-background-color: windowframe;
+  }
 }
 @media (prefers-contrast: more) {
   .onboardingContainer {
@@ -369,14 +392,8 @@ body {
 .onboardingContainer .screen[pos=split] .section-main .main-content .main-content-inner {
   min-height: 330px;
 }
-.onboardingContainer .screen[pos=split] .section-main .main-content .main-content-inner .language-switcher-container .secondary {
-  margin-inline-start: 0;
-  margin: 5px 0;
-  color: var(--in-content-primary-button-text-color);
-  background-color: var(--in-content-primary-button-background);
-}
-.onboardingContainer .screen[pos=split] .section-main .main-content .main-content-inner .language-switcher-container .secondary:hover {
-  background-color: var(--in-content-primary-button-background-hover);
+.onboardingContainer .screen[pos=split] .section-main .main-content .main-content-inner .language-switcher-container .primary {
+  margin-bottom: 5px;
 }
 .onboardingContainer .screen[pos=split] .section-main .main-content .action-buttons {
   position: relative;
@@ -424,15 +441,17 @@ body {
   color: var(--in-content-button-text-color-hover);
 }
 .onboardingContainer .screen[pos=split] .section-main .main-content .action-buttons .secondary-cta .arrow-icon {
-  background: url("chrome://browser/skin/forward.svg") no-repeat right 8px center;
-  background-size: 12px;
-  padding-inline-end: 24px;
   -moz-context-properties: fill;
   fill: currentColor;
 }
-.onboardingContainer .screen[pos=split] .section-main .main-content .action-buttons .secondary-cta .arrow-icon:dir(rtl) {
+.onboardingContainer .screen[pos=split] .section-main .main-content .action-buttons .secondary-cta .arrow-icon::after {
+  content: "";
+  padding-inline-end: 12px;
+  margin-inline-start: 4px;
+  background: url("chrome://browser/skin/forward.svg") no-repeat center/12px;
+}
+.onboardingContainer .screen[pos=split] .section-main .main-content .action-buttons .secondary-cta .arrow-icon:dir(rtl)::after {
   background-image: url("chrome://browser/skin/back.svg");
-  background-position-x: left 8px;
 }
 .onboardingContainer .screen[pos=split] .section-main .main-content .logo-container {
   text-align: start;
@@ -546,7 +565,7 @@ body {
 @media only screen and (max-width: 800px) {
   .onboardingContainer .screen[pos=split] {
     flex-direction: column;
-    min-height: 500px;
+    min-height: 550px;
   }
   .onboardingContainer .screen[pos=split] .section-secondary,
 .onboardingContainer .screen[pos=split] .section-main {
@@ -573,7 +592,7 @@ body {
   }
   .onboardingContainer .screen[pos=split] .section-main {
     margin: 0 auto auto;
-    height: 400px;
+    height: 450px;
   }
   .onboardingContainer .screen[pos=split] .section-main .main-content {
     border-radius: 0 0 8px 8px;
