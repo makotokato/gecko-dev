@@ -9,25 +9,22 @@ var EXPORTED_SYMBOLS = ["TabCrashHandler", "UnsubmittedCrashHandler"];
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-  clearTimeout: "resource://gre/modules/Timer.jsm",
-  CrashSubmit: "resource://gre/modules/CrashSubmit.jsm",
-  E10SUtils: "resource://gre/modules/E10SUtils.jsm",
-  PluralForm: "resource://gre/modules/PluralForm.jsm",
-  SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
-  setTimeout: "resource://gre/modules/Timer.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  E10SUtils: "resource://gre/modules/E10SUtils.sys.mjs",
+  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "gNavigatorBundle", function() {
-  const url = "chrome://browser/locale/browser.properties";
-  return Services.strings.createBundle(url);
+XPCOMUtils.defineLazyModuleGetters(lazy, {
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
+  CrashSubmit: "resource://gre/modules/CrashSubmit.jsm",
+  SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
 });
 
 // We don't process crash reports older than 28 days, so don't bother
@@ -409,6 +406,10 @@ var TabCrashHandler = {
         }
       }
     };
+
+    gBrowser.ownerGlobal.MozXULElement.insertFTLIfNeeded(
+      "browser/contentCrash.ftl"
+    );
 
     let buttons = [
       {
@@ -971,23 +972,12 @@ var UnsubmittedCrashHandler = {
    * @returns The <xul:notification> if one is shown. null otherwise.
    */
   showPendingSubmissionsNotification(reportIDs) {
-    let count = reportIDs.length;
-    if (!count) {
+    if (!reportIDs.length) {
       return null;
     }
 
-    let messageTemplate = lazy.gNavigatorBundle.GetStringFromName(
-      "pendingCrashReports2.label"
-    );
-
-    let message = lazy.PluralForm.get(count, messageTemplate).replace(
-      "#1",
-      count
-    );
-
     let notification = this.show({
       notificationID: "pending-crash-reports",
-      message,
       reportIDs,
       onAction: () => {
         this.showingNotification = false;
@@ -1035,9 +1025,6 @@ var UnsubmittedCrashHandler = {
    *        notificationID (string)
    *          The ID for the notification to be opened.
    *
-   *        message (string)
-   *          The message to be displayed in the notification.
-   *
    *        reportIDs (Array<string>)
    *          The array of report IDs to offer to the user.
    *
@@ -1048,7 +1035,7 @@ var UnsubmittedCrashHandler = {
    *
    * @returns The <xul:notification> if one is shown. null otherwise.
    */
-  show({ notificationID, message, reportIDs, onAction }) {
+  show({ notificationID, reportIDs, onAction }) {
     let chromeWin = lazy.BrowserWindowTracker.getTopWindow();
     if (!chromeWin) {
       // Can't show a notification in this case. We'll hopefully
@@ -1064,11 +1051,11 @@ var UnsubmittedCrashHandler = {
       return null;
     }
 
+    chromeWin.MozXULElement.insertFTLIfNeeded("browser/contentCrash.ftl");
+
     let buttons = [
       {
-        label: lazy.gNavigatorBundle.GetStringFromName(
-          "pendingCrashReports.send"
-        ),
+        "l10n-id": "pending-crash-reports-send",
         callback: () => {
           this.submitReports(
             reportIDs,
@@ -1080,9 +1067,7 @@ var UnsubmittedCrashHandler = {
         },
       },
       {
-        label: lazy.gNavigatorBundle.GetStringFromName(
-          "pendingCrashReports.alwaysSend"
-        ),
+        "l10n-id": "pending-crash-reports-always-send",
         callback: () => {
           this.autoSubmit = true;
           this.submitReports(
@@ -1095,9 +1080,7 @@ var UnsubmittedCrashHandler = {
         },
       },
       {
-        label: lazy.gNavigatorBundle.GetStringFromName(
-          "pendingCrashReports.viewAll"
-        ),
+        "l10n-id": "pending-crash-reports-view-all",
         callback() {
           chromeWin.openTrustedLinkIn("about:crashes", "tab");
           return true;
@@ -1123,7 +1106,10 @@ var UnsubmittedCrashHandler = {
     return chromeWin.gNotificationBox.appendNotification(
       notificationID,
       {
-        label: message,
+        label: {
+          "l10n-id": "pending-crash-reports-message",
+          "l10n-args": { reportCount: reportIDs.length },
+        },
         image: TABCRASHED_ICON_URI,
         priority: chromeWin.gNotificationBox.PRIORITY_INFO_HIGH,
         eventCallback,

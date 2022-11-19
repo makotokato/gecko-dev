@@ -155,16 +155,16 @@ fn smoke_test_imports_config() {
                                 *seen = true
                             }
                             (Some((seen, I::Func(p, r))), TypeRef::Func(sig_idx))
-                                if &sig_types[*sig_idx as usize].params[..] == *p
-                                    && &sig_types[*sig_idx as usize].returns[..] == *r =>
+                                if sig_types[*sig_idx as usize].params() == *p
+                                    && sig_types[*sig_idx as usize].results() == *r =>
                             {
                                 *seen = true
                             }
                             (
                                 Some((seen, I::Tag(p))),
                                 TypeRef::Tag(wasmparser::TagType { func_type_idx, .. }),
-                            ) if &sig_types[*func_type_idx as usize].params[..] == *p
-                                && sig_types[*func_type_idx as usize].returns.is_empty() =>
+                            ) if sig_types[*func_type_idx as usize].params() == *p
+                                && sig_types[*func_type_idx as usize].results().is_empty() =>
                             {
                                 *seen = true
                             }
@@ -203,13 +203,13 @@ fn smoke_test_no_trapping_mode() {
     let mut buf = vec![0; 2048];
     for _ in 0..1024 {
         rng.fill_bytes(&mut buf);
-        let u = Unstructured::new(&buf);
-        if let Ok(mut module) = Module::arbitrary_take_rest(u) {
-            if module.no_traps().is_ok() {
-                let wasm_bytes = module.to_bytes();
-                let mut validator = Validator::new_with_features(wasm_features());
-                validate(&mut validator, &wasm_bytes);
-            }
+        let mut u = Unstructured::new(&buf);
+        let mut cfg = SwarmConfig::arbitrary(&mut u).unwrap();
+        cfg.disallow_traps = true;
+        if let Ok(module) = Module::new(cfg, &mut u) {
+            let wasm_bytes = module.to_bytes();
+            let mut validator = Validator::new_with_features(wasm_features());
+            validate(&mut validator, &wasm_bytes);
         }
     }
 }

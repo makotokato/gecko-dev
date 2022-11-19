@@ -1549,6 +1549,12 @@ void nsFrameSelection::SetDragState(bool aState) {
     mTableSelection.mDragSelectingCells = false;
     // Notify that reason is mouse up.
     SetChangeReasons(nsISelectionListener::MOUSEUP_REASON);
+
+    // flag is set to false in `NotifySelectionListeners`.
+    // since this function call is part of click event, this would immediately
+    // reset the flag, rendering it useless.
+    AutoRestore<bool> restoreIsDoubleClickSelectionFlag(
+        mIsDoubleClickSelection);
     // Be aware, the Selection instance may be destroyed after this call.
     NotifySelectionListeners(SelectionType::eNormal);
   }
@@ -1581,7 +1587,7 @@ nsresult nsFrameSelection::ScrollSelectionIntoView(SelectionType aSelectionType,
   }
   if (aFlags & nsISelectionController::SCROLL_CENTER_VERTICALLY) {
     verticalScroll =
-        ScrollAxis(kScrollToCenter, WhenToScroll::IfNotFullyVisible);
+        ScrollAxis(WhereToScroll::Center, WhenToScroll::IfNotFullyVisible);
   }
   if (aFlags & nsISelectionController::SCROLL_FOR_CARET_MOVE) {
     flags |= Selection::SCROLL_FOR_CARET_MOVE;

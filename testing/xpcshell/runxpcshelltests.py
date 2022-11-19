@@ -26,7 +26,6 @@ from argparse import Namespace
 from collections import defaultdict, deque, namedtuple
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-from distutils import dir_util
 from functools import partial
 from multiprocessing import cpu_count
 from subprocess import Popen, PIPE, STDOUT
@@ -167,7 +166,6 @@ class XPCShellTestThread(Thread):
         self.testingModulesDir = kwargs.get("testingModulesDir")
         self.debuggerInfo = kwargs.get("debuggerInfo")
         self.jsDebuggerInfo = kwargs.get("jsDebuggerInfo")
-        self.pluginsPath = kwargs.get("pluginsPath")
         self.httpdJSPath = kwargs.get("httpdJSPath")
         self.headJSPath = kwargs.get("headJSPath")
         self.testharnessdir = kwargs.get("testharnessdir")
@@ -481,24 +479,6 @@ class XPCShellTestThread(Thread):
             self.log.info("temp dir is %s" % tempDir)
         return tempDir
 
-    def setupPluginsDir(self):
-        if not os.path.isdir(self.pluginsPath):
-            return None
-
-        pluginsDir = mkdtemp(prefix="xpc-plugins-", dir=self._rootTempDir)
-        retries = 0
-        while not os.path.isdir(pluginsDir) and retries < 5:
-            self.log.info("plugins temp directory %s missing; waiting..." % pluginsDir)
-            time.sleep(1)
-            retries += 1
-        # shutil.copytree requires dst to not exist. Deleting the tempdir
-        # would make a race condition possible in a concurrent environment,
-        # so we are using dir_utils.copy_tree which accepts an existing dst
-        dir_util.copy_tree(self.pluginsPath, pluginsDir)
-        if self.interactive:
-            self.log.info("plugins dir is %s" % pluginsDir)
-        return pluginsDir
-
     def setupProfileDir(self):
         """
         Create a temporary folder for the profile and set appropriate environment variables.
@@ -607,16 +587,6 @@ class XPCShellTestThread(Thread):
         if self.debuggerInfo:
             xpcsCmd = [self.debuggerInfo.path] + self.debuggerInfo.args + xpcsCmd
 
-        # Automation doesn't specify a pluginsPath and xpcshell defaults to
-        # $APPDIR/plugins. We do the same here so we can carry on with
-        # setting up every test with its own plugins directory.
-        if not self.pluginsPath:
-            self.pluginsPath = os.path.join(self.appPath, "plugins")
-
-        self.pluginsDir = self.setupPluginsDir()
-        if self.pluginsDir:
-            xpcsCmd.extend(["-p", self.pluginsDir])
-
         return xpcsCmd
 
     def cleanupDir(self, directory, name):
@@ -650,9 +620,6 @@ class XPCShellTestThread(Thread):
             self.cleanupDir(self.profileDir, name)
 
         self.cleanupDir(self.tempDir, name)
-
-        if self.pluginsDir:
-            self.cleanupDir(self.pluginsDir, name)
 
     def parse_output(self, output):
         """Parses process output for structured messages and saves output as it is
@@ -710,6 +677,10 @@ class XPCShellTestThread(Thread):
         """Parses a single line of output, determining its significance and
         reporting a message.
         """
+        if isinstance(line_string, bytes):
+            # Transform binary to string representation
+            line_string = line_string.decode(sys.stdout.encoding, errors="replace")
+
         if not line_string.strip():
             return
 
@@ -1753,7 +1724,6 @@ class XPCShellTests(object):
         self.profileName = options.get("profileName") or "xpcshell"
         self.mozInfo = options.get("mozInfo")
         self.testingModulesDir = testingModulesDir
-        self.pluginsPath = options.get("pluginsPath")
         self.sequential = options.get("sequential")
         self.failure_manifest = options.get("failure_manifest")
         self.threadCount = options.get("threadCount") or NUM_THREADS
@@ -1853,7 +1823,6 @@ class XPCShellTests(object):
             "testingModulesDir": self.testingModulesDir,
             "debuggerInfo": self.debuggerInfo,
             "jsDebuggerInfo": self.jsDebuggerInfo,
-            "pluginsPath": self.pluginsPath,
             "httpdJSPath": self.httpdJSPath,
             "headJSPath": self.headJSPath,
             "tempDir": self.tempDir,
@@ -1980,6 +1949,8 @@ class XPCShellTests(object):
                 # Run tests sequentially, with MOZ_CHAOSMODE enabled.
                 sequential_tests = []
                 self.env["MOZ_CHAOSMODE"] = "0xfb"
+                # chaosmode runs really slow, allow tests extra time to pass
+                self.harness_timeout = self.harness_timeout * 2
                 for i in range(VERIFY_REPEAT):
                     self.testCount += 1
                     test = testClass(
@@ -1989,6 +1960,7 @@ class XPCShellTests(object):
                 status = self.runTestList(
                     tests_queue, sequential_tests, testClass, mobileArgs, **kwargs
                 )
+                self.harness_timeout = self.harness_timeout / 2
                 return status
 
             steps = [

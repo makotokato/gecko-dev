@@ -396,7 +396,6 @@ pub mod kw {
     custom_keyword!(code);
     custom_keyword!(component);
     custom_keyword!(data);
-    custom_keyword!(dataref);
     custom_keyword!(declare);
     custom_keyword!(delegate);
     custom_keyword!(r#do = "do");
@@ -461,7 +460,6 @@ pub mod kw {
     custom_keyword!(result);
     custom_keyword!(shared);
     custom_keyword!(start);
-    custom_keyword!(r#struct = "struct");
     custom_keyword!(sub);
     custom_keyword!(table);
     custom_keyword!(then);
@@ -485,13 +483,12 @@ pub mod kw {
     custom_keyword!(float32);
     custom_keyword!(float64);
     custom_keyword!(variant);
-    custom_keyword!(unit);
     custom_keyword!(flags);
     custom_keyword!(option);
     custom_keyword!(tuple);
     custom_keyword!(list);
+    custom_keyword!(error);
     custom_keyword!(union);
-    custom_keyword!(expected);
     custom_keyword!(canon);
     custom_keyword!(lift);
     custom_keyword!(lower);
@@ -499,6 +496,8 @@ pub mod kw {
     custom_keyword!(string_utf8 = "string-encoding=utf8");
     custom_keyword!(string_utf16 = "string-encoding=utf16");
     custom_keyword!(string_latin1_utf16 = "string-encoding=latin1+utf16");
+    custom_keyword!(r#struct = "struct");
+    custom_keyword!(structref);
     custom_keyword!(realloc);
     custom_keyword!(post_return = "post-return");
     custom_keyword!(with);

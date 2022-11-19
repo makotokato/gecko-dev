@@ -493,9 +493,8 @@ void nsMathMLmoFrame::ProcessOperatorData() {
   mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::minsize_, value);
   if (!value.IsEmpty()) {
     nsCSSValue cssValue;
-    if (dom::MathMLElement::ParseNumericValue(
-            value, cssValue, dom::MathMLElement::PARSE_ALLOW_UNITLESS,
-            mContent->OwnerDoc())) {
+    if (dom::MathMLElement::ParseNumericValue(value, cssValue, 0,
+                                              mContent->OwnerDoc())) {
       nsCSSUnit unit = cssValue.GetUnit();
       if (eCSSUnit_Number == unit)
         mMinSize = cssValue.GetFloatValue();
@@ -525,9 +524,8 @@ void nsMathMLmoFrame::ProcessOperatorData() {
   mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::maxsize_, value);
   if (!value.IsEmpty()) {
     nsCSSValue cssValue;
-    if (dom::MathMLElement::ParseNumericValue(
-            value, cssValue, dom::MathMLElement::PARSE_ALLOW_UNITLESS,
-            mContent->OwnerDoc())) {
+    if (dom::MathMLElement::ParseNumericValue(value, cssValue, 0,
+                                              mContent->OwnerDoc())) {
       nsCSSUnit unit = cssValue.GetUnit();
       if (eCSSUnit_Number == unit)
         mMaxSize = cssValue.GetFloatValue();
@@ -555,7 +553,7 @@ static uint32_t GetStretchHint(nsOperatorFlags aFlags,
     // stretchy are true or false (see bug 69325).
     // . largeopOnly is taken if largeop=true and stretchy=false
     // . largeop is taken if largeop=true and stretchy=true
-    if (aStyleFont->mMathStyle == NS_STYLE_MATH_STYLE_NORMAL &&
+    if (aStyleFont->mMathStyle == StyleMathStyle::Normal &&
         NS_MATHML_OPERATOR_IS_LARGEOP(aFlags)) {
       stretchHint = NS_STRETCH_LARGEOP;  // (largeopOnly, not mask!)
       if (NS_MATHML_OPERATOR_IS_STRETCHY(aFlags)) {
@@ -909,9 +907,9 @@ nsMathMLmoFrame::TransmitAutomaticData() {
 }
 
 void nsMathMLmoFrame::SetInitialChildList(ChildListID aListID,
-                                          nsFrameList& aChildList) {
+                                          nsFrameList&& aChildList) {
   // First, let the parent class do its work
-  nsMathMLTokenFrame::SetInitialChildList(aListID, aChildList);
+  nsMathMLTokenFrame::SetInitialChildList(aListID, std::move(aChildList));
   ProcessTextData();
 }
 
@@ -948,7 +946,7 @@ nsresult nsMathMLmoFrame::Place(DrawTarget* aDrawTarget, bool aPlaceOrigin,
      Stretch() method.
   */
 
-  if (!aPlaceOrigin && StyleFont()->mMathStyle == NS_STYLE_MATH_STYLE_NORMAL &&
+  if (!aPlaceOrigin && StyleFont()->mMathStyle == StyleMathStyle::Normal &&
       NS_MATHML_OPERATOR_IS_LARGEOP(mFlags) && UseMathMLChar()) {
     nsBoundingMetrics newMetrics;
     rv = mMathMLChar.Stretch(

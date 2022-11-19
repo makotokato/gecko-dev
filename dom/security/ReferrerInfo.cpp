@@ -435,9 +435,7 @@ bool ReferrerInfo::ShouldSetNullOriginHeader(net::HttpBaseChannel* aChannel,
   MOZ_ASSERT(aChannel);
   MOZ_ASSERT(aOriginURI);
 
-  // This code should not really be here, but we always need to send an Origin
-  // header for CORS requests that aren't GET or HEAD. Also see the comment
-  // in nsHttpChannel::SetOriginHeader.
+  // If request’s mode is not "cors", then switch on request’s referrer policy:
   RequestMode requestMode = RequestMode::No_cors;
   MOZ_ALWAYS_SUCCEEDS(aChannel->GetRequestMode(&requestMode));
   if (requestMode == RequestMode::Cors) {
@@ -450,25 +448,40 @@ bool ReferrerInfo::ShouldSetNullOriginHeader(net::HttpBaseChannel* aChannel,
   if (!referrerInfo) {
     return false;
   }
+
+  // "no-referrer":
   enum ReferrerPolicy policy = referrerInfo->ReferrerPolicy();
   if (policy == ReferrerPolicy::No_referrer) {
+    // Set serializedOrigin to `null`.
+    // Note: Returning true is the same as setting the serializedOrigin to null
+    // in this method.
     return true;
   }
 
+  // "no-referrer-when-downgrade":
+  // "strict-origin":
+  // "strict-origin-when-cross-origin":
+  //   If request’s origin is a tuple origin, its scheme is "https", and
+  //   request’s current URL’s scheme is not "https", then set serializedOrigin
+  //   to `null`.
   bool allowed = false;
   nsCOMPtr<nsIURI> uri;
   NS_ENSURE_SUCCESS(aChannel->GetURI(getter_AddRefs(uri)), false);
-
   if (NS_SUCCEEDED(ReferrerInfo::HandleSecureToInsecureReferral(
           aOriginURI, uri, policy, allowed)) &&
       !allowed) {
     return true;
   }
 
+  // "same-origin":
   if (policy == ReferrerPolicy::Same_origin) {
+    // If request’s origin is not same origin with request’s current URL’s
+    // origin, then set serializedOrigin to `null`.
     return ReferrerInfo::IsCrossOriginRequest(aChannel);
   }
 
+  // Otherwise:
+  //  Do Nothing.
   return false;
 }
 
@@ -1461,17 +1474,14 @@ nsresult ReferrerInfo::ReadTailDataBeforeGecko100(
   // We need to create a new pipe in order to read the aData and the rest of
   // the input stream together in the old format. This would also help us with
   // handling big endian correctly.
-  nsresult rv = NS_NewPipe(getter_AddRefs(reader), getter_AddRefs(writer));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  NS_NewPipe(getter_AddRefs(reader), getter_AddRefs(writer));
 
   nsCOMPtr<nsIBinaryOutputStream> binaryPipeWriter =
       NS_NewObjectOutputStream(writer);
 
   // Write back the aData so that we can read bytes from it and handle big
   // endian correctly.
-  rv = binaryPipeWriter->Write32(aData);
+  nsresult rv = binaryPipeWriter->Write32(aData);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }

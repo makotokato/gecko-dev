@@ -13,6 +13,7 @@ if (CONFIG["OS_ARCH"] == "WINNT" and CONFIG["CPU_ARCH"] != "aarch64") or CONFIG[
     DIRS += ["osclientcerts"]
 
 DIRS += ["ipcclientcerts"]
+DIRS += ["builtins"]
 
 TEST_DIRS += ["tests"]
 
@@ -40,8 +41,10 @@ XPIDL_SOURCES += [
     "nsISecretDecoderRing.idl",
     "nsISecurityUITelemetry.idl",
     "nsISiteSecurityService.idl",
+    "nsITLSSocketControl.idl",
     "nsITokenDialogs.idl",
     "nsITokenPasswordDialogs.idl",
+    "nsITransportSecurityInfo.idl",
     "nsIX509Cert.idl",
     "nsIX509CertDB.idl",
     "nsIX509CertValidity.idl",
@@ -138,6 +141,7 @@ UNIFIED_SOURCES += [
     "nsSiteSecurityService.cpp",
     "NSSKeyStore.cpp",
     "nsSSLSocketProvider.cpp",
+    "NSSSocketControl.cpp",
     "nsTLSSocketProvider.cpp",
     "OSKeyStore.cpp",
     "PKCS11ModuleDB.cpp",

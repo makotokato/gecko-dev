@@ -407,8 +407,7 @@ void MathMLElement::MapMathMLAttributesInto(
     aDecls.Document()->WarnOnceAbout(
         dom::DeprecatedOperations::eMathML_DeprecatedScriptminsizeAttribute);
     nsCSSValue scriptMinSize;
-    ParseNumericValue(value->GetStringValue(), scriptMinSize,
-                      PARSE_ALLOW_UNITLESS | CONVERT_UNITLESS_TO_PERCENT,
+    ParseNumericValue(value->GetStringValue(), scriptMinSize, 0,
                       aDecls.Document());
 
     if (scriptMinSize.GetUnit() == eCSSUnit_Percent) {
@@ -456,8 +455,7 @@ void MathMLElement::MapMathMLAttributesInto(
       !aDecls.PropertyIsSet(eCSSProperty_font_size)) {
     auto str = value->GetStringValue();
     nsCSSValue fontSize;
-    uint32_t flags = PARSE_ALLOW_UNITLESS | CONVERT_UNITLESS_TO_PERCENT;
-    ParseNumericValue(str, fontSize, flags, nullptr);
+    ParseNumericValue(str, fontSize, 0, nullptr);
     if (fontSize.GetUnit() == eCSSUnit_Percent) {
       aDecls.SetPercentValue(eCSSProperty_font_size,
                              fontSize.GetPercentValue());
@@ -595,8 +593,8 @@ void MathMLElement::MapMathMLAttributesInto(
       !aDecls.PropertyIsSet(eCSSProperty_math_style)) {
     auto str = value->GetStringValue();
     static const char displaystyles[][6] = {"false", "true"};
-    static const uint8_t mathStyle[MOZ_ARRAY_LENGTH(displaystyles)] = {
-        NS_STYLE_MATH_STYLE_COMPACT, NS_STYLE_MATH_STYLE_NORMAL};
+    static const StyleMathStyle mathStyle[MOZ_ARRAY_LENGTH(displaystyles)] = {
+        StyleMathStyle::Compact, StyleMathStyle::Normal};
     for (uint32_t i = 0; i < ArrayLength(displaystyles); ++i) {
       if (str.LowerCaseEqualsASCII(displaystyles[i])) {
         aDecls.SetKeywordValue(eCSSProperty_math_style, mathStyle[i]);

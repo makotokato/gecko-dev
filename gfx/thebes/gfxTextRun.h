@@ -51,7 +51,7 @@ enum class StyleHyphens : uint8_t;
  * Callback for Draw() to use when drawing text with mode
  * DrawMode::GLYPH_PATH.
  */
-struct gfxTextRunDrawCallbacks {
+struct MOZ_STACK_CLASS gfxTextRunDrawCallbacks {
   /**
    * Constructs a new DrawCallbacks object.
    *
@@ -252,6 +252,8 @@ class gfxTextRun : public gfxShapedText {
     gfxContext* context;
     DrawMode drawMode = DrawMode::GLYPH_FILL;
     nscolor textStrokeColor = 0;
+    nsAtom* fontPalette = nullptr;
+    mozilla::gfx::FontPaletteValueSet* paletteValueSet = nullptr;
     gfxPattern* textStrokePattern = nullptr;
     const mozilla::gfx::StrokeOptions* strokeOpts = nullptr;
     const mozilla::gfx::DrawOptions* drawOpts = nullptr;
@@ -934,7 +936,8 @@ class gfxFontGroup final : public gfxTextRunFactory {
                const mozilla::StyleFontFamilyList& aFontFamilyList,
                const gfxFontStyle* aStyle, nsAtom* aLanguage,
                bool aExplicitLanguage, gfxTextPerfMetrics* aTextPerf,
-               gfxUserFontSet* aUserFontSet, gfxFloat aDevToCssSize);
+               gfxUserFontSet* aUserFontSet, gfxFloat aDevToCssSize,
+               StyleFontVariantEmoji aVariantEmoji);
 
   virtual ~gfxFontGroup();
 
@@ -1032,7 +1035,7 @@ class gfxFontGroup final : public gfxTextRunFactory {
   // initialized mUnderlineOffset. The value should be lower value of
   // first font's metrics and the bad font's metrics. Otherwise, this
   // returns from first font's metrics.
-  enum { UNDERLINE_OFFSET_NOT_SET = INT16_MAX };
+  static constexpr gfxFloat UNDERLINE_OFFSET_NOT_SET = INT16_MAX;
   gfxFloat GetUnderlineOffset();
 
   already_AddRefed<gfxFont> FindFontForChar(uint32_t ch, uint32_t prevCh,
@@ -1417,6 +1420,8 @@ class gfxFontGroup final : public gfxTextRunFactory {
                       // timer to fire)
 
   bool mExplicitLanguage;  // Does mLanguage come from an explicit attribute?
+
+  eFontPresentation mEmojiPresentation = eFontPresentation::Any;
 
   // Generic font family used to select among font prefs during fallback.
   mozilla::StyleGenericFontFamily mFallbackGeneric =

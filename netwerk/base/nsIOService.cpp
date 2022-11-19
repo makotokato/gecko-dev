@@ -35,8 +35,10 @@
 #include "nsIProtocolProxyService2.h"
 #include "MainThreadUtils.h"
 #include "nsINode.h"
+#include "nsIWebTransport.h"
 #include "nsIWidget.h"
 #include "nsThreadUtils.h"
+#include "WebTransportSessionProxy.h"
 #include "mozilla/AppShutdown.h"
 #include "mozilla/LoadInfo.h"
 #include "mozilla/net/NeckoCommon.h"
@@ -217,7 +219,6 @@ static const char* gCallbackPrefs[] = {
 static const char* gCallbackPrefsForSocketProcess[] = {
     WEBRTC_PREF_PREFIX,
     NETWORK_DNS_PREF,
-    "network.ssl_tokens_cache_enabled",
     "network.send_ODA_to_content_directly",
     "network.trr.",
     "doh-rollout.",
@@ -1240,6 +1241,18 @@ nsIOService::NewChannel(const nsACString& aSpec, const char* aCharset,
                            aContentPolicyType, result);
 }
 
+NS_IMETHODIMP
+nsIOService::NewWebTransport(nsIWebTransport** result) {
+  if (!XRE_IsParentProcess()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  nsCOMPtr<nsIWebTransport> webTransport = new WebTransportSessionProxy();
+
+  webTransport.forget(result);
+  return NS_OK;
+}
+
 bool nsIOService::IsLinkUp() {
   InitializeNetworkLinkService();
 
@@ -1698,7 +1711,7 @@ nsIOService::Observe(nsISupports* subject, const char* topic,
     if (IsSocketProcessChild()) {
       Preferences::UnregisterCallbacks(nsIOService::OnTLSPrefChange,
                                        gCallbackSecurityPrefs, this);
-      NSSShutdownForSocketProcess();
+      PrepareForShutdownInSocketProcess();
     }
   } else if (!strcmp(topic, NS_NETWORK_LINK_TOPIC)) {
     OnNetworkLinkEvent(NS_ConvertUTF16toUTF8(data).get());

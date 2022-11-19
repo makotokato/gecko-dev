@@ -20,6 +20,7 @@
 #include "mozilla/Result.h"
 #include "mozilla/dom/Nullable.h"
 #include "mozilla/dom/ipc/IdType.h"
+#include "mozilla/dom/quota/Assertions.h"
 #include "mozilla/dom/quota/CommonMetadata.h"
 #include "mozilla/dom/quota/ForwardDecls.h"
 #include "mozilla/dom/quota/InitializationTypes.h"
@@ -62,6 +63,7 @@ class PrincipalInfo;
 
 namespace mozilla::dom::quota {
 
+class CanonicalQuotaObject;
 class ClientUsageArray;
 class ClientDirectoryLock;
 class DirectoryLockImpl;
@@ -74,10 +76,10 @@ class QuotaObject;
 class UniversalDirectoryLock;
 
 class QuotaManager final : public BackgroundThreadObject {
+  friend class CanonicalQuotaObject;
   friend class DirectoryLockImpl;
   friend class GroupInfo;
   friend class OriginInfo;
-  friend class QuotaObject;
 
   using PrincipalInfo = mozilla::ipc::PrincipalInfo;
   using DirectoryLockTable =
@@ -191,7 +193,7 @@ class QuotaManager final : public BackgroundThreadObject {
   void RemoveQuotaForOrigin(PersistenceType aPersistenceType,
                             const OriginMetadata& aOriginMetadata) {
     MutexAutoLock lock(mQuotaMutex);
-    LockedRemoveQuotaForOrigin(aPersistenceType, aOriginMetadata);
+    LockedRemoveQuotaForOrigin(aOriginMetadata);
   }
 
   nsresult LoadQuota();
@@ -453,8 +455,7 @@ class QuotaManager final : public BackgroundThreadObject {
       uint64_t aMinSizeToBeFreed,
       nsTArray<RefPtr<OriginDirectoryLock>>& aLocks);
 
-  void LockedRemoveQuotaForOrigin(PersistenceType aPersistenceType,
-                                  const OriginMetadata& aOriginMetadata);
+  void LockedRemoveQuotaForOrigin(const OriginMetadata& aOriginMetadata);
 
   already_AddRefed<GroupInfo> LockedGetOrCreateGroupInfo(
       PersistenceType aPersistenceType, const nsACString& aSuffix,

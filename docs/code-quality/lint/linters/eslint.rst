@@ -49,6 +49,12 @@ My editor doesn't understand a new global I've just added (e.g. to a content fil
 * Restarting your editor should pick up the new globals.
 * You can always double check via ``./mach lint --linter eslint <file path>`` on the command line.
 
+I am getting a linter error "Unknown Services member property"
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Make sure to add any new Services to ``tools/lint/eslint/eslint-plugin-mozilla/lib/services.json``. For example by copying from
+``<objdir>/xpcom/components/services.json`` after a build.
+
 I'm adding tests, how do I set up the right configuration?
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -125,6 +131,48 @@ Sources
 
 * `Configuration (YAML)`_
 * `Source`_
+
+Builders
+--------
+
+`Mark Banner (standard8) <https://people.mozilla.org/s?query=standard8>`__ owns
+the builders. Questions can also be asked on #lint:mozilla.org on Matrix.
+
+ESLint (ES)
+^^^^^^^^^^^
+
+This is a tier-1 task. For test failures the patch causing the
+issue should be backed out or the issue fixed.
+
+Some failures can be fixed with ``./mach eslint --fix path/to/file``.
+
+For test harness issues, file bugs in Developer Infrastructure :: Lint and Formatting.
+
+ESLint-build (ES-B)
+^^^^^^^^^^^^^^^^^^^
+
+This is a tier-2 task that is run once a day at midnight UTC via a cron job.
+
+It currently runs the ESLint rules plus two additional rules:
+
+* `valid-ci-uses <eslint-plugin-mozilla/valid-ci-uses.html>`__
+* `valid-services-property <eslint-plugin-mozilla/valid-services-property.html>`__
+
+These are two rules that both require build artifacts.
+
+To run them manually, you can run:
+
+``MOZ_OBJDIR=objdir-ff-opt ./mach eslint --rule "mozilla/valid-ci-uses: error" --rule "mozilla/valid-services-property: error" *``
+
+For test failures, the regression causing bug may be able to be found by:
+
+    * Determining if the file where the error is reported has been changed recently.
+    * Seeing if an associated ``.idl`` file has been changed.
+
+If no regressing bug can easily be found, file a bug in the relevant
+product/component for the file where the failure is and cc :standard8.
+
+For test harness issues, file bugs in Developer Infrastructure :: Lint and Formatting.
 
 .. toctree::
    :hidden:

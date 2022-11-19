@@ -5,37 +5,27 @@
 // These tests check the behavior of the Urlbar when search terms are shown
 // and the user switches between tabs.
 
-let originalEngine, defaultTestEngine;
+let defaultTestEngine;
 
 // The main search keyword used in tests
 const SEARCH_STRING = "chocolate cake";
 
 add_setup(async function() {
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["browser.search.widget.inNavBar", false],
-      ["browser.urlbar.showSearchTerms", true],
-    ],
+    set: [["browser.urlbar.showSearchTerms.featureGate", true]],
   });
 
-  await SearchTestUtils.installSearchExtension({
-    name: "MozSearch",
-    search_url: "https://www.example.com/",
-    search_url_get_params: "q={searchTerms}&pc=fake_code",
-  });
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: "MozSearch",
+      search_url: "https://www.example.com/",
+      search_url_get_params: "q={searchTerms}&pc=fake_code",
+    },
+    { setAsDefault: true }
+  );
   defaultTestEngine = Services.search.getEngineByName("MozSearch");
 
-  originalEngine = await Services.search.getDefault();
-  await Services.search.setDefault(
-    defaultTestEngine,
-    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-  );
-
   registerCleanupFunction(async function() {
-    await Services.search.setDefault(
-      originalEngine,
-      Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-    );
     await PlacesUtils.history.clear();
   });
 });
@@ -78,9 +68,19 @@ function assertSearchStringIsInUrlbar(searchString) {
     `Search string ${searchString} should be in the url bar`
   );
   Assert.equal(
+    gBrowser.userTypedValue,
+    searchString,
+    `${searchString} should be the userTypedValue`
+  );
+  Assert.equal(
     gURLBar.getAttribute("pageproxystate"),
     "invalid",
     "Pageproxystate should be invalid"
+  );
+  Assert.equal(
+    gBrowser.selectedBrowser.showingSearchTerms,
+    true,
+    "showingSearchTerms should be true"
   );
 }
 

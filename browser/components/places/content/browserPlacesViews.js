@@ -404,7 +404,6 @@ PlacesViewBase.prototype = {
     let type = aPlacesNode.type;
     if (type == Ci.nsINavHistoryResultNode.RESULT_TYPE_SEPARATOR) {
       element = document.createXULElement("menuseparator");
-      element.setAttribute("class", "small-separator");
     } else {
       if (type == Ci.nsINavHistoryResultNode.RESULT_TYPE_URI) {
         element = document.createXULElement("menuitem");
@@ -667,6 +666,7 @@ PlacesViewBase.prototype = {
    * This method may be overridden by classes that extend this base class.
    *
    * @param  {Element} elt
+   *   The element to check.
    * @returns {boolean}
    */
   _isPopupOpen(elt) {
@@ -723,6 +723,7 @@ PlacesViewBase.prototype = {
 
   /**
    * Adds an "Open All in Tabs" menuitem to the bottom of the popup.
+   *
    * @param {object} aPopup
    *        a Places popup.
    */
@@ -2105,7 +2106,6 @@ PlacesPanelMenuView.prototype = {
     let button;
     if (type == Ci.nsINavHistoryResultNode.RESULT_TYPE_SEPARATOR) {
       button = document.createXULElement("toolbarseparator");
-      button.setAttribute("class", "small-separator");
     } else {
       button = document.createXULElement("toolbarbutton");
       button.className = "bookmark-item";

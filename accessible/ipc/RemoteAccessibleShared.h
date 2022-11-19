@@ -52,8 +52,6 @@ virtual Relation RelationByType(RelationType aType) const override;
 
 bool IsSearchbox() const;
 
-nsStaticAtom* ARIARoleAtom() const;
-
 virtual mozilla::a11y::GroupPos GroupPosition() override;
 void ScrollToPoint(uint32_t aScrollType, int32_t aX, int32_t aY);
 
@@ -133,7 +131,7 @@ uint32_t ColIdx();
 
 uint32_t RowIdx();
 
-void GetPosition(uint32_t* aColIdx, uint32_t* aRowIdx);
+void GetPosition(uint32_t* aRowIdx, uint32_t* aColIdx);
 
 uint32_t ColExtent();
 

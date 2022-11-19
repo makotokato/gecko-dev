@@ -202,7 +202,7 @@ impl Encode for Rec<'_> {
             return;
         }
 
-        e.push(0x45);
+        e.push(0x4f);
         self.types.len().encode(e);
         for ty in &self.types {
             ty.encode(e);
@@ -238,7 +238,7 @@ impl<'a> Encode for HeapType<'a> {
             HeapType::Extern => e.push(0x6f),
             HeapType::Any => e.push(0x6e),
             HeapType::Eq => e.push(0x6d),
-            HeapType::Data => e.push(0x67),
+            HeapType::Struct => e.push(0x67),
             HeapType::Array => e.push(0x66),
             HeapType::I31 => e.push(0x6a),
             HeapType::Index(index) => {
@@ -266,10 +266,10 @@ impl<'a> Encode for RefType<'a> {
                 nullable: true,
                 heap: HeapType::Eq,
             } => e.push(0x6d),
-            // The 'dataref' binary abbreviation
+            // The 'structref' binary abbreviation
             RefType {
                 nullable: true,
-                heap: HeapType::Data,
+                heap: HeapType::Struct,
             } => e.push(0x67),
             // The 'i31ref' binary abbreviation
             RefType {
@@ -823,7 +823,7 @@ fn find_names<'a>(
                     names.push((Name::Type, &ty.id, &ty.name, field));
                 }
                 continue;
-            },
+            }
             ModuleField::Elem(e) => (Name::Elem, &e.id, &e.name),
             ModuleField::Data(d) => (Name::Data, &d.id, &d.name),
             ModuleField::Func(f) => (Name::Func, &f.id, &f.name),

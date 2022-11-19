@@ -3030,6 +3030,7 @@ exports.CSS_PROPERTIES = {
       "font-kerning",
       "font-variant-alternates",
       "font-variant-east-asian",
+      "font-variant-emoji",
       "font-variant-ligatures",
       "font-variant-numeric",
       "font-variant-position",
@@ -3037,6 +3038,7 @@ exports.CSS_PROPERTIES = {
       "font-variation-settings",
       "font-language-override",
       "font-optical-sizing",
+      "font-palette",
       "math-depth",
       "math-style",
       "-moz-osx-font-smoothing",
@@ -6676,12 +6678,14 @@ exports.CSS_PROPERTIES = {
       "font-optical-sizing",
       "font-variant-alternates",
       "font-variant-east-asian",
+      "font-variant-emoji",
       "font-variant-ligatures",
       "font-variant-numeric",
       "font-variant-position",
       "font-language-override",
       "font-feature-settings",
-      "font-variation-settings"
+      "font-variation-settings",
+      "font-palette"
     ],
     "supports": [],
     "values": [
@@ -6815,6 +6819,20 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "font-palette": {
+    "isInherited": true,
+    "subproperties": [
+      "font-palette"
+    ],
+    "supports": [],
+    "values": [
+      "inherit",
+      "initial",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
   "font-size": {
     "isInherited": true,
     "subproperties": [
@@ -6922,6 +6940,7 @@ exports.CSS_PROPERTIES = {
       "font-variant-caps",
       "font-variant-alternates",
       "font-variant-east-asian",
+      "font-variant-emoji",
       "font-variant-ligatures",
       "font-variant-numeric",
       "font-variant-position"
@@ -6936,6 +6955,7 @@ exports.CSS_PROPERTIES = {
       "contextual",
       "diagonal-fractions",
       "discretionary-ligatures",
+      "emoji",
       "full-width",
       "historical-forms",
       "historical-ligatures",
@@ -6971,9 +6991,11 @@ exports.CSS_PROPERTIES = {
       "super",
       "swash",
       "tabular-nums",
+      "text",
       "titling-caps",
       "traditional",
       "unicase",
+      "unicode",
       "unset"
     ]
   },
@@ -7041,6 +7063,24 @@ exports.CSS_PROPERTIES = {
       "ruby",
       "simplified",
       "traditional",
+      "unset"
+    ]
+  },
+  "font-variant-emoji": {
+    "isInherited": true,
+    "subproperties": [
+      "font-variant-emoji"
+    ],
+    "supports": [],
+    "values": [
+      "emoji",
+      "inherit",
+      "initial",
+      "normal",
+      "revert",
+      "revert-layer",
+      "text",
+      "unicode",
       "unset"
     ]
   },
@@ -11819,6 +11859,10 @@ exports.PREFERENCES = [
     "layout.css.font-variations.enabled"
   ],
   [
+    "font-variant-emoji",
+    "layout.css.font-variant-emoji.enabled"
+  ],
+  [
     "initial-letter",
     "layout.css.initial-letter.enabled"
   ],
@@ -11917,6 +11961,10 @@ exports.PREFERENCES = [
   [
     "d",
     "layout.css.d-property.enabled"
+  ],
+  [
+    "font-palette",
+    "layout.css.font-palette.enabled"
   ],
   [
     "font-variation-settings",

@@ -45,6 +45,8 @@ browser-main-window-mac-window-titles =
 # `browser-main-window` and `browser-main-window-mac`.
 browser-main-window-title = { -brand-full-name }
 
+# The non-variable portion of this MUST match the translation of
+# "PRIVATE_BROWSING_SHORTCUT_TITLE" in custom.properties
 private-browsing-shortcut-text-2 = { -brand-shortcut-name } Private Browsing
 
 ##
@@ -103,11 +105,15 @@ urlbar-addons-notification-anchor =
 urlbar-tip-help-icon =
     .title = Get help
 urlbar-search-tips-confirm = Okay, Got It
+urlbar-search-tips-confirm-short = Got it
 # Read out before Urlbar Tip text content so screenreader users know the
 # subsequent text is a tip offered by the browser. It should end in a colon or
 # localized equivalent.
 urlbar-tip-icon-description =
     .alt = Tip:
+
+urlbar-result-menu-button =
+    .title = Open menu
 
 ## Prompts users to use the Urlbar when they open a new tab or visit the
 ## homepage of their default search engine.
@@ -116,6 +122,9 @@ urlbar-tip-icon-description =
 
 urlbar-search-tips-onboard = Type less, find more: Search { $engineName } right from your address bar.
 urlbar-search-tips-redirect-2 = Start your search in the address bar to see suggestions from { $engineName } and your browsing history.
+
+# Make sure to match the name of the Search panel in settings.
+urlbar-search-tips-persist = Searching just got simpler. Try making your search more specific here in the address bar. To show the URL instead, visit Search, in settings.
 
 # Prompts users to use the Urlbar when they are typing in the domain of a
 # search engine, e.g. google.com or amazon.com.
@@ -477,17 +486,10 @@ popup-select-microphone-icon =
     .tooltiptext = Microphone
 popup-select-speaker-icon =
     .tooltiptext = Speakers
+popup-select-window-or-screen =
+    .label = Window or screen:
+    .accesskey = W
 popup-all-windows-shared = All visible windows on your screen will be shared.
-
-popup-screen-sharing-block =
-  .label = Block
-  .accesskey = B
-
-popup-screen-sharing-always-block =
-  .label = Always block
-  .accesskey = w
-
-popup-mute-notifications-checkbox = Mute website notifications while sharing
 
 ## WebRTC window or screen share tab switch warning
 
@@ -645,6 +647,15 @@ urlbar-group-search-suggestions =
 urlbar-group-quickactions =
   .label = Quick Actions
 
+## Reader View toolbar buttons
+
+# This should match menu-view-enter-readerview in menubar.ftl
+reader-view-enter-button =
+    .aria-label = Enter Reader View
+# This should match menu-view-close-readerview in menubar.ftl
+reader-view-close-button =
+    .aria-label = Close Reader View
+
 ## Full Screen and Pointer Lock UI
 
 # Please ensure that the domain stays in the `<span data-l10n-name="domain">` markup.
@@ -663,20 +674,6 @@ fullscreen-exit-mac-button = Exit Full Screen (esc)
 #  $domain (String): the domain that is using pointer-lock, e.g. "mozilla.org"
 pointerlock-warning-domain = <span data-l10n-name="domain">{ $domain }</span> has control of your pointer. Press Esc to take back control.
 pointerlock-warning-no-domain = This document has control of your pointer. Press Esc to take back control.
-
-## Subframe crash notification
-
-crashed-subframe-message = <strong>Part of this page crashed.</strong> To let { -brand-product-name } know about this issue and get it fixed faster, please submit a report.
-
-# The string for crashed-subframe-title.title should match crashed-subframe-message,
-# but without any markup.
-crashed-subframe-title =
-  .title = Part of this page crashed. To let { -brand-product-name } know about this issue and get it fixed faster, please submit a report.
-crashed-subframe-learnmore-link =
-  .value = Learn more
-crashed-subframe-submit =
-  .label = Submit report
-  .accesskey = S
 
 ## Bookmarks panels, menus and toolbar
 

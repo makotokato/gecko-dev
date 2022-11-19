@@ -324,6 +324,7 @@ OpKind wasm::Classify(OpBytes op) {
           WASM_GC_OP(OpKind::ArrayGet);
         case GcOp::ArraySet:
           WASM_GC_OP(OpKind::ArraySet);
+        case GcOp::ArrayLenWithTypeIndex:
         case GcOp::ArrayLen:
           WASM_GC_OP(OpKind::ArrayLen);
         case GcOp::ArrayCopy:
@@ -333,7 +334,12 @@ OpKind wasm::Classify(OpBytes op) {
         case GcOp::RefCast:
           WASM_GC_OP(OpKind::RefCast);
         case GcOp::BrOnCast:
+        case GcOp::BrOnCastFail:
           WASM_GC_OP(OpKind::BrOnCast);
+        case GcOp::ExternInternalize:
+          WASM_GC_OP(OpKind::RefConversion);
+        case GcOp::ExternExternalize:
+          WASM_GC_OP(OpKind::RefConversion);
       }
       break;
     }
@@ -604,14 +610,15 @@ OpKind wasm::Classify(OpBytes op) {
         case SimdOp::V128Store64Lane:
           WASM_SIMD_OP(OpKind::StoreLane);
         case SimdOp::F32x4RelaxedFma:
-        case SimdOp::F32x4RelaxedFms:
+        case SimdOp::F32x4RelaxedFnma:
         case SimdOp::F64x2RelaxedFma:
-        case SimdOp::F64x2RelaxedFms:
+        case SimdOp::F64x2RelaxedFnma:
         case SimdOp::I8x16RelaxedLaneSelect:
         case SimdOp::I16x8RelaxedLaneSelect:
         case SimdOp::I32x4RelaxedLaneSelect:
         case SimdOp::I64x2RelaxedLaneSelect:
         case SimdOp::I32x4DotI8x16I7x16AddS:
+        case SimdOp::F32x4RelaxedDotBF16x8AddF32x4:
           WASM_SIMD_OP(OpKind::Ternary);
       }
       break;

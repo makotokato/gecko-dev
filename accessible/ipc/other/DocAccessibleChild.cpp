@@ -205,22 +205,6 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvLandmarkRole(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult DocAccessibleChild::RecvARIARoleAtom(
-    const uint64_t& aID, nsString* aRole) {
-  LocalAccessible* acc = IdToAccessible(aID);
-  if (!acc) {
-    return IPC_OK();
-  }
-
-  if (const nsRoleMapEntry* roleMap = acc->ARIARoleMap()) {
-    if (nsStaticAtom* roleAtom = roleMap->roleAtom) {
-      roleAtom->ToString(*aRole);
-    }
-  }
-
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult DocAccessibleChild::RecvGroupPosition(
     const uint64_t& aID, int32_t* aLevel, int32_t* aSimilarItemsInGroup,
     int32_t* aPositionInGroup) {
@@ -760,8 +744,8 @@ mozilla::ipc::IPCResult DocAccessibleChild::RecvRowIdx(const uint64_t& aID,
 }
 
 mozilla::ipc::IPCResult DocAccessibleChild::RecvGetPosition(const uint64_t& aID,
-                                                            uint32_t* aColIdx,
-                                                            uint32_t* aRowIdx) {
+                                                            uint32_t* aRowIdx,
+                                                            uint32_t* aColIdx) {
   *aColIdx = 0;
   *aRowIdx = 0;
   TableCellAccessible* acc = IdToTableCellAccessible(aID);

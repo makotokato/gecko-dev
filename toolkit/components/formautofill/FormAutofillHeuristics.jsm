@@ -119,7 +119,7 @@ class FieldScanner {
    *
    * @param {number} index
    *        The index of the element that you want to retrieve.
-   * @returns {Object}
+   * @returns {object}
    *          The field detail at the specific index.
    */
   getFieldDetailByIndex(index) {
@@ -161,10 +161,10 @@ class FieldScanner {
    *
    * @param {number} mergeNextNFields How many of the next N fields to merge into the current section
    * @param {string} currentType Type of the current field detail
-   * @param {Array<Object>} fieldDetails List of current field details
+   * @param {Array<object>} fieldDetails List of current field details
    * @param {number} i Index to keep track of the fieldDetails list
    * @param {boolean} createNewSection Determines if a new section should be created
-   * @returns {[number, boolean]} mergeNextNFields and creatNewSection for use in _classifySections
+   * @returns {Array<(number|boolean)>} mergeNextNFields and creatNewSection for use in _classifySections
    * @memberof FieldScanner
    */
   _mergeNextNFields(
@@ -256,7 +256,7 @@ class FieldScanner {
    * section name (DEFAULT_SECTION_NAME), `this._classifySections` should be
    * able to identify all sections in the heuristic way.
    *
-   * @returns {Array<Object>}
+   * @returns {Array<object>}
    *          The array with the sections, and the belonging fieldDetails are in
    *          each section. For example, it may return something like this:
    *          [{
@@ -378,7 +378,7 @@ class FieldScanner {
    * then we transform the credit card number into
    * four subsections in order to fill correctly.
    *
-   * @param {Array<Object>} creditCardFieldDetails
+   * @param {Array<object>} creditCardFieldDetails
    *        The credit card field details to be transformed for multiple cc-number fields filling
    * @memberof FieldScanner
    */
@@ -405,9 +405,9 @@ class FieldScanner {
    * Each item should contain one type of fields only, and the two valid types
    * are Address and CreditCard.
    *
-   * @param   {Array<Object>} fieldDetails
+   * @param   {Array<object>} fieldDetails
    *          The field details for trimming.
-   * @returns {Array<Object>}
+   * @returns {Array<object>}
    *          The array with the field details without invalid field name and
    *          duplicated fields.
    */
@@ -496,7 +496,7 @@ class FieldScanner {
     }
 
     let highestField = null;
-    let highestConfidence = lazy.FormAutofillUtils.ccHeuristicsThreshold; // Start with a threshold of 0.5
+    let highestConfidence = lazy.FormAutofillUtils.ccFathomConfidenceThreshold; // Start with a threshold of 0.5
     for (let [key, value] of Object.entries(elementConfidences)) {
       if (!fields.includes(key)) {
         // ignore field that we don't care
@@ -514,10 +514,8 @@ class FieldScanner {
     }
 
     // Used by test ONLY! This ensure testcases always get the same confidence
-    if (lazy.FormAutofillUtils.ccHeuristicTestConfidence != null) {
-      highestConfidence = parseFloat(
-        lazy.FormAutofillUtils.ccHeuristicTestConfidence
-      );
+    if (lazy.FormAutofillUtils.ccFathomTestConfidence > 0) {
+      highestConfidence = lazy.FormAutofillUtils.ccFathomTestConfidence;
     }
 
     return [highestField, highestConfidence];
@@ -1051,7 +1049,7 @@ FormAutofillHeuristics = {
    * @param {boolean} allowDuplicates
    *        true to remain any duplicated field details otherwise to remove the
    *        duplicated ones.
-   * @returns {Array<Array<Object>>}
+   * @returns {Array<Array<object>>}
    *        all sections within its field details in the form.
    */
   getFormInfo(form, allowDuplicates = false) {
@@ -1177,11 +1175,13 @@ FormAutofillHeuristics = {
         return infoRecordWithFieldName(matchedFieldName, confidence);
       }
 
-      // TODO: Do we want to run old heuristics for fields that fathom isn't confident?
-      // Since Fathom isn't confident, try the old heuristics. I've removed all
-      // the CC-specific ones, so this should be almost a mutually exclusive
-      // set of fields.
-      fields = fields.filter(r => !lazy.creditCardRulesets.types.includes(r));
+      // Continue to run regex-based heuristics even when fathom doesn't recognize
+      // the field. Since the regex-based heuristic has good search coverage but
+      // has a worse precision. We use it in conjunction with fathom to maximize
+      // our search coverage. For example, when a <input> is not considered cc-name
+      // by fathom but is considered cc-name by regex-based heuristic, if the form
+      // also contains a cc-number identified by fathom, we will treat the form as a
+      // valid cc form; hence both cc-number & cc-name are identified.
     }
 
     if (fields.length) {
@@ -1197,9 +1197,9 @@ FormAutofillHeuristics = {
   /**
    * @typedef ElementStrings
    * @type {object}
-   * @yield {string} id - element id.
-   * @yield {string} name - element name.
-   * @yield {Array<string>} labels - extracted labels.
+   * @yields {string} id - element id.
+   * @yields {string} name - element name.
+   * @yields {Array<string>} labels - extracted labels.
    */
 
   /**

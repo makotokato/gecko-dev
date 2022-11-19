@@ -33,7 +33,6 @@ linux64/opt:
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
         tooltool-downloads: public
-        need-xvfb: true
     run-on-projects: ['integration']
     use-sccache: true
     fetches:
@@ -47,6 +46,7 @@ linux64/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -84,6 +84,7 @@ linux64-x11/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu-x11
             - sysroot-wasm32-wasi
 
@@ -122,6 +123,7 @@ linux64-plain/opt:
             - linux64-node
             - linux64-cbindgen
             - linux64-dump_syms
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -165,6 +167,7 @@ linux64-hybrid/plain:
             - linux64-cbindgen
             - linux64-sccache
             - linux64-dump_syms
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -192,7 +195,6 @@ linux64-gcc/opt:
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: true
     fetches:
         toolchain:
@@ -206,6 +208,7 @@ linux64-gcc/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -246,6 +249,7 @@ linux64-plain-clang-trunk/opt:
             - linux64-cbindgen
             - linux64-dump_syms
             - linux64-toolchain-sysroot
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -278,7 +282,6 @@ linux64-fuzzing/debug:
         custom-build-variant-cfg: fuzzing-debug
         mozconfig-variant: debug-fuzzing
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: true
     fetches:
         toolchain:
@@ -292,6 +295,7 @@ linux64-fuzzing/debug:
             - linux64-rust-size
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -324,7 +328,6 @@ linux64-fuzzing-noopt/debug:
         custom-build-variant-cfg: fuzzing-debug
         mozconfig-variant: debug-fuzzing-noopt
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: true
     fetches:
         toolchain:
@@ -338,6 +341,7 @@ linux64-fuzzing-noopt/debug:
             - linux64-rust-size
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -372,7 +376,6 @@ linux64/debug:
         custom-build-variant-cfg: debug
         mozconfig-variant: debug
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: true
     fetches:
         toolchain:
@@ -385,68 +388,9 @@ linux64/debug:
             - linux64-rust-size
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-
-linux64/codeql-cpp:
-    description: Builds a C++ codeql database
-    index:
-        job-name: linux64-codeql-cpp
-        product: firefox
-    treeherder:
-        platform: codeql/all
-        symbol: linux64-cpp
-        tier: 2
-        kind: other
-    shipping-phase: ship
-    shipping-product: firefox
-    worker-type: b-linux-xlarge
-    worker:
-        env:
-            PERFHERDER_EXTRA_OPTIONS: cpp
-        max-run-time: 86400
-        artifacts:
-            - type: file
-              name: public/codeql/codeql-db-cpp.tar.xz
-              path: /builds/worker/codeql-db-cpp.tar.xz
-    run:
-        using: mozharness
-        actions: [build]
-        config:
-            - builds/releng_base_firefox.py
-            - builds/releng_base_linux_64_builds.py
-        script: "mozharness/scripts/fx_desktop_build.py"
-        job-script: taskcluster/scripts/misc/generate-codeql-db-cpp.sh
-        secrets: false
-        custom-build-variant-cfg: debug
-        mozconfig-variant: debug
-        tooltool-downloads: public
-        need-xvfb: true
-    run-on-projects: []
-    fetches:
-        fetch:
-            - codeql-2.5.7
-        toolchain:
-            - linux64-binutils
-            - linux64-clang
-            - linux64-cbindgen
-            - linux64-dump_syms
-            - linux64-rust
-            - linux64-rust-size
-            - linux64-nasm
-            - linux64-node
-            - sysroot-x86_64-linux-gnu
-            - sysroot-wasm32-wasi
-    notifications:
-        subject: '{task[shipping-product]} {release_config[version]} build{release_config[build_number]}/{config[params][project]} linux64 codeql-cpp status'
-        message: '{task[shipping-product]} {release_config[version]} build{release_config[build_number]}/{config[params][project]} linux64 codeql-cpp status'
-        emails:
-            by-project:
-                mozilla-release: ["tom@mozilla.com", "freddy@mozilla.com"]
-                try: ["{config[params][owner]}"]
-                default: []
-    optimization: null
-
 
 linux64-plain/debug:
     description: "Linux64 Debug Plain"
@@ -483,6 +427,7 @@ linux64-plain/debug:
             - linux64-node
             - linux64-cbindgen
             - linux64-dump_syms
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -524,7 +469,6 @@ linux64-devedition/opt:
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
         tooltool-downloads: public
-        need-xvfb: true
         mozconfig-variant: devedition
     run-on-projects: ['mozilla-beta']
     fetches:
@@ -537,6 +481,7 @@ linux64-devedition/opt:
             - linux64-dump_syms
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -564,7 +509,6 @@ linux/opt:
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
         tooltool-downloads: public
-        need-xvfb: true
     run-on-projects: ['mozilla-beta', 'mozilla-release', 'mozilla-esr102']
     use-sccache: true
     fetches:
@@ -578,9 +522,57 @@ linux/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-i686-linux-gnu
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
+
+linux-fuzzing/debug:
+    description: "Linux32 Fuzzing Debug"
+    index:
+        product: firefox
+        job-name: linux-fuzzing-debug
+    attributes:
+        # The gtest libxul contains libFuzzer targets
+        skip-verify-test-packaging: true
+    treeherder:
+        platform: linux32/debug
+        symbol: Bf
+    worker:
+        max-run-time: 5400
+        env:
+            PERFHERDER_EXTRA_OPTIONS: fuzzing
+            MOZ_AUTOMATION_PACKAGE_TESTS: "1"
+    run:
+        using: mozharness
+        actions: [get-secrets, build]
+        config:
+            - builds/releng_base_firefox.py
+            - builds/releng_base_linux_32_builds.py
+        script: "mozharness/scripts/fx_desktop_build.py"
+        secrets: true
+        custom-build-variant-cfg: fuzzing-debug
+        mozconfig-variant: debug-fuzzing
+        tooltool-downloads: public
+    use-sccache: true
+    fetches:
+        toolchain:
+            - linux64-binutils
+            - linux64-clang
+            - linux64-cbindgen
+            - linux64-dump_syms
+            - linux32-llvm-symbolizer
+            - linux64-sccache
+            - linux64-rust
+            - linux64-rust-size
+            - linux64-nasm
+            - linux64-node
+            - linux64-pkgconf
+            - sysroot-i686-linux-gnu
+            - sysroot-x86_64-linux-gnu
+            - sysroot-wasm32-wasi
+    optimization:
+        skip-unless-expanded: null
 
 linux/debug:
     description: "Linux32 Debug"
@@ -607,7 +599,6 @@ linux/debug:
         custom-build-variant-cfg: debug
         mozconfig-variant: debug
         tooltool-downloads: public
-        need-xvfb: true
     run-on-projects: ['release']
     use-sccache: true
     fetches:
@@ -621,6 +612,7 @@ linux/debug:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-i686-linux-gnu
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
@@ -662,6 +654,7 @@ linux-rusttests/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-i686-linux-gnu
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
@@ -705,6 +698,7 @@ linux-rusttests/debug:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-i686-linux-gnu
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
@@ -743,7 +737,6 @@ linux-devedition/opt:
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
         tooltool-downloads: public
-        need-xvfb: true
         mozconfig-variant: devedition
     run-on-projects: ['mozilla-beta']
     fetches:
@@ -756,6 +749,7 @@ linux-devedition/opt:
             - linux64-dump_syms
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-i686-linux-gnu
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
@@ -790,7 +784,6 @@ linux-shippable/opt:
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
         tooltool-downloads: public
-        need-xvfb: true
     run-on-projects: ['release']
     fetches:
         toolchain:
@@ -802,6 +795,7 @@ linux-shippable/opt:
             - linux64-dump_syms
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-i686-linux-gnu
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
@@ -832,7 +826,6 @@ linux-reproduced/opt:
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
         tooltool-downloads: public
-        need-xvfb: true
     # Original comment: Limited to trunk until bug 1596350 is fixed.
     # Addendum: Do not run on autoland, Bug 1599197
     run-on-projects: ['mozilla-central', 'comm-central']
@@ -846,9 +839,57 @@ linux-reproduced/opt:
             - linux64-dump_syms
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-i686-linux-gnu
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
+
+linux-asan-fuzzing/opt:
+    description: "Linux32 Fuzzing Opt ASAN"
+    index:
+        product: firefox
+        job-name: linux-fuzzing-asan-opt
+    attributes:
+        # The gtest libxul contains libFuzzer targets
+        skip-verify-test-packaging: true
+    treeherder:
+        platform: linux32/asan
+        symbol: Bof
+    worker:
+        env:
+            PERFHERDER_EXTRA_OPTIONS: asan-fuzzing
+            MOZ_AUTOMATION_PACKAGE_TESTS: "1"
+        max-run-time: 5400
+    run:
+        using: mozharness
+        actions: [get-secrets, build]
+        config:
+            - builds/releng_base_firefox.py
+            - builds/releng_base_linux_32_builds.py
+        script: "mozharness/scripts/fx_desktop_build.py"
+        secrets: true
+        custom-build-variant-cfg: fuzzing-asan-tc
+        mozconfig-variant: nightly-fuzzing-asan
+        tooltool-downloads: public
+    use-sccache: true
+    fetches:
+        toolchain:
+            - linux64-binutils
+            - linux64-clang
+            - linux64-rust
+            - linux64-rust-size
+            - linux64-cbindgen
+            - linux64-dump_syms
+            - linux32-llvm-symbolizer
+            - linux64-sccache
+            - linux64-nasm
+            - linux64-node
+            - linux64-pkgconf
+            - sysroot-i686-linux-gnu
+            - sysroot-x86_64-linux-gnu
+            - sysroot-wasm32-wasi
+    optimization:
+        skip-unless-expanded: null
 
 linux64-reproduced/opt:
     description: "Linux64 Reproduced"
@@ -876,7 +917,6 @@ linux64-reproduced/opt:
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
         tooltool-downloads: public
-        need-xvfb: true
     # Original comment: Limited to trunk until bug 1596350 is fixed.
     # Addendum: Do not run on autoland, Bug 1599197
     run-on-projects: ['mozilla-central', 'comm-central']
@@ -890,6 +930,7 @@ linux64-reproduced/opt:
             - linux64-dump_syms
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -917,7 +958,6 @@ linux64-asan/opt:
         custom-build-variant-cfg: asan-tc
         mozconfig-variant: nightly-asan
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: true
     fetches:
         toolchain:
@@ -931,6 +971,7 @@ linux64-asan/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -958,7 +999,6 @@ linux64-tsan/opt:
         custom-build-variant-cfg: tsan-tc
         mozconfig-variant: tsan
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: true
     fetches:
         toolchain:
@@ -972,6 +1012,7 @@ linux64-tsan/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -1002,7 +1043,6 @@ linux64-tsan-fuzzing/opt:
         custom-build-variant-cfg: fuzzing-tsan-tc
         mozconfig-variant: tsan-fuzzing
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: true
     fetches:
         toolchain:
@@ -1016,6 +1056,7 @@ linux64-tsan-fuzzing/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -1048,7 +1089,6 @@ linux64-asan-fuzzing/noopt:
         custom-build-variant-cfg: fuzzing-asan-tc
         mozconfig-variant: nightly-fuzzing-asan-noopt
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: true
     fetches:
         toolchain:
@@ -1062,6 +1102,7 @@ linux64-asan-fuzzing/noopt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -1096,7 +1137,6 @@ linux64-asan-fuzzing-nyx/opt:
         custom-build-variant-cfg: fuzzing-asan-tc
         mozconfig-variant: nightly-fuzzing-asan-nyx
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: true
     fetches:
         toolchain:
@@ -1111,6 +1151,7 @@ linux64-asan-fuzzing-nyx/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -1143,7 +1184,6 @@ linux64-asan-fuzzing/opt:
         custom-build-variant-cfg: fuzzing-asan-tc
         mozconfig-variant: nightly-fuzzing-asan
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: true
     fetches:
         toolchain:
@@ -1157,6 +1197,7 @@ linux64-asan-fuzzing/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -1189,7 +1230,6 @@ linux64-asan-fuzzing-ccov/opt:
         secrets: true
         mozconfig-variant: asan-fuzzing-ccov
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: false
     fetches:
         toolchain:
@@ -1203,6 +1243,7 @@ linux64-asan-fuzzing-ccov/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -1230,7 +1271,6 @@ linux64-fuzzing-ccov/opt:
         secrets: true
         mozconfig-variant: fuzzing-ccov
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: false
     fetches:
         toolchain:
@@ -1244,6 +1284,7 @@ linux64-fuzzing-ccov/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -1283,7 +1324,6 @@ linux64-asan-reporter-shippable/opt:
         custom-build-variant-cfg: asan-reporter-tc
         mozconfig-variant: nightly-asan-reporter
         tooltool-downloads: public
-        need-xvfb: true
         mar-channel-id:
             firefox-mozilla-central-asan
         accepted-mar-channel-ids:
@@ -1299,6 +1339,7 @@ linux64-asan-reporter-shippable/opt:
             - linux64-llvm-symbolizer
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -1325,7 +1366,6 @@ linux64-asan/debug:
         custom-build-variant-cfg: asan-tc-and-debug
         mozconfig-variant: debug-asan
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: true
     fetches:
         toolchain:
@@ -1339,6 +1379,7 @@ linux64-asan/debug:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -1379,7 +1420,6 @@ linux64-shippable/opt:
         script: "mozharness/scripts/fx_desktop_build.py"
         secrets: true
         tooltool-downloads: public
-        need-xvfb: true
     fetches:
         toolchain:
             - linux64-binutils
@@ -1390,6 +1430,7 @@ linux64-shippable/opt:
             - linux64-dump_syms
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -1418,7 +1459,6 @@ linux64-noopt/debug:
         mozconfig-variant: noopt-debug
         tooltool-downloads: public
         keep-artifacts: false
-        need-xvfb: true
     run-on-projects: ['mozilla-central']
     use-sccache: true
     fetches:
@@ -1432,6 +1472,7 @@ linux64-noopt/debug:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -1472,6 +1513,7 @@ linux64-rusttests/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -1514,6 +1556,7 @@ linux64-rusttests/debug:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
     optimization:
@@ -1549,7 +1592,6 @@ linux64-ccov/opt:
         custom-build-variant-cfg: code-coverage-opt
         mozconfig-variant: code-coverage-opt
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: false
     fetches:
         toolchain:
@@ -1562,6 +1604,7 @@ linux64-ccov/opt:
             - linux64-nasm
             - linux64-node
             - linux64-grcov
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -1590,7 +1633,6 @@ linux64-ccov/debug:
         custom-build-variant-cfg: code-coverage-debug
         mozconfig-variant: code-coverage-debug
         tooltool-downloads: public
-        need-xvfb: true
     use-sccache: false
     fetches:
         toolchain:
@@ -1603,6 +1645,7 @@ linux64-ccov/debug:
             - linux64-nasm
             - linux64-node
             - linux64-grcov
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -1628,7 +1671,6 @@ linux64-add-on-devel/opt:
         custom-build-variant-cfg: add-on-devel
         mozconfig-variant: add-on-devel
         tooltool-downloads: public
-        need-xvfb: true
     run-on-projects: ['mozilla-beta', 'mozilla-release']
     use-sccache: true
     fetches:
@@ -1642,6 +1684,7 @@ linux64-add-on-devel/opt:
             - linux64-sccache
             - linux64-nasm
             - linux64-node
+            - linux64-pkgconf
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
 
@@ -1671,7 +1714,6 @@ linux64-aarch64/opt:
         secrets: true
         mozconfig-variant: opt
         tooltool-downloads: public
-        need-xvfb: true
     run-on-projects: ['integration']
     fetches:
         toolchain:
@@ -1682,6 +1724,7 @@ linux64-aarch64/opt:
             - linux64-cbindgen
             - linux64-dump_syms
             - linux64-node
+            - linux64-pkgconf
             - sysroot-aarch64-linux-gnu
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi

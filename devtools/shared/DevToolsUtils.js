@@ -8,20 +8,20 @@
 
 /* General utilities used throughout devtools. */
 
-var flags = require("devtools/shared/flags");
+var flags = require("resource://devtools/shared/flags.js");
 var {
   getStack,
   callFunctionWithAsyncStack,
-} = require("devtools/shared/platform/stack");
+} = require("resource://devtools/shared/platform/stack.js");
 
 const lazy = {};
 ChromeUtils.defineModuleGetter(lazy, "OS", "resource://gre/modules/osfile.jsm");
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "FileUtils",
-  "resource://gre/modules/FileUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  NetworkHelper:
+    "resource://devtools/shared/network-observer/NetworkHelper.sys.mjs",
+});
 
 ChromeUtils.defineModuleGetter(
   lazy,
@@ -34,7 +34,7 @@ ChromeUtils.defineModuleGetter(
 var DevToolsUtils = exports;
 
 // Re-export the thread-safe utils.
-const ThreadSafeDevToolsUtils = require("devtools/shared/ThreadSafeDevToolsUtils.js");
+const ThreadSafeDevToolsUtils = require("resource://devtools/shared/ThreadSafeDevToolsUtils.js");
 for (const key of Object.keys(ThreadSafeDevToolsUtils)) {
   exports[key] = ThreadSafeDevToolsUtils[key];
 }
@@ -420,8 +420,9 @@ DevToolsUtils.defineLazyGetter(this, "AppConstants", () => {
   if (isWorker) {
     return {};
   }
-  return ChromeUtils.import("resource://gre/modules/AppConstants.jsm")
-    .AppConstants;
+  return ChromeUtils.importESModule(
+    "resource://gre/modules/AppConstants.sys.mjs"
+  ).AppConstants;
 });
 
 /**
@@ -470,10 +471,6 @@ Object.defineProperty(exports, "assert", {
 
 DevToolsUtils.defineLazyGetter(this, "NetUtil", () => {
   return ChromeUtils.import("resource://gre/modules/NetUtil.jsm").NetUtil;
-});
-
-DevToolsUtils.defineLazyGetter(this, "NetworkHelper", () => {
-  return require("devtools/shared/webconsole/network-helper");
 });
 
 /**
@@ -618,7 +615,10 @@ function mainThreadFetch(
         if (!charset) {
           charset = aOptions.charset || "UTF-8";
         }
-        const unicodeSource = NetworkHelper.convertToUnicode(source, charset);
+        const unicodeSource = lazy.NetworkHelper.convertToUnicode(
+          source,
+          charset
+        );
 
         // Look for any source map URL in the response.
         let sourceMapURL;

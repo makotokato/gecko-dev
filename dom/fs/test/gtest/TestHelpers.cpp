@@ -4,7 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "TestHelpers.h"
+
 #include "gtest/gtest.h"
+#include "mozilla/dom/quota/CommonMetadata.h"
 #include "nsString.h"
 
 namespace testing::internal {
@@ -24,4 +27,31 @@ GTEST_API_ ::testing::AssertionResult CmpHelperSTREQ(const char* s1_expression,
       /* ignore case */ false);
 }
 
+GTEST_API_ ::testing::AssertionResult CmpHelperSTREQ(const char* s1_expression,
+                                                     const char* s2_expression,
+                                                     const nsACString& s1,
+                                                     const nsACString& s2) {
+  if (s1.Equals(s2)) {
+    return ::testing::AssertionSuccess();
+  }
+
+  return ::testing::internal::EqFailure(s1_expression, s2_expression,
+                                        std::string(s1), std::string(s2),
+                                        /* ignore case */ false);
+}
+
 }  // namespace testing::internal
+
+namespace mozilla::dom::fs::test {
+
+quota::OriginMetadata GetTestOriginMetadata() {
+  return quota::OriginMetadata{""_ns, "example.com"_ns, "http://example.com"_ns,
+                               quota::PERSISTENCE_TYPE_DEFAULT};
+}
+
+const Origin& GetTestOrigin() {
+  static const Origin origin = "http://example.com"_ns;
+  return origin;
+}
+
+}  // namespace mozilla::dom::fs::test

@@ -11,7 +11,12 @@ const { TargetActorRegistry } = ChromeUtils.importESModule(
   "resource://devtools/server/actors/targets/target-actor-registry.sys.mjs"
 );
 const { WatcherRegistry } = ChromeUtils.importESModule(
-  "resource://devtools/server/actors/watcher/WatcherRegistry.sys.mjs"
+  "resource://devtools/server/actors/watcher/WatcherRegistry.sys.mjs",
+  {
+    // WatcherRegistry needs to be a true singleton and loads ActorManagerParent
+    // which also has to be a true singleton.
+    loadInDevToolsLoader: false,
+  }
 );
 const Targets = require("resource://devtools/server/actors/targets/index.js");
 const { getAllBrowsingContextsForContext } = ChromeUtils.importESModule(
@@ -513,15 +518,16 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
      * We will eventually get rid of this code once all targets are properly supported by
      * the Watcher Actor and we have target helpers for all of them.
      */
-    const frameResourceTypes = Resources.getResourceTypesForTargetType(
-      resourceTypes,
-      Targets.TYPES.FRAME
-    );
-    if (frameResourceTypes.length) {
-      const targetActor = this._getTargetActorInParentProcess();
-      if (targetActor) {
-        await targetActor.addSessionDataEntry("resources", frameResourceTypes);
-      }
+    const targetActor = this._getTargetActorInParentProcess();
+    if (targetActor) {
+      const targetActorResourceTypes = Resources.getResourceTypesForTargetType(
+        resourceTypes,
+        targetActor.targetType
+      );
+      await targetActor.addSessionDataEntry(
+        "resources",
+        targetActorResourceTypes
+      );
     }
   },
 
@@ -583,15 +589,13 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
     }
 
     // See comment in watchResources.
-    const frameResourceTypes = Resources.getResourceTypesForTargetType(
-      resourceTypes,
-      Targets.TYPES.FRAME
-    );
-    if (frameResourceTypes.length) {
-      const targetActor = this._getTargetActorInParentProcess();
-      if (targetActor) {
-        targetActor.removeSessionDataEntry("resources", frameResourceTypes);
-      }
+    const targetActor = this._getTargetActorInParentProcess();
+    if (targetActor) {
+      const targetActorResourceTypes = Resources.getResourceTypesForTargetType(
+        resourceTypes,
+        targetActor.targetType
+      );
+      targetActor.removeSessionDataEntry("resources", targetActorResourceTypes);
     }
 
     // Unregister the JS Window Actor if there is no more DevTools code observing any target/resource

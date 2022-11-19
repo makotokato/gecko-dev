@@ -27,7 +27,6 @@
         "path": {
           "title": "Path",
           "type": "string",
-          "default": "/",
           "description": "The path pertaining to the cookie."
         },
         "expiryRelative": {
@@ -53,7 +52,6 @@
             1,
             2
           ],
-          "default": 0,
           "description": "The SameSite attribute. See nsICookie.idl."
         },
         "isSession": {
@@ -79,11 +77,12 @@
     "id",
     "domain"
   ],
+  "additionalProperties": false,
   "properties": {
     "id": {
       "title": "ID",
       "type": "string",
-      "description": "Unique identifier of the rule. This should match the domain field."
+      "description": "Unique identifier of the rule."
     },
     "domain": {
       "title": "Domain",
@@ -123,6 +122,11 @@
           "type": "string",
           "description": "Query selector to detect cookie banner element."
         },
+        "skipPresenceVisibilityCheck": {
+          "title": "Skip Presence Visibility Check",
+          "type": "boolean",
+          "description": "Whether to skip checking if the banner is visible before clicking it."
+        },
         "hide": {
           "title": "Hide Selector",
           "type": "string",
@@ -150,6 +154,10 @@
           "presence"
         ]
       }
+    },
+    "filter_expression": {
+      "type": "string",
+      "description": "This is NOT used by the cookie banner handling feature, but has special functionality in Remote Settings. See https://remote-settings.readthedocs.io/en/latest/target-filters.html#how"
     }
   },
   "description": "Rule containing instructions on how to handle a cookie banner on a specific site."

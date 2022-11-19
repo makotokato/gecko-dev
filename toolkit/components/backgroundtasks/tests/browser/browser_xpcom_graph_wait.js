@@ -29,10 +29,10 @@ const backgroundtaskPhases = {
   AfterRunBackgroundTaskNamed: {
     allowlist: {
       modules: [
-        "resource://gre/modules/AppConstants.jsm",
+        "resource://gre/modules/AppConstants.sys.mjs",
         "resource://gre/modules/AsyncShutdown.jsm",
-        "resource://gre/modules/BackgroundTasksManager.jsm",
-        "resource://gre/modules/Console.jsm",
+        "resource://gre/modules/BackgroundTasksManager.sys.mjs",
+        "resource://gre/modules/Console.sys.mjs",
         "resource://gre/modules/EnterprisePolicies.sys.mjs",
         "resource://gre/modules/EnterprisePoliciesParent.sys.mjs",
         "resource://gre/modules/PromiseUtils.sys.mjs",
@@ -120,17 +120,15 @@ const backgroundtaskPhases = {
     allowlist: {
       modules: [
         // We have a profile marker for this, even though it failed to load!
-        "resource:///modules/backgroundtasks/BackgroundTask_wait.jsm",
         "resource:///modules/backgroundtasks/BackgroundTask_wait.sys.mjs",
 
         "resource://gre/modules/ConsoleAPIStorage.jsm",
-        "resource://gre/modules/Timer.jsm",
+        "resource://gre/modules/Timer.sys.mjs",
 
         // We have a profile marker for this, even though it failed to load!
-        "resource://gre/modules/backgroundtasks/BackgroundTask_wait.jsm",
         "resource://gre/modules/backgroundtasks/BackgroundTask_wait.sys.mjs",
 
-        "resource://testing-common/backgroundtasks/BackgroundTask_wait.jsm",
+        "resource://testing-common/backgroundtasks/BackgroundTask_wait.sys.mjs",
       ],
       services: ["@mozilla.org/consoleAPI-storage;1"],
     },
@@ -205,10 +203,10 @@ add_task(async function test_xpcom_graph_wait() {
     .get("MOZ_UPLOAD_DIR");
   profilePath =
     profilePath ||
-    (await IOUtils.createUniqueFile(
+    (await IOUtils.createUniqueDirectory(
       PathUtils.profileDir,
       "testBackgroundTask",
-      0o600
+      0o700
     ));
 
   profilePath = PathUtils.join(profilePath, "profile_backgroundtask_wait.json");
@@ -257,6 +255,7 @@ add_task(async function test_xpcom_graph_wait() {
       ![
         "ChromeUtils.import", // JSMs.
         "ChromeUtils.importESModule", // System ESMs.
+        "ChromeUtils.importESModule static import",
         "GetService", // XPCOM services.
       ].includes(markerName)
     ) {
@@ -266,7 +265,8 @@ add_task(async function test_xpcom_graph_wait() {
     let markerData = m[dataCol];
     if (
       markerName == "ChromeUtils.import" ||
-      markerName == "ChromeUtils.importESModule"
+      markerName == "ChromeUtils.importESModule" ||
+      markerName == "ChromeUtils.importESModule static import"
     ) {
       let module = markerData.name;
       if (!markersForAllPhases.modules.includes(module)) {

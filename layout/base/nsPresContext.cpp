@@ -277,6 +277,7 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
       mIsGlyph(false),
       mCounterStylesDirty(true),
       mFontFeatureValuesDirty(true),
+      mFontPaletteValuesDirty(true),
       mIsVisual(false),
       mHasWarnedAboutTooLargeDashedOrDottedRadius(false),
       mQuirkSheetAdded(false),
@@ -330,7 +331,6 @@ static const char* gExactCallbackPrefs[] = {
     "intl.accept_languages",
     "layout.css.devPixelsPerPx",
     "layout.css.dpi",
-    "privacy.resistFingerprinting",
     "privacy.trackingprotection.enabled",
     "ui.use_standins_for_native_colors",
     nullptr,
@@ -576,7 +576,6 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
   // because that pref doesn't just affect the "live" value of the media query;
   // it affects whether it is parsed at all.
   if (prefName.EqualsLiteral("browser.display.document_color_use") ||
-      prefName.EqualsLiteral("privacy.resistFingerprinting") ||
       prefName.EqualsLiteral("browser.display.foreground_color") ||
       prefName.EqualsLiteral("browser.display.background_color")) {
     MediaFeatureValuesChanged({MediaFeatureChangeReason::PreferenceChange},
@@ -1003,11 +1002,13 @@ struct QueryContainerState {
   nscoord GetInlineSize() const { return LogicalSize(mWm, mSize).ISize(mWm); }
 
   bool Changed(const QueryContainerState& aNewState, StyleContainerType aType) {
-    if (aType & StyleContainerType::SIZE) {
-      return mSize != aNewState.mSize;
-    }
-    if (aType & StyleContainerType::INLINE_SIZE) {
-      return GetInlineSize() != aNewState.GetInlineSize();
+    switch (aType) {
+      case StyleContainerType::Normal:
+        break;
+      case StyleContainerType::Size:
+        return mSize != aNewState.mSize;
+      case StyleContainerType::InlineSize:
+        return GetInlineSize() != aNewState.GetInlineSize();
     }
     return false;
   }
@@ -1031,6 +1032,8 @@ bool nsPresContext::UpdateContainerQueryStyles() {
     return false;
   }
 
+  AUTO_PROFILER_MARKER_TEXT("UpdateContainerQueryStyles", LAYOUT, {}, ""_ns);
+
   PresShell()->DoFlushLayout(/* aInterruptible = */ false);
 
   bool anyChanged = false;
@@ -1040,7 +1043,8 @@ bool nsPresContext::UpdateContainerQueryStyles() {
     }
 
     auto type = frame->StyleDisplay()->mContainerType;
-    MOZ_ASSERT(type, "Non-container frames shouldn't be in this type");
+    MOZ_ASSERT(type != StyleContainerType::Normal,
+               "Non-container frames shouldn't be in this type");
 
     if (!mUpdatedContainerQueryContents.EnsureInserted(frame->GetContent())) {
       continue;
@@ -1835,6 +1839,7 @@ void nsPresContext::RebuildAllStyleData(nsChangeHint aExtraHint,
   mDocument->MarkUserFontSetDirty();
   MarkCounterStylesDirty();
   MarkFontFeatureValuesDirty();
+  MarkFontPaletteValuesDirty();
   PostRebuildAllStyleDataEvent(aExtraHint, aRestyleHint);
 }
 
@@ -2780,11 +2785,31 @@ void nsPresContext::FlushFontFeatureValues() {
     return;  // we've been torn down
   }
 
-  if (mFontFeatureValuesDirty) {
-    ServoStyleSet* styleSet = mPresShell->StyleSet();
-    mFontFeatureValuesLookup = styleSet->BuildFontFeatureValueSet();
-    mFontFeatureValuesDirty = false;
+  if (!mFontFeatureValuesDirty) {
+    return;
   }
+
+  ServoStyleSet* styleSet = mPresShell->StyleSet();
+  mFontFeatureValuesLookup = styleSet->BuildFontFeatureValueSet();
+  mFontFeatureValuesDirty = false;
+}
+
+void nsPresContext::FlushFontPaletteValues() {
+  if (!mPresShell) {
+    return;  // we've been torn down
+  }
+
+  if (!mFontPaletteValuesDirty) {
+    return;
+  }
+
+  ServoStyleSet* styleSet = mPresShell->StyleSet();
+  mFontPaletteValueSet = styleSet->BuildFontPaletteValueSet();
+  mFontPaletteValuesDirty = false;
+
+  // Even if we're not reflowing anything, a change to the palette means we
+  // need to repaint in order to show the new colors.
+  InvalidatePaintedLayers();
 }
 
 void nsPresContext::SetVisibleArea(const nsRect& r) {

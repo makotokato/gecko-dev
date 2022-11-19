@@ -30,7 +30,9 @@ const promiseDisableUnifiedExtensions = async () => {
 };
 
 const getListView = win => {
-  return PanelMultiView.getViewNode(win.document, "unified-extensions-view");
+  const { panel } = win.gUnifiedExtensions;
+  ok(panel, "expected panel to be created");
+  return panel.querySelector("#unified-extensions-view");
 };
 
 const openExtensionsPanel = async win => {
@@ -50,7 +52,7 @@ const closeExtensionsPanel = async win => {
   ok(button, "expected button");
 
   const hidden = BrowserTestUtils.waitForEvent(
-    win.document,
+    win.gUnifiedExtensions.panel,
     "popuphidden",
     true
   );
@@ -59,15 +61,20 @@ const closeExtensionsPanel = async win => {
 };
 
 const getUnifiedExtensionsItem = (win, extensionId) => {
-  return getListView(win).querySelector(
-    `unified-extensions-item[extension-id="${extensionId}"]`
+  const view = getListView(win);
+
+  // First try to find a CUI widget, otherwise a custom element when the
+  // extension does not have a browser action.
+  return (
+    view.querySelector(`toolbaritem[data-extensionid="${extensionId}"]`) ||
+    view.querySelector(`unified-extensions-item[extension-id="${extensionId}"]`)
   );
 };
 
 const openUnifiedExtensionsContextMenu = async (win, extensionId) => {
-  const button = getUnifiedExtensionsItem(win, extensionId).querySelector(
-    ".unified-extensions-item-open-menu"
-  );
+  const item = getUnifiedExtensionsItem(win, extensionId);
+  ok(item, `expected item for extensionId=${extensionId}`);
+  const button = item.querySelector(".unified-extensions-item-open-menu");
   ok(button, "expected 'open menu' button");
   // Make sure the button is visible before clicking on it (below) since the
   // list of extensions can have a scrollbar (when there are many extensions
@@ -85,12 +92,24 @@ const openUnifiedExtensionsContextMenu = async (win, extensionId) => {
   return menu;
 };
 
-const clickUnifiedExtensionsItem = async (win, extensionId) => {
+const clickUnifiedExtensionsItem = async (
+  win,
+  extensionId,
+  forceEnableButton = false
+) => {
   // The panel should be closed automatically when we click an extension item.
   await openExtensionsPanel(win);
 
   const item = getUnifiedExtensionsItem(win, extensionId);
   ok(item, `expected item for ${extensionId}`);
+
+  // The action button should be disabled when users aren't supposed to click
+  // on it but it might still be useful to re-enable it for testing purposes.
+  if (forceEnableButton) {
+    let actionButton = item.querySelector(".unified-extensions-item-action");
+    actionButton.disabled = false;
+    ok(!actionButton.disabled, "action button was force-enabled");
+  }
 
   // Similar to `openUnifiedExtensionsContextMenu()`, we make sure the item is
   // visible before clicking on it to prevent intermittents.
@@ -114,7 +133,7 @@ const createExtensions = (
     ExtensionTestUtils.loadExtension({
       manifest: {
         name: "default-extension-name",
-        applications: {
+        browser_specific_settings: {
           gecko: { id: `@ext-${extensionsCreated++}` },
         },
         ...manifestData,

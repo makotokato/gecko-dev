@@ -1,8 +1,8 @@
 const { AddonTestUtils } = ChromeUtils.import(
   "resource://testing-common/AddonTestUtils.jsm"
 );
-const { getAppInfo } = ChromeUtils.import(
-  "resource://testing-common/AppInfo.jsm"
+const { getAppInfo } = ChromeUtils.importESModule(
+  "resource://testing-common/AppInfo.sys.mjs"
 );
 const { XPIInstall } = ChromeUtils.import(
   "resource://gre/modules/addons/XPIInstall.jsm"
@@ -10,7 +10,9 @@ const { XPIInstall } = ChromeUtils.import(
 const { PromiseUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/PromiseUtils.sys.mjs"
 );
-const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
 const { TelemetryTestUtils } = ChromeUtils.import(
   "resource://testing-common/TelemetryTestUtils.jsm"
 );
@@ -263,7 +265,7 @@ add_task(async function testRedownload() {
   gAUS.addDownloadListener(listener);
 
   let bestUpdate = gAUS.selectUpdate(updates);
-  gAUS.downloadUpdate(bestUpdate, false);
+  await gAUS.downloadUpdate(bestUpdate, false);
 
   await waitForEvent("update-downloaded");
 

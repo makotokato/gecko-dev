@@ -62,10 +62,6 @@ LOCAL_INCLUDES += [
     "/netwerk/cache",
 ]
 
-FINAL_LIBRARY = "xul"
+include("/ipc/chromium/chromium-config.mozbuild")
 
-if CONFIG["MOZ_BACKGROUNDTASKS"]:
-    EXTRA_JS_MODULES.backgroundtasks += [
-        "BackgroundTask_purgeHTTPCache.jsm",
-    ]
-    DEFINES["MOZ_BACKGROUNDTASKS"] = True
+FINAL_LIBRARY = "xul"

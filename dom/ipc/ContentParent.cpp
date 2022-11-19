@@ -53,6 +53,8 @@
 #include "mozilla/ipc/URIUtils.h"
 #include "gfxPlatform.h"
 #include "gfxPlatformFontList.h"
+#include "nsDNSService2.h"
+#include "nsPIDNSService.h"
 #include "mozilla/AntiTrackingUtils.h"
 #include "mozilla/AppShutdown.h"
 #include "mozilla/AutoRestore.h"
@@ -163,6 +165,7 @@
 #include "mozilla/net/NeckoParent.h"
 #include "mozilla/net/PCookieServiceParent.h"
 #include "mozilla/net/CookieKey.h"
+#include "mozilla/net/TRRService.h"
 #include "mozilla/TelemetryComms.h"
 #include "mozilla/TelemetryEventEnums.h"
 #include "mozilla/RemoteLazyInputStreamParent.h"
@@ -326,6 +329,9 @@
 
 // For VP9Benchmark::sBenchmarkFpsPref
 #include "Benchmark.h"
+
+#include "nsIToolkitProfileService.h"
+#include "nsIToolkitProfile.h"
 
 static NS_DEFINE_CID(kCClipboardCID, NS_CLIPBOARD_CID);
 
@@ -965,6 +971,7 @@ already_AddRefed<ContentParent> ContentParent::GetUsedBrowserProcess(
   // Note: this process may not have finished launching yet
   RefPtr<ContentParent> preallocated;
   if (aRemoteType != FILE_REMOTE_TYPE &&
+      aRemoteType != PRIVILEGEDABOUT_REMOTE_TYPE &&
       aRemoteType != EXTENSION_REMOTE_TYPE &&  // Bug 1638119
       (preallocated = PreallocatedProcessManager::Take(aRemoteType))) {
     MOZ_DIAGNOSTIC_ASSERT(preallocated->GetRemoteType() ==
@@ -996,7 +1003,9 @@ already_AddRefed<ContentParent> ContentParent::GetUsedBrowserProcess(
     if (!preallocated->IsLaunching()) {
       // Specialize this process for the appropriate remote type, and activate
       // it.
-      Unused << preallocated->SendRemoteType(preallocated->mRemoteType);
+
+      Unused << preallocated->SendRemoteType(preallocated->mRemoteType,
+                                             preallocated->mProfile);
 
       nsCOMPtr<nsIObserverService> obs =
           mozilla::services::GetObserverService();
@@ -1224,23 +1233,26 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateGMPService() {
   Endpoint<PGMPServiceParent> parent;
   Endpoint<PGMPServiceChild> child;
 
+  if (mGMPCreated) {
+    return IPC_FAIL(this, "GMP Service already created");
+  }
+
   nsresult rv;
   rv = PGMPService::CreateEndpoints(base::GetCurrentProcId(), OtherPid(),
                                     &parent, &child);
   if (NS_FAILED(rv)) {
-    MOZ_ASSERT(false, "CreateEndpoints failed");
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "CreateEndpoints failed");
   }
 
   if (!GMPServiceParent::Create(std::move(parent))) {
-    MOZ_ASSERT(false, "GMPServiceParent::Create failed");
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "GMPServiceParent::Create failed");
   }
 
   if (!SendInitGMPService(std::move(child))) {
-    MOZ_ASSERT(false, "SendInitGMPService failed");
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "SendInitGMPService failed");
   }
+
+  mGMPCreated = true;
 
   return IPC_OK();
 }
@@ -1764,10 +1776,8 @@ void MaybeLogBlockShutdownDiagnostics(ContentParent* aSelf, const char* aMsg,
                                       const char* aFile, int32_t aLine) {
 #if defined(MOZ_DIAGNOSTIC_ASSERT_ENABLED)
   if (aSelf->IsBlockingShutdown()) {
-    nsAutoCString logmsg;
-    logmsg.AppendPrintf("ContentParent: id=%p - ", aSelf);
-    logmsg.Append(aMsg);
-    NS_DebugBreak(NS_DEBUG_WARNING, logmsg.get(), nullptr, aFile, aLine);
+    MOZ_LOG(ContentParent::GetLog(), LogLevel::Info,
+            ("ContentParent: id=%p - %s at %s(%d)", aSelf, aMsg, aFile, aLine));
   }
 #else
   Unused << aSelf;
@@ -2830,6 +2840,7 @@ ContentParent::ContentParent(const nsACString& aRemoteType, int32_t aJSPluginID)
       mIsRemoteInputEventQueueEnabled(false),
       mIsInputPriorityEventEnabled(false),
       mIsInPool(false),
+      mGMPCreated(false),
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
       mBlockShutdownCalled(false),
 #endif
@@ -2931,6 +2942,19 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
       do_GetService(NS_CAPTIVEPORTAL_CONTRACTID);
   if (cps) {
     cps->GetState(&xpcomInit.captivePortalState());
+  }
+
+  if (StaticPrefs::fission_processProfileName()) {
+    nsCOMPtr<nsIToolkitProfileService> profileSvc =
+        do_GetService(NS_PROFILESERVICE_CONTRACTID);
+    if (profileSvc) {
+      nsCOMPtr<nsIToolkitProfile> currentProfile;
+      nsresult rv =
+          profileSvc->GetCurrentProfile(getter_AddRefs(currentProfile));
+      if (NS_SUCCEEDED(rv) && currentProfile) {
+        currentProfile->GetName(mProfile);
+      }
+    }
   }
 
   nsIBidiKeyboard* bidi = nsContentUtils::GetBidiKeyboard();
@@ -3066,6 +3090,8 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
 
   xpcomInit.perfStatsMask() = PerfStats::GetCollectionMask();
 
+  xpcomInit.trrDomain() = TRRService::ProviderKey();
+
   Unused << SendSetXPCOMProcessAttributes(
       xpcomInit, initialData, lnf, fontList, std::move(sharedUASheetHandle),
       sharedUASheetAddress, std::move(sharedFontListBlocks),
@@ -3103,7 +3129,8 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
   // Send the child its remote type. On Mac, this needs to be sent prior
   // to the message we send to enable the Sandbox (SendStartProcessSandbox)
   // because different remote types require different sandbox privileges.
-  Unused << SendRemoteType(mRemoteType);
+
+  Unused << SendRemoteType(mRemoteType, mProfile);
 
   ScriptPreloader::InitContentChild(*this);
 
@@ -3517,7 +3544,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPlaySound(nsIURI* aURI) {
   // If the check here fails, it can only mean that this message was spoofed.
   if (!aURI || !aURI->SchemeIs("chrome")) {
     // PlaySound only accepts a valid chrome URI.
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "Invalid aURI passed.");
   }
   nsCOMPtr<nsIURL> soundURL(do_QueryInterface(aURI));
   if (!soundURL) {
@@ -4592,7 +4619,7 @@ bool ContentParent::DeallocPSpeechSynthesisParent(
 mozilla::ipc::IPCResult ContentParent::RecvPSpeechSynthesisConstructor(
     PSpeechSynthesisParent* aActor) {
   if (!static_cast<SpeechSynthesisParent*>(aActor)->SendInit()) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "SpeechSynthesisParent::SendInit failed.");
   }
   return IPC_OK();
 }
@@ -4616,7 +4643,7 @@ mozilla::ipc::IPCResult ContentParent::RecvStartVisitedQueries(
 mozilla::ipc::IPCResult ContentParent::RecvSetURITitle(nsIURI* uri,
                                                        const nsAString& title) {
   if (!uri) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "uri must not be null.");
   }
   nsCOMPtr<IHistory> history = components::History::Service();
   if (history) {
@@ -4630,14 +4657,14 @@ mozilla::ipc::IPCResult ContentParent::RecvIsSecureURI(
     bool* aIsSecureURI) {
   nsCOMPtr<nsISiteSecurityService> sss(do_GetService(NS_SSSERVICE_CONTRACTID));
   if (!sss) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "Failed to get nsISiteSecurityService.");
   }
   if (!aURI) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "aURI must not be null.");
   }
   nsresult rv = sss->IsSecureURI(aURI, aOriginAttributes, aIsSecureURI);
   if (NS_FAILED(rv)) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "IsSecureURI failed.");
   }
   return IPC_OK();
 }
@@ -4646,7 +4673,7 @@ mozilla::ipc::IPCResult ContentParent::RecvAccumulateMixedContentHSTS(
     nsIURI* aURI, const bool& aActive,
     const OriginAttributes& aOriginAttributes) {
   if (!aURI) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "aURI must not be null.");
   }
   nsMixedContentBlocker::AccumulateMixedContentHSTS(aURI, aActive,
                                                     aOriginAttributes);
@@ -4669,7 +4696,7 @@ mozilla::ipc::IPCResult ContentParent::RecvLoadURIExternal(
   }
 
   if (!uri) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "uri must not be null.");
   }
 
   BrowsingContext* bc = aContext.get();
@@ -4707,7 +4734,7 @@ mozilla::ipc::IPCResult ContentParent::RecvExtProtocolChannelConnectParent(
 mozilla::ipc::IPCResult ContentParent::RecvShowAlert(
     nsIAlertNotification* aAlert) {
   if (!aAlert) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "aAlert must not be null.");
   }
   nsCOMPtr<nsIAlertsService> sysAlerts(components::Alerts::Service());
   if (sysAlerts) {
@@ -5070,12 +5097,12 @@ mozilla::ipc::IPCResult ContentParent::RecvAddIdleObserver(
   nsresult rv;
   nsCOMPtr<nsIUserIdleService> idleService =
       do_GetService("@mozilla.org/widget/useridleservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, IPC_FAIL_NO_REASON(this));
+  NS_ENSURE_SUCCESS(rv, IPC_FAIL(this, "Failed to get UserIdleService."));
 
   RefPtr<ParentIdleListener> listener =
       new ParentIdleListener(this, aObserver, aIdleTimeInS);
   rv = idleService->AddIdleObserver(listener, aIdleTimeInS);
-  NS_ENSURE_SUCCESS(rv, IPC_FAIL_NO_REASON(this));
+  NS_ENSURE_SUCCESS(rv, IPC_FAIL(this, "AddIdleObserver failed."));
   mIdleListeners.AppendElement(listener);
   return IPC_OK();
 }
@@ -5089,7 +5116,7 @@ mozilla::ipc::IPCResult ContentParent::RecvRemoveIdleObserver(
       nsresult rv;
       nsCOMPtr<nsIUserIdleService> idleService =
           do_GetService("@mozilla.org/widget/useridleservice;1", &rv);
-      NS_ENSURE_SUCCESS(rv, IPC_FAIL_NO_REASON(this));
+      NS_ENSURE_SUCCESS(rv, IPC_FAIL(this, "Failed to get UserIdleService."));
       idleService->RemoveIdleObserver(listener, aIdleTimeInS);
       mIdleListeners.RemoveElementAt(i);
       break;
@@ -5502,8 +5529,11 @@ mozilla::ipc::IPCResult ContentParent::CommonCreateWindow(
     return IPC_OK();
   }
 
+  WindowFeatures features;
+  features.Tokenize(aFeatures);
+
   aResult = pwwatch->OpenWindowWithRemoteTab(
-      thisBrowserHost, aFeatures, aCalledFromJS, aParent.FullZoom(), openInfo,
+      thisBrowserHost, features, aCalledFromJS, aParent.FullZoom(), openInfo,
       getter_AddRefs(aNewRemoteTab));
   if (NS_WARN_IF(NS_FAILED(aResult))) {
     return IPC_OK();
@@ -5518,12 +5548,15 @@ mozilla::ipc::IPCResult ContentParent::CommonCreateWindow(
   // the frameloader to display will be correct (instead of falling back to a
   // 10x10 default), we force layout if necessary to get the most up-to-date
   // dimensions. See bug 1358712 for details.
-  //
-  // This involves doing a bit of gymnastics in order to get at the FrameLoader,
-  // so we scope this to avoid polluting the main function scope.
-  {
-    nsCOMPtr<Element> frameElement = newBrowserHost->GetOwnerElement();
-    MOZ_ASSERT(frameElement);
+  nsCOMPtr<Element> frameElement = newBrowserHost->GetOwnerElement();
+  MOZ_ASSERT(frameElement);
+  if (nsWindowWatcher::HaveSpecifiedSize(features)) {
+    // We want to flush the layout anyway because of the resize to the specified
+    // size. (Bug 1793605).
+    RefPtr<Document> chromeDoc = frameElement->OwnerDoc();
+    MOZ_ASSERT(chromeDoc);
+    chromeDoc->FlushPendingNotifications(FlushType::Layout);
+  } else {
     RefPtr<nsFrameLoaderOwner> frameLoaderOwner = do_QueryObject(frameElement);
     MOZ_ASSERT(frameLoaderOwner);
     RefPtr<nsFrameLoader> frameLoader = frameLoaderOwner->GetFrameLoader();
@@ -5823,7 +5856,7 @@ mozilla::ipc::IPCResult ContentParent::RecvStartCmapLoading(
 mozilla::ipc::IPCResult ContentParent::RecvGetHyphDict(
     nsIURI* aURI, base::SharedMemoryHandle* aOutHandle, uint32_t* aOutSize) {
   if (!aURI) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "aURI must not be null.");
   }
   nsHyphenationManager::Instance()->ShareHyphDictToProcess(
       aURI, Pid(), aOutHandle, aOutSize);
@@ -5857,8 +5890,7 @@ mozilla::ipc::IPCResult ContentParent::RecvBeginDriverCrashGuard(
       guard = MakeUnique<gfx::WMFVPXVideoCrashGuard>(this);
       break;
     default:
-      MOZ_ASSERT_UNREACHABLE("unknown crash guard type");
-      return IPC_FAIL_NO_REASON(this);
+      return IPC_FAIL(this, "unknown crash guard type");
   }
 
   if (guard->Crashed()) {
@@ -6031,7 +6063,7 @@ mozilla::ipc::IPCResult ContentParent::RecvStoreAndBroadcastBlobURLRegistration(
   }
   RefPtr<BlobImpl> blobImpl = IPCBlobUtils::Deserialize(aBlob);
   if (NS_WARN_IF(!blobImpl)) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "Blob deserialization failed.");
   }
 
   BlobURLProtocolHandler::AddDataEntry(aURI, aPrincipal, aAgentClusterId,
@@ -6109,9 +6141,12 @@ mozilla::ipc::IPCResult ContentParent::RecvGetFilesRequest(
   if (!mozilla::Preferences::GetBool("dom.filesystem.pathcheck.disabled",
                                      false)) {
     RefPtr<FileSystemSecurity> fss = FileSystemSecurity::Get();
-    if (NS_WARN_IF(!fss || !fss->ContentProcessHasAccessTo(ChildID(),
-                                                           aDirectoryPath))) {
-      return IPC_FAIL_NO_REASON(this);
+    if (!fss) {
+      return IPC_FAIL(this, "Failed to get FileSystemSecurity.");
+    }
+
+    if (!fss->ContentProcessHasAccessTo(ChildID(), aDirectoryPath)) {
+      return IPC_FAIL(this, "ContentProcessHasAccessTo failed.");
     }
   }
 
@@ -6122,7 +6157,7 @@ mozilla::ipc::IPCResult ContentParent::RecvGetFilesRequest(
   if (NS_WARN_IF(rv.Failed())) {
     if (!SendGetFilesResponse(aUUID,
                               GetFilesResponseFailure(rv.StealNSResult()))) {
-      return IPC_FAIL_NO_REASON(this);
+      return IPC_FAIL(this, "SendGetFilesResponse failed.");
     }
     return IPC_OK();
   }
@@ -6469,8 +6504,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPURLClassifierLocalConstructor(
   nsTArray<IPCURLClassifierFeature> features = std::move(aFeatures);
 
   if (!aURI) {
-    NS_WARNING("aURI should not be null");
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "aURI should not be null");
   }
 
   auto* actor = static_cast<URLClassifierLocalParent*>(aActor);
@@ -6501,7 +6535,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPLoginReputationConstructor(
   MOZ_ASSERT(aActor);
 
   if (!aURI) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "aURI should not be null");
   }
 
   auto* actor = static_cast<LoginReputationParent*>(aActor);
@@ -6531,7 +6565,7 @@ mozilla::ipc::IPCResult ContentParent::RecvPSessionStorageObserverConstructor(
   MOZ_ASSERT(aActor);
 
   if (!mozilla::dom::RecvPSessionStorageObserverConstructor(aActor)) {
-    return IPC_FAIL_NO_REASON(this);
+    return IPC_FAIL(this, "RecvPSessionStorageObserverConstructor failed.");
   }
   return IPC_OK();
 }

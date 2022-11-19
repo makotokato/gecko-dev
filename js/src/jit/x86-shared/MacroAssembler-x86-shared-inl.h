@@ -2842,6 +2842,13 @@ void MacroAssembler::dotInt8x16Int7x16ThenAdd(FloatRegister lhs,
   vpaddd(Operand(scratch), dest, dest);
 }
 
+void MacroAssembler::dotBFloat16x8ThenAdd(FloatRegister lhs, FloatRegister rhs,
+                                          FloatRegister dest,
+                                          FloatRegister temp) {
+  MOZ_ASSERT(lhs != dest && rhs != dest);
+  MacroAssemblerX86Shared::dotBFloat16x8ThenAdd(lhs, rhs, dest, temp);
+}
+
 // Rounding
 
 void MacroAssembler::ceilFloat32x4(FloatRegister src, FloatRegister dest) {
@@ -3215,14 +3222,22 @@ void MacroAssembler::unsignedWidenHighInt32x4(FloatRegister src,
 
 void MacroAssembler::fmaFloat32x4(FloatRegister src1, FloatRegister src2,
                                   FloatRegister srcDest) {
+  if (HasFMA()) {
+    vfmadd231ps(src2, src1, srcDest);
+    return;
+  }
   ScratchSimd128Scope scratch(*this);
   src1 = moveSimd128FloatIfNotAVX(src1, scratch);
   mulFloat32x4(src1, src2, scratch);
   addFloat32x4(srcDest, scratch, srcDest);
 }
 
-void MacroAssembler::fmsFloat32x4(FloatRegister src1, FloatRegister src2,
-                                  FloatRegister srcDest) {
+void MacroAssembler::fnmaFloat32x4(FloatRegister src1, FloatRegister src2,
+                                   FloatRegister srcDest) {
+  if (HasFMA()) {
+    vfnmadd231ps(src2, src1, srcDest);
+    return;
+  }
   ScratchSimd128Scope scratch(*this);
   src1 = moveSimd128FloatIfNotAVX(src1, scratch);
   mulFloat32x4(src1, src2, scratch);
@@ -3231,14 +3246,22 @@ void MacroAssembler::fmsFloat32x4(FloatRegister src1, FloatRegister src2,
 
 void MacroAssembler::fmaFloat64x2(FloatRegister src1, FloatRegister src2,
                                   FloatRegister srcDest) {
+  if (HasFMA()) {
+    vfmadd231pd(src2, src1, srcDest);
+    return;
+  }
   ScratchSimd128Scope scratch(*this);
   src1 = moveSimd128FloatIfNotAVX(src1, scratch);
   mulFloat64x2(src1, src2, scratch);
   addFloat64x2(srcDest, scratch, srcDest);
 }
 
-void MacroAssembler::fmsFloat64x2(FloatRegister src1, FloatRegister src2,
-                                  FloatRegister srcDest) {
+void MacroAssembler::fnmaFloat64x2(FloatRegister src1, FloatRegister src2,
+                                   FloatRegister srcDest) {
+  if (HasFMA()) {
+    vfnmadd231pd(src2, src1, srcDest);
+    return;
+  }
   ScratchSimd128Scope scratch(*this);
   src1 = moveSimd128FloatIfNotAVX(src1, scratch);
   mulFloat64x2(src1, src2, scratch);

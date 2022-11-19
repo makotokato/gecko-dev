@@ -118,6 +118,7 @@ var FormAutofill = {
   /**
    * Determines if the credit card autofill feature is available to use in the browser.
    * If the feature is not available, then there are no user facing ways to enable it.
+   *
    * @returns {boolean} `true` if credit card autofill is available
    */
   get isAutofillCreditCardsAvailable() {
@@ -129,6 +130,7 @@ var FormAutofill = {
   /**
    * Determines if the address autofill feature is available to use in the browser.
    * If the feature is not available, then there are no user facing ways to enable it.
+   *
    * @returns {boolean} `true` if address autofill is available
    */
   get isAutofillAddressesAvailable() {
@@ -139,6 +141,7 @@ var FormAutofill = {
   },
   /**
    * Determines if the user has enabled or disabled credit card autofill.
+   *
    * @returns {boolean} `true` if credit card autofill is enabled
    */
   get isAutofillCreditCardsEnabled() {
@@ -148,7 +151,16 @@ var FormAutofill = {
     );
   },
   /**
+   * Determines if credit card autofill is locked by policy.
+   *
+   * @returns {boolean} `true` if credit card autofill is locked
+   */
+  get isAutofillCreditCardsLocked() {
+    return Services.prefs.prefIsLocked(ENABLED_AUTOFILL_CREDITCARDS_PREF);
+  },
+  /**
    * Determines if the user has enabled or disabled address autofill.
+   *
    * @returns {boolean} `true` if address autofill is enabled
    */
   get isAutofillAddressesEnabled() {
@@ -157,12 +169,20 @@ var FormAutofill = {
       FormAutofill._isAutofillAddressesEnabled
     );
   },
+  /**
+   * Determines if address autofill is locked by policy.
+   *
+   * @returns {boolean} `true` if address autofill is locked
+   */
+  get isAutofillAddressesLocked() {
+    return Services.prefs.prefIsLocked(ENABLED_AUTOFILL_ADDRESSES_PREF);
+  },
 
   defineLogGetter(scope, logPrefix) {
     scope.debug = debug;
 
-    let { ConsoleAPI } = ChromeUtils.import(
-      "resource://gre/modules/Console.jsm"
+    let { ConsoleAPI } = ChromeUtils.importESModule(
+      "resource://gre/modules/Console.sys.mjs"
     );
     return new ConsoleAPI({
       maxLogLevelPref: "extensions.formautofill.loglevel",

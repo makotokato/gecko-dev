@@ -34,11 +34,17 @@ class DocAccessiblePlatformExtParent;
  * an accessible document in a content process.
  */
 class DocAccessibleParent : public RemoteAccessible,
-                            public PDocAccessibleParent {
+                            public PDocAccessibleParent,
+                            public nsIMemoryReporter {
  public:
-  NS_INLINE_DECL_REFCOUNTING(DocAccessibleParent);
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIMEMORYREPORTER
 
+ private:
   DocAccessibleParent();
+
+ public:
+  static already_AddRefed<DocAccessibleParent> New();
 
   /**
    * Set this as a top level document; i.e. it is not embedded by another remote
@@ -79,6 +85,7 @@ class DocAccessibleParent : public RemoteAccessible,
   void MarkAsShutdown() {
     MOZ_ASSERT(mChildDocs.IsEmpty());
     MOZ_ASSERT(mAccessibles.Count() == 0);
+    MOZ_ASSERT(!mBrowsingContext);
     mShutdown = true;
   }
 
@@ -162,7 +169,8 @@ class DocAccessibleParent : public RemoteAccessible,
   virtual mozilla::ipc::IPCResult RecvTextSelectionChangeEvent(
       const uint64_t& aID, nsTArray<TextRangeData>&& aSelection) override;
 
-  mozilla::ipc::IPCResult RecvRoleChangedEvent(const a11y::role& aRole) final;
+  mozilla::ipc::IPCResult RecvRoleChangedEvent(
+      const a11y::role& aRole, const uint8_t& aRoleMapEntryIndex) final;
 
   virtual mozilla::ipc::IPCResult RecvBindChildDoc(
       PDocAccessibleParent* aChildDoc, const uint64_t& aID) override;
@@ -328,6 +336,9 @@ class DocAccessibleParent : public RemoteAccessible,
   virtual Accessible* FocusedChild() override;
 
   void URL(nsAString& aURL) const;
+  void URL(nsACString& aURL) const;
+
+  virtual Relation RelationByType(RelationType aType) const override;
 
   // Tracks cached reverse relations (ie. those not set explicitly by an
   // attribute like aria-labelledby) for accessibles in this doc. This map is of
@@ -335,7 +346,13 @@ class DocAccessibleParent : public RemoteAccessible,
   nsTHashMap<uint64_t, nsTHashMap<uint64_t, nsTArray<uint64_t>>>
       mReverseRelations;
 
+  // Computed from the viewport cache, the accs referenced by these ids
+  // are currently on screen (making any acc not in this list offscreen).
+  nsTHashSet<uint64_t> mOnScreenAccessibles;
+
   static DocAccessibleParent* GetFrom(dom::BrowsingContext* aBrowsingContext);
+
+  size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) override;
 
  private:
   ~DocAccessibleParent();

@@ -16,6 +16,7 @@
 #include "Http2ConnectTransaction.h"
 #include "base/basictypes.h"
 #include "mozilla/Components.h"
+#include "mozilla/net/SSLTokensCache.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Tokenizer.h"
 #include "mozilla/StaticPrefs_network.h"
@@ -23,6 +24,7 @@
 #include "nsCRT.h"
 #include "nsComponentManagerUtils.h"  // do_CreateInstance
 #include "nsHttpBasicAuth.h"
+#include "nsHttpChannel.h"
 #include "nsHttpChunkedDecoder.h"
 #include "nsHttpDigestAuth.h"
 #include "nsHttpHandler.h"
@@ -47,7 +49,7 @@
 #include "nsIPipe.h"
 #include "nsIRequestContext.h"
 #include "nsISeekableStream.h"
-#include "nsISSLSocketControl.h"
+#include "nsITLSSocketControl.h"
 #include "nsIThrottledInputChannel.h"
 #include "nsITransport.h"
 #include "nsMultiplexInputStream.h"
@@ -345,10 +347,9 @@ nsresult nsHttpTransaction::Init(
                      : -1;
 
   // create pipe for response stream
-  rv = NS_NewPipe2(getter_AddRefs(mPipeIn), getter_AddRefs(mPipeOut), true,
-                   true, nsIOService::gDefaultSegmentSize,
-                   nsIOService::gDefaultSegmentCount);
-  if (NS_FAILED(rv)) return rv;
+  NS_NewPipe2(getter_AddRefs(mPipeIn), getter_AddRefs(mPipeOut), true, true,
+              nsIOService::gDefaultSegmentSize,
+              nsIOService::gDefaultSegmentCount);
 
   if (transWithPushedStream && aPushedStreamId) {
     RefPtr<nsHttpTransaction> trans =
@@ -410,7 +411,7 @@ void nsHttpTransaction::OnPendingQueueInserted(
   }
 
   // Don't create mHttp3BackupTimer if HTTPS RR is in play.
-  if (mConnInfo->IsHttp3() && !mOrigConnInfo) {
+  if (mConnInfo->IsHttp3() && !mOrigConnInfo && !mConnInfo->GetWebTransport()) {
     // Backup timer should only be created once.
     if (!mHttp3BackupTimerCreated) {
       CreateAndStartTimer(mHttp3BackupTimer, this,
@@ -433,6 +434,13 @@ nsresult nsHttpTransaction::AsyncRead(nsIStreamListener* listener,
   transactionPump.forget(pump);
   MutexAutoLock lock(mLock);
   mEarlyHintObserver = do_QueryInterface(listener);
+
+  RefPtr<nsHttpChannel> httpChannel = do_QueryObject(listener);
+  if (httpChannel) {
+    mWebTransportSessionEventListener =
+        httpChannel->GetWebTransportSessionEventListener();
+  }
+
   return NS_OK;
 }
 
@@ -736,10 +744,12 @@ nsresult nsHttpTransaction::ReadSegments(nsAHttpSegmentReader* reader,
 
   if (!mConnected && !m0RTTInProgress) {
     mConnected = true;
-    nsCOMPtr<nsISSLSocketControl> tlsSocketControl;
+    nsCOMPtr<nsITLSSocketControl> tlsSocketControl;
     mConnection->GetTLSSocketControl(getter_AddRefs(tlsSocketControl));
-    MutexAutoLock lock(mLock);
-    mTLSSocketControl = tlsSocketControl;
+    if (tlsSocketControl) {
+      MutexAutoLock lock(mLock);
+      tlsSocketControl->GetSecurityInfo(getter_AddRefs(mSecurityInfo));
+    }
   }
 
   mDeferredSendProgress = false;
@@ -750,6 +760,7 @@ nsresult nsHttpTransaction::ReadSegments(nsAHttpSegmentReader* reader,
 
   if (m0RTTInProgress && (mEarlyDataDisposition == EARLY_NONE) &&
       NS_SUCCEEDED(rv) && (*countRead > 0)) {
+    LOG(("mEarlyDataDisposition = EARLY_SENT"));
     mEarlyDataDisposition = EARLY_SENT;
   }
 
@@ -980,9 +991,7 @@ bool nsHttpTransaction::DataSentToChildProcess() { return false; }
 
 already_AddRefed<nsITransportSecurityInfo> nsHttpTransaction::SecurityInfo() {
   MutexAutoLock lock(mLock);
-  nsCOMPtr<nsITransportSecurityInfo> securityInfo(
-      do_QueryInterface(mTLSSocketControl));
-  return securityInfo.forget();
+  return do_AddRef(mSecurityInfo);
 }
 
 bool nsHttpTransaction::HasStickyConnection() const {
@@ -1223,7 +1232,7 @@ void nsHttpTransaction::PrepareConnInfoForRetry(nsresult aReason) {
     LOG((" Got SSL_ERROR_ECH_RETRY_WITH_ECH, use retry echConfig"));
     MOZ_ASSERT(mConnection);
 
-    nsCOMPtr<nsISSLSocketControl> socketControl;
+    nsCOMPtr<nsITLSSocketControl> socketControl;
     if (mConnection) {
       mConnection->GetTLSSocketControl(getter_AddRefs(socketControl));
     }
@@ -1324,6 +1333,21 @@ bool nsHttpTransaction::ShouldRestartOn0RttError(nsresult reason) {
          mEarlyDataWasAvailable && SecurityErrorThatMayNeedRestart(reason);
 }
 
+static void MaybeRemoveSSLToken(nsITransportSecurityInfo* aSecurityInfo) {
+  if (!StaticPrefs::
+          network_http_remove_resumption_token_when_early_data_failed()) {
+    return;
+  }
+  if (!aSecurityInfo) {
+    return;
+  }
+  nsAutoCString key;
+  aSecurityInfo->GetPeerId(key);
+  nsresult rv = SSLTokensCache::RemoveAll(key);
+  LOG(("RemoveSSLToken [key=%s, rv=%" PRIx32 "]", key.get(),
+       static_cast<uint32_t>(rv)));
+}
+
 void nsHttpTransaction::Close(nsresult reason) {
   LOG(("nsHttpTransaction::Close [this=%p reason=%" PRIx32 "]\n", this,
        static_cast<uint32_t>(reason)));
@@ -1331,6 +1355,7 @@ void nsHttpTransaction::Close(nsresult reason) {
   {
     MutexAutoLock lock(mLock);
     mEarlyHintObserver = nullptr;
+    mWebTransportSessionEventListener = nullptr;
   }
 
   if (!mClosed) {
@@ -1385,10 +1410,12 @@ void nsHttpTransaction::Close(nsresult reason) {
     isHttp2or3 = mConnection->Version() >= HttpVersion::v2_0;
     if (!mConnected) {
       // Try to get TLSSocketControl for this transaction.
-      nsCOMPtr<nsISSLSocketControl> tlsSocketControl;
+      nsCOMPtr<nsITLSSocketControl> tlsSocketControl;
       mConnection->GetTLSSocketControl(getter_AddRefs(tlsSocketControl));
-      MutexAutoLock lock(mLock);
-      mTLSSocketControl = tlsSocketControl;
+      if (tlsSocketControl) {
+        MutexAutoLock lock(mLock);
+        tlsSocketControl->GetSecurityInfo(getter_AddRefs(mSecurityInfo));
+      }
     }
   }
   mConnected = false;
@@ -1457,6 +1484,7 @@ void nsHttpTransaction::Close(nsresult reason) {
     }
 
     mDoNotTryEarlyData = true;
+
     // reallySentData is meant to separate the instances where data has
     // been sent by this transaction but buffered at a higher level while
     // a TLS session (perhaps via a tunnel) is setup.
@@ -1751,10 +1779,15 @@ nsresult nsHttpTransaction::Restart() {
   nsCOMPtr<nsISeekableStream> seekable = do_QueryInterface(mRequestStream);
   if (seekable) seekable->Seek(nsISeekableStream::NS_SEEK_SET, 0);
 
+  if (mDoNotTryEarlyData) {
+    MutexAutoLock lock(mLock);
+    MaybeRemoveSSLToken(mSecurityInfo);
+  }
+
   // clear old connection state...
   {
     MutexAutoLock lock(mLock);
-    mTLSSocketControl = nullptr;
+    mSecurityInfo = nullptr;
   }
 
   if (mConnection) {
@@ -2154,6 +2187,29 @@ nsresult nsHttpTransaction::HandleContentStart() {
 
     // check if this is a no-content response
     switch (mResponseHead->Status()) {
+      case 200: {
+        if (!mIsForWebTransport) {
+          break;
+        }
+        RefPtr<Http3WebTransportSession> wtSession =
+            mConnection->GetWebTransportSession(this);
+        if (wtSession) {
+          nsCOMPtr<WebTransportSessionEventListener> webTransportListener;
+          {
+            MutexAutoLock lock(mLock);
+            webTransportListener = mWebTransportSessionEventListener;
+          }
+          if (webTransportListener) {
+            webTransportListener->OnSessionReadyInternal(wtSession);
+            wtSession->SetWebTransportSessionEventListener(
+                webTransportListener);
+          }
+        }
+        mWebTransportSessionEventListener = nullptr;
+      }
+        // Fall through to WebSocket cases (nsHttpTransaction behaviar is the
+        // same):
+        [[fallthrough]];
       case 101:
         mPreserveStream = true;
         [[fallthrough]];  // to other no content cases:
@@ -2896,6 +2952,7 @@ void nsHttpTransaction::GetNetworkAddresses(NetAddr& self, NetAddr& peer,
 }
 
 bool nsHttpTransaction::Do0RTT() {
+  LOG(("nsHttpTransaction::Do0RTT"));
   mEarlyDataWasAvailable = true;
   if (mRequestHead->IsSafeMethod() && !mDoNotTryEarlyData &&
       (!mConnection || !mConnection->IsProxyConnectInProgress())) {
@@ -2932,10 +2989,12 @@ nsresult nsHttpTransaction::Finish0RTT(bool aRestart,
   } else if (!mConnected) {
     // this is code that was skipped in ::ReadSegments while in 0RTT
     mConnected = true;
-    nsCOMPtr<nsISSLSocketControl> tlsSocketControl;
+    nsCOMPtr<nsITLSSocketControl> tlsSocketControl;
     mConnection->GetTLSSocketControl(getter_AddRefs(tlsSocketControl));
-    MutexAutoLock lock(mLock);
-    mTLSSocketControl = tlsSocketControl;
+    if (tlsSocketControl) {
+      MutexAutoLock lock(mLock);
+      tlsSocketControl->GetSecurityInfo(getter_AddRefs(mSecurityInfo));
+    }
   }
   return NS_OK;
 }
@@ -3057,7 +3116,7 @@ void nsHttpTransaction::NotifyTransactionObserver(nsresult reason) {
                  ((mConnection->Version() == HttpVersion::v2_0) ||
                   (mConnection->Version() == HttpVersion::v3_0)));
 
-    nsCOMPtr<nsISSLSocketControl> socketControl;
+    nsCOMPtr<nsITLSSocketControl> socketControl;
     mConnection->GetTLSSocketControl(getter_AddRefs(socketControl));
     LOG(
         ("nsHttpTransaction::NotifyTransactionObserver"
@@ -3451,6 +3510,10 @@ void nsHttpTransaction::CollectTelemetryForUploads() {
 void nsHttpTransaction::GetHashKeyOfConnectionEntry(nsACString& aResult) {
   MutexAutoLock lock(mLock);
   aResult.Assign(mHashKeyOfConnectionEntry);
+}
+
+void nsHttpTransaction::SetIsForWebTransport(bool aIsForWebTransport) {
+  mIsForWebTransport = aIsForWebTransport;
 }
 
 }  // namespace mozilla::net

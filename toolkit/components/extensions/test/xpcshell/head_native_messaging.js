@@ -5,28 +5,22 @@
 /* globals AppConstants, FileUtils */
 /* exported getSubprocessCount, setupHosts, waitForSubprocessExit */
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "MockRegistry",
-  "resource://testing-common/MockRegistry.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  MockRegistry: "resource://testing-common/MockRegistry.sys.mjs",
+});
 ChromeUtils.defineModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
 if (AppConstants.platform == "win") {
-  ChromeUtils.defineModuleGetter(
-    this,
-    "SubprocessImpl",
-    "resource://gre/modules/subprocess/subprocess_win.jsm"
-  );
+  ChromeUtils.defineESModuleGetters(this, {
+    SubprocessImpl: "resource://gre/modules/subprocess/subprocess_win.sys.mjs",
+  });
 } else {
-  ChromeUtils.defineModuleGetter(
-    this,
-    "SubprocessImpl",
-    "resource://gre/modules/subprocess/subprocess_unix.jsm"
-  );
+  ChromeUtils.defineESModuleGetters(this, {
+    SubprocessImpl: "resource://gre/modules/subprocess/subprocess_unix.sys.mjs",
+  });
 }
 
-const { Subprocess } = ChromeUtils.import(
-  "resource://gre/modules/Subprocess.jsm"
+const { Subprocess } = ChromeUtils.importESModule(
+  "resource://gre/modules/Subprocess.sys.mjs"
 );
 
 // It's important that we use a space in this directory name to make sure we

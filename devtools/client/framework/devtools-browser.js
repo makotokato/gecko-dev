@@ -229,7 +229,7 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
   async selectToolCommand(win, toolId, startTime) {
     if (gDevToolsBrowser._isAboutDevtoolsToolbox(win)) {
       const toolbox = gDevToolsBrowser._getAboutDevtoolsToolbox(win);
-      toolbox.selectTool(toolId, "key_shortcut");
+      await toolbox.selectTool(toolId, "key_shortcut");
       return;
     }
 
@@ -249,14 +249,14 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
         toolbox.hostType == Toolbox.HostType.WINDOW
       ) {
         if (!toolDefinition.preventRaisingOnKey) {
-          toolbox.raise();
+          await toolbox.raise();
         }
       } else {
-        toolbox.destroy();
+        await toolbox.destroy();
       }
       gDevTools.emit("select-tool-command", toolId);
     } else {
-      gDevTools
+      await gDevTools
         .showToolboxForTab(tab, {
           raise: !toolDefinition.preventRaisingOnKey,
           startTime,
@@ -370,9 +370,8 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
     if (processId) {
       try {
         const commands = await CommandsFactory.forProcess(processId);
-        const descriptor = commands.descriptorFront;
         // Display a new toolbox in a new window
-        const toolbox = await gDevTools.showToolbox(descriptor, {
+        const toolbox = await gDevTools.showToolbox(commands, {
           hostType: Toolbox.HostType.WINDOW,
           hostOptions: {
             // Will be used by the WINDOW host to decide whether to create a
@@ -514,8 +513,8 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
 
   hasToolboxOpened(win) {
     const tab = win.gBrowser.selectedTab;
-    for (const [descriptor] of gDevTools._toolboxes) {
-      if (descriptor.localTab == tab) {
+    for (const commands of gDevTools._toolboxesPerCommands.keys()) {
+      if (commands.descriptorFront.localTab == tab) {
         return true;
       }
     }
@@ -615,10 +614,9 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
     BrowserMenus.removeMenus(win.document);
 
     // Destroy toolboxes for closed window
-    for (const [descriptor, toolbox] of gDevTools._toolboxes) {
+    for (const [commands, toolbox] of gDevTools._toolboxesPerCommands) {
       if (
-        descriptor.localTab &&
-        descriptor.localTab.ownerDocument.defaultView == win
+        commands.descriptorFront.localTab?.ownerDocument?.defaultView == win
       ) {
         toolbox.destroy();
       }

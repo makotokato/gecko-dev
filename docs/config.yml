@@ -44,9 +44,11 @@ categories:
         - taskcluster
         - tools/moztreedocs
     testing_doc:
+        - testing/automated-testing
         - testing/intermittent
         - testing/testing-policy
         - testing/ci-configs
+        - testing/browser-chrome
         - testing/chrome-tests
         - testing/marionette
         - testing/geckodriver

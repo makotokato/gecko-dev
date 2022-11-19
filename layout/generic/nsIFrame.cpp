@@ -25,7 +25,6 @@
 #include "mozilla/dom/ImageTracker.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/gfx/2D.h"
-#include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/PathHelpers.h"
 #include "mozilla/intl/BidiEmbeddingLevel.h"
 #include "mozilla/Maybe.h"
@@ -721,7 +720,7 @@ void nsIFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
     AddStateBits(NS_FRAME_MAY_BE_TRANSFORMED);
   }
 
-  if (disp->mContainerType) {
+  if (disp->mContainerType != StyleContainerType::Normal) {
     PresContext()->RegisterContainerQueryFrame(this);
   }
 
@@ -811,7 +810,7 @@ void nsIFrame::DestroyFrom(nsIFrame* aDestructRoot,
     }
   }
 
-  if (disp->mContainerType) {
+  if (disp->mContainerType != StyleContainerType::Normal) {
     PresContext()->UnregisterContainerQueryFrame(this);
   }
 
@@ -1447,16 +1446,12 @@ void nsIFrame::HandleLastRememberedSize() {
   if (!canRememberISize) {
     element->RemoveLastRememberedISize();
   }
-  if (canRememberBSize || canRememberISize) {
-    const auto containAxes = GetContainSizeAxes();
-    if ((canRememberBSize && !containAxes.mBContained) ||
-        (canRememberISize && !containAxes.mIContained)) {
-      bool isNonReplacedInline = IsFrameOfType(nsIFrame::eLineParticipant) &&
-                                 !IsFrameOfType(nsIFrame::eReplaced);
-      if (!isNonReplacedInline) {
-        PresContext()->Document()->ObserveForLastRememberedSize(*element);
-        return;
-      }
+  if ((canRememberBSize || canRememberISize) && !HidesContent()) {
+    bool isNonReplacedInline = IsFrameOfType(nsIFrame::eLineParticipant) &&
+                               !IsFrameOfType(nsIFrame::eReplaced);
+    if (!isNonReplacedInline) {
+      PresContext()->Document()->ObserveForLastRememberedSize(*element);
+      return;
     }
   }
   PresContext()->Document()->UnobserveForLastRememberedSize(*element);
@@ -1573,27 +1568,6 @@ void nsIFrame::CreateView() {
   NS_FRAME_LOG(NS_FRAME_TRACE_CALLS,
                ("nsIFrame::CreateView: frame=%p view=%p", this, view));
 }
-
-// MSVC fails with link error "one or more multiply defined symbols found",
-// gcc fails with "hidden symbol `nsIFrame::kPrincipalList' isn't defined"
-// etc if they are not defined.
-#ifndef _MSC_VER
-// static nsIFrame constants; initialized in the header file.
-const nsIFrame::ChildListID nsIFrame::kPrincipalList;
-const nsIFrame::ChildListID nsIFrame::kAbsoluteList;
-const nsIFrame::ChildListID nsIFrame::kBulletList;
-const nsIFrame::ChildListID nsIFrame::kCaptionList;
-const nsIFrame::ChildListID nsIFrame::kColGroupList;
-const nsIFrame::ChildListID nsIFrame::kExcessOverflowContainersList;
-const nsIFrame::ChildListID nsIFrame::kFixedList;
-const nsIFrame::ChildListID nsIFrame::kFloatList;
-const nsIFrame::ChildListID nsIFrame::kOverflowContainersList;
-const nsIFrame::ChildListID nsIFrame::kOverflowList;
-const nsIFrame::ChildListID nsIFrame::kOverflowOutOfFlowList;
-const nsIFrame::ChildListID nsIFrame::kPopupList;
-const nsIFrame::ChildListID nsIFrame::kPushedFloatsList;
-const nsIFrame::ChildListID nsIFrame::kNoReflowPrincipalList;
-#endif
 
 /* virtual */
 nsMargin nsIFrame::GetUsedMargin() const {
@@ -2122,7 +2096,8 @@ const nsFrameList& nsIFrame::GetChildList(ChildListID aListID) const {
 
 void nsIFrame::GetChildLists(nsTArray<ChildList>* aLists) const {
   if (IsAbsoluteContainer()) {
-    nsFrameList absoluteList = GetAbsoluteContainingBlock()->GetChildList();
+    const nsFrameList& absoluteList =
+        GetAbsoluteContainingBlock()->GetChildList();
     absoluteList.AppendIfNonempty(aLists, GetAbsoluteListID());
   }
 }
@@ -2136,12 +2111,40 @@ AutoTArray<nsIFrame::ChildList, 4> nsIFrame::CrossDocChildLists() {
     if (root) {
       childLists.EmplaceBack(
           nsFrameList(root, nsLayoutUtils::GetLastSibling(root)),
-          nsIFrame::kPrincipalList);
+          FrameChildListID::Principal);
     }
   }
 
   GetChildLists(&childLists);
   return childLists;
+}
+
+const nsAtom* nsIFrame::ComputePageValue() const {
+  if (!StaticPrefs::layout_css_named_pages_enabled()) {
+    return nsGkAtoms::_empty;
+  }
+  const nsAtom* value = nsGkAtoms::_empty;
+  const nsIFrame* frame = this;
+  do {
+    // If this has a non-auto start value, track that instead.
+    if (const nsAtom* const startValue = frame->GetStartPageValue()) {
+      value = startValue;
+    }
+    MOZ_ASSERT(value, "Should not have a NULL page value.");
+    // Get the next frame to read from.
+    const nsIFrame* firstNonPlaceholderFrame = nullptr;
+    // If this is a container frame, inspect its in-flow children.
+    if (const nsContainerFrame* containerFrame = do_QueryFrame(frame)) {
+      for (const nsIFrame* childFrame : containerFrame->PrincipalChildList()) {
+        if (!childFrame->IsPlaceholderFrame()) {
+          firstNonPlaceholderFrame = childFrame;
+          break;
+        }
+      }
+    }
+    frame = firstNonPlaceholderFrame;
+  } while (frame);
+  return value;
 }
 
 Visibility nsIFrame::GetVisibility() const {
@@ -3968,12 +3971,6 @@ void nsIFrame::BuildDisplayListForSimpleChild(nsDisplayListBuilder* aBuilder,
   aBuilder->DisplayCaret(aChild, aLists.Outlines());
 }
 
-nsIFrame::DisplayChildFlag nsIFrame::DisplayFlagForFlexOrGridItem() const {
-  MOZ_ASSERT(IsFlexOrGridItem(),
-             "Should only be called on flex or grid items!");
-  return DisplayChildFlag::ForcePseudoStackingContext;
-}
-
 static bool ShouldSkipFrame(nsDisplayListBuilder* aBuilder,
                             const nsIFrame* aFrame) {
   // If painting is restricted to just the background of the top level frame,
@@ -4999,6 +4996,9 @@ nsresult nsIFrame::PeekBackwardAndForward(nsSelectionAmount aAmountBack,
       nsFrameSelection::FocusMode::kExtendSelection, CARET_ASSOCIATE_BEFORE);
   if (NS_FAILED(rv)) {
     return rv;
+  }
+  if (aAmountBack == eSelectWord) {
+    frameSelection->SetIsDoubleClickSelection(true);
   }
 
   // maintain selection
@@ -6734,6 +6734,7 @@ void nsIFrame::DidReflow(nsPresContext* aPresContext,
   NS_FRAME_TRACE(NS_FRAME_TRACE_CALLS, ("nsIFrame::DidReflow"));
 
   if (IsHiddenByContentVisibilityOfInFlowParentForLayout()) {
+    RemoveStateBits(NS_FRAME_IN_REFLOW | NS_FRAME_FIRST_REFLOW);
     return;
   }
 
@@ -6855,7 +6856,8 @@ bool nsIFrame::HidesContentForLayout() const {
 
 bool nsIFrame::IsHiddenByContentVisibilityOfInFlowParentForLayout() const {
   const auto* parent = GetInFlowParent();
-  return parent && parent->HidesContentForLayout() && !Style()->IsAnonBox();
+  return parent && parent->HidesContentForLayout() &&
+         !(Style()->IsAnonBox() && !IsFrameOfType(nsIFrame::eLineParticipant));
 }
 
 bool nsIFrame::IsHiddenByContentVisibilityOnAnyAncestor() const {
@@ -6863,18 +6865,17 @@ bool nsIFrame::IsHiddenByContentVisibilityOnAnyAncestor() const {
     return false;
   }
 
-  bool isAnonymousBox = Style()->IsAnonBox();
+  bool isAnonymousBlock =
+      Style()->IsAnonBox() && !IsFrameOfType(nsIFrame::eLineParticipant);
   for (nsIFrame* cur = GetInFlowParent(); cur; cur = cur->GetInFlowParent()) {
+    if (!isAnonymousBlock && cur->HidesContent()) {
+      return true;
+    }
+
     // Anonymous boxes are not hidden by the content-visibility of their first
     // non-anonymous ancestor, but can be hidden by ancestors further up the
     // tree.
-    if (isAnonymousBox && !cur->Style()->IsAnonBox()) {
-      isAnonymousBox = false;
-    }
-
-    if (!isAnonymousBox && cur->HidesContent()) {
-      return true;
-    }
+    isAnonymousBlock = false;
   }
 
   return false;
@@ -7199,48 +7200,6 @@ Matrix4x4Flagged nsIFrame::GetTransformMatrix(ViewportType aViewportType,
     }
 
     return result;
-  }
-
-  if (nsLayoutUtils::IsPopup(this) && IsListControlFrame()) {
-    nsPresContext* presContext = PresContext();
-    nsIFrame* docRootFrame = presContext->PresShell()->GetRootFrame();
-
-    // Compute a matrix that transforms from the popup widget to the toplevel
-    // widget. We use the widgets because they're the simplest and most
-    // accurate approach --- this should work no matter how the widget position
-    // was chosen.
-    nsIWidget* widget = GetView()->GetWidget();
-    nsPresContext* rootPresContext = PresContext()->GetRootPresContext();
-    // Maybe the widget hasn't been created yet? Popups without widgets are
-    // treated as regular frames. That should work since they'll be rendered
-    // as part of the page if they're rendered at all.
-    if (widget && rootPresContext) {
-      nsIWidget* toplevel = rootPresContext->GetNearestWidget();
-      if (toplevel) {
-        LayoutDeviceIntRect screenBounds = widget->GetClientBounds();
-        LayoutDeviceIntRect toplevelScreenBounds = toplevel->GetClientBounds();
-        LayoutDeviceIntPoint translation =
-            screenBounds.TopLeft() - toplevelScreenBounds.TopLeft();
-
-        Matrix4x4 transformToTop;
-        transformToTop._41 = translation.x;
-        transformToTop._42 = translation.y;
-
-        *aOutAncestor = docRootFrame;
-        Matrix4x4 docRootTransformToTop =
-            nsLayoutUtils::GetTransformToAncestor(RelativeTo{docRootFrame},
-                                                  RelativeTo{nullptr})
-                .GetMatrix();
-        if (docRootTransformToTop.IsSingular()) {
-          NS_WARNING(
-              "Containing document is invisible, we can't compute a valid "
-              "transform");
-        } else {
-          docRootTransformToTop.Invert();
-          return transformToTop * docRootTransformToTop;
-        }
-      }
-    }
   }
 
   *aOutAncestor = nsLayoutUtils::GetCrossDocParentFrameInProcess(this);
@@ -7855,6 +7814,11 @@ bool nsIFrame::IsImageFrameOrSubclass() const {
   return !!asImage;
 }
 
+bool nsIFrame::IsSubgrid() const {
+  return IsGridContainerFrame() &&
+         static_cast<const nsGridContainerFrame*>(this)->IsSubgrid();
+}
+
 static nsIFrame* GetNearestBlockContainer(nsIFrame* frame) {
   // The block wrappers we use to wrap blocks inside inlines aren't
   // described in the CSS spec.  We need to make them not be containing
@@ -7866,7 +7830,7 @@ static nsIFrame* GetNearestBlockContainer(nsIFrame* frame) {
   // If we ever start skipping table row groups from being containing blocks,
   // you need to remove the StickyScrollContainer hack referencing bug 1421660.
   while (frame->IsFrameOfType(nsIFrame::eLineParticipant) ||
-         frame->IsBlockWrapper() ||
+         frame->IsBlockWrapper() || frame->IsSubgrid() ||
          // Table rows are not containing blocks either
          frame->IsTableRowFrame()) {
     frame = frame->GetParent();
@@ -8448,39 +8412,6 @@ static nsresult GetNextPrevLineFromBlockFrame(nsPeekOffsetStruct* aPos,
           point.x = aPos->mDesiredCaretPos.x;
         }
 
-        // special check. if we allow non-text selection then we can allow a hit
-        // location to fall before a table. otherwise there is no way to get and
-        // click signal to fall before a table (it being a line iterator itself)
-        mozilla::PresShell* presShell = pc->PresShell();
-        int16_t isEditor = presShell->GetSelectionFlags();
-        isEditor = isEditor == nsISelectionDisplay::DISPLAY_ALL;
-        if (isEditor) {
-          if (resultFrame->IsTableWrapperFrame()) {
-            if (((point.x - offset.x + tempRect.x) < 0) ||
-                ((point.x - offset.x + tempRect.x) >
-                 tempRect.width))  // off left/right side
-            {
-              nsIContent* content = resultFrame->GetContent();
-              if (content) {
-                nsIContent* parent = content->GetParent();
-                if (parent) {
-                  aPos->mResultContent = parent;
-                  aPos->mContentOffset =
-                      parent->ComputeIndexOf_Deprecated(content);
-                  aPos->mAttach = CARET_ASSOCIATE_BEFORE;
-                  if ((point.x - offset.x + tempRect.x) > tempRect.width) {
-                    aPos->mContentOffset++;  // go to end of this frame
-                    aPos->mAttach = CARET_ASSOCIATE_AFTER;
-                  }
-                  // result frame is the result frames parent.
-                  aPos->mResultFrame = resultFrame->GetParent();
-                  return NS_POSITION_BEFORE_TABLE;
-                }
-              }
-            }
-          }
-        }
-
         if (!resultFrame->HasView()) {
           nsView* view;
           nsPoint offset;
@@ -8635,8 +8566,7 @@ static nsContentAndOffset FindLineBreakingFrame(nsIFrame* aFrame,
 
   // Iterate over children and call ourselves recursively
   if (aDirection == eDirPrevious) {
-    nsIFrame* child =
-        aFrame->GetChildList(nsIFrame::kPrincipalList).LastChild();
+    nsIFrame* child = aFrame->PrincipalChildList().LastChild();
     while (child && !result.mContent) {
       result = FindLineBreakingFrame(child, aDirection);
       child = child->GetPrevSibling();
@@ -9004,6 +8934,11 @@ nsresult nsIFrame::PeekOffsetForLine(nsPeekOffsetStruct* aPos) {
         break;
       }
 
+      if (aPos->mResultFrame == blockFrame) {
+        // Make sure block element is not the same as the one we had before.
+        break;
+      }
+
       // we've struck another block element with selectable content!
       if (aPos->mDirection == eDirPrevious) {
         edgeCase = 1;  // far edge, search from end backwards
@@ -9227,11 +9162,6 @@ bool nsIFrame::BreakWordBetweenPunctuation(const PeekWordState* aState,
   // Stop only if we've seen some non-punctuation since the last whitespace;
   // don't stop after punctuation that follows whitespace.
   return aState->mSeenNonPunctuationSinceWhitespace;
-}
-
-nsresult nsIFrame::CheckVisibility(nsPresContext*, int32_t, int32_t, bool,
-                                   bool*, bool*) {
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 std::pair<nsIFrame*, nsIFrame*> nsIFrame::GetContainingBlockForLine(
@@ -9595,9 +9525,10 @@ static nsRect ComputeOutlineInnerRect(
 
   // Iterate over all children except pop-up, absolutely-positioned,
   // float, and overflow ones.
-  const nsIFrame::ChildListIDs skip = {
-      nsIFrame::kPopupList, nsIFrame::kAbsoluteList, nsIFrame::kFixedList,
-      nsIFrame::kFloatList, nsIFrame::kOverflowList};
+  const FrameChildListIDs skip = {
+      FrameChildListID::Popup, FrameChildListID::Absolute,
+      FrameChildListID::Fixed, FrameChildListID::Float,
+      FrameChildListID::Overflow};
   for (const auto& [list, listID] : aFrame->ChildLists()) {
     if (skip.contains(listID)) {
       continue;
@@ -11515,8 +11446,7 @@ CompositorHitTestInfo nsIFrame::GetCompositorHitTestInfo(
     // If WebRender is enabled, simple clip-paths can be converted into WR
     // clips that WR knows how to hit-test against, so we don't need to mark
     // it as an irregular area.
-    if (!gfxVars::UseWebRender() ||
-        !SVGIntegrationUtils::UsingSimpleClipPathForFrame(this)) {
+    if (!SVGIntegrationUtils::UsingSimpleClipPathForFrame(this)) {
       result += CompositorHitTestFlags::eIrregularArea;
     }
   }
@@ -11790,9 +11720,8 @@ void nsIFrame::TraceMsg(const char* aFormatString, ...) {
 }
 
 void nsIFrame::VerifyDirtyBitSet(const nsFrameList& aFrameList) {
-  for (nsFrameList::Enumerator e(aFrameList); !e.AtEnd(); e.Next()) {
-    NS_ASSERTION(e.get()->HasAnyStateBits(NS_FRAME_IS_DIRTY),
-                 "dirty bit not set");
+  for (nsIFrame* f : aFrameList) {
+    NS_ASSERTION(f->HasAnyStateBits(NS_FRAME_IS_DIRTY), "dirty bit not set");
   }
 }
 
@@ -12300,7 +12229,6 @@ void DR_State::InitFrameTypeTable() {
   AddFrameTypeInfo(LayoutFrameType::Viewport, "VP", "viewport");
   AddFrameTypeInfo(LayoutFrameType::Box, "Box", "Box");
   AddFrameTypeInfo(LayoutFrameType::Slider, "Slider", "Slider");
-  AddFrameTypeInfo(LayoutFrameType::PopupSet, "PopupSet", "PopupSet");
   AddFrameTypeInfo(LayoutFrameType::None, "unknown", "unknown");
 }
 

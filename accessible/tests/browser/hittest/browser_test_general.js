@@ -46,8 +46,8 @@ async function runTests(browser, accDoc) {
       "because it's not a child of the accessible even though visually it is."
   );
   await invokeContentTask(browser, [], () => {
-    const { CommonUtils } = ChromeUtils.import(
-      "chrome://mochitests/content/browser/accessible/tests/browser/Common.jsm"
+    const { CommonUtils } = ChromeUtils.importESModule(
+      "chrome://mochitests/content/browser/accessible/tests/browser/Common.sys.mjs"
     );
     const doc = content.document;
     const rectArea = CommonUtils.getNode("area", doc).getBoundingClientRect();
@@ -78,6 +78,13 @@ async function runTests(browser, accDoc) {
     container2Input,
     container2Input
   );
+
+  info("hittesting table, row, cells -- rows are not in the layout tree");
+  const table = findAccessibleChildByID(accDoc, "table");
+  const row = findAccessibleChildByID(accDoc, "row");
+  const cell1 = findAccessibleChildByID(accDoc, "cell1");
+
+  await hitTest(browser, table, row, cell1);
 }
 
 addAccessibleTask(
@@ -106,11 +113,91 @@ addAccessibleTask(
   <div id="container2" style="width: 0px">
     <input id="container2_input">
   </div>
+
+  <table id="table" border>
+    <tr id="row">
+      <td id="cell1">hello</td>
+      <td id="cell2">world</td>
+    </tr>
+  </table>
   `,
   runTests,
   {
     iframe: true,
     remoteIframe: true,
+    // Ensure that all hittest elements are in view.
+    iframeAttrs: { style: "width: 600px; height: 600px; padding: 10px;" },
+  }
+);
+
+addAccessibleTask(
+  `
+  <div id="container">
+    <h1 id="a">A</h1><h1 id="b">B</h1>
+  </div>
+  `,
+  async function(browser, accDoc) {
+    const a = findAccessibleChildByID(accDoc, "a");
+    const b = findAccessibleChildByID(accDoc, "b");
+    const dpr = await getContentDPR(browser);
+    // eslint-disable-next-line no-unused-vars
+    const [x, y, w, h] = Layout.getBounds(a, dpr);
+    // The point passed below will be made relative to `b`, but
+    // we'd like to test a point within `a`. Pass `a`s negative
+    // width for an x offset. Pass zero as a y offset,
+    // assuming the headings are on the same line.
+    await testChildAtPoint(dpr, -w, 0, b, null, null);
+  },
+  {
+    iframe: true,
+    remoteIframe: true,
+    // Ensure that all hittest elements are in view.
+    iframeAttrs: { style: "width: 600px; height: 600px; padding: 10px;" },
+  }
+);
+
+addAccessibleTask(
+  `
+  <style>
+    div {
+      width: 50px;
+      height: 50px;
+      position: relative;
+    }
+
+    div > div {
+      width: 30px;
+      height: 30px;
+      position: absolute;
+      opacity: 0.9;
+    }
+  </style>
+  <div id="a" style="background-color: orange;">
+    <div id="aa" style="background-color: purple;"></div>
+  </div>
+  <div id="b" style="background-color: yellowgreen;">
+    <div id="bb" style="top: -30px; background-color: turquoise"></div>
+  </div>`,
+  async function(browser, accDoc) {
+    const a = findAccessibleChildByID(accDoc, "a");
+    const aa = findAccessibleChildByID(accDoc, "aa");
+    const dpr = await getContentDPR(browser);
+    // eslint-disable-next-line no-unused-vars
+    const [_, y, w] = Layout.getBounds(a, dpr);
+    // test upper left of `a`
+    await testChildAtPoint(dpr, 1, 1, a, aa, aa);
+    // test upper right of `a`
+    await testChildAtPoint(dpr, w - 1, 1, a, a, a);
+    // test just outside upper left of `a`
+    await testChildAtPoint(dpr, 1, y - 1, a, null, null);
+    if (isCacheEnabled) {
+      // test halfway down/left of `a`
+      await testChildAtPoint(dpr, 1, Math.round(y / 2), a, null, null);
+    }
+  },
+  {
+    iframe: false,
+    remoteIframe: false,
     // Ensure that all hittest elements are in view.
     iframeAttrs: { style: "width: 600px; height: 600px; padding: 10px;" },
   }

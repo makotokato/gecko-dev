@@ -152,7 +152,8 @@ async function runTests(options) {
       browserActionId = `${makeWidgetId(extension.id)}-browser-action`;
     }
 
-    let button = document.getElementById(browserActionId);
+    let node = document.getElementById(browserActionId);
+    let button = node.firstElementChild;
 
     ok(button, "button exists");
 
@@ -163,7 +164,7 @@ async function runTests(options) {
     is(button.getAttribute("label"), title, "image label is correct");
     is(button.getAttribute("badge"), details.badge, "badge text is correct");
     is(
-      button.getAttribute("disabled") == "true",
+      node.getAttribute("disabled") == "true",
       !details.enabled,
       "disabled state is correct"
     );
@@ -411,6 +412,7 @@ add_task(async function testTabSwitchContext() {
         default_icon: "default.png",
         default_popup: "__MSG_popup__",
         default_title: "Default __MSG_title__",
+        default_area: "navbar",
       },
 
       default_locale: "en",
@@ -433,6 +435,7 @@ add_task(async function testTabSwitchActionContext() {
         default_icon: "default.png",
         default_popup: "__MSG_popup__",
         default_title: "Default __MSG_title__",
+        default_area: "navbar",
       },
       default_locale: "en",
       permissions: ["tabs"],
@@ -448,6 +451,7 @@ add_task(async function testDefaultTitle() {
 
       browser_action: {
         default_icon: "icon.png",
+        default_area: "navbar",
       },
 
       permissions: ["tabs"],
@@ -527,14 +531,16 @@ add_task(async function testBadgeColorPersistence() {
       });
     },
     manifest: {
-      browser_action: {},
+      browser_action: {
+        default_area: "navbar",
+      },
     },
   });
   await extension.startup();
 
   function getBadgeForWindow(win) {
     const widget = getBrowserActionWidget(extension).forWindow(win).node;
-    return widget.badgeLabel;
+    return widget.firstElementChild.badgeLabel;
   }
 
   let badge = getBadgeForWindow(window);
@@ -579,6 +585,7 @@ add_task(async function testPropertyRemoval() {
         default_icon: "default.png",
         default_popup: "default.html",
         default_title: "Default Title",
+        default_area: "navbar",
       },
     },
 
@@ -765,6 +772,7 @@ add_task(async function testMultipleWindows() {
         default_icon: "default.png",
         default_popup: "default.html",
         default_title: "Default Title",
+        default_area: "navbar",
       },
     },
 
@@ -935,6 +943,7 @@ add_task(async function testDefaultBadgeTextColor() {
         default_icon: "default.png",
         default_popup: "default.html",
         default_title: "Default Title",
+        default_area: "navbar",
       },
     },
 

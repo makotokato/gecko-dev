@@ -12,9 +12,6 @@
   --toolbar-non-lwt-textcolor: -moz-dialogtext;
   --toolbar-non-lwt-bgimage: none;
 
-  --toolbarbutton-vertical-text-padding: calc(var(--toolbarbutton-inner-padding) + 1px);
-  --toolbarbutton-border-radius: 4px;
-
   --panel-separator-color: hsla(210,4%,10%,.14);
 
   --arrowpanel-field-background: rgba(249,249,250,.3);
@@ -173,19 +170,6 @@
   list-style-image: url("chrome://browser/skin/places/bookmarksToolbar.svg");
 }
 
-#PlacesToolbar menupopup[placespopup=true]::part(content) {
-  border: 1px solid var(--arrowpanel-border-color) !important;
-}
-
-#PlacesToolbar menupopup > menu .menu-iconic-icon,
-#PlacesToolbar menupopup > menuitem .menu-iconic-icon {
-  margin-inline-end: 0;
-}
-
-#PlacesToolbar menu menupopup {
-  margin-top: -8px;
-}
-
 /* Inactive elements are faded out on OSX */
 .toolbarbutton-1:not(:hover):-moz-window-inactive,
 .bookmark-item:not(:hover):-moz-window-inactive,
@@ -224,12 +208,6 @@
   #urlbar[breakout-extend] {
     font-size: 1.36em;
   }
-}
-
-/* Ensure diacritics and other edge-of-font-box glyphs do not get clipped,
- * even in non-Latin scripts. */
-#urlbar-input {
-  line-height: 1.745em;
 }
 
 /* Move the margin to the parent element to properly position the ::after badge */
@@ -461,15 +439,6 @@ moz-input-box > menupopup .context-menu-add-engine > .menu-iconic-left {
 #UITourTooltipClose {
   margin-inline-end: -10px;
   margin-top: -14px;
-}
-
-.cui-widget-panelview[id^=PanelUI-webext-] {
-  border-radius: var(--arrowpanel-border-radius);
-}
-
-.webextension-popup-browser,
-.webextension-popup-stack {
-  border-radius: inherit;
 }
 
 #historySwipeAnimationPreviousArrow {

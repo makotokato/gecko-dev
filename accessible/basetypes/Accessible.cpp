@@ -7,7 +7,9 @@
 #include "AccGroupInfo.h"
 #include "ARIAMap.h"
 #include "nsAccUtils.h"
+#include "Relation.h"
 #include "States.h"
+#include "mozilla/a11y/FocusManager.h"
 #include "mozilla/a11y/HyperTextAccessibleBase.h"
 #include "mozilla/BasicEvents.h"
 #include "mozilla/Components.h"
@@ -116,7 +118,8 @@ LayoutDeviceIntSize Accessible::Size() const { return Bounds().Size(); }
 
 LayoutDeviceIntPoint Accessible::Position(uint32_t aCoordType) {
   LayoutDeviceIntPoint point = Bounds().TopLeft();
-  nsAccUtils::ConvertScreenCoordsTo(&point.x, &point.y, aCoordType, this);
+  nsAccUtils::ConvertScreenCoordsTo(&point.x.value, &point.y.value, aCoordType,
+                                    this);
   return point;
 }
 
@@ -234,7 +237,7 @@ int32_t Accessible::GetLevel(bool aFast) const {
 
     if (!aFast) {
       const Accessible* parent = this;
-      while ((parent = parent->Parent())) {
+      while ((parent = parent->Parent()) && !parent->IsDoc()) {
         roles::Role parentRole = parent->Role();
 
         if (parentRole == roles::OUTLINE) break;
@@ -251,7 +254,7 @@ int32_t Accessible::GetLevel(bool aFast) const {
     // Calculate 'level' attribute based on number of parent listitems.
     level = 0;
     const Accessible* parent = this;
-    while ((parent = parent->Parent())) {
+    while ((parent = parent->Parent()) && !parent->IsDoc()) {
       roles::Role parentRole = parent->Role();
 
       if (parentRole == roles::LISTITEM) {
@@ -293,9 +296,8 @@ int32_t Accessible::GetLevel(bool aFast) const {
           return 1;
         }
 
-        for (Accessible* child = parent->FirstChild(); child;
-             child = child->NextSibling()) {
-          if (child->IsHTMLOptGroup()) {
+        for (uint32_t i = 0, count = parent->ChildCount(); i < count; ++i) {
+          if (parent->ChildAt(i)->IsHTMLOptGroup()) {
             return 1;
           }
         }
@@ -334,7 +336,7 @@ int32_t Accessible::GetLevel(bool aFast) const {
 
     if (!aFast) {
       const Accessible* parent = this;
-      while ((parent = parent->Parent())) {
+      while ((parent = parent->Parent()) && !parent->IsDoc()) {
         roles::Role parentRole = parent->Role();
         if (parentRole == roles::COMMENT) {
           ++level;
@@ -397,7 +399,11 @@ void Accessible::DebugPrint(const char* aPrefix,
                             const Accessible* aAccessible) {
   nsAutoCString desc;
   aAccessible->DebugDescription(desc);
+#  if defined(ANDROID)
+  printf_stderr("%s %s\n", aPrefix, desc.get());
+#  else
   printf("%s %s\n", aPrefix, desc.get());
+#  endif
 }
 
 #endif
@@ -483,6 +489,50 @@ nsAtom* Accessible::LandmarkRole() const {
   return roleMapEntry && roleMapEntry->IsOfType(eLandmark)
              ? roleMapEntry->roleAtom
              : nullptr;
+}
+
+void Accessible::ApplyImplicitState(uint64_t& aState) const {
+  // nsAccessibilityService (and thus FocusManager) can be shut down before
+  // RemoteAccessibles.
+  if (const auto* focusMgr = FocusMgr()) {
+    if (focusMgr->IsFocused(this)) {
+      aState |= states::FOCUSED;
+    }
+  }
+
+  // If this is an ARIA item of the selectable widget and if it's focused and
+  // not marked unselected explicitly (i.e. aria-selected="false") then expose
+  // it as selected to make ARIA widget authors life easier.
+  const nsRoleMapEntry* roleMapEntry = ARIARoleMap();
+  if (roleMapEntry && !(aState & states::SELECTED) &&
+      ARIASelected().valueOr(true)) {
+    // Special case for tabs: focused tab or focus inside related tab panel
+    // implies selected state.
+    if (roleMapEntry->role == roles::PAGETAB) {
+      if (aState & states::FOCUSED) {
+        aState |= states::SELECTED;
+      } else {
+        // If focus is in a child of the tab panel surely the tab is selected!
+        Relation rel = RelationByType(RelationType::LABEL_FOR);
+        Accessible* relTarget = nullptr;
+        while ((relTarget = rel.Next())) {
+          if (relTarget->Role() == roles::PROPERTYPAGE &&
+              FocusMgr()->IsFocusWithin(relTarget)) {
+            aState |= states::SELECTED;
+          }
+        }
+      }
+    } else if (aState & states::FOCUSED) {
+      Accessible* container = nsAccUtils::GetSelectableContainer(this, aState);
+      if (container && !(container->State() & states::MULTISELECTABLE)) {
+        aState |= states::SELECTED;
+      }
+    }
+  }
+
+  if (Opacity() == 1.0f && !(aState & states::INVISIBLE)) {
+    aState |= states::OPAQUE1;
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

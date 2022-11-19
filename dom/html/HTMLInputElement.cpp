@@ -25,6 +25,7 @@
 #include "mozilla/dom/MutationEventBinding.h"
 #include "mozilla/dom/WheelEventBinding.h"
 #include "mozilla/dom/WindowGlobalChild.h"
+#include "mozilla/EventStateManager.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/TextUtils.h"
@@ -3737,6 +3738,22 @@ nsresult HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
           }
           break;
         }
+
+        case eKeyDown: {
+          // For compatibility with the other browsers, we should active this
+          // element at least when a checkbox or a radio button.
+          // TODO: Investigate which elements are activated by space key in the
+          //       other browsers.
+          if (aVisitor.mPresContext && keyEvent->IsTrusted() && !IsDisabled() &&
+              keyEvent->ShouldWorkAsSpaceKey() &&
+              (mType == FormControlType::InputCheckbox ||
+               mType == FormControlType::InputRadio)) {
+            EventStateManager::SetActiveManager(
+                aVisitor.mPresContext->EventStateManager(), this);
+          }
+          break;
+        }
+
         case eKeyPress: {
           if (mType == FormControlType::InputRadio && keyEvent->IsTrusted() &&
               !keyEvent->IsAlt() && !keyEvent->IsControl() &&
@@ -4465,6 +4482,14 @@ void HTMLInputElement::HandleTypeChange(FormControlType aNewType,
 
   UpdateBarredFromConstraintValidation();
 
+  // Changing type may affect directionality because of the special-case for
+  // <input type=tel>, as specified in
+  // https://html.spec.whatwg.org/multipage/dom.html#the-directionality
+  if (oldType == FormControlType::InputTel ||
+      mType == FormControlType::InputTel) {
+    RecomputeDirectionality(this, aNotify);
+  }
+
   if (oldType == FormControlType::InputImage) {
     // We're no longer an image input.  Cancel our image requests, if we have
     // any.
@@ -4510,6 +4535,12 @@ void HTMLInputElement::HandleTypeChange(FormControlType aNewType,
     } else if (CreatesDateTimeWidget()) {
       // Switch to date/time type.
       AttachAndSetUAShadowRoot(NotifyUAWidgetSetup::Yes, DelegatesFocus::Yes);
+    }
+    // If we're becoming a text control and have focus, make sure to show focus
+    // rings.
+    if (State().HasState(ElementState::FOCUS) && IsSingleLineTextControl() &&
+        !IsSingleLineTextControl(/* aExcludePassword = */ false, oldType)) {
+      AddStates(ElementState::FOCUSRING);
     }
   }
 }
@@ -6502,24 +6533,25 @@ void HTMLInputElement::UpdateValueMissingValidityStateForRadio(
 
   HTMLInputElement* selection = GetSelectedRadioButton();
 
-  aIgnoreSelf = aIgnoreSelf || !IsMutable();
-
   // If there is no selection, that might mean the radio is not in a group.
   // In that case, we can look for the checked state of the radio.
   bool selected = selection || (!aIgnoreSelf && mChecked);
   bool required = !aIgnoreSelf && IsRequired();
-  bool valueMissing = false;
 
   nsCOMPtr<nsIRadioGroupContainer> container = GetRadioGroupContainer();
 
-  if (!container) {
-    SetValidityState(VALIDITY_STATE_VALUE_MISSING,
-                     IsMutable() && required && !selected);
-    return;
-  }
-
   nsAutoString name;
   GetAttr(kNameSpaceID_None, nsGkAtoms::name, name);
+
+  if (!container) {
+    // As per the spec, a radio button not within a radio button group cannot
+    // suffer from being missing; however, we currently are failing to get a
+    // radio group in the case of a single, named radio button that has no
+    // form owner, forcing us to check for validity in that case here.
+    SetValidityState(VALIDITY_STATE_VALUE_MISSING,
+                     required && !selected && !name.IsEmpty());
+    return;
+  }
 
   // If the current radio is required and not ignored, we can assume the entire
   // group is required.
@@ -6529,8 +6561,7 @@ void HTMLInputElement::UpdateValueMissingValidityStateForRadio(
                    : container->GetRequiredRadioCount(name);
   }
 
-  valueMissing = required && !selected;
-
+  bool valueMissing = required && !selected;
   if (container->GetValueMissingState(name) != valueMissing) {
     container->SetValueMissingState(name, valueMissing);
 

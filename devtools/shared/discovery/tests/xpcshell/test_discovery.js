@@ -4,13 +4,13 @@
 
 "use strict";
 
-const { require } = ChromeUtils.import(
-  "resource://devtools/shared/loader/Loader.jsm"
+const { require } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/Loader.sys.mjs"
 );
-const EventEmitter = require("devtools/shared/event-emitter");
-const discovery = require("devtools/shared/discovery/discovery");
-const { setTimeout, clearTimeout } = ChromeUtils.import(
-  "resource://gre/modules/Timer.jsm"
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
+const discovery = require("resource://devtools/shared/discovery/discovery.js");
+const { setTimeout, clearTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
 );
 
 Services.prefs.setBoolPref("devtools.discovery.log", true);

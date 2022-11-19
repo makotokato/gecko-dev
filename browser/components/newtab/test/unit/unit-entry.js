@@ -8,10 +8,8 @@ import FxMSCommonSchema from "../../content-src/asrouter/schemas/FxMSCommon.sche
 enzyme.configure({ adapter: new Adapter() });
 
 // Cause React warnings to make tests that trigger them fail
-const origConsoleError = console.error; // eslint-disable-line no-console
-// eslint-disable-next-line no-console
+const origConsoleError = console.error;
 console.error = function(msg, ...args) {
-  // eslint-disable-next-line no-console
   origConsoleError.apply(console, [msg, ...args]);
 
   if (
@@ -230,6 +228,15 @@ const TEST_GLOBAL = {
       },
     },
     "@mozilla.org/updates/update-checker;1": { createInstance() {} },
+    "@mozilla.org/widget/useridleservice;1": {
+      getService() {
+        return {
+          idleTime: 0,
+          addIdleObserver() {},
+          removeIdleObserver() {},
+        };
+      },
+    },
     "@mozilla.org/streamConverters;1": {
       getService() {
         return this;
@@ -266,6 +273,8 @@ const TEST_GLOBAL = {
     registerCallback: (id, init, uninit) => {},
     unregisterCallback: id => {},
   },
+  setTimeout: window.setTimeout.bind(window),
+  clearTimeout: window.clearTimeout.bind(window),
   fetch() {},
   // eslint-disable-next-line object-shorthand
   Image: function() {}, // NB: This is a function/constructor
@@ -354,6 +363,7 @@ const TEST_GLOBAL = {
   PrivateBrowsingUtils: {
     isBrowserPrivate: () => false,
     isWindowPrivate: () => false,
+    permanentPrivateBrowsing: false,
   },
   DownloadsViewUI: {
     getDisplayName: () => "filename.ext",

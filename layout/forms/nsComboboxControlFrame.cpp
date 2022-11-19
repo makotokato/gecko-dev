@@ -836,8 +836,8 @@ nsIFrame* nsComboboxControlFrame::CreateFrameForDisplayNode() {
   textFrame->Init(mDisplayContent, mDisplayFrame, nullptr);
   mDisplayContent->SetPrimaryFrame(textFrame);
 
-  nsFrameList textList(textFrame, textFrame);
-  mDisplayFrame->SetInitialChildList(kPrincipalList, textList);
+  mDisplayFrame->SetInitialChildList(FrameChildListID::Principal,
+                                     nsFrameList(textFrame, textFrame));
   return mDisplayFrame;
 }
 
@@ -864,22 +864,17 @@ void nsComboboxControlFrame::GetChildLists(nsTArray<ChildList>* aLists) const {
 }
 
 void nsComboboxControlFrame::SetInitialChildList(ChildListID aListID,
-                                                 nsFrameList& aChildList) {
-#ifdef DEBUG
+                                                 nsFrameList&& aChildList) {
   for (nsIFrame* f : aChildList) {
     MOZ_ASSERT(f->GetParent() == this, "Unexpected parent");
-  }
-#endif
-  for (nsFrameList::Enumerator e(aChildList); !e.AtEnd(); e.Next()) {
-    nsCOMPtr<nsIFormControl> formControl =
-        do_QueryInterface(e.get()->GetContent());
+    nsCOMPtr<nsIFormControl> formControl = do_QueryInterface(f->GetContent());
     if (formControl &&
         formControl->ControlType() == FormControlType::ButtonButton) {
-      mButtonFrame = e.get();
+      mButtonFrame = f;
       break;
     }
   }
-  nsBlockFrame::SetInitialChildList(aListID, aChildList);
+  nsBlockFrame::SetInitialChildList(aListID, std::move(aChildList));
 }
 
 namespace mozilla {

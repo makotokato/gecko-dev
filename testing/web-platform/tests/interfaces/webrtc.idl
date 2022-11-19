@@ -51,29 +51,29 @@ enum RTCSignalingState {
 };
 
 enum RTCIceGatheringState {
-  "new",
-  "gathering",
-  "complete"
-};
+"new",
+"gathering",
+"complete"
+     };
 
 enum RTCPeerConnectionState {
-  "closed",
-  "failed",
-  "disconnected",
-  "new",
-  "connecting",
-  "connected"
-};
+"closed",
+"failed",
+"disconnected",
+"new",
+"connecting",
+"connected"
+     };
 
 enum RTCIceConnectionState {
-  "closed",
-  "failed",
-  "disconnected",
-  "new",
-  "checking",
-  "completed",
-  "connected"
-};
+"closed",
+"failed",
+"disconnected",
+"new",
+"checking",
+"completed",
+"connected"
+     };
 
 [Exposed=Window]
 interface RTCPeerConnection : EventTarget  {
@@ -178,6 +178,8 @@ interface RTCIceCandidate {
   readonly attribute DOMString? relatedAddress;
   readonly attribute unsigned short? relatedPort;
   readonly attribute DOMString? usernameFragment;
+  readonly attribute RTCIceServerTransportProtocol? relayProtocol;
+  readonly attribute DOMString? url;
   RTCIceCandidateInit toJSON();
 };
 
@@ -204,6 +206,12 @@ enum RTCIceCandidateType {
   "srflx",
   "prflx",
   "relay"
+};
+
+enum RTCIceServerTransportProtocol {
+  "udp",
+  "tcp",
+  "tls",
 };
 
 [Exposed=Window]
@@ -309,6 +317,7 @@ dictionary RTCRtpCodingParameters {
 dictionary RTCRtpEncodingParameters : RTCRtpCodingParameters {
   boolean active = true;
   unsigned long maxBitrate;
+  double maxFramerate;
   double scaleResolutionDownBy;
 };
 

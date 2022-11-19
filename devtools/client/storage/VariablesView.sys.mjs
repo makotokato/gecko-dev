@@ -12,12 +12,10 @@ const PAGE_SIZE_MAX_JUMPS = 30;
 const SEARCH_ACTION_MAX_DELAY = 300; // ms
 const ITEM_FLASH_DURATION = 300; // ms
 
-const { require } = ChromeUtils.import(
-  "resource://devtools/shared/loader/Loader.jsm"
-);
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
+import { require } from "resource://devtools/shared/loader/Loader.sys.mjs";
+
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
+
 const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 const DevToolsUtils = require("resource://devtools/shared/DevToolsUtils.js");
 const {

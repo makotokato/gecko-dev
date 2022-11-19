@@ -33,12 +33,8 @@ const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-ChromeUtils.defineModuleGetter(
-  this,
-  "Downloads",
-  "resource://gre/modules/Downloads.jsm"
-);
 ChromeUtils.defineESModuleGetters(this, {
+  Downloads: "resource://gre/modules/Downloads.sys.mjs",
   FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
 });
 
@@ -486,13 +482,15 @@ window.onload = function() {
   gFooter = appendElement(document.body, "div", "ancillary hidden");
   gFooter.setAttribute("role", "contentinfo");
 
-  let a = appendElementWithText(
-    gFooter,
-    "a",
-    "option",
-    "Troubleshooting information"
-  );
-  a.href = "about:support";
+  if (Services.policies.isAllowed("aboutSupport")) {
+    let a = appendElementWithText(
+      gFooter,
+      "a",
+      "option",
+      "Troubleshooting information"
+    );
+    a.href = "about:support";
+  }
 
   let legendText1 =
     "Click on a non-leaf node in a tree to expand ('++') " +

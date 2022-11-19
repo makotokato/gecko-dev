@@ -2,16 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { Preferences } = ChromeUtils.import(
-  "resource://gre/modules/Preferences.jsm"
-);
-const { Assert } = ChromeUtils.import("resource://testing-common/Assert.jsm");
+import { Preferences } from "resource://gre/modules/Preferences.sys.mjs";
+
+import { Assert } from "resource://testing-common/Assert.sys.mjs";
+
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "FileTestUtils",
-  "resource://testing-common/FileTestUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  FileTestUtils: "resource://testing-common/FileTestUtils.sys.mjs",
+});
 
 export var EnterprisePolicyTesting = {
   // |json| must be an object representing the desired policy configuration, OR a

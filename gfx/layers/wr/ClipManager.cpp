@@ -54,7 +54,7 @@ void ClipManager::BeginList(const StackingContextHelper& aStackingContext) {
            aStackingContext.AffectsClipPositioning(),
            aStackingContext.ReferenceFrameId().isSome());
 
-  ItemClips clips(nullptr, nullptr, false);
+  ItemClips clips(nullptr, nullptr, 0, false);
   if (!mItemClipStack.empty()) {
     clips = mItemClipStack.top();
   }
@@ -66,6 +66,10 @@ void ClipManager::BeginList(const StackingContextHelper& aStackingContext) {
     } else {
       // Start a new cache
       mCacheStack.emplace();
+    }
+    if (clips.mChain) {
+      clips.mClipChainId =
+          DefineClipChain(clips.mChain, clips.mAppUnitsPerDevPixel);
     }
   }
 
@@ -97,46 +101,56 @@ void ClipManager::EndList(const StackingContextHelper& aStackingContext) {
 
 void ClipManager::PushOverrideForASR(const ActiveScrolledRoot* aASR,
                                      const wr::WrSpatialId& aSpatialId) {
-  Maybe<wr::WrSpatialId> space = GetScrollLayer(aASR);
-  MOZ_ASSERT(space.isSome());
+  wr::WrSpatialId space = GetScrollLayer(aASR);
 
-  CLIP_LOG("Pushing %p override %zu -> %zu\n", aASR, space->id, aSpatialId.id);
-
-  if (!mItemClipStack.empty()) {
-    auto& top = mItemClipStack.top();
-    if (top.mASR == aASR) {
-      top.mScrollId = aSpatialId;
-    }
-  }
-
-  auto it = mASROverride.insert({*space, std::stack<wr::WrSpatialId>()});
+  CLIP_LOG("Pushing %p override %zu -> %zu\n", aASR, space.id, aSpatialId.id);
+  auto it = mASROverride.insert({space, std::stack<wr::WrSpatialId>()});
   it.first->second.push(aSpatialId);
 
   // Start a new cache
   mCacheStack.emplace();
+
+  // Fix up our cached item clip if needed.
+  if (!mItemClipStack.empty()) {
+    auto& top = mItemClipStack.top();
+    if (top.mASR == aASR) {
+      top.mScrollId = aSpatialId;
+      if (top.mChain) {
+        top.mClipChainId =
+            DefineClipChain(top.mChain, top.mAppUnitsPerDevPixel);
+      }
+    }
+  }
 }
 
 void ClipManager::PopOverrideForASR(const ActiveScrolledRoot* aASR) {
   MOZ_ASSERT(!mCacheStack.empty());
   mCacheStack.pop();
 
-  Maybe<wr::WrSpatialId> space = GetScrollLayer(aASR);
-  MOZ_ASSERT(space.isSome());
-
-  auto it = mASROverride.find(*space);
-  CLIP_LOG("Popping %p override %zu -> %s\n", aASR, space->id,
-           ToString(it->second.top().id).c_str());
-
-  it->second.pop();
+  wr::WrSpatialId space = GetScrollLayer(aASR);
+  auto it = mASROverride.find(space);
+  if (it == mASROverride.end()) {
+    MOZ_ASSERT_UNREACHABLE("Push/PopOverrideForASR should be balanced");
+  } else {
+    CLIP_LOG("Popping %p override %zu -> %zu\n", aASR, space.id,
+             it->second.top().id);
+    it->second.pop();
+  }
 
   if (!mItemClipStack.empty()) {
     auto& top = mItemClipStack.top();
     if (top.mASR == aASR) {
-      top.mScrollId = it->second.empty() ? *space : it->second.top();
+      top.mScrollId = (it == mASROverride.end() || it->second.empty())
+                          ? space
+                          : it->second.top();
+      if (top.mChain) {
+        top.mClipChainId =
+            DefineClipChain(top.mChain, top.mAppUnitsPerDevPixel);
+      }
     }
   }
 
-  if (it->second.empty()) {
+  if (it != mASROverride.end() && it->second.empty()) {
     mASROverride.erase(it);
   }
 }
@@ -148,9 +162,7 @@ wr::WrSpatialId ClipManager::SpatialIdAfterOverride(
     return aSpatialId;
   }
   MOZ_ASSERT(!it->second.empty());
-  CLIP_LOG("Overriding %zu with %s\n", aSpatialId.id,
-           ToString(it->second.top().id).c_str());
-
+  CLIP_LOG("Overriding %zu with %zu\n", aSpatialId.id, it->second.top().id);
   return it->second.top();
 }
 
@@ -201,7 +213,17 @@ wr::WrSpaceAndClipChain ClipManager::SwitchItem(nsDisplayListBuilder* aBuilder,
     separateLeaf = !aItem->GetChildren();
   }
 
-  ItemClips clips(asr, clip, separateLeaf);
+  // Zoom display items report their bounds etc using the parent document's
+  // APD because zoom items act as a conversion layer between the two different
+  // APDs.
+  const int32_t auPerDevPixel = [&] {
+    if (type == DisplayItemType::TYPE_ZOOM) {
+      return static_cast<nsDisplayZoom*>(aItem)->GetParentAppUnitsPerDevPixel();
+    }
+    return aItem->Frame()->PresContext()->AppUnitsPerDevPixel();
+  }();
+
+  ItemClips clips(asr, clip, auPerDevPixel, separateLeaf);
   MOZ_ASSERT(!mItemClipStack.empty());
   if (clips.HasSameInputs(mItemClipStack.top())) {
     // Early-exit because if the clips are the same as aItem's previous sibling,
@@ -217,17 +239,6 @@ wr::WrSpaceAndClipChain ClipManager::SwitchItem(nsDisplayListBuilder* aBuilder,
   // Pop aItem's previous sibling's stuff from mBuilder in preparation for
   // pushing aItem's stuff.
   mItemClipStack.pop();
-
-  // Zoom display items report their bounds etc using the parent document's
-  // APD because zoom items act as a conversion layer between the two different
-  // APDs.
-  int32_t auPerDevPixel;
-  if (type == DisplayItemType::TYPE_ZOOM) {
-    auPerDevPixel =
-        static_cast<nsDisplayZoom*>(aItem)->GetParentAppUnitsPerDevPixel();
-  } else {
-    auPerDevPixel = aItem->Frame()->PresContext()->AppUnitsPerDevPixel();
-  }
 
   // If the leaf of the clip chain is going to be merged with the display item's
   // clip rect, then we should create a clip chain id from the leaf's parent.
@@ -254,10 +265,9 @@ wr::WrSpaceAndClipChain ClipManager::SwitchItem(nsDisplayListBuilder* aBuilder,
   // for it.
   clips.mClipChainId = DefineClipChain(clip, auPerDevPixel);
 
-  Maybe<wr::WrSpatialId> space = GetScrollLayer(asr);
-  MOZ_ASSERT(space.isSome());
-  clips.mScrollId = SpatialIdAfterOverride(*space);
-  CLIP_LOG("\tassigning %d -> %d\n", (int)space->id, (int)clips.mScrollId.id);
+  wr::WrSpatialId space = GetScrollLayer(asr);
+  clips.mScrollId = SpatialIdAfterOverride(space);
+  CLIP_LOG("\tassigning %d -> %d\n", (int)space.id, (int)clips.mScrollId.id);
 
   // Now that we have the scroll id and a clip id for the item, push it onto
   // the WR stack.
@@ -274,13 +284,12 @@ wr::WrSpaceAndClipChain ClipManager::SwitchItem(nsDisplayListBuilder* aBuilder,
   return spaceAndClipChain;
 }
 
-Maybe<wr::WrSpatialId> ClipManager::GetScrollLayer(
-    const ActiveScrolledRoot* aASR) {
+wr::WrSpatialId ClipManager::GetScrollLayer(const ActiveScrolledRoot* aASR) {
   for (const ActiveScrolledRoot* asr = aASR; asr; asr = asr->mParent) {
     Maybe<wr::WrSpatialId> space =
         mBuilder->GetScrollIdForDefinedScrollLayer(asr->GetViewId());
     if (space) {
-      return space;
+      return *space;
     }
 
     // If this ASR doesn't have a scroll ID, then we should check its ancestor.
@@ -291,7 +300,7 @@ Maybe<wr::WrSpatialId> ClipManager::GetScrollLayer(
   Maybe<wr::WrSpatialId> space = mBuilder->GetScrollIdForDefinedScrollLayer(
       ScrollableLayerGuid::NULL_SCROLL_ID);
   MOZ_ASSERT(space.isSome());
-  return space;
+  return *space;
 }
 
 Maybe<wr::WrSpatialId> ClipManager::DefineScrollLayers(
@@ -377,22 +386,25 @@ Maybe<wr::WrSpatialId> ClipManager::DefineScrollLayers(
 
 Maybe<wr::WrClipChainId> ClipManager::DefineClipChain(
     const DisplayItemClipChain* aChain, int32_t aAppUnitsPerDevPixel) {
+  MOZ_ASSERT(!mCacheStack.empty());
   AutoTArray<wr::WrClipId, 6> allClipIds;
+  ClipIdMap& cache = mCacheStack.top();
   // Iterate through the clips in the current item's clip chain, define them
   // in WR, and put their IDs into |clipIds|.
   for (const DisplayItemClipChain* chain = aChain; chain;
        chain = chain->mParent) {
-    ClipIdMap& cache = mCacheStack.top();
-    auto it = cache.find(chain);
-    if (it != cache.end()) {
+    if (!chain->mClip.HasClip()) {
+      // This item in the chain is a no-op, skip over it
+      continue;
+    }
+
+    auto emplaceResult = cache.try_emplace(chain);
+    auto& chainClipIds = emplaceResult.first->second;
+    if (!emplaceResult.second) {
       // Found it in the currently-active cache, so just use the id we have for
       // it.
       CLIP_LOG("cache[%p] => hit\n", chain);
-      allClipIds.AppendElements(it->second);
-      continue;
-    }
-    if (!chain->mClip.HasClip()) {
-      // This item in the chain is a no-op, skip over it
+      allClipIds.AppendElements(chainClipIds);
       continue;
     }
 
@@ -401,27 +413,22 @@ Maybe<wr::WrClipChainId> ClipManager::DefineClipChain(
     AutoTArray<wr::ComplexClipRegion, 6> wrRoundedRects;
     chain->mClip.ToComplexClipRegions(aAppUnitsPerDevPixel, wrRoundedRects);
 
-    Maybe<wr::WrSpatialId> space = GetScrollLayer(chain->mASR);
-    // Before calling DefineClipChain we defined the ASRs by calling
-    // DefineScrollLayers, so we must have a scrollId here.
-    MOZ_ASSERT(space.isSome());
-
+    wr::WrSpatialId space = GetScrollLayer(chain->mASR);
     // Define the clip
-    *space = SpatialIdAfterOverride(*space);
+    space = SpatialIdAfterOverride(space);
 
-    AutoTArray<wr::WrClipId, 4> chainClipIds;
-
-    auto rectClipId = mBuilder->DefineRectClip(space, wr::ToLayoutRect(clip));
+    auto rectClipId =
+        mBuilder->DefineRectClip(Some(space), wr::ToLayoutRect(clip));
     CLIP_LOG("cache[%p] <= %zu\n", chain, rectClipId.id);
     chainClipIds.AppendElement(rectClipId);
 
     for (const auto& complexClip : wrRoundedRects) {
-      auto complexClipId = mBuilder->DefineRoundedRectClip(space, complexClip);
+      auto complexClipId =
+          mBuilder->DefineRoundedRectClip(Some(space), complexClip);
       CLIP_LOG("cache[%p] <= %zu\n", chain, complexClipId.id);
       chainClipIds.AppendElement(complexClipId);
     }
 
-    cache[chain] = chainClipIds.Clone();
     allClipIds.AppendElements(chainClipIds);
   }
 
@@ -440,8 +447,12 @@ ClipManager::~ClipManager() {
 
 ClipManager::ItemClips::ItemClips(const ActiveScrolledRoot* aASR,
                                   const DisplayItemClipChain* aChain,
+                                  int32_t aAppUnitsPerDevPixel,
                                   bool aSeparateLeaf)
-    : mASR(aASR), mChain(aChain), mSeparateLeaf(aSeparateLeaf) {
+    : mASR(aASR),
+      mChain(aChain),
+      mAppUnitsPerDevPixel(aAppUnitsPerDevPixel),
+      mSeparateLeaf(aSeparateLeaf) {
   mScrollId = wr::wr_root_scroll_node_id();
 }
 
@@ -458,8 +469,16 @@ void ClipManager::ItemClips::UpdateSeparateLeaf(
 }
 
 bool ClipManager::ItemClips::HasSameInputs(const ItemClips& aOther) {
-  return mASR == aOther.mASR && mChain == aOther.mChain &&
-         mSeparateLeaf == aOther.mSeparateLeaf;
+  if (mASR != aOther.mASR || mChain != aOther.mChain ||
+      mSeparateLeaf != aOther.mSeparateLeaf) {
+    return false;
+  }
+  // AUPDP only matters if we have a clip chain, since it's only used to compute
+  // the device space clip rect.
+  if (mChain && mAppUnitsPerDevPixel != aOther.mAppUnitsPerDevPixel) {
+    return false;
+  }
+  return true;
 }
 
 wr::WrSpaceAndClipChain ClipManager::ItemClips::GetSpaceAndClipChain() const {

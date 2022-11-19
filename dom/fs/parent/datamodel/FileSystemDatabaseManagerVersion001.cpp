@@ -11,6 +11,7 @@
 #include "mozStorageHelper.h"
 #include "mozilla/dom/FileSystemDataManager.h"
 #include "mozilla/dom/FileSystemHandle.h"
+#include "mozilla/dom/FileSystemLog.h"
 #include "mozilla/dom/FileSystemTypes.h"
 #include "mozilla/dom/PFileSystemManager.h"
 #include "mozilla/dom/quota/QuotaCommon.h"
@@ -156,6 +157,31 @@ Result<Path, QMResult> ResolveReversedPath(
   // Spec wants us to return 'null' for not-an-ancestor case
   pathResult.Clear();
   return pathResult;
+}
+
+Result<bool, QMResult> IsAncestor(const FileSystemConnection& aConnection,
+                                  const FileSystemEntryPair& aEndpoints) {
+  const nsCString pathQuery =
+      "WITH RECURSIVE followPath(handle, parent) AS ( "
+      "SELECT handle, parent "
+      "FROM Entries "
+      "WHERE handle=:entryId "
+      "UNION "
+      "SELECT Entries.handle, Entries.parent FROM followPath, Entries "
+      "WHERE followPath.parent=Entries.handle ) "
+      "SELECT EXISTS "
+      "(SELECT 1 FROM followPath "
+      "WHERE handle=:possibleAncestor ) "
+      ";"_ns;
+
+  QM_TRY_UNWRAP(ResultStatement stmt,
+                ResultStatement::Create(aConnection, pathQuery));
+  QM_TRY(
+      QM_TO_RESULT(stmt.BindEntryIdByName("entryId"_ns, aEndpoints.childId())));
+  QM_TRY(QM_TO_RESULT(
+      stmt.BindEntryIdByName("possibleAncestor"_ns, aEndpoints.parentId())));
+
+  return stmt.YesOrNoQuery();
 }
 
 Result<bool, QMResult> DoesFileExist(const FileSystemConnection& mConnection,
@@ -727,6 +753,15 @@ Result<bool, QMResult> FileSystemDatabaseManagerVersion001::RemoveFile(
   QM_TRY_UNWRAP(EntryId entryId, FindEntryId(mConnection, aHandle, true));
   MOZ_ASSERT(!entryId.IsEmpty());
 
+  // XXX This code assumes the spec question is resolved to state
+  // removing an in-use file should fail.  If it shouldn't fail, we need to
+  // do something to neuter all the extant FileAccessHandles/WritableFileStreams
+  // that reference it
+  if (mDataManager->IsLocked(entryId)) {
+    LOG(("Trying to remove in-use file"));
+    return Err(QMResult(NS_ERROR_DOM_INVALID_MODIFICATION_ERR));
+  }
+
   const nsLiteralCString deleteEntryQuery =
       "DELETE FROM Entries "
       "WHERE handle = :handle "
@@ -796,14 +831,11 @@ Result<bool, QMResult> FileSystemDatabaseManagerVersion001::MoveEntry(
   // Verify the source exists
   QM_TRY_UNWRAP(bool isFile, IsFile(mConnection, entryId), false);
 
-#if 0
-  // Enable once file lock code lands with the SyncAccessHandle patch
   // At this point, entry exists
-  if (isFile && !CanUseFile(entryId, AccessMode::EXCLUSIVE)) {
+  if (isFile && mDataManager->IsLocked(entryId)) {
     LOG(("Trying to move in-use file"));
     return Err(QMResult(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR));
   }
-#endif
 
   // XXX Note: the spec doesn't mention this case.  The WPT tests assume
   // that you can overwrite using move().
@@ -818,6 +850,15 @@ Result<bool, QMResult> FileSystemDatabaseManagerVersion001::MoveEntry(
   QM_TRY_UNWRAP(exists, DoesDirectoryExist(mConnection, aNewDesignation));
   if (exists) {
     return Err(QMResult(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR));
+  }
+
+  // To prevent cyclic paths, we check that there is no path from
+  // the item to be moved to the destination folder.
+  QM_TRY_UNWRAP(
+      const bool isDestinationUnderSelf,
+      IsAncestor(mConnection, {aHandle.entryId(), aNewDesignation.parentId()}));
+  if (isDestinationUnderSelf) {
+    return Err(QMResult(NS_ERROR_DOM_INVALID_MODIFICATION_ERR));
   }
 
   const nsLiteralCString updateEntryParentQuery =

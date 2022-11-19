@@ -82,9 +82,6 @@ class DocAccessibleChild : public DocAccessibleChildBase {
   virtual mozilla::ipc::IPCResult RecvLandmarkRole(
       const uint64_t& aID, nsString* aLandmark) override;
 
-  virtual mozilla::ipc::IPCResult RecvARIARoleAtom(const uint64_t& aID,
-                                                   nsString* aRole) override;
-
   virtual mozilla::ipc::IPCResult RecvGroupPosition(
       const uint64_t& aID, int32_t* aLevel, int32_t* aSimilarItemsInGroup,
       int32_t* aPositionInGroup) override;
@@ -262,8 +259,8 @@ class DocAccessibleChild : public DocAccessibleChildBase {
                                                 uint32_t* aExtent) override;
 
   virtual mozilla::ipc::IPCResult RecvGetPosition(const uint64_t& aID,
-                                                  uint32_t* aColIdx,
-                                                  uint32_t* aRowIdx) override;
+                                                  uint32_t* aRowIdx,
+                                                  uint32_t* aColIdx) override;
 
   virtual mozilla::ipc::IPCResult RecvGetColRowExtents(
       const uint64_t& aID, uint32_t* aColIdx, uint32_t* aRowIdx,

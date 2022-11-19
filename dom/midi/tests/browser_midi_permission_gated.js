@@ -16,11 +16,7 @@ const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
 
 add_setup(async function() {
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["dom.webmidi.enabled", true],
-      ["dom.sitepermsaddon-provider.enabled", true],
-      ["midi.prompt.testing", false],
-    ],
+    set: [["midi.prompt.testing", false]],
   });
 
   registerCleanupFunction(async () => {
@@ -29,6 +25,12 @@ add_setup(async function() {
       url: EXAMPLE_COM_URL,
     });
     await SpecialPowers.removePermission("midi-sysex", {
+      url: PAGE_WITH_IFRAMES_URL,
+    });
+    await SpecialPowers.removePermission("midi", {
+      url: EXAMPLE_COM_URL,
+    });
+    await SpecialPowers.removePermission("midi", {
       url: PAGE_WITH_IFRAMES_URL,
     });
     await SpecialPowers.removePermission("install", {
@@ -43,6 +45,7 @@ add_setup(async function() {
 add_task(async function testRequestMIDIAccess() {
   gBrowser.selectedTab = BrowserTestUtils.addTab(gBrowser, EXAMPLE_COM_URL);
   await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
+  const testPageHost = gBrowser.selectedTab.linkedBrowser.documentURI.host;
 
   info("Check that midi-sysex isn't set");
   ok(
@@ -54,20 +57,35 @@ add_task(async function testRequestMIDIAccess() {
     "midi-sysex value should have UNKNOWN permission"
   );
 
-  info("Request midi access");
+  info("Request midi-sysex access");
   let onAddonInstallBlockedNotification = waitForNotification(
     "addon-install-blocked"
   );
   await SpecialPowers.spawn(gBrowser.selectedBrowser, [], () => {
-    content.midiAccessRequestPromise = content.wrappedJSObject.navigator.requestMIDIAccess(
-      {
-        sysex: true,
-      }
-    );
+    content.midiAccessRequestPromise = content.navigator.requestMIDIAccess({
+      sysex: true,
+    });
   });
 
   info("Deny site permission addon install");
   let addonInstallPanel = await onAddonInstallBlockedNotification;
+  const [
+    installPopupHeader,
+    installPopupMessage,
+  ] = addonInstallPanel.querySelectorAll(
+    "description.popup-notification-description"
+  );
+  is(
+    installPopupHeader.textContent,
+    gNavigatorBundle.getString("sitePermissionInstallFirstPrompt.header"),
+    "First popup has expected header text"
+  );
+  is(
+    installPopupMessage.textContent,
+    gNavigatorBundle.getString("sitePermissionInstallFirstPrompt.message"),
+    "First popup has expected message"
+  );
+
   let notification = addonInstallPanel.childNodes[0];
   // secondaryButton is the "Don't allow" button
   notification.secondaryButton.click();
@@ -92,28 +110,44 @@ add_task(async function testRequestMIDIAccess() {
     "SecurityError: WebMIDI requires a site permission add-on to activate"
   );
 
-  info("Request midi access again");
+  info("Request midi-sysex access again");
   onAddonInstallBlockedNotification = waitForNotification(
     "addon-install-blocked"
   );
   await SpecialPowers.spawn(gBrowser.selectedBrowser, [], () => {
-    content.midiAccessRequestPromise = content.wrappedJSObject.navigator.requestMIDIAccess(
-      {
-        sysex: true,
-      }
-    );
+    content.midiAccessRequestPromise = content.navigator.requestMIDIAccess({
+      sysex: true,
+    });
   });
 
   info("Accept site permission addon install");
   addonInstallPanel = await onAddonInstallBlockedNotification;
   notification = addonInstallPanel.childNodes[0];
-  const dialogPromise = waitForInstallDialog();
+  let dialogPromise = waitForInstallDialog();
   notification.button.click();
   let installDialog = await dialogPromise;
+  is(
+    installDialog.querySelector(".popup-notification-description").textContent,
+    gNavigatorBundle.getFormattedString(
+      "webextSitePerms.headerWithGatedPerms.midi-sysex",
+      [testPageHost]
+    ),
+    "Install dialog has expected header text"
+  );
+  is(
+    installDialog.querySelector("popupnotificationcontent description")
+      .textContent,
+    gNavigatorBundle.getFormattedString(
+      "webextSitePerms.descriptionGatedPerms",
+      [testPageHost]
+    ),
+    "Install dialog has expected description"
+  );
+
   installDialog.button.click();
 
-  info("Wait for the midi access request promise to resolve");
-  const accessGranted = await SpecialPowers.spawn(
+  info("Wait for the midi-sysex access request promise to resolve");
+  let accessGranted = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [],
     async () => {
@@ -137,14 +171,22 @@ add_task(async function testRequestMIDIAccess() {
     ),
     "midi-sysex value should have ALLOW permission"
   );
+  ok(
+    await SpecialPowers.testPermission(
+      "midi",
+      SpecialPowers.Services.perms.UNKNOWN_ACTION,
+      { url: EXAMPLE_COM_URL }
+    ),
+    "but midi should have UNKNOWN permission"
+  );
 
   info("Check that we don't prompt user again once they installed the addon");
   const accessPromiseState = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [],
     async () => {
-      return content.wrappedJSObject.navigator
-        .requestMIDIAccess()
+      return content.navigator
+        .requestMIDIAccess({ sysex: true })
         .then(() => "resolved");
     }
   );
@@ -152,6 +194,85 @@ add_task(async function testRequestMIDIAccess() {
     accessPromiseState,
     "resolved",
     "requestMIDIAccess resolved without user prompt"
+  );
+
+  info("Request midi access without sysex");
+  onAddonInstallBlockedNotification = waitForNotification(
+    "addon-install-blocked"
+  );
+  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], () => {
+    content.midiNoSysexAccessRequestPromise = content.navigator.requestMIDIAccess();
+  });
+
+  info("Accept site permission addon install");
+  addonInstallPanel = await onAddonInstallBlockedNotification;
+  notification = addonInstallPanel.childNodes[0];
+
+  is(
+    notification
+      .querySelector("#addon-install-blocked-info")
+      .getAttribute("href"),
+    Services.urlFormatter.formatURLPref("app.support.baseURL") +
+      "site-permission-addons",
+    "Got the expected SUMO page as a learn more link in the addon-install-blocked panel"
+  );
+
+  dialogPromise = waitForInstallDialog();
+  notification.button.click();
+  installDialog = await dialogPromise;
+
+  is(
+    installDialog.querySelector(".popup-notification-description").textContent,
+    gNavigatorBundle.getFormattedString(
+      "webextSitePerms.headerWithGatedPerms.midi",
+      [testPageHost]
+    ),
+    "Install dialog has expected header text"
+  );
+  is(
+    installDialog.querySelector("popupnotificationcontent description")
+      .textContent,
+    gNavigatorBundle.getFormattedString(
+      "webextSitePerms.descriptionGatedPerms",
+      [testPageHost]
+    ),
+    "Install dialog has expected description"
+  );
+
+  installDialog.button.click();
+
+  info("Wait for the midi access request promise to resolve");
+  accessGranted = await SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [],
+    async () => {
+      try {
+        await content.midiNoSysexAccessRequestPromise;
+        return true;
+      } catch (e) {}
+
+      delete content.midiNoSysexAccessRequestPromise;
+      return false;
+    }
+  );
+  ok(accessGranted, "requestMIDIAccess resolved");
+
+  info("Check that both midi-sysex and midi are now set");
+  ok(
+    await SpecialPowers.testPermission(
+      "midi-sysex",
+      SpecialPowers.Services.perms.ALLOW_ACTION,
+      { url: EXAMPLE_COM_URL }
+    ),
+    "midi-sysex value should have ALLOW permission"
+  );
+  ok(
+    await SpecialPowers.testPermission(
+      "midi",
+      SpecialPowers.Services.perms.ALLOW_ACTION,
+      { url: EXAMPLE_COM_URL }
+    ),
+    "and midi value should also have ALLOW permission"
   );
 
   info("Check that we don't prompt user again when they perm denied");
@@ -164,11 +285,9 @@ add_task(async function testRequestMIDIAccess() {
     "addon-install-blocked"
   );
   await SpecialPowers.spawn(gBrowser.selectedBrowser, [], () => {
-    content.midiAccessRequestPromise = content.wrappedJSObject.navigator.requestMIDIAccess(
-      {
-        sysex: true,
-      }
-    );
+    content.midiAccessRequestPromise = content.navigator.requestMIDIAccess({
+      sysex: true,
+    });
   });
 
   info("Perm-deny site permission addon install");
@@ -193,14 +312,14 @@ add_task(async function testRequestMIDIAccess() {
   );
   is(rejectionMessage, "SecurityError", "requestMIDIAccess was rejected");
 
-  info("Request midi access again");
+  info("Request midi-sysex access again");
   rejectionMessage = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [],
     async () => {
       let errorMessage;
       try {
-        await content.wrappedJSObject.navigator.requestMIDIAccess({
+        await content.navigator.requestMIDIAccess({
           sysex: true,
         });
       } catch (e) {
@@ -233,7 +352,7 @@ add_task(async function testIframeRequestMIDIAccess() {
     "midi-sysex value should have UNKNOWN permission"
   );
 
-  info("Request midi access from the same-origin iframe");
+  info("Request midi-sysex access from the same-origin iframe");
   const sameOriginIframeBrowsingContext = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [],
@@ -246,11 +365,9 @@ add_task(async function testIframeRequestMIDIAccess() {
     "addon-install-blocked"
   );
   await SpecialPowers.spawn(sameOriginIframeBrowsingContext, [], () => {
-    content.midiAccessRequestPromise = content.wrappedJSObject.navigator.requestMIDIAccess(
-      {
-        sysex: true,
-      }
-    );
+    content.midiAccessRequestPromise = content.navigator.requestMIDIAccess({
+      sysex: true,
+    });
   });
 
   info("Accept site permission addon install");
@@ -261,7 +378,7 @@ add_task(async function testIframeRequestMIDIAccess() {
   let installDialog = await dialogPromise;
   installDialog.button.click();
 
-  info("Wait for the midi access request promise to resolve");
+  info("Wait for the midi-sysex access request promise to resolve");
   const accessGranted = await SpecialPowers.spawn(
     sameOriginIframeBrowsingContext,
     [],
@@ -294,8 +411,8 @@ add_task(async function testIframeRequestMIDIAccess() {
     gBrowser.selectedBrowser,
     [],
     async () => {
-      return content.wrappedJSObject.navigator
-        .requestMIDIAccess()
+      return content.navigator
+        .requestMIDIAccess({ sysex: true })
         .then(() => "resolved");
     }
   );
@@ -314,13 +431,25 @@ add_task(async function testIframeRequestMIDIAccess() {
     }
   );
 
+  const onConsoleErrorMessage = new Promise(resolve => {
+    const errorListener = {
+      observe(error) {
+        if (error.message.includes("WebMIDI access request was denied")) {
+          resolve(error);
+          Services.console.unregisterListener(errorListener);
+        }
+      },
+    };
+    Services.console.registerListener(errorListener);
+  });
+
   const rejectionMessage = await SpecialPowers.spawn(
     crossOriginIframeBrowsingContext,
     [],
     async () => {
       let errorName;
       try {
-        await content.wrappedJSObject.navigator.requestMIDIAccess({
+        await content.navigator.requestMIDIAccess({
           sysex: true,
         });
       } catch (e) {
@@ -334,6 +463,14 @@ add_task(async function testIframeRequestMIDIAccess() {
     rejectionMessage,
     "SecurityError",
     "requestMIDIAccess from the remote iframe was rejected"
+  );
+
+  const consoleErrorMessage = await onConsoleErrorMessage;
+  ok(
+    consoleErrorMessage.message.includes(
+      `WebMIDI access request was denied: ❝SitePermsAddons can't be installed from cross origin subframes❞`,
+      "an error message is sent to the console"
+    )
   );
 });
 
@@ -367,14 +504,16 @@ add_task(async function testRequestMIDIAccessLocalhost() {
   );
 
   info(
-    "Request midi access should not prompt for addon install on locahost, but for permission"
+    "Request midi-sysex access should not prompt for addon install on locahost, but for permission"
   );
   let popupShown = BrowserTestUtils.waitForEvent(
     PopupNotifications.panel,
     "popupshown"
   );
   await SpecialPowers.spawn(gBrowser.selectedBrowser, [], () => {
-    content.midiAccessRequestPromise = content.navigator.requestMIDIAccess();
+    content.midiAccessRequestPromise = content.navigator.requestMIDIAccess({
+      sysex: true,
+    });
   });
   await popupShown;
   is(
@@ -388,7 +527,7 @@ add_task(async function testRequestMIDIAccessLocalhost() {
     .querySelector(".popup-notification-primary-button")
     .click();
 
-  info("Wait for the midi access request promise to resolve");
+  info("Wait for the midi-sysex access request promise to resolve");
   const accessGranted = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [],
@@ -410,7 +549,7 @@ add_task(async function testRequestMIDIAccessLocalhost() {
     "popupshown"
   );
   await SpecialPowers.spawn(gBrowser.selectedBrowser, [], async () => {
-    content.navigator.requestMIDIAccess();
+    content.navigator.requestMIDIAccess({ sysex: true });
   });
   await popupShown;
   is(

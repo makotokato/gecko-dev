@@ -231,6 +231,11 @@ RefPtr<GenericNonExclusivePromise> UtilityProcessManager::StartUtility(
       [self, aActor, aSandbox]() {
         RefPtr<UtilityProcessParent> utilityParent =
             self->GetProcessParent(aSandbox);
+        if (!utilityParent) {
+          NS_WARNING("Missing parent in StartUtility");
+          return GenericNonExclusivePromise::CreateAndReject(NS_ERROR_FAILURE,
+                                                             __func__);
+        }
 
         // It is possible if multiple processes concurrently request a utility
         // actor that the previous CanSend() check returned false for both but
@@ -266,7 +271,7 @@ RefPtr<UtilityProcessManager::StartRemoteDecodingUtilityPromise>
 UtilityProcessManager::StartProcessForRemoteMediaDecoding(
     base::ProcessId aOtherProcess, SandboxingKind aSandbox) {
   // Not supported kinds.
-  if (aSandbox != SandboxingKind::UTILITY_AUDIO_DECODING_GENERIC
+  if (aSandbox != SandboxingKind::GENERIC_UTILITY
 #ifdef MOZ_APPLEMEDIA
       && aSandbox != SandboxingKind::UTILITY_AUDIO_DECODING_APPLE_MEDIA
 #endif
@@ -288,14 +293,21 @@ UtilityProcessManager::StartProcessForRemoteMediaDecoding(
       ->Then(
           GetMainThreadSerialEventTarget(), __func__,
           [self, uadc, aOtherProcess, aSandbox]() {
-            base::ProcessId process =
-                self->GetProcessParent(aSandbox)->OtherPid();
-
-            if (!uadc->CanSend()) {
-              MOZ_ASSERT(false, "UtilityAudioDecoderChild lost in the middle");
+            RefPtr<UtilityProcessParent> parent =
+                self->GetProcessParent(aSandbox);
+            if (!parent) {
+              NS_WARNING("UtilityAudioDecoderParent lost in the middle");
               return StartRemoteDecodingUtilityPromise::CreateAndReject(
                   NS_ERROR_FAILURE, __func__);
             }
+
+            if (!uadc->CanSend()) {
+              NS_WARNING("UtilityAudioDecoderChild lost in the middle");
+              return StartRemoteDecodingUtilityPromise::CreateAndReject(
+                  NS_ERROR_FAILURE, __func__);
+            }
+
+            base::ProcessId process = parent->OtherPid();
 
             Endpoint<PRemoteDecoderManagerChild> childPipe;
             Endpoint<PRemoteDecoderManagerParent> parentPipe;
@@ -410,7 +422,6 @@ void UtilityProcessManager::DestroyProcess(SandboxingKind aSandbox) {
     }
 
     mObserver = nullptr;
-    sSingleton = nullptr;
   }
 
   RefPtr<ProcessFields> p = GetProcess(aSandbox);
@@ -432,6 +443,10 @@ void UtilityProcessManager::DestroyProcess(SandboxingKind aSandbox) {
 
   CrashReporter::AnnotateCrashReport(
       CrashReporter::Annotation::UtilityProcessStatus, "Destroyed"_ns);
+
+  if (NoMoreProcesses()) {
+    sSingleton = nullptr;
+  }
 }
 
 Maybe<base::ProcessId> UtilityProcessManager::ProcessPid(

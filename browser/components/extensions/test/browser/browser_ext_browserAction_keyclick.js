@@ -26,7 +26,9 @@ async function focusButtonAndPressKeyWithDelay(key, elem, modifiers) {
 add_task(async function testKeyBrowserAction() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
-      browser_action: {},
+      browser_action: {
+        default_area: "navbar",
+      },
     },
 
     async background() {
@@ -56,7 +58,7 @@ add_task(async function testKeyBrowserAction() {
 
   await promiseAnimationFrame(window);
   await showBrowserAction(extension, window);
-  await focusButtonAndPressKeyWithDelay(" ", elem, {});
+  await focusButtonAndPressKeyWithDelay(" ", elem.firstElementChild, {});
 
   extension.sendMessage("checkCounter");
   let counter = await extension.awaitMessage("counter");

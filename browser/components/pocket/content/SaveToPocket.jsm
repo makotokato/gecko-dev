@@ -25,9 +25,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
 
 var EXPORTED_SYMBOLS = ["SaveToPocket"];
 
-const gStrings = Services.strings.createBundle(
-  "chrome://global/locale/aboutReader.properties"
-);
 var PocketCustomizableWidget = {
   init() {
     lazy.CustomizableUI.createWidget({
@@ -46,7 +43,9 @@ var PocketCustomizableWidget = {
         let frame = doc.createXULElement("browser");
 
         frame.setAttribute("type", "content");
-        frame.setAttribute("remote", true);
+        frame.setAttribute("remote", "true");
+        frame.setAttribute("remoteType", "privilegedabout");
+        frame.setAttribute("maychangeremoteness", "true");
         frame.setAttribute("autocompletepopup", "PopupAutoComplete");
         panelNode.appendChild(frame);
 
@@ -125,10 +124,8 @@ var SaveToPocket = {
 
   _readerButtonData: {
     id: "pocket-button",
+    l10nId: "about-reader-toolbar-savetopocket",
     telemetryId: "save-to-pocket",
-    label: gStrings.formatStringFromName("readerView.savetopocket.label", [
-      "Pocket",
-    ]),
     image: "chrome://global/skin/icons/pocket.svg",
   },
 

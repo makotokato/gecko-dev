@@ -278,7 +278,7 @@ nsDOMAttributeMap* Element::Attributes() {
 }
 
 void Element::SetPointerCapture(int32_t aPointerId, ErrorResult& aError) {
-  if (nsContentUtils::ShouldResistFingerprinting(GetComposedDoc()) &&
+  if (OwnerDoc()->ShouldResistFingerprinting() &&
       aPointerId != PointerEventHandler::GetSpoofedPointerIdForRFP()) {
     aError.ThrowNotFoundError("Invalid pointer id");
     return;
@@ -307,7 +307,7 @@ void Element::SetPointerCapture(int32_t aPointerId, ErrorResult& aError) {
 }
 
 void Element::ReleasePointerCapture(int32_t aPointerId, ErrorResult& aError) {
-  if (nsContentUtils::ShouldResistFingerprinting(GetComposedDoc()) &&
+  if (OwnerDoc()->ShouldResistFingerprinting() &&
       aPointerId != PointerEventHandler::GetSpoofedPointerIdForRFP()) {
     aError.ThrowNotFoundError("Invalid pointer id");
     return;
@@ -777,41 +777,25 @@ void Element::ScrollIntoView(const ScrollIntoViewOptions& aOptions) {
     return;
   }
 
-  WhereToScroll whereToScrollVertically = kScrollToCenter;
-  switch (aOptions.mBlock) {
-    case ScrollLogicalPosition::Start:
-      whereToScrollVertically = kScrollToTop;
-      break;
-    case ScrollLogicalPosition::Center:
-      whereToScrollVertically = kScrollToCenter;
-      break;
-    case ScrollLogicalPosition::End:
-      whereToScrollVertically = kScrollToBottom;
-      break;
-    case ScrollLogicalPosition::Nearest:
-      whereToScrollVertically = kScrollMinimum;
-      break;
-    default:
-      MOZ_ASSERT_UNREACHABLE("Unexpected ScrollLogicalPosition value");
-  }
+  const auto ToWhereToScroll =
+      [](ScrollLogicalPosition aPosition) -> WhereToScroll {
+    switch (aPosition) {
+      case ScrollLogicalPosition::Start:
+        return WhereToScroll::Start;
+      case ScrollLogicalPosition::Center:
+        return WhereToScroll::Center;
+      case ScrollLogicalPosition::End:
+        return WhereToScroll::End;
+      case ScrollLogicalPosition::EndGuard_:
+        MOZ_FALLTHROUGH_ASSERT("Unexpected block direction value");
+      case ScrollLogicalPosition::Nearest:
+        break;
+    }
+    return WhereToScroll::Nearest;
+  };
 
-  WhereToScroll whereToScrollHorizontally = kScrollToCenter;
-  switch (aOptions.mInline) {
-    case ScrollLogicalPosition::Start:
-      whereToScrollHorizontally = kScrollToLeft;
-      break;
-    case ScrollLogicalPosition::Center:
-      whereToScrollHorizontally = kScrollToCenter;
-      break;
-    case ScrollLogicalPosition::End:
-      whereToScrollHorizontally = kScrollToRight;
-      break;
-    case ScrollLogicalPosition::Nearest:
-      whereToScrollHorizontally = kScrollMinimum;
-      break;
-    default:
-      MOZ_ASSERT_UNREACHABLE("Unexpected ScrollLogicalPosition value");
-  }
+  const auto block = ToWhereToScroll(aOptions.mBlock);
+  const auto inline_ = ToWhereToScroll(aOptions.mInline);
 
   ScrollFlags scrollFlags =
       ScrollFlags::ScrollOverflowHidden | ScrollFlags::TriggeredByScript;
@@ -821,9 +805,10 @@ void Element::ScrollIntoView(const ScrollIntoViewOptions& aOptions) {
     scrollFlags |= ScrollFlags::ScrollSmoothAuto;
   }
 
+  // TODO: Propagate whether the axes are logical or not down (via scrollflags).
   presShell->ScrollContentIntoView(
-      this, ScrollAxis(whereToScrollVertically, WhenToScroll::Always),
-      ScrollAxis(whereToScrollHorizontally, WhenToScroll::Always), scrollFlags);
+      this, ScrollAxis(block, WhenToScroll::Always),
+      ScrollAxis(inline_, WhenToScroll::Always), scrollFlags);
 }
 
 void Element::Scroll(const CSSIntPoint& aScroll,
@@ -897,7 +882,7 @@ void Element::ScrollBy(const ScrollToOptions& aOptions) {
 
 int32_t Element::ScrollTop() {
   nsIScrollableFrame* sf = GetScrollFrame();
-  return sf ? sf->GetScrollPositionCSSPixels().y : 0;
+  return sf ? sf->GetScrollPositionCSSPixels().y.value : 0;
 }
 
 void Element::SetScrollTop(int32_t aScrollTop) {
@@ -922,7 +907,7 @@ void Element::SetScrollTop(int32_t aScrollTop) {
 
 int32_t Element::ScrollLeft() {
   nsIScrollableFrame* sf = GetScrollFrame();
-  return sf ? sf->GetScrollPositionCSSPixels().x : 0;
+  return sf ? sf->GetScrollPositionCSSPixels().x.value : 0;
 }
 
 void Element::SetScrollLeft(int32_t aScrollLeft) {
@@ -2845,22 +2830,9 @@ bool Element::GetAttr(int32_t aNameSpaceID, const nsAtom* aName,
 }
 
 int32_t Element::FindAttrValueIn(int32_t aNameSpaceID, const nsAtom* aName,
-                                 AttrValuesArray* aValues,
+                                 AttrArray::AttrValuesArray* aValues,
                                  nsCaseTreatment aCaseSensitive) const {
-  NS_ASSERTION(aName, "Must have attr name");
-  NS_ASSERTION(aNameSpaceID != kNameSpaceID_Unknown, "Must have namespace");
-  NS_ASSERTION(aValues, "Null value array");
-
-  const nsAttrValue* val = mAttrs.GetAttr(aName, aNameSpaceID);
-  if (val) {
-    for (int32_t i = 0; aValues[i]; ++i) {
-      if (val->Equals(aValues[i], aCaseSensitive)) {
-        return i;
-      }
-    }
-    return ATTR_VALUE_NO_MATCH;
-  }
-  return ATTR_MISSING;
+  return mAttrs.FindAttrValueIn(aNameSpaceID, aName, aValues, aCaseSensitive);
 }
 
 nsresult Element::UnsetAttr(int32_t aNameSpaceID, nsAtom* aName, bool aNotify) {
@@ -3816,14 +3788,19 @@ void Element::CloneAnimationsFrom(const Element& aOther) {
       EffectSet* const clonedEffects =
           EffectSet::GetOrCreateEffectSet(this, pseudoType);
       for (KeyframeEffect* const effect : *effects) {
+        auto* animation = effect->GetAnimation();
+        if (animation->AsCSSTransition()) {
+          // Don't clone transitions, for compat with other browsers.
+          continue;
+        }
         // Clone the effect.
         RefPtr<KeyframeEffect> clonedEffect = new KeyframeEffect(
             OwnerDoc(), OwningAnimationTarget{this, pseudoType}, *effect);
 
         // Clone the animation
         RefPtr<Animation> clonedAnimation = Animation::ClonePausedAnimation(
-            OwnerDoc()->GetParentObject(), *effect->GetAnimation(),
-            *clonedEffect, *timeline);
+            OwnerDoc()->GetParentObject(), *animation, *clonedEffect,
+            *timeline);
         clonedEffects->AddEffect(*clonedEffect);
       }
     }
@@ -3970,7 +3947,6 @@ void Element::InsertAdjacentHTML(const nsAString& aPosition,
   // listeners on the fragment that comes from the parser.
   nsAutoScriptBlockerSuppressNodeRemoved scriptBlocker;
 
-  nsAutoMutationBatch mb(destination, true, false);
   switch (position) {
     case eBeforeBegin:
       destination->InsertBefore(*fragment, this, aError);

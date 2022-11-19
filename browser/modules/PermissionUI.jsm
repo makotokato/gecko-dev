@@ -20,8 +20,8 @@ var EXPORTED_SYMBOLS = ["PermissionUI"];
  * permission request is coming up from content by way of the
  * nsContentPermissionHelper. The system add-on could then do the following:
  *
- * const { Integration } = ChromeUtils.import(
- *   "resource://gre/modules/Integration.jsm"
+ * const { Integration } = ChromeUtils.importESModule(
+ *   "resource://gre/modules/Integration.sys.mjs"
  * );
  * const { PermissionUI } = ChromeUtils.import(
  *   "resource:///modules/PermissionUI.jsm"
@@ -75,11 +75,9 @@ ChromeUtils.defineModuleGetter(
   "SitePermissions",
   "resource:///modules/SitePermissions.jsm"
 );
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+});
 
 XPCOMUtils.defineLazyServiceGetter(
   lazy,
@@ -190,7 +188,7 @@ var PermissionPromptPrototype = {
   /**
    * These are the options that will be passed to the PopupNotification when it
    * is shown. See the documentation of `PopupNotifications_show` in
-   * PopupNotifications.jsm for details.
+   * PopupNotifications.sys.mjs for details.
    *
    * Note that prompt() will automatically set displayURI to
    * be the URI of the requesting pricipal, unless the displayURI is exactly
@@ -231,7 +229,7 @@ var PermissionPromptPrototype = {
    * then you need to make sure its ID has the "-notification" suffix,
    * and then return the prefix here.
    *
-   * See PopupNotifications.jsm for more details.
+   * See PopupNotifications.sys.mjs for more details.
    *
    * @return {string}
    *         The unique ID that will be used to as the
@@ -253,7 +251,7 @@ var PermissionPromptPrototype = {
 
   /**
    * The message to show to the user in the PopupNotification, see
-   * `PopupNotifications_show` in PopupNotifications.jsm.
+   * `PopupNotifications_show` in PopupNotifications.sys.mjs.
    *
    * Subclasses must override this.
    *
@@ -728,10 +726,39 @@ var SitePermsAddonInstallRequestPrototype = {
         this.allow();
       },
       err => {
-        Cu.reportError(err);
         this.cancel();
+
+        // Print an error message in the console to give more information to the developer.
+        let scriptErrorClass = Cc["@mozilla.org/scripterror;1"];
+        let errorMessage =
+          this.getInstallErrorMessage(err) ||
+          `${this.permName} access was rejected: ${err.message}`;
+
+        let scriptError = scriptErrorClass.createInstance(Ci.nsIScriptError);
+        scriptError.initWithWindowID(
+          errorMessage,
+          null,
+          null,
+          0,
+          0,
+          0,
+          "content javascript",
+          this.browser.browsingContext.currentWindowGlobal.innerWindowId
+        );
+        Services.console.logMessage(scriptError);
       }
     );
+  },
+
+  /**
+   * Returns an error message that will be printed to the console given a passed Component.Exception.
+   * This should be overriden by children classes.
+   *
+   * @param {Components.Exception} err
+   * @returns {String} The error message
+   */
+  getInstallErrorMessage(err) {
+    return null;
   },
 };
 
@@ -1308,6 +1335,15 @@ MIDIPermissionPrompt.prototype = {
         action: Ci.nsIPermissionManager.DENY_ACTION,
       },
     ];
+  },
+
+  /**
+   * @override
+   * @param {Components.Exception} err
+   * @returns {String}
+   */
+  getInstallErrorMessage(err) {
+    return `WebMIDI access request was denied: ❝${err.message}❞. See https://developer.mozilla.org/docs/Web/API/Navigator/requestMIDIAccess for more information`;
   },
 };
 

@@ -322,7 +322,8 @@
   outline: var(--focus-outline);
 }
 
-.urlbarView-button:hover {
+.urlbarView-button:hover,
+.urlbarView-button[open] {
   background-color: var(--autocomplete-popup-hover-background);
 }
 
@@ -336,6 +337,10 @@
 
 .urlbarView-button-help {
   background-image: url("chrome://global/skin/icons/help.svg");
+}
+
+.urlbarView-button-menu {
+  background-image: url("chrome://global/skin/icons/more.svg");
 }
 
 /* Tip rows */
@@ -422,7 +427,11 @@
   min-width: 16px;
   min-height: 16px;
   margin-block-start: 2px;
-  margin-inline: 8px 4px;
+  margin-inline: 1.8em 0;
+}
+
+.urlbarView-row:is([dynamicType="quickactions"]) > .urlbarView-row-inner > .urlbarView-button-help {
+  display: none;
 }
 
 .urlbarView-row:is([type=tip], [dynamicType="quickactions"]) > .urlbarView-row-inner > .urlbarView-button-help[selected] {
@@ -865,6 +874,9 @@
 
 #PopupSearchAutoComplete::part(content)  {
   --panel-padding: var(--panel-subview-body-padding);
+  /* NOTE(emilio): Once bug 1551637 is fixed we don't need to use block layout
+   * for this (though it doesn't really hurt) */
+  display: block;
 }
 
 @media not (prefers-contrast) {

@@ -220,9 +220,9 @@ ${helpers.predefined_type(
 ${helpers.predefined_type(
     "text-emphasis-position",
     "TextEmphasisPosition",
-    "computed::TextEmphasisPosition::DEFAULT",
+    "computed::TextEmphasisPosition::OVER",
     engines="gecko",
-    initial_specified_value="specified::TextEmphasisPosition::DEFAULT",
+    initial_specified_value="specified::TextEmphasisPosition::OVER",
     animation_value_type="discrete",
     spec="https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-position",
 )}
@@ -318,6 +318,7 @@ ${helpers.single_keyword(
     "text-combine-upright",
     "none all",
     engines="gecko",
+    gecko_enum_prefix="StyleTextCombineUpright",
     animation_value_type="none",
     spec="https://drafts.csswg.org/css-writing-modes-3/#text-combine-upright",
 )}

@@ -181,10 +181,10 @@ class ModuleLoaderBase : public nsISupports {
   // for fetches to finish and for imports to become avilable.
   nsCOMPtr<nsISerialEventTarget> mEventTarget;
 
-  // https://wicg.github.io/import-maps/#document-acquiring-import-maps
+  // https://html.spec.whatwg.org/multipage/webappapis.html#import-maps-allowed
   //
-  // Each Document has an acquiring import maps boolean. It is initially true.
-  bool mAcquiringImportMaps = true;
+  // Each Window has an import maps allowed boolean, initially true.
+  bool mImportMapsAllowed = true;
 
  protected:
   RefPtr<ScriptLoaderInterface> mLoader;
@@ -284,16 +284,14 @@ class ModuleLoaderBase : public nsISupports {
   // Process <script type="importmap">
   mozilla::UniquePtr<ImportMap> ParseImportMap(ScriptLoadRequest* aRequest);
 
-  // Implements https://wicg.github.io/import-maps/#register-an-import-map
+  // Implements
+  // https://html.spec.whatwg.org/multipage/webappapis.html#register-an-import-map
   void RegisterImportMap(mozilla::UniquePtr<ImportMap> aImportMap);
 
-  /**
-   * Getter and Setter for mAcquiringImportMaps.
-   */
-  bool GetAcquiringImportMaps() const { return mAcquiringImportMaps; }
-  void SetAcquiringImportMaps(bool acquiring) {
-    mAcquiringImportMaps = acquiring;
-  }
+  // Getter for mImportMapsAllowed.
+  bool IsImportMapAllowed() const { return mImportMapsAllowed; }
+  // https://html.spec.whatwg.org/multipage/webappapis.html#disallow-further-import-maps
+  void DisallowImportMaps() { mImportMapsAllowed = false; }
 
   // Returns true if the module for given URL is already fetched.
   bool IsModuleFetched(nsIURI* aURL) const;
@@ -351,8 +349,8 @@ class ModuleLoaderBase : public nsISupports {
   JS::Value FindFirstParseError(ModuleLoadRequest* aRequest);
   static nsresult InitDebuggerDataForModuleGraph(JSContext* aCx,
                                                  ModuleLoadRequest* aRequest);
-  static nsresult ResolveRequestedModules(ModuleLoadRequest* aRequest,
-                                          nsCOMArray<nsIURI>* aUrlsOut);
+  nsresult ResolveRequestedModules(ModuleLoadRequest* aRequest,
+                                   nsCOMArray<nsIURI>* aUrlsOut);
 
   void SetModuleFetchFinishedAndResumeWaitingRequests(
       ModuleLoadRequest* aRequest, nsresult aResult);
@@ -373,8 +371,8 @@ class ModuleLoaderBase : public nsISupports {
    *        The result of running ModuleEvaluate -- If this is successful, then
    *        we can await the associated EvaluationPromise.
    */
-  static void FinishDynamicImportAndReject(ModuleLoadRequest* aRequest,
-                                           nsresult aResult);
+  void FinishDynamicImportAndReject(ModuleLoadRequest* aRequest,
+                                    nsresult aResult);
 
   /**
    * Wrapper for JSAPI FinishDynamicImport function. Takes an optional argument

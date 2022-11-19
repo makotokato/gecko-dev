@@ -10,8 +10,8 @@
 
 var EXPORTED_SYMBOLS = ["FormAutofillHandler"];
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
@@ -126,7 +126,7 @@ class FormAutofillSection {
   /**
    * Override this method if the profile is needed to apply some transformers.
    *
-   * @param {Object} profile
+   * @param {object} profile
    *        A profile should be converted based on the specific requirement.
    */
   applyTransformers(profile) {}
@@ -135,7 +135,7 @@ class FormAutofillSection {
    * Override this method if the profile is needed to be customized for
    * previewing values.
    *
-   * @param {Object} profile
+   * @param {object} profile
    *        A profile for pre-processing before previewing values.
    */
   preparePreviewProfile(profile) {}
@@ -144,7 +144,7 @@ class FormAutofillSection {
    * Override this method if the profile is needed to be customized for filling
    * values.
    *
-   * @param {Object} profile
+   * @param {object} profile
    *        A profile for pre-processing before filling values.
    * @returns {boolean} Whether the profile should be filled.
    */
@@ -321,7 +321,7 @@ class FormAutofillSection {
    * Processes form fields that can be autofilled, and populates them with the
    * profile provided by backend.
    *
-   * @param {Object} profile
+   * @param {object} profile
    *        A profile to be filled in.
    * @returns {boolean}
    *          True if successful, false if failed
@@ -413,7 +413,7 @@ class FormAutofillSection {
   /**
    * Populates result to the preview layers with given profile.
    *
-   * @param {Object} profile
+   * @param {object} profile
    *        A profile to be previewed with
    */
   previewFormFields(profile) {
@@ -505,7 +505,7 @@ class FormAutofillSection {
   /**
    * Change the state of a field to correspond with different presentations.
    *
-   * @param {Object} fieldDetail
+   * @param {object} fieldDetail
    *        A fieldDetail of which its element is about to update the state.
    * @param {string} nextState
    *        Used to determine the next state
@@ -603,7 +603,7 @@ class FormAutofillSection {
    * Return the record that is converted from `fieldDetails` and only valid
    * form record is included.
    *
-   * @returns {Object|null}
+   * @returns {object | null}
    *          A record object consists of three properties:
    *            - guid: The id of the previously-filled profile or null if omitted.
    *            - record: A valid record converted from details with trimmed result.
@@ -830,7 +830,8 @@ class FormAutofillAddressSection extends FormAutofillSection {
   /**
    * Replace tel with tel-national if tel violates the input element's
    * restriction.
-   * @param {Object} profile
+   *
+   * @param {object} profile
    *        A profile to be converted.
    */
   telTransformer(profile) {
@@ -971,11 +972,11 @@ class FormAutofillCreditCardSection extends FormAutofillSection {
   /**
    * Credit Card Section Constructor
    *
-   * @param {Object} fieldDetails
+   * @param {object} fieldDetails
    *        The fieldDetail objects for the fields in this section
-   * @param {Object} winUtils
+   * @param {object} winUtils
    *        A WindowUtils reference for the Window the section appears in
-   * @param {Object} handler
+   * @param {object} handler
    *        The FormAutofillHandler responsible for this section
    */
   constructor(fieldDetails, winUtils, handler) {
@@ -1019,6 +1020,28 @@ class FormAutofillCreditCardSection extends FormAutofillSection {
     this.handler.onFormSubmitted();
   }
 
+  /**
+   * Determine whether a set of cc fields identified by our heuristics form a
+   * valid credit card section.
+   * There are 4 different cases when a field is considered a credit card field
+   * 1. Identified by autocomplete attribute. ex <input autocomplete="cc-number">
+   * 2. Identified by fathom and fathom is pretty confident (when confidence
+   *    value is higher than `highConfidenceThreshold`)
+   * 3. Identified by fathom. Confidence value is between `fathom.confidenceThreshold`
+   *    and `fathom.highConfidenceThreshold`
+   * 4. Identified by regex-based heurstic. There is no confidence value in thise case.
+   *
+   * A form is considered a valid credit card form when one of the following condition
+   * is met:
+   * A. One of the cc field is identified by autocomplete (case 1)
+   * B. One of the cc field is identified by fathom (case 2 or 3), and there is also
+   *    another cc field found by any of our heuristic (case 2, 3, or 4)
+   * C. Only one cc field is found in the section, but fathom is very confident (Case 2).
+   *    Currently we add an extra restriction to this rule to decrease the false-positive
+   *    rate. See comments below for details.
+   *
+   * @returns {boolean} True for a valid section, otherwise false
+   */
   isValidSection() {
     let ccNumberDetail = null;
     let ccNameDetail = null;
@@ -1043,7 +1066,7 @@ class FormAutofillCreditCardSection extends FormAutofillSection {
       }
     }
 
-    // Always trust autocomplete attribute. A section is considered a valid
+    // Condition A. Always trust autocomplete attribute. A section is considered a valid
     // cc section as long as a field has autocomplete=cc-number, cc-name or cc-exp*
     if (
       ccNumberDetail?._reason == "autocomplete" ||
@@ -1053,43 +1076,41 @@ class FormAutofillCreditCardSection extends FormAutofillSection {
       return true;
     }
 
-    if (ccNumberDetail) {
-      // For fields that are identified as a cc-number field by our heuristics,
-      // we consider the associated section a valid section only if one of
-      // the following conditions meet:
-      // 1. Our heuristics also identify a cc-name field or a cc-exp* field in this
-      //    section
-      // 2. Fathom is pretty confident this is a cc-number field (determined by
-      //    check whether confidence is over a certain threshold) AND the field
-      //    is the only non-hidden input field of its
-      //    form (or ownerDocument).
+    // Condition B. One of the field is identified by fathom, if this section also
+    // contains another cc field found by our heuristic (Case 2, 3, or 4), we consider
+    // this section a valid credit card seciton
+    if (ccNumberDetail?.confidence > 0) {
       if (ccNameDetail || ccExpiryDetail) {
         return true;
       }
-
-      // Condition #2 is mainly used to address cases when a form (or iframe) only
-      // contains a cc-number field. Since now the fathom algorithm is not mature
-      // enough to use it as the only source of truth when determining a cc-number
-      // field. We increase the confidence threshold for this case and add a
-      // additional constraint to reduce the false-positive rate.
-      if (
-        ccNumberDetail.confidence >=
-        FormAutofillUtils.ccHeuristicsNumberOnlyThreshold
-      ) {
-        const element = ccNumberDetail.elementWeakRef.get();
-        const root = element.form || element.ownerDocument;
-        const inputs = root.querySelectorAll("input:not([type=hidden])");
-        if (inputs.length == 1 && inputs[0] == element) {
-          return true;
-        }
+    } else if (ccNameDetail?.confidence > 0) {
+      if (ccNumberDetail || ccExpiryDetail) {
+        return true;
       }
-    } else if (
-      ccNameDetail &&
-      ccExpiryDetail &&
-      FormAutofillUtils.ccHeuristicsNameExpirySection
-    ) {
-      return true;
     }
+
+    // Condition C.
+    let highConfidenceThreshold =
+      FormAutofillUtils.ccFathomHighConfidenceThreshold;
+    let highConfidenceField;
+    if (ccNumberDetail?.confidence > highConfidenceThreshold) {
+      highConfidenceField = ccNumberDetail;
+    } else if (ccNameDetail?.confidence > highConfidenceThreshold) {
+      highConfidenceField = ccNameDetail;
+    }
+    if (highConfidenceField) {
+      // Temporarily add an addtional "the field is the only visible input" constraint
+      // when determining whether a form has only a high-confidence cc-* field a valid
+      // credit card section. We can remove this restriction once we are confident
+      // about only using fathom.
+      const element = highConfidenceField.elementWeakRef.get();
+      const root = element.form || element.ownerDocument;
+      const inputs = root.querySelectorAll("input:not([type=hidden])");
+      if (inputs.length == 1 && inputs[0] == element) {
+        return true;
+      }
+    }
+
     return false;
   }
 
@@ -1325,7 +1346,7 @@ class FormAutofillCreditCardSection extends FormAutofillSection {
   /**
    * Customize for previewing profile
    *
-   * @param {Object} profile
+   * @param {object} profile
    *        A profile for pre-processing before previewing values.
    * @override
    */
@@ -1344,7 +1365,7 @@ class FormAutofillCreditCardSection extends FormAutofillSection {
   /**
    * Customize for filling profile
    *
-   * @param {Object} profile
+   * @param {object} profile
    *        A profile for pre-processing before filling values.
    * @returns {boolean} Whether the profile should be filled.
    * @override
@@ -1412,8 +1433,9 @@ class FormAutofillHandler {
   /**
    * Initialize the form from `FormLike` object to handle the section or form
    * operations.
+   *
    * @param {FormLike} form Form that need to be auto filled
-   * @param {function} onFormSubmitted Function that can be invoked
+   * @param {Function} onFormSubmitted Function that can be invoked
    *                   to simulate form submission. Function is passed
    *                   three arguments: (1) a FormLike for the form being
    *                   submitted, (2) the corresponding Window, and (3) the
@@ -1467,6 +1489,7 @@ class FormAutofillHandler {
   /**
    * Check the form is necessary to be updated. This function should be able to
    * detect any changes including all control elements in the form.
+   *
    * @param {HTMLElement} element The element supposed to be in the form.
    * @returns {boolean} FormAutofillHandler.form is updated or not.
    */
@@ -1510,6 +1533,7 @@ class FormAutofillHandler {
   /**
    * Update the form with a new FormLike, and the related fields should be
    * updated or clear to ensure the data consistency.
+   *
    * @param {FormLike} form a new FormLike to replace the original one.
    */
   _updateForm(form) {
@@ -1588,7 +1612,7 @@ class FormAutofillHandler {
    * Processes form fields that can be autofilled, and populates them with the
    * profile provided by backend.
    *
-   * @param {Object} profile
+   * @param {object} profile
    *        A profile to be filled in.
    */
   async autofillFormFields(profile) {
@@ -1650,7 +1674,7 @@ class FormAutofillHandler {
    * Collect the filled sections within submitted form and convert all the valid
    * field data into multiple records.
    *
-   * @returns {Object} records
+   * @returns {object} records
    *          {Array.<Object>} records.address
    *          {Array.<Object>} records.creditCard
    */

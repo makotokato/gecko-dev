@@ -263,7 +263,7 @@ class Metrics {
   struct Enumeration {
     using SourceType = int;
     static uint32_t convert(SourceType sample) {
-      MOZ_ASSERT(sample <= 100);
+      MOZ_ASSERT(sample >= 0 && sample <= 100);
       return static_cast<uint32_t>(sample);
     }
   };
@@ -274,7 +274,7 @@ class Metrics {
   struct Percentage {
     using SourceType = int;
     static uint32_t convert(SourceType sample) {
-      MOZ_ASSERT(sample <= 100);
+      MOZ_ASSERT(sample >= 0 && sample <= 100);
       return static_cast<uint32_t>(sample);
     }
   };
@@ -453,6 +453,8 @@ struct JSRuntime {
   js::MainThreadData<const js::DOMCallbacks*> DOMcallbacks;
   js::MainThreadData<JSDestroyPrincipalsOp> destroyPrincipals;
   js::MainThreadData<JSReadPrincipalsOp> readPrincipals;
+
+  js::MainThreadData<JS::EnsureCanAddPrivateElementOp> canAddPrivateElement;
 
   /* Optional warning reporter. */
   js::MainThreadData<JS::WarningReporter> warningReporter;
@@ -677,6 +679,10 @@ struct JSRuntime {
   /* Strong references on scripts held for PCCount profiling API. */
   js::MainThreadData<JS::PersistentRooted<js::ScriptAndCountsVector>*>
       scriptAndCountsVector;
+
+  using RootedPlainObjVec = JS::PersistentRooted<
+      JS::GCVector<js::PlainObject*, 0, js::SystemAllocPolicy>>;
+  js::MainThreadData<js::UniquePtr<RootedPlainObjVec>> watchtowerTestingLog;
 
  private:
   /* Code coverage output. */

@@ -35,6 +35,7 @@ XPCOMUtils.defineLazyServiceGetter(
 /**
  * Asserts that search mode telemetry was recorded correctly. Checks both the
  * urlbar.searchmode.* and urlbar.searchmode_picked.* probes.
+ *
  * @param {string} entry
  *   A search mode entry point.
  * @param {string} engineOrSource
@@ -92,19 +93,13 @@ add_setup(async function() {
 
   // Create an engine to generate search suggestions and add it as default
   // for this test.
-  let suggestionEngine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + "urlbarTelemetrySearchSuggestions.xml"
-  );
+  let suggestionEngine = await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + "urlbarTelemetrySearchSuggestions.xml",
+    setAsDefault: true,
+  });
   suggestionEngine.alias = ENGINE_ALIAS;
   engineDomain = suggestionEngine.getResultDomain();
   engineName = suggestionEngine.name;
-
-  // Make it the default search engine.
-  let originalEngine = await Services.search.getDefault();
-  await Services.search.setDefault(
-    suggestionEngine,
-    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-  );
 
   // And the first one-off engine.
   await Services.search.moveEngine(suggestionEngine, 0);
@@ -132,10 +127,6 @@ add_setup(async function() {
   // Make sure to restore the engine once we're done.
   registerCleanupFunction(async function() {
     Services.telemetry.canRecordExtended = oldCanRecord;
-    await Services.search.setDefault(
-      originalEngine,
-      Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-    );
     await PlacesUtils.history.clear();
     Services.telemetry.setEventRecordingEnabled("navigation", false);
     UrlbarTestUtils.uninit();

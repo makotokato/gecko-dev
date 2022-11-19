@@ -221,7 +221,8 @@ bool TextAttrsMgr::LangTextAttr::GetValueFor(LocalAccessible* aAccessible,
 
 void TextAttrsMgr::LangTextAttr::ExposeValue(AccAttributes* aAttributes,
                                              const nsString& aValue) {
-  aAttributes->SetAttributeStringCopy(nsGkAtoms::language, aValue);
+  RefPtr<nsAtom> lang = NS_Atomize(aValue);
+  aAttributes->SetAttribute(nsGkAtoms::language, lang);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -270,8 +271,8 @@ bool TextAttrsMgr::InvalidTextAttr::GetValue(nsIContent* aElm,
       static dom::Element::AttrValuesArray tokens[] = {
           nsGkAtoms::_false, nsGkAtoms::grammar, nsGkAtoms::spelling, nullptr};
 
-      int32_t idx = elm->AsElement()->FindAttrValueIn(
-          kNameSpaceID_None, nsGkAtoms::aria_invalid, tokens, eCaseMatters);
+      int32_t idx = nsAccUtils::FindARIAAttrValueIn(
+          elm->AsElement(), nsGkAtoms::aria_invalid, tokens, eCaseMatters);
       switch (idx) {
         case 0:
           *aValue = eFalse;
@@ -401,7 +402,8 @@ bool TextAttrsMgr::FontFamilyTextAttr::GetValueFor(LocalAccessible* aAccessible,
 
 void TextAttrsMgr::FontFamilyTextAttr::ExposeValue(AccAttributes* aAttributes,
                                                    const nsString& aValue) {
-  aAttributes->SetAttributeStringCopy(nsGkAtoms::font_family, aValue);
+  RefPtr<nsAtom> family = NS_Atomize(aValue);
+  aAttributes->SetAttribute(nsGkAtoms::font_family, family);
 }
 
 bool TextAttrsMgr::FontFamilyTextAttr::GetFontFamily(nsIFrame* aFrame,

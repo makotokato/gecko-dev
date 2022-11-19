@@ -17,6 +17,7 @@ class Document;
 
 namespace a11y {
 
+class Accessible;
 class AccEvent;
 class LocalAccessible;
 class DocAccessible;
@@ -29,14 +30,22 @@ class FocusManager {
   virtual ~FocusManager();
 
   /**
-   * Return a focused accessible.
+   * Return the currently focused LocalAccessible. If a remote document has
+   * focus, this will return null.
    */
-  LocalAccessible* FocusedAccessible() const;
+  LocalAccessible* FocusedLocalAccessible() const;
+
+  /**
+   * Return the currently focused Accessible, local or remote.
+   */
+  Accessible* FocusedAccessible() const;
 
   /**
    * Return true if given accessible is focused.
    */
-  bool IsFocused(const LocalAccessible* aAccessible) const;
+  bool IsFocused(const Accessible* aAccessible) const {
+    return FocusedAccessible() == aAccessible;
+  }
 
   /**
    * Return true if the given accessible is an active item, i.e. an item that
@@ -61,7 +70,7 @@ class FocusManager {
   /**
    * Return true if focused accessible is within the given container.
    */
-  bool IsFocusWithin(const LocalAccessible* aContainer) const;
+  bool IsFocusWithin(const Accessible* aContainer) const;
 
   /**
    * Return whether the given accessible is focused or contains the focus or

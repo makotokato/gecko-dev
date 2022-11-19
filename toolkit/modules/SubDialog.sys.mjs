@@ -476,7 +476,7 @@ SubDialog.prototype = {
       scrollWidth + "px";
     let frameWidth = docEl.getAttribute("width")
       ? docEl.getAttribute("width") + "px"
-      : frameMinWidth;
+      : scrollWidth + "px";
     if (
       this._box.getAttribute("sizeto") == "available" &&
       docEl.style.maxWidth
@@ -617,14 +617,11 @@ SubDialog.prototype = {
       // content pane exists, which is usually the case when the "window"
       // element is used to implement the subdialog instead.
       frameMinHeight = maxHeight + "px";
-
-      if (contentPane) {
-        // There are also instances where the subdialog is neither implemented
-        // using a content pane, nor a <dialog> (such as manageAddresses.xhtml)
-        // so make sure to check that we actually got a contentPane before we
-        // use it.
-        contentPane.classList.add("doScroll");
-      }
+      // There also instances where the subdialog is neither implemented using
+      // a content pane, nor a <dialog> (such as manageAddresses.xhtml)
+      // so make sure to check that we actually got a contentPane before we
+      // use it.
+      contentPane?.classList.add("doScroll");
     }
 
     this._overlay.parentNode.style.setProperty("--inner-height", frameHeight);
@@ -879,7 +876,7 @@ SubDialog.prototype = {
     if (!focusedElement) {
       // Ensure the focus is pulled out of the content document even if there's
       // nothing focusable in the dialog.
-      this._frame.contentWindow.focus();
+      this._frame.focus();
     }
   },
 

@@ -72,14 +72,23 @@ enum class TypeCode {
   // A reference to any host value.
   ExternRef = 0x6f,  // SLEB128(-0x11)
 
+  // A reference to any wasm gc value.
+  AnyRef = 0x6e,  // SLEB128(-0x12)
+
   // A reference to a struct/array value.
-  EqRef = 0x6d,  // SLEB128(-0x12)
+  EqRef = 0x6d,  // SLEB128(-0x13)
 
   // Type constructor for nullable reference types.
   NullableRef = 0x6c,  // SLEB128(-0x14)
 
   // Type constructor for non-nullable reference types.
   Ref = 0x6b,  // SLEB128(-0x15)
+
+  // A reference to any struct value.
+  StructRef = 0x67,  // SLEB128(-0x19)
+
+  // A reference to any array value.
+  ArrayRef = 0x66,  // SLEB128(-0x1A)
 
   // Type constructor for function types
   Func = 0x60,  // SLEB128(-0x20)
@@ -92,6 +101,15 @@ enum class TypeCode {
 
   // The 'empty' case of blocktype.
   BlockVoid = 0x40,  // SLEB128(-0x40)
+
+  // Type constructor for recursion groups - gc proposal
+  RecGroup = 0x4f,
+
+  // TODO: update wasm-tools to use the correct prefix
+  RecGroupOld = 0x45,
+
+  // Type prefix for parent types - gc proposal
+  SubType = 0x50,
 
   Limit = 0x80
 };
@@ -107,12 +125,10 @@ static constexpr TypeCode LowestPrimitiveTypeCode = TypeCode::I16;
 
 static constexpr TypeCode AbstractReferenceTypeCode = TypeCode::ExternRef;
 
-// A type code used to represent (ref null? typeindex) whether or not the type
+// A type code used to represent (ref null? T) whether or not the type
 // is encoded with 'Ref' or 'NullableRef'.
 
-static constexpr TypeCode AbstractReferenceTypeIndexCode = TypeCode::Ref;
-
-enum class TypeIdDescKind { None, Immediate, Global };
+static constexpr TypeCode AbstractTypeRefCode = TypeCode::Ref;
 
 // A wasm::Trap represents a wasm-defined trap that can occur during execution
 // which triggers a WebAssembly.RuntimeError. Generated code may jump to a Trap
@@ -469,13 +485,19 @@ enum class GcOp {
   ArrayGetS = 0x14,
   ArrayGetU = 0x15,
   ArraySet = 0x16,
-  ArrayLen = 0x17,
+  ArrayLenWithTypeIndex = 0x17,
   ArrayCopy = 0x18,
+  ArrayLen = 0x19,
 
   // Ref operations
   RefTest = 0x44,
   RefCast = 0x45,
   BrOnCast = 0x46,
+  BrOnCastFail = 0x47,
+
+  // Extern/any coercion operations
+  ExternInternalize = 0x70,
+  ExternExternalize = 0x71,
 
   Limit
 };
@@ -749,9 +771,9 @@ enum class SimdOp {
   I32x4RelaxedTruncSatF64x2SZero = 0x103,
   I32x4RelaxedTruncSatF64x2UZero = 0x104,
   F32x4RelaxedFma = 0x105,
-  F32x4RelaxedFms = 0x106,
+  F32x4RelaxedFnma = 0x106,
   F64x2RelaxedFma = 0x107,
-  F64x2RelaxedFms = 0x108,
+  F64x2RelaxedFnma = 0x108,
   I8x16RelaxedLaneSelect = 0x109,
   I16x8RelaxedLaneSelect = 0x10a,
   I32x4RelaxedLaneSelect = 0x10b,
@@ -763,7 +785,8 @@ enum class SimdOp {
   I16x8RelaxedQ15MulrS = 0x111,
   I16x8DotI8x16I7x16S = 0x112,
   I32x4DotI8x16I7x16AddS = 0x113,
-  // bfloat16 dot product = 0x114
+  F32x4RelaxedDotBF16x8AddF32x4 = 0x114,
+
   // Reserved for Relaxed SIMD = 0x115-0x12f
 
   // Unused = 0x130 and up
@@ -1017,6 +1040,7 @@ static const unsigned MaxTypeIndex = 1000000;
 static const unsigned MaxTypeIndex = 15000;
 #endif
 
+static const unsigned MaxRecGroups = 1000000;
 static const unsigned MaxTags = 1000000;
 
 // These limits pertain to our WebAssembly implementation only.
@@ -1038,12 +1062,6 @@ static const unsigned MaxFrameSize = 512 * 1024;
 // Asserted by Decoder::readVarU32.
 
 static const unsigned MaxVarU32DecodedBytes = 5;
-
-// Which backend to use in the case of the optimized tier.
-
-enum class OptimizedBackend {
-  Ion,
-};
 
 // The CompileMode controls how compilation of a module is performed (notably,
 // how many times we compile it).

@@ -4,6 +4,7 @@ headers = [
     "mozilla/StyleAnimationValue.h",
     "gfxFontConstants.h",
     "gfxFontFeatures.h",
+    "COLRFonts.h",
     "nsStyleConsts.h",
     "mozilla/css/Loader.h",
     "mozilla/css/SheetLoadData.h",
@@ -109,6 +110,7 @@ rusty-enums = [
     "mozilla::StyleShapeSourceType",
     "mozilla::StyleVisibility",
     "mozilla::StyleBasicShapeType",
+    "mozilla::StyleMathStyle",
     "nsStyleImageLayers_Size_DimensionType",
     "mozilla::StyleBorderCollapse",
     "mozilla::StyleBorderImageRepeat",
@@ -148,6 +150,7 @@ rusty-enums = [
     "mozilla::StyleIsolation",
     "mozilla::StyleTextOrientation",
     "mozilla::StyleMozBoxLayout",
+    "mozilla::StyleTextCombineUpright",
     "mozilla::StyleTableLayout",
     "mozilla::StyleEmptyCells",
     "nsStyleImageType",
@@ -166,6 +169,7 @@ rusty-enums = [
     "mozilla::StyleBlend",
     "mozilla::StyleMaskComposite",
     "mozilla::StyleWritingModeProperty",
+    "StyleFontVariantEmoji",
 ]
 allowlist-vars = [
     "NS_ATTRVALUE_.*",
@@ -234,6 +238,8 @@ allowlist-types = [
     "mozilla::LookAndFeel",
     "mozilla::gfx::Float",
     "mozilla::gfx::FontVariation",
+    "mozilla::gfx::FontPaletteValueSet",
+    "mozilla::gfx::FontPaletteValueSet::PaletteValeus",
     "mozilla::StyleImageLayerAttachment",
     "gfxFontFeature",
     "gfxFontVariation",
@@ -568,7 +574,7 @@ cbindgen-types = [
     { gecko = "StyleGenericGridTemplateComponent", servo = "crate::values::generics::grid::GridTemplateComponent" },
     { gecko = "StyleTextEmphasisStyle", servo = "crate::values::computed::text::TextEmphasisStyle" },
     { gecko = "StyleTextEmphasisPosition", servo = "crate::values::computed::TextEmphasisPosition" },
-    { gecko = "StyleVariantAlternatesList", servo = "crate::values::specified::font::VariantAlternatesList" },
+    { gecko = "StyleFontVariantAlternates", servo = "crate::values::specified::font::FontVariantAlternates" },
     { gecko = "StyleSVGPaintOrder", servo = "crate::values::specified::svg::SVGPaintOrder" },
     { gecko = "StyleClipRectOrAuto", servo = "crate::values::computed::ClipRectOrAuto" },
     { gecko = "StyleCounterReset", servo = "crate::values::computed::CounterReset" },
@@ -609,6 +615,7 @@ cbindgen-types = [
     { gecko = "StyleFontStyle", servo = "crate::values::computed::font::FontStyle" },
     { gecko = "StyleFontWeight", servo = "crate::values::computed::font::FontWeight" },
     { gecko = "StyleFontStretch", servo = "crate::values::computed::font::FontStretch" },
+    { gecko = "StyleFontPalette", servo = "crate::values::computed::font::FontPalette" },
     { gecko = "StyleBoolInteger", servo = "crate::values::computed::BoolInteger" },
 ]
 

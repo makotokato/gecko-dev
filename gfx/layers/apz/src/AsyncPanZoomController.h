@@ -903,12 +903,11 @@ class AsyncPanZoomController {
       RepaintUpdateType aUpdateType = RepaintUpdateType::eUserAction);
 
   /**
-   * Send the provided metrics to Gecko to trigger a repaint. This function
-   * may filter duplicate calls with the same metrics. This function must be
-   * called on the main thread.
+   * Send Metrics() to Gecko to trigger a repaint. This function may filter
+   * duplicate calls with the same metrics. This function must be called on the
+   * main thread.
    */
-  void RequestContentRepaint(const FrameMetrics& aFrameMetrics,
-                             const ParentLayerPoint& aVelocity,
+  void RequestContentRepaint(const ParentLayerPoint& aVelocity,
                              const ScreenMargin& aDisplayportMargins,
                              RepaintUpdateType aUpdateType);
 
@@ -1367,7 +1366,22 @@ class AsyncPanZoomController {
   AxisX mX;
   AxisY mY;
 
+  /**
+   * Returns wheter the given input state is a user pan-gesture.
+   *
+   * Note: momentum pan gesture states are not considered a panning state.
+   */
   static bool IsPanningState(PanZoomState aState);
+
+  /**
+   * Returns wheter a delayed transform end is queued.
+   */
+  bool IsDelayedTransformEndSet();
+
+  /**
+   * Returns wheter a delayed transform end is queued.
+   */
+  void SetDelayedTransformEnd(bool aDelayedTransformEnd);
 
   /**
    * Returns whether the specified PanZoomState does not need to be reset when
@@ -1397,11 +1411,18 @@ class AsyncPanZoomController {
   int mNotificationBlockers;
 
   /**
+   * Helper to set the current state, without content controller events
+   * for the state change. This is useful in cases where the content
+   * controller events may need to be delayed.
+   */
+  PanZoomState SetStateNoContentControllerDispatch(PanZoomState aNewState);
+
+  /**
    * Helper to set the current state. Holds the monitor before actually setting
    * it and fires content controller events based on state changes. Always set
    * the state using this call, do not set it directly.
    */
-  void SetState(PanZoomState aState);
+  void SetState(PanZoomState aNewState);
   /**
    * Fire content controller notifications about state changes, assuming no
    * StateChangeNotificationBlocker has been activated.
@@ -1505,6 +1526,11 @@ class AsyncPanZoomController {
   // Indicates if the repaint-during-pinch timer is currently set
   bool mPinchPaintTimerSet;
 
+  // Indicates a delayed transform end notification is queued, and the
+  // transform-end timer is currently set. mRecursiveMutex must be held
+  // when using or modifying this member.
+  bool mDelayedTransformEnd;
+
   // Deal with overscroll resulting from a fling animation. This is only ever
   // called on APZC instances that were actually performing a fling.
   // The overscroll is handled by trying to hand the fling off to an APZC
@@ -1537,6 +1563,11 @@ class AsyncPanZoomController {
 
   // Invoked by the pinch repaint timer.
   void DoDelayedRequestContentRepaint();
+
+  // Invoked by the on pan-end handler to ensure that scrollend is only
+  // fired once when a momentum pan or scroll snap is triggered as a
+  // result of the pan gesture.
+  void DoDelayedTransformEndNotification(PanZoomState aOldState);
 
   // Compute the number of ParentLayer pixels per (Screen) inch at the given
   // point and in the given direction.
@@ -1764,6 +1795,16 @@ class AsyncPanZoomController {
  private:
   // The timestamp of the latest touch start event.
   TimeStamp mTouchStartTime;
+  // Used for interpolating touch events that cross the touch-start
+  // tolerance threshold.
+  struct TouchSample {
+    ExternalPoint mPosition;
+    TimeStamp mTimeStamp;
+  };
+  // Information about the latest touch event.
+  // This is only populated when we're in the TOUCHING state
+  // (and thus the last touch event has only one touch point).
+  TouchSample mLastTouch;
   // The time duration between mTouchStartTime and the touchmove event that
   // started the pan (the touchmove event that transitioned this APZC from the
   // TOUCHING state to one of the PANNING* states). Only valid while this APZC
@@ -1844,6 +1885,23 @@ class AsyncPanZoomController {
   Maybe<CSSSnapTarget> FindSnapPointNear(const CSSPoint& aDestination,
                                          ScrollUnit aUnit,
                                          ScrollSnapFlags aSnapFlags);
+
+  // If |aOriginalEvent| crosses the touch-start tolerance threshold, split it
+  // into two events: one that just reaches the threshold, and the remainder.
+  //
+  // |aPanThreshold| is the touch-start tolerance, and |aVectorLength| is
+  // the length of the vector from the touch-start position to |aOriginalEvent|.
+  // These values could be computed from |aOriginalEvent| but they are
+  // passed in for convenience since the caller also needs to compute them.
+  //
+  // |aExtPoint| is the position of |aOriginalEvent| in External coordinates,
+  // and in case of a split is modified by the function to reflect the position
+  // of of the first event. This is a workaround for the fact that recomputing
+  // the External position from the returned event would require a round-trip
+  // through |mScreenPoint| which is an integer.
+  Maybe<std::pair<MultiTouchInput, MultiTouchInput>> MaybeSplitTouchMoveEvent(
+      const MultiTouchInput& aOriginalEvent, ScreenCoord aPanThreshold,
+      float aVectorLength, ExternalPoint& aExtPoint);
 
   friend std::ostream& operator<<(
       std::ostream& aOut, const AsyncPanZoomController::PanZoomState& aState);

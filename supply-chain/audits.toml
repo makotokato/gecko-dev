@@ -262,6 +262,14 @@ who = "Matthew Gregan <kinetik@flim.org>"
 criteria = "safe-to-deploy"
 delta = "0.10.1 -> 0.10.2"
 
+[[audits.cubeb-backend]]
+who = "Paul Adenot <paul@paul.cx>"
+criteria = "safe-to-deploy"
+delta = "0.10.2 -> 0.10.3"
+notes = """
+Mozilla-developed package.
+"""
+
 [[audits.cubeb-core]]
 who = "Matthew Gregan <kinetik@flim.org>"
 criteria = "safe-to-deploy"
@@ -275,6 +283,14 @@ who = "Matthew Gregan <kinetik@flim.org>"
 criteria = "safe-to-deploy"
 delta = "0.10.1 -> 0.10.2"
 
+[[audits.cubeb-core]]
+who = "Paul Adenot <paul@paul.cx>"
+criteria = "safe-to-deploy"
+delta = "0.10.2 -> 0.10.3"
+notes = """
+Mozilla-developed package.
+"""
+
 [[audits.cubeb-sys]]
 who = "Matthew Gregan <kinetik@flim.org>"
 criteria = "safe-to-deploy"
@@ -287,6 +303,14 @@ Mozilla-developed package.
 who = "Matthew Gregan <kinetik@flim.org>"
 criteria = "safe-to-deploy"
 delta = "0.10.1 -> 0.10.2"
+
+[[audits.cubeb-sys]]
+who = "Paul Adenot <paul@paul.cx>"
+criteria = "safe-to-deploy"
+delta = "0.10.2 -> 0.10.3"
+notes = """
+Mozilla-developed package.
+"""
 
 [[audits.d3d12]]
 who = "Jim Blandy <jimb@red-bean.com>"
@@ -394,6 +418,11 @@ who = "Zibi Braniecki <zibi@unicode.org>"
 criteria = "safe-to-deploy"
 version = "0.6.0"
 
+[[audits.fluent-fallback]]
+who = "Greg Tatum <tatum.creative@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "0.6.0 -> 0.7.0"
+
 [[audits.fluent-langneg]]
 who = "Zibi Braniecki <zibi@unicode.org>"
 criteria = "safe-to-deploy"
@@ -413,6 +442,11 @@ version = "0.11.0"
 who = "Zibi Braniecki <zibi@unicode.org>"
 criteria = "safe-to-run"
 version = "0.0.2"
+
+[[audits.fluent-testing]]
+who = "Greg Tatum <tatum.creative@gmail.com>"
+criteria = "safe-to-run"
+delta = "0.0.2 -> 0.0.3"
 
 [[audits.fnv]]
 who = "Bobby Holley <bobbyholley@gmail.com>"
@@ -505,6 +539,24 @@ version = "51.1.0"
 notes = "Maintained by the Glean team at Mozilla"
 
 [[audits.glean]]
+who = "Chris H-C <chutten@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "51.7.0"
+notes = "Maintained by the Glean team at Mozilla"
+
+[[audits.glean]]
+who = "Chris H-C <chutten@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "51.8.1"
+notes = "Maintained by the Glean Team at Mozilla"
+
+[[audits.glean]]
+who = "Chris H-C <chutten@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "51.8.2"
+notes = "Maintained by the Glean Team at Mozilla."
+
+[[audits.glean]]
 who = "Jan-Erik Rediger <jrediger@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "50.1.2 -> 50.1.3"
@@ -520,6 +572,23 @@ notes = "Maintained by the Glean team at Mozilla"
 who = "Jan-Erik Rediger <jrediger@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "51.1.0 -> 51.2.0"
+notes = "Maintained by the Glean team at Mozilla"
+
+[[audits.glean]]
+who = "Perry McManis <pmcmanis@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "51.2.0 -> 51.4.0"
+
+[[audits.glean]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "51.4.0 -> 51.5.0"
+notes = "Maintained by the Glean team at Mozilla"
+
+[[audits.glean]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "51.7.0 -> 51.8.0"
 notes = "Maintained by the Glean team at Mozilla"
 
 [[audits.glean-core]]
@@ -541,6 +610,24 @@ version = "51.1.0"
 notes = "Maintained by the Glean team at Mozilla"
 
 [[audits.glean-core]]
+who = "Chris H-C <chutten@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "51.7.0"
+notes = "Maintained by the Glean team at Mozilla"
+
+[[audits.glean-core]]
+who = "Chris H-C <chutten@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "51.8.1"
+notes = "Maintained by the Glean Team at Mozilla"
+
+[[audits.glean-core]]
+who = "Chris H-C <chutten@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "51.8.2"
+notes = "Maintained by the Glean Team at Mozilla."
+
+[[audits.glean-core]]
 who = "Jan-Erik Rediger <jrediger@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "50.1.2 -> 50.1.3"
@@ -557,6 +644,23 @@ who = "Jan-Erik Rediger <jrediger@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "51.1.0 -> 51.2.0"
 notes = "Bug fix release with minimal changes, changes done by myself"
+
+[[audits.glean-core]]
+who = "Perry McManis <pmcmanis@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "51.2.0 -> 51.4.0"
+
+[[audits.glean-core]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "51.4.0 -> 51.5.0"
+notes = "Maintained by the Glean team at Mozilla"
+
+[[audits.glean-core]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "51.7.0 -> 51.8.0"
+notes = "Maintained by the Glean team at Mozilla"
 
 [[audits.goblin]]
 who = "Jan-Erik Rediger <jrediger@mozilla.com>"
@@ -590,6 +694,11 @@ who = "Mike Hommey <mh+mozilla@glandium.org>"
 criteria = "safe-to-deploy"
 version = "0.12.3"
 notes = "This version is used in rust's libstd, so effectively we're already trusting it"
+
+[[audits.hex]]
+who = "Simon Friedberger <simon@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "0.4.3"
 
 [[audits.hyper]]
 who = "Mike Hommey <mh+mozilla@glandium.org>"
@@ -674,6 +783,24 @@ criteria = "safe-to-deploy"
 delta = "0.23.1 -> 0.24.0"
 notes = "This audit treats Dzmitry Malyshau (kvark) as a trusted reviewer."
 
+[[audits.mozprofile]]
+who = "Henrik Skupin <mail@hskupin.info>"
+criteria = "safe-to-deploy"
+version = "0.9.0"
+notes = "Maintained by the DevTools team at Mozilla and has no unsafe code."
+
+[[audits.mozrunner]]
+who = "Henrik Skupin <mail@hskupin.info>"
+criteria = "safe-to-deploy"
+version = "0.15.0"
+notes = "Maintained by the DevTools team at Mozilla and has no unsafe code."
+
+[[audits.mozversion]]
+who = "Henrik Skupin <mail@hskupin.info>"
+criteria = "safe-to-run"
+version = "0.5.0"
+notes = "Maintained by the DevTools team at Mozilla and has no unsafe code."
+
 [[audits.naga]]
 who = "Dzmitry Malyshau <kvark@fastmail.com>"
 criteria = "safe-to-deploy"
@@ -690,6 +817,11 @@ Dzmitry was shown, and agreed to, the 'safe-to-deploy' text.
 who = "Jim Blandy <jimb@red-bean.com>"
 criteria = "safe-to-deploy"
 delta = "0.8.0 -> 0.9.0"
+
+[[audits.naga]]
+who = "Jim Blandy <jimb@red-bean.com>"
+criteria = "safe-to-deploy"
+delta = "0.9.0 -> 0.10.0"
 
 [[audits.new_debug_unreachable]]
 who = "Bobby Holley <bobbyholley@gmail.com>"
@@ -809,6 +941,17 @@ auto-generated by running bindgen on the PKCS#11 specification headers. Other
 than the tests generated by bindgen, it consists of no runnable code.
 """
 
+[[audits.pkcs11-bindings]]
+who = "John M. Schanck <jmschanck@gmail.com>"
+criteria = "safe-to-deploy"
+version = "0.1.1"
+
+[[audits.plane-split]]
+who = "Nicolas Silva <nical@fastmail.com>"
+criteria = "safe-to-deploy"
+version = "0.18.0"
+notes = "Mozilla-developed package, no unsafe code, no access to file system, network or other far reaching APIs."
+
 [[audits.precomputed-hash]]
 who = "Bobby Holley <bobbyholley@gmail.com>"
 criteria = "safe-to-deploy"
@@ -926,10 +1069,48 @@ who = "Mike Hommey <mh+mozilla@glandium.org>"
 criteria = "safe-to-deploy"
 delta = "0.6.26 -> 0.6.27"
 
+[[audits.rkv]]
+who = "Chris H-C <chutten@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "0.18.2"
+notes = "Maintained by Jan-Erik and :krosylight."
+
 [[audits.ron]]
 who = "Mike Hommey <mh+mozilla@glandium.org>"
 criteria = "safe-to-deploy"
 delta = "0.7.0 -> 0.7.1"
+
+[[audits.ron]]
+who = "Jim Blandy <jimb@red-bean.com>"
+criteria = "safe-to-deploy"
+delta = "0.7.1 -> 0.8.0"
+
+[[audits.rure]]
+who = "Nika Layzell <nika@thelayzells.com>"
+criteria = "safe-to-deploy"
+version = "0.2.2"
+notes = """
+This is a fairly straightforward FFI wrapper crate for `regex`, maintained by
+the `regex` developers in the same repository.
+
+This crate is explicitly designed for FFI use, and should not be used directly
+by Rust code. The exported `extern \"C\"` functions are not marked as `unsafe`,
+meaning that it is technically incorrect to use them from within Rust code,
+however they are reasonable to use from C code.
+
+The unsafe code in this crate heavily depends on the C caller maintaining
+invariants, however these invariants are clearly documented in the `rure.h`
+file, bundled with the crate.
+
+I have checked the signatures of each function both in C++ and in the Rust to
+ensure they match.  In some places, the c `rure.h` header file is missing a
+`const` qualifier which could be present given the Rust code, however this will
+have no impact on ABI, and is fairly normal for FFI crates.
+
+Panics are handled in all Rust FFI methods, meaning that projects which do not
+disable unwinding will still consistently abort (using `libc::abort()`) if a
+panic occurs in the Rust code.
+"""
 
 [[audits.rust_decimal]]
 who = "Mike Hommey <mh+mozilla@glandium.org>"
@@ -1152,6 +1333,11 @@ who = "Glenn Watson <git@intuitionlibrary.com>"
 criteria = "safe-to-deploy"
 version = "0.1.2"
 
+[[audits.typed-arena-nomut]]
+who = "Lee Salzman <lsalzman@gmail.com>"
+criteria = "safe-to-deploy"
+version = "0.1.0"
+
 [[audits.uluru]]
 who = "Emilio Cobos Álvarez <emilio@crisal.io>"
 criteria = "safe-to-deploy"
@@ -1214,6 +1400,17 @@ criteria = "safe-to-deploy"
 delta = "0.19.3 -> 0.19.6"
 notes = "Maintained by the Glean and Application Services team."
 
+[[audits.uniffi]]
+who = "Perry McManis <pmcmanis@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.19.6 -> 0.20.0"
+
+[[audits.uniffi]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.20.0 -> 0.21.0"
+notes = "Maintained by the Glean and Application Services team."
+
 [[audits.uniffi_bindgen]]
 who = "Travis Long <tlong@mozilla.com>"
 criteria = "safe-to-deploy"
@@ -1224,6 +1421,17 @@ notes = "Maintained by the Glean and Application Services teams."
 who = "Jan-Erik Rediger <jrediger@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "0.19.3 -> 0.19.6"
+notes = "Maintained by the Glean and Application Services team."
+
+[[audits.uniffi_bindgen]]
+who = "Perry McManis <pmcmanis@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.19.6 -> 0.20.0"
+
+[[audits.uniffi_bindgen]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.20.0 -> 0.21.0"
 notes = "Maintained by the Glean and Application Services team."
 
 [[audits.uniffi_build]]
@@ -1238,6 +1446,17 @@ criteria = "safe-to-deploy"
 delta = "0.19.3 -> 0.19.6"
 notes = "Maintained by the Glean and Application Services team."
 
+[[audits.uniffi_build]]
+who = "Perry McManis <pmcmanis@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.19.6 -> 0.20.0"
+
+[[audits.uniffi_build]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.20.0 -> 0.21.0"
+notes = "Maintained by the Glean and Application Services team."
+
 [[audits.uniffi_macros]]
 who = "Travis Long <tlong@mozilla.com>"
 criteria = "safe-to-deploy"
@@ -1248,12 +1467,34 @@ notes = "Maintained by the Glean and Application Services teams."
 who = "Jan-Erik Rediger <jrediger@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "0.19.3 -> 0.19.6"
+notes = "Maintained by the Glean and Application Services team."
+
+[[audits.uniffi_macros]]
+who = "Perry McManis <pmcmanis@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.19.6 -> 0.20.0"
+
+[[audits.uniffi_macros]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.20.0 -> 0.21.0"
 notes = "Maintained by the Glean and Application Services team."
 
 [[audits.uniffi_meta]]
 who = "Jan-Erik Rediger <jrediger@mozilla.com>"
 criteria = "safe-to-deploy"
 version = "0.19.6"
+notes = "Maintained by the Glean and Application Services team."
+
+[[audits.uniffi_meta]]
+who = "Perry McManis <pmcmanis@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.19.6 -> 0.20.0"
+
+[[audits.uniffi_meta]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.20.0 -> 0.21.0"
 notes = "Maintained by the Glean and Application Services team."
 
 [[audits.void]]
@@ -1279,6 +1520,16 @@ who = "Yury Delendik <ydelendik@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "0.14.0 -> 0.15.0"
 
+[[audits.wasm-encoder]]
+who = "Yury Delendik <ydelendik@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.16.0 -> 0.17.0"
+
+[[audits.wasm-encoder]]
+who = "Ryan Hunt <rhunt@eqrion.net>"
+criteria = "safe-to-deploy"
+delta = "0.19.0 -> 0.19.1"
+
 [[audits.wasm-smith]]
 who = "Ryan Hunt <rhunt@eqrion.net>"
 criteria = "safe-to-deploy"
@@ -1289,6 +1540,16 @@ notes = "Maintained by the Bytecode Alliance, with contributions from Mozilla. I
 who = "Yury Delendik <ydelendik@mozilla.com>"
 criteria = "safe-to-run"
 delta = "0.11.2 -> 0.11.3"
+
+[[audits.wasm-smith]]
+who = "Yury Delendik <ydelendik@mozilla.com>"
+criteria = "safe-to-run"
+delta = "0.11.4 -> 0.11.5"
+
+[[audits.wasm-smith]]
+who = "Ryan Hunt <rhunt@eqrion.net>"
+criteria = "safe-to-run"
+delta = "0.11.7 -> 0.11.8"
 
 [[audits.wasmparser]]
 who = "Ryan Hunt <rhunt@eqrion.net>"
@@ -1301,6 +1562,21 @@ who = "Yury Delendik <ydelendik@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "0.87.0 -> 0.88.0"
 
+[[audits.wasmparser]]
+who = "Yury Delendik <ydelendik@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.89.1 -> 0.91.0"
+
+[[audits.wasmparser]]
+who = "Ryan Hunt <rhunt@eqrion.net>"
+criteria = "safe-to-deploy"
+delta = "0.93.0 -> 0.94.0"
+
+[[audits.wast]]
+who = "Ryan Hunt <rhunt@eqrion.net>"
+criteria = "safe-to-deploy"
+version = "44.0.0"
+
 [[audits.wast]]
 who = "Ryan Hunt <rhunt@eqrion.net>"
 criteria = "safe-to-deploy"
@@ -1311,6 +1587,16 @@ notes = "Maintained by the Bytecode Alliance, with contributions from Mozilla. w
 who = "Yury Delendik <ydelendik@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "44.0.0 -> 45.0.0"
+
+[[audits.wast]]
+who = "Yury Delendik <ydelendik@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "46.0.0 -> 47.0.0"
+
+[[audits.wast]]
+who = "Ryan Hunt <rhunt@eqrion.net>"
+criteria = "safe-to-deploy"
+delta = "48.0.0 -> 49.0.0"
 
 [[audits.webdriver]]
 who = "Henrik Skupin <mail@hskupin.info>"
@@ -1347,6 +1633,12 @@ who = "Jim Blandy <jimb@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "0.12.0 -> 0.13.0"
 
+[[audits.wgpu-core]]
+who = "Jim Blandy <jimb@red-bean.com>"
+criteria = "safe-to-deploy"
+delta = "0.13.0 -> 0.14.0"
+notes = "Audit by Erich Gubler, Jim Blandy, Nicolas Silva, and Teodor Tanasoaia."
+
 [[audits.wgpu-hal]]
 who = "Dzmitry Malyshau <kvark@fastmail.com>"
 criteria = "safe-to-deploy"
@@ -1364,6 +1656,12 @@ who = "Jim Blandy <jimb@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "0.12.0 -> 0.13.0"
 
+[[audits.wgpu-hal]]
+who = "Jim Blandy <jimb@red-bean.com>"
+criteria = "safe-to-deploy"
+delta = "0.13.0 -> 0.14.0"
+notes = "Audit by Erich Gubler, Jim Blandy, Nicolas Silva, and Teodor Tanasoaia."
+
 [[audits.wgpu-types]]
 who = "Dzmitry Malyshau <kvark@fastmail.com>"
 criteria = "safe-to-deploy"
@@ -1380,6 +1678,12 @@ Dzmitry was shown, and agreed to, the 'safe-to-deploy' text.
 who = "Jim Blandy <jimb@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "0.12.0 -> 0.13.0"
+
+[[audits.wgpu-types]]
+who = "Jim Blandy <jimb@red-bean.com>"
+criteria = "safe-to-deploy"
+delta = "0.13.0 -> 0.14.0"
+notes = "Audit by Erich Gubler, Jim Blandy, Nicolas Silva, and Teodor Tanasoaia."
 
 [[audits.whatsys]]
 who = "Bobby Holley <bobbyholley@gmail.com>"
@@ -1390,6 +1694,12 @@ Contains platform-specific FFI code for apple, mac, and windows. The windows cod
 also contains a small C file compiled at build-time. I audited all of it and it
 looks correct.
 """
+
+[[audits.wpf-gpu-raster]]
+who = "Lee Salzman <lsalzman@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "0.1.0"
+notes = "Written and maintained by Gfx team at Mozilla."
 
 [[audits.xmldecl]]
 who = "Henri Sivonen <hsivonen@hsivonen.fi>"

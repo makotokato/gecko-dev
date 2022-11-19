@@ -30,6 +30,7 @@
 #include "mozilla/TextUtils.h"
 #include "mozilla/Unused.h"
 #include "mozilla/Utf8.h"
+#include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/IOUtilsBinding.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/WorkerCommon.h"
@@ -402,7 +403,7 @@ RefPtr<SyncReadFile> IOUtils::OpenFileForSyncReading(GlobalObject& aGlobal,
     return nullptr;
   }
 
-  RefPtr<nsFileStream> stream = new nsFileStream();
+  RefPtr<nsFileRandomAccessStream> stream = new nsFileRandomAccessStream();
   if (nsresult rv =
           stream->Init(file, PR_RDONLY | nsIFile::OS_READAHEAD, 0666, 0);
       NS_FAILED(rv)) {
@@ -592,7 +593,8 @@ already_AddRefed<Promise> IOUtils::WriteJSON(GlobalObject& aGlobal,
           return;
         }
 
-        if (opts.inspect().mMode == WriteMode::Append) {
+        if (opts.inspect().mMode == WriteMode::Append ||
+            opts.inspect().mMode == WriteMode::AppendOrCreate) {
           promise->MaybeRejectWithNotSupportedError(
               "IOUtils.writeJSON does not support appending to files."_ns);
           return;
@@ -1051,6 +1053,72 @@ already_AddRefed<Promise> IOUtils::DelMacXAttr(GlobalObject& aGlobal,
 #endif
 
 /* static */
+already_AddRefed<Promise> IOUtils::GetFile(
+    GlobalObject& aGlobal, const Sequence<nsString>& aComponents,
+    ErrorResult& aError) {
+  return WithPromiseAndState(
+      aGlobal, aError, [&](Promise* promise, auto& state) {
+        ErrorResult joinErr;
+        nsCOMPtr<nsIFile> file = PathUtils::Join(aComponents, joinErr);
+        if (joinErr.Failed()) {
+          promise->MaybeReject(std::move(joinErr));
+          return;
+        }
+
+        nsCOMPtr<nsIFile> parent;
+        if (nsresult rv = file->GetParent(getter_AddRefs(parent));
+            NS_FAILED(rv)) {
+          RejectJSPromise(promise, IOError(rv).WithMessage(
+                                       "Could not get parent directory"));
+          return;
+        }
+
+        state->mEventQueue
+            ->template Dispatch<Ok>([parent = std::move(parent)]() {
+              return MakeDirectorySync(parent, /* aCreateAncestors = */ true,
+                                       /* aIgnoreExisting = */ true, 0755);
+            })
+            ->Then(
+                GetCurrentSerialEventTarget(), __func__,
+                [file = std::move(file), promise = RefPtr(promise)](const Ok&) {
+                  promise->MaybeResolve(file);
+                },
+                [promise = RefPtr(promise)](const IOError& err) {
+                  RejectJSPromise(promise, err);
+                });
+      });
+}
+
+/* static */
+already_AddRefed<Promise> IOUtils::GetDirectory(
+    GlobalObject& aGlobal, const Sequence<nsString>& aComponents,
+    ErrorResult& aError) {
+  return WithPromiseAndState(
+      aGlobal, aError, [&](Promise* promise, auto& state) {
+        ErrorResult joinErr;
+        nsCOMPtr<nsIFile> dir = PathUtils::Join(aComponents, joinErr);
+        if (joinErr.Failed()) {
+          promise->MaybeReject(std::move(joinErr));
+          return;
+        }
+
+        state->mEventQueue
+            ->template Dispatch<Ok>([dir]() {
+              return MakeDirectorySync(dir, /* aCreateAncestors = */ true,
+                                       /* aIgnoreExisting = */ true, 0755);
+            })
+            ->Then(
+                GetCurrentSerialEventTarget(), __func__,
+                [dir, promise = RefPtr(promise)](const Ok&) {
+                  promise->MaybeResolve(dir);
+                },
+                [promise = RefPtr(promise)](const IOError& err) {
+                  RejectJSPromise(promise, err);
+                });
+      });
+}
+
+/* static */
 already_AddRefed<Promise> IOUtils::CreateJSPromise(GlobalObject& aGlobal,
                                                    ErrorResult& aError) {
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
@@ -1084,7 +1152,7 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
 
   const int64_t offset = static_cast<int64_t>(aOffset);
 
-  RefPtr<nsFileStream> stream = new nsFileStream();
+  RefPtr<nsFileRandomAccessStream> stream = new nsFileRandomAccessStream();
   if (nsresult rv =
           stream->Init(aFile, PR_RDONLY | nsIFile::OS_READAHEAD, 0666, 0);
       NS_FAILED(rv)) {
@@ -1259,6 +1327,10 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteSync(
       flags |= PR_APPEND;
       break;
 
+    case WriteMode::AppendOrCreate:
+      flags |= PR_APPEND | PR_CREATE_FILE;
+      break;
+
     case WriteMode::Create:
       flags |= PR_CREATE_FILE | PR_EXCL;
       break;
@@ -1303,8 +1375,8 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteSync(
                                   writeFile->HumanReadablePath().get()));
     }
 
-    // nsFileStream::Write uses PR_Write under the hood, which accepts a
-    // *int32_t* for the chunk size.
+    // nsFileRandomAccessStream::Write uses PR_Write under the hood, which
+    // accepts a *int32_t* for the chunk size.
     uint32_t chunkSize = INT32_MAX;
     Span<const char> pendingBytes = bytes;
 
@@ -2651,7 +2723,8 @@ NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(SyncReadFile, mParent)
 
-SyncReadFile::SyncReadFile(nsISupports* aParent, RefPtr<nsFileStream>&& aStream,
+SyncReadFile::SyncReadFile(nsISupports* aParent,
+                           RefPtr<nsFileRandomAccessStream>&& aStream,
                            int64_t aSize)
     : mParent(aParent), mStream(std::move(aStream)), mSize(aSize) {
   MOZ_RELEASE_ASSERT(mSize >= 0);

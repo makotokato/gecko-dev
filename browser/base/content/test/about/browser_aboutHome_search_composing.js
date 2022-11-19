@@ -20,38 +20,17 @@ add_task(async function() {
     { gBrowser, url: "about:home" },
     async function(browser) {
       // Add a test engine that provides suggestions and switch to it.
-      let currEngine = await Services.search.getDefault();
-
       let engine;
       await promiseContentSearchChange(browser, async () => {
-        engine = await SearchTestUtils.promiseNewSearchEngine(
-          getRootDirectory(gTestPath) + "searchSuggestionEngine.xml"
-        );
-        await Services.search.setDefault(
-          engine,
-          Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-        );
+        engine = await SearchTestUtils.promiseNewSearchEngine({
+          url: getRootDirectory(gTestPath) + "searchSuggestionEngine.xml",
+          setAsDefault: true,
+        });
         return engine.name;
       });
 
       // Clear any search history results
-      await new Promise((resolve, reject) => {
-        FormHistory.update(
-          { op: "remove" },
-          {
-            handleError(error) {
-              reject(error);
-            },
-            handleCompletion(reason) {
-              if (!reason) {
-                resolve();
-              } else {
-                reject();
-              }
-            },
-          }
-        );
-      });
+      await FormHistory.update({ op: "remove" });
 
       await SpecialPowers.spawn(browser, [], async function() {
         // Start composition and type "x"
@@ -132,14 +111,6 @@ add_task(async function() {
         browser
       );
       await loadPromise;
-
-      Services.search.setDefault(
-        currEngine,
-        Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-      );
-      try {
-        await Services.search.removeEngine(engine);
-      } catch (ex) {}
     }
   );
   await SpecialPowers.popPrefEnv();

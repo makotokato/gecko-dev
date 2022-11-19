@@ -100,11 +100,12 @@ class MutationObserverWrapper final : public nsIMutationObserver {
     mOwner->ContentRemoved(aChild, aPreviousSibling);
   }
 
-  void NodeWillBeDestroyed(const nsINode* aNode) override {
+  void NodeWillBeDestroyed(nsINode* aNode) override {
     MOZ_ASSERT(mOwner);
+    AddRefWrapper();
     RefPtr<nsMultiMutationObserver> owner = mOwner;
     owner->NodeWillBeDestroyed(aNode);
-    owner->mWrapperForNode.Remove(const_cast<nsINode*>(aNode));
+    owner->RemoveMutationObserverFromNode(aNode);
     mOwner = nullptr;
     ReleaseWrapper();
   }
@@ -114,9 +115,24 @@ class MutationObserverWrapper final : public nsIMutationObserver {
     mOwner->ParentChainChanged(aContent);
   }
 
+  void ARIAAttributeDefaultWillChange(mozilla::dom::Element* aElement,
+                                      nsAtom* aAttribute,
+                                      int32_t aModType) override {
+    MOZ_ASSERT(mOwner);
+    mOwner->ARIAAttributeDefaultWillChange(aElement, aAttribute, aModType);
+  }
+
+  void ARIAAttributeDefaultChanged(mozilla::dom::Element* aElement,
+                                   nsAtom* aAttribute,
+                                   int32_t aModType) override {
+    MOZ_ASSERT(mOwner);
+    mOwner->ARIAAttributeDefaultChanged(aElement, aAttribute, aModType);
+  }
+
   MozExternalRefCountType AddRefWrapper() {
-    NS_LOG_ADDREF(this, mRefCnt, "MutationObserverWrapper", sizeof(*this));
-    return ++mRefCnt;
+    nsrefcnt count = ++mRefCnt;
+    NS_LOG_ADDREF(this, count, "MutationObserverWrapper", sizeof(*this));
+    return count;
   }
 
   MozExternalRefCountType ReleaseWrapper() {
@@ -124,9 +140,8 @@ class MutationObserverWrapper final : public nsIMutationObserver {
     NS_LOG_RELEASE(this, mRefCnt, "MutationObserverWrapper");
     if (mRefCnt == 0) {
       mRefCnt = 1;
-      auto refCnt = MozExternalRefCountType(mRefCnt);
       delete this;
-      return refCnt;
+      return MozExternalRefCountType(0);
     }
     return mRefCnt;
   }

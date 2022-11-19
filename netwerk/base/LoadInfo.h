@@ -59,7 +59,7 @@ class LoadInfo final : public nsILoadInfo {
   friend already_AddRefed<T> mozilla::MakeAndAddRef(Args&&... aArgs);
 
  public:
-  NS_DECL_THREADSAFE_ISUPPORTS
+  NS_DECL_ISUPPORTS
   NS_DECL_NSILOADINFO
 
   // Used for TYPE_DOCUMENT load.
@@ -176,7 +176,7 @@ class LoadInfo final : public nsILoadInfo {
   // note that any additonal Meta CSP in that document will be merged
   // into that CSP. Any subresource loads within that document
   // subesquently will receive the correct CSP by querying
-  // loadinfo->GetCSP() from that point on.
+  // loadinfo->GetCsp() from that point on.
   void SetCSPToInherit(nsIContentSecurityPolicy* aCspToInherit) {
     mCspToInherit = aCspToInherit;
   }

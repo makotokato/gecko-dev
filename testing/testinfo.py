@@ -484,8 +484,11 @@ class TestInfoReport(TestInfo):
 
         manifest_paths = set()
         for t in tests:
-            if "manifest" in t and t["manifest"] is not None:
-                manifest_paths.add(t["manifest"])
+            if t.get("manifest", None):
+                manifest_path = t["manifest"]
+                if t.get("ancestor_manifest", None):
+                    manifest_path = "%s:%s" % (t["ancestor_manifest"], t["manifest"])
+                manifest_paths.add(manifest_path)
         manifest_count = len(manifest_paths)
         print(
             "Resolver found {} tests, {} manifests".format(len(tests), manifest_count)
@@ -631,6 +634,19 @@ class TestInfoReport(TestInfo):
                             if_data = ifd.get(relpath)
                             test_info["failure_count"] = if_data["count"]
 
+                        if "manifest_relpath" in t and "manifest" in t:
+                            if "web-platform" in t["manifest_relpath"]:
+                                test_info["manifest"] = [t["manifest"]]
+                            else:
+                                test_info["manifest"] = [t["manifest_relpath"]]
+
+                            # handle included manifests as ancestor:child
+                            if t.get("ancestor_manifest", None):
+                                test_info["manifest"] = [
+                                    "%s:%s"
+                                    % (t["ancestor_manifest"], test_info["manifest"][0])
+                                ]
+
                         if show_tests:
                             rkey = key if show_components else "all"
                             if rkey in by_component["tests"]:
@@ -643,6 +659,22 @@ class TestInfoReport(TestInfo):
                                         break
                                 if not found:
                                     by_component["tests"][rkey].append(test_info)
+                                else:
+                                    for ti in by_component["tests"][rkey]:
+                                        if ti["test"] == test_info["test"]:
+                                            if (
+                                                test_info["manifest"][0]
+                                                not in ti["manifest"]
+                                            ):
+                                                ti_manifest = test_info["manifest"]
+                                                if test_info.get(
+                                                    "ancestor_manifest", None
+                                                ):
+                                                    ti_manifest = "%s:%s" % (
+                                                        test_info["ancestor_manifest"],
+                                                        ti_manifest,
+                                                    )
+                                                ti["manifest"].extend(ti_manifest)
                             else:
                                 by_component["tests"][rkey] = [test_info]
             if show_tests:

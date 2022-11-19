@@ -4,8 +4,8 @@
 
 // This file tests the Vacuum Manager.
 
-const { MockRegistrar } = ChromeUtils.import(
-  "resource://testing-common/MockRegistrar.jsm"
+const { MockRegistrar } = ChromeUtils.importESModule(
+  "resource://testing-common/MockRegistrar.sys.mjs"
 );
 
 /**
@@ -17,9 +17,9 @@ function load_test_vacuum_component() {
   const CATEGORY_NAME = "vacuum-participant";
   const CONTRACT_ID = "@unit.test.com/test-vacuum-participant;1";
 
-  MockRegistrar.registerJSM(
+  MockRegistrar.registerESM(
     CONTRACT_ID,
-    "resource://test/VacuumParticipant.jsm",
+    "resource://test/VacuumParticipant.sys.mjs",
     "VacuumParticipant"
   );
 

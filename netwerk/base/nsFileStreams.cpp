@@ -25,6 +25,7 @@
 #include "nsLiteralString.h"
 #include "nsSocketTransport2.h"  // for ErrorAccordingToNSPR()
 #include "mozilla/ipc/InputStreamUtils.h"
+#include "mozilla/ipc/RandomAccessStreamParams.h"
 #include "mozilla/Unused.h"
 #include "mozilla/FileUtils.h"
 #include "nsNetCID.h"
@@ -869,19 +870,19 @@ nsSafeFileOutputStream::Finish() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// nsFileStream
+// nsFileRandomAccessStream
 
-nsresult nsFileStream::Create(REFNSIID aIID, void** aResult) {
-  RefPtr<nsFileStream> stream = new nsFileStream();
+nsresult nsFileRandomAccessStream::Create(REFNSIID aIID, void** aResult) {
+  RefPtr<nsFileRandomAccessStream> stream = new nsFileRandomAccessStream();
   return stream->QueryInterface(aIID, aResult);
 }
 
-NS_IMPL_ISUPPORTS_INHERITED(nsFileStream, nsFileStreamBase,
-                            nsIRandomAccessStream, nsIFileStream,
+NS_IMPL_ISUPPORTS_INHERITED(nsFileRandomAccessStream, nsFileStreamBase,
+                            nsIRandomAccessStream, nsIFileRandomAccessStream,
                             nsIInputStream, nsIOutputStream)
 
 NS_IMETHODIMP
-nsFileStream::GetInputStream(nsIInputStream** aInputStream) {
+nsFileRandomAccessStream::GetInputStream(nsIInputStream** aInputStream) {
   nsCOMPtr<nsIInputStream> inputStream(this);
 
   inputStream.forget(aInputStream);
@@ -889,20 +890,86 @@ nsFileStream::GetInputStream(nsIInputStream** aInputStream) {
 }
 
 NS_IMETHODIMP
-nsFileStream::GetOutputStream(nsIOutputStream** aOutputStream) {
+nsFileRandomAccessStream::GetOutputStream(nsIOutputStream** aOutputStream) {
   nsCOMPtr<nsIOutputStream> outputStream(this);
 
   outputStream.forget(aOutputStream);
   return NS_OK;
 }
 
-nsIInputStream* nsFileStream::InputStream() { return this; }
+nsIInputStream* nsFileRandomAccessStream::InputStream() { return this; }
 
-nsIOutputStream* nsFileStream::OutputStream() { return this; }
+nsIOutputStream* nsFileRandomAccessStream::OutputStream() { return this; }
+
+RandomAccessStreamParams nsFileRandomAccessStream::Serialize() {
+  FileRandomAccessStreamParams params;
+
+  if (NS_SUCCEEDED(DoPendingOpen())) {
+    MOZ_ASSERT(mFD);
+    FileHandleType fd = FileHandleType(PR_FileDesc2NativeHandle(mFD));
+    MOZ_ASSERT(fd, "This should never be null!");
+
+    params.fileDescriptor() = FileDescriptor(fd);
+
+    Close();
+  } else {
+    NS_WARNING(
+        "This file has not been opened (or could not be opened). "
+        "Sending an invalid file descriptor to the other process!");
+
+    params.fileDescriptor() = FileDescriptor();
+  }
+
+  int32_t behaviorFlags = mBehaviorFlags;
+
+  // The receiving process (or thread) is going to have an open file
+  // descriptor automatically so transferring this flag is meaningless.
+  behaviorFlags &= ~nsIFileInputStream::DEFER_OPEN;
+
+  params.behaviorFlags() = behaviorFlags;
+
+  return params;
+}
+
+bool nsFileRandomAccessStream::Deserialize(
+    RandomAccessStreamParams& aStreamParams) {
+  MOZ_ASSERT(!mFD, "Already have a file descriptor?!");
+  MOZ_ASSERT(mState == nsFileStreamBase::eUnitialized, "Deferring open?!");
+
+  if (aStreamParams.type() !=
+      RandomAccessStreamParams::TFileRandomAccessStreamParams) {
+    NS_WARNING("Received unknown parameters from the other process!");
+    return false;
+  }
+
+  const FileRandomAccessStreamParams& params =
+      aStreamParams.get_FileRandomAccessStreamParams();
+
+  const FileDescriptor& fd = params.fileDescriptor();
+
+  if (fd.IsValid()) {
+    auto rawFD = fd.ClonePlatformHandle();
+    PRFileDesc* fileDesc = PR_ImportFile(PROsfd(rawFD.release()));
+    if (!fileDesc) {
+      NS_WARNING("Failed to import file handle!");
+      return false;
+    }
+    mFD = fileDesc;
+    mState = eOpened;
+  } else {
+    NS_WARNING("Received an invalid file descriptor!");
+    mState = eError;
+    mErrorValue = NS_ERROR_FILE_NOT_FOUND;
+  }
+
+  mBehaviorFlags = params.behaviorFlags();
+
+  return true;
+}
 
 NS_IMETHODIMP
-nsFileStream::Init(nsIFile* file, int32_t ioFlags, int32_t perm,
-                   int32_t behaviorFlags) {
+nsFileRandomAccessStream::Init(nsIFile* file, int32_t ioFlags, int32_t perm,
+                               int32_t behaviorFlags) {
   NS_ENSURE_TRUE(mFD == nullptr, NS_ERROR_ALREADY_INITIALIZED);
   NS_ENSURE_TRUE(mState == eUnitialized || mState == eClosed,
                  NS_ERROR_ALREADY_INITIALIZED);
@@ -914,7 +981,7 @@ nsFileStream::Init(nsIFile* file, int32_t ioFlags, int32_t perm,
   if (perm <= 0) perm = 0;
 
   return MaybeOpen(file, ioFlags, perm,
-                   mBehaviorFlags & nsIFileStream::DEFER_OPEN);
+                   mBehaviorFlags & nsIFileRandomAccessStream::DEFER_OPEN);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

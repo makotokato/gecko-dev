@@ -24,8 +24,8 @@ const { FormAutofill } = ChromeUtils.import(
 const { FormAutofillUtils } = ChromeUtils.import(
   "resource://autofill/FormAutofillUtils.jsm"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -164,6 +164,9 @@ FormAutofillPreferences.prototype = {
       if (FormAutofill.isAutofillAddressesEnabled) {
         addressAutofillCheckbox.setAttribute("checked", true);
       }
+      if (FormAutofill.isAutofillAddressesLocked) {
+        addressAutofillCheckbox.disabled = true;
+      }
 
       addressAutofillCheckboxGroup.setAttribute("align", "center");
       addressAutofillCheckboxGroup.setAttribute("flex", "1");
@@ -228,6 +231,9 @@ FormAutofillPreferences.prototype = {
       // Manually set the checked state
       if (FormAutofill.isAutofillCreditCardsEnabled) {
         creditCardAutofillCheckbox.setAttribute("checked", true);
+      }
+      if (FormAutofill.isAutofillCreditCardsLocked) {
+        creditCardAutofillCheckbox.disabled = true;
       }
 
       creditCardAutofillCheckboxGroup.setAttribute("align", "center");

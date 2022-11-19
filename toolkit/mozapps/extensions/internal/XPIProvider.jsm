@@ -25,8 +25,8 @@ const { XPCOMUtils } = ChromeUtils.importESModule(
 const { AddonManager, AddonManagerPrivate } = ChromeUtils.import(
   "resource://gre/modules/AddonManager.jsm"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const lazy = {};
@@ -180,7 +180,8 @@ const ALL_XPI_TYPES = new Set([
   "dictionary",
   "extension",
   "locale",
-  "sitepermission",
+  // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+  "sitepermission-deprecated",
   "theme",
 ]);
 
@@ -1905,7 +1906,8 @@ class BootstrapScope {
           this.scope = lazy.Extension.getBootstrapScope();
           break;
 
-        case "sitepermission":
+        // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+        case "sitepermission-deprecated":
           this.scope = lazy.SitePermission.getBootstrapScope();
           break;
 

@@ -29,11 +29,14 @@ li:hover > hgroup > .stylesheet-more > h3 > .stylesheet-saveButton {
 
 .stylesheet-details-container {
   -moz-box-flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 
-.stylesheet-media-container {
+.stylesheet-at-rules-container {
   overflow-y: auto;
-  contain: size;
+  min-width: 0;
+  min-height: 0;
 }
 
 .stylesheet-error-message {
@@ -128,11 +131,18 @@ li.error > .stylesheet-info > .stylesheet-more  > .stylesheet-error-message {
   border-color: var(--theme-splitter-color);
 }
 
-.media-rule-label {
-  display: flex;
+.at-rule-label {
+  display: grid;
+  /*
+   * +----------------------------------------------+
+   * |        Rule information        | line number |
+   * +----------------------------------------------+
+   */
+  grid-template-columns: 1fr max-content;
   padding: 4px;
-  cursor: pointer;
   border-bottom: 1px solid var(--theme-splitter-color);
+  cursor: pointer;
+  word-break: break-word;
 }
 
 .media-responsive-mode-toggle {
@@ -140,17 +150,12 @@ li.error > .stylesheet-info > .stylesheet-more  > .stylesheet-error-message {
   text-decoration: underline;
 }
 
-.media-rule-line {
+.at-rule-line {
   padding-inline-start: 4px;
 }
 
 .media-condition-unmatched {
   opacity: 0.4;
-}
-
-.media-rule-condition {
-  flex: 1;
-  overflow: hidden;
 }
 
 .stylesheet-toggle {

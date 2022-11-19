@@ -267,8 +267,7 @@ void RootAccessible::ProcessDOMEvent(Event* aDOMEvent, nsINode* aTarget) {
   }
 
   if (eventType.EqualsLiteral("popupshown") &&
-      (aTarget->IsXULElement(nsGkAtoms::tooltip) ||
-       aTarget->IsXULElement(nsGkAtoms::panel))) {
+      aTarget->IsAnyOfXULElements(nsGkAtoms::tooltip, nsGkAtoms::panel)) {
     targetDocument->ContentInserted(aTarget->AsContent(),
                                     aTarget->GetNextSibling());
     return;
@@ -530,8 +529,7 @@ void RootAccessible::HandlePopupShownEvent(LocalAccessible* aAccessible) {
     // menulist containing div elements instead of XUL menuitems. XUL menuitems
     // fire DOMMenuItemActive events from layout instead.
     MOZ_ASSERT(aAccessible->Elm());
-    if (aAccessible->Elm()->HasAttr(kNameSpaceID_None,
-                                    nsGkAtoms::aria_activedescendant)) {
+    if (aAccessible->Elm()->HasAttr(nsGkAtoms::aria_activedescendant)) {
       LocalAccessible* activeDescendant = aAccessible->CurrentItem();
       if (activeDescendant) {
         FocusMgr()->ActiveItemChanged(activeDescendant, false);
@@ -550,8 +548,7 @@ void RootAccessible::HandlePopupHidingEvent(nsINode* aPopupNode) {
   DocAccessible* document = nsAccUtils::GetDocAccessibleFor(aPopupNode);
   if (!document) return;
 
-  if (aPopupNode->IsXULElement(nsGkAtoms::tooltip) ||
-      aPopupNode->IsXULElement(nsGkAtoms::panel)) {
+  if (aPopupNode->IsAnyOfXULElements(nsGkAtoms::tooltip, nsGkAtoms::panel)) {
     document->ContentRemoved(aPopupNode->AsContent());
     return;
   }

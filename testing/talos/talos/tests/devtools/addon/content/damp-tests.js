@@ -33,7 +33,7 @@ module.exports = {
   [TEST_SUITES.INSPECTOR]: [
     // The first cold-open test is *colder* than the other cold-open tests, it will also
     // assess the impact of loading shared DevTools modules for the first time.
-    // This test will assert the impact of base loader/Loader.jsm modules loading,
+    // This test will assert the impact of base loader/Loader.sys.mjs modules loading,
     // typically gDevtools/gDevToolsBrowser/Framework modules, while the others will mostly
     // track panel-specific modules (Browser loader, but not only).
     {
@@ -237,6 +237,16 @@ module.exports = {
       name: "server.protocoljs",
       path: "server/protocol.js",
       description: "Measure RDP/protocol.js performance",
+    },
+    {
+      name: "source-map-loader",
+      path: "source-map/source-map-loader.js",
+      description: "Measure source map loader performance",
+    },
+    {
+      name: "source-map-library",
+      path: "source-map/source-map-library.js",
+      description: "Measure source map library performance",
     },
     // ⚠  Adding new individual tests slows down DAMP execution ⚠
     // ⚠  Consider contributing to custom.${tool} rather than adding isolated tests ⚠

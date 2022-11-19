@@ -2,20 +2,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { EventEmitter } = ChromeUtils.import(
-  "resource://gre/modules/EventEmitter.jsm"
-);
-const Loader = ChromeUtils.import(
-  "resource://devtools/shared/loader/Loader.jsm"
-);
+import { EventEmitter } from "resource://gre/modules/EventEmitter.sys.mjs";
+import * as Loader from "resource://devtools/shared/loader/Loader.sys.mjs";
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   isWindowGlobalPartOfContext:
     "resource://devtools/server/actors/watcher/browsing-context-helpers.sys.mjs",
+  releaseDistinctSystemPrincipalLoader:
+    "resource://devtools/shared/loader/DistinctSystemPrincipalLoader.sys.mjs",
   TargetActorRegistry:
     "resource://devtools/server/actors/targets/target-actor-registry.sys.mjs",
+  useDistinctSystemPrincipalLoader:
+    "resource://devtools/shared/loader/DistinctSystemPrincipalLoader.sys.mjs",
   WindowGlobalLogger:
     "resource://devtools/server/connectors/js-window-actor/WindowGlobalLogger.sys.mjs",
 });
@@ -318,7 +318,7 @@ export class DevToolsFrameChild extends JSWindowActorChild {
     if (!this.loader) {
       // When debugging chrome pages, use a new dedicated loader, using a distinct chrome compartment.
       this.loader = this.useCustomLoader
-        ? Loader.useDistinctSystemPrincipalLoader(this)
+        ? lazy.useDistinctSystemPrincipalLoader(this)
         : Loader;
     }
     const { DevToolsServer } = this.loader.require(
@@ -683,7 +683,7 @@ export class DevToolsFrameChild extends JSWindowActorChild {
 
     if (this.loader) {
       if (this.useCustomLoader) {
-        Loader.releaseDistinctSystemPrincipalLoader(this);
+        lazy.releaseDistinctSystemPrincipalLoader(this);
       }
       this.loader = null;
     }

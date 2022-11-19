@@ -133,12 +133,6 @@ nsAtom* RemoteAccessible::LandmarkRole() const {
   return NS_GetStaticAtom(landmark);
 }
 
-nsStaticAtom* RemoteAccessible::ARIARoleAtom() const {
-  nsString role;
-  Unused << mDoc->SendARIARoleAtom(mID, &role);
-  return NS_GetStaticAtom(role);
-}
-
 GroupPos RemoteAccessible::GroupPosition() {
   if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
     return RemoteAccessibleBase<RemoteAccessible>::GroupPosition();
@@ -491,8 +485,8 @@ void RemoteAccessible::GetColRowExtents(uint32_t* aColIdx, uint32_t* aRowIdx,
                                        aRowExtent);
 }
 
-void RemoteAccessible::GetPosition(uint32_t* aColIdx, uint32_t* aRowIdx) {
-  Unused << mDoc->SendGetPosition(mID, aColIdx, aRowIdx);
+void RemoteAccessible::GetPosition(uint32_t* aRowIdx, uint32_t* aColIdx) {
+  Unused << mDoc->SendGetPosition(mID, aRowIdx, aColIdx);
 }
 
 uint32_t RemoteAccessible::ColExtent() {

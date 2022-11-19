@@ -3,20 +3,18 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-const { EventEmitter } = ChromeUtils.import(
-  "resource://gre/modules/EventEmitter.jsm"
-);
+import { EventEmitter } from "resource://gre/modules/EventEmitter.sys.mjs";
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  DeferredTask: "resource://gre/modules/DeferredTask.sys.mjs",
   PlacesUIUtils: "resource:///modules/PlacesUIUtils.sys.mjs",
   SnapshotScorer: "resource:///modules/SnapshotScorer.sys.mjs",
   Snapshots: "resource:///modules/Snapshots.sys.mjs",
 });
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
-  DeferredTask: "resource://gre/modules/DeferredTask.jsm",
   FilterAdult: "resource://activity-stream/lib/FilterAdult.jsm",
 });
 
@@ -48,7 +46,7 @@ XPCOMUtils.defineLazyGetter(lazy, "logConsole", function() {
  *   The page the snapshots are for.
  * @property {PageDataCollector.DATA_TYPE | undefined} type
  *   The type of snapshots desired.
- * @property {function} getCurrentSessionUrls
+ * @property {Function} getCurrentSessionUrls
  *   A function that returns a Set containing the urls for the current session.
  */
 
@@ -116,6 +114,7 @@ export class SnapshotSelector extends EventEmitter {
 
   /**
    * @param {object} options
+   *   Options for the selector.
    * @param {number} [options.count]
    *   The maximum number of snapshots we ever need to generate. This should not
    *   affect the actual snapshots generated and their order but may speed up
@@ -124,7 +123,7 @@ export class SnapshotSelector extends EventEmitter {
    *   Whether adult sites should be filtered from the snapshots.
    * @param {object | undefined} [options.sourceWeights]
    *   Overrides for the weights of different recommendation sources.
-   * @param {function} [options.getCurrentSessionUrls]
+   * @param {Function} [options.getCurrentSessionUrls]
    *   A function that returns a Set containing the urls for the current session.
    */
   constructor({
@@ -187,6 +186,7 @@ export class SnapshotSelector extends EventEmitter {
    * Called internally when the set of snapshots has been generated.
    *
    * @param {Recommendation[]} recommendations
+   *   The generated recommendations.
    */
   #snapshotsGenerated(recommendations) {
     // If this instance has been destroyed then do nothing.
@@ -310,15 +310,18 @@ export class SnapshotSelector extends EventEmitter {
   /**
    * Update context details and start a rebuild.
    * Undefined properties are ignored, thus pass null to nullify a property.
-   * @param {string} [url]
+   *
+   * @param {object} context
+   *   The new context.
+   * @param {string} [context.url]
    *  The url of the current context.
-   * @param {number} [time]
+   * @param {number} [context.time]
    *  The time, in milliseconds since the Unix epoch.
-   * @param {PageDataSchema.DATA_TYPE} [type]
+   * @param {PageDataSchema.DATA_TYPE} [context.type]
    *  The type of snapshots for this selector.
-   * @param {number} [sessionStartTime]
+   * @param {number} [context.sessionStartTime]
    *  The start time of the session, in milliseconds since the Unix epoch.
-   * @param {string} [rebuildImmediately] (default: false)
+   * @param {string} [context.rebuildImmediately] (default: false)
    *  Whether to rebuild immediately instead of waiting some delay. Useful on
    *  startup.
    */

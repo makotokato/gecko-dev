@@ -42,7 +42,7 @@ class LoadListener {
    *   The initial channel to load from.
    * @param {RegExp} expectedContentType
    *   A regular expression to match the expected content type to.
-   * @param {function} callback
+   * @param {Function} callback
    *   A callback to receive the loaded data. The callback is passed the bytes
    *   (array) and the content type received. The bytes argument may be null if
    *   no data could be loaded.
@@ -217,6 +217,7 @@ export var SearchUtils = {
 
   /**
    * Wrapper function for nsIIOService::newURI.
+   *
    * @param {string} urlSpec
    *        The URL string from which to create an nsIURI.
    * @returns {nsIURI} an nsIURI object, or null if the creation of the URI failed.
@@ -271,7 +272,7 @@ export var SearchUtils = {
    *   The current settings version.
    */
   get SETTINGS_VERSION() {
-    return 6;
+    return 7;
   },
 
   /**
@@ -323,6 +324,30 @@ export var SearchUtils = {
     hasher.update(data, data.length);
 
     return hasher.finish(true);
+  },
+
+  /**
+   * Tests whether the given URI is a secure OpenSearch submission URI or a
+   * secure OpenSearch update URI.
+   *
+   * Note: We don't want to count something served via localhost as insecure.
+   * We also don't want to count sites with .onion as their top-level domain
+   * as insecure because .onion URLs actually can't use https and are secured
+   * in other ways.
+   *
+   * @param {nsIURI} uri
+   *  The URI to be tested.
+   * @returns {boolean}
+   *  Whether the URI is secure for OpenSearch purposes.
+   */
+  isSecureURIForOpenSearch(uri) {
+    const loopbackAddresses = ["127.0.0.1", "[::1]", "localhost"];
+
+    return (
+      uri.schemeIs("https") ||
+      loopbackAddresses.includes(uri.host) ||
+      uri.host.toLowerCase().endsWith(".onion")
+    );
   },
 };
 

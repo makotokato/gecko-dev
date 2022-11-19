@@ -25,14 +25,13 @@ ChromeUtils.defineModuleGetter(
   "AddonManager",
   "resource://gre/modules/AddonManager.jsm"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "Assert",
-  "resource://testing-common/Assert.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  Assert: "resource://testing-common/Assert.sys.mjs",
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+});
 ChromeUtils.defineModuleGetter(
   lazy,
   "Extension",
@@ -53,9 +52,6 @@ ChromeUtils.defineModuleGetter(
   "ExtensionPermissions",
   "resource://gre/modules/ExtensionPermissions.jsm"
 );
-ChromeUtils.defineESModuleGetters(lazy, {
-  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
-});
 ChromeUtils.defineModuleGetter(lazy, "OS", "resource://gre/modules/osfile.jsm");
 
 XPCOMUtils.defineLazyGetter(
@@ -162,7 +158,7 @@ class MockExtension {
     let { addonData } = this;
     if (addonData && addonData.incognitoOverride) {
       try {
-        let { id } = addonData.manifest.applications.gecko;
+        let { id } = addonData.manifest.browser_specific_settings.gecko;
         if (id) {
           return ExtensionTestCommon.setIncognitoOverride({ id, addonData });
         }
@@ -578,7 +574,7 @@ ExtensionTestCommon = class ExtensionTestCommon {
 
   static setExtensionID(data) {
     try {
-      if (data.manifest.applications.gecko.id) {
+      if (data.manifest.browser_specific_settings.gecko.id) {
         return;
       }
     } catch (e) {
@@ -586,7 +582,7 @@ ExtensionTestCommon = class ExtensionTestCommon {
     }
     provide(
       data,
-      ["manifest", "applications", "gecko", "id"],
+      ["manifest", "browser_specific_settings", "gecko", "id"],
       Services.uuid.generateUUID().number
     );
   }

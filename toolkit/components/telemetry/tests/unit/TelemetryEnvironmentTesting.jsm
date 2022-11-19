@@ -4,20 +4,22 @@
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const lazy = {};
 
+ChromeUtils.defineESModuleGetters(lazy, {
+  Assert: "resource://testing-common/Assert.sys.mjs",
+  MockRegistrar: "resource://testing-common/MockRegistrar.sys.mjs",
+});
+
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   AddonManager: "resource://gre/modules/AddonManager.jsm",
-  Assert: "resource://testing-common/Assert.jsm",
+
   // AttributionCode is only needed for Firefox
   AttributionCode: "resource:///modules/AttributionCode.jsm",
-  CommonUtils: "resource://services-common/utils.js",
-  MockRegistrar: "resource://testing-common/MockRegistrar.jsm",
-  OS: "resource://gre/modules/osfile.jsm",
 });
 
 var EXPORTED_SYMBOLS = ["TelemetryEnvironmentTesting"];
@@ -129,13 +131,13 @@ var TelemetryEnvironmentTesting = {
   },
 
   spoofProfileReset() {
-    return lazy.CommonUtils.writeJSON(
+    return IOUtils.writeJSON(
+      PathUtils.join(PathUtils.profileDir, "times.json"),
       {
         created: PROFILE_CREATION_DATE_MS,
         reset: PROFILE_RESET_DATE_MS,
         firstUse: PROFILE_FIRST_USE_MS,
-      },
-      lazy.OS.Path.join(lazy.OS.Constants.Path.profileDir, "times.json")
+      }
     );
   },
 
@@ -487,6 +489,7 @@ var TelemetryEnvironmentTesting = {
           "l3cacheKB",
           "speedMHz",
           "vendor",
+          "name",
         ];
 
         for (let f of EXTRA_CPU_FIELDS) {

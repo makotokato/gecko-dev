@@ -2,9 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
@@ -13,8 +11,8 @@ XPCOMUtils.defineLazyServiceGetters(lazy, {
   WindowsUIUtils: ["@mozilla.org/windows-ui-utils;1", "nsIWindowsUIUtils"],
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
 });
 
 import { Rect, Point } from "resource://gre/modules/Geometry.sys.mjs";
@@ -198,6 +196,10 @@ export var PictureInPicture = {
     let count = this.browserWeakMap.get(browser);
     if (count <= 1) {
       this.browserWeakMap.delete(browser);
+      let tabbrowser = browser.getTabBrowser();
+      if (tabbrowser && !tabbrowser.shouldActivateDocShell(browser)) {
+        browser.docShellIsActive = false;
+      }
     } else {
       this.browserWeakMap.set(browser, count - 1);
     }
@@ -242,7 +244,7 @@ export var PictureInPicture = {
       return;
     }
 
-    let gBrowser = browser.ownerGlobal.gBrowser;
+    let gBrowser = browser.getTabBrowser();
     let tab = gBrowser.getTabForBrowser(browser);
 
     // focus the tab's window
@@ -276,8 +278,8 @@ export var PictureInPicture = {
       }
     }
 
-    let gBrowser = browser.ownerGlobal.gBrowser;
-    let tab = gBrowser.getTabForBrowser(browser);
+    let gBrowser = browser.getTabBrowser();
+    let tab = gBrowser?.getTabForBrowser(browser);
     if (tab) {
       tab.removeAttribute("pictureinpicture");
     }

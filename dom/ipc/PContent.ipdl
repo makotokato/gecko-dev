@@ -364,6 +364,7 @@ struct XPCOMInitData
     L10nFileSourceDescriptor[] l10nFileSources;
     DynamicScalarDefinition[] dynamicScalarDefs;
     MetricMask perfStatsMask;
+    nsCString trrDomain;
 };
 
 struct VisitedQueryResult
@@ -753,7 +754,7 @@ child:
     /**
      * Send the remote type associated with the content process.
      */
-    async RemoteType(nsCString aRemoteType);
+    async RemoteType(nsCString aRemoteType, nsCString aProfile);
 
     /**
      * Send BlobURLRegistrationData to child process.

@@ -225,9 +225,7 @@ ENameValueFlag RemoteAccessibleBase<Derived>::Name(nsString& aName) const {
   }
 
   MOZ_ASSERT(aName.IsEmpty());
-  if (nameFlag != eNoNameOnPurpose) {
-    aName.SetIsVoid(true);
-  }
+  aName.SetIsVoid(true);
   return nameFlag;
 }
 
@@ -269,6 +267,9 @@ void RemoteAccessibleBase<Derived>::Value(nsString& aValue) const {
           const_cast<RemoteAccessibleBase<Derived>*>(this)->GetSelectedItem(0);
       if (option) {
         option->Name(aValue);
+      } else {
+        // If no selected item, determine the value from descendant elements.
+        nsTextEquivUtils::GetTextEquivFromSubtree(this, aValue);
       }
       return;
     }
@@ -349,6 +350,11 @@ Accessible* RemoteAccessibleBase<Derived>::ChildAtPoint(
   // If `this` is a document, use its viewport cache instead of
   // the cache of its parent document.
   if (DocAccessibleParent* doc = IsDoc() ? AsDoc() : mDoc) {
+    if (!doc->mCachedFields) {
+      // A client call might arrive after we've constructed doc but before we
+      // get a cache push for it.
+      return nullptr;
+    }
     if (auto maybeViewportCache =
             doc->mCachedFields->GetAttribute<nsTArray<uint64_t>>(
                 nsGkAtoms::viewport)) {
@@ -377,12 +383,16 @@ Accessible* RemoteAccessibleBase<Derived>::ChildAtPoint(
             MOZ_ASSERT(innerDoc->IsDoc());
             // Search the embedded document's viewport cache so we return the
             // deepest descendant in that embedded document.
-            return innerDoc->ChildAtPoint(aX, aY,
-                                          EWhichChildAtPoint::DeepestChild);
+            Accessible* deepestAcc = innerDoc->ChildAtPoint(
+                aX, aY, EWhichChildAtPoint::DeepestChild);
+            MOZ_ASSERT(!deepestAcc || deepestAcc->IsRemote());
+            lastMatch = deepestAcc ? deepestAcc->AsRemote() : nullptr;
+            break;
           }
           // If there is no embedded document, the iframe itself is the deepest
           // descendant.
-          return acc;
+          lastMatch = acc;
+          break;
         }
 
         if (acc == this) {
@@ -413,6 +423,12 @@ Accessible* RemoteAccessibleBase<Derived>::ChildAtPoint(
 
   if (!lastMatch && Bounds().Contains(aX, aY)) {
     return this;
+  }
+  // If we end up with a match that is not in the ancestor chain
+  // of the accessible this call originated on, we should ignore it.
+  // This can happen when the aX, aY given are outside `this`.
+  if (lastMatch && !IsDoc() && !IsAncestorOf(lastMatch)) {
+    return nullptr;
   }
 
   return lastMatch;
@@ -688,12 +704,131 @@ Relation RemoteAccessibleBase<Derived>::RelationByType(
     return Relation();
   }
 
+  if (aType == RelationType::LINKS_TO && Role() == roles::LINK) {
+    Pivot p = Pivot(mDoc);
+    nsString href;
+    Value(href);
+    int32_t i = href.FindChar('#');
+    int32_t len = static_cast<int32_t>(href.Length());
+    if (i != -1 && i < (len - 1)) {
+      nsDependentSubstring anchorName = Substring(href, i + 1, len);
+      MustPruneSameDocRule rule;
+      Accessible* nameMatch = nullptr;
+      for (Accessible* match = p.Next(mDoc, rule); match;
+           match = p.Next(match, rule)) {
+        nsString currID;
+        match->DOMNodeID(currID);
+        MOZ_ASSERT(match->IsRemote());
+        if (anchorName.Equals(currID)) {
+          return Relation(match->AsRemote());
+        }
+        if (!nameMatch) {
+          nsString currName = match->AsRemote()->GetCachedHTMLNameAttribute();
+          if (match->TagName() == nsGkAtoms::a && anchorName.Equals(currName)) {
+            // If we find an element with a matching ID, we should return
+            // that, but if we don't we should return the first anchor with
+            // a matching name. To avoid doing two traversals, store the first
+            // name match here.
+            nameMatch = match;
+          }
+        }
+      }
+      return nameMatch ? Relation(nameMatch->AsRemote()) : Relation();
+    }
+
+    return Relation();
+  }
+
+  // Handle ARIA tree, treegrid parent/child relations. Each of these cases
+  // relies on cached group info. To find the parent of an accessible, use the
+  // unified conceptual parent.
+  if (aType == RelationType::NODE_CHILD_OF) {
+    const nsRoleMapEntry* roleMapEntry = ARIARoleMap();
+    if (roleMapEntry && (roleMapEntry->role == roles::OUTLINEITEM ||
+                         roleMapEntry->role == roles::LISTITEM ||
+                         roleMapEntry->role == roles::ROW)) {
+      if (const AccGroupInfo* groupInfo =
+              const_cast<RemoteAccessibleBase<Derived>*>(this)
+                  ->GetOrCreateGroupInfo()) {
+        return Relation(groupInfo->ConceptualParent());
+      }
+    }
+    return Relation();
+  }
+
+  // To find the children of a parent, provide an iterator through its items.
+  if (aType == RelationType::NODE_PARENT_OF) {
+    const nsRoleMapEntry* roleMapEntry = ARIARoleMap();
+    if (roleMapEntry && (roleMapEntry->role == roles::OUTLINEITEM ||
+                         roleMapEntry->role == roles::LISTITEM ||
+                         roleMapEntry->role == roles::ROW ||
+                         roleMapEntry->role == roles::OUTLINE ||
+                         roleMapEntry->role == roles::LIST ||
+                         roleMapEntry->role == roles::TREE_TABLE)) {
+      return Relation(new ItemIterator(this));
+    }
+    return Relation();
+  }
+
+  if (aType == RelationType::MEMBER_OF) {
+    Relation rel = Relation();
+    // HTML radio buttons with cached names should be grouped.
+    if (IsHTMLRadioButton()) {
+      nsString name = GetCachedHTMLNameAttribute();
+      if (name.IsEmpty()) {
+        return rel;
+      }
+
+      RemoteAccessible* ancestor = RemoteParent();
+      while (ancestor && ancestor->Role() != roles::FORM && ancestor != mDoc) {
+        ancestor = ancestor->RemoteParent();
+      }
+      Pivot p = Pivot(ancestor);
+      PivotRadioNameRule rule(name);
+      Accessible* match = p.Next(ancestor, rule);
+      while (match) {
+        rel.AppendTarget(match->AsRemote());
+        match = p.Next(match, rule);
+      }
+      return rel;
+    }
+
+    if (IsARIARole(nsGkAtoms::radio)) {
+      // ARIA radio buttons should be grouped by their radio group
+      // parent, if one exists.
+      RemoteAccessible* currParent = RemoteParent();
+      while (currParent && currParent->Role() != roles::RADIO_GROUP) {
+        currParent = currParent->RemoteParent();
+      }
+
+      if (currParent && currParent->Role() == roles::RADIO_GROUP) {
+        // If we found a radiogroup parent, search for all
+        // roles::RADIOBUTTON children and add them to our relation.
+        // This search will include the radio button this method
+        // was called from, which is expected.
+        Pivot p = Pivot(currParent);
+        PivotRoleRule rule(roles::RADIOBUTTON);
+        Accessible* match = p.Next(currParent, rule);
+        while (match) {
+          MOZ_ASSERT(match->IsRemote(),
+                     "We should only be traversing the remote tree.");
+          rel.AppendTarget(match->AsRemote());
+          match = p.Next(match, rule);
+        }
+      }
+    }
+    // By webkit's standard, aria radio buttons do not get grouped
+    // if they lack a group parent, so we return an empty
+    // relation here if the above check fails.
+    return rel;
+  }
+
   Relation rel;
   if (!mCachedFields) {
     return rel;
   }
 
-  for (auto data : kRelationTypeAtoms) {
+  for (const auto& data : kRelationTypeAtoms) {
     if (data.mType != aType ||
         (data.mValidTag && TagName() != data.mValidTag)) {
       continue;
@@ -767,7 +902,7 @@ nsTArray<bool> RemoteAccessibleBase<Derived>::PreProcessRelations(
         }
       }
       MOZ_ASSERT(
-          tag || IsTextLeaf(),
+          tag || IsTextLeaf() || IsDoc(),
           "Could not fetch tag via TagName() or from initial cache push!");
       if (tag != data.mValidTag) {
         // If this rel doesn't apply to us, do no pre-processing. Also,
@@ -939,6 +1074,17 @@ RemoteAccessibleBase<Derived>::GetCachedARIAAttributes() const {
 }
 
 template <class Derived>
+nsString RemoteAccessibleBase<Derived>::GetCachedHTMLNameAttribute() const {
+  if (mCachedFields) {
+    if (auto maybeName =
+            mCachedFields->GetAttribute<nsString>(nsGkAtoms::attributeName)) {
+      return *maybeName;
+    }
+  }
+  return nsString();
+}
+
+template <class Derived>
 uint64_t RemoteAccessibleBase<Derived>::State() {
   uint64_t state = 0;
   if (mCachedFields) {
@@ -955,29 +1101,56 @@ uint64_t RemoteAccessibleBase<Derived>::State() {
       }
     }
 
-    // Fetch our current opacity value from the cache.
-    auto opacity = Opacity();
-    if (opacity && *opacity == 1.0f) {
-      state |= states::OPAQUE1;
-    } else {
-      // If we can't retrieve an opacity value, or if the value we retrieve
-      // is less than one, ensure the OPAQUE1 bit is cleared.
-      // It's possible this bit was set in the cached `rawState` vector, but
-      // we've since been notified of a style change invalidating that state.
-      state &= ~states::OPAQUE1;
-    }
+    ApplyImplicitState(state);
 
     auto* cbc = mDoc->GetBrowsingContext();
     if (cbc && !cbc->IsActive()) {
+      // If our browsing context is _not_ active, we're in a background tab
+      // and inherently offscreen.
       state |= states::OFFSCREEN;
+    } else {
+      // If we're in an active browsing context, there are a few scenarios we
+      // need to address:
+      // - We are an iframe document in the visual viewport
+      // - We are an iframe document out of the visual viewport
+      // - We are non-iframe content in the visual viewport
+      // - We are non-iframe content out of the visual viewport
+      // We assume top level tab docs are on screen if their BC is active, so
+      // we don't need additional handling for them here.
+      if (!mDoc->IsTopLevel()) {
+        // Here we handle iframes and iframe content.
+        // We use an iframe's outer doc's position in the embedding document's
+        // viewport to determine if the iframe has been scrolled offscreen.
+        Accessible* docParent = mDoc->Parent();
+        // In rare cases, we might not have an outer doc yet. Return if that's
+        // the case.
+        if (NS_WARN_IF(!docParent || !docParent->IsRemote())) {
+          return state;
+        }
+
+        RemoteAccessible* outerDoc = docParent->AsRemote();
+        DocAccessibleParent* embeddingDocument = outerDoc->Document();
+        if (embeddingDocument &&
+            !embeddingDocument->mOnScreenAccessibles.Contains(outerDoc->ID())) {
+          // Our embedding document's viewport cache doesn't contain the ID of
+          // our outer doc, so this iframe (and any of its content) is
+          // offscreen.
+          state |= states::OFFSCREEN;
+        } else if (this != mDoc && !mDoc->mOnScreenAccessibles.Contains(ID())) {
+          // Our embedding document's viewport cache contains the ID of our
+          // outer doc, but the iframe's viewport cache doesn't contain our ID.
+          // We are offscreen.
+          state |= states::OFFSCREEN;
+        }
+      } else if (this != mDoc && !mDoc->mOnScreenAccessibles.Contains(ID())) {
+        // We are top level tab content (but not a top level tab doc).
+        // If our tab doc's viewport cache doesn't contain our ID, we're
+        // offscreen.
+        state |= states::OFFSCREEN;
+      }
     }
   }
-  auto* browser = static_cast<dom::BrowserParent*>(Document()->Manager());
-  if (browser == dom::BrowserParent::GetFocused()) {
-    if (this == Document()->GetFocusedAcc()) {
-      state |= states::FOCUSED;
-    }
-  }
+
   return state;
 }
 
@@ -1067,6 +1240,12 @@ already_AddRefed<AccAttributes> RemoteAccessibleBase<Derived>::Attributes() {
     }
 
     nsAccUtils::SetLiveContainerAttributes(attributes, this);
+
+    nsString id;
+    DOMNodeID(id);
+    if (!id.IsEmpty()) {
+      attributes->SetAttribute(nsGkAtoms::id, std::move(id));
+    }
   }
 
   nsAutoString name;
@@ -1102,14 +1281,14 @@ already_AddRefed<nsAtom> RemoteAccessibleBase<Derived>::DisplayStyle() const {
 }
 
 template <class Derived>
-Maybe<float> RemoteAccessibleBase<Derived>::Opacity() const {
+float RemoteAccessibleBase<Derived>::Opacity() const {
   if (mCachedFields) {
-    // GetAttribute already returns a Maybe<float>, so we don't
-    // need to do any additional manipulation.
-    return mCachedFields->GetAttribute<float>(nsGkAtoms::opacity);
+    if (auto opacity = mCachedFields->GetAttribute<float>(nsGkAtoms::opacity)) {
+      return *opacity;
+    }
   }
 
-  return Nothing();
+  return 1.0f;
 }
 
 template <class Derived>
@@ -1138,6 +1317,14 @@ void RemoteAccessibleBase<Derived>::LiveRegionAttributes(
   if (aBusy) {
     attrs->GetAttribute(nsGkAtoms::aria_busy, *aBusy);
   }
+}
+
+template <class Derived>
+Maybe<bool> RemoteAccessibleBase<Derived>::ARIASelected() const {
+  if (mCachedFields) {
+    return mCachedFields->GetAttribute<bool>(nsGkAtoms::aria_selected);
+  }
+  return Nothing();
 }
 
 template <class Derived>
@@ -1292,6 +1479,24 @@ void RemoteAccessibleBase<Derived>::InvalidateGroupInfo() {
   if (mCachedFields) {
     mCachedFields->Remove(nsGkAtoms::group);
   }
+}
+
+template <class Derived>
+void RemoteAccessibleBase<Derived>::GetPositionAndSetSize(int32_t* aPosInSet,
+                                                          int32_t* aSetSize) {
+  if (IsHTMLRadioButton()) {
+    *aSetSize = 0;
+    Relation rel = RelationByType(RelationType::MEMBER_OF);
+    while (Accessible* radio = rel.Next()) {
+      ++*aSetSize;
+      if (radio == this) {
+        *aPosInSet = *aSetSize;
+      }
+    }
+    return;
+  }
+
+  Accessible::GetPositionAndSetSize(aPosInSet, aSetSize);
 }
 
 template <class Derived>
@@ -1505,6 +1710,29 @@ Maybe<int32_t> RemoteAccessibleBase<Derived>::GetIntARIAAttr(
     }
   }
   return Nothing();
+}
+
+template <class Derived>
+size_t RemoteAccessibleBase<Derived>::SizeOfIncludingThis(
+    MallocSizeOf aMallocSizeOf) {
+  return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
+}
+
+template <class Derived>
+size_t RemoteAccessibleBase<Derived>::SizeOfExcludingThis(
+    MallocSizeOf aMallocSizeOf) {
+  size_t size = 0;
+
+  // Count attributes.
+  if (mCachedFields) {
+    size += mCachedFields->SizeOfIncludingThis(aMallocSizeOf);
+  }
+
+  // We don't recurse into mChildren because they're already counted in their
+  // document's mAccessibles.
+  size += mChildren.ShallowSizeOfExcludingThis(aMallocSizeOf);
+
+  return size;
 }
 
 template class RemoteAccessibleBase<RemoteAccessible>;

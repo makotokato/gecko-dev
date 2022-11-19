@@ -5,6 +5,7 @@ set(TEST_FILES
   extras/codec_test.cc
   extras/dec/color_description_test.cc
   extras/dec/pgx_test.cc
+  extras/decode_jpeg_test.cc
   jxl/ac_strategy_test.cc
   jxl/alpha_test.cc
   jxl/ans_common_test.cc
@@ -66,8 +67,6 @@ set(TEST_FILES
 
 # Test-only library code.
 set(TESTLIB_FILES
-  jxl/codec_y4m_testonly.cc
-  jxl/codec_y4m_testonly.h
   jxl/dct_for_test.h
   jxl/dec_transforms_testonly.cc
   jxl/dec_transforms_testonly.h

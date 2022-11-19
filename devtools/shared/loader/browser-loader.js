@@ -6,8 +6,8 @@
 const BaseLoader = ChromeUtils.import(
   "resource://devtools/shared/loader/base-loader.js"
 );
-const { require: devtoolsRequire, loader } = ChromeUtils.import(
-  "resource://devtools/shared/loader/Loader.jsm"
+const { require: devtoolsRequire, loader } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/Loader.sys.mjs"
 );
 const flags = devtoolsRequire("devtools/shared/flags");
 const { joinURI } = devtoolsRequire("devtools/shared/path");
@@ -35,7 +35,7 @@ const BROWSER_BASED_DIRS = [
   "resource://devtools/client/jsonview",
   "resource://devtools/client/netmonitor/src/utils",
   "resource://devtools/client/shared/fluent-l10n",
-  "resource://devtools/client/shared/source-map",
+  "resource://devtools/client/shared/source-map-loader",
   "resource://devtools/client/shared/redux",
   "resource://devtools/client/shared/vendor",
   "resource://devtools/client/shared/worker-utils",

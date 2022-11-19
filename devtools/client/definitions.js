@@ -86,11 +86,9 @@ loader.lazyRequireGetter(
 );
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "AppConstants",
-  "resource://gre/modules/AppConstants.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  AppConstants: "resource://gre/modules/AppConstants.sys.mjs",
+});
 loader.lazyRequireGetter(
   this,
   "DevToolsExperimentalPrefs",
@@ -494,14 +492,14 @@ exports.ToolboxButtons = [
     ),
     isToolSupported: toolbox => toolbox.target.isLocalTab,
     onClick(event, toolbox) {
-      const { localTab } = toolbox.descriptorFront;
+      const { localTab } = toolbox.commands.descriptorFront;
       const browserWindow = localTab.ownerDocument.defaultView;
       ResponsiveUIManager.toggle(browserWindow, localTab, {
         trigger: "toolbox",
       });
     },
     isChecked(toolbox) {
-      const { localTab } = toolbox.descriptorFront;
+      const { localTab } = toolbox.commands.descriptorFront;
       if (!localTab) {
         return false;
       }

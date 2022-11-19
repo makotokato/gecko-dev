@@ -56,6 +56,7 @@
 #include <sys/stat.h>
 
 #ifdef MOZ_WIDGET_ANDROID
+#  include "AndroidBuild.h"
 #  include "mozilla/jni/Utils.h"
 #  include <dlfcn.h>
 #endif
@@ -114,7 +115,8 @@ already_AddRefed<SharedFTFace> FT2FontEntry::GetFTFace(bool aCommit) {
       }
     }
   } else {
-    face = Factory::NewSharedFTFace(nullptr, mFilename.get(), mFTFontIndex);
+    RefPtr<FTUserFontData> fd = new FTUserFontData(mFilename.get());
+    face = fd->CloneFace(mFTFontIndex);
     if (!face) {
       NS_WARNING("failed to create freetype face");
       return nullptr;
@@ -1455,6 +1457,20 @@ void gfxFT2FontList::FindFonts() {
   }
 
   bool useSystemFontAPI = !!systemFontIterator_open;
+
+  if (useSystemFontAPI &&
+      !StaticPrefs::
+          gfx_font_list_use_font_match_api_force_enabled_AtStartup()) {
+    // OPPO, realme and OnePlus device seem to crash when using font match API
+    // (Bug 1787551).
+    nsCString manufacturer = java::sdk::Build::MANUFACTURER()->ToCString();
+    if (manufacturer.EqualsLiteral("OPPO") ||
+        manufacturer.EqualsLiteral("realme") ||
+        manufacturer.EqualsLiteral("OnePlus")) {
+      useSystemFontAPI = false;
+    }
+  }
+
   if (useSystemFontAPI) {
     void* iter = systemFontIterator_open();
     if (iter) {

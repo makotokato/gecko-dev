@@ -32,12 +32,8 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "DeferredTask",
-  "resource://gre/modules/DeferredTask.jsm"
-);
 ChromeUtils.defineESModuleGetters(lazy, {
+  DeferredTask: "resource://gre/modules/DeferredTask.sys.mjs",
   FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
 });
 ChromeUtils.defineModuleGetter(
@@ -210,7 +206,7 @@ JSONFile.prototype = {
     } catch (ex) {
       // If an exception occurs because the file does not exist or it cannot be read,
       // we do two things.
-      // 1. For consumers of JSONFile.jsm that have configured a `backupTo` path option,
+      // 1. For consumers of JSONFile.sys.mjs that have configured a `backupTo` path option,
       //    we try to look for and use backed up json files first. If the backup
       //    is also not found or if the backup is unreadable, we then start with an empty file.
       // 2. If a consumer does not configure a `backupTo` path option, we just start
@@ -320,7 +316,7 @@ JSONFile.prototype = {
     } catch (ex) {
       // If an exception occurs because the file does not exist or it cannot be read,
       // we do two things.
-      // 1. For consumers of JSONFile.jsm that have configured a `backupTo` path option,
+      // 1. For consumers of JSONFile.sys.mjs that have configured a `backupTo` path option,
       //    we try to look for and use backed up json files first. If the backup
       //    is also not found or if the backup is unreadable, we then start with an empty file.
       // 2. If a consumer does not configure a `backupTo` path option, we just start

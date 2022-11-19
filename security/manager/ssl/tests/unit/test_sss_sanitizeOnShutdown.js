@@ -6,8 +6,11 @@
 // The purpose of this test is to ensure that Firefox sanitizes site security
 // service data on shutdown if configured to do so.
 
+ChromeUtils.defineESModuleGetters(this, {
+  TestUtils: "resource://testing-common/TestUtils.sys.mjs",
+});
+
 XPCOMUtils.defineLazyModuleGetters(this, {
-  TestUtils: "resource://testing-common/TestUtils.jsm",
   Sanitizer: "resource:///modules/Sanitizer.jsm",
 });
 
@@ -35,15 +38,8 @@ add_task(async function run_test() {
   let SSService = Cc["@mozilla.org/ssservice;1"].getService(
     Ci.nsISiteSecurityService
   );
-  let secInfo = Cc[
-    "@mozilla.org/security/transportsecurityinfo;1"
-  ].createInstance(Ci.nsITransportSecurityInfo);
   let header = "max-age=50000";
-  SSService.processHeader(
-    Services.io.newURI("http://example.com"),
-    header,
-    secInfo
-  );
+  SSService.processHeader(Services.io.newURI("http://example.com"), header);
   await TestUtils.topicObserved(
     "data-storage-written",
     (_, data) => data == SSS_STATE_FILE_NAME

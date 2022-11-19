@@ -106,7 +106,7 @@ class ScrollFrameHelper : public nsIReflowCallback {
 
   MOZ_CAN_RUN_SCRIPT nsresult FireScrollPortEvent();
   void PostScrollEndEvent();
-  void FireScrollEndEvent();
+  MOZ_CAN_RUN_SCRIPT void FireScrollEndEvent();
   void PostOverflowEvent();
   using PostDestroyData = nsIFrame::PostDestroyData;
   void Destroy(PostDestroyData& aPostDestroyData);
@@ -372,7 +372,7 @@ class ScrollFrameHelper : public nsIReflowCallback {
   nsRect GetScrolledRect() const;
 
   /**
-   * GetUnsnappedScrolledRectInternal is designed to encapsulate deciding which
+   * GetScrolledRectInternal is designed to encapsulate deciding which
    * directions of overflow should be reachable by scrolling and which
    * should not.  Callers should NOT depend on it having any particular
    * behavior (although nsXULScrollFrame currently does).
@@ -382,8 +382,8 @@ class ScrollFrameHelper : public nsIReflowCallback {
    * nsXULScrollFrames, and allows scrolling down and to the left for
    * nsHTMLScrollFrames with RTL directionality.
    */
-  nsRect GetUnsnappedScrolledRectInternal(const nsRect& aScrolledOverflowArea,
-                                          const nsSize& aScrollPortSize) const;
+  nsRect GetScrolledRectInternal(const nsRect& aScrolledOverflowArea,
+                                 const nsSize& aScrollPortSize) const;
 
   layers::ScrollDirections GetAvailableScrollingDirectionsForUserInputEvents()
       const;
@@ -993,11 +993,11 @@ class nsHTMLScrollFrame : public nsContainerFrame,
   // Called to set the child frames. We typically have three: the scroll area,
   // the vertical scrollbar, and the horizontal scrollbar.
   void SetInitialChildList(ChildListID aListID,
-                           nsFrameList& aChildList) override;
-  void AppendFrames(ChildListID aListID, nsFrameList& aFrameList) final;
+                           nsFrameList&& aChildList) override;
+  void AppendFrames(ChildListID aListID, nsFrameList&& aFrameList) final;
   void InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
                     const nsLineList::iterator* aPrevFrameLine,
-                    nsFrameList& aFrameList) final;
+                    nsFrameList&& aFrameList) final;
   void RemoveFrame(ChildListID aListID, nsIFrame* aOldFrame) final;
 
   void DestroyFrom(nsIFrame* aDestructRoot, PostDestroyData&) override;
@@ -1450,11 +1450,11 @@ class nsXULScrollFrame final : public nsBoxFrame,
 
   // Called to set the child frames. We typically have three: the scroll area,
   // the vertical scrollbar, and the horizontal scrollbar.
-  void SetInitialChildList(ChildListID aListID, nsFrameList& aChildList) final;
-  void AppendFrames(ChildListID aListID, nsFrameList& aFrameList) final;
+  void SetInitialChildList(ChildListID aListID, nsFrameList&& aChildList) final;
+  void AppendFrames(ChildListID aListID, nsFrameList&& aFrameList) final;
   void InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
                     const nsLineList::iterator* aPrevFrameLine,
-                    nsFrameList& aFrameList) final;
+                    nsFrameList&& aFrameList) final;
   void RemoveFrame(ChildListID aListID, nsIFrame* aOldFrame) final;
 
   void DestroyFrom(nsIFrame* aDestructRoot,

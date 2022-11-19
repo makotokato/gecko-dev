@@ -35,8 +35,8 @@ const JSMs = [
   "resource:///modules/BrowserWindowTracker.jsm",
 ];
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 if (AppConstants.platform === "win") {
@@ -57,6 +57,7 @@ add_task(async function test_chrome_utils_import() {
 add_task(async function test_cu_import() {
   for (const file of JSMs) {
     try {
+      // eslint-disable-next-line mozilla/use-chromeutils-import
       Cu.import(file, {});
       ok(true, `Imported ${file}`);
     } catch (e) {

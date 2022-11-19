@@ -1112,12 +1112,12 @@ class TextNodeIterator {
   /**
    * The root under which all Text will be iterated over.
    */
-  nsIContent* mRoot;
+  nsIContent* const mRoot;
 
   /**
    * The node rooting the subtree to track.
    */
-  nsIContent* mSubtree;
+  nsIContent* const mSubtree;
 
   /**
    * The current node during iteration.
@@ -1418,7 +1418,7 @@ void TextNodeCorrespondenceRecorder::TraverseAndRecord(nsIFrame* aFrame) {
  * Note that any text frames that are empty -- whose ContentLength() is 0 --
  * will be skipped over.
  */
-class TextFrameIterator {
+class MOZ_STACK_CLASS TextFrameIterator {
  public:
   /**
    * Constructs a TextFrameIterator for the specified SVGTextFrame
@@ -1536,12 +1536,12 @@ class TextFrameIterator {
   /**
    * The root frame we are iterating through.
    */
-  SVGTextFrame* mRootFrame;
+  SVGTextFrame* const mRootFrame;
 
   /**
    * The frame for the subtree we are also interested in tracking.
    */
-  const nsIFrame* mSubtree;
+  const nsIFrame* const mSubtree;
 
   /**
    * The current value of the iterator.
@@ -1927,7 +1927,7 @@ TextRenderedRun TextRenderedRunIterator::First() {
 /**
  * Iterator for characters within an SVGTextFrame.
  */
-class CharIterator {
+class MOZ_STACK_CLASS CharIterator {
   using Range = gfxTextRun::Range;
 
  public:
@@ -2134,7 +2134,7 @@ class CharIterator {
   /**
    * The subtree we were constructed with.
    */
-  nsIContent* mSubtree;
+  nsIContent* const mSubtree;
 #endif
 
   /**
@@ -2467,9 +2467,9 @@ class SVGTextDrawPathCallbacks final : public nsTextFrame::DrawPathCallbacks {
    */
   void StrokeGeometry();
 
-  SVGTextFrame* mSVGTextFrame;
+  SVGTextFrame* const mSVGTextFrame;
   gfxContext& mContext;
-  nsTextFrame* mFrame;
+  nsTextFrame* const mFrame;
   const gfxMatrix& mCanvasTM;
   imgDrawingParams& mImgParams;
 
@@ -2847,12 +2847,6 @@ void SVGTextFrame::ReflowSVGNonDisplayText() {
   // We had a style change, so we mark this frame as dirty so that the next
   // time it is painted, we reflow the anonymous block frame.
   this->MarkSubtreeDirty();
-
-  // We also need to call InvalidateRenderingObservers, so that if the <text>
-  // element is within a <mask>, say, the element referencing the <mask> will
-  // be updated, which will then cause this SVGTextFrame to be painted and
-  // in doing so cause the anonymous block frame to be reflowed.
-  SVGObserverUtils::InvalidateRenderingObservers(this);
 
   // Finally, we need to actually reflow the anonymous block frame and update
   // mPositions, in case we are being reflowed immediately after a DOM
@@ -5314,9 +5308,9 @@ Point SVGTextFrame::TransformFramePointToTextChild(
       // The point was closer to this rendered run's rect than any others
       // we've seen so far.
       pointInRun.x =
-          clamped(pointInRunUserSpace.x, runRect.X(), runRect.XMost());
+          clamped(pointInRunUserSpace.x.value, runRect.X(), runRect.XMost());
       pointInRun.y =
-          clamped(pointInRunUserSpace.y, runRect.Y(), runRect.YMost());
+          clamped(pointInRunUserSpace.y.value, runRect.Y(), runRect.YMost());
       hit = run;
     }
   }

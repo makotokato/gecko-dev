@@ -8,7 +8,9 @@ var CC = Components.Constructor;
 
 // Populate AppInfo before anything (like the shared loader) accesses
 // System.appinfo, which is a lazy getter.
-const appInfo = ChromeUtils.import("resource://testing-common/AppInfo.jsm");
+const appInfo = ChromeUtils.importESModule(
+  "resource://testing-common/AppInfo.sys.mjs"
+);
 appInfo.updateAppInfo({
   ID: "devtools@tests.mozilla.org",
   name: "devtools-tests",
@@ -17,8 +19,8 @@ appInfo.updateAppInfo({
   crashReporter: true,
 });
 
-const { require, loader } = ChromeUtils.import(
-  "resource://devtools/shared/loader/Loader.jsm"
+const { require, loader } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/Loader.sys.mjs"
 );
 const { worker } = ChromeUtils.import(
   "resource://devtools/shared/loader/worker-loader.js"
@@ -57,15 +59,15 @@ const {
   CommandsFactory,
 } = require("resource://devtools/shared/commands/commands-factory.js");
 
-const { addDebuggerToGlobal } = ChromeUtils.import(
-  "resource://gre/modules/jsdebugger.jsm"
+const { addDebuggerToGlobal } = ChromeUtils.importESModule(
+  "resource://gre/modules/jsdebugger.sys.mjs"
 );
 
 const { AddonTestUtils } = ChromeUtils.import(
   "resource://testing-common/AddonTestUtils.jsm"
 );
-const { getAppInfo } = ChromeUtils.import(
-  "resource://testing-common/AppInfo.jsm"
+const { getAppInfo } = ChromeUtils.importESModule(
+  "resource://testing-common/AppInfo.sys.mjs"
 );
 
 const systemPrincipal = Cc["@mozilla.org/systemprincipal;1"].createInstance(

@@ -11,6 +11,7 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Atomics.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/BlockingResourceBase.h"
 #include "mozilla/PlatformRWLock.h"
 #include "mozilla/ThreadSafety.h"
@@ -39,8 +40,8 @@ namespace mozilla {
 //
 // It is unspecified whether RWLock gives priority to waiting readers or
 // a waiting writer when unlocking.
-class MOZ_CAPABILITY RWLock : public detail::RWLockImpl,
-                              public BlockingResourceBase {
+class MOZ_CAPABILITY("rwlock") RWLock : public detail::RWLockImpl,
+                                        public BlockingResourceBase {
  public:
   explicit RWLock(const char* aName);
 
@@ -181,16 +182,8 @@ typedef BaseAutoTryWriteLock<RWLock> AutoTryWriteLock;
 // calls to WriteLock() and WriteUnlock().
 typedef BaseAutoWriteLock<RWLock> AutoWriteLock;
 
-// XXX: normally we would define StaticRWLock as
-// MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS, but the contexts in which it
-// is used (e.g. member variables in a third-party library) are non-trivial
-// to modify to properly declare everything at static scope.  As those
-// third-party libraries are the only clients, put it behind the detail
-// namespace to discourage other (possibly erroneous) uses from popping up.
-
-namespace detail {
-
-class MOZ_CAPABILITY StaticRWLock {
+class MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS MOZ_CAPABILITY("rwlock")
+    StaticRWLock {
  public:
   // In debug builds, check that mLock is initialized for us as we expect by
   // the compiler.  In non-debug builds, don't declare a constructor so that
@@ -244,8 +237,6 @@ typedef BaseAutoTryReadLock<StaticRWLock> StaticAutoTryReadLock;
 typedef BaseAutoReadLock<StaticRWLock> StaticAutoReadLock;
 typedef BaseAutoTryWriteLock<StaticRWLock> StaticAutoTryWriteLock;
 typedef BaseAutoWriteLock<StaticRWLock> StaticAutoWriteLock;
-
-}  // namespace detail
 
 }  // namespace mozilla
 

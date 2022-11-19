@@ -21,6 +21,7 @@ gecko_metrics = [
     "gfx/metrics.yaml",
     "netwerk/metrics.yaml",
     "netwerk/protocol/http/metrics.yaml",
+    "toolkit/components/cookiebanners/metrics.yaml",
     "toolkit/components/glean/metrics.yaml",
     "toolkit/components/processtools/metrics.yaml",
 ]
@@ -36,6 +37,7 @@ firefox_desktop_metrics = [
     "toolkit/components/nimbus/metrics.yaml",
     "toolkit/components/pdfjs/metrics.yaml",
     "toolkit/components/search/metrics.yaml",
+    "toolkit/components/telemetry/dap/metrics.yaml",
     "toolkit/components/telemetry/metrics.yaml",
     "toolkit/xre/metrics.yaml",
 ]

@@ -38,7 +38,7 @@ nsresult GetGpuTimeSinceProcessStartInMs(uint64_t* aResult);
 // WebIDLProcType, ChromeUtils::RequestProcInfo and ProcTypeToWebIDL to
 // mirror the changes.
 enum class ProcType {
-  // These must match the ones in RemoteType.h, and E10SUtils.jsm
+  // These must match the ones in RemoteType.h, and E10SUtils.sys.mjs
   Web,
   WebIsolated,
   File,
@@ -75,6 +75,9 @@ enum class UtilityActorName {
   AudioDecoder_WMF,
   MfMediaEngineCDM,
 };
+
+// String that will be used e.g. to annotate crash reports
+nsCString GetUtilityActorName(const UtilityActorName aActorName);
 
 /* Get the CPU frequency to use to convert cycle time values to actual time.
  * @returns the TSC (Time Stamp Counter) frequency in MHz, or 0 if converting

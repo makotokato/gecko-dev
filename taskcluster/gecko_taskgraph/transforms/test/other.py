@@ -320,12 +320,12 @@ def setup_browsertime(config, tasks):
 
         fs = {
             "by-test-platform": {
-                "android.*": ["linux64-ffmpeg-4.1.4"],
-                "linux.*": ["linux64-ffmpeg-4.1.4"],
-                "macosx.*": ["mac64-ffmpeg-4.1.1"],
-                "windows.*aarch64.*": ["win64-ffmpeg-4.1.1"],
-                "windows.*-32.*": ["win64-ffmpeg-4.1.1"],
-                "windows.*-64.*": ["win64-ffmpeg-4.1.1"],
+                "android.*": ["linux64-ffmpeg-4.4.1"],
+                "linux.*": ["linux64-ffmpeg-4.4.1"],
+                "macosx.*": ["mac64-ffmpeg-4.4.1"],
+                "windows.*aarch64.*": ["win64-ffmpeg-4.4.1"],
+                "windows.*-32.*": ["win64-ffmpeg-4.4.1"],
+                "windows.*-64.*": ["win64-ffmpeg-4.4.1"],
             },
         }
 
@@ -339,6 +339,7 @@ def setup_browsertime(config, tasks):
                 "linux64-chromedriver-104",
                 "linux64-chromedriver-105",
                 "linux64-chromedriver-106",
+                "linux64-chromedriver-107",
             ],
             "macosx.*": [
                 "mac64-chromedriver-102",
@@ -346,6 +347,7 @@ def setup_browsertime(config, tasks):
                 "mac64-chromedriver-104",
                 "mac64-chromedriver-105",
                 "mac64-chromedriver-106",
+                "mac64-chromedriver-107",
             ],
             "windows.*aarch64.*": [
                 "win32-chromedriver-102",
@@ -353,6 +355,7 @@ def setup_browsertime(config, tasks):
                 "win32-chromedriver-104",
                 "win32-chromedriver-105",
                 "win32-chromedriver-106",
+                "win32-chromedriver-107",
             ],
             "windows.*-32.*": [
                 "win32-chromedriver-102",
@@ -360,6 +363,7 @@ def setup_browsertime(config, tasks):
                 "win32-chromedriver-104",
                 "win32-chromedriver-105",
                 "win32-chromedriver-106",
+                "win32-chromedriver-107",
             ],
             "windows.*-64.*": [
                 "win32-chromedriver-102",
@@ -367,6 +371,7 @@ def setup_browsertime(config, tasks):
                 "win32-chromedriver-104",
                 "win32-chromedriver-105",
                 "win32-chromedriver-106",
+                "win32-chromedriver-107",
             ],
         }
 
@@ -426,7 +431,7 @@ def setup_browsertime(config, tasks):
                     "--browsertime-chromedriver",
                     "$MOZ_FETCHES_DIR/" + cd_extracted_name["windows"],
                     "--browsertime-ffmpeg",
-                    "$MOZ_FETCHES_DIR/ffmpeg-4.1.1-win64-static/bin/ffmpeg.exe",
+                    "$MOZ_FETCHES_DIR/ffmpeg-4.4.1-full_build/bin/ffmpeg.exe",
                 ],
                 "macosx.*": [
                     "--browsertime-node",
@@ -436,7 +441,7 @@ def setup_browsertime(config, tasks):
                     "--browsertime-chromedriver",
                     "$MOZ_FETCHES_DIR/" + cd_extracted_name["mac"],
                     "--browsertime-ffmpeg",
-                    "$MOZ_FETCHES_DIR/ffmpeg-4.1.1-macos64-static/bin/ffmpeg",
+                    "$MOZ_FETCHES_DIR/ffmpeg-macos/ffmpeg",
                 ],
                 "default": [
                     "--browsertime-node",
@@ -446,7 +451,7 @@ def setup_browsertime(config, tasks):
                     "--browsertime-chromedriver",
                     "$MOZ_FETCHES_DIR/" + cd_extracted_name["default"],
                     "--browsertime-ffmpeg",
-                    "$MOZ_FETCHES_DIR/ffmpeg-4.1.4-i686-static/ffmpeg",
+                    "$MOZ_FETCHES_DIR/ffmpeg-4.4.1-i686-static/ffmpeg",
                 ],
             }
         }

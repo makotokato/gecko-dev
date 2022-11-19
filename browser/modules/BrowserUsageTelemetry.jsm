@@ -15,27 +15,27 @@ var EXPORTED_SYMBOLS = [
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   SearchSERPTelemetry: "resource:///modules/SearchSERPTelemetry.sys.mjs",
+  clearInterval: "resource://gre/modules/Timer.sys.mjs",
+  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  setInterval: "resource://gre/modules/Timer.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   ClientID: "resource://gre/modules/ClientID.jsm",
   CustomizableUI: "resource:///modules/CustomizableUI.jsm",
   PageActions: "resource:///modules/PageActions.jsm",
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   WindowsInstallsInfo:
     "resource://gre/modules/components-utils/WindowsInstallsInfo.jsm",
-  setTimeout: "resource://gre/modules/Timer.jsm",
-  setInterval: "resource://gre/modules/Timer.jsm",
-  clearTimeout: "resource://gre/modules/Timer.jsm",
-  clearInterval: "resource://gre/modules/Timer.jsm",
 });
 
 // This pref is in seconds!
@@ -109,6 +109,7 @@ const BROWSER_UI_CONTAINER_IDS = {
   "widget-overflow-fixed-list": "pinned-overflow-menu",
   "page-action-buttons": "pageaction-urlbar",
   pageActionPanel: "pageaction-panel",
+  "unified-extensions-area": "unified-extensions-area",
 
   // This should appear last as some of the above are inside the nav bar.
   "nav-bar": "nav-bar",

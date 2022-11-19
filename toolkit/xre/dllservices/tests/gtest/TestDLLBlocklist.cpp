@@ -80,6 +80,28 @@ TEST(TestDllBlocklist, AllowDllByVersion)
   EXPECT_TRUE(!!::GetModuleHandleW(kLeafName.get()));
 }
 
+TEST(TestDllBlocklist, SocketProcessOnly_AllowInMainProcess)
+{
+  constexpr auto kLeafName = u"TestDllBlocklist_SocketProcessOnly.dll"_ns;
+  nsString dllPath = GetFullPath(kLeafName);
+
+  nsModuleHandle hDll(::LoadLibraryW(dllPath.get()));
+
+  EXPECT_TRUE(!!hDll);
+  EXPECT_TRUE(!!::GetModuleHandleW(kLeafName.get()));
+}
+
+TEST(TestDllBlocklist, UtilityProcessOnly_AllowInMainProcess)
+{
+  constexpr auto kLeafName = u"TestDllBlocklist_UtilityProcessOnly.dll"_ns;
+  nsString dllPath = GetFullPath(kLeafName);
+
+  nsModuleHandle hDll(::LoadLibraryW(dllPath.get()));
+
+  EXPECT_TRUE(!!hDll);
+  EXPECT_TRUE(!!::GetModuleHandleW(kLeafName.get()));
+}
+
 // RedirectToNoOpEntryPoint needs the launcher process.
 #if defined(MOZ_LAUNCHER_PROCESS)
 TEST(TestDllBlocklist, NoOpEntryPoint)
@@ -155,8 +177,12 @@ TEST(TestDllBlocklist, BlockThreadWithLoadLibraryEntryPoint)
   EXPECT_TRUE(!!threadW);
   EXPECT_EQ(::WaitForSingleObject(threadW, INFINITE), WAIT_OBJECT_0);
 
+#  if !defined(MOZ_ASAN)
+  // ASAN builds under Windows 11 can have unexpected thread exit codes.
+  // See bug 1798796
   DWORD exitCode;
   EXPECT_TRUE(::GetExitCodeThread(threadW, &exitCode) && !exitCode);
+#  endif  // !defined(MOZ_ASAN)
   EXPECT_TRUE(!::GetModuleHandleW(kLeafNameW.get()));
 
   const NS_LossyConvertUTF16toASCII fullPathA(fullPathW);
@@ -168,7 +194,11 @@ TEST(TestDllBlocklist, BlockThreadWithLoadLibraryEntryPoint)
 
   EXPECT_TRUE(!!threadA);
   EXPECT_EQ(::WaitForSingleObject(threadA, INFINITE), WAIT_OBJECT_0);
+#  if !defined(MOZ_ASAN)
+  // ASAN builds under Windows 11 can have unexpected thread exit codes.
+  // See bug 1798796
   EXPECT_TRUE(::GetExitCodeThread(threadA, &exitCode) && !exitCode);
+#  endif  // !defined(MOZ_ASAN)
   EXPECT_TRUE(!::GetModuleHandleW(kLeafNameW.get()));
 #endif  // defined(NIGHTLY_BUILD)
 }

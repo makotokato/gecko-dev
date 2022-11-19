@@ -305,8 +305,9 @@ class ScriptLoadRequest
   void DropBytecodeCacheReferences();
 
   bool HasLoadContext() const { return mLoadContext; }
-
   bool HasScriptLoadContext() const;
+  bool HasWorkerLoadContext() const;
+
   mozilla::dom::ScriptLoadContext* GetScriptLoadContext();
 
   mozilla::loader::ComponentLoadContext* GetComponentLoadContext();

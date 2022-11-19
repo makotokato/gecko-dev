@@ -8,12 +8,9 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/ComposerCommandsUpdater.h"
-#include "mozilla/CSSEditUtils.h"
 #include "mozilla/EditorBase.h"
 #include "mozilla/EditorForwards.h"
-#include "mozilla/EditorUtils.h"
 #include "mozilla/ErrorResult.h"
-#include "mozilla/HTMLEditHelpers.h"
 #include "mozilla/ManualNAC.h"
 #include "mozilla/Result.h"
 #include "mozilla/dom/BlobImpl.h"
@@ -32,7 +29,6 @@
 #include "nsITableEditor.h"
 #include "nsPoint.h"
 #include "nsStubMutationObserver.h"
-#include "nsTArray.h"
 
 class nsDocumentFragment;
 class nsFrameSelection;
@@ -44,6 +40,8 @@ class nsStaticAtom;
 class nsStyledElement;
 class nsTableCellFrame;
 class nsTableWrapperFrame;
+template <class E>
+class nsTArray;
 
 namespace mozilla {
 class AlignStateAtSelection;
@@ -608,20 +606,6 @@ class HTMLEditor final : public EditorBase,
   }
 
   /**
-   * Get split/join node(s) direction for **this** instance.
-   */
-  [[nodiscard]] SplitNodeDirection GetSplitNodeDirection() const {
-    return MOZ_LIKELY(mUseGeckoTraditionalJoinSplitBehavior)
-               ? SplitNodeDirection::LeftNodeIsNewOne
-               : SplitNodeDirection::RightNodeIsNewOne;
-  }
-  [[nodiscard]] JoinNodesDirection GetJoinNodesDirection() const {
-    return MOZ_LIKELY(mUseGeckoTraditionalJoinSplitBehavior)
-               ? JoinNodesDirection::LeftNodeIntoRightNode
-               : JoinNodesDirection::RightNodeIntoLeftNode;
-  }
-
-  /**
    * Modifies the table containing the selection according to the
    * activation of an inline table editing UI element
    * @param aUIAnonymousElement [IN] the inline table editing UI element
@@ -866,14 +850,6 @@ class HTMLEditor final : public EditorBase,
    */
   MOZ_CAN_RUN_SCRIPT nsresult CollapseAdjacentTextNodes(nsRange& aRange);
 
-  static bool HasAttributes(Element* aElement) {
-    MOZ_ASSERT(aElement);
-    uint32_t attrCount = aElement->GetAttrCount();
-    return attrCount > 1 ||
-           (1 == attrCount &&
-            !aElement->GetAttrNameAt(0)->Equals(nsGkAtoms::mozdirty));
-  }
-
   static dom::Element* GetLinkElement(nsINode* aNode);
 
   /**
@@ -1041,7 +1017,10 @@ class HTMLEditor final : public EditorBase,
    * XXX I think that `IsSelectionEditable()` is better name, but it's already
    *     in `EditorBase`...
    */
-  Result<EditActionResult, nsresult> CanHandleHTMLEditSubAction() const;
+  enum class CheckSelectionInReplacedElement { Yes, OnlyWhenNotInSameNode };
+  Result<EditActionResult, nsresult> CanHandleHTMLEditSubAction(
+      CheckSelectionInReplacedElement aCheckSelectionInReplacedElement =
+          CheckSelectionInReplacedElement::Yes) const;
 
   /**
    * EnsureCaretNotAfterInvisibleBRElement() makes sure that caret is NOT after
@@ -1245,20 +1224,6 @@ class HTMLEditor final : public EditorBase,
   already_AddRefed<nsRange> CreateRangeIncludingAdjuscentWhiteSpaces(
       const EditorDOMPointType1& aStartPoint,
       const EditorDOMPointType2& aEndPoint);
-
-  /**
-   * GetChildNodesOf() returns all child nodes of aParent with an array.
-   */
-  static void GetChildNodesOf(
-      nsINode& aParentNode,
-      nsTArray<OwningNonNull<nsIContent>>& aOutArrayOfContents) {
-    MOZ_ASSERT(aOutArrayOfContents.IsEmpty());
-    aOutArrayOfContents.SetCapacity(aParentNode.GetChildCount());
-    for (nsIContent* childContent = aParentNode.GetFirstChild(); childContent;
-         childContent = childContent->GetNextSibling()) {
-      aOutArrayOfContents.AppendElement(*childContent);
-    }
-  }
 
   /**
    * GetRangeExtendedToHardLineEdgesForBlockEditAction() returns an extended
@@ -1758,12 +1723,9 @@ class HTMLEditor final : public EditorBase,
    *                            with new element.
    * @param aTagName            The name of new element node.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
+  [[nodiscard]] inline MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
   ReplaceContainerAndCloneAttributesWithTransaction(Element& aOldContainer,
-                                                    nsAtom& aTagName) {
-    return ReplaceContainerWithTransactionInternal(
-        aOldContainer, aTagName, *nsGkAtoms::_empty, u""_ns, true);
-  }
+                                                    const nsAtom& aTagName);
 
   /**
    * ReplaceContainerWithTransaction() creates new element whose name is
@@ -1777,13 +1739,11 @@ class HTMLEditor final : public EditorBase,
    * @param aAttribute          Attribute name to be set to the new element.
    * @param aAttributeValue     Attribute value to be set to aAttribute.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
-  ReplaceContainerWithTransaction(Element& aOldContainer, nsAtom& aTagName,
-                                  nsAtom& aAttribute,
-                                  const nsAString& aAttributeValue) {
-    return ReplaceContainerWithTransactionInternal(
-        aOldContainer, aTagName, aAttribute, aAttributeValue, false);
-  }
+  [[nodiscard]] inline MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
+  ReplaceContainerWithTransaction(Element& aOldContainer,
+                                  const nsAtom& aTagName,
+                                  const nsAtom& aAttribute,
+                                  const nsAString& aAttributeValue);
 
   /**
    * ReplaceContainerWithTransaction() creates new element whose name is
@@ -1794,11 +1754,9 @@ class HTMLEditor final : public EditorBase,
    *                            with new element.
    * @param aTagName            The name of new element node.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
-  ReplaceContainerWithTransaction(Element& aOldContainer, nsAtom& aTagName) {
-    return ReplaceContainerWithTransactionInternal(
-        aOldContainer, aTagName, *nsGkAtoms::_empty, u""_ns, false);
-  }
+  [[nodiscard]] inline MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
+  ReplaceContainerWithTransaction(Element& aOldContainer,
+                                  const nsAtom& aTagName);
 
   /**
    * RemoveContainerWithTransaction() removes aElement from the DOM tree and
@@ -1823,12 +1781,9 @@ class HTMLEditor final : public EditorBase,
    *                            aContent and be inserted into where aContent
    *                            was.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
+  [[nodiscard]] inline MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
   InsertContainerWithTransaction(nsIContent& aContentToBeWrapped,
-                                 nsAtom& aWrapperTagName) {
-    return InsertContainerWithTransactionInternal(
-        aContentToBeWrapped, aWrapperTagName, *nsGkAtoms::_empty, u""_ns);
-  }
+                                 const nsAtom& aWrapperTagName);
 
   /**
    * InsertContainerWithTransaction() creates new element whose name is
@@ -1847,13 +1802,11 @@ class HTMLEditor final : public EditorBase,
    *                            element.
    * @param aAttributeValue     Value to be set to aAttribute.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
+  [[nodiscard]] inline MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
   InsertContainerWithTransaction(nsIContent& aContentToBeWrapped,
-                                 nsAtom& aWrapperTagName, nsAtom& aAttribute,
-                                 const nsAString& aAttributeValue) {
-    return InsertContainerWithTransactionInternal(
-        aContentToBeWrapped, aWrapperTagName, aAttribute, aAttributeValue);
-  }
+                                 const nsAtom& aWrapperTagName,
+                                 const nsAtom& aAttribute,
+                                 const nsAString& aAttributeValue);
 
   /**
    * MoveNodeWithTransaction() moves aContentToMove to aPointToInsert.
@@ -1873,12 +1826,9 @@ class HTMLEditor final : public EditorBase,
    * @param aNewContainer   The new container which will contain aContentToMove
    *                        as its last child.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<MoveNodeResult, nsresult>
+  [[nodiscard]] inline MOZ_CAN_RUN_SCRIPT Result<MoveNodeResult, nsresult>
   MoveNodeToEndWithTransaction(nsIContent& aContentToMove,
-                               nsINode& aNewContainer) {
-    return MoveNodeWithTransaction(aContentToMove,
-                                   EditorDOMPoint::AtEndOf(aNewContainer));
-  }
+                               nsINode& aNewContainer);
 
   /**
    * MoveNodeOrChildrenWithTransaction() moves aContent to aPointToInsert.  If
@@ -2159,43 +2109,9 @@ class HTMLEditor final : public EditorBase,
    */
   template <typename EditorDOMPointType>
   static CharPointType GetPreviousCharPointType(
-      const EditorDOMPointType& aPoint) {
-    MOZ_ASSERT(aPoint.IsInTextNode());
-    if (aPoint.IsStartOfContainer()) {
-      return CharPointType::TextEnd;
-    }
-    if (aPoint.IsPreviousCharPreformattedNewLine()) {
-      return CharPointType::PreformattedLineBreak;
-    }
-    if (EditorUtils::IsWhiteSpacePreformatted(
-            *aPoint.template ContainerAs<Text>())) {
-      return CharPointType::PreformattedChar;
-    }
-    if (aPoint.IsPreviousCharASCIISpace()) {
-      return CharPointType::ASCIIWhiteSpace;
-    }
-    return aPoint.IsPreviousCharNBSP() ? CharPointType::NoBreakingSpace
-                                       : CharPointType::VisibleChar;
-  }
+      const EditorDOMPointType& aPoint);
   template <typename EditorDOMPointType>
-  static CharPointType GetCharPointType(const EditorDOMPointType& aPoint) {
-    MOZ_ASSERT(aPoint.IsInTextNode());
-    if (aPoint.IsEndOfContainer()) {
-      return CharPointType::TextEnd;
-    }
-    if (aPoint.IsCharPreformattedNewLine()) {
-      return CharPointType::PreformattedLineBreak;
-    }
-    if (EditorUtils::IsWhiteSpacePreformatted(
-            *aPoint.template ContainerAs<Text>())) {
-      return CharPointType::PreformattedChar;
-    }
-    if (aPoint.IsCharASCIISpace()) {
-      return CharPointType::ASCIIWhiteSpace;
-    }
-    return aPoint.IsCharNBSP() ? CharPointType::NoBreakingSpace
-                               : CharPointType::VisibleChar;
-  }
+  static CharPointType GetCharPointType(const EditorDOMPointType& aPoint);
 
   /**
    * CharPointData let the following helper methods of
@@ -2726,6 +2642,12 @@ class HTMLEditor final : public EditorBase,
   MOZ_CAN_RUN_SCRIPT nsresult OnDocumentModified();
 
  protected:  // Called by helper classes.
+  /**
+   * Get split/join node(s) direction for **this** instance.
+   */
+  [[nodiscard]] inline SplitNodeDirection GetSplitNodeDirection() const;
+  [[nodiscard]] inline JoinNodesDirection GetJoinNodesDirection() const;
+
   MOZ_CAN_RUN_SCRIPT void OnStartToHandleTopLevelEditSubAction(
       EditSubAction aTopLevelEditSubAction,
       nsIEditor::EDirection aDirectionOfTopLevelEditSubAction,
@@ -3148,13 +3070,11 @@ class HTMLEditor final : public EditorBase,
    *                            Returns nullptr without error if the indexes
    *                            are out of bounds.
    */
-  Element* GetTableCellElementAt(Element& aTableElement,
-                                 const CellIndexes& aCellIndexes) const {
-    return GetTableCellElementAt(aTableElement, aCellIndexes.mRow,
-                                 aCellIndexes.mColumn);
-  }
-  Element* GetTableCellElementAt(Element& aTableElement, int32_t aRowIndex,
-                                 int32_t aColumnIndex) const;
+  [[nodiscard]] inline Element* GetTableCellElementAt(
+      Element& aTableElement, const CellIndexes& aCellIndexes) const;
+  [[nodiscard]] Element* GetTableCellElementAt(Element& aTableElement,
+                                               int32_t aRowIndex,
+                                               int32_t aColumnIndex) const;
 
   /**
    * GetSelectedOrParentTableElement() returns <td>, <th>, <tr> or <table>
@@ -3263,8 +3183,9 @@ class HTMLEditor final : public EditorBase,
    *                            be copied to the new element.
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
-  ReplaceContainerWithTransactionInternal(Element& aElement, nsAtom& aTagName,
-                                          nsAtom& aAttribute,
+  ReplaceContainerWithTransactionInternal(Element& aOldContainer,
+                                          const nsAtom& aTagName,
+                                          const nsAtom& aAttribute,
                                           const nsAString& aAttributeValue,
                                           bool aCloneAllAttributes);
 
@@ -3288,8 +3209,8 @@ class HTMLEditor final : public EditorBase,
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
   InsertContainerWithTransactionInternal(nsIContent& aContentToBeWrapped,
-                                         nsAtom& aWrapperTagName,
-                                         nsAtom& aAttribute,
+                                         const nsAtom& aWrapperTagName,
+                                         const nsAtom& aAttribute,
                                          const nsAString& aAttributeValue);
 
   /**
@@ -3456,11 +3377,13 @@ class HTMLEditor final : public EditorBase,
       bool aIgnoreIfSelectionInEditingHost) const;
 
   class BlobReader final {
-    typedef EditorBase::AutoEditActionDataSetter AutoEditActionDataSetter;
+    using AutoEditActionDataSetter = EditorBase::AutoEditActionDataSetter;
 
    public:
-    BlobReader(dom::BlobImpl* aBlob, HTMLEditor* aHTMLEditor, bool aIsSafe,
-               const EditorDOMPoint& aPointToInsert, bool aDoDeleteSelection);
+    MOZ_CAN_RUN_SCRIPT BlobReader(dom::BlobImpl* aBlob, HTMLEditor* aHTMLEditor,
+                                  SafeToInsertData aSafeToInsertData,
+                                  const EditorDOMPoint& aPointToInsert,
+                                  DeleteSelectedContent aDeleteSelectedContent);
 
     NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(BlobReader)
     NS_DECL_CYCLE_COLLECTION_NATIVE_CLASS(BlobReader)
@@ -3476,8 +3399,8 @@ class HTMLEditor final : public EditorBase,
     RefPtr<dom::DataTransfer> mDataTransfer;
     EditorDOMPoint mPointToInsert;
     EditAction mEditAction;
-    bool mIsSafe;
-    bool mDoDeleteSelection;
+    SafeToInsertData mSafeToInsertData;
+    DeleteSelectedContent mDeleteSelectedContent;
     bool mNeedsToDispatchBeforeInputEvent;
   };
 
@@ -3795,18 +3718,18 @@ class HTMLEditor final : public EditorBase,
    * @param aType one of kFileMime, kJPEGImageMime, kJPGImageMime,
    *              kPNGImageMime, kGIFImageMime.
    */
-  MOZ_CAN_RUN_SCRIPT nsresult InsertObject(const nsACString& aType,
-                                           nsISupports* aObject, bool aIsSafe,
-                                           const EditorDOMPoint& aPointToInsert,
-                                           bool aDoDeleteSelection);
+  MOZ_CAN_RUN_SCRIPT nsresult InsertObject(
+      const nsACString& aType, nsISupports* aObject,
+      SafeToInsertData aSafeToInsertData, const EditorDOMPoint& aPointToInsert,
+      DeleteSelectedContent aDeleteSelectedContent);
 
   class HTMLTransferablePreparer;
   nsresult PrepareHTMLTransferable(nsITransferable** aTransferable) const;
 
-  MOZ_CAN_RUN_SCRIPT nsresult InsertFromTransferable(
+  enum class HavePrivateHTMLFlavor { No, Yes };
+  MOZ_CAN_RUN_SCRIPT nsresult InsertFromTransferableAtSelection(
       nsITransferable* aTransferable, const nsAString& aContextStr,
-      const nsAString& aInfoStr, bool aHavePrivateHTMLFlavor,
-      bool aDoDeleteSelection);
+      const nsAString& aInfoStr, HavePrivateHTMLFlavor aHavePrivateHTMLFlavor);
 
   /**
    * InsertFromDataTransfer() is called only when user drops data into
@@ -3817,9 +3740,10 @@ class HTMLEditor final : public EditorBase,
   MOZ_CAN_RUN_SCRIPT nsresult InsertFromDataTransfer(
       const dom::DataTransfer* aDataTransfer, uint32_t aIndex,
       nsIPrincipal* aSourcePrincipal, const EditorDOMPoint& aDroppedAt,
-      bool aDoDeleteSelection);
+      DeleteSelectedContent aDeleteSelectedContent);
 
-  static bool HavePrivateHTMLFlavor(nsIClipboard* clipboard);
+  static HavePrivateHTMLFlavor ClipboardHasPrivateHTMLFlavor(
+      nsIClipboard* clipboard);
 
   /**
    * CF_HTML:
@@ -4056,15 +3980,19 @@ class HTMLEditor final : public EditorBase,
    * (for example, if it's coming from a transferable object), in which case
    * aTrustedInput should be set to false, otherwise, the caller should set it
    * to true, which means that the HTML will be inserted in the DOM verbatim.
-   *
-   * aClearStyle should be set to false if you want the paste to be affected by
-   * local style (e.g., for the insertHTML command).
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult DoInsertHTMLWithContext(
+  enum class InlineStylesAtInsertionPoint {
+    Preserve,  // If you want the paste to be affected by local style, e.g.,
+               // for the insertHTML command, use "Preserve"
+    Clear,     // If you want the paste to be keep its own style, e.g., pasting
+               // from clipboard, use "Clear"
+  };
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult InsertHTMLWithContextAsSubAction(
       const nsAString& aInputString, const nsAString& aContextStr,
       const nsAString& aInfoStr, const nsAString& aFlavor,
-      const EditorDOMPoint& aPointToInsert, bool aDeleteSelection,
-      bool aTrustedInput, bool aClearStyle = true);
+      SafeToInsertData aSafeToInsertData, const EditorDOMPoint& aPointToInsert,
+      DeleteSelectedContent aDeleteSelectedContent,
+      InlineStylesAtInsertionPoint aInlineStylesAtInsertionPoint);
 
   /**
    * sets the position of an element; warning it does NOT check if the
@@ -4327,10 +4255,10 @@ class HTMLEditor final : public EditorBase,
    * operation is finished.
    *
    * @param aBlob       The input blob
-   * @param aWindow     The global object under which the read should happen.
+   * @param aGlobal     The global object under which the read should happen.
    * @param aBlobReader The blob reader object to be notified when finished.
    */
-  static nsresult SlurpBlob(dom::Blob* aBlob, nsPIDOMWindowOuter* aWindow,
+  static nsresult SlurpBlob(dom::Blob* aBlob, nsIGlobalObject* aGlobal,
                             BlobReader* aBlobReader);
 
   /**
@@ -4346,13 +4274,8 @@ class HTMLEditor final : public EditorBase,
    * destructed and the class is stack only class so that we don't need
    * to (and also should not) add the RangeItem into the cycle collection.
    */
-  already_AddRefed<RangeItem> GetSelectedRangeItemForTopLevelEditSubAction()
-      const {
-    if (!mSelectedRangeForTopLevelEditSubAction) {
-      mSelectedRangeForTopLevelEditSubAction = new RangeItem();
-    }
-    return do_AddRef(mSelectedRangeForTopLevelEditSubAction);
-  }
+  [[nodiscard]] inline already_AddRefed<RangeItem>
+  GetSelectedRangeItemForTopLevelEditSubAction() const;
 
   /**
    * For saving allocation cost in the constructor of
@@ -4362,12 +4285,8 @@ class HTMLEditor final : public EditorBase,
    * destructed, but AbstractRange::mOwner keeps grabbing the owner document
    * so that we need to make it in the cycle collection.
    */
-  already_AddRefed<nsRange> GetChangedRangeForTopLevelEditSubAction() const {
-    if (!mChangedRangeForTopLevelEditSubAction) {
-      mChangedRangeForTopLevelEditSubAction = nsRange::Create(GetDocument());
-    }
-    return do_AddRef(mChangedRangeForTopLevelEditSubAction);
-  }
+  [[nodiscard]] inline already_AddRefed<nsRange>
+  GetChangedRangeForTopLevelEditSubAction() const;
 
   MOZ_CAN_RUN_SCRIPT void DidDoTransaction(
       TransactionManager& aTransactionManager, nsITransaction& aTransaction,
@@ -4627,7 +4546,8 @@ class HTMLEditor final : public EditorBase,
                             // RemoveEmptyInclusiveAncestorInlineElements,
                             // mComposerUpdater, mHasBeforeInputBeenCanceled
   friend class JoinNodesTransaction;  // DidJoinNodesTransaction, DoJoinNodes,
-                                      // DoSplitNode, RangeUpdaterRef
+                                      // DoSplitNode, GetJoinNodesDirection,
+                                      // RangeUpdaterRef
   friend class ListElementSelectionState;      // CollectEditTargetNodes,
                                                // CollectNonEditableNodes
   friend class ListItemElementSelectionState;  // CollectEditTargetNodes,
@@ -4641,7 +4561,8 @@ class HTMLEditor final : public EditorBase,
                                            // CollectNonEditableNodes,
                                            // CollectTableChildren
   friend class SlurpBlobEventListener;     // BlobReader
-  friend class SplitNodeTransaction;       // DoJoinNodes, DoSplitNode
+  friend class SplitNodeTransaction;       // DoJoinNodes, DoSplitNode,
+                                           // GetSplitNodeDirection
   friend class TransactionManager;  // DidDoTransaction, DidRedoTransaction,
                                     // DidUndoTransaction
   friend class

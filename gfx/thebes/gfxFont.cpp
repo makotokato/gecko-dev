@@ -1191,8 +1191,8 @@ static void HasLookupRuleWithGlyph(hb_face_t* aFace, hb_tag_t aTableTag,
   hb_set_destroy(otherLookups);
 }
 
-nsTHashMap<nsUint32HashKey, intl::Script>* gfxFont::sScriptTagToCode = nullptr;
-nsTHashSet<uint32_t>* gfxFont::sDefaultFeatures = nullptr;
+Atomic<nsTHashMap<nsUint32HashKey, intl::Script>*> gfxFont::sScriptTagToCode;
+Atomic<nsTHashSet<uint32_t>*> gfxFont::sDefaultFeatures;
 
 static inline bool HasSubstitution(uint32_t* aBitVector, intl::Script aScript) {
   return (aBitVector[static_cast<uint32_t>(aScript) >> 5] &
@@ -1243,12 +1243,12 @@ void gfxFont::CheckForFeaturesInvolvingSpace() const {
 
   // GSUB lookups - examine per script
   if (hb_ot_layout_has_substitution(face)) {
-    // set up the script ==> code hashtable if needed
-    if (!sScriptTagToCode) {
-      sScriptTagToCode = new nsTHashMap<nsUint32HashKey, Script>(
+    // Get the script ==> code hashtable, creating it on first use.
+    nsTHashMap<nsUint32HashKey, Script>* tagToCode = sScriptTagToCode;
+    if (!tagToCode) {
+      tagToCode = new nsTHashMap<nsUint32HashKey, Script>(
           size_t(Script::NUM_SCRIPT_CODES));
-      sScriptTagToCode->InsertOrUpdate(HB_TAG('D', 'F', 'L', 'T'),
-                                       Script::COMMON);
+      tagToCode->InsertOrUpdate(HB_TAG('D', 'F', 'L', 'T'), Script::COMMON);
       // Ensure that we don't try to look at script codes beyond what the
       // current version of ICU (at runtime -- in case of system ICU)
       // knows about.
@@ -1264,14 +1264,25 @@ void gfxFont::CheckForFeaturesInvolvingSpace() const {
                                             &scriptCount, scriptTags, nullptr,
                                             nullptr);
         for (unsigned int i = 0; i < scriptCount; i++) {
-          sScriptTagToCode->InsertOrUpdate(scriptTags[i], s);
+          tagToCode->InsertOrUpdate(scriptTags[i], s);
         }
       }
+      if (!sScriptTagToCode.compareExchange(nullptr, tagToCode)) {
+        // We lost a race! Discard our new table and use the winner.
+        delete tagToCode;
+        tagToCode = sScriptTagToCode;
+      }
+    }
 
+    // Set up the default-features hashset on first use.
+    if (!sDefaultFeatures) {
       uint32_t numDefaultFeatures = ArrayLength(defaultFeatures);
-      sDefaultFeatures = new nsTHashSet<uint32_t>(numDefaultFeatures);
+      auto* set = new nsTHashSet<uint32_t>(numDefaultFeatures);
       for (uint32_t i = 0; i < numDefaultFeatures; i++) {
-        sDefaultFeatures->Insert(defaultFeatures[i]);
+        set->Insert(defaultFeatures[i]);
+      }
+      if (!sDefaultFeatures.compareExchange(nullptr, set)) {
+        delete set;
       }
     }
 
@@ -1289,7 +1300,7 @@ void gfxFont::CheckForFeaturesInvolvingSpace() const {
         if (!HasLookupRuleWithGlyphByScript(
                 face, HB_OT_TAG_GSUB, scriptTags[i], offset + i, spaceGlyph,
                 *sDefaultFeatures, isDefaultFeature) ||
-            !sScriptTagToCode->Get(scriptTags[i], &s)) {
+            !tagToCode->Get(scriptTags[i], &s)) {
           continue;
         }
         flags = flags | gfxFontEntry::SpaceFeatures::HasFeatures;
@@ -1907,7 +1918,8 @@ bool gfxFont::DrawGlyphs(const gfxShapedText* aShapedText,
                          gfx::Point* aPt,
                          const gfx::Matrix* aOffsetMatrix,  // may be null
                          GlyphBufferAzure& aBuffer) {
-  float& inlineCoord = aBuffer.mFontParams.isVerticalFont ? aPt->y : aPt->x;
+  float& inlineCoord =
+      aBuffer.mFontParams.isVerticalFont ? aPt->y.value : aPt->x.value;
 
   const gfxShapedText::CompressedGlyph* glyphData =
       &aShapedText->GetCharacterGlyphs()[aOffset];
@@ -2035,8 +2047,7 @@ void gfxFont::DrawOneGlyph(uint32_t aGlyphID, const gfx::Point& aPt,
 
     if (fontParams.haveColorGlyphs && !UseNativeColrFontSupport() &&
         RenderColorGlyph(runParams.dt, runParams.context, textDrawer,
-                         fontParams.scaledFont, fontParams.drawOptions, devPt,
-                         aGlyphID)) {
+                         fontParams, devPt, aGlyphID)) {
       return;
     }
 
@@ -2124,7 +2135,7 @@ bool gfxFont::DrawMissingGlyph(const TextRunDrawParams& aRunParams,
 void gfxFont::DrawEmphasisMarks(const gfxTextRun* aShapedText, gfx::Point* aPt,
                                 uint32_t aOffset, uint32_t aCount,
                                 const EmphasisMarkDrawParams& aParams) {
-  float& inlineCoord = aParams.isVertical ? aPt->y : aPt->x;
+  float& inlineCoord = aParams.isVertical ? aPt->y.value : aPt->x.value;
   gfxTextRun::Range markRange(aParams.mark);
   gfxTextRun::DrawParams params(aParams.context);
 
@@ -2187,6 +2198,17 @@ void gfxFont::Draw(const gfxTextRun* aTextRun, uint32_t aStart, uint32_t aEnd,
   fontParams.haveColorGlyphs = GetFontEntry()->TryGetColorGlyphs();
   fontParams.contextPaint = aRunParams.runContextPaint;
 
+  if (fontParams.haveColorGlyphs && !UseNativeColrFontSupport()) {
+    DeviceColor ctxColor;
+    fontParams.currentColor = aRunParams.context->GetDeviceColor(ctxColor)
+                                  ? sRGBColor::FromABGR(ctxColor.ToABGR())
+                                  : sRGBColor::OpaqueBlack();
+    gfxFontEntry::AutoHBFace face = GetFontEntry()->GetHBFace();
+    fontParams.palette = COLRFonts::SetupColorPalette(
+        face, aRunParams.paletteValueSet, aRunParams.fontPalette,
+        GetFontEntry()->FamilyName());
+  }
+
   if (textDrawer) {
     fontParams.isVerticalFont = aRunParams.isVerticalRun;
   } else {
@@ -2199,7 +2221,7 @@ void gfxFont::Draw(const gfxTextRun* aTextRun, uint32_t aStart, uint32_t aEnd,
 
   // Save the current baseline offset for restoring later, in case it is
   // modified.
-  float& baseline = fontParams.isVerticalFont ? aPt->x : aPt->y;
+  float& baseline = fontParams.isVerticalFont ? aPt->x.value : aPt->y.value;
   float origBaseline = baseline;
 
   // The point may be advanced in local-space, while the resulting point on
@@ -2468,24 +2490,17 @@ bool gfxFont::RenderSVGGlyph(gfxContext* aContext,
 
 bool gfxFont::RenderColorGlyph(DrawTarget* aDrawTarget, gfxContext* aContext,
                                layout::TextDrawTarget* aTextDrawer,
-                               ScaledFont* aScaledFont,
-                               DrawOptions aDrawOptions, const Point& aPoint,
-                               uint32_t aGlyphId) {
-  auto currentColor = [=]() {
-    DeviceColor ctxColor;
-    return aContext->GetDeviceColor(ctxColor)
-               ? sRGBColor::FromABGR(ctxColor.ToABGR())
-               : sRGBColor::OpaqueBlack();
-  };
-
+                               const FontDrawParams& aFontParams,
+                               const Point& aPoint, uint32_t aGlyphId) {
   if (const auto* paintGraph =
           COLRFonts::GetGlyphPaintGraph(GetFontEntry()->GetCOLR(), aGlyphId)) {
     const auto* hbShaper = GetHarfBuzzShaper();
     if (hbShaper && hbShaper->IsInitialized()) {
       return COLRFonts::PaintGlyphGraph(
           GetFontEntry()->GetCOLR(), hbShaper->GetHBFont(), paintGraph,
-          aDrawTarget, aTextDrawer, aScaledFont, aDrawOptions, currentColor(),
-          aPoint, aGlyphId, mFUnitsConvFactor);
+          aDrawTarget, aTextDrawer, aFontParams.scaledFont,
+          aFontParams.drawOptions, aPoint, aFontParams.currentColor,
+          aFontParams.palette.get(), aGlyphId, mFUnitsConvFactor);
     }
   }
 
@@ -2494,7 +2509,8 @@ bool gfxFont::RenderColorGlyph(DrawTarget* aDrawTarget, gfxContext* aContext,
     auto face(GetFontEntry()->GetHBFace());
     bool ok = COLRFonts::PaintGlyphLayers(
         GetFontEntry()->GetCOLR(), face, layers, aDrawTarget, aTextDrawer,
-        aScaledFont, aDrawOptions, currentColor(), aPoint);
+        aFontParams.scaledFont, aFontParams.drawOptions, aPoint,
+        aFontParams.currentColor, aFontParams.palette.get());
     return ok;
   }
 

@@ -17,8 +17,8 @@ if ("@mozilla.org/xre/app-info;1" in Cc) {
   }
 }
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const MOZ_COMPATIBILITY_NIGHTLY = ![
@@ -104,6 +104,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
   isGatedPermissionType:
     "resource://gre/modules/addons/siteperms-addon-utils.sys.mjs",
   isKnownPublicSuffix:
+    "resource://gre/modules/addons/siteperms-addon-utils.sys.mjs",
+  isPrincipalInSitePermissionsBlocklist:
     "resource://gre/modules/addons/siteperms-addon-utils.sys.mjs",
 });
 
@@ -1798,6 +1800,7 @@ var AddonManagerInternal = {
    *         - `aInstallingPrincipal` scheme is not https
    *         - `aInstallingPrincipal` is a public etld
    *         - `aInstallingPrincipal` is a plain ip address
+   *         - `aInstallingPrincipal` is in the blocklist
    *         - `aSitePerm` is not a gated permission
    *         - `aBrowser` is not null and not an element
    */
@@ -1830,6 +1833,23 @@ var AddonManagerInternal = {
       );
     }
 
+    if (lazy.isPrincipalInSitePermissionsBlocklist(aInstallingPrincipal)) {
+      throw Components.Exception(
+        `SitePermsAddons can't be installed`,
+        Cr.NS_ERROR_INVALID_ARG
+      );
+    }
+
+    // Block install from null principal.
+    // /!\ We need to do this check before checking if this is a remote origin iframe,
+    // otherwise isThirdPartyPrincipal might throw.
+    if (aInstallingPrincipal.isNullPrincipal) {
+      throw Components.Exception(
+        `SitePermsAddons can't be installed from sandboxed subframes`,
+        Cr.NS_ERROR_INVALID_ARG
+      );
+    }
+
     // Block install from remote origin iframe
     if (
       aBrowser &&
@@ -1837,13 +1857,6 @@ var AddonManagerInternal = {
     ) {
       throw Components.Exception(
         `SitePermsAddons can't be installed from cross origin subframes`,
-        Cr.NS_ERROR_INVALID_ARG
-      );
-    }
-
-    if (aInstallingPrincipal.scheme !== "https") {
-      throw Components.Exception(
-        `SitePermsAddons can only be installed from secure origins`,
         Cr.NS_ERROR_INVALID_ARG
       );
     }
@@ -1865,9 +1878,9 @@ var AddonManagerInternal = {
     }
 
     // Install origin cannot be on a known etld (e.g. github.io).
-    if (lazy.isKnownPublicSuffix(aInstallingPrincipal.siteOrigin)) {
+    if (lazy.isKnownPublicSuffix(aInstallingPrincipal.siteOriginNoSuffix)) {
       throw Components.Exception(
-        `SitePermsAddon can't be installed from public eTLDs ${aInstallingPrincipal.siteOrigin}`,
+        `SitePermsAddon can't be installed from public eTLDs ${aInstallingPrincipal.siteOriginNoSuffix}`,
         Cr.NS_ERROR_INVALID_ARG
       );
     }
@@ -4876,6 +4889,11 @@ AMTelemetry = {
       case "dictionary":
       case "sitepermission":
         return addonType;
+      // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+      case "sitepermission-deprecated":
+        // Telemetry events' object maximum length is 20 chars (See https://firefox-source-docs.mozilla.org/toolkit/components/telemetry/collection/events.html#limits)
+        // and the value needs to matching the "^[a-zA-Z][a-zA-Z0-9_.]*[a-zA-Z0-9]$" pattern.
+        return "siteperm_deprecated";
       default:
         // Currently this should only include gmp-plugins ("plugin").
         return "other";

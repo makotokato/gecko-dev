@@ -3,17 +3,19 @@
 // Parsing and resolving.
 
 var text = `(module
-      (type $cons (struct
-                   (field $car i32)
-                   (field $cdr (ref null $cons))))
+      (rec
+        (type $cons (struct
+                     (field $car i32)
+                     (field $cdr (ref null $cons))))
 
-      (type $odd (struct
-                  (field $odd.x i32)
-                  (field $to_even (ref null $even))))
+        (type $odd (struct
+                    (field $odd.x i32)
+                    (field $to_even (ref null $even))))
 
-      (type $even (struct
-                   (field $even.x i32)
-                   (field $to_odd (ref null $odd))))
+        (type $even (struct
+                     (field $even.x i32)
+                     (field $to_odd (ref null $odd))))
+      )
 
       ;; Use eqref on the API since struct types cannot be exposed outside the module yet.
 
@@ -87,7 +89,7 @@ assertErrorMessage(() => wasmEvalText(`
 (module
  (func (param (ref null $odd)) (unreachable)))
 `),
-SyntaxError, /failed to find type/);
+SyntaxError, /failed to find name/);
 
 // Ref type mismatch in parameter is allowed through the prefix rule
 // but not if the structs are incompatible.

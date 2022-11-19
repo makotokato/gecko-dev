@@ -36,10 +36,13 @@ use std::hash::{Hash, Hasher};
 
 use anyhow::{bail, Result};
 
-use super::attributes::{ArgumentAttributes, FunctionAttributes};
 use super::ffi::{FFIArgument, FFIFunction};
 use super::literal::{convert_default_value, Literal};
 use super::types::{Type, TypeIterator};
+use super::{
+    attributes::{ArgumentAttributes, FunctionAttributes},
+    convert_type,
+};
 use super::{APIConverter, ComponentInterface};
 
 /// Represents a standalone function.
@@ -78,7 +81,11 @@ impl Function {
         &self.ffi_func
     }
 
-    pub fn throws(&self) -> Option<&str> {
+    pub fn throws(&self) -> bool {
+        self.attributes.get_throws_err().is_some()
+    }
+
+    pub fn throws_name(&self) -> Option<&str> {
         self.attributes.get_throws_err()
     }
 
@@ -89,7 +96,7 @@ impl Function {
     }
 
     pub fn derive_ffi_func(&mut self, ci_prefix: &str) -> Result<()> {
-        // The name is already set if the function is defined in a proc-macro-generated JSON file
+        // The name is already set if the function is defined through a proc-macro invocation
         // rather than in UDL. Don't overwrite it in that case.
         if self.ffi_func.name.is_empty() {
             self.ffi_func.name = format!("{ci_prefix}_{}", self.name);
@@ -132,34 +139,6 @@ impl From<uniffi_meta::FnMetadata> for Function {
             ffi_func,
             attributes: Default::default(),
         }
-    }
-}
-
-fn convert_type(s: &uniffi_meta::Type) -> Type {
-    use uniffi_meta::Type as Ty;
-
-    match s {
-        Ty::U8 => Type::UInt8,
-        Ty::U16 => Type::UInt16,
-        Ty::U32 => Type::UInt32,
-        Ty::U64 => Type::UInt64,
-        Ty::I8 => Type::Int8,
-        Ty::I16 => Type::Int16,
-        Ty::I32 => Type::Int32,
-        Ty::I64 => Type::Int64,
-        Ty::F32 => Type::Float32,
-        Ty::F64 => Type::Float64,
-        Ty::Bool => Type::Boolean,
-        Ty::String => Type::String,
-        Ty::Option { inner_type } => Type::Optional(convert_type(inner_type).into()),
-        Ty::Vec { inner_type } => Type::Sequence(convert_type(inner_type).into()),
-        Ty::HashMap {
-            key_type,
-            value_type,
-        } => Type::Map(
-            convert_type(key_type).into(),
-            convert_type(value_type).into(),
-        ),
     }
 }
 
@@ -220,16 +199,16 @@ impl Argument {
         &self.name
     }
 
-    pub fn type_(&self) -> Type {
-        self.type_.clone()
+    pub fn type_(&self) -> &Type {
+        &self.type_
     }
 
     pub fn by_ref(&self) -> bool {
         self.by_ref
     }
 
-    pub fn default_value(&self) -> Option<Literal> {
-        self.default.clone()
+    pub fn default_value(&self) -> Option<&Literal> {
+        self.default.as_ref()
     }
 
     pub fn iter_types(&self) -> TypeIterator<'_> {
@@ -297,7 +276,7 @@ mod test {
         let func1 = ci.get_function_definition("minimal").unwrap();
         assert_eq!(func1.name(), "minimal");
         assert!(func1.return_type().is_none());
-        assert!(func1.throws().is_none());
+        assert!(func1.throws_type().is_none());
         assert_eq!(func1.arguments().len(), 0);
 
         let func2 = ci.get_function_definition("rich").unwrap();
@@ -306,7 +285,7 @@ mod test {
             func2.return_type().unwrap().canonical_name(),
             "SequenceOptionalstring"
         );
-        assert!(matches!(func2.throws(), Some("TestError")));
+        assert!(matches!(func2.throws_type(), Some(Type::Error(s)) if s == "TestError"));
         assert_eq!(func2.arguments().len(), 2);
         assert_eq!(func2.arguments()[0].name(), "arg1");
         assert_eq!(func2.arguments()[0].type_().canonical_name(), "u32");

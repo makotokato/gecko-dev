@@ -188,6 +188,7 @@ static const char sIntPrefs[][45] = {
     "ui.GtkMenuRadius",
     "ui.dynamicRange",
     "ui.videoDynamicRange",
+    "ui.panelAnimations",
 };
 
 static_assert(ArrayLength(sIntPrefs) == size_t(LookAndFeel::IntID::End),
@@ -497,6 +498,7 @@ static constexpr struct {
     {"browser.theme.content-theme"_ns},
     {"layout.css.moz-box-flexbox-emulation.enabled"_ns},
     {"mathml.legacy_maction_and_semantics_implementations.disabled"_ns},
+    {"mathml.ms_lquote_rquote_attributes.disabled"_ns},
 };
 
 // Read values from the user's preferences.

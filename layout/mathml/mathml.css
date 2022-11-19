@@ -20,6 +20,8 @@ math {
   display: inline;
   font-size: inherit;
   font-style: normal;
+  font-weight: normal;
+  text-indent: 0;
   font-family: serif;
   line-height: normal;
   word-spacing: normal;
@@ -42,18 +44,20 @@ math[display="inline" i] {
 /* Token elements                                                         */
 /**************************************************************************/
 
-ms {
-  display: inline;
+@media not (-moz-mathml-core-ms) {
+  ms {
+    display: inline;
+  }
+  ms:before, ms:after {
+    content: "\0022"
+  }
+  ms[lquote]:before {
+    content: attr(lquote)
+  }
+  ms[rquote]:after {
+    content: attr(rquote)
+  }
 }
-ms:before, ms:after {
-  content: "\0022"
-}
-ms[lquote]:before {
-  content: attr(lquote)
-}
-ms[rquote]:after {
-  content: attr(rquote)
- }
 
 /**************************************************************************/
 /* Links                                                                  */

@@ -12,21 +12,21 @@ const env = Cc["@mozilla.org/process/environment;1"].getService(
 const APPLY_CONFIG_TIMEOUT_MS = 60 * 1000;
 const HOME_PAGE = "resource://mozscreenshots/lib/mozscreenshots.html";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
-const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
 const { Rect } = ChromeUtils.importESModule(
   "resource://gre/modules/Geometry.sys.mjs"
 );
 
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "BrowserTestUtils",
-  "resource://testing-common/BrowserTestUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  BrowserTestUtils: "resource://testing-common/BrowserTestUtils.sys.mjs",
+});
 // Screenshot.jsm must be imported this way for xpcshell tests to work
 ChromeUtils.defineModuleGetter(
   lazy,
@@ -261,7 +261,7 @@ var TestRunner = {
    * Calculate the bounding box based on CSS selector from config for cropping
    *
    * @param {String[]} selectors - array of CSS selectors for relevant DOM element
-   * @return {Geometry.jsm Rect} Rect holding relevant x, y, width, height with padding
+   * @return {Geometry.sys.mjs Rect} Rect holding relevant x, y, width, height with padding
    **/
   _findBoundingBox(selectors, windowType) {
     if (!selectors.length) {

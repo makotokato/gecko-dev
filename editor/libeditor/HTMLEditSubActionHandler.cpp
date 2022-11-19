@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "HTMLEditor.h"
+#include "HTMLEditorInlines.h"
 
 #include <algorithm>
 #include <utility>
@@ -707,8 +708,9 @@ nsresult HTMLEditor::OnEndHandlingTopLevelEditSubActionInternal() {
   return NS_OK;
 }
 
-Result<EditActionResult, nsresult> HTMLEditor::CanHandleHTMLEditSubAction()
-    const {
+Result<EditActionResult, nsresult> HTMLEditor::CanHandleHTMLEditSubAction(
+    CheckSelectionInReplacedElement aCheckSelectionInReplacedElement
+    /* = CheckSelectionInReplacedElement::Yes */) const {
   MOZ_ASSERT(IsEditActionDataAvailable());
 
   if (NS_WARN_IF(Destroyed())) {
@@ -726,8 +728,7 @@ Result<EditActionResult, nsresult> HTMLEditor::CanHandleHTMLEditSubAction()
     return Err(NS_ERROR_FAILURE);
   }
 
-  if (!HTMLEditUtils::IsSimplyEditableNode(*selStartNode) ||
-      HTMLEditUtils::IsNonEditableReplacedContent(*selStartNode->AsContent())) {
+  if (!HTMLEditUtils::IsSimplyEditableNode(*selStartNode)) {
     return EditActionResult::CanceledResult();
   }
 
@@ -737,11 +738,21 @@ Result<EditActionResult, nsresult> HTMLEditor::CanHandleHTMLEditSubAction()
   }
 
   if (selStartNode == selEndNode) {
+    if (aCheckSelectionInReplacedElement ==
+            CheckSelectionInReplacedElement::Yes &&
+        HTMLEditUtils::IsNonEditableReplacedContent(
+            *selStartNode->AsContent())) {
+      return EditActionResult::CanceledResult();
+    }
     return EditActionResult::IgnoredResult();
   }
 
-  if (!HTMLEditUtils::IsSimplyEditableNode(*selEndNode) ||
+  if (HTMLEditUtils::IsNonEditableReplacedContent(*selStartNode->AsContent()) ||
       HTMLEditUtils::IsNonEditableReplacedContent(*selEndNode->AsContent())) {
+    return EditActionResult::CanceledResult();
+  }
+
+  if (!HTMLEditUtils::IsSimplyEditableNode(*selEndNode)) {
     return EditActionResult::CanceledResult();
   }
 
@@ -1530,7 +1541,8 @@ HTMLEditor::InsertParagraphSeparatorAsSubAction(const Element& aEditingHost) {
   }
 
   {
-    Result<EditActionResult, nsresult> result = CanHandleHTMLEditSubAction();
+    Result<EditActionResult, nsresult> result = CanHandleHTMLEditSubAction(
+        CheckSelectionInReplacedElement::OnlyWhenNotInSameNode);
     if (MOZ_UNLIKELY(result.isErr())) {
       NS_WARNING("HTMLEditor::CanHandleHTMLEditSubAction() failed");
       return result;
@@ -1621,6 +1633,20 @@ HTMLEditor::InsertParagraphSeparatorAsSubAction(const Element& aEditingHost) {
   if (NS_WARN_IF(!pointToInsert.IsInContentNode())) {
     return Err(NS_ERROR_FAILURE);
   }
+  while (true) {
+    Element* element = pointToInsert.GetContainerOrContainerParentElement();
+    if (MOZ_UNLIKELY(!element)) {
+      return Err(NS_ERROR_FAILURE);
+    }
+    // If the element can have a <br> element (it means that the element or its
+    // container must be able to have <div> or <p> too), we can handle
+    // insertParagraph at the point.
+    if (HTMLEditUtils::CanNodeContain(*element, *nsGkAtoms::br)) {
+      break;
+    }
+    // Otherwise, try to insert paragraph at the parent.
+    pointToInsert = pointToInsert.ParentPoint();
+  }
 
   if (IsMailEditor()) {
     if (RefPtr<Element> mailCiteElement = GetMostDistantAncestorMailCiteElement(
@@ -1702,7 +1728,7 @@ HTMLEditor::InsertParagraphSeparatorAsSubAction(const Element& aEditingHost) {
              editableBlockAncestor;
              editableBlockAncestor = HTMLEditUtils::GetAncestorElement(
                  *editableBlockAncestor,
-                 HTMLEditUtils::ClosestEditableBlockElement)) {
+                 HTMLEditUtils::ClosestEditableBlockElementOrButtonElement)) {
           if (HTMLEditUtils::CanElementContainParagraph(
                   *editableBlockAncestor)) {
             return false;
@@ -1717,7 +1743,7 @@ HTMLEditor::InsertParagraphSeparatorAsSubAction(const Element& aEditingHost) {
   RefPtr<Element> editableBlockElement =
       HTMLEditUtils::GetInclusiveAncestorElement(
           *pointToInsert.ContainerAs<nsIContent>(),
-          HTMLEditUtils::ClosestEditableBlockElement);
+          HTMLEditUtils::ClosestEditableBlockElementOrButtonElement);
 
   // If we cannot insert a <p>/<div> element at the selection, we should insert
   // a <br> element or a linefeed instead.
@@ -1825,7 +1851,7 @@ HTMLEditor::InsertParagraphSeparatorAsSubAction(const Element& aEditingHost) {
 
     editableBlockElement = HTMLEditUtils::GetInclusiveAncestorElement(
         *pointToInsert.ContainerAs<nsIContent>(),
-        HTMLEditUtils::ClosestEditableBlockElement);
+        HTMLEditUtils::ClosestEditableBlockElementOrButtonElement);
     if (NS_WARN_IF(!editableBlockElement)) {
       return Err(NS_ERROR_UNEXPECTED);
     }
@@ -5217,10 +5243,9 @@ Result<EditActionResult, nsresult> HTMLEditor::HandleOutdentAtSelection(
   // at restoring Selection.
   Result<SplitRangeOffFromNodeResult, nsresult> outdentResult =
       HandleOutdentAtSelectionInternal(aEditingHost);
+  MOZ_ASSERT_IF(outdentResult.isOk(),
+                !outdentResult.inspect().HasCaretPointSuggestion());
   if (NS_WARN_IF(Destroyed())) {
-    if (outdentResult.isOk()) {
-      outdentResult.inspect().IgnoreCaretPointSuggestion();
-    }
     return Err(NS_ERROR_EDITOR_DESTROYED);
   }
   if (MOZ_UNLIKELY(outdentResult.isErr())) {
@@ -5731,9 +5756,15 @@ HTMLEditor::HandleOutdentAtSelectionInternal(const Element& aEditingHost) {
       OutdentPartOfBlock(*indentedParentElement, *firstContentToBeOutdented,
                          *lastContentToBeOutdented, indentedParentIndentedWith,
                          aEditingHost);
-  NS_WARNING_ASSERTION(outdentResult.isOk(),
-                       "HTMLEditor::OutdentPartOfBlock() failed");
-  return outdentResult;
+  if (MOZ_UNLIKELY(outdentResult.isErr())) {
+    NS_WARNING("HTMLEditor::OutdentPartOfBlock() failed");
+    return outdentResult;
+  }
+  // We will restore selection soon.  Therefore, callers do not need to restore
+  // the selection.
+  SplitRangeOffFromNodeResult unwrappedOutdentResult = outdentResult.unwrap();
+  unwrappedOutdentResult.ForgetCaretPointSuggestion();
+  return unwrappedOutdentResult;
 }
 
 Result<SplitRangeOffFromNodeResult, nsresult>
@@ -5950,7 +5981,7 @@ Result<CreateElementResult, nsresult> HTMLEditor::ChangeListElementType(
   EditorDOMPoint pointToPutCaret;
 
   AutoTArray<OwningNonNull<nsIContent>, 32> listElementChildren;
-  HTMLEditor::GetChildNodesOf(aListElement, listElementChildren);
+  HTMLEditUtils::CollectAllChildren(aListElement, listElementChildren);
 
   for (const OwningNonNull<nsIContent>& childContent : listElementChildren) {
     if (!childContent->IsElement()) {
@@ -6380,12 +6411,13 @@ nsresult HTMLEditor::AlignContentsAtRanges(AutoRangeArray& aRanges,
 
   if (createEmptyDivElement) {
     if (MOZ_UNLIKELY(!pointToPutCaret.IsSet() && !aRanges.IsInContent())) {
-      NS_WARNING("Mutaiton event listener might have changed the selection");
+      NS_WARNING("Mutation event listener might have changed the selection");
       return NS_ERROR_EDITOR_UNEXPECTED_DOM_TREE;
     }
     const EditorDOMPoint pointToInsertDivElement =
-        pointToPutCaret.IsSet() ? pointToPutCaret
-                                : GetFirstSelectionStartPoint<EditorDOMPoint>();
+        pointToPutCaret.IsSet()
+            ? pointToPutCaret
+            : aRanges.GetFirstRangeStartPoint<EditorDOMPoint>();
     Result<CreateElementResult, nsresult> insertNewDivElementResult =
         InsertDivElementToAlignContents(pointToInsertDivElement, aAlignType,
                                         aEditingHost);
@@ -8248,7 +8280,7 @@ HTMLEditor::WrapContentsInBlockquoteElementsWithTransaction(
       curBlock = nullptr;
       // Recursion time
       AutoTArray<OwningNonNull<nsIContent>, 24> childContents;
-      HTMLEditor::GetChildNodesOf(*content, childContents);
+      HTMLEditUtils::CollectAllChildren(*content, childContents);
       Result<CreateElementResult, nsresult>
           wrapChildrenInAnotherBlockquoteResult =
               WrapContentsInBlockquoteElementsWithTransaction(childContents,
@@ -8391,7 +8423,7 @@ HTMLEditor::RemoveBlockContainerElementsWithTransaction(
       }
       // Recursion time
       AutoTArray<OwningNonNull<nsIContent>, 24> childContents;
-      HTMLEditor::GetChildNodesOf(*content, childContents);
+      HTMLEditUtils::CollectAllChildren(*content, childContents);
       Result<EditorDOMPoint, nsresult> removeBlockContainerElementsResult =
           RemoveBlockContainerElementsWithTransaction(childContents);
       if (MOZ_UNLIKELY(removeBlockContainerElementsResult.isErr())) {
@@ -8550,7 +8582,7 @@ HTMLEditor::CreateOrChangeBlockContainerElement(
       curBlock = nullptr;
       // Recursion time
       AutoTArray<OwningNonNull<nsIContent>, 24> childContents;
-      HTMLEditor::GetChildNodesOf(*content, childContents);
+      HTMLEditUtils::CollectAllChildren(*content, childContents);
       if (!childContents.IsEmpty()) {
         Result<CreateElementResult, nsresult> wrapChildrenInBlockElementResult =
             CreateOrChangeBlockContainerElement(childContents, aBlockTag,
@@ -9400,6 +9432,7 @@ nsresult HTMLEditor::AdjustCaretPositionAndEnsurePaddingBRElement(
       if (HTMLEditUtils::IsInvisibleBRElement(*previousEditableContent) &&
           !EditorUtils::IsPaddingBRElementForEmptyLastLine(
               *previousEditableContent)) {
+        AutoEditorDOMPointChildInvalidator lockOffset(point);
         Result<CreateElementResult, nsresult> insertPaddingBRElementResult =
             InsertPaddingBRElementForEmptyLastLineWithTransaction(point);
         if (MOZ_UNLIKELY(insertPaddingBRElementResult.isErr())) {
@@ -10411,7 +10444,7 @@ Result<EditorDOMPoint, nsresult> HTMLEditor::ChangeMarginStart(
 
   // Remove unnecessary divs
   if (!aElement.IsHTMLElement(nsGkAtoms::div) ||
-      HTMLEditor::HasAttributes(&aElement)) {
+      HTMLEditUtils::ElementHasAttributesExceptMozDirty(aElement)) {
     return EditorDOMPoint();
   }
   // Don't touch editing host nor node which is outside of it.

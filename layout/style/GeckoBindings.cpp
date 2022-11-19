@@ -73,6 +73,7 @@
 #include "mozilla/dom/HTMLSlotElement.h"
 #include "mozilla/dom/MediaList.h"
 #include "mozilla/dom/SVGElement.h"
+#include "mozilla/dom/WorkerCommon.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/URLExtraData.h"
 #include "mozilla/dom/CSSMozDocumentRule.h"
@@ -1005,6 +1006,32 @@ nsTArray<uint32_t>* Gecko_AppendFeatureValueHashEntry(
                                                          aName, aAlternate);
 }
 
+gfx::FontPaletteValueSet* Gecko_ConstructFontPaletteValueSet() {
+  return new gfx::FontPaletteValueSet();
+}
+
+gfx::FontPaletteValueSet::PaletteValues* Gecko_AppendPaletteValueHashEntry(
+    gfx::FontPaletteValueSet* aPaletteValueSet, nsAtom* aFamily,
+    nsAtom* aName) {
+  MOZ_ASSERT(NS_IsMainThread());
+  return aPaletteValueSet->Insert(aName, nsAtomCString(aFamily));
+}
+
+void Gecko_SetFontPaletteBase(gfx::FontPaletteValueSet::PaletteValues* aValues,
+                              int32_t aBasePaletteIndex) {
+  aValues->mBasePalette = aBasePaletteIndex;
+}
+
+void Gecko_SetFontPaletteOverride(
+    gfx::FontPaletteValueSet::PaletteValues* aValues, int32_t aIndex,
+    StyleRGBA aColor) {
+  if (aIndex < 0) {
+    return;
+  }
+  aValues->mOverrides.AppendElement(gfx::FontPaletteValueSet::OverrideColor{
+      uint32_t(aIndex), gfx::sRGBColor::FromABGR(aColor.ToColor())});
+}
+
 void Gecko_CounterStyle_ToPtr(const StyleCounterStyle* aStyle,
                               CounterStylePtr* aPtr) {
   *aPtr = CounterStylePtr::FromStyle(*aStyle);
@@ -1418,13 +1445,17 @@ void Gecko_StyleSheet_FinishAsyncParse(
   UniquePtr<StyleUseCounters> useCounters = aUseCounters.Consume();
   RefPtr<SheetLoadDataHolder> loadData = aData;
   RefPtr<RawServoStyleSheetContents> sheetContents = aSheetContents.Consume();
-  NS_DispatchToMainThread(NS_NewRunnableFunction(
-      __func__, [d = std::move(loadData), contents = std::move(sheetContents),
-                 counters = std::move(useCounters)]() mutable {
-        MOZ_ASSERT(NS_IsMainThread());
-        SheetLoadData* data = d->get();
-        data->mSheet->FinishAsyncParse(contents.forget(), std::move(counters));
-      }));
+  NS_DispatchToMainThreadQueue(
+      NS_NewRunnableFunction(
+          __func__,
+          [d = std::move(loadData), contents = std::move(sheetContents),
+           counters = std::move(useCounters)]() mutable {
+            MOZ_ASSERT(NS_IsMainThread());
+            SheetLoadData* data = d->get();
+            data->mSheet->FinishAsyncParse(contents.forget(),
+                                           std::move(counters));
+          }),
+      EventQueuePriority::RenderBlocking);
 }
 
 static already_AddRefed<StyleSheet> LoadImportSheet(
@@ -1496,16 +1527,19 @@ void Gecko_LoadStyleSheetAsync(SheetLoadDataHolder* aParentData,
   RefPtr<SheetLoadDataHolder> loadData = aParentData;
   RefPtr<RawServoMediaList> mediaList = aMediaList.Consume();
   RefPtr<RawServoImportRule> importRule = aImportRule.Consume();
-  NS_DispatchToMainThread(NS_NewRunnableFunction(
-      __func__,
-      [data = std::move(loadData), url = StyleCssUrl(*aUrl),
-       media = std::move(mediaList), import = std::move(importRule)]() mutable {
-        MOZ_ASSERT(NS_IsMainThread());
-        SheetLoadData* d = data->get();
-        RefPtr<StyleSheet> sheet = LoadImportSheet(
-            d->mLoader, d->mSheet, d, nullptr, url, media.forget());
-        Servo_ImportRule_SetSheet(import, sheet);
-      }));
+  NS_DispatchToMainThreadQueue(
+      NS_NewRunnableFunction(
+          __func__,
+          [data = std::move(loadData), url = StyleCssUrl(*aUrl),
+           media = std::move(mediaList),
+           import = std::move(importRule)]() mutable {
+            MOZ_ASSERT(NS_IsMainThread());
+            SheetLoadData* d = data->get();
+            RefPtr<StyleSheet> sheet = LoadImportSheet(
+                d->mLoader, d->mSheet, d, nullptr, url, media.forget());
+            Servo_ImportRule_SetSheet(import, sheet);
+          }),
+      EventQueuePriority::RenderBlocking);
 }
 
 void Gecko_AddPropertyToSet(nsCSSPropertyIDSet* aPropertySet,
@@ -1653,6 +1687,8 @@ bool Gecko_IsFontTechSupported(StyleFontFaceSourceTechFlags aFlag) {
 bool Gecko_IsInServoTraversal() { return ServoStyleSet::IsInServoTraversal(); }
 
 bool Gecko_IsMainThread() { return NS_IsMainThread(); }
+
+bool Gecko_IsDOMWorkerThread() { return !!GetCurrentThreadWorkerPrivate(); }
 
 const nsAttrValue* Gecko_GetSVGAnimatedClass(const Element* aElement) {
   MOZ_ASSERT(aElement->IsSVGElement());

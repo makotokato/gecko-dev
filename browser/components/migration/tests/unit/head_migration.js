@@ -1,7 +1,7 @@
 "use strict";
 
-var { MigrationUtils, MigratorPrototype } = ChromeUtils.import(
-  "resource:///modules/MigrationUtils.jsm"
+var { MigrationUtils, MigratorPrototype } = ChromeUtils.importESModule(
+  "resource:///modules/MigrationUtils.sys.mjs"
 );
 var { LoginHelper } = ChromeUtils.import(
   "resource://gre/modules/LoginHelper.jsm"
@@ -10,8 +10,8 @@ var { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 var { PlacesUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/PlacesUtils.sys.mjs"
 );
-var { Preferences } = ChromeUtils.import(
-  "resource://gre/modules/Preferences.jsm"
+var { Preferences } = ChromeUtils.importESModule(
+  "resource://gre/modules/Preferences.sys.mjs"
 );
 var { PromiseUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/PromiseUtils.sys.mjs"
@@ -19,8 +19,8 @@ var { PromiseUtils } = ChromeUtils.importESModule(
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-var { TestUtils } = ChromeUtils.import(
-  "resource://testing-common/TestUtils.jsm"
+var { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 var { PlacesTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/PlacesTestUtils.sys.mjs"
@@ -34,8 +34,8 @@ ChromeUtils.defineESModuleGetters(this, {
 // Initialize profile.
 var gProfD = do_get_profile();
 
-var { getAppInfo, newAppInfo, updateAppInfo } = ChromeUtils.import(
-  "resource://testing-common/AppInfo.jsm"
+var { getAppInfo, newAppInfo, updateAppInfo } = ChromeUtils.importESModule(
+  "resource://testing-common/AppInfo.sys.mjs"
 );
 updateAppInfo();
 

@@ -42,6 +42,7 @@ class SharedSurfaceTextureClient;
 class WebRenderCanvasData;
 }  // namespace layers
 namespace gfx {
+class DrawTarget;
 class SourceSurface;
 class VRLayerChild;
 }  // namespace gfx
@@ -163,8 +164,6 @@ class HTMLCanvasElement final : public nsGenericHTMLElement,
 
     SetHTMLBoolAttr(nsGkAtoms::moz_opaque, aValue, aRv);
   }
-  already_AddRefed<nsISupports> MozGetIPCContext(const nsAString& aContextId,
-                                                 ErrorResult& aRv);
   PrintCallback* GetMozPrintCallback() const;
   void SetMozPrintCallback(PrintCallback* aCallback);
 
@@ -216,8 +215,14 @@ class HTMLCanvasElement final : public nsGenericHTMLElement,
   bool GetIsOpaque();
   virtual bool GetOpaqueAttr() override;
 
+  /**
+   * Retrieve a snapshot of the internal surface, returning the alpha type if
+   * requested. An optional target may be supplied for which the snapshot will
+   * be optimized for, if possible.
+   */
   virtual already_AddRefed<gfx::SourceSurface> GetSurfaceSnapshot(
-      gfxAlphaType* aOutAlphaType = nullptr);
+      gfxAlphaType* aOutAlphaType = nullptr,
+      gfx::DrawTarget* aTarget = nullptr);
 
   /*
    * Register a FrameCaptureListener with this canvas.

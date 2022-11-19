@@ -7,6 +7,7 @@
 #ifndef mozilla_dom_workers_WorkerLoadContext_h__
 #define mozilla_dom_workers_WorkerLoadContext_h__
 
+#include "nsIChannel.h"
 #include "nsIInputStream.h"
 #include "nsIRequest.h"
 #include "mozilla/CORSMode.h"
@@ -25,10 +26,11 @@ class WorkerPrivate;
 
 namespace workerinternals::loader {
 class CacheCreator;
-}
+class ScriptLoaderRunnable;
+}  // namespace workerinternals::loader
 
 /*
- * WorkerScriptLoadContext (for all workers)
+ * WorkerLoadContext (for all workers)
  *
  * LoadContexts augment the loading of a ScriptLoadRequest. They
  * describe how a ScriptLoadRequests loading and evaluation needs to be
@@ -36,12 +38,23 @@ class CacheCreator;
  * WorkerLoadContext has the following generic fields applied to all worker
  * ScriptLoadRequests (and primarily used for error handling):
  *
- *    * mLoadResult
- *        Used to store the result of a load. In particular, it is used for
- *        error handling when a load fails (for example, a malformed URI).
  *    * mMutedErrorFlag
  *        Set when we finish loading a script, and used to determine whether a
  *        given error is thrown or muted.
+ *    * mLoadResult
+ *        In order to report errors correctly in the worker thread, we need to
+ *        move them from the main thread to the worker. This field records the
+ *        load error, for throwing when we return to the worker thread.
+ *    * mKind
+ *        See documentation of WorkerLoadContext::Kind.
+ *    * mClientInfo
+ *        A snapshot of a global living in the system (see documentation for
+ *        ClientInfo). In worker loading, this field is important for CSP
+ *        information and knowing what to intercept for Service Worker
+ *        interception.
+ *    * mChannel
+ *        The channel used by this request for it's load. Used for cancellation,
+ *        in order to cancel the stream.
  *
  * The rest of the fields on this class focus on enabling the ServiceWorker
  * usecase, in particular -- using the Cache API to store the worker so that
@@ -80,8 +93,6 @@ class WorkerLoadContext : public JS::loader::LoadContextBase {
 
   explicit WorkerLoadContext(Kind aKind, const Maybe<ClientInfo>& aClientInfo);
 
-  ~WorkerLoadContext() = default;
-
   // Used to detect if the `is top-level` bit is set on a given module.
   bool IsTopLevel() {
     return mRequest->IsTopLevel() && (mKind == Kind::MainScript);
@@ -101,8 +112,10 @@ class WorkerLoadContext : public JS::loader::LoadContextBase {
   Maybe<bool> mMutedErrorFlag;
   nsresult mLoadResult = NS_ERROR_NOT_INITIALIZED;
   bool mLoadingFinished = false;
+  bool mIsTopLevel = true;
   Kind mKind;
   Maybe<ClientInfo> mClientInfo;
+  nsCOMPtr<nsIChannel> mChannel;
 
   /* These fields are only used by service workers */
   /* TODO: Split out a ServiceWorkerLoadContext */
@@ -119,15 +132,6 @@ class WorkerLoadContext : public JS::loader::LoadContextBase {
   // The reader stream the cache entry should be filled from, for those cases
   // when we're going to have an mCachePromise.
   nsCOMPtr<nsIInputStream> mCacheReadStream;
-
-  RefPtr<workerinternals::loader::CacheCreator> mCacheCreator;
-
-  void ClearCacheCreator();
-
-  void SetCacheCreator(
-      RefPtr<workerinternals::loader::CacheCreator> aCacheCreator);
-
-  RefPtr<workerinternals::loader::CacheCreator> GetCacheCreator();
 
   enum CacheStatus {
     // By default a normal script is just loaded from the network. But for
@@ -152,6 +156,49 @@ class WorkerLoadContext : public JS::loader::LoadContextBase {
   CacheStatus mCacheStatus = Uncached;
 
   bool IsAwaitingPromise() const { return bool(mCachePromise); }
+};
+
+class ThreadSafeRequestHandle final {
+ public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(ThreadSafeRequestHandle)
+
+  ThreadSafeRequestHandle(JS::loader::ScriptLoadRequest* aRequest,
+                          nsISerialEventTarget* aSyncTarget);
+
+  JS::loader::ScriptLoadRequest* GetRequest() const { return mRequest; }
+
+  WorkerLoadContext* GetContext() { return mRequest->GetWorkerLoadContext(); }
+
+  bool IsEmpty() { return !mRequest; }
+
+  // Runnable controls
+  nsresult OnStreamComplete(nsresult aStatus);
+
+  void LoadingFinished(nsresult aRv);
+
+  void MaybeExecuteFinishedScripts();
+
+  bool IsCancelled();
+
+  bool Finished() {
+    return GetContext()->mLoadingFinished && !GetContext()->IsAwaitingPromise();
+  }
+
+  nsresult GetCancelResult();
+
+  already_AddRefed<JS::loader::ScriptLoadRequest> ReleaseRequest();
+
+  workerinternals::loader::CacheCreator* GetCacheCreator();
+
+  RefPtr<workerinternals::loader::ScriptLoaderRunnable> mRunnable;
+
+  bool mExecutionScheduled = false;
+
+ private:
+  ~ThreadSafeRequestHandle();
+
+  RefPtr<JS::loader::ScriptLoadRequest> mRequest;
+  nsCOMPtr<nsISerialEventTarget> mOwningEventTarget;
 };
 
 }  // namespace mozilla::dom

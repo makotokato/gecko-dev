@@ -8,22 +8,22 @@
 
 #include "AlternateServices.h"
 #include "LoadInfo.h"
-#include "nsComponentManagerUtils.h"
-#include "nsEscape.h"
-#include "nsHttpConnectionInfo.h"
-#include "nsHttpChannel.h"
-#include "nsHttpHandler.h"
-#include "nsIOService.h"
-#include "nsThreadUtils.h"
-#include "nsHttpTransaction.h"
-#include "nsISSLSocketControl.h"
-#include "nsIWellKnownOpportunisticUtils.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/StaticPrefs_network.h"
-#include "mozilla/dom/PContent.h"
 #include "mozilla/SyncRunnable.h"
-#include "mozilla/net/AltSvcTransactionParent.h"
+#include "mozilla/dom/PContent.h"
 #include "mozilla/net/AltSvcTransactionChild.h"
+#include "mozilla/net/AltSvcTransactionParent.h"
+#include "nsComponentManagerUtils.h"
+#include "nsEscape.h"
+#include "nsHttpChannel.h"
+#include "nsHttpConnectionInfo.h"
+#include "nsHttpHandler.h"
+#include "nsHttpTransaction.h"
+#include "nsIOService.h"
+#include "nsITLSSocketControl.h"
+#include "nsIWellKnownOpportunisticUtils.h"
+#include "nsThreadUtils.h"
 
 /* RFC 7838 Alternative Services
    http://httpwg.org/http-extensions/opsec.html
@@ -354,7 +354,7 @@ void AltSvcMapping::GetConnectionInfo(
     const OriginAttributes& originAttributes) {
   RefPtr<nsHttpConnectionInfo> ci = new nsHttpConnectionInfo(
       mOriginHost, mOriginPort, mNPNToken, mUsername, pi, originAttributes,
-      mAlternateHost, mAlternatePort, mIsHttp3);
+      mAlternateHost, mAlternatePort, mIsHttp3, false);
 
   // http:// without the mixed-scheme attribute needs to be segmented in the
   // connection manager connection information hash with this attribute
@@ -566,7 +566,7 @@ bool AltSvcTransaction<Validator>::MaybeValidate(nsresult reason) {
     return false;
   }
 
-  nsCOMPtr<nsISSLSocketControl> socketControl;
+  nsCOMPtr<nsITLSSocketControl> socketControl;
   mConnection->GetTLSSocketControl(getter_AddRefs(socketControl));
 
   LOG(("AltSvcTransaction::MaybeValidate() %p socketControl=%p\n", this,
@@ -898,8 +898,8 @@ void AltSvcCache::EnsureStorageInited() {
   }
 
   SyncRunnable::DispatchToThread(
-      main, new SyncRunnable(NS_NewRunnableFunction(
-                "AltSvcCache::EnsureStorageInited", initTask)));
+      main,
+      NS_NewRunnableFunction("AltSvcCache::EnsureStorageInited", initTask));
 }
 
 already_AddRefed<AltSvcMapping> AltSvcCache::LookupMapping(

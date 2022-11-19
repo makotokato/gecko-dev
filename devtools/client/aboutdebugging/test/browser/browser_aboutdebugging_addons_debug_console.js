@@ -7,8 +7,8 @@ Services.scriptloader.loadSubScript(CHROME_URL_ROOT + "helper-addons.js", this);
 
 // There are shutdown issues for which multiple rejections are left uncaught.
 // See bug 1018184 for resolving these issues.
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 PromiseTestUtils.allowMatchingRejectionsGlobally(/File closed/);
 
@@ -58,6 +58,7 @@ add_task(async function testWebExtensionsToolboxWebConsole() {
         browser_action: {
           default_title: "WebExtension Popup Debugging",
           default_popup: "popup.html",
+          default_area: "navbar",
         },
       },
       files: {
@@ -104,6 +105,7 @@ add_task(async function testWebExtensionsToolboxWebConsole() {
         browser_action: {
           default_title: "Other addon popup",
           default_popup: "other-popup.html",
+          default_area: "navbar",
         },
       },
       files: {
@@ -271,6 +273,7 @@ add_task(async function testWebExtensionNoBgScript() {
         browser_action: {
           default_title: "WebExtension Popup Only",
           default_popup: "popup.html",
+          default_area: "navbar",
         },
       },
       files: {
@@ -361,6 +364,7 @@ add_task(async function testWebExtensionTwoReloads() {
         browser_action: {
           default_title: "WebExtension with background script",
           default_popup: "popup.html",
+          default_area: "navbar",
         },
       },
       files: {

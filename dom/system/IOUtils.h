@@ -27,7 +27,7 @@
 #include "nsTArray.h"
 #include "prio.h"
 
-class nsFileStream;
+class nsFileRandomAccessStream;
 
 namespace mozilla {
 
@@ -207,6 +207,14 @@ class IOUtils final {
                                 const LaunchOptions& aOptions,
                                 ErrorResult& aRv);
 #endif
+
+  static already_AddRefed<Promise> GetFile(
+      GlobalObject& aGlobal, const Sequence<nsString>& aComponents,
+      ErrorResult& aError);
+
+  static already_AddRefed<Promise> GetDirectory(
+      GlobalObject& aGlobal, const Sequence<nsString>& aComponents,
+      ErrorResult& aError);
 
   static void GetProfileBeforeChange(GlobalObject& aGlobal,
                                      JS::MutableHandle<JS::Value>,
@@ -861,7 +869,7 @@ class IOUtils::JsBuffer final {
 
 class SyncReadFile : public nsISupports, public nsWrapperCache {
  public:
-  SyncReadFile(nsISupports* aParent, RefPtr<nsFileStream>&& aStream,
+  SyncReadFile(nsISupports* aParent, RefPtr<nsFileRandomAccessStream>&& aStream,
                int64_t aSize);
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -880,7 +888,7 @@ class SyncReadFile : public nsISupports, public nsWrapperCache {
   virtual ~SyncReadFile();
 
   nsCOMPtr<nsISupports> mParent;
-  RefPtr<nsFileStream> mStream;
+  RefPtr<nsFileRandomAccessStream> mStream;
   int64_t mSize = 0;
 };
 

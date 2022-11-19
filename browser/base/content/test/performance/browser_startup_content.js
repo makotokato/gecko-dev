@@ -20,12 +20,12 @@ const kDumpAllStacks = false;
 
 const known_scripts = {
   modules: new Set([
-    "chrome://mochikit/content/ShutdownLeaksCollector.jsm",
+    "chrome://mochikit/content/ShutdownLeaksCollector.sys.mjs",
 
     // General utilities
-    "resource://gre/modules/AppConstants.jsm",
-    "resource://gre/modules/DeferredTask.jsm",
-    "resource://gre/modules/Timer.jsm",
+    "resource://gre/modules/AppConstants.sys.mjs",
+    "resource://gre/modules/DeferredTask.sys.mjs",
+    "resource://gre/modules/Timer.sys.mjs",
     "resource://gre/modules/XPCOMUtils.sys.mjs",
 
     // Logging related
@@ -69,10 +69,10 @@ if (!gFissionBrowser) {
 const intermittently_loaded_scripts = {
   modules: new Set([
     "resource://gre/modules/nsAsyncShutdown.jsm",
-    "resource://gre/modules/sessionstore/Utils.jsm",
+    "resource://gre/modules/sessionstore/Utils.sys.mjs",
 
     // Session store.
-    "resource://gre/modules/sessionstore/SessionHistory.jsm",
+    "resource://gre/modules/sessionstore/SessionHistory.sys.mjs",
 
     // Webcompat about:config front-end. This is part of a system add-on which
     // may not load early enough for the test.
@@ -80,15 +80,16 @@ const intermittently_loaded_scripts = {
 
     // Cookie banner handling.
     "resource://gre/actors/CookieBannerChild.jsm",
+    "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
 
     // Test related
     "chrome://remote/content/marionette/actors/MarionetteEventsChild.sys.mjs",
     "chrome://remote/content/shared/Log.sys.mjs",
-    "resource://testing-common/BrowserTestUtilsChild.jsm",
-    "resource://testing-common/ContentEventListenerChild.jsm",
-    "resource://specialpowers/AppTestDelegateChild.jsm",
-    "resource://specialpowers/SpecialPowersChild.jsm",
-    "resource://specialpowers/WrapPrivileged.jsm",
+    "resource://testing-common/BrowserTestUtilsChild.sys.mjs",
+    "resource://testing-common/ContentEventListenerChild.sys.mjs",
+    "resource://specialpowers/AppTestDelegateChild.sys.mjs",
+    "resource://specialpowers/SpecialPowersChild.sys.mjs",
+    "resource://specialpowers/WrapPrivileged.sys.mjs",
   ]),
   frameScripts: new Set([]),
   processScripts: new Set([
@@ -129,8 +130,8 @@ add_task(async function() {
         /* eslint-env mozilla/frame-script */
         const Cm = Components.manager;
         Cm.QueryInterface(Ci.nsIServiceManager);
-        const { AppConstants } = ChromeUtils.import(
-          "resource://gre/modules/AppConstants.jsm"
+        const { AppConstants } = ChromeUtils.importESModule(
+          "resource://gre/modules/AppConstants.sys.mjs"
         );
         let collectStacks = AppConstants.NIGHTLY_BUILD || AppConstants.DEBUG;
         let modules = {};

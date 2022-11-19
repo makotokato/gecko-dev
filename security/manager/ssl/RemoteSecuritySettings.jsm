@@ -33,11 +33,13 @@ const lazy = {};
 XPCOMUtils.defineLazyGetter(lazy, "gTextDecoder", () => new TextDecoder());
 
 XPCOMUtils.defineLazyGetter(lazy, "log", () => {
-  let { ConsoleAPI } = ChromeUtils.import("resource://gre/modules/Console.jsm");
+  let { ConsoleAPI } = ChromeUtils.importESModule(
+    "resource://gre/modules/Console.sys.mjs"
+  );
   return new ConsoleAPI({
     prefix: "RemoteSecuritySettings.jsm",
     // tip: set maxLogLevel to "debug" and use log.debug() to create detailed
-    // messages during development. See LOG_LEVELS in Console.jsm for details.
+    // messages during development. See LOG_LEVELS in Console.sys.mjs for details.
     maxLogLevel: "error",
     maxLogLevelPref: LOGLEVEL_PREF,
   });
@@ -122,7 +124,7 @@ function setRevocations(certStorage, revocations) {
  * @param {Integer} dataType a Ci.nsICertStorage.DATA_TYPE_* constant
  *                           indicating the type of data
 
- * @return {Promise} a promise that will resolve with true if the data type is
+ * @returns {Promise} a promise that will resolve with true if the data type is
  *                   present
  */
 function hasPriorData(dataType) {
@@ -145,7 +147,12 @@ function hasPriorData(dataType) {
 /**
  * Revoke the appropriate certificates based on the records from the blocklist.
  *
- * @param {Object} data   Current records in the local db.
+ * @param {object} options
+ * @param {object} options.data Current records in the local db.
+ * @param {Array} options.data.current
+ * @param {Array} options.data.created
+ * @param {Array} options.data.updated
+ * @param {Array} options.data.deleted
  */
 const updateCertBlocklist = async function({
   data: { current, created, updated, deleted },
@@ -165,7 +172,8 @@ const updateCertBlocklist = async function({
     created = current;
   }
 
-  for (let item of deleted) {
+  let toDelete = deleted.concat(updated.map(u => u.old));
+  for (let item of toDelete) {
     if (item.issuerName && item.serialNumber) {
       items.push(
         new IssuerAndSerialRevocationState(
@@ -213,36 +221,41 @@ const updateCertBlocklist = async function({
     );
     await setRevocations(certList, items);
   } catch (e) {
-    Cu.reportError(e);
+    lazy.log.error(e);
   }
 };
 
 var RemoteSecuritySettings = {
+  _initialized: false,
+  OneCRLBlocklistClient: null,
+  IntermediatePreloadsClient: null,
+  CRLiteFiltersClient: null,
+
   /**
    * Initialize the clients (cheap instantiation) and setup their sync event.
    * This static method is called from BrowserGlue.jsm soon after startup.
    *
-   * @returns {Object} intantiated clients for security remote settings.
+   * @returns {object} instantiated clients for security remote settings.
    */
   init() {
-    const OneCRLBlocklistClient = RemoteSettings("onecrl", {
+    // Avoid repeated initialization (work-around for bug 1730026).
+    if (this._initialized) {
+      return this;
+    }
+    this._initialized = true;
+
+    this.OneCRLBlocklistClient = RemoteSettings("onecrl", {
       bucketName: SECURITY_STATE_BUCKET,
       signerName: SECURITY_STATE_SIGNER,
     });
-    OneCRLBlocklistClient.on("sync", updateCertBlocklist);
+    this.OneCRLBlocklistClient.on("sync", updateCertBlocklist);
 
-    let IntermediatePreloadsClient = new IntermediatePreloads();
-    let CRLiteFiltersClient = new CRLiteFilters();
+    this.IntermediatePreloadsClient = new IntermediatePreloads();
 
-    this.OneCRLBlocklistClient = OneCRLBlocklistClient;
-    this.IntermediatePreloadsClient = IntermediatePreloadsClient;
-    this.CRLiteFiltersClient = CRLiteFiltersClient;
+    this.CRLiteFiltersClient = new CRLiteFilters();
+    this.CRLiteFiltersClient.cleanAttachmentCache();
 
-    return {
-      OneCRLBlocklistClient,
-      IntermediatePreloadsClient,
-      CRLiteFiltersClient,
-    };
+    return this;
   },
 };
 
@@ -367,7 +380,7 @@ class IntermediatePreloads {
       certStorage.addCerts(certInfos, resolve);
     }).catch(err => err);
     if (result != Cr.NS_OK) {
-      Cu.reportError(`certStorage.addCerts failed: ${result}`);
+      lazy.log.error(`certStorage.addCerts failed: ${result}`);
       return;
     }
     try {
@@ -414,9 +427,10 @@ class IntermediatePreloads {
   /**
    * Attempts to download the attachment, assuming it's not been processed
    * already. Does not retry, and always resolves (e.g., does not reject upon
-   * failure.) Errors are reported via Cu.reportError.
+   * failure.) Errors are reported via console.error.
+   *
    * @param  {AttachmentRecord} record defines which data to obtain
-   * @return {Promise}          a Promise that will resolve to an object with the properties
+   * @returns {Promise}          a Promise that will resolve to an object with the properties
    *                            record, cert, and subject. record is the original record.
    *                            cert is the base64-encoded bytes of the downloaded certificate (if
    *                            downloading was successful), and null otherwise.
@@ -436,7 +450,7 @@ class IntermediatePreloads {
       if (err.name == "BadContentError") {
         lazy.log.debug(`Bad attachment content.`);
       } else {
-        Cu.reportError(`Failed to download attachment: ${err}`);
+        lazy.log.error(`Failed to download attachment: ${err}`);
       }
       return result;
     }
@@ -456,7 +470,7 @@ class IntermediatePreloads {
         bytesToString(cert.tbsCertificate.subject._der._bytes)
       );
     } catch (err) {
-      Cu.reportError(`Failed to decode cert: ${err}`);
+      lazy.log.error(`Failed to decode cert: ${err}`);
       return result;
     }
     result.cert = certBase64;
@@ -477,7 +491,7 @@ class IntermediatePreloads {
       certStorage.removeCertsByHashes(hashes, resolve);
     }).catch(err => err);
     if (result != Cr.NS_OK) {
-      Cu.reportError(`Failed to remove some intermediate certificates`);
+      lazy.log.error(`Failed to remove some intermediate certificates`);
     }
   }
 }
@@ -500,6 +514,38 @@ class CRLiteFilters {
       this.onObservePollEnd.bind(this),
       "remote-settings:changes-poll-end"
     );
+  }
+
+  async cleanAttachmentCache() {
+    // Bug 1795710 - misuse of Remote Settings `downloadToDisk` caused us to
+    // keep filters and stashes on disk indefinitely. We're no longer caching
+    // these downloads, so if there are any filters still in the cache they can
+    // be removed.
+    let cachePath = PathUtils.join(
+      PathUtils.localProfileDir,
+      ...this.client.attachments.folders
+    );
+
+    try {
+      let needCleanup = await IOUtils.exists(cachePath);
+      if (needCleanup) {
+        let cacheFiles = await IOUtils.getChildren(cachePath);
+        let staleFilters = cacheFiles.filter(
+          path => path.endsWith("filter") || path.endsWith("filter.stash")
+        );
+        if (cacheFiles.length == staleFilters.length) {
+          // Expected case. No files other than filters, we can remove the
+          // entire directory
+          await IOUtils.remove(cachePath, { recursive: true });
+        } else {
+          for (let filter of staleFilters) {
+            await IOUtils.remove(filter);
+          }
+        }
+      }
+    } catch (e) {
+      lazy.log.error("Could not clean cert-revocations attachment cache", e);
+    }
   }
 
   async onObservePollEnd(subject, topic, data) {
@@ -588,18 +634,15 @@ class CRLiteFilters {
     let filtersDownloaded = [];
     for (let filter of filtersToDownload) {
       try {
-        // If we've already downloaded this, the backend should just grab it from its cache.
-        let localURI = await this.client.attachments.downloadToDisk(filter);
-        let buffer = await (await fetch(localURI)).arrayBuffer();
-        let bytes = new Uint8Array(buffer);
+        let attachment = await this.client.attachments.downloadAsBytes(filter);
+        let bytes = new Uint8Array(attachment);
         lazy.log.debug(
           `Downloaded ${filter.details.name}: ${bytes.length} bytes`
         );
         filter.bytes = bytes;
         filtersDownloaded.push(filter);
       } catch (e) {
-        lazy.log.debug(e);
-        Cu.reportError("failed to download CRLite filter", e);
+        lazy.log.error("failed to download CRLite filter", e);
       }
     }
     let fullFiltersDownloaded = filtersDownloaded.filter(

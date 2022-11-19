@@ -3,7 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ---
 job-defaults:
-    worker-type: b-linux-large
+    worker-type: b-linux-large-gcp
     worker:
         max-run-time: 1800
     run:
@@ -11,9 +11,24 @@ job-defaults:
         toolchain-artifact: public/build/llvm-symbolizer.tar.zst
     fetches:
         fetch:
-            - clang-14
+            - clang-15
         toolchain:
-            - linux64-clang-14-stage1
+            - linux64-clang-15-stage1
+
+linux32-llvm-symbolizer:
+    description: "llvm-symbolizer for Linux"
+    treeherder:
+        symbol: TL32(llvm-symbolizer)
+    run:
+        arguments:
+            - i686-unknown-linux-gnu
+            - build/build-clang/clang-15.json
+        resources:
+            - build/build-clang/clang-15.json
+            - taskcluster/scripts/misc/build-llvm-common.sh
+    fetches:
+        toolchain:
+            - linux32-toolchain-sysroot
 
 linux64-llvm-symbolizer:
     description: "llvm-symbolizer for Linux"
@@ -22,13 +37,28 @@ linux64-llvm-symbolizer:
     run:
         arguments:
             - x86_64-unknown-linux-gnu
-            - build/build-clang/clang-14.json
+            - build/build-clang/clang-15.json
         resources:
-            - build/build-clang/clang-14.json
+            - build/build-clang/clang-15.json
             - taskcluster/scripts/misc/build-llvm-common.sh
     fetches:
         toolchain:
             - linux64-toolchain-sysroot
+
+macosx64-aarch64-llvm-symbolizer:
+    description: "llvm-symbolizer for macOS aarch64"
+    treeherder:
+        symbol: TM(llvm-symbolizer-aarch64)
+    run:
+        arguments:
+            - aarch64-apple-darwin
+            - build/build-clang/clang-15.json
+        resources:
+            - build/build-clang/clang-15.json
+            - taskcluster/scripts/misc/build-llvm-common.sh
+    fetches:
+        toolchain:
+            - macosx64-sdk
 
 macosx64-llvm-symbolizer:
     description: "llvm-symbolizer for macOS x64"
@@ -37,9 +67,9 @@ macosx64-llvm-symbolizer:
     run:
         arguments:
             - x86_64-apple-darwin
-            - build/build-clang/clang-14.json
+            - build/build-clang/clang-15.json
         resources:
-            - build/build-clang/clang-14.json
+            - build/build-clang/clang-15.json
             - taskcluster/scripts/misc/build-llvm-common.sh
     fetches:
         toolchain:
@@ -52,9 +82,9 @@ win64-llvm-symbolizer:
     run:
         arguments:
             - x86_64-pc-windows-msvc
-            - build/build-clang/clang-14.json
+            - build/build-clang/clang-15.json
         resources:
-            - build/build-clang/clang-14.json
+            - build/build-clang/clang-15.json
             - taskcluster/scripts/misc/build-llvm-common.sh
     fetches:
         toolchain:

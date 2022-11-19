@@ -63,10 +63,13 @@ use std::{collections::HashSet, iter};
 
 use anyhow::{bail, Result};
 
-use super::attributes::{ConstructorAttributes, InterfaceAttributes, MethodAttributes};
 use super::ffi::{FFIArgument, FFIFunction, FFIType};
 use super::function::Argument;
 use super::types::{Type, TypeIterator};
+use super::{
+    attributes::{ConstructorAttributes, InterfaceAttributes, MethodAttributes},
+    convert_type,
+};
 use super::{APIConverter, ComponentInterface};
 
 /// An "object" is an opaque type that can be instantiated and passed around by reference,
@@ -93,7 +96,7 @@ pub struct Object {
 }
 
 impl Object {
-    fn new(name: String) -> Object {
+    pub(super) fn new(name: String) -> Object {
         Object {
             name,
             constructors: Default::default(),
@@ -155,18 +158,24 @@ impl Object {
     }
 
     pub fn derive_ffi_funcs(&mut self, ci_prefix: &str) -> Result<()> {
-        self.ffi_func_free.name = format!("ffi_{ci_prefix}_{}_object_free", self.name);
+        // The name is already set if the function is defined through a proc-macro invocation
+        // rather than in UDL. Don't overwrite it in that case.
+        if self.ffi_func_free.name().is_empty() {
+            self.ffi_func_free.name = format!("ffi_{ci_prefix}_{}_object_free", self.name);
+        }
         self.ffi_func_free.arguments = vec![FFIArgument {
             name: "ptr".to_string(),
             type_: FFIType::RustArcPtr(self.name().to_string()),
         }];
         self.ffi_func_free.return_type = None;
+
         for cons in self.constructors.iter_mut() {
-            cons.derive_ffi_func(ci_prefix, &self.name)
+            cons.derive_ffi_func(ci_prefix, &self.name);
         }
         for meth in self.methods.iter_mut() {
-            meth.derive_ffi_func(ci_prefix, &self.name)?
+            meth.derive_ffi_func(ci_prefix, &self.name)?;
         }
+
         Ok(())
     }
 
@@ -261,7 +270,11 @@ impl Constructor {
         &self.ffi_func
     }
 
-    pub fn throws(&self) -> Option<&str> {
+    pub fn throws(&self) -> bool {
+        self.attributes.get_throws_err().is_some()
+    }
+
+    pub fn throws_name(&self) -> Option<&str> {
         self.attributes.get_throws_err()
     }
 
@@ -374,7 +387,11 @@ impl Method {
         &self.ffi_func
     }
 
-    pub fn throws(&self) -> Option<&str> {
+    pub fn throws(&self) -> bool {
+        self.attributes.get_throws_err().is_some()
+    }
+
+    pub fn throws_name(&self) -> Option<&str> {
         self.attributes.get_throws_err()
     }
 
@@ -389,7 +406,12 @@ impl Method {
     }
 
     pub fn derive_ffi_func(&mut self, ci_prefix: &str, obj_prefix: &str) -> Result<()> {
-        self.ffi_func.name = format!("{ci_prefix}_{obj_prefix}_{}", self.name);
+        // The name is already set if the function is defined through a proc-macro invocation
+        // rather than in UDL. Don't overwrite it in that case.
+        if self.ffi_func.name.is_empty() {
+            self.ffi_func.name = format!("{ci_prefix}_{obj_prefix}_{}", self.name);
+        }
+
         self.ffi_func.arguments = self.full_arguments().iter().map(Into::into).collect();
         self.ffi_func.return_type = self.return_type.as_ref().map(Into::into);
         Ok(())
@@ -402,6 +424,29 @@ impl Method {
                 .flat_map(Argument::iter_types)
                 .chain(self.return_type.iter().flat_map(Type::iter_types)),
         )
+    }
+}
+
+impl From<uniffi_meta::MethodMetadata> for Method {
+    fn from(meta: uniffi_meta::MethodMetadata) -> Self {
+        let ffi_name = meta.ffi_symbol_name();
+
+        let return_type = meta.return_type.map(|out| convert_type(&out));
+        let arguments = meta.inputs.into_iter().map(Into::into).collect();
+
+        let ffi_func = FFIFunction {
+            name: ffi_name,
+            ..FFIFunction::default()
+        };
+
+        Self {
+            name: meta.name,
+            object_name: meta.self_name,
+            arguments,
+            return_type,
+            ffi_func,
+            attributes: Default::default(),
+        }
     }
 }
 

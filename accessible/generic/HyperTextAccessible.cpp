@@ -188,7 +188,7 @@ role HyperTextAccessible::NativeRole() const {
 uint64_t HyperTextAccessible::NativeState() const {
   uint64_t states = AccessibleWrap::NativeState();
 
-  if (mContent->AsElement()->State().HasState(dom::ElementState::READWRITE)) {
+  if (IsEditable()) {
     states |= states::EDITABLE;
 
   } else if (mContent->IsHTMLElement(nsGkAtoms::article)) {
@@ -204,6 +204,13 @@ uint64_t HyperTextAccessible::NativeState() const {
   }
 
   return states;
+}
+
+bool HyperTextAccessible::IsEditable() const {
+  if (!mContent) {
+    return false;
+  }
+  return mContent->AsElement()->State().HasState(dom::ElementState::READWRITE);
 }
 
 LayoutDeviceIntRect HyperTextAccessible::GetBoundsInFrame(
@@ -1978,8 +1985,9 @@ void HyperTextAccessible::ScrollSubstringToPoint(int32_t aStartOffset,
         int16_t vPercent = offsetPointY * 100 / size.height;
 
         nsresult rv = nsCoreUtils::ScrollSubstringTo(
-            frame, domRange, ScrollAxis(vPercent, WhenToScroll::Always),
-            ScrollAxis(hPercent, WhenToScroll::Always));
+            frame, domRange,
+            ScrollAxis(WhereToScroll(vPercent), WhenToScroll::Always),
+            ScrollAxis(WhereToScroll(hPercent), WhenToScroll::Always));
         if (NS_FAILED(rv)) return;
 
         initialScrolled = true;
@@ -2067,10 +2075,8 @@ void HyperTextAccessible::RangeAtPoint(int32_t aX, int32_t aY,
 // LocalAccessible protected
 ENameValueFlag HyperTextAccessible::NativeName(nsString& aName) const {
   // Check @alt attribute for invalid img elements.
-  bool hasImgAlt = false;
   if (mContent->IsHTMLElement(nsGkAtoms::img)) {
-    hasImgAlt = mContent->AsElement()->GetAttr(kNameSpaceID_None,
-                                               nsGkAtoms::alt, aName);
+    mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::alt, aName);
     if (!aName.IsEmpty()) return eNameOK;
   }
 
@@ -2085,7 +2091,7 @@ ENameValueFlag HyperTextAccessible::NativeName(nsString& aName) const {
     aName.CompressWhitespace();
   }
 
-  return hasImgAlt ? eNoNameOnPurpose : eNameOK;
+  return eNameOK;
 }
 
 void HyperTextAccessible::Shutdown() {

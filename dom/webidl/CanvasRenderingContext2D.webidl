@@ -43,17 +43,10 @@ interface CanvasRenderingContext2D {
   // associated with a canvas.
   readonly attribute HTMLCanvasElement? canvas;
 
-  // Mozilla-specific stuff
-  [Deprecated="MozCurrentTransform",
-   Pref="dom.mozCurrentTransform.enabled",
-   Throws]
-  attribute object mozCurrentTransform; // [ m11, m12, m21, m22, dx, dy ], i.e. row major
-  [Deprecated="MozCurrentTransformInverse",
-   Pref="dom.mozCurrentTransform.enabled",
-   Throws]
-  attribute object mozCurrentTransformInverse;
-
-  [SetterThrows]
+  // Use `CanvasRenderingContext2D.font` instead (bug 1294362).
+  [Deprecated="MozTextStyle",
+   Pref="dom.mozTextStyle.enabled",
+   SetterThrows]
   attribute UTF8String mozTextStyle;
 
   // image smoothing mode -- if disabled, images won't be smoothed

@@ -21,19 +21,21 @@
         ${'font-optical-sizing' if engine == 'gecko' else ''}
         ${'font-variant-alternates' if engine == 'gecko' else ''}
         ${'font-variant-east-asian' if engine == 'gecko' else ''}
+        ${'font-variant-emoji' if engine == 'gecko' else ''}
         ${'font-variant-ligatures' if engine == 'gecko' else ''}
         ${'font-variant-numeric' if engine == 'gecko' else ''}
         ${'font-variant-position' if engine == 'gecko' else ''}
         ${'font-language-override' if engine == 'gecko' else ''}
         ${'font-feature-settings' if engine == 'gecko' else ''}
         ${'font-variation-settings' if engine == 'gecko' else ''}
+        ${'font-palette' if engine == 'gecko' else ''}
     "
     derive_value_info="False"
     spec="https://drafts.csswg.org/css-fonts-3/#propdef-font"
 >
     use crate::computed_values::font_variant_caps::T::SmallCaps;
     use crate::parser::Parse;
-    use crate::properties::longhands::{font_family, font_style, font_weight, font_stretch};
+    use crate::properties::longhands::{font_family, font_style, font_size, font_weight, font_stretch};
     use crate::properties::longhands::font_variant_caps;
     use crate::values::specified::text::LineHeight;
     use crate::values::specified::FontSize;
@@ -44,9 +46,10 @@
     <%
         gecko_sub_properties = "kerning language_override size_adjust \
                                 variant_alternates variant_east_asian \
-                                variant_ligatures variant_numeric \
-                                variant_position feature_settings \
-                                variation_settings optical_sizing".split()
+                                variant_emoji variant_ligatures \
+                                variant_numeric variant_position \
+                                feature_settings variation_settings \
+                                optical_sizing palette".split()
     %>
     % if engine == "gecko":
         % for prop in gecko_sub_properties:
@@ -69,14 +72,12 @@
             if let Ok(sys) = input.try_parse(SystemFont::parse) {
                 return Ok(expanded! {
                      % for name in SYSTEM_FONT_LONGHANDS:
-                         % if name == "font_size":
-                             ${name}: FontSize::system_font(sys),
-                         % else:
-                             ${name}: ${name}::SpecifiedValue::system_font(sys),
-                         % endif
+                        ${name}: ${name}::SpecifiedValue::system_font(sys),
                      % endfor
-                     // line-height is just reset to initial
                      line_height: LineHeight::normal(),
+                     % for name in gecko_sub_properties + ["variant_caps"]:
+                         font_${name}: font_${name}::get_initial_specified_value(),
+                     % endfor
                  })
             }
         % endif
@@ -105,7 +106,7 @@
                 // defined by CSS Fonts 3 and later are not accepted.
                 // https://www.w3.org/TR/css-fonts-4/#font-prop
                 if input.try_parse(|input| input.expect_ident_matching("small-caps")).is_ok() {
-                    variant_caps = Some(font_variant_caps::SpecifiedValue::Keyword(SmallCaps));
+                    variant_caps = Some(SmallCaps);
                     continue
                 }
             }
@@ -186,9 +187,19 @@
                     return Ok(());
                 }
             }
+            if let Some(v) = self.font_palette {
+                if v != &font_palette::get_initial_specified_value() {
+                    return Ok(());
+                }
+            }
+            if let Some(v) = self.font_variant_emoji {
+                if v != &font_variant_emoji::get_initial_specified_value() {
+                    return Ok(());
+                }
+            }
 
             % for name in gecko_sub_properties:
-            % if name != "optical_sizing" and name != "variation_settings":
+            % if name != "optical_sizing" and name != "variation_settings" and name != "palette" and name != "variant_emoji":
             if self.font_${name} != &font_${name}::get_initial_specified_value() {
                 return Ok(());
             }
@@ -213,7 +224,7 @@
             // the added values defined by CSS Fonts 3 and later are not supported.
             // https://www.w3.org/TR/css-fonts-4/#font-prop
             if self.font_variant_caps != &font_variant_caps::get_initial_specified_value() &&
-                *self.font_variant_caps != font_variant_caps::SpecifiedValue::Keyword(SmallCaps) {
+                *self.font_variant_caps != SmallCaps {
                 return Ok(());
             }
 
@@ -251,7 +262,7 @@
             let mut all = true;
 
             % for prop in SYSTEM_FONT_LONGHANDS:
-            % if prop == "font_optical_sizing" or prop == "font_variation_settings":
+            % if prop == "font_optical_sizing" or prop == "font_variation_settings" or prop == "font_palette":
             if let Some(value) = self.${prop} {
             % else:
             {
@@ -312,11 +323,12 @@
                     sub_properties="font-variant-caps
                                     ${'font-variant-alternates' if engine == 'gecko' else ''}
                                     ${'font-variant-east-asian' if engine == 'gecko' else ''}
+                                    ${'font-variant-emoji' if engine == 'gecko' else ''}
                                     ${'font-variant-ligatures' if engine == 'gecko' else ''}
                                     ${'font-variant-numeric' if engine == 'gecko' else ''}
                                     ${'font-variant-position' if engine == 'gecko' else ''}"
                     spec="https://drafts.csswg.org/css-fonts-3/#propdef-font-variant">
-    <% gecko_sub_properties = "alternates east_asian ligatures numeric position".split() %>
+    <% gecko_sub_properties = "alternates east_asian emoji ligatures numeric position".split() %>
     <%
         sub_properties = ["caps"]
         if engine == "gecko":
@@ -343,7 +355,7 @@
             // The 'none' value sets 'font-variant-ligatures' to 'none' and resets all other sub properties
             // to their initial value.
         % if engine == "gecko":
-            ligatures = Some(FontVariantLigatures::none());
+            ligatures = Some(FontVariantLigatures::NONE);
         % endif
         } else {
             let mut has_custom_value: bool = false;
@@ -383,7 +395,7 @@
 
             let has_none_ligatures =
             % if engine == "gecko":
-                self.font_variant_ligatures == &FontVariantLigatures::none();
+                self.font_variant_ligatures == &FontVariantLigatures::NONE;
             % else:
                 false;
             % endif
@@ -391,9 +403,23 @@
             const TOTAL_SUBPROPS: usize = ${len(sub_properties)};
             let mut nb_normals = 0;
         % for prop in sub_properties:
-            if self.font_variant_${prop} == &font_variant_${prop}::get_initial_specified_value() {
+        % if prop == "emoji":
+            if let Some(value) = self.font_variant_${prop} {
+        % else:
+            {
+                let value = self.font_variant_${prop};
+        % endif
+                if value == &font_variant_${prop}::get_initial_specified_value() {
+                   nb_normals += 1;
+                }
+            }
+        % if prop == "emoji":
+            else {
+                // The property was disabled, so we count it as 'normal' for the purpose
+                // of deciding how the shorthand can be serialized.
                 nb_normals += 1;
             }
+        % endif
         % endfor
 
 
@@ -410,12 +436,19 @@
             } else {
                 let mut has_any = false;
             % for prop in sub_properties:
-                if self.font_variant_${prop} != &font_variant_${prop}::get_initial_specified_value() {
-                    if has_any {
-                        dest.write_str(" ")?;
+            % if prop == "emoji":
+                if let Some(value) = self.font_variant_${prop} {
+            % else:
+                {
+                    let value = self.font_variant_${prop};
+            % endif
+                    if value != &font_variant_${prop}::get_initial_specified_value() {
+                        if has_any {
+                            dest.write_str(" ")?;
+                        }
+                        has_any = true;
+                        value.to_css(dest)?;
                     }
-                    has_any = true;
-                    self.font_variant_${prop}.to_css(dest)?;
                 }
             % endfor
             }

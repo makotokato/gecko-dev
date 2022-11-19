@@ -92,8 +92,8 @@ void SampledAPZCState::RemoveFractionalAsyncDelta() {
   const ParentLayerCoord EPSILON = 0.01;
   ParentLayerPoint paintedOffset = mLayoutViewport.TopLeft() * mZoom;
   ParentLayerPoint asyncOffset = mVisualScrollOffset * mZoom;
-  if (FuzzyEqualsAdditive(paintedOffset.x, asyncOffset.x, EPSILON.value) &&
-      FuzzyEqualsAdditive(paintedOffset.y, asyncOffset.y, EPSILON.value)) {
+  if (FuzzyEqualsAdditive(paintedOffset.x, asyncOffset.x, EPSILON) &&
+      FuzzyEqualsAdditive(paintedOffset.y, asyncOffset.y, EPSILON)) {
     mVisualScrollOffset = mLayoutViewport.TopLeft();
   }
 }

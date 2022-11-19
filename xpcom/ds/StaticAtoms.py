@@ -318,6 +318,7 @@ STATIC_ATOMS = [
     Atom("headerDefaultStyle", "default-style"),
     Atom("defer", "defer"),
     Atom("del", "del"),
+    Atom("delegatesanchor", "delegatesanchor"),
     Atom("deletion", "deletion"),
     Atom("deprecation", "deprecation"),
     Atom("descendant", "descendant"),
@@ -419,7 +420,6 @@ STATIC_ATOMS = [
     Atom("end", "end"),
     Atom("endEvent", "endEvent"),
     Atom("enterkeyhint", "enterkeyhint"),
-    Atom("equalsize", "equalsize"),
     Atom("error", "error"),
     Atom("ethiopic_numeric", "ethiopic-numeric"),
     Atom("even", "even"),
@@ -1012,9 +1012,10 @@ STATIC_ATOMS = [
     Atom("prefersReducedMotion", "prefers-reduced-motion"),
     Atom("prefersColorScheme", "prefers-color-scheme"),
     Atom("prefersContrast", "prefers-contrast"),
+    Atom("prefix", "prefix"),
+    Atom("prefwidth", "prefwidth"),
     Atom("dynamicRange", "dynamic-range"),
     Atom("videoDynamicRange", "video-dynamic-range"),
-    Atom("prefix", "prefix"),
     Atom("preload", "preload"),
     Atom("preserve", "preserve"),
     Atom("preserveSpace", "preserve-space"),
@@ -1131,6 +1132,7 @@ STATIC_ATOMS = [
     Atom("shape", "shape"),
     Atom("show", "show"),
     Atom("showcaret", "showcaret"),
+    Atom("sibling", "sibling"),
     Atom("simple", "simple"),
     Atom("simp_chinese_formal", "simp-chinese-formal"),
     Atom("simp_chinese_informal", "simp-chinese-informal"),
@@ -1202,6 +1204,7 @@ STATIC_ATOMS = [
     Atom("targets", "targets"),
     Atom("tbody", "tbody"),
     Atom("td", "td"),
+    Atom("tel", "tel"),
     Atom("_template", "template"),
     Atom("text_decoration", "text-decoration"),
     Atom("terminate", "terminate"),
@@ -1977,6 +1980,13 @@ STATIC_ATOMS = [
     Atom("webRequestFilterResponse_serviceWorkerScript", "webRequestFilterResponse.serviceWorkerScript"),
     Atom("http", "http"),
     Atom("https", "https"),
+    Atom("ws", "ws"),
+    Atom("wss", "wss"),
+    Atom("ftp", "ftp"),
+    Atom("chrome", "chrome"),
+    Atom("moz", "moz"),
+    Atom("moz_icon", "moz-icon"),
+    Atom("moz_gio", "moz-gio"),
     Atom("proxy", "proxy"),
     Atom("privateBrowsingAllowedPermission", "internal:privateBrowsingAllowed"),
     Atom("svgContextPropertiesAllowedPermission", "internal:svgContextPropertiesAllowed"),
@@ -2206,6 +2216,9 @@ STATIC_ATOMS = [
     Atom("monospace", "monospace"),
     Atom("mozfixed", "-moz-fixed"),
     Atom("moz_fixed_pos_containing_block", "-moz-fixed-pos-containing-block"),
+    # Standard font-palette identifiers
+    Atom("light", "light"),
+    Atom("dark", "dark"),
     # IPC stuff
     # Atom("Remote", "remote"),  # "remote" is present above
     Atom("RemoteId", "_remote_id"),
@@ -2258,6 +2271,7 @@ STATIC_ATOMS = [
     Atom("_moz_content_preferred_color_scheme", "-moz-content-preferred-color-scheme"),
     Atom("_moz_system_dark_theme", "-moz-system-dark-theme"),
     Atom("_moz_box_flexbox_emulation", "-moz-box-flexbox-emulation"),
+    Atom("_moz_panel_animations", "-moz-panel-animations"),
     # application commands
     Atom("Back", "Back"),
     Atom("Forward", "Forward"),
@@ -2390,6 +2404,8 @@ STATIC_ATOMS = [
     Atom("onsupportedkeyschange", "onsupportedkeyschange"),
     # media query for MathML Core's implementation of maction/semantics
     Atom("_moz_mathml_core_maction_and_semantics", "-moz-mathml-core-maction-and-semantics"),
+    # media query for MathML Core's implementation of ms
+    Atom("_moz_mathml_core_ms", "-moz-mathml-core-ms"),
     # Contextual Identity / Containers
     Atom("usercontextid", "usercontextid"),
     Atom("geckoViewSessionContextId", "geckoViewSessionContextId"),
@@ -2434,6 +2450,7 @@ STATIC_ATOMS = [
     Atom("DirectoryService_OS_TemporaryDirectory", "TmpD"),
     Atom("DirectoryService_OS_CurrentProcessDirectory", "CurProcD"),
     Atom("DirectoryService_OS_CurrentWorkingDirectory", "CurWorkD"),
+    Atom("DirectoryService_OS_SystemConfigDir", "SysConfD"),
     # Atom("DirectoryService_OS_HomeDirectory", "Home"),  # "Home" is present above
     Atom("DirectoryService_OS_DesktopDirectory", "Desk"),
     Atom("DirectoryService_InitCurrentProcess_dummy", "MozBinD"),

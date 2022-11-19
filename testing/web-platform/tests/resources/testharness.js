@@ -1127,7 +1127,7 @@
      *
      * Typically this function is called implicitly on page load; it's
      * only necessary for users to call this when either the
-     * ``explict_done`` or ``single_page`` properties have been set
+     * ``explicit_done`` or ``single_page`` properties have been set
      * via the :js:func:`setup` function.
      *
      * For single page tests this marks the test as complete and sets its status.
@@ -3822,7 +3822,9 @@
             return;
         }
 
-        this.pending_remotes.push(this.create_remote_window(remote));
+        var remoteContext = this.create_remote_window(remote);
+        this.pending_remotes.push(remoteContext);
+        return remoteContext.done;
     };
 
     /**
@@ -3837,7 +3839,7 @@
      * @param {Window} window - The window to fetch tests from.
      */
     function fetch_tests_from_window(window) {
-        tests.fetch_tests_from_window(window);
+        return tests.fetch_tests_from_window(window);
     }
     expose(fetch_tests_from_window, 'fetch_tests_from_window');
 
@@ -3871,7 +3873,7 @@
      */
     function begin_shadow_realm_tests(postMessage) {
         if (!(test_environment instanceof ShadowRealmTestEnvironment)) {
-            throw new Error("beign_shadow_realm_tests called in non-Shadow Realm environment");
+            throw new Error("begin_shadow_realm_tests called in non-Shadow Realm environment");
         }
 
         test_environment.begin(function (msg) {
@@ -3883,7 +3885,7 @@
     /**
      * Timeout the tests.
      *
-     * This only has an effect when ``explict_timeout`` has been set
+     * This only has an effect when ``explicit_timeout`` has been set
      * in :js:func:`setup`. In other cases any call is a no-op.
      *
      */

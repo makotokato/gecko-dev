@@ -128,9 +128,8 @@ struct AccessCheck {
 
 // Encapsulate all the information about a function call.
 struct FunctionCall {
-  explicit FunctionCall(uint32_t lineOrBytecode)
-      : lineOrBytecode(lineOrBytecode),
-        restoreRegisterStateAndRealm(false),
+  FunctionCall()
+      : restoreRegisterStateAndRealm(false),
         usesSystemAbi(false),
 #ifdef JS_CODEGEN_ARM
         hardFP(true),
@@ -139,7 +138,6 @@ struct FunctionCall {
         stackArgAreaSize(0) {
   }
 
-  uint32_t lineOrBytecode;
   WasmABIArgGenerator abi;
   bool restoreRegisterStateAndRealm;
   bool usesSystemAbi;
@@ -276,10 +274,6 @@ struct BaseCompiler final {
   // Flag indicating that the compiler is currently in a dead code region.
   bool deadCode_;
 
-  // Running count of call sites, used only to assert that the compiler is in a
-  // sensible state once compilation has completed.
-  size_t lastReadCallSite_;
-
   ///////////////////////////////////////////////////////////////////////////
   //
   // State for bounds check elimination.
@@ -330,7 +324,6 @@ struct BaseCompiler final {
   // WasmBaselineObject-inl.h.
 
   inline const FuncType& funcType() const;
-  inline const TypeIdDesc& funcTypeId() const;
   inline bool usesMemory() const;
   inline bool usesSharedMemory() const;
   inline bool isMem32() const;
@@ -948,7 +941,7 @@ struct BaseCompiler final {
                     CodeOffset* fastCallOffset, CodeOffset* slowCallOffset);
   CodeOffset callImport(unsigned globalDataOffset, const FunctionCall& call);
 #ifdef ENABLE_WASM_FUNCTION_REFERENCES
-  void callRef(const Stk& calleeRef, const FunctionCall& call, bool checkNull,
+  void callRef(const Stk& calleeRef, const FunctionCall& call,
                CodeOffset* fastCallOffset, CodeOffset* slowCallOffset);
 #endif
   CodeOffset builtinCall(SymbolicAddress builtin, const FunctionCall& call);
@@ -1196,7 +1189,7 @@ struct BaseCompiler final {
   template <typename RegIndexType>
   void atomicRMW64(MemoryAccessDesc* access, ValType type, AtomicOp op);
 
-  void atomicXchg(MemoryAccessDesc* desc, ValType type);
+  void atomicXchg(MemoryAccessDesc* access, ValType type);
   template <typename RegIndexType>
   void atomicXchg64(MemoryAccessDesc* access, WantResult wantResult);
   template <typename RegIndexType>
@@ -1243,10 +1236,7 @@ struct BaseCompiler final {
   //
   // Sundry helpers.
 
-  // Get the line number or bytecode offset, depending on what's available.
-  inline uint32_t readCallSiteLineOrBytecode();
-
-  // Retrieve the current bytecodeOffset
+  // Retrieve the current bytecodeOffset.
   inline BytecodeOffset bytecodeOffset() const;
 
   // Generate a trap instruction for the current bytecodeOffset.
@@ -1254,7 +1244,7 @@ struct BaseCompiler final {
 
   // Abstracted helper for throwing, used for throw, rethrow, and rethrowing
   // at the end of a series of catch blocks (if none matched the exception).
-  [[nodiscard]] bool throwFrom(RegRef exn, uint32_t lineOrBytecode);
+  [[nodiscard]] bool throwFrom(RegRef exn);
 
   // Load the specified tag object from the Instance.
   void loadTag(RegPtr instanceData, uint32_t tagIndex, RegRef tagDst);
@@ -1491,6 +1481,10 @@ struct BaseCompiler final {
   inline void emitTernary(void (*op)(CompilerType&, ValType src0, ValType src1,
                                      ValType srcDest, ValType temp));
 
+  template <typename CompilerType, typename ValType>
+  inline void emitTernaryResultLast(void (*op)(CompilerType&, ValType src0,
+                                               ValType src1, ValType srcDest));
+
   template <typename R>
   [[nodiscard]] inline bool emitInstanceCallOp(
       const SymbolicAddressSignature& fn, R reader);
@@ -1570,8 +1564,7 @@ struct BaseCompiler final {
   //
   // (see WasmBuiltins.cpp).  In short, the most recently pushed value is the
   // rightmost argument to the function.
-  [[nodiscard]] bool emitInstanceCall(uint32_t lineOrBytecode,
-                                      const SymbolicAddressSignature& builtin);
+  [[nodiscard]] bool emitInstanceCall(const SymbolicAddressSignature& builtin);
 
   [[nodiscard]] bool emitMemoryGrow();
   [[nodiscard]] bool emitMemorySize();
@@ -1592,21 +1585,19 @@ struct BaseCompiler final {
                                    AtomicOp op);
   [[nodiscard]] bool emitAtomicStore(ValType type, Scalar::Type viewType);
   [[nodiscard]] bool emitWait(ValType type, uint32_t byteSize);
-  [[nodiscard]] bool atomicWait(ValType type, MemoryAccessDesc* access,
-                                uint32_t lineOrBytecode);
+  [[nodiscard]] bool atomicWait(ValType type, MemoryAccessDesc* access);
   [[nodiscard]] bool emitWake();
-  [[nodiscard]] bool atomicWake(MemoryAccessDesc* access,
-                                uint32_t lineOrBytecode);
+  [[nodiscard]] bool atomicWake(MemoryAccessDesc* access);
   [[nodiscard]] bool emitFence();
   [[nodiscard]] bool emitAtomicXchg(ValType type, Scalar::Type viewType);
   [[nodiscard]] bool emitMemInit();
   [[nodiscard]] bool emitMemCopy();
-  [[nodiscard]] bool memCopyCall(uint32_t lineOrBytecode);
+  [[nodiscard]] bool memCopyCall();
   void memCopyInlineM32();
   [[nodiscard]] bool emitTableCopy();
   [[nodiscard]] bool emitDataOrElemDrop(bool isData);
   [[nodiscard]] bool emitMemFill();
-  [[nodiscard]] bool memFillCall(uint32_t lineOrBytecode);
+  [[nodiscard]] bool memFillCall();
   void memFillInlineM32();
   [[nodiscard]] bool emitTableInit();
   [[nodiscard]] bool emitTableFill();
@@ -1632,17 +1623,19 @@ struct BaseCompiler final {
   [[nodiscard]] bool emitArrayNewElem();
   [[nodiscard]] bool emitArrayGet(FieldExtension extension);
   [[nodiscard]] bool emitArraySet();
-  [[nodiscard]] bool emitArrayLen();
+  [[nodiscard]] bool emitArrayLen(bool decodeIgnoredTypeIndex);
   [[nodiscard]] bool emitArrayCopy();
   [[nodiscard]] bool emitRefTest();
   [[nodiscard]] bool emitRefCast();
-  [[nodiscard]] bool emitBrOnCast();
+  [[nodiscard]] bool emitBrOnCastCommon(bool onSuccess);
+  [[nodiscard]] bool emitExternInternalize();
+  [[nodiscard]] bool emitExternExternalize();
 
   void emitGcCanon(uint32_t typeIndex);
   void emitGcNullCheck(RegRef rp);
   RegPtr emitGcArrayGetData(RegRef rp);
   RegI32 emitGcArrayGetNumElements(RegRef rp);
-  void emitGcArrayBoundsCheck(RegI32 index, RegI32 length);
+  void emitGcArrayBoundsCheck(RegI32 index, RegI32 numElements);
   template <typename T>
   void emitGcGet(FieldType type, FieldExtension extension, const T& src);
   template <typename T>
@@ -1665,6 +1658,7 @@ struct BaseCompiler final {
   void emitVectorAndNot();
 #  ifdef ENABLE_WASM_RELAXED_SIMD
   void emitDotI8x16I7x16AddS();
+  void emitDotBF16x8AddF32x4();
 #  endif
 
   void loadSplat(MemoryAccessDesc* access);

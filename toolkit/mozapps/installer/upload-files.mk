@@ -264,6 +264,7 @@ NO_PKG_FILES += \
 	BadCertAndPinningServer* \
 	DelegatedCredentialsServer* \
 	EncryptedClientHelloServer* \
+	FaultyServer* \
 	OCSPStaplingServer* \
 	SanctionsTestServer* \
 	GenerateOCSPResponse* \
@@ -402,6 +403,9 @@ endif
 ifdef MOZ_STUB_INSTALLER
   UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PKG_INST_PATH)$(PKG_STUB_BASENAME).exe)
 endif
+
+# Upload `.xpt` artifacts for use in artifact builds.
+UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(XPT_ARTIFACTS_ARCHIVE_BASENAME).zip)
 
 ifndef MOZ_PKG_SRCDIR
   MOZ_PKG_SRCDIR = $(topsrcdir)

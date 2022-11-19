@@ -18,7 +18,6 @@
 #include "mozilla/gfx/Rect.h"               // for RoundedIn
 #include "mozilla/layers/APZThreadUtils.h"  // for AssertOnControllerThread
 #include "mozilla/mozalloc.h"               // for operator new
-#include "mozilla/FloatingPoint.h"          // for FuzzyEqualsAdditive
 #include "nsMathUtils.h"                    // for NS_lround
 #include "nsPrintfCString.h"                // for nsPrintfCString
 #include "nsThreadUtils.h"                  // for NS_DispatchToMainThread, etc
@@ -31,9 +30,8 @@ namespace mozilla {
 namespace layers {
 
 bool FuzzyEqualsCoordinate(CSSCoord aValue1, CSSCoord aValue2) {
-  return FuzzyEqualsAdditive(aValue1.value, aValue2.value,
-                             COORDINATE_EPSILON.value) ||
-         FuzzyEqualsMultiplicative(aValue1.value, aValue2.value);
+  return FuzzyEqualsAdditive(aValue1, aValue2, COORDINATE_EPSILON) ||
+         FuzzyEqualsMultiplicative(aValue1, aValue2);
 }
 
 Axis::Axis(AsyncPanZoomController* aAsyncPanZoomController)
@@ -84,11 +82,10 @@ void Axis::StartTouch(ParentLayerCoord aPos, TimeStamp aTimestamp) {
   mAxisLocked = false;
 }
 
-bool Axis::AdjustDisplacement(
-    ParentLayerCoord aDisplacement,
-    /* ParentLayerCoord */ float& aDisplacementOut,
-    /* ParentLayerCoord */ float& aOverscrollAmountOut,
-    bool aForceOverscroll /* = false */) {
+bool Axis::AdjustDisplacement(ParentLayerCoord aDisplacement,
+                              ParentLayerCoord& aDisplacementOut,
+                              ParentLayerCoord& aOverscrollAmountOut,
+                              bool aForceOverscroll /* = false */) {
   if (mAxisLocked) {
     aOverscrollAmountOut = 0;
     aDisplacementOut = 0;

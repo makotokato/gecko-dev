@@ -48,6 +48,7 @@ add_task(async function testBrowserActionTelemetryTiming() {
     manifest: {
       browser_action: {
         default_popup: "popup.html",
+        default_area: "navbar",
         browser_style: true,
       },
     },
@@ -60,7 +61,7 @@ add_task(async function testBrowserActionTelemetryTiming() {
     ...extensionOptions,
     manifest: {
       ...extensionOptions.manifest,
-      applications: {
+      browser_specific_settings: {
         gecko: { id: EXTENSION_ID1 },
       },
     },
@@ -69,7 +70,7 @@ add_task(async function testBrowserActionTelemetryTiming() {
     ...extensionOptions,
     manifest: {
       ...extensionOptions.manifest,
-      applications: {
+      browser_specific_settings: {
         gecko: { id: EXTENSION_ID2 },
       },
     },
@@ -208,11 +209,12 @@ add_task(async function testBrowserActionTelemetryTiming() {
 add_task(async function testBrowserActionTelemetryResults() {
   let extensionOptions = {
     manifest: {
-      applications: {
+      browser_specific_settings: {
         gecko: { id: EXTENSION_ID1 },
       },
       browser_action: {
         default_popup: "popup.html",
+        default_area: "navbar",
         browser_style: true,
       },
     },

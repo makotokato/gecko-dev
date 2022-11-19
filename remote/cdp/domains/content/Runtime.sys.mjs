@@ -4,9 +4,7 @@
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-const { addDebuggerToGlobal } = ChromeUtils.import(
-  "resource://gre/modules/jsdebugger.jsm"
-);
+import { addDebuggerToGlobal } from "resource://gre/modules/jsdebugger.sys.mjs";
 
 import { ContentProcessDomain } from "chrome://remote/content/cdp/domains/ContentProcessDomain.sys.mjs";
 
@@ -606,7 +604,7 @@ export class Runtime extends ContentProcessDomain {
 }
 
 function fromConsoleAPI(message) {
-  // From sendConsoleAPIMessage (toolkit/modules/Console.jsm)
+  // From sendConsoleAPIMessage (toolkit/modules/Console.sys.mjs)
   return {
     arguments: message.arguments,
     innerWindowId: message.innerID,

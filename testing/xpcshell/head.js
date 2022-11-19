@@ -44,12 +44,12 @@ var _XPCSHELL_PROCESS;
 let _Services = Services;
 _register_modules_protocol_handler();
 
-let { AppConstants: _AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+let { AppConstants: _AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
-let { PromiseTestUtils: _PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+let { PromiseTestUtils: _PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 
 let { NetUtil: _NetUtil } = ChromeUtils.import(
@@ -62,9 +62,9 @@ let { XPCOMUtils: _XPCOMUtils } = ChromeUtils.importESModule(
 
 let { OS: _OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 
-// Support a common assertion library, Assert.jsm.
-var { Assert: AssertCls } = ChromeUtils.import(
-  "resource://testing-common/Assert.jsm"
+// Support a common assertion library, Assert.sys.mjs.
+var { Assert: AssertCls } = ChromeUtils.importESModule(
+  "resource://testing-common/Assert.sys.mjs"
 );
 
 // Pass a custom report function for xpcshell-test style reporting.
@@ -76,7 +76,7 @@ var Assert = new AssertCls(function(err, message, stack) {
   }
 }, true);
 
-// Bug 1506134 for followup.  Some xpcshell tests use ContentTask.jsm, which
+// Bug 1506134 for followup.  Some xpcshell tests use ContentTask.sys.mjs, which
 // expects browser-test.js to have set a testScope that includes record.
 function record(condition, name, diag, stack) {
   do_report_result(condition, name, stack);
@@ -127,6 +127,8 @@ if (runningInParent && "mozIAsyncHistory" in Ci) {
 // crashreporter component.
 try {
   if (runningInParent && "@mozilla.org/toolkit/crash-reporter;1" in Cc) {
+    // Intentially access the crash reporter service directly for this.
+    // eslint-disable-next-line mozilla/use-services
     let crashReporter = Cc["@mozilla.org/toolkit/crash-reporter;1"].getService(
       Ci.nsICrashReporter
     );
@@ -400,8 +402,8 @@ function _setupDevToolsServer(breakpointFiles, callback) {
 
   let require;
   try {
-    ({ require } = ChromeUtils.import(
-      "resource://devtools/shared/loader/Loader.jsm"
+    ({ require } = ChromeUtils.importESModule(
+      "resource://devtools/shared/loader/Loader.sys.mjs"
     ));
   } catch (e) {
     throw new Error(
@@ -553,8 +555,8 @@ function _execute_test() {
 
   let coverageCollector = null;
   if (typeof _JSCOV_DIR === "string") {
-    let _CoverageCollector = ChromeUtils.import(
-      "resource://testing-common/CoverageUtils.jsm"
+    let _CoverageCollector = ChromeUtils.importESModule(
+      "resource://testing-common/CoverageUtils.sys.mjs"
     ).CoverageCollector;
     coverageCollector = new _CoverageCollector(_JSCOV_DIR);
   }
@@ -566,7 +568,7 @@ function _execute_test() {
   // _TEST_FILE is dynamically defined by <runxpcshelltests.py>.
   _load_files(_TEST_FILE);
 
-  // Tack Assert.jsm methods to the current scope.
+  // Tack Assert.sys.mjs methods to the current scope.
   this.Assert = Assert;
   for (let func in Assert) {
     this[func] = Assert[func].bind(Assert);
@@ -1328,6 +1330,8 @@ function do_get_profile(notifyProfileAfterChange = false) {
 
   // We need to update the crash events directory when the profile changes.
   if (runningInParent && "@mozilla.org/toolkit/crash-reporter;1" in Cc) {
+    // Intentially access the crash reporter service directly for this.
+    // eslint-disable-next-line mozilla/use-services
     let crashReporter = Cc["@mozilla.org/toolkit/crash-reporter;1"].getService(
       Ci.nsICrashReporter
     );

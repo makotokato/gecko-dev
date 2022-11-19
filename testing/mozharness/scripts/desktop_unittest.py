@@ -12,6 +12,7 @@ author: Jordan Lund
 
 from __future__ import absolute_import
 import json
+import multiprocessing
 import os
 import re
 import sys
@@ -514,6 +515,10 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
                 requirements=[requirements_file], two_pass=True
             )
 
+        _python_interp = self.query_exe("python")
+        if "win" in self.platform_name() and os.path.exists(_python_interp):
+            multiprocessing.set_executable(_python_interp)
+
     def _query_symbols_url(self):
         """query the full symbols URL based upon binary URL"""
         # may break with name convention changes but is one less 'input' for script
@@ -665,10 +670,6 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
             # Ensure the --tag flag and its params get passed along
             if c["test_tags"]:
                 base_cmd.extend(["--tag={}".format(t) for t in c["test_tags"]])
-
-            # set pluginsPath
-            abs_res_plugins_dir = os.path.join(abs_res_dir, "plugins")
-            str_format_values["test_plugin_path"] = abs_res_plugins_dir
 
             if suite_category not in c["suite_definitions"]:
                 self.fatal("'%s' not defined in the config!")

@@ -35,6 +35,7 @@
 #include "xpc_make_class.h"
 #include "XPCWrapper.h"
 #include "Crypto.h"
+#include "mozilla/Result.h"
 #include "mozilla/dom/AbortControllerBinding.h"
 #include "mozilla/dom/AutoEntryScript.h"
 #include "mozilla/dom/BindingCallContext.h"
@@ -59,6 +60,8 @@
 #include "mozilla/dom/InspectorUtilsBinding.h"
 #include "mozilla/dom/MessageChannelBinding.h"
 #include "mozilla/dom/MessagePortBinding.h"
+#include "mozilla/dom/MIDIInputMapBinding.h"
+#include "mozilla/dom/MIDIOutputMapBinding.h"
 #include "mozilla/dom/ModuleLoader.h"
 #include "mozilla/dom/NodeBinding.h"
 #include "mozilla/dom/NodeFilterBinding.h"
@@ -88,6 +91,8 @@
 #include "mozilla/dom/XMLSerializerBinding.h"
 #include "mozilla/dom/FormDataBinding.h"
 #include "mozilla/dom/nsCSPContext.h"
+#include "mozilla/ipc/BackgroundUtils.h"
+#include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/DeferredFinalize.h"
 #include "mozilla/ExtensionPolicyService.h"
@@ -921,6 +926,10 @@ bool xpc::GlobalProperties::Parse(JSContext* cx, JS::HandleObject obj) {
       InspectorUtils = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "MessageChannel")) {
       MessageChannel = true;
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "MIDIInputMap")) {
+      MIDIInputMap = true;
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "MIDIOutputMap")) {
+      MIDIOutputMap = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "Node")) {
       Node = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "NodeFilter")) {
@@ -1062,6 +1071,14 @@ bool xpc::GlobalProperties::Define(JSContext* cx, JS::HandleObject obj) {
       (!dom::MessageChannel_Binding::GetConstructorObject(cx) ||
        !dom::MessagePort_Binding::GetConstructorObject(cx)))
     return false;
+
+  if (MIDIInputMap && !dom::MIDIInputMap_Binding::GetConstructorObject(cx)) {
+    return false;
+  }
+
+  if (MIDIOutputMap && !dom::MIDIOutputMap_Binding::GetConstructorObject(cx)) {
+    return false;
+  }
 
   if (Node && !dom::Node_Binding::GetConstructorObject(cx)) {
     return false;
@@ -2214,4 +2231,25 @@ ModuleLoaderBase* SandboxPrivate::GetModuleLoader(JSContext* aCx) {
   mModuleLoader = moduleLoader;
 
   return moduleLoader;
+}
+
+mozilla::Result<mozilla::ipc::PrincipalInfo, nsresult>
+SandboxPrivate::GetStorageKey() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  mozilla::ipc::PrincipalInfo principalInfo;
+  nsresult rv = PrincipalToPrincipalInfo(mPrincipal, &principalInfo);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return mozilla::Err(rv);
+  }
+
+  // Block expanded and null principals, let content and system through.
+  if (principalInfo.type() !=
+          mozilla::ipc::PrincipalInfo::TContentPrincipalInfo &&
+      principalInfo.type() !=
+          mozilla::ipc::PrincipalInfo::TSystemPrincipalInfo) {
+    return Err(NS_ERROR_DOM_SECURITY_ERR);
+  }
+
+  return std::move(principalInfo);
 }

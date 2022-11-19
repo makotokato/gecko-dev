@@ -3152,6 +3152,12 @@ toolbar#nav-bar {
                 "verify": options.verify,
                 "verify_fission": options.verify_fission,
                 "webgl_ipc": self.extraPrefs.get("webgl.out-of-process", False),
+                "wmfme": (
+                    self.extraPrefs.get("media.wmf.media-engine.enabled", False)
+                    and self.extraPrefs.get(
+                        "media.wmf.media-engine.channel-decoder.enabled", False
+                    )
+                ),
                 "xorigin": options.xOriginTests,
                 "condprof": options.conditionedProfile,
             }
@@ -3428,6 +3434,9 @@ toolbar#nav-bar {
                 # Wait a little (10 seconds) more before timing out here.
                 # See bug 479518 and bug 1414063.
                 timeout = 370.0
+
+            if "MOZ_CHAOSMODE=0xfb" in options.environment and timeout:
+                timeout *= 2
 
             # Detect shutdown leaks for m-bc runs if
             # code coverage is not enabled.

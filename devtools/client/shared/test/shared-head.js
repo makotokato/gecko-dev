@@ -31,12 +31,17 @@ if (DEBUG_ALLOCATIONS) {
   // Use a custom loader with `invisibleToDebugger` flag for the allocation tracker
   // as it instantiates custom Debugger API instances and has to be running in a distinct
   // compartments from DevTools and system scopes (JSMs, XPCOM,...)
-  const { DevToolsLoader } = ChromeUtils.import(
-    "resource://devtools/shared/loader/Loader.jsm"
+  const {
+    useDistinctSystemPrincipalLoader,
+    releaseDistinctSystemPrincipalLoader,
+  } = ChromeUtils.importESModule(
+    "resource://devtools/shared/loader/DistinctSystemPrincipalLoader.sys.mjs"
   );
-  const loader = new DevToolsLoader({
-    invisibleToDebugger: true,
-  });
+  const requester = {};
+  const loader = useDistinctSystemPrincipalLoader(requester);
+  registerCleanupFunction(() =>
+    releaseDistinctSystemPrincipalLoader(requester)
+  );
 
   const { allocationTracker } = loader.require(
     "resource://devtools/shared/test-helpers/allocation-tracker.js"
@@ -52,8 +57,8 @@ if (DEBUG_ALLOCATIONS) {
   });
 }
 
-const { loader, require } = ChromeUtils.import(
-  "resource://devtools/shared/loader/Loader.jsm"
+const { loader, require } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/Loader.sys.mjs"
 );
 
 // When loaded from xpcshell test, this file is loaded via xpcshell.ini's head property
@@ -64,9 +69,6 @@ const { loader, require } = ChromeUtils.import(
 const {
   gDevTools,
 } = require("resource://devtools/client/framework/devtools.js");
-const {
-  TabDescriptorFactory,
-} = require("resource://devtools/client/framework/tab-descriptor-factory.js");
 const {
   CommandsFactory,
 } = require("resource://devtools/shared/commands/commands-factory.js");
@@ -329,8 +331,8 @@ function highlighterTestActorBootstrap() {
   const HIGHLIGHTER_TEST_ACTOR_URL =
     "chrome://mochitests/content/browser/devtools/client/shared/test/highlighter-test-actor.js";
 
-  const { require: _require } = ChromeUtils.import(
-    "resource://devtools/shared/loader/Loader.jsm"
+  const { require: _require } = ChromeUtils.importESModule(
+    "resource://devtools/shared/loader/Loader.sys.mjs"
   );
   _require(HIGHLIGHTER_TEST_ACTOR_URL);
 
@@ -1215,7 +1217,7 @@ async function openNewTabAndToolbox(url, toolId, hostType) {
  * closed.
  */
 async function closeTabAndToolbox(tab = gBrowser.selectedTab) {
-  if (TabDescriptorFactory.isKnownTab(tab)) {
+  if (gDevTools.hasToolboxForTab(tab)) {
     await gDevTools.closeToolboxForTab(tab);
   }
 
@@ -1422,8 +1424,8 @@ async function registerActorInContentProcess(url, options) {
     [{ url, options }],
     args => {
       // eslint-disable-next-line no-shadow
-      const { require } = ChromeUtils.import(
-        "resource://devtools/shared/loader/Loader.jsm"
+      const { require } = ChromeUtils.importESModule(
+        "resource://devtools/shared/loader/Loader.sys.mjs"
       );
       const {
         ActorRegistry,
@@ -1523,8 +1525,8 @@ let allDownloads = [];
  *                  screenshot appears in the private window, not the non-private one (See Bug 1783373)
  */
 async function waitUntilScreenshot({ isWindowPrivate = false } = {}) {
-  const { Downloads } = ChromeUtils.import(
-    "resource://gre/modules/Downloads.jsm"
+  const { Downloads } = ChromeUtils.importESModule(
+    "resource://gre/modules/Downloads.sys.mjs"
   );
   const list = await Downloads.getList(Downloads.ALL);
 
@@ -1559,8 +1561,8 @@ async function waitUntilScreenshot({ isWindowPrivate = false } = {}) {
  */
 async function resetDownloads() {
   info("Reset downloads");
-  const { Downloads } = ChromeUtils.import(
-    "resource://gre/modules/Downloads.jsm"
+  const { Downloads } = ChromeUtils.importESModule(
+    "resource://gre/modules/Downloads.sys.mjs"
   );
   const downloadList = await Downloads.getList(Downloads.ALL);
   const downloads = await downloadList.getAll();

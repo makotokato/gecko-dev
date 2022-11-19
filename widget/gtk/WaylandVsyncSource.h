@@ -43,7 +43,7 @@ using layers::NativeLayerRootWayland;
  */
 class WaylandVsyncSource final : public gfx::VsyncSource {
  public:
-  WaylandVsyncSource();
+  explicit WaylandVsyncSource(nsWindow* aWindow);
   virtual ~WaylandVsyncSource();
 
   static Maybe<TimeDuration> GetFastestVsyncRate();
@@ -55,33 +55,42 @@ class WaylandVsyncSource final : public gfx::VsyncSource {
   void EnableMonitor();
   void DisableMonitor();
 
-  void FrameCallback(uint32_t aTime);
+  void FrameCallback(wl_callback* aCallback, uint32_t aTime);
+  void IdleCallback();
 
   TimeDuration GetVsyncRate() override;
 
-  virtual void EnableVsync() override;
+  void EnableVsync() override;
 
-  virtual void DisableVsync() override;
+  void DisableVsync() override;
 
-  virtual bool IsVsyncEnabled() override;
+  bool IsVsyncEnabled() override;
 
-  virtual void Shutdown() override;
+  void Shutdown() override;
 
  private:
+  Maybe<TimeDuration> GetVsyncRateIfEnabled();
+
   void Refresh(const MutexAutoLock& aProofOfLock);
   void SetupFrameCallback(const MutexAutoLock& aProofOfLock);
   void CalculateVsyncRate(const MutexAutoLock& aProofOfLock,
                           TimeStamp aVsyncTimestamp);
+  void* GetWindowForLogging() { return mWindow; };
 
-  Mutex mMutex MOZ_UNANNOTATED;
-  bool mIsShutdown;
-  bool mVsyncEnabled;
-  bool mMonitorEnabled;
-  bool mCallbackRequested;
-  MozContainer* mContainer;
-  RefPtr<NativeLayerRootWayland> mNativeLayerRoot;
-  TimeDuration mVsyncRate;
-  TimeStamp mLastVsyncTimeStamp;
+  Mutex mMutex;
+  bool mIsShutdown MOZ_GUARDED_BY(mMutex) = false;
+  bool mVsyncEnabled MOZ_GUARDED_BY(mMutex) = false;
+  bool mMonitorEnabled MOZ_GUARDED_BY(mMutex) = false;
+  bool mCallbackRequested MOZ_GUARDED_BY(mMutex) = false;
+  MozContainer* mContainer MOZ_GUARDED_BY(mMutex) = nullptr;
+  RefPtr<NativeLayerRootWayland> mNativeLayerRoot MOZ_GUARDED_BY(mMutex);
+  TimeDuration mVsyncRate MOZ_GUARDED_BY(mMutex);
+  TimeStamp mLastVsyncTimeStamp MOZ_GUARDED_BY(mMutex);
+  guint mIdleTimerID MOZ_GUARDED_BY(mMutex) = 0;
+  wl_callback* mCallback MOZ_GUARDED_BY(mMutex) = nullptr;
+
+  nsWindow* const mWindow;  // Main thread only, except for logging.
+  const guint mIdleTimeout;
 };
 
 }  // namespace mozilla

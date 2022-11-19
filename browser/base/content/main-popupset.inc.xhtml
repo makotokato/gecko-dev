@@ -189,7 +189,9 @@
            tabspecific="true"
            aria-labelledby="editBookmarkPanelTitle">
       <box class="panel-header">
-        <html:h1 id="editBookmarkPanelTitle"/>
+        <html:h1>
+          <html:span id="editBookmarkPanelTitle"/>
+        </html:h1>
       </box>
       <toolbarseparator id="editBookmarkHeaderSeparator"></toolbarseparator>
       <vbox class="panel-subview-body">
@@ -346,6 +348,11 @@
               data-lazy-l10n-id="toolbar-context-menu-remove-from-toolbar"
               contexttype="toolbaritem"
               class="customize-context-removeFromToolbar"/>
+    <menuitem oncommand="gUnifiedExtensions.onPinToToolbarChange(this.parentElement, event);"
+              data-lazy-l10n-id="toolbar-context-menu-pin-to-toolbar"
+              type="checkbox"
+              contexttype="toolbaritem"
+              class="customize-context-pinToToolbar"/>
     <menuseparator id="toolbarDownloadsAnchorMenuSeparator"/>
     <menuitem id="toolbar-context-always-open-downloads-panel"
               oncommand="ToolbarContextMenu.onDownloadsAlwaysOpenPanelChange(event);"
@@ -507,13 +514,13 @@
            class="places-tooltip"
            onpopupshowing="gBrowser.createTooltip(event);"
            onpopuphiding="this.removeAttribute('position')">
-    <vbox class="places-tooltip-box" flex="1">
+    <box class="places-tooltip-box">
       <description class="tooltip-label places-tooltip-title"/>
       <hbox>
         <image id="places-tooltip-insecure-icon"></image>
         <description crop="center" class="tooltip-label places-tooltip-uri uri-element"/>
       </hbox>
-    </vbox>
+    </box>
   </tooltip>
 
   <tooltip id="back-button-tooltip">
@@ -633,6 +640,11 @@
 
   <menupopup id="unified-extensions-context-menu"
              onpopupshowing="gUnifiedExtensions.updateContextMenu(this, event)">
+    <menuitem oncommand="gUnifiedExtensions.onPinToToolbarChange(this.parentElement, event);"
+              data-lazy-l10n-id="unified-extensions-context-menu-pin-to-toolbar"
+              type="checkbox"
+              class="unified-extensions-context-menu-pin-to-toolbar"/>
+    <menuseparator class="unified-extensions-context-menu-management-separator"/>
     <menuitem data-lazy-l10n-id="unified-extensions-context-menu-manage-extension"
               class="unified-extensions-context-menu-manage-extension"
               oncommand="gUnifiedExtensions.manageExtension(this.parentElement)" />

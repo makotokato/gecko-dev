@@ -76,7 +76,10 @@ DeviceManagerDx::DeviceManagerDx()
   mFeatureLevels.AppendElement(D3D_FEATURE_LEVEL_11_0);
   mFeatureLevels.AppendElement(D3D_FEATURE_LEVEL_10_1);
   mFeatureLevels.AppendElement(D3D_FEATURE_LEVEL_10_0);
+  MOZ_COUNT_CTOR(DeviceManagerDx);
 }
+
+DeviceManagerDx::~DeviceManagerDx() { MOZ_COUNT_DTOR(DeviceManagerDx); }
 
 bool DeviceManagerDx::LoadD3D11() {
   FeatureState& d3d11 = gfxConfig::GetFeature(Feature::D3D11_COMPOSITING);
@@ -110,7 +113,6 @@ bool DeviceManagerDx::LoadD3D11() {
 
 bool DeviceManagerDx::LoadDcomp() {
   MOZ_ASSERT(gfxConfig::GetFeature(Feature::D3D11_COMPOSITING).IsEnabled());
-  MOZ_ASSERT(gfxVars::UseWebRender());
   MOZ_ASSERT(gfxVars::UseWebRenderANGLE());
   MOZ_ASSERT(gfxVars::UseWebRenderDCompWin());
 
@@ -142,9 +144,6 @@ bool DeviceManagerDx::LoadDcomp() {
 }
 
 void DeviceManagerDx::ReleaseD3D11() {
-#ifdef DEBUG
-  MutexAutoLock lock(mDeviceLock);
-#endif
   MOZ_ASSERT(!mCompositorDevice);
   MOZ_ASSERT(!mContentDevice);
   MOZ_ASSERT(!mVRDevice);
@@ -317,7 +316,7 @@ bool DeviceManagerDx::CreateCompositorDevicesLocked() {
   // Fallback from WR to D3D11 Non-WR compositor without re-creating gpu process
   // could happen when WR causes error. In this case, the attachments are loaded
   // synchronously.
-  if (!gfx::gfxVars::UseWebRender() || gfx::gfxVars::UseSoftwareWebRender()) {
+  if (gfx::gfxVars::UseSoftwareWebRender()) {
     PreloadAttachmentsOnCompositorThread();
   }
 
@@ -391,6 +390,18 @@ bool DeviceManagerDx::CreateCanvasDeviceLocked() {
                     mCanvasDevice)) {
     gfxCriticalError() << "Crash during D3D11 device creation for Canvas";
     return false;
+  }
+
+  if (StaticPrefs::
+          gfx_direct2d_target_independent_rasterization_disabled_AtStartup()) {
+    int creationFlags = 0x2;  // disable target independent rasterization
+    const GUID D2D_INTERNAL_DEVICE_CREATION_OPTIONS = {
+        0xfb3a8e1a,
+        0x2e3c,
+        0x4de1,
+        {0x84, 0x42, 0x40, 0x43, 0xe0, 0xb0, 0x94, 0x95}};
+    mCanvasDevice->SetPrivateData(D2D_INTERNAL_DEVICE_CREATION_OPTIONS,
+                                  sizeof(creationFlags), &creationFlags);
   }
 
   if (FAILED(hr) || !mCanvasDevice) {
@@ -1043,7 +1054,7 @@ bool DeviceManagerDx::MaybeResetAndReacquireDevices() {
 
   ResetDevicesLocked();
 
-  if (createCompositorDevice && !CreateCompositorDevices()) {
+  if (createCompositorDevice && !CreateCompositorDevicesLocked()) {
     // Just stop, don't try anything more
     return true;
   }

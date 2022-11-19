@@ -18,8 +18,8 @@ ChromeUtils.defineModuleGetter(
   "pktApi",
   "chrome://pocket/content/pktApi.jsm"
 );
-const { setTimeout, clearTimeout } = ChromeUtils.import(
-  "resource://gre/modules/Timer.jsm"
+const { setTimeout, clearTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
 );
 const { actionTypes: at, actionCreators: ac } = ChromeUtils.import(
   "resource://activity-stream/common/Actions.jsm"
@@ -44,6 +44,7 @@ const DEFAULT_RECS_EXPIRE_TIME = 60 * 60 * 1000; // 1 hour
 const MIN_PERSONALIZATION_UPDATE_TIME = 12 * 60 * 60 * 1000; // 12 hours
 const MAX_LIFETIME_CAP = 500; // Guard against misconfiguration on the server
 const FETCH_TIMEOUT = 45 * 1000;
+const SPOCS_URL = "https://spocs.getpocket.com/spocs";
 const PREF_CONFIG = "discoverystream.config";
 const PREF_ENDPOINTS = "discoverystream.endpoints";
 const PREF_IMPRESSION_ID = "browser.newtabpage.activity-stream.impressionId";
@@ -54,8 +55,11 @@ const PREF_SPOCS_ENDPOINT_QUERY = "discoverystream.spocs-endpoint-query";
 const PREF_REGION_BASIC_LAYOUT = "discoverystream.region-basic-layout";
 const PREF_USER_TOPSTORIES = "feeds.section.topstories";
 const PREF_SYSTEM_TOPSTORIES = "feeds.system.topstories";
+const PREF_USER_TOPSITES = "feeds.topsites";
+const PREF_SYSTEM_TOPSITES = "feeds.system.topsites";
 const PREF_SPOCS_CLEAR_ENDPOINT = "discoverystream.endpointSpocsClear";
 const PREF_SHOW_SPONSORED = "showSponsored";
+const PREF_SHOW_SPONSORED_TOPSITES = "showSponsoredTopSites";
 const PREF_SPOC_IMPRESSIONS = "discoverystream.spoc.impressions";
 const PREF_FLIGHT_BLOCKS = "discoverystream.flight.blocks";
 const PREF_REC_IMPRESSIONS = "discoverystream.rec.impressions";
@@ -147,6 +151,12 @@ class DiscoveryStreamFeed {
   }
 
   get showSpocs() {
+    // High level overall sponsored check, if one of these is true,
+    // we know we need some sort of spoc control setup.
+    return this.showSponsoredStories || this.showSponsoredTopsites;
+  }
+
+  get showSponsoredStories() {
     // Combine user-set sponsored opt-out with Mozilla-set config
     return (
       this.store.getState().Prefs.values[PREF_SHOW_SPONSORED] &&
@@ -154,11 +164,24 @@ class DiscoveryStreamFeed {
     );
   }
 
-  get showStories() {
+  get showSponsoredTopsites() {
     // Combine user-set sponsored opt-out with Mozilla-set config
+    return this.store.getState().Prefs.values[PREF_SHOW_SPONSORED_TOPSITES];
+  }
+
+  get showStories() {
+    // Combine user-set stories opt-out with Mozilla-set config
     return (
       this.store.getState().Prefs.values[PREF_SYSTEM_TOPSTORIES] &&
       this.store.getState().Prefs.values[PREF_USER_TOPSTORIES]
+    );
+  }
+
+  get showTopsites() {
+    // Combine user-set topsites opt-out with Mozilla-set config
+    return (
+      this.store.getState().Prefs.values[PREF_SYSTEM_TOPSITES] &&
+      this.store.getState().Prefs.values[PREF_USER_TOPSITES]
     );
   }
 
@@ -463,12 +486,13 @@ class DiscoveryStreamFeed {
     const { feeds } = cachedData;
     return {
       layout: this.isExpired({ cachedData, key: "layout" }),
-      spocs: this.isExpired({ cachedData, key: "spocs" }),
+      spocs: this.showSpocs && this.isExpired({ cachedData, key: "spocs" }),
       feeds:
-        !feeds ||
-        Object.keys(feeds).some(url =>
-          this.isExpired({ cachedData, key: "feed", url })
-        ),
+        this.showStories &&
+        (!feeds ||
+          Object.keys(feeds).some(url =>
+            this.isExpired({ cachedData, key: "feed", url })
+          )),
     };
   }
 
@@ -511,25 +535,48 @@ class DiscoveryStreamFeed {
     const placements = [];
     const placementsMap = {};
     for (const row of layout.filter(r => r.components && r.components.length)) {
-      for (const component of row.components) {
-        if (component.placement) {
-          // Throw away any dupes for the request.
-          if (!placementsMap[component.placement.name]) {
-            placementsMap[component.placement.name] = component.placement;
-            placements.push(component.placement);
+      for (const component of row.components.filter(
+        c => c.placement && c.spocs
+      )) {
+        // If we find a valid placement, we set it to this value.
+        let placement;
+
+        // We need to check to see if this placement is on or not.
+        // If this placement has a prefs array, check against that.
+        if (component.spocs.prefs) {
+          // Check every pref in the array to see if this placement is turned on.
+          if (
+            component.spocs.prefs.length &&
+            component.spocs.prefs.every(
+              p => this.store.getState().Prefs.values[p]
+            )
+          ) {
+            // This placement is on.
+            placement = component.placement;
           }
+        } else if (this.showSponsoredStories) {
+          // If we do not have a prefs array, use old check.
+          // This is because Pocket spocs uses an old non pref method.
+          placement = component.placement;
+        }
+
+        // Validate this placement and check for dupes.
+        if (placement?.name && !placementsMap[placement.name]) {
+          placementsMap[placement.name] = placement;
+          placements.push(placement);
         }
       }
     }
-    if (placements.length) {
-      sendUpdate({
-        type: at.DISCOVERY_STREAM_SPOCS_PLACEMENTS,
-        data: { placements },
-        meta: {
-          isStartup,
-        },
-      });
-    }
+
+    // Update placements data.
+    // Even if we have no placements, we still want to update it to clear it.
+    sendUpdate({
+      type: at.DISCOVERY_STREAM_SPOCS_PLACEMENTS,
+      data: { placements },
+      meta: {
+        isStartup,
+      },
+    });
   }
 
   /**
@@ -601,13 +648,21 @@ class DiscoveryStreamFeed {
         items = isBasicLayout ? 4 : 24;
       }
 
-      const spocAdTypes = pocketConfig.spocAdTypes
-        ?.split(",")
-        .map(item => parseInt(item, 10));
-      const spocZoneIds = pocketConfig.spocZoneIds
-        ?.split(",")
-        .map(item => parseInt(item, 10));
+      const prepConfArr = arr => {
+        return arr
+          ?.split(",")
+          .filter(item => item)
+          .map(item => parseInt(item, 10));
+      };
+
+      const spocAdTypes = prepConfArr(pocketConfig.spocAdTypes);
+      const spocZoneIds = prepConfArr(pocketConfig.spocZoneIds);
+      const spocTopsitesAdTypes = prepConfArr(pocketConfig.spocTopsitesAdTypes);
+      const spocTopsitesZoneIds = prepConfArr(pocketConfig.spocTopsitesZoneIds);
+      const { spocSiteId } = pocketConfig;
       let spocPlacementData;
+      let spocTopsitesPlacementData;
+      let spocsUrl;
 
       if (spocAdTypes?.length && spocZoneIds?.length) {
         spocPlacementData = {
@@ -616,12 +671,27 @@ class DiscoveryStreamFeed {
         };
       }
 
+      if (spocTopsitesAdTypes?.length && spocTopsitesZoneIds?.length) {
+        spocTopsitesPlacementData = {
+          ad_types: spocTopsitesAdTypes,
+          zone_ids: spocTopsitesZoneIds,
+        };
+      }
+
+      if (spocSiteId) {
+        const newUrl = new URL(SPOCS_URL);
+        newUrl.searchParams.set("site", spocSiteId);
+        spocsUrl = newUrl.href;
+      }
+
       // Set a hardcoded layout if one is needed.
       // Changing values in this layout in memory object is unnecessary.
       layoutResp = getHardcodedLayout({
+        spocsUrl,
         items,
         sponsoredCollectionsEnabled,
         spocPlacementData,
+        spocTopsitesPlacementData,
         spocPositions: this.parseGridPositions(
           pocketConfig.spocPositions?.split(`,`)
         ),
@@ -678,8 +748,8 @@ class DiscoveryStreamFeed {
             isStartup,
           },
         });
+        this.updatePlacements(sendUpdate, layoutResp.layout, isStartup);
       }
-      this.updatePlacements(sendUpdate, layoutResp.layout, isStartup);
     }
   }
 
@@ -823,10 +893,6 @@ class DiscoveryStreamFeed {
 
   getPlacements() {
     const { placements } = this.store.getState().DiscoveryStream.spocs;
-    // Backwards comp for before we had placements, assume just a single spocs placement.
-    if (!placements || !placements.length) {
-      return [{ name: "spocs" }];
-    }
     return placements;
   }
 
@@ -915,9 +981,9 @@ class DiscoveryStreamFeed {
     const cachedData = (await this.cache.get()) || {};
     let spocsState;
 
-    const { placements } = this.store.getState().DiscoveryStream.spocs;
+    const placements = this.getPlacements();
 
-    if (this.showSpocs) {
+    if (this.showSpocs && placements?.length) {
       spocsState = cachedData.spocs;
       if (this.isExpired({ cachedData, key: "spocs", isStartup })) {
         const endpoint = this.store.getState().DiscoveryStream.spocs
@@ -1545,15 +1611,25 @@ class DiscoveryStreamFeed {
       : this.store.dispatch;
 
     await this.loadLayout(dispatch, isStartup);
-    if (this.showStories) {
-      await Promise.all([
-        this.loadSpocs(dispatch, isStartup).catch(error =>
-          Cu.reportError(`Error trying to load spocs feeds: ${error}`)
-        ),
-        this.loadComponentFeeds(dispatch, isStartup).catch(error =>
+    if (this.showStories || this.showTopsites) {
+      const promises = [];
+      // We could potentially have either or both sponsored topsites or stories.
+      // We only make one fetch, and control which to request when we fetch.
+      // So for now we only care if we need to make this request at all.
+      const spocsPromise = this.loadSpocs(dispatch, isStartup).catch(error =>
+        Cu.reportError(`Error trying to load spocs feeds: ${error}`)
+      );
+      promises.push(spocsPromise);
+      if (this.showStories) {
+        const storiesPromise = this.loadComponentFeeds(
+          dispatch,
+          isStartup
+        ).catch(error =>
           Cu.reportError(`Error trying to load component feeds: ${error}`)
-        ),
-      ]);
+        );
+        promises.push(storiesPromise);
+      }
+      await Promise.all(promises);
       if (isStartup) {
         await this._maybeUpdateCachedData();
       }
@@ -1756,7 +1832,7 @@ class DiscoveryStreamFeed {
     }
   }
 
-  onPocketConfigChanged() {
+  onCollectionsChanged() {
     // Update layout, and reload any off screen tabs.
     // This does not change any existing open tabs.
     // It also doesn't update any spoc or rec data, just the layout.
@@ -1776,7 +1852,7 @@ class DiscoveryStreamFeed {
         this.configReset();
         break;
       case PREF_COLLECTIONS_ENABLED:
-        this.onPocketConfigChanged();
+        this.onCollectionsChanged();
         break;
       case PREF_USER_TOPSTORIES:
       case PREF_SYSTEM_TOPSTORIES:
@@ -1789,13 +1865,21 @@ class DiscoveryStreamFeed {
         break;
       // Check if spocs was disabled. Remove them if they were.
       case PREF_SHOW_SPONSORED:
+      case PREF_SHOW_SPONSORED_TOPSITES:
         if (!action.data.value) {
           // Ensure we delete any remote data potentially related to spocs.
           this.clearSpocs();
         }
-        await this.loadSpocs(update =>
-          this.store.dispatch(ac.BroadcastToContent(update))
+        const dispatch = update =>
+          this.store.dispatch(ac.BroadcastToContent(update));
+        // We refresh placements data because one of the spocs were turned off.
+        this.updatePlacements(
+          dispatch,
+          this.store.getState().DiscoveryStream.layout
         );
+        // Placements have changed so consider spocs expired, and reload them.
+        await this.cache.set("spocs", {});
+        await this.loadSpocs(dispatch);
         break;
     }
   }
@@ -2009,7 +2093,7 @@ class DiscoveryStreamFeed {
       case at.PREF_CHANGED:
         await this.onPrefChangedAction(action);
         if (action.data.name === "pocketConfig") {
-          this.onPocketConfigChanged();
+          await this.onPrefChange();
           this.setupPrefs(false /* isStartup */);
         }
         break;
@@ -2022,9 +2106,11 @@ class DiscoveryStreamFeed {
    persist across pref changes and system_tick updates.
 
    NOTE: There is some branching logic in the template.
+     `spocsUrl` Changing the url for spocs is used for adding a siteId query param.
      `items` How many items to include in the primary card grid.
      `spocPositions` Changes the position of spoc cards.
      `spocPlacementData` Used to set the spoc content.
+     `spocTopsitesPlacementData` Used to set spoc content for topsites.
      `sponsoredCollectionsEnabled` Tuns on and off the sponsored collection section.
      `hybridLayout` Changes cards to smaller more compact cards only for specific breakpoints.
      `hideCardBackground` Removes Pocket card background and borders.
@@ -2035,9 +2121,11 @@ class DiscoveryStreamFeed {
      `editorsPicksHeader` Updates the Pocket section header and title to say "Editor’s Picks", if used with essentialReadsHeader, creates a second section 2 rows down for editorsPicks.
 */
 getHardcodedLayout = ({
+  spocsUrl = SPOCS_URL,
   items = 21,
   spocPositions = [1, 5, 7, 11, 18, 20],
   spocPlacementData = { ad_types: [3617], zone_ids: [217758, 217995] },
+  spocTopsitesPlacementData,
   widgetPositions = [],
   widgetData = [],
   sponsoredCollectionsEnabled = false,
@@ -2051,7 +2139,7 @@ getHardcodedLayout = ({
 }) => ({
   lastUpdate: Date.now(),
   spocs: {
-    url: "https://spocs.getpocket.com/spocs",
+    url: spocsUrl,
   },
   layout: [
     {
@@ -2064,6 +2152,24 @@ getHardcodedLayout = ({
               id: "newtab-section-header-topsites",
             },
           },
+          ...(spocTopsitesPlacementData
+            ? {
+                placement: {
+                  name: "sponsored-topsites",
+                  ad_types: spocTopsitesPlacementData.ad_types,
+                  zone_ids: spocTopsitesPlacementData.zone_ids,
+                },
+                spocs: {
+                  probability: 1,
+                  prefs: [PREF_SHOW_SPONSORED_TOPSITES],
+                  positions: [
+                    {
+                      index: 1,
+                    },
+                  ],
+                },
+              }
+            : {}),
           properties: {},
         },
         ...(sponsoredCollectionsEnabled

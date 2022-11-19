@@ -32,6 +32,7 @@ var gExceptionPaths = [
   "chrome://activity-stream/content/data/content/assets/remote/",
   "chrome://activity-stream/content/data/content/assets/mobile-download-qr-new-user-cn.svg",
   "chrome://activity-stream/content/data/content/assets/mobile-download-qr-existing-user-cn.svg",
+  "chrome://activity-stream/content/data/content/assets/person-typing.svg",
   "chrome://browser/content/assets/moz-vpn.svg",
   "chrome://browser/content/assets/vpn-logo.svg",
   "chrome://browser/content/assets/focus-promo.png",
@@ -53,7 +54,7 @@ var gExceptionPaths = [
 
   // Paths from this folder are constructed in NetErrorParent.jsm based on
   // the type of cert or net error the user is encountering.
-  "chrome://browser/content/certerror/supportpages/",
+  "chrome://global/content/neterror/supportpages/",
 
   // Points to theme preview images, which are defined in browser/ but only used
   // in toolkit/mozapps/extensions/content/aboutaddons.js.
@@ -130,6 +131,9 @@ var whitelist = [
     file: "chrome://devtools/content/inspector/markup/markup.xhtml",
     isFromDevTools: true,
   },
+
+  // used by devtools/client/memory/index.xhtml
+  { file: "chrome://global/content/third_party/d3/d3.js" },
 
   // SpiderMonkey parser API, currently unused in browser/ and toolkit/
   { file: "resource://gre/modules/reflect.jsm" },
@@ -285,14 +289,8 @@ var whitelist = [
   // toolkit/xre/MacRunFromDmgUtils.mm
   { file: "resource://gre/localization/en-US/toolkit/global/run-from-dmg.ftl" },
 
-  // References to esm generated from jsm programatically
+  // References to esm generated from jsm programmatically
   { file: "resource://gre/modules/LangPackMatcher.sys.mjs" },
-  { file: "resource://gre/modules/PluralForm.sys.mjs" },
-
-  // Bug 1788595 - used by Firefox Translations extension
-  // see also https://github.com/mozilla/firefox-translations/issues/496
-  { file: "chrome://browser/locale/translation.dtd" },
-  { file: "chrome://global/locale/notification.dtd" },
 ];
 
 if (AppConstants.NIGHTLY_BUILD && AppConstants.platform != "win") {
@@ -363,7 +361,7 @@ if (!isDevtools) {
   // resource://devtools/shared/worker/loader.js,
   // resource://devtools/shared/loader/builtin-modules.js
   if (!AppConstants.ENABLE_WEBDRIVER) {
-    whitelist.add("resource://gre/modules/jsdebugger.jsm");
+    whitelist.add("resource://gre/modules/jsdebugger.sys.mjs");
   }
 }
 

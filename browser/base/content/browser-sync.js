@@ -174,9 +174,6 @@ this.SyncedTabsPanelList = class SyncedTabsPanelList {
           fragment.appendChild(container);
         }
         this.tabsList.appendChild(fragment);
-        PanelView.forNode(
-          this.tabsList.closest("panelview")
-        ).descriptionHeightWorkaround();
       })
       .catch(err => {
         Cu.reportError(err);
@@ -1142,6 +1139,9 @@ var gSync = {
   },
 
   async openSignInAgainPage(entryPoint) {
+    if (!(await FxAccounts.canConnectAccount())) {
+      return;
+    }
     const url = await FxAccounts.config.promiseForceSigninURI(entryPoint);
     switchToTabHavingURI(url, true, {
       replaceQueryString: true,
@@ -1198,6 +1198,9 @@ var gSync = {
   },
 
   async openFxAEmailFirstPage(entryPoint) {
+    if (!(await FxAccounts.canConnectAccount())) {
+      return;
+    }
     const url = await FxAccounts.config.promiseConnectAccountURI(entryPoint);
     switchToTabHavingURI(url, true, { replaceQueryString: true });
   },

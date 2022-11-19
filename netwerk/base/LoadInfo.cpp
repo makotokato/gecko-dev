@@ -779,44 +779,7 @@ void LoadInfo::ComputeIsThirdPartyContext(dom::WindowGlobalParent* aGlobal) {
 
 NS_IMPL_ISUPPORTS(LoadInfo, nsILoadInfo)
 
-#ifdef EARLY_BETA_OR_EARLIER
-void LoadInfo::ReleaseMembers() {
-  Unused << NS_DispatchToCurrentThread(NS_NewRunnableFunction(
-      "LoadInfo::ReleasePrincipalAnUrl",
-      [loadinPrinciple{std::move(mLoadingPrincipal)},
-       principalToInherit{std::move(mPrincipalToInherit)},
-       topLevelPrincipal{std::move(mTopLevelPrincipal)},
-       resultPrincipalURI{std::move(mResultPrincipalURI)},
-       unstrippedURI{std::move(mUnstrippedURI)}]() {}));
-
-  Unused << NS_DispatchToCurrentThread(NS_NewRunnableFunction(
-      "LoadInfo::ReleaseOther",
-      [cspEventListener{std::move(mCSPEventListener)},
-       performanceStorage{std::move(mPerformanceStorage)},
-       cspToInherit{std::move(mCspToInherit)}]() {}));
-
-  Unused << NS_DispatchToCurrentThread(NS_NewRunnableFunction(
-      "LoadInfo::ReleaseCookieJarSettings",
-      [cookieJarSettings{std::move(mCookieJarSettings)}]() {}));
-}
-
-#else
-void LoadInfo::ReleaseMembers() {
-  mCSPEventListener = nullptr;
-  mCookieJarSettings = nullptr;
-  mPerformanceStorage = nullptr;
-  mLoadingPrincipal = nullptr;
-  mTriggeringPrincipal = nullptr;
-  mPrincipalToInherit = nullptr;
-  mTopLevelPrincipal = nullptr;
-  mResultPrincipalURI = nullptr;
-  mCspToInherit = nullptr;
-  mUnstrippedURI = nullptr;
-  mAncestorPrincipals.Clear();
-}
-#endif
-
-LoadInfo::~LoadInfo() { ReleaseMembers(); }
+LoadInfo::~LoadInfo() { MOZ_RELEASE_ASSERT(NS_IsMainThread()); }
 
 already_AddRefed<nsILoadInfo> LoadInfo::Clone() const {
   RefPtr<LoadInfo> copy(new LoadInfo(*this));
@@ -1502,10 +1465,26 @@ already_AddRefed<nsIPrincipal> CreateTruncatedPrincipal(
     return NullPrincipal::CreateWithInheritedAttributes(truncatedPrecursor);
   }
 
+  // Expanded Principals shouldn't contain sensitive information but their
+  // allowlists might so we truncate that information here.
+  if (aPrincipal->GetIsExpandedPrincipal()) {
+    nsTArray<nsCOMPtr<nsIPrincipal>> truncatedAllowList;
+
+    for (const auto& allowedPrincipal : BasePrincipal::Cast(aPrincipal)
+                                            ->As<ExpandedPrincipal>()
+                                            ->AllowList()) {
+      nsCOMPtr<nsIPrincipal> truncatedPrincipal =
+          CreateTruncatedPrincipal(allowedPrincipal);
+
+      truncatedAllowList.AppendElement(truncatedPrincipal);
+    }
+
+    return ExpandedPrincipal::Create(truncatedAllowList,
+                                     aPrincipal->OriginAttributesRef());
+  }
+
   // If we hit this assertion we need to update this function to add the
   // Principals and URIs seen as new corner cases to handle.
-  // For example we may need to do this for Expanded Principals and moz-icon
-  // URIs.
   MOZ_ASSERT(false, "Unhandled Principal or URI type encountered.");
 
   truncatedPrincipal = aPrincipal;

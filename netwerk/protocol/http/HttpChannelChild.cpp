@@ -35,11 +35,12 @@
 #include "nsStringStream.h"
 #include "nsHttpChannel.h"
 #include "nsHttpHandler.h"
+#include "nsQueryObject.h"
 #include "nsNetUtil.h"
 #include "nsSerializationHelper.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Telemetry.h"
 #include "mozilla/dom/PerformanceStorage.h"
-#include "mozilla/glean/GleanMetrics.h"
 #include "mozilla/ipc/InputStreamUtils.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/ipc/BackgroundUtils.h"
@@ -452,12 +453,19 @@ void HttpChannelChild::OnStartRequest(
 
   ResourceTimingStructArgsToTimingsStruct(aArgs.timing(), mTransactionTimings);
 
+  nsAutoCString cosString;
+  ClassOfService::ToString(mClassOfService, cosString);
   if (!mAsyncOpenTime.IsNull() &&
       !aArgs.timing().transactionPending().IsNull()) {
-    TimeDuration asyncOpenToTransactionPending =
-        aArgs.timing().transactionPending() - mAsyncOpenTime;
-    glean::network::open_to_transaction_pending.AccumulateRawDuration(
-        asyncOpenToTransactionPending);
+    Telemetry::AccumulateTimeDelta(
+        Telemetry::NETWORK_ASYNC_OPEN_CHILD_TO_TRANSACTION_PENDING_EXP_MS,
+        cosString, mAsyncOpenTime, aArgs.timing().transactionPending());
+  }
+
+  if (!aArgs.timing().responseStart().IsNull()) {
+    Telemetry::AccumulateTimeDelta(
+        Telemetry::NETWORK_RESPONSE_START_PARENT_TO_CONTENT_EXP_MS, cosString,
+        aArgs.timing().responseStart(), TimeStamp::Now());
   }
 
   StoreAllRedirectsSameOrigin(aArgs.allRedirectsSameOrigin());
@@ -900,6 +908,14 @@ void HttpChannelChild::OnStopRequest(
   }
   PerfStats::RecordMeasurement(PerfStats::Metric::HttpChannelCompletion,
                                channelCompletionDuration);
+
+  if (!aTiming.responseEnd().IsNull()) {
+    nsAutoCString cosString;
+    ClassOfService::ToString(mClassOfService, cosString);
+    Telemetry::AccumulateTimeDelta(
+        Telemetry::NETWORK_RESPONSE_END_PARENT_TO_CONTENT_MS, cosString,
+        aTiming.responseEnd(), TimeStamp::Now());
+  }
 
   mResponseTrailers = MakeUnique<nsHttpHeaderArray>(aResponseTrailers);
 
@@ -1450,6 +1466,36 @@ mozilla::ipc::IPCResult HttpChannelChild::RecvRedirect3Complete() {
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult HttpChannelChild::RecvRedirectFailed(
+    const nsresult& status) {
+  LOG(("HttpChannelChild::RecvRedirectFailed this=%p status=%X\n", this,
+       static_cast<uint32_t>(status)));
+  mEventQ->RunOrEnqueue(new NeckoTargetChannelFunctionEvent(
+      this, [self = UnsafePtr<HttpChannelChild>(this), status]() {
+        nsCOMPtr<nsIRedirectResultListener> vetoHook;
+        self->GetCallback(vetoHook);
+        if (vetoHook) {
+          vetoHook->OnRedirectResult(status);
+        }
+
+        if (RefPtr<HttpChannelChild> httpChannelChild =
+                do_QueryObject(self->mRedirectChannelChild)) {
+          // For sending an IPC message to parent channel so that the loading
+          // can be cancelled.
+          Unused << httpChannelChild->CancelWithReason(
+              status, "HttpChannelChild RecvRedirectFailed"_ns);
+
+          // The post-redirect channel could still get OnStart/StopRequest IPC
+          // messages from parent, but the mListener is still null. So, we
+          // call |DoNotifyListener| to pretend that OnStart/StopRequest are
+          // already called.
+          httpChannelChild->DoNotifyListener();
+        }
+      }));
+
+  return IPC_OK();
+}
+
 void HttpChannelChild::ProcessNotifyClassificationFlags(
     uint32_t aClassificationFlags, bool aIsThirdParty) {
   LOG(
@@ -1514,7 +1560,7 @@ void HttpChannelChild::Redirect3Complete() {
   nsCOMPtr<nsIRedirectResultListener> vetoHook;
   GetCallback(vetoHook);
   if (vetoHook) {
-    vetoHook->OnRedirectResult(true);
+    vetoHook->OnRedirectResult(NS_OK);
   }
 
   // Chrome channel has been AsyncOpen'd.  Reflect this in child.
@@ -2918,6 +2964,12 @@ class AttachStreamFilterEvent : public ChannelEvent {
   Endpoint<extensions::PStreamFilterParent> mEndpoint;
 };
 
+void HttpChannelChild::RegisterStreamFilter(
+    RefPtr<extensions::StreamFilterParent>& aStreamFilter) {
+  MOZ_ASSERT(NS_IsMainThread());
+  mStreamFilters.AppendElement(aStreamFilter);
+}
+
 void HttpChannelChild::ProcessAttachStreamFilter(
     Endpoint<extensions::PStreamFilterParent>&& aEndpoint) {
   LOG(("HttpChannelChild::ProcessAttachStreamFilter [this=%p]\n", this));
@@ -2925,6 +2977,25 @@ void HttpChannelChild::ProcessAttachStreamFilter(
 
   mEventQ->RunOrEnqueue(new AttachStreamFilterEvent(this, GetNeckoTarget(),
                                                     std::move(aEndpoint)));
+}
+
+void HttpChannelChild::OnDetachStreamFilters() {
+  LOG(("HttpChannelChild::OnDetachStreamFilters [this=%p]\n", this));
+  MOZ_ASSERT(NS_IsMainThread());
+  for (auto& StreamFilter : mStreamFilters) {
+    StreamFilter->Disconnect("ServiceWorker fallback redirection"_ns);
+  }
+  mStreamFilters.Clear();
+}
+
+void HttpChannelChild::ProcessDetachStreamFilters() {
+  LOG(("HttpChannelChild::ProcessDetachStreamFilter [this=%p]\n", this));
+  MOZ_ASSERT(OnSocketThread());
+
+  mEventQ->RunOrEnqueue(new NeckoTargetChannelFunctionEvent(
+      this, [self = UnsafePtr<HttpChannelChild>(this)]() {
+        self->OnDetachStreamFilters();
+      }));
 }
 
 void HttpChannelChild::ActorDestroy(ActorDestroyReason aWhy) {

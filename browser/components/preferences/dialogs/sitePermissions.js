@@ -4,8 +4,8 @@
 
 /* import-globals-from ../extensionControlled.js */
 
-var { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+var { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 const { SitePermissions } = ChromeUtils.import(
   "resource:///modules/SitePermissions.jsm"
@@ -128,6 +128,7 @@ var gSitePermissionsManager = {
 
     let permissionsText = document.getElementById("permissionsText");
 
+    document.l10n.pauseObserving();
     let l10n = sitePermissionsL10n[this._type];
     document.l10n.setAttributes(permissionsText, l10n.description);
     if (l10n.disableLabel) {
@@ -147,6 +148,7 @@ var gSitePermissionsManager = {
       this._permissionsDisableDescription,
       document.documentElement,
     ]);
+    document.l10n.resumeObserving();
 
     // Initialize the checkbox state and handle showing notification permission UI
     // when it is disabled by an extension.
@@ -157,7 +159,7 @@ var gSitePermissionsManager = {
     this.buildPermissionsList();
 
     if (params.permissionType == "autoplay-media") {
-      this.buildAutoplayMenulist();
+      await this.buildAutoplayMenulist();
       this._setAutoplayPref.hidden = false;
     }
 
@@ -358,7 +360,7 @@ var gSitePermissionsManager = {
     website.setAttribute("value", permission.origin);
     website.setAttribute("width", width);
     hbox.setAttribute("class", "website-name");
-    hbox.setAttribute("style", "-moz-box-flex: 1");
+    hbox.setAttribute("style", "-moz-box-flex: 3");
     hbox.appendChild(website);
 
     let menulist = document.createXULElement("menulist");
@@ -444,17 +446,6 @@ var gSitePermissionsManager = {
 
   onPermissionSelect() {
     this._setRemoveButtonState();
-
-    // If any item is selected, it should be the only item tabable
-    // in the richlistbox for accessibility reasons.
-    this._list.itemChildren.forEach(item => {
-      let menulist = item.getElementsByTagName("menulist")[0];
-      if (!item.selected) {
-        menulist.setAttribute("tabindex", -1);
-      } else {
-        menulist.removeAttribute("tabindex");
-      }
-    });
   },
 
   onPermissionChange(perm, capability) {
@@ -525,9 +516,10 @@ var gSitePermissionsManager = {
     this._setRemoveButtonState();
   },
 
-  buildAutoplayMenulist() {
+  async buildAutoplayMenulist() {
     let menulist = document.createXULElement("menulist");
     let states = SitePermissions.getAvailableStates("autoplay-media");
+    document.l10n.pauseObserving();
     for (let state of states) {
       let m = menulist.appendItem(undefined, state);
       document.l10n.setAttributes(
@@ -547,6 +539,8 @@ var gSitePermissionsManager = {
     menulist.disabled = Services.prefs.prefIsLocked(AUTOPLAY_PREF);
 
     document.getElementById("setAutoplayPref").appendChild(menulist);
+    await document.l10n.translateFragment(menulist);
+    document.l10n.resumeObserving();
   },
 
   _sortPermissions(list, frag, column) {

@@ -11,8 +11,11 @@
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-XPCOMUtils.defineLazyModuleGetters(this, {
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  BookmarkJSONUtils: "resource://gre/modules/BookmarkJSONUtils.sys.mjs",
+  MigrationUtils: "resource:///modules/MigrationUtils.sys.mjs",
+  PlacesBackups: "resource://gre/modules/PlacesBackups.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
 });
 XPCOMUtils.defineLazyScriptGetter(
   this,
@@ -26,18 +29,10 @@ XPCOMUtils.defineLazyScriptGetter(
 );
 /* End Shared Places Import */
 
-var { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+var { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
-ChromeUtils.defineModuleGetter(
-  this,
-  "MigrationUtils",
-  "resource:///modules/MigrationUtils.jsm"
-);
-ChromeUtils.defineESModuleGetters(this, {
-  BookmarkJSONUtils: "resource://gre/modules/BookmarkJSONUtils.sys.mjs",
-  PlacesBackups: "resource://gre/modules/PlacesBackups.sys.mjs",
-});
+
 ChromeUtils.defineModuleGetter(
   this,
   "DownloadUtils",
@@ -107,7 +102,7 @@ var PlacesOrganizer = {
    * Opens a given hierarchy in the left pane, stopping at the last reachable
    * container. Note: item ids should be considered deprecated.
    *
-   * @param {array|string|number} aHierarchy
+   * @param {Array | string | number} aHierarchy
    *        A single container or an array of containers, sorted from
    *        the outmost to the innermost in the hierarchy. Each
    *        container may be either an item id, a Places URI string,
@@ -329,6 +324,7 @@ var PlacesOrganizer = {
 
   /**
    * Called when a place folder is selected in the left pane.
+   *
    * @param   resetSearchBox
    *          true if the search box should also be reset, false otherwise.
    *          The search box should be reset when a new folder in the left
@@ -371,15 +367,14 @@ var PlacesOrganizer = {
 
     let input = PlacesSearchBox.searchFilter;
     input.value = "";
-    try {
-      input.editor.transactionManager.clear();
-    } catch (e) {}
+    input.editor?.clearUndoRedo();
     this._setSearchScopeForNode(node);
     this.updateDetailsPane();
   },
 
   /**
    * Sets the search scope based on aNode's properties.
+   *
    * @param {object} aNode
    *          the node to set up scope from
    */
@@ -403,6 +398,7 @@ var PlacesOrganizer = {
    * Handle clicks on the places list.
    * Single Left click, right click or modified click do not result in any
    * special action, since they're related to selection.
+   *
    * @param {object} aEvent
    *          The mouse event.
    */
@@ -442,6 +438,7 @@ var PlacesOrganizer = {
 
   /**
    * Handle openFlatContainer events.
+   *
    * @param {object} aContainer
    *        The node the event was dispatched on.
    */
@@ -595,7 +592,7 @@ var PlacesOrganizer = {
   /**
    * Called when a menuitem is selected from the restore menu.
    *
-   * @param {object} aMenuItem
+   * @param {object} aMenuItem The menuitem that was selected.
    */
   async onRestoreMenuItemClick(aMenuItem) {
     let backupName = aMenuItem.getAttribute("value");
@@ -819,6 +816,9 @@ var PlacesOrganizer = {
 var PlacesSearchBox = {
   /**
    * The Search text field
+   *
+   * @see {@link https://searchfox.org/mozilla-central/source/toolkit/content/widgets/search-textbox.js}
+   * @returns {HTMLInputElement}
    */
   get searchFilter() {
     return document.getElementById("searchFilter");
@@ -842,6 +842,7 @@ var PlacesSearchBox = {
    * Run a search for the specified text, over the collection specified by
    * the dropdown arrow. The default is all bookmarks, but can be
    * localized to the active collection.
+   *
    * @param {string} filterString
    *          The text to search for.
    */
@@ -918,6 +919,7 @@ var PlacesSearchBox = {
 
   /**
    * Updates the display with the title of the current collection.
+   *
    * @param {string} aTitle
    *          The title of the current collection.
    */
@@ -938,6 +940,8 @@ var PlacesSearchBox = {
 
   /**
    * Gets/sets the active collection from the dropdown menu.
+   *
+   * @returns {string}
    */
   get filterCollection() {
     return this.searchFilter.getAttribute("collection");
@@ -967,6 +971,8 @@ var PlacesSearchBox = {
 
   /**
    * Gets or sets the text shown in the Places Search Box
+   *
+   * @returns {string}
    */
   get value() {
     return this.searchFilter.value;
@@ -988,6 +994,7 @@ var PlacesQueryBuilder = {
    * in that case, when the user does begin a search aScope will be used (see
    * PSB_search()).  If there is an active search, it's performed again to
    * update the content tree.
+   *
    * @param {string} aScope
    *          The search scope: "bookmarks", "collection", "downloads" or
    *          "history".
@@ -1027,6 +1034,7 @@ var PlacesQueryBuilder = {
 var ViewMenu = {
   /**
    * Removes content generated previously from a menupopup.
+   *
    * @param {object} popup
    *          The popup that contains the previously generated content.
    * @param {string} startID
@@ -1080,6 +1088,7 @@ var ViewMenu = {
 
   /**
    * Fills a menupopup with a list of columns
+   *
    * @param {object} event
    *          The popupshowing event that invoked this function.
    * @param {string} startID
@@ -1159,6 +1168,7 @@ var ViewMenu = {
    * Set up the content of the view menu.
    *
    * @param {object} event
+   *   The event that invoked this function
    */
   populateSortMenu: function VM_populateSortMenu(event) {
     this.fillWithColumns(
@@ -1192,6 +1202,7 @@ var ViewMenu = {
 
   /**
    * Shows/Hides a tree column.
+   *
    * @param {object} element
    *          The menuitem element for the column
    */
@@ -1212,6 +1223,7 @@ var ViewMenu = {
 
   /**
    * Gets the last column that was sorted.
+   *
    * @returns {object|null} the currently sorted column, null if there is no sorted column.
    */
   _getSortColumn: function VM__getSortColumn() {
@@ -1229,6 +1241,7 @@ var ViewMenu = {
 
   /**
    * Sorts the view by the specified column.
+   *
    * @param {object} aColumn
    *          The colum that is the sort key. Can be null - the
    *          current sort column or the title column will be used.
@@ -1330,6 +1343,7 @@ var ContentArea = {
   /**
    * Sets a custom view to be used rather than the default places tree
    * whenever the given query is selected in the left pane.
+   *
    * @param {string} aQueryString
    *        a query string
    * @param {object} aView
@@ -1418,7 +1432,8 @@ var ContentArea = {
   /**
    * Options for the current view.
    *
-   * @see ContentTree.viewOptions for supported options and default values.
+   * @see {@link ContentTree.viewOptions} for supported options and default values.
+   * @returns {{showDetailsPane: boolean;toolbarSet: string;}}
    */
   get currentViewOptions() {
     // Use ContentTree options as default.

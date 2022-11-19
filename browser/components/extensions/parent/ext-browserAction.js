@@ -11,20 +11,14 @@ ChromeUtils.defineModuleGetter(
   "CustomizableUI",
   "resource:///modules/CustomizableUI.jsm"
 );
-ChromeUtils.defineModuleGetter(
-  this,
-  "clearTimeout",
-  "resource://gre/modules/Timer.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
+});
 ChromeUtils.defineModuleGetter(
   this,
   "ExtensionTelemetry",
   "resource://gre/modules/ExtensionTelemetry.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "setTimeout",
-  "resource://gre/modules/Timer.jsm"
 );
 ChromeUtils.defineModuleGetter(
   this,
@@ -36,8 +30,13 @@ ChromeUtils.defineModuleGetter(
   "BrowserUsageTelemetry",
   "resource:///modules/BrowserUsageTelemetry.jsm"
 );
+ChromeUtils.defineModuleGetter(
+  this,
+  "OriginControls",
+  "resource://gre/modules/ExtensionPermissions.jsm"
+);
 
-var { DefaultWeakMap } = ExtensionUtils;
+var { DefaultWeakMap, ExtensionError } = ExtensionUtils;
 
 var { ExtensionParent } = ChromeUtils.import(
   "resource://gre/modules/ExtensionParent.jsm"
@@ -54,13 +53,23 @@ const POPUP_PRELOAD_TIMEOUT_MS = 200;
 const browserActionMap = new WeakMap();
 
 XPCOMUtils.defineLazyGetter(this, "browserAreas", () => {
+  let panelArea = gUnifiedExtensionsEnabled
+    ? CustomizableUI.AREA_ADDONS
+    : CustomizableUI.AREA_FIXED_OVERFLOW_PANEL;
   return {
     navbar: CustomizableUI.AREA_NAVBAR,
-    menupanel: CustomizableUI.AREA_FIXED_OVERFLOW_PANEL,
+    menupanel: panelArea,
     tabstrip: CustomizableUI.AREA_TABSTRIP,
     personaltoolbar: CustomizableUI.AREA_BOOKMARKS,
   };
 });
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "gUnifiedExtensionsEnabled",
+  "extensions.unifiedExtensions.enabled",
+  false
+);
 
 function actionWidgetId(widgetId) {
   return `${widgetId}-browser-action`;
@@ -137,7 +146,7 @@ this.browserAction = class extends ExtensionAPIPersistent {
 
     let widgetId = makeWidgetId(extension.id);
     this.id = actionWidgetId(widgetId);
-    this.viewId = `PanelUI-webext-${widgetId}-browser-action-view`;
+    this.viewId = `PanelUI-webext-${widgetId}-BAV`;
     this.widget = null;
 
     this.pendingPopup = null;
@@ -193,20 +202,105 @@ this.browserAction = class extends ExtensionAPIPersistent {
   }
 
   build() {
+    let { extension } = this;
+    let widgetId = makeWidgetId(extension.id);
     let widget = CustomizableUI.createWidget({
       id: this.id,
       viewId: this.viewId,
-      type: "view",
+      type: "custom",
+      webExtension: true,
       removable: true,
       label: this.action.getProperty(null, "title"),
       tooltiptext: this.action.getProperty(null, "title"),
       defaultArea: browserAreas[this.action.getDefaultArea()],
-      showInPrivateBrowsing: this.extension.privateBrowsingAllowed,
+      showInPrivateBrowsing: extension.privateBrowsingAllowed,
       disallowSubView: true,
 
       // Don't attempt to load properties from the built-in widget string
       // bundle.
       localized: false,
+
+      // Build a custom widget that looks like a `unified-extensions-item`
+      // custom element.
+      onBuild(document) {
+        let viewId = widgetId + "-BAP";
+        let button = document.createXULElement("toolbarbutton");
+        button.setAttribute("id", viewId);
+        // Ensure the extension context menuitems are available by setting this
+        // on all button children and the item.
+        button.setAttribute("data-extensionid", extension.id);
+        button.classList.add(
+          "toolbarbutton-1",
+          "unified-extensions-item-action",
+          "subviewbutton"
+        );
+
+        if (gUnifiedExtensionsEnabled) {
+          let contents = document.createXULElement("vbox");
+          contents.classList.add("unified-extensions-item-contents");
+          contents.setAttribute("move-after-stack", "true");
+
+          let name = document.createXULElement("label");
+          name.classList.add("unified-extensions-item-name");
+          contents.appendChild(name);
+
+          let messageDefault = document.createXULElement("label");
+          messageDefault.classList.add(
+            "unified-extensions-item-message",
+            "unified-extensions-item-message-default"
+          );
+          contents.appendChild(messageDefault);
+
+          let messageHover = document.createXULElement("label");
+          messageHover.classList.add(
+            "unified-extensions-item-message",
+            "unified-extensions-item-message-hover"
+          );
+          messageHover.setAttribute(
+            "data-l10n-id",
+            "unified-extensions-item-message-manage"
+          );
+          contents.appendChild(messageHover);
+
+          button.appendChild(contents);
+        }
+
+        let menuButton = document.createXULElement("toolbarbutton");
+        menuButton.classList.add(
+          "unified-extensions-item-open-menu",
+          "subviewbutton",
+          "subviewbutton-iconic"
+        );
+
+        if (gUnifiedExtensionsEnabled) {
+          menuButton.setAttribute(
+            "data-l10n-id",
+            "unified-extensions-item-open-menu"
+          );
+          // Allow the users to quickly move between extension items using
+          // the arrow keys, see: `PanelMultiView._isNavigableWithTabOnly()`.
+          menuButton.setAttribute("data-navigable-with-tab-only", true);
+        }
+
+        menuButton.setAttribute("data-extensionid", extension.id);
+        menuButton.setAttribute("closemenu", "none");
+
+        let node = document.createXULElement("toolbaritem");
+        node.setAttribute(
+          "unified-extensions",
+          String(gUnifiedExtensionsEnabled)
+        );
+        node.classList.add(
+          "toolbaritem-combined-buttons",
+          "unified-extensions-item"
+        );
+        node.setAttribute("view-button-id", viewId);
+        node.setAttribute("data-extensionid", extension.id);
+        node.append(button, menuButton);
+        node.viewButton = button;
+
+        return node;
+      },
 
       onBeforeCreated: document => {
         let view = document.createXULElement("panelview");
@@ -238,25 +332,84 @@ this.browserAction = class extends ExtensionAPIPersistent {
       },
 
       onCreated: node => {
-        node.classList.add("panel-no-padding");
-        node.classList.add("webextension-browser-action");
-        node.setAttribute("badged", "true");
-        node.setAttribute("constrain-size", "true");
-        node.setAttribute("data-extensionid", this.extension.id);
+        let actionButton = node.querySelector(
+          ".unified-extensions-item-action"
+        );
+        actionButton.classList.add("panel-no-padding");
+        actionButton.classList.add("webextension-browser-action");
+        actionButton.setAttribute("badged", "true");
+        actionButton.setAttribute("constrain-size", "true");
+        actionButton.setAttribute("data-extensionid", this.extension.id);
 
-        node.onmousedown = event => this.handleEvent(event);
-        node.onmouseover = event => this.handleEvent(event);
-        node.onmouseout = event => this.handleEvent(event);
-        node.onauxclick = event => this.handleEvent(event);
+        actionButton.onmousedown = event => this.handleEvent(event);
+        actionButton.onmouseover = event => this.handleEvent(event);
+        actionButton.onmouseout = event => this.handleEvent(event);
+        actionButton.onauxclick = event => this.handleEvent(event);
 
-        this.updateButton(node, this.action.getContextData(null), true);
+        if (gUnifiedExtensionsEnabled) {
+          const menuButton = node.querySelector(
+            ".unified-extensions-item-open-menu"
+          );
+          menuButton.setAttribute(
+            "data-l10n-args",
+            JSON.stringify({ extensionName: this.extension.name })
+          );
+
+          menuButton.onblur = event => this.handleMenuButtonEvent(event);
+          menuButton.onfocus = event => this.handleMenuButtonEvent(event);
+          menuButton.onmouseout = event => this.handleMenuButtonEvent(event);
+          menuButton.onmouseover = event => this.handleMenuButtonEvent(event);
+
+          actionButton.onblur = event => this.handleEvent(event);
+          actionButton.onfocus = event => this.handleEvent(event);
+        }
+
+        this.updateButton(node, this.action.getContextData(null), true, false);
       },
 
-      onBeforeCommand: event => {
+      onBeforeCommand: (event, node) => {
         this.lastClickInfo = {
           button: event.button || 0,
           modifiers: clickModifiersFromEvent(event),
         };
+
+        // The openPopupWithoutUserInteraction flag may be set by openPopup.
+        this.openPopupWithoutUserInteraction =
+          event.detail?.openPopupWithoutUserInteraction === true;
+
+        if (event.target.classList.contains("unified-extensions-item-action")) {
+          return "view";
+        } else if (
+          event.target.classList.contains("unified-extensions-item-open-menu")
+        ) {
+          return "command";
+        }
+      },
+
+      onCommand: event => {
+        const { target } = event;
+
+        if (event.button !== 0) {
+          return;
+        }
+
+        // Open the unified extensions context menu when the pref is enabled.
+        // This context menu only has the relevant menu items for the unified
+        // extensions UI.
+        const popup = target.ownerDocument.getElementById(
+          gUnifiedExtensionsEnabled
+            ? "unified-extensions-context-menu"
+            : "customizationPanelItemContextMenu"
+        );
+        popup.openPopup(
+          target,
+          "after_end",
+          0,
+          0,
+          true /* isContextMenu */,
+          false /* attributesOverride */,
+          event
+        );
       },
 
       onViewShowing: async event => {
@@ -270,7 +423,10 @@ this.browserAction = class extends ExtensionAPIPersistent {
         let tabbrowser = document.defaultView.gBrowser;
 
         let tab = tabbrowser.selectedTab;
-        let popupURL = this.action.triggerClickOrPopup(tab, this.lastClickInfo);
+
+        let popupURL = !this.openPopupWithoutUserInteraction
+          ? this.action.triggerClickOrPopup(tab, this.lastClickInfo)
+          : this.action.getPopupUrl(tab);
 
         if (popupURL) {
           try {
@@ -328,6 +484,55 @@ this.browserAction = class extends ExtensionAPIPersistent {
   }
 
   /**
+   * Shows the popup. The caller is expected to check if a popup is set before
+   * this is called.
+   *
+   * @param {Window} window Window to show the popup for
+   * @param {boolean} openPopupWithoutUserInteraction
+   *        If the popup was opened without user interaction
+   */
+  async openPopup(window, openPopupWithoutUserInteraction = false) {
+    const widgetForWindow = this.widget.forWindow(window);
+
+    if (!widgetForWindow.node) {
+      return;
+    }
+
+    // We want to focus hidden or minimized windows (both for the API, and to
+    // avoid an issue where showing the popup in a non-focused window
+    // immediately triggers a popuphidden event)
+    window.focus();
+
+    if (widgetForWindow.node.firstElementChild.open) {
+      return;
+    }
+
+    if (this.widget.areaType == CustomizableUI.TYPE_PANEL) {
+      if (gUnifiedExtensionsEnabled) {
+        await window.gUnifiedExtensions.togglePanel();
+      } else {
+        await window.document.getElementById("nav-bar").overflowable.show();
+      }
+    }
+
+    // This should already have been checked by callers, but acts as an
+    // an additional safeguard. It also makes sure we don't dispatch a click
+    // if the URL is removed while waiting for the overflow to show above.
+    if (!this.action.getPopupUrl(window.gBrowser.selectedTab)) {
+      return;
+    }
+
+    const event = new window.CustomEvent("command", {
+      bubbles: true,
+      cancelable: true,
+      detail: {
+        openPopupWithoutUserInteraction,
+      },
+    });
+    widgetForWindow.node.firstElementChild.dispatchEvent(event);
+  }
+
+  /**
    * Triggers this browser action for the given window, with the same effects as
    * if it were clicked by a user.
    *
@@ -336,38 +541,54 @@ this.browserAction = class extends ExtensionAPIPersistent {
    *
    * @param {Window} window
    */
-  async triggerAction(window) {
+  triggerAction(window) {
     let popup = ViewPopup.for(this.extension, window);
     if (!this.pendingPopup && popup) {
       popup.closePopup();
       return;
     }
 
-    let widget = this.widget.forWindow(window);
     let tab = window.gBrowser.selectedTab;
-
-    if (!widget.node) {
-      return;
-    }
 
     let popupUrl = this.action.triggerClickOrPopup(tab, {
       button: 0,
       modifiers: [],
     });
     if (popupUrl) {
-      if (this.widget.areaType == CustomizableUI.TYPE_MENU_PANEL) {
-        await window.document.getElementById("nav-bar").overflowable.show();
+      this.openPopup(window);
+    }
+  }
+
+  /**
+   * Handles events on the (secondary) menu/cog button in an extension widget.
+   *
+   * @param {Event} event
+   */
+  handleMenuButtonEvent(event) {
+    let window = event.target.ownerGlobal;
+    let { node } = window.gBrowser && this.widget.forWindow(window);
+
+    switch (event.type) {
+      case "focus":
+      case "mouseover": {
+        if (node) {
+          node.setAttribute("secondary-button-hovered", true);
+        }
+        break;
       }
 
-      let event = new window.CustomEvent("command", {
-        bubbles: true,
-        cancelable: true,
-      });
-      widget.node.dispatchEvent(event);
+      case "blur":
+      case "mouseout": {
+        if (node) {
+          node.removeAttribute("secondary-button-hovered");
+        }
+        break;
+      }
     }
   }
 
   handleEvent(event) {
+    // This button is the action/primary button in the custom widget.
     let button = event.target;
     let window = button.ownerGlobal;
 
@@ -413,12 +634,36 @@ this.browserAction = class extends ExtensionAPIPersistent {
         }
         break;
 
+      case "focus":
       case "mouseover": {
-        // Begin pre-loading the browser for the popup, so it's more likely to
-        // be ready by the time we get a complete click.
         let tab = window.gBrowser.selectedTab;
         let popupURL = this.action.getPopupUrl(tab);
 
+        let { node } = window.gBrowser && this.widget.forWindow(window);
+        if (gUnifiedExtensionsEnabled && node) {
+          const policy = WebExtensionPolicy.getByID(this.extension.id);
+          const messages = OriginControls.getStateMessageIDs({
+            policy,
+            uri: window.gBrowser.currentURI,
+            isAction: true,
+            hasPopup: !!popupURL,
+          });
+
+          if (messages?.onHover) {
+            node.ownerDocument.l10n.setAttributes(
+              node.querySelector(".unified-extensions-item-message-default"),
+              messages.onHover
+            );
+          }
+        }
+
+        // We don't want to preload the popup on focus (for now).
+        if (event.type === "focus") {
+          break;
+        }
+
+        // Begin pre-loading the browser for the popup, so it's more likely to
+        // be ready by the time we get a complete click.
         if (
           popupURL &&
           (this.pendingPopup || !ViewPopup.for(this.extension, window))
@@ -429,7 +674,34 @@ this.browserAction = class extends ExtensionAPIPersistent {
         break;
       }
 
-      case "mouseout":
+      case "blur":
+      case "mouseout": {
+        let { node } = window.gBrowser && this.widget.forWindow(window);
+        if (gUnifiedExtensionsEnabled && node) {
+          let tab = window.gBrowser.selectedTab;
+          let popupURL = this.action.getPopupUrl(tab);
+
+          const policy = WebExtensionPolicy.getByID(this.extension.id);
+          const messages = OriginControls.getStateMessageIDs({
+            policy,
+            uri: window.gBrowser.currentURI,
+            isAction: true,
+            hasPopup: !!popupURL,
+          });
+
+          if (messages?.default) {
+            node.ownerDocument.l10n.setAttributes(
+              node.querySelector(".unified-extensions-item-message-default"),
+              messages.default
+            );
+          }
+        }
+
+        // We don't want to clear the popup on blur for now.
+        if (event.type === "blur") {
+          break;
+        }
+
         if (this.pendingPopup) {
           if (this.eventQueue.length) {
             ExtensionTelemetry.browserActionPreloadResult.histogramAdd({
@@ -441,6 +713,7 @@ this.browserAction = class extends ExtensionAPIPersistent {
           this.clearPopup();
         }
         break;
+      }
 
       case "popupshowing":
         const menu = event.target;
@@ -566,16 +839,52 @@ this.browserAction = class extends ExtensionAPIPersistent {
 
   // Update the toolbar button |node| with the tab context data
   // in |tabData|.
-  updateButton(node, tabData, sync = false) {
+  updateButton(node, tabData, sync = false, attention = false) {
+    // This is the primary/action button in the custom widget.
+    let button = node.querySelector(".unified-extensions-item-action");
     let title = tabData.title || this.extension.name;
+
+    let messages;
+    if (gUnifiedExtensionsEnabled) {
+      let policy = WebExtensionPolicy.getByID(this.extension.id);
+      messages = OriginControls.getStateMessageIDs({
+        policy,
+        uri: node.ownerGlobal.gBrowser.currentURI,
+        isAction: true,
+        hasPopup: !!tabData.popup,
+      });
+    }
+
     let callback = () => {
-      node.setAttribute("tooltiptext", title);
-      node.setAttribute("label", title);
+      button.setAttribute("tooltiptext", title);
+      button.setAttribute("label", title);
+
+      // This is set on the node so that it looks good in the toolbar.
+      node.toggleAttribute("attention", attention);
+
+      if (gUnifiedExtensionsEnabled) {
+        button.querySelector(
+          ".unified-extensions-item-name"
+        ).textContent = this.extension?.name;
+
+        if (messages) {
+          const messageElement = button.querySelector(
+            ".unified-extensions-item-message-default"
+          );
+          node.ownerDocument.l10n.setAttributes(
+            messageElement,
+            messages.default
+          );
+
+          // TODO: Bug 1799694 - adjust min-height property on the
+          // `.unified-extensions-item-contents` element.
+        }
+      }
 
       if (tabData.badgeText) {
-        node.setAttribute("badge", tabData.badgeText);
+        button.setAttribute("badge", tabData.badgeText);
       } else {
-        node.removeAttribute("badge");
+        button.removeAttribute("badge");
       }
 
       if (tabData.enabled) {
@@ -586,7 +895,7 @@ this.browserAction = class extends ExtensionAPIPersistent {
 
       let serializeColor = ([r, g, b, a]) =>
         `rgba(${r}, ${g}, ${b}, ${a / 255})`;
-      node.setAttribute(
+      button.setAttribute(
         "badgeStyle",
         [
           `background-color: ${serializeColor(tabData.badgeBackgroundColor)}`,
@@ -595,7 +904,7 @@ this.browserAction = class extends ExtensionAPIPersistent {
       );
 
       let style = this.iconData.get(tabData.icon);
-      node.setAttribute("style", style);
+      button.setAttribute("style", style);
     };
     if (sync) {
       callback();
@@ -622,6 +931,17 @@ this.browserAction = class extends ExtensionAPIPersistent {
 
     let icon16 = IconDetails.getPreferredIcon(icons, this.extension, 16).icon;
     let icon32 = IconDetails.getPreferredIcon(icons, this.extension, 32).icon;
+    let icon64 = IconDetails.getPreferredIcon(icons, this.extension, 64).icon;
+
+    if (gUnifiedExtensionsEnabled) {
+      return `
+        ${getStyle("menupanel-image", icon32)}
+        ${getStyle("menupanel-image-2x", icon64)}
+        ${getStyle("toolbar-image", icon32)}
+        ${getStyle("toolbar-image-2x", icon64)}
+      `;
+    }
+
     return `
       ${getStyle("menupanel-image", icon16)}
       ${getStyle("menupanel-image-2x", icon32)}
@@ -640,7 +960,12 @@ this.browserAction = class extends ExtensionAPIPersistent {
     let node = this.widget.forWindow(window).node;
     if (node) {
       let tab = window.gBrowser.selectedTab;
-      this.updateButton(node, this.action.getContextData(tab));
+      this.updateButton(
+        node,
+        this.action.getContextData(tab),
+        false,
+        OriginControls.getAttention(this.extension.policy, window)
+      );
     }
   }
 
@@ -690,9 +1015,27 @@ this.browserAction = class extends ExtensionAPIPersistent {
           extensionApi: this,
         }).api(),
 
-        openPopup: () => {
-          let window = windowTracker.topWindow;
-          this.triggerAction(window);
+        openPopup: async options => {
+          const isHandlingUserInput =
+            context.callContextData?.isHandlingUserInput;
+
+          if (
+            !Services.prefs.getBoolPref(
+              "extensions.openPopupWithoutUserGesture.enabled"
+            ) &&
+            !isHandlingUserInput
+          ) {
+            throw new ExtensionError("openPopup requires a user gesture");
+          }
+
+          const window =
+            typeof options?.windowId === "number"
+              ? windowTracker.getWindow(options.windowId, context)
+              : windowTracker.getTopNormalWindow(context);
+
+          if (this.action.getPopupUrl(window.gBrowser.selectedTab, true)) {
+            await this.openPopup(window, !isHandlingUserInput);
+          }
         },
       },
     };

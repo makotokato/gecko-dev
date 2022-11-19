@@ -33,6 +33,7 @@ DIRS += [
     "contextualidentity",
     "crashes",
     "crashmonitor",
+    "credentialmanagement",
     "downloads",
     "enterprisepolicies",
     "extensions",
@@ -77,7 +78,6 @@ DIRS += [
     "timermanager",
     "tooltiptext",
     "typeaheadfind",
-    "uniffi-js",
     "utils",
     "url-classifier",
     "urlformatter",
@@ -97,6 +97,8 @@ if CONFIG["MOZ_BUILD_APP"] != "mobile/android":
         "narrate",
         "reader",
         "viaduct",
+        "uniffi-js",
+        "uniffi-bindgen-gecko-js/components",
     ]
 
 if CONFIG["BUILD_CTYPES"]:
@@ -135,16 +137,6 @@ if CONFIG["MOZ_BACKGROUNDTASKS"]:
 # This is only packaged for browser since corrupt JAR and XPI files tend to be a desktop-OS problem.
 if CONFIG["MOZ_BUILD_APP"] == "browser":
     DIRS += ["corroborator"]
-
-if CONFIG["COMPILE_ENVIRONMENT"]:
-    CbindgenHeader(
-        "regex_ffi_generated.h",
-        inputs=["/toolkit/components/regex-ffi"],
-    )
-
-    EXPORTS.mozilla += [
-        "!regex_ffi_generated.h",
-    ]
 
 if CONFIG["MOZ_UNIFFI_FIXTURES"]:
     DIRS += ["uniffi-bindgen-gecko-js/fixtures"]

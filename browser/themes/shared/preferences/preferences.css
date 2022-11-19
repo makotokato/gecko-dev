@@ -49,12 +49,16 @@
 
 .main-content {
   padding-top: 0;
+  /* the 32px min-height, plus 20+30px margin below, plus some leeway: */
+  scroll-padding-top: 90px;
+  contain: inline-size;
 }
 
 .pane-container {
   /* A workaround to keep the container always float on the `top: 0` (Bug 1377009) */
   display: block;
-  max-width: var(--main-pane-width);
+  width: min(100%, var(--main-pane-width));
+  min-width: min-content;
 }
 
 #mainPrefPane {
@@ -284,7 +288,7 @@ checkbox {
 #FontsDialog menulist:empty {
   /* When there's no menupopup, while the font builder is running,
    * the height of the menulist would otherwise shrink. This throws
-   * off the height determination SubDialog.jsm does, which then
+   * off the height determination SubDialog.sys.mjs does, which then
    * leads to content being cut off. Fix by enforcing a minimum height
    * when there's no content: */
   min-height: max(32px, calc(1.4em + 16px));
@@ -349,7 +353,7 @@ checkbox {
 }
 
 #updateRadioGroup > radio {
-  height: 30px;
+  min-height: 30px;
   margin: 2px 0;
 }
 
@@ -663,6 +667,11 @@ richlistitem[selected] .actionsMenu:focus-visible {
  * Font group and font dialog menulist fixes
  */
 
+#font-chooser-group {
+  display: grid;
+  grid-template-columns: max-content 1fr max-content max-content;
+}
+
 #defaultFont {
   width: 25ch;
 }
@@ -671,6 +680,7 @@ richlistitem[selected] .actionsMenu:focus-visible {
 #serif,
 #sans-serif,
 #monospace {
+  width: 0; /* Might be able to be removed */
   min-width: 30ch;
 }
 
@@ -941,11 +951,6 @@ image.update-throbber {
   margin-inline-end: 8px;
 }
 
-.main-content {
-  /* the 32px min-height, plus 20+30px margin below, plus some leeway: */
-  scroll-padding-top: 90px;
-}
-
 #policies-container,
 #searchInput {
   min-height: 32px;
@@ -1007,14 +1012,14 @@ image.update-throbber {
 }
 
 .search-tooltip {
-  max-width: 150px;
-  font-size: 1.25rem;
+  max-width: 10em;
+  font-size: 1rem;
   position: absolute;
-  padding: 0 10px;
+  padding: 0 .7em;
   background-color: #ffe900;
   color: #000;
   border: 1px solid #d7b600;
-  bottom: 36px;
+  margin-top: -18px;
   opacity: .85;
 }
 
@@ -1045,6 +1050,7 @@ image.update-throbber {
 }
 
 .search-tooltip > span {
+  display: block;
   user-select: none;
   white-space: nowrap;
   overflow: hidden;

@@ -8,6 +8,7 @@
 #define MOZILLA_GFX_COORD_H_
 
 #include "mozilla/Attributes.h"
+#include "mozilla/FloatingPoint.h"
 #include "Types.h"
 #include "BaseCoord.h"
 
@@ -20,6 +21,9 @@ template <typename>
 struct IsPixel;
 
 namespace gfx {
+
+// Should only be used to define generic typedefs like Coord, Point, etc.
+struct UnknownUnits {};
 
 template <class Units, class Rep = int32_t>
 struct IntCoordTyped;
@@ -88,7 +92,6 @@ struct CoordOperatorsHelper<true, Coord, Primitive> {
 template <class Units, class Rep>
 struct MOZ_EMPTY_BASES IntCoordTyped
     : public BaseCoord<Rep, IntCoordTyped<Units, Rep>>,
-      public Units,
       public CoordOperatorsHelper<true, IntCoordTyped<Units, Rep>, float>,
       public CoordOperatorsHelper<true, IntCoordTyped<Units, Rep>, double> {
   static_assert(IsPixel<Units>::value,
@@ -109,7 +112,6 @@ struct MOZ_EMPTY_BASES IntCoordTyped
 template <class Units, class F>
 struct MOZ_EMPTY_BASES CoordTyped
     : public BaseCoord<F, CoordTyped<Units, F>>,
-      public Units,
       public CoordOperatorsHelper<!std::is_same_v<F, int32_t>,
                                   CoordTyped<Units, F>, int32_t>,
       public CoordOperatorsHelper<!std::is_same_v<F, uint32_t>,
@@ -148,7 +150,27 @@ struct MOZ_EMPTY_BASES CoordTyped
   }
 };
 
+typedef CoordTyped<UnknownUnits> Coord;
+
 }  // namespace gfx
+
+template <class Units, class F>
+static MOZ_ALWAYS_INLINE bool FuzzyEqualsAdditive(
+    gfx::CoordTyped<Units, F> aValue1, gfx::CoordTyped<Units, F> aValue2,
+    gfx::CoordTyped<Units, F> aEpsilon =
+        detail::FuzzyEqualsEpsilon<F>::value()) {
+  return FuzzyEqualsAdditive(aValue1.value, aValue2.value, aEpsilon.value);
+}
+
+template <class Units, class F>
+static MOZ_ALWAYS_INLINE bool FuzzyEqualsMultiplicative(
+    gfx::CoordTyped<Units, F> aValue1, gfx::CoordTyped<Units, F> aValue2,
+    gfx::CoordTyped<Units, F> aEpsilon =
+        detail::FuzzyEqualsEpsilon<F>::value()) {
+  return FuzzyEqualsMultiplicative(aValue1.value, aValue2.value,
+                                   aEpsilon.value);
+}
+
 }  // namespace mozilla
 
 #endif /* MOZILLA_GFX_COORD_H_ */

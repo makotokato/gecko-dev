@@ -69,17 +69,23 @@ nsresult nsTableColGroupFrame::AddColsToTable(int32_t aFirstColIndex,
 
   // set the col indices of the col frames and and add col info to the table
   int32_t colIndex = aFirstColIndex;
-  nsFrameList::Enumerator e(aCols);
-  for (; !e.AtEnd(); e.Next()) {
-    ((nsTableColFrame*)e.get())->SetColIndex(colIndex);
+
+  // XXX: We cannot use range-based for loop because InsertCol() can destroy the
+  // nsTableColFrame in the slice we're traversing! Need to check the validity
+  // of *colIter.
+  auto colIter = aCols.begin();
+  for (auto colIterEnd = aCols.end(); *colIter && colIter != colIterEnd;
+       ++colIter) {
+    auto* colFrame = static_cast<nsTableColFrame*>(*colIter);
+    colFrame->SetColIndex(colIndex);
     mColCount++;
-    tableFrame->InsertCol((nsTableColFrame&)*e.get(), colIndex);
+    tableFrame->InsertCol(*colFrame, colIndex);
     colIndex++;
   }
 
-  for (nsFrameList::Enumerator eTail = e.GetUnlimitedEnumerator();
-       !eTail.AtEnd(); eTail.Next()) {
-    ((nsTableColFrame*)eTail.get())->SetColIndex(colIndex);
+  for (; *colIter; ++colIter) {
+    auto* colFrame = static_cast<nsTableColFrame*>(*colIter);
+    colFrame->SetColIndex(colIndex);
     colIndex++;
   }
 
@@ -96,7 +102,7 @@ nsresult nsTableColGroupFrame::AddColsToTable(int32_t aFirstColIndex,
 
 nsTableColGroupFrame* nsTableColGroupFrame::GetLastRealColGroup(
     nsTableFrame* aTableFrame) {
-  nsFrameList colGroups = aTableFrame->GetColGroups();
+  const nsFrameList& colGroups = aTableFrame->GetColGroups();
 
   auto lastColGroup = static_cast<nsTableColGroupFrame*>(colGroups.LastChild());
   if (!lastColGroup) {
@@ -112,10 +118,10 @@ nsTableColGroupFrame* nsTableColGroupFrame::GetLastRealColGroup(
 
 // don't set mColCount here, it is done in AddColsToTable
 void nsTableColGroupFrame::SetInitialChildList(ChildListID aListID,
-                                               nsFrameList& aChildList) {
+                                               nsFrameList&& aChildList) {
   MOZ_ASSERT(mFrames.IsEmpty(),
              "unexpected second call to SetInitialChildList");
-  MOZ_ASSERT(aListID == kPrincipalList, "unexpected child list");
+  MOZ_ASSERT(aListID == FrameChildListID::Principal, "unexpected child list");
 #ifdef DEBUG
   for (nsIFrame* f : aChildList) {
     MOZ_ASSERT(f->GetParent() == this, "Unexpected parent");
@@ -127,7 +133,7 @@ void nsTableColGroupFrame::SetInitialChildList(ChildListID aListID,
     return;
   }
 
-  mFrames.AppendFrames(this, aChildList);
+  mFrames.AppendFrames(this, std::move(aChildList));
 }
 
 /* virtual */
@@ -150,8 +156,8 @@ void nsTableColGroupFrame::DidSetComputedStyle(
 }
 
 void nsTableColGroupFrame::AppendFrames(ChildListID aListID,
-                                        nsFrameList& aFrameList) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+                                        nsFrameList&& aFrameList) {
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
 
   nsTableColFrame* col = GetFirstColumn();
   nsTableColFrame* nextCol;
@@ -161,7 +167,7 @@ void nsTableColGroupFrame::AppendFrames(ChildListID aListID,
     // since the HTML spec says to ignore the span of a colgroup if it
     // has content columns in it.
     nextCol = col->GetNextCol();
-    RemoveFrame(kPrincipalList, col);
+    RemoveFrame(FrameChildListID::Principal, col);
     col = nextCol;
   }
 
@@ -172,14 +178,15 @@ void nsTableColGroupFrame::AppendFrames(ChildListID aListID,
   MOZ_ASSERT(!col || col->GetColType() == eColContent,
              "What's going on with our columns?");
 
-  const nsFrameList::Slice& newFrames = mFrames.AppendFrames(this, aFrameList);
+  const nsFrameList::Slice& newFrames =
+      mFrames.AppendFrames(this, std::move(aFrameList));
   InsertColsReflow(GetStartColumnIndex() + mColCount, newFrames);
 }
 
 void nsTableColGroupFrame::InsertFrames(
     ChildListID aListID, nsIFrame* aPrevFrame,
-    const nsLineList::iterator* aPrevFrameLine, nsFrameList& aFrameList) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+    const nsLineList::iterator* aPrevFrameLine, nsFrameList&& aFrameList) {
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
   NS_ASSERTION(!aPrevFrame || aPrevFrame->GetParent() == this,
                "inserting after sibling frame with different parent");
 
@@ -198,7 +205,7 @@ void nsTableColGroupFrame::InsertFrames(
       // We'll want to insert at the beginning
       aPrevFrame = nullptr;
     }
-    RemoveFrame(kPrincipalList, col);
+    RemoveFrame(FrameChildListID::Principal, col);
     col = nextCol;
   }
 
@@ -216,7 +223,7 @@ void nsTableColGroupFrame::InsertFrames(
                "Shouldn't be inserting before a spanned colframe");
 
   const nsFrameList::Slice& newFrames =
-      mFrames.InsertFrames(this, aPrevFrame, aFrameList);
+      mFrames.InsertFrames(this, aPrevFrame, std::move(aFrameList));
   nsIFrame* prevFrame = nsTableFrame::GetFrameAtOrBefore(
       this, aPrevFrame, LayoutFrameType::TableCol);
 
@@ -260,7 +267,7 @@ void nsTableColGroupFrame::RemoveChild(nsTableColFrame& aChild,
 
 void nsTableColGroupFrame::RemoveFrame(ChildListID aListID,
                                        nsIFrame* aOldFrame) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
 
   if (!aOldFrame) {
     return;
@@ -278,7 +285,7 @@ void nsTableColGroupFrame::RemoveFrame(ChildListID aListID,
 #ifdef DEBUG
 #endif
         nextCol = col->GetNextCol();
-        RemoveFrame(kPrincipalList, col);
+        RemoveFrame(FrameChildListID::Principal, col);
         col = nextCol;
       }
     }

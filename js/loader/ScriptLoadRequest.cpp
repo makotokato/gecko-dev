@@ -115,6 +115,12 @@ void ScriptLoadRequest::Cancel() {
   if (HasScriptLoadContext()) {
     GetScriptLoadContext()->MaybeCancelOffThreadScript();
   }
+  if (HasWorkerLoadContext()) {
+    // The back reference needs to be cleared for workers, as there is no CC.
+    // However, we don't want to remove our pointer to the worker load
+    // context as it is used to determine load failure information.
+    GetWorkerLoadContext()->mRequest = nullptr;
+  }
 }
 
 void ScriptLoadRequest::DropBytecodeCacheReferences() {
@@ -124,6 +130,10 @@ void ScriptLoadRequest::DropBytecodeCacheReferences() {
 
 bool ScriptLoadRequest::HasScriptLoadContext() const {
   return HasLoadContext() && mLoadContext->IsWindowContext();
+}
+
+bool ScriptLoadRequest::HasWorkerLoadContext() const {
+  return HasLoadContext() && mLoadContext->IsWorkerContext();
 }
 
 mozilla::dom::ScriptLoadContext* ScriptLoadRequest::GetScriptLoadContext() {

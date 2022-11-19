@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef mozilla_HTMLEditUtils_h
-#define mozilla_HTMLEditUtils_h
+#ifndef HTMLEditUtils_h
+#define HTMLEditUtils_h
 
 /**
  * This header declares/defines static helper methods as members of
@@ -12,11 +12,12 @@
  * HTMLEditor, see HTMLEditHelpers.h.
  */
 
+#include "EditorBase.h"
+#include "EditorDOMPoint.h"
+#include "EditorForwards.h"
+#include "EditorUtils.h"
+
 #include "mozilla/Attributes.h"
-#include "mozilla/EditorBase.h"
-#include "mozilla/EditorDOMPoint.h"
-#include "mozilla/EditorForwards.h"
-#include "mozilla/EditorUtils.h"
 #include "mozilla/EnumSet.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/Maybe.h"
@@ -27,6 +28,7 @@
 #include "mozilla/dom/HTMLBRElement.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/Text.h"
+
 #include "nsContentUtils.h"
 #include "nsCRT.h"
 #include "nsGkAtoms.h"
@@ -201,7 +203,7 @@ class HTMLEditUtils final {
   static bool IsAnyListElement(const nsINode* aNode);
   static bool IsPre(const nsINode* aNode);
   static bool IsImage(nsINode* aNode);
-  static bool IsLink(nsINode* aNode);
+  static bool IsLink(const nsINode* aNode);
   static bool IsNamedAnchor(const nsINode* aNode);
   static bool IsMozDiv(nsINode* aNode);
   static bool IsMailCite(const Element& aElement);
@@ -308,8 +310,12 @@ class HTMLEditUtils final {
       //     information in the DB.  E.g., `<template>`, `<script>` elements
       //     can have children, but shouldn't be split.
       return HTMLEditUtils::IsContainerNode(aContent) &&
-             !aContent.IsAnyOfHTMLElements(nsGkAtoms::body, nsGkAtoms::head,
-                                           nsGkAtoms::html);
+             !aContent.IsAnyOfHTMLElements(nsGkAtoms::body, nsGkAtoms::button,
+                                           nsGkAtoms::caption, nsGkAtoms::table,
+                                           nsGkAtoms::tbody, nsGkAtoms::tfoot,
+                                           nsGkAtoms::thead, nsGkAtoms::tr) &&
+             !HTMLEditUtils::IsNeverElementContentsEditableByUser(aContent) &&
+             !HTMLEditUtils::IsNonEditableReplacedContent(aContent);
     }
     return aContent.IsText() && aContent.Length() > 0;
   }
@@ -329,7 +335,7 @@ class HTMLEditUtils final {
   static bool IsVisibleTextNode(const Text& aText);
 
   /**
-   * IsInVisibleTextFrames() returns true if all text in aText is in visible
+   * IsInVisibleTextFrames() returns true if any text in aText is in visible
    * text frames.  Callers have to guarantee that there is no pending reflow.
    */
   static bool IsInVisibleTextFrames(nsPresContext* aPresContext,
@@ -595,6 +601,17 @@ class HTMLEditUtils final {
     }
     return IsContentInclusiveDescendantOfLink(*commonAncestorNode->AsContent(),
                                               aFoundLinkElement);
+  }
+
+  /**
+   * Whether aElement has at least one attribute except _moz_dirty attribute or
+   * has no attribute or only has _moz_dirty attribute.
+   */
+  static bool ElementHasAttributesExceptMozDirty(const Element& aElement) {
+    uint32_t attrCount = aElement.GetAttrCount();
+    return attrCount > 1 ||
+           (attrCount == 1u &&
+            !aElement.GetAttrNameAt(0)->Equals(nsGkAtoms::mozdirty));
   }
 
   /**
@@ -1253,6 +1270,7 @@ class HTMLEditUtils final {
     MostDistantInlineElementInBlock,
     EditableElement,
     IgnoreHRElement,  // Ignore ancestor <hr> element since invalid structure
+    ButtonElement,
   };
   using AncestorTypes = EnumSet<AncestorType>;
   constexpr static AncestorTypes
@@ -1267,6 +1285,9 @@ class HTMLEditUtils final {
   constexpr static AncestorTypes ClosestEditableBlockElementExceptHRElement = {
       AncestorType::ClosestBlockElement, AncestorType::IgnoreHRElement,
       AncestorType::EditableElement};
+  constexpr static AncestorTypes ClosestEditableBlockElementOrButtonElement = {
+      AncestorType::ClosestBlockElement, AncestorType::EditableElement,
+      AncestorType::ButtonElement};
   static Element* GetAncestorElement(const nsIContent& aContent,
                                      const AncestorTypes& aAncestorTypes,
                                      const Element* aAncestorLimiter = nullptr);
@@ -2038,6 +2059,20 @@ class HTMLEditUtils final {
   }
 
   /**
+   * CollectAllChildren() collects all child nodes of aParentNode.
+   */
+  static void CollectAllChildren(
+      const nsINode& aParentNode,
+      nsTArray<OwningNonNull<nsIContent>>& aOutArrayOfContents) {
+    MOZ_ASSERT(aOutArrayOfContents.IsEmpty());
+    aOutArrayOfContents.SetCapacity(aParentNode.GetChildCount());
+    for (nsIContent* childContent = aParentNode.GetFirstChild(); childContent;
+         childContent = childContent->GetNextSibling()) {
+      aOutArrayOfContents.AppendElement(*childContent);
+    }
+  }
+
+  /**
    * CollectChildren() collects child nodes of aNode (starting from
    * first editable child, but may return non-editable children after it).
    *
@@ -2254,4 +2289,4 @@ class MOZ_STACK_CLASS SelectedTableCellScanner final {
 
 }  // namespace mozilla
 
-#endif  // #ifndef mozilla_HTMLEditUtils_h
+#endif  // #ifndef HTMLEditUtils_h

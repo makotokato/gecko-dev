@@ -176,6 +176,11 @@ nsDisplayWrapList* ViewportFrame::BuildDisplayListForTopLayer(
     if (!frame) {
       continue;
     }
+
+    if (frame->IsHiddenByContentVisibilityOnAnyAncestor()) {
+      continue;
+    }
+
     // There are two cases where an element in fullscreen is not in
     // the top layer:
     // 1. When building display list for purpose other than painting,
@@ -201,7 +206,7 @@ nsDisplayWrapList* ViewportFrame::BuildDisplayListForTopLayer(
       continue;
     }
     if (nsIFrame* backdropPh =
-            frame->GetChildList(kBackdropList).FirstChild()) {
+            frame->GetChildList(FrameChildListID::Backdrop).FirstChild()) {
       MOZ_ASSERT(!backdropPh->GetNextSibling(), "more than one ::backdrop?");
       MOZ_ASSERT(backdropPh->HasAnyStateBits(NS_FRAME_FIRST_REFLOW),
                  "did you intend to reflow ::backdrop placeholders?");
@@ -247,23 +252,24 @@ nsDisplayWrapList* ViewportFrame::BuildDisplayListForTopLayer(
 }
 
 #ifdef DEBUG
-void ViewportFrame::AppendFrames(ChildListID aListID, nsFrameList& aFrameList) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+void ViewportFrame::AppendFrames(ChildListID aListID,
+                                 nsFrameList&& aFrameList) {
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
   NS_ASSERTION(GetChildList(aListID).IsEmpty(), "Shouldn't have any kids!");
-  nsContainerFrame::AppendFrames(aListID, aFrameList);
+  nsContainerFrame::AppendFrames(aListID, std::move(aFrameList));
 }
 
 void ViewportFrame::InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
                                  const nsLineList::iterator* aPrevFrameLine,
-                                 nsFrameList& aFrameList) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+                                 nsFrameList&& aFrameList) {
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
   NS_ASSERTION(GetChildList(aListID).IsEmpty(), "Shouldn't have any kids!");
   nsContainerFrame::InsertFrames(aListID, aPrevFrame, aPrevFrameLine,
-                                 aFrameList);
+                                 std::move(aFrameList));
 }
 
 void ViewportFrame::RemoveFrame(ChildListID aListID, nsIFrame* aOldFrame) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
   nsContainerFrame::RemoveFrame(aListID, aOldFrame);
 }
 #endif
@@ -301,12 +307,14 @@ nsPoint ViewportFrame::AdjustReflowInputForScrollbars(
   if (scrollingFrame) {
     WritingMode wm = aReflowInput->GetWritingMode();
     LogicalMargin scrollbars(wm, scrollingFrame->GetActualScrollbarSizes());
-    aReflowInput->SetComputedISize(aReflowInput->ComputedISize() -
-                                   scrollbars.IStartEnd(wm));
+    aReflowInput->SetComputedISize(
+        aReflowInput->ComputedISize() - scrollbars.IStartEnd(wm),
+        ReflowInput::ResetResizeFlags::No);
     aReflowInput->SetAvailableISize(aReflowInput->AvailableISize() -
                                     scrollbars.IStartEnd(wm));
-    aReflowInput->SetComputedBSizeWithoutResettingResizeFlags(
-        aReflowInput->ComputedBSize() - scrollbars.BStartEnd(wm));
+    aReflowInput->SetComputedBSize(
+        aReflowInput->ComputedBSize() - scrollbars.BStartEnd(wm),
+        ReflowInput::ResetResizeFlags::No);
     return nsPoint(scrollbars.Left(wm), scrollbars.Top(wm));
   }
   return nsPoint(0, 0);

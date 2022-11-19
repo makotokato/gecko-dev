@@ -6,18 +6,18 @@
 // Create the profile directory early to ensure pushBroadcastService
 // is initialized with the correct path
 do_get_profile();
-const { BroadcastService } = ChromeUtils.import(
-  "resource://gre/modules/PushBroadcastService.jsm"
+const { BroadcastService } = ChromeUtils.importESModule(
+  "resource://gre/modules/PushBroadcastService.sys.mjs"
 );
 const { JSONFile } = ChromeUtils.importESModule(
   "resource://gre/modules/JSONFile.sys.mjs"
 );
 
-const { FileTestUtils } = ChromeUtils.import(
-  "resource://testing-common/FileTestUtils.jsm"
+const { FileTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/FileTestUtils.sys.mjs"
 );
-const { broadcastHandler } = ChromeUtils.import(
-  "resource://test/broadcast_handler.jsm"
+const { broadcastHandler } = ChromeUtils.importESModule(
+  "resource://test/broadcast_handler.sys.mjs"
 );
 
 const broadcastService = pushBroadcastService;

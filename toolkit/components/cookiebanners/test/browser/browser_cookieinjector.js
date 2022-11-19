@@ -153,20 +153,25 @@ add_task(async function test_cookie_injector_disabled() {
 
 /**
  * Tests that no cookies are set if the cookie injection component is enabled
- * by pref, but the cookie banner service is disabled.
+ * by pref, but the cookie banner service is disabled or in detect-only mode.
  */
 add_task(async function test_cookie_banner_service_disabled() {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["cookiebanners.service.mode", Ci.nsICookieBannerService.MODE_DISABLED],
-      ["cookiebanners.cookieInjector.enabled", true],
-    ],
-  });
+  for (let mode of [
+    Ci.nsICookieBannerService.MODE_DISABLED,
+    Ci.nsICookieBannerService.MODE_DETECT_ONLY,
+  ]) {
+    await SpecialPowers.pushPrefEnv({
+      set: [
+        ["cookiebanners.service.mode", mode],
+        ["cookiebanners.cookieInjector.enabled", true],
+      ],
+    });
 
-  await visitTestSites();
-  assertNoCookies();
+    await visitTestSites();
+    assertNoCookies();
 
-  await SiteDataTestUtils.clear();
+    await SiteDataTestUtils.clear();
+  }
 });
 
 /**
@@ -545,5 +550,107 @@ add_task(async function test_subdomain() {
     "Should not set any cookies for ORIGIN_B"
   );
 
+  await SiteDataTestUtils.clear();
+});
+
+add_task(async function test_site_preference() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["cookiebanners.service.mode", Ci.nsICookieBannerService.MODE_REJECT],
+      ["cookiebanners.cookieInjector.enabled", true],
+    ],
+  });
+
+  insertTestRules();
+
+  await visitTestSites();
+
+  ok(
+    !SiteDataTestUtils.hasCookies(ORIGIN_B),
+    "Should not set any cookies for ORIGIN_B"
+  );
+
+  info("Set the site preference of example.org to MODE_REJECT_OR_ACCEPT.");
+  let uri = Services.io.newURI(ORIGIN_B);
+  Services.cookieBanners.setDomainPref(
+    uri,
+    Ci.nsICookieBannerService.MODE_REJECT_OR_ACCEPT,
+    false
+  );
+
+  await visitTestSites();
+  ok(
+    SiteDataTestUtils.hasCookies(ORIGIN_B, [
+      {
+        key: `cookieConsent_${DOMAIN_B}_1`,
+        value: "optIn1",
+      },
+    ]),
+    "Should set opt-in cookies for ORIGIN_B"
+  );
+
+  Services.cookieBanners.removeAllDomainPrefs(false);
+  await SiteDataTestUtils.clear();
+});
+
+add_task(async function test_site_preference_pbm() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      [
+        "cookiebanners.service.mode.privateBrowsing",
+        Ci.nsICookieBannerService.MODE_REJECT,
+      ],
+      ["cookiebanners.cookieInjector.enabled", true],
+    ],
+  });
+
+  insertTestRules();
+
+  let pbmWindow = await BrowserTestUtils.openNewBrowserWindow({
+    private: true,
+  });
+  let tab = BrowserTestUtils.addTab(pbmWindow.gBrowser, "about:blank");
+  await BrowserTestUtils.loadURI(tab.linkedBrowser, ORIGIN_B);
+  await BrowserTestUtils.browserLoaded(tab.linkedBrowser);
+
+  ok(
+    !SiteDataTestUtils.hasCookies(
+      tab.linkedBrowser.contentPrincipal.origin,
+      null,
+      true
+    ),
+    "Should not set any cookies for ORIGIN_B in the private window"
+  );
+
+  info(
+    "Set the site preference of example.org to MODE_REJECT_OR_ACCEPT. in the private window."
+  );
+  let uri = Services.io.newURI(ORIGIN_B);
+  Services.cookieBanners.setDomainPref(
+    uri,
+    Ci.nsICookieBannerService.MODE_REJECT_OR_ACCEPT,
+    true
+  );
+
+  await BrowserTestUtils.loadURI(tab.linkedBrowser, ORIGIN_B);
+  await BrowserTestUtils.browserLoaded(tab.linkedBrowser);
+
+  ok(
+    SiteDataTestUtils.hasCookies(
+      tab.linkedBrowser.contentPrincipal.origin,
+      [
+        {
+          key: `cookieConsent_${DOMAIN_B}_1`,
+          value: "optIn1",
+        },
+      ],
+      true
+    ),
+    "Should set opt-in cookies for ORIGIN_B"
+  );
+
+  Services.cookieBanners.removeAllDomainPrefs(true);
+  BrowserTestUtils.removeTab(tab);
+  await BrowserTestUtils.closeWindow(pbmWindow);
   await SiteDataTestUtils.clear();
 });

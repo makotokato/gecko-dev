@@ -5,9 +5,6 @@
 
 #include "EditorBase.h"
 
-#include "ErrorList.h"
-#include "mozilla/DebugOnly.h"  // for DebugOnly
-
 #include <stdio.h>   // for nullptr, stdout
 #include <string.h>  // for strcmp
 
@@ -17,31 +14,35 @@
 #include "DeleteNodeTransaction.h"       // for DeleteNodeTransaction
 #include "DeleteRangeTransaction.h"      // for DeleteRangeTransaction
 #include "DeleteTextTransaction.h"       // for DeleteTextTransaction
+#include "EditAction.h"                  // for EditSubAction
 #include "EditAggregateTransaction.h"    // for EditAggregateTransaction
+#include "EditorDOMPoint.h"              // for EditorDOMPoint
+#include "EditorUtils.h"                 // for various helper classes.
+#include "EditTransactionBase.h"         // for EditTransactionBase
 #include "EditTransactionBase.h"         // for EditTransactionBase
 #include "EditorEventListener.h"         // for EditorEventListener
-#include "gfxFontUtils.h"                // for gfxFontUtils
-#include "HTMLEditUtils.h"               // for HTMLEditUtils
-#include "InsertNodeTransaction.h"       // for InsertNodeTransaction
-#include "InsertTextTransaction.h"       // for InsertTextTransaction
-#include "JoinNodesTransaction.h"        // for JoinNodesTransaction
-#include "PlaceholderTransaction.h"      // for PlaceholderTransaction
-#include "SplitNodeTransaction.h"        // for SplitNodeTransaction
+#include "HTMLEditor.h"                  // for HTMLEditor
+#include "HTMLEditorInlines.h"
+#include "HTMLEditUtils.h"           // for HTMLEditUtils
+#include "InsertNodeTransaction.h"   // for InsertNodeTransaction
+#include "InsertTextTransaction.h"   // for InsertTextTransaction
+#include "JoinNodesTransaction.h"    // for JoinNodesTransaction
+#include "PlaceholderTransaction.h"  // for PlaceholderTransaction
+#include "SplitNodeTransaction.h"    // for SplitNodeTransaction
+#include "TextEditor.h"              // for TextEditor
+
+#include "ErrorList.h"
+#include "gfxFontUtils.h"  // for gfxFontUtils
 #include "mozilla/intl/BidiEmbeddingLevel.h"
 #include "mozilla/BasePrincipal.h"            // for BasePrincipal
 #include "mozilla/CheckedInt.h"               // for CheckedInt
 #include "mozilla/ComposerCommandsUpdater.h"  // for ComposerCommandsUpdater
 #include "mozilla/ContentEvents.h"            // for InternalClipboardEvent
-#include "mozilla/CSSEditUtils.h"             // for CSSEditUtils
-#include "mozilla/EditAction.h"               // for EditSubAction
-#include "mozilla/EditorDOMPoint.h"           // for EditorDOMPoint
+#include "mozilla/DebugOnly.h"                // for DebugOnly
 #include "mozilla/EditorSpellCheck.h"         // for EditorSpellCheck
-#include "mozilla/EditorUtils.h"              // for various helper classes.
-#include "mozilla/EditTransactionBase.h"      // for EditTransactionBase
 #include "mozilla/Encoding.h"  // for Encoding (used in Document::GetDocumentCharacterSet)
 #include "mozilla/EventDispatcher.h"     // for EventChainPreVisitor, etc.
 #include "mozilla/FlushType.h"           // for FlushType::Frames
-#include "mozilla/HTMLEditor.h"          // for HTMLEditor
 #include "mozilla/IMEContentObserver.h"  // for IMEContentObserver
 #include "mozilla/IMEStateManager.h"     // for IMEStateManager
 #include "mozilla/InputEventOptions.h"   // for InputEventOptions
@@ -63,7 +64,6 @@
 #include "mozilla/TextControlElement.h"  // for TextControlElement
 #include "mozilla/TextInputListener.h"   // for TextInputListener
 #include "mozilla/TextServicesDocument.h"  // for TextServicesDocument
-#include "mozilla/TextEditor.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TransactionManager.h"   // for TransactionManager
 #include "mozilla/dom/AbstractRange.h"    // for AbstractRange
@@ -109,25 +109,24 @@
 #include "nsINode.h"                   // for nsINode, etc.
 #include "nsISelectionController.h"    // for nsISelectionController, etc.
 #include "nsISelectionDisplay.h"       // for nsISelectionDisplay, etc.
-#include "nsISupportsBase.h"           // for nsISupports
+#include "nsISupports.h"               // for nsISupports
 #include "nsISupportsUtils.h"          // for NS_ADDREF, NS_IF_ADDREF
 #include "nsITransferable.h"           // for nsITransferable
-#include "nsITransactionManager.h"
-#include "nsIWeakReference.h"  // for nsISupportsWeakReference
-#include "nsIWidget.h"         // for nsIWidget, IMEState, etc.
-#include "nsPIDOMWindow.h"     // for nsPIDOMWindow
-#include "nsPresContext.h"     // for nsPresContext
-#include "nsRange.h"           // for nsRange
-#include "nsReadableUtils.h"   // for EmptyString, ToNewCString
-#include "nsString.h"          // for nsAutoString, nsString, etc.
-#include "nsStringFwd.h"       // for nsString
-#include "nsStyleConsts.h"     // for StyleDirection::Rtl, etc.
-#include "nsStyleStruct.h"     // for nsStyleDisplay, nsStyleText, etc.
-#include "nsStyleStructFwd.h"  // for nsIFrame::StyleUIReset, etc.
-#include "nsStyleUtil.h"       // for nsStyleUtil
-#include "nsTextNode.h"        // for nsTextNode
-#include "nsThreadUtils.h"     // for nsRunnable
-#include "prtime.h"            // for PR_Now
+#include "nsIWeakReference.h"          // for nsISupportsWeakReference
+#include "nsIWidget.h"                 // for nsIWidget, IMEState, etc.
+#include "nsPIDOMWindow.h"             // for nsPIDOMWindow
+#include "nsPresContext.h"             // for nsPresContext
+#include "nsRange.h"                   // for nsRange
+#include "nsReadableUtils.h"           // for EmptyString, ToNewCString
+#include "nsString.h"                  // for nsAutoString, nsString, etc.
+#include "nsStringFwd.h"               // for nsString
+#include "nsStyleConsts.h"             // for StyleDirection::Rtl, etc.
+#include "nsStyleStruct.h"             // for nsStyleDisplay, nsStyleText, etc.
+#include "nsStyleStructFwd.h"          // for nsIFrame::StyleUIReset, etc.
+#include "nsStyleUtil.h"               // for nsStyleUtil
+#include "nsTextNode.h"                // for nsTextNode
+#include "nsThreadUtils.h"             // for nsRunnable
+#include "prtime.h"                    // for PR_Now
 
 class nsIOutputStream;
 class nsITransferable;
@@ -940,45 +939,53 @@ NS_IMETHODIMP EditorBase::EnableUndo(bool aEnable) {
   return NS_OK;
 }
 
-NS_IMETHODIMP EditorBase::GetTransactionManager(
-    nsITransactionManager** aTransactionManager) {
-  if (NS_WARN_IF(!aTransactionManager)) {
-    return NS_ERROR_INVALID_ARG;
+NS_IMETHODIMP EditorBase::ClearUndoRedoXPCOM() {
+  if (MOZ_UNLIKELY(!ClearUndoRedo())) {
+    return NS_ERROR_FAILURE;  // We're handling a transaction
   }
-  if (NS_WARN_IF(!mTransactionManager)) {
-    return NS_ERROR_FAILURE;
-  }
-  *aTransactionManager = do_AddRef(mTransactionManager).take();
   return NS_OK;
 }
 
-NS_IMETHODIMP EditorBase::Undo(uint32_t aCount) {
-  nsresult rv = UndoAsAction(aCount);
+NS_IMETHODIMP EditorBase::Undo() {
+  nsresult rv = UndoAsAction(1u);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "EditorBase::UndoAsAction() failed");
   return rv;
 }
 
-NS_IMETHODIMP EditorBase::CanUndo(bool* aIsEnabled, bool* aCanUndo) {
-  if (NS_WARN_IF(!aIsEnabled) || NS_WARN_IF(!aCanUndo)) {
-    return NS_ERROR_INVALID_ARG;
+NS_IMETHODIMP EditorBase::UndoAll() {
+  if (!mTransactionManager) {
+    return NS_OK;
   }
-  *aCanUndo = CanUndo();
+  size_t numberOfUndoItems = mTransactionManager->NumberOfUndoItems();
+  if (!numberOfUndoItems) {
+    return NS_OK;  // no transactions
+  }
+  nsresult rv = UndoAsAction(numberOfUndoItems);
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "EditorBase::UndoAsAction() failed");
+  return rv;
+}
+
+NS_IMETHODIMP EditorBase::GetUndoRedoEnabled(bool* aIsEnabled) {
+  MOZ_ASSERT(aIsEnabled);
   *aIsEnabled = IsUndoRedoEnabled();
   return NS_OK;
 }
 
-NS_IMETHODIMP EditorBase::Redo(uint32_t aCount) {
-  nsresult rv = RedoAsAction(aCount);
+NS_IMETHODIMP EditorBase::GetCanUndo(bool* aCanUndo) {
+  MOZ_ASSERT(aCanUndo);
+  *aCanUndo = CanUndo();
+  return NS_OK;
+}
+
+NS_IMETHODIMP EditorBase::Redo() {
+  nsresult rv = RedoAsAction(1u);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "EditorBase::RedoAsAction() failed");
   return rv;
 }
 
-NS_IMETHODIMP EditorBase::CanRedo(bool* aIsEnabled, bool* aCanRedo) {
-  if (NS_WARN_IF(!aIsEnabled) || NS_WARN_IF(!aCanRedo)) {
-    return NS_ERROR_INVALID_ARG;
-  }
+NS_IMETHODIMP EditorBase::GetCanRedo(bool* aCanRedo) {
+  MOZ_ASSERT(aCanRedo);
   *aCanRedo = CanRedo();
-  *aIsEnabled = IsUndoRedoEnabled();
   return NS_OK;
 }
 
@@ -1706,14 +1713,15 @@ NS_IMETHODIMP EditorBase::Paste(int32_t aClipboardType) {
 }
 
 nsresult EditorBase::PrepareToInsertContent(
-    const EditorDOMPoint& aPointToInsert, bool aDoDeleteSelection) {
+    const EditorDOMPoint& aPointToInsert,
+    DeleteSelectedContent aDeleteSelectedContent) {
   // TODO: Move this method to `EditorBase`.
   MOZ_ASSERT(IsEditActionDataAvailable());
 
   MOZ_ASSERT(aPointToInsert.IsSet());
 
   EditorDOMPoint pointToInsert(aPointToInsert);
-  if (aDoDeleteSelection) {
+  if (aDeleteSelectedContent == DeleteSelectedContent::Yes) {
     AutoTrackDOMPoint tracker(RangeUpdaterRef(), &pointToInsert);
     nsresult rv = DeleteSelectionAsSubAction(
         nsIEditor::eNone,
@@ -1730,13 +1738,13 @@ nsresult EditorBase::PrepareToInsertContent(
   return rv;
 }
 
-nsresult EditorBase::InsertTextAt(const nsAString& aStringToInsert,
-                                  const EditorDOMPoint& aPointToInsert,
-                                  bool aDoDeleteSelection) {
+nsresult EditorBase::InsertTextAt(
+    const nsAString& aStringToInsert, const EditorDOMPoint& aPointToInsert,
+    DeleteSelectedContent aDeleteSelectedContent) {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(aPointToInsert.IsSet());
 
-  nsresult rv = PrepareToInsertContent(aPointToInsert, aDoDeleteSelection);
+  nsresult rv = PrepareToInsertContent(aPointToInsert, aDeleteSelectedContent);
   if (NS_FAILED(rv)) {
     NS_WARNING("EditorBase::PrepareToInsertContent() failed");
     return rv;
@@ -1748,10 +1756,9 @@ nsresult EditorBase::InsertTextAt(const nsAString& aStringToInsert,
   return rv;
 }
 
-bool EditorBase::IsSafeToInsertData(nsIPrincipal* aSourcePrincipal) const {
+EditorBase::SafeToInsertData EditorBase::IsSafeToInsertData(
+    nsIPrincipal* aSourcePrincipal) const {
   // Try to determine whether we should use a sanitizing fragment sink
-  bool isSafe = false;
-
   RefPtr<Document> destdoc = GetDocument();
   NS_ASSERTION(destdoc, "Where is our destination doc?");
 
@@ -1763,7 +1770,8 @@ bool EditorBase::IsSafeToInsertData(nsIPrincipal* aSourcePrincipal) const {
     docShell = root->GetDocShell();
   }
 
-  isSafe = docShell && docShell->GetAppType() == nsIDocShell::APP_TYPE_EDITOR;
+  bool isSafe =
+      docShell && docShell->GetAppType() == nsIDocShell::APP_TYPE_EDITOR;
 
   if (!isSafe && aSourcePrincipal) {
     nsIPrincipal* destPrincipal = destdoc->NodePrincipal();
@@ -1774,7 +1782,7 @@ bool EditorBase::IsSafeToInsertData(nsIPrincipal* aSourcePrincipal) const {
                          "nsIPrincipal::Subsumes() failed, but ignored");
   }
 
-  return isSafe;
+  return isSafe ? SafeToInsertData::Yes : SafeToInsertData::No;
 }
 
 NS_IMETHODIMP EditorBase::PasteTransferable(nsITransferable* aTransferable) {
@@ -4156,6 +4164,10 @@ nsresult EditorBase::DeleteSelectionAsAction(
     }
   }
 
+  editActionData.SetSelectionCreatedByDoubleclick(
+      SelectionRef().GetFrameSelection() &&
+      SelectionRef().GetFrameSelection()->IsDoubleClickSelection());
+
   if (!FlushPendingNotificationsIfToHandleDeletionWithFrameSelection(
           aDirectionAndAmount)) {
     NS_WARNING("Flusing pending notifications caused destroying the editor");
@@ -4306,7 +4318,7 @@ nsresult EditorBase::HandleDropEvent(DragEvent* aDropEvent) {
           dragSession, aDropEvent->WidgetEventPtr()->AsDragEvent())) {
     // Don't allow drags from subframe documents with different origins than
     // the drop destination.
-    if (!IsSafeToInsertData(sourcePrincipal)) {
+    if (IsSafeToInsertData(sourcePrincipal) == SafeToInsertData::No) {
       return NS_OK;
     }
   }

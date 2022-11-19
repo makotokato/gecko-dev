@@ -89,7 +89,7 @@
 //! to load and use the compiled rust code via its C-compatible FFI.
 //!
 
-#![warn(rust_2018_idioms)]
+#![warn(rust_2018_idioms, unused_qualifications)]
 #![allow(unknown_lints)]
 
 const BINDGEN_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -229,7 +229,7 @@ pub trait BindingGenerator: Sized {
         ci: ComponentInterface,
         config: Self::Config,
         out_dir: &Utf8Path,
-    ) -> anyhow::Result<()>;
+    ) -> Result<()>;
 }
 
 /// Generate bindings for an external binding generator
@@ -388,7 +388,7 @@ pub fn run_tests(
 /// For now, we assume that the UDL file is in `./src/something.udl` relative
 /// to the crate root. We might consider something more sophisticated in
 /// future.
-fn guess_crate_root(udl_file: &Utf8Path) -> Result<&Utf8Path> {
+pub fn guess_crate_root(udl_file: &Utf8Path) -> Result<&Utf8Path> {
     let path_guess = udl_file
         .parent()
         .context("UDL file has no parent folder!")?
@@ -428,7 +428,7 @@ fn get_out_dir(udl_file: &Utf8Path, out_dir_override: Option<&Utf8Path>) -> Resu
     Ok(match out_dir_override {
         Some(s) => {
             // Create the directory if it doesn't exist yet.
-            fs::create_dir_all(&s)?;
+            fs::create_dir_all(s)?;
             s.canonicalize_utf8().context("Unable to find out-dir")?
         }
         None => udl_file
@@ -537,9 +537,9 @@ enum Commands {
         #[clap(long, short)]
         config: Option<Utf8PathBuf>,
 
-        /// Extract proc-macro metadata from a cdylib for this crate
+        /// Extract proc-macro metadata from a native lib (cdylib or staticlib) for this crate.
         #[clap(long)]
-        cdylib: Option<Utf8PathBuf>,
+        lib_file: Option<Utf8PathBuf>,
 
         /// Path to the UDL file.
         udl_file: Utf8PathBuf,
@@ -594,14 +594,14 @@ pub fn run_main() -> Result<()> {
             out_dir,
             no_format,
             config,
-            cdylib,
+            lib_file,
             udl_file,
-        } => crate::generate_bindings(
+        } => generate_bindings(
             udl_file,
             config.as_deref(),
             language.iter().map(String::as_str).collect(),
             out_dir.as_deref(),
-            cdylib.as_deref(),
+            lib_file.as_deref(),
             !no_format,
         ),
         Commands::Scaffolding {
@@ -609,7 +609,7 @@ pub fn run_main() -> Result<()> {
             config,
             no_format,
             udl_file,
-        } => crate::generate_component_scaffolding(
+        } => generate_component_scaffolding(
             udl_file,
             config.as_deref(),
             out_dir.as_deref(),
@@ -620,7 +620,7 @@ pub fn run_main() -> Result<()> {
             udl_file,
             test_scripts,
             config,
-        } => crate::run_tests(library_file, &[udl_file], test_scripts, config.as_deref()),
+        } => run_tests(library_file, &[udl_file], test_scripts, config.as_deref()),
         Commands::PrintJson { path } => print_json(path),
     }?;
     Ok(())

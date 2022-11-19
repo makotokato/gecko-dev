@@ -218,15 +218,15 @@ void VerifyFrameEncoding(size_t xsize, size_t ysize, JxlEncoder* enc,
   EXPECT_LE(
       ComputeDistance2(input_io.Main(), decoded_io.Main(), jxl::GetJxlCms()),
 #if JXL_HIGH_PRECISION
-      1.8);
+      1.84);
 #else
-      8.0);
+      8.7);
 #endif
 }
 
 void VerifyFrameEncoding(JxlEncoder* enc,
                          const JxlEncoderFrameSettings* frame_settings) {
-  VerifyFrameEncoding(63, 129, enc, frame_settings, 2600,
+  VerifyFrameEncoding(63, 129, enc, frame_settings, 2700,
                       /*lossy_use_original_profile=*/false);
 }
 
@@ -523,7 +523,7 @@ TEST(EncodeTest, LossyEncoderUseOriginalProfileTest) {
     ASSERT_EQ(JXL_ENC_SUCCESS,
               JxlEncoderFrameSettingsSetOption(
                   frame_settings, JXL_ENC_FRAME_SETTING_EFFORT, 8));
-    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 3700, true);
+    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 3720, true);
   }
 }
 
@@ -890,6 +890,8 @@ TEST(EncodeTest, BasicInfoTest) {
   basic_info.min_nits = 5.0;
   basic_info.linear_below = 12.7;
   basic_info.orientation = JXL_ORIENT_ROTATE_90_CW;
+  basic_info.intrinsic_xsize = 88;
+  basic_info.intrinsic_ysize = 99;
   basic_info.animation.tps_numerator = 55;
   basic_info.animation.tps_denominator = 77;
   basic_info.animation.num_loops = 10;
@@ -945,6 +947,8 @@ TEST(EncodeTest, BasicInfoTest) {
       EXPECT_EQ(basic_info.uses_original_profile,
                 basic_info2.uses_original_profile);
       EXPECT_EQ(basic_info.orientation, basic_info2.orientation);
+      EXPECT_EQ(basic_info.intrinsic_xsize, basic_info2.intrinsic_xsize);
+      EXPECT_EQ(basic_info.intrinsic_ysize, basic_info2.intrinsic_ysize);
       EXPECT_EQ(basic_info.num_color_channels, basic_info2.num_color_channels);
       // TODO(lode): also test num_extra_channels, but currently there may be a
       // mismatch between 0 and 1 if there is alpha, until encoder support for
@@ -1167,7 +1171,7 @@ TEST(EncodeTest, CroppedFrameTest) {
   EXPECT_EQ(true, seen_frame);
 }
 
-TEST(EncodeTest, BoxTest) {
+TEST(EncodeTest, JXL_BOXES_TEST(BoxTest)) {
   // Test with uncompressed boxes and with brob boxes
   for (int compress_box = 0; compress_box <= 1; ++compress_box) {
     // Tests adding two metadata boxes with the encoder: an exif box before the

@@ -4,8 +4,15 @@
 
 "use strict";
 
-var { loader, require, DevToolsLoader } = ChromeUtils.import(
-  "resource://devtools/shared/loader/Loader.jsm"
+var { loader, require } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/Loader.sys.mjs"
+);
+
+var {
+  useDistinctSystemPrincipalLoader,
+  releaseDistinctSystemPrincipalLoader,
+} = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/DistinctSystemPrincipalLoader.sys.mjs"
 );
 
 // Require this module to setup core modules
@@ -117,6 +124,12 @@ var connect = async function() {
 
   appendStatusMessage("Get root form for toolbox");
   gCommands = await CommandsFactory.forMainProcess({ client });
+
+  // Bug 1794607: for some unexpected reason, closing the DevToolsClient
+  // when the commands is destroyed by the toolbox would introduce leaks
+  // when running the browser-toolbox mochitests.
+  gCommands.shouldCloseClient = false;
+
   await openToolbox(gCommands);
 };
 
@@ -204,8 +217,7 @@ function onReloadBrowser() {
 }
 
 async function openToolbox(commands) {
-  const { descriptorFront } = commands;
-  const form = descriptorFront._form;
+  const form = commands.descriptorFront._form;
   appendStatusMessage(
     `Create toolbox for target descriptor: ${JSON.stringify({ form }, null, 2)}`
   );
@@ -220,14 +232,13 @@ async function openToolbox(commands) {
   const toolboxOptions = { doc: document };
   appendStatusMessage(`Show toolbox with ${selectedTool} selected`);
 
-  gToolbox = await gDevTools.showToolbox(descriptorFront, {
+  gToolbox = await gDevTools.showToolbox(commands, {
     toolId: selectedTool,
     hostType: Toolbox.HostType.BROWSERTOOLBOX,
     hostOptions: toolboxOptions,
   });
 
   bindToolboxHandlers();
-  gToolbox.raise();
 
   // Enable some testing features if the browser toolbox test pref is set.
   if (
@@ -239,6 +250,8 @@ async function openToolbox(commands) {
     // setup a server so that the test can evaluate messages in this process.
     installTestingServer();
   }
+
+  await gToolbox.raise();
 
   // Warn the user if we started recording this browser toolbox via MOZ_BROWSER_TOOLBOX_PROFILER_STARTUP=1
   if (env.get("MOZ_PROFILER_STARTUP") === "1") {
@@ -254,15 +267,16 @@ async function openToolbox(commands) {
   }
 }
 
+let releaseTestLoader = null;
 function installTestingServer() {
   // Install a DevToolsServer in this process and inform the server of its
   // location. Tests operating on the browser toolbox run in the server
   // (the firefox parent process) and can connect to this new server using
   // initBrowserToolboxTask(), allowing them to evaluate scripts here.
 
-  const testLoader = new DevToolsLoader({
-    invisibleToDebugger: true,
-  });
+  const requester = {};
+  const testLoader = useDistinctSystemPrincipalLoader(requester);
+  releaseTestLoader = () => releaseDistinctSystemPrincipalLoader(requester);
   const { DevToolsServer } = testLoader.require(
     "resource://devtools/server/devtools-server.js"
   );
@@ -313,6 +327,10 @@ function updateBadgeText(paused) {
 function onUnload() {
   window.removeEventListener("unload", onUnload);
   gToolbox.destroy();
+  if (releaseTestLoader) {
+    releaseTestLoader();
+    releaseTestLoader = null;
+  }
 }
 
 function quitApp() {

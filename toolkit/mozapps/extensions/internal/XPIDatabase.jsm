@@ -31,6 +31,7 @@ XPCOMUtils.defineLazyServiceGetters(lazy, {
 });
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  DeferredTask: "resource://gre/modules/DeferredTask.sys.mjs",
   PermissionsUtils: "resource://gre/modules/PermissionsUtils.sys.mjs",
 });
 
@@ -39,7 +40,6 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   AddonManagerPrivate: "resource://gre/modules/AddonManager.jsm",
   AddonRepository: "resource://gre/modules/addons/AddonRepository.jsm",
   AddonSettings: "resource://gre/modules/addons/AddonSettings.jsm",
-  DeferredTask: "resource://gre/modules/DeferredTask.jsm",
   ExtensionData: "resource://gre/modules/Extension.jsm",
   ExtensionUtils: "resource://gre/modules/ExtensionUtils.jsm",
   Blocklist: "resource://gre/modules/Blocklist.jsm",
@@ -179,7 +179,8 @@ const SIGNED_TYPES = new Set([
   "extension",
   "locale",
   "theme",
-  "sitepermission",
+  // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+  "sitepermission-deprecated",
 ]);
 
 // Time to wait before async save of XPI JSON database, in milliseconds
@@ -384,7 +385,8 @@ class AddonInternal {
       return false;
     }
 
-    if (this.type == "sitepermission") {
+    // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+    if (this.type == "sitepermission-deprecated") {
       // NOTE: This may move into a check for all addons later.
       for (let origin of installOrigins) {
         let host = new URL(origin).host;
@@ -844,7 +846,9 @@ class AddonInternal {
     // when the extension has opted out or it gets the permission automatically
     // on every extension startup (as system, privileged and builtin addons).
     if (
-      (this.type === "extension" || this.type == "sitepermission") &&
+      (this.type === "extension" ||
+        // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+        this.type == "sitepermission-deprecated") &&
       this.incognito !== "not_allowed" &&
       this.signedState !== lazy.AddonManager.SIGNEDSTATE_PRIVILEGED &&
       this.signedState !== lazy.AddonManager.SIGNEDSTATE_SYSTEM &&

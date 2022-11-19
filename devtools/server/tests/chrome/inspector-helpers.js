@@ -4,8 +4,8 @@
    runNextTest, _documentWalker */
 "use strict";
 
-const { require } = ChromeUtils.import(
-  "resource://devtools/shared/loader/Loader.jsm"
+const { require } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/Loader.sys.mjs"
 );
 const {
   CommandsFactory,
@@ -13,8 +13,8 @@ const {
 const {
   DevToolsServer,
 } = require("resource://devtools/server/devtools-server.js");
-const { BrowserTestUtils } = ChromeUtils.import(
-  "resource://testing-common/BrowserTestUtils.jsm"
+const { BrowserTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/BrowserTestUtils.sys.mjs"
 );
 const {
   DocumentWalker: _documentWalker,

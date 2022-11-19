@@ -247,7 +247,7 @@ UNIFIED_SOURCES += [
 if CONFIG["FUZZING"]:
     SOURCES += [
         "FuzzyLayer.cpp",
-        "FuzzySecurityInfo.cpp",
+        "FuzzySocketControl.cpp",
     ]
 
 if CONFIG["FUZZING_INTERFACES"] and CONFIG["LIBFUZZER"]:
@@ -314,6 +314,7 @@ LOCAL_INCLUDES += [
     "/dom/base",
     "/netwerk/dns",
     "/netwerk/protocol/http",
+    "/netwerk/protocol/webtransport",
     "/netwerk/socket",
     "/netwerk/url-classifier",
     "/security/manager/ssl",

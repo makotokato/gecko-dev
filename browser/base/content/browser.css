@@ -28,8 +28,19 @@ body {
   min-height: 120px;
 }
 
-:root[customizing] {
-  min-width: -moz-fit-content;
+#appcontent,
+#browser,
+#tabbrowser-tabbox,
+#tabbrowser-tabpanels,
+.browserSidebarContainer {
+  /* Allow devtools with large specified width/height to shrink */
+  min-width: 0;
+  min-height: 0;
+}
+
+.browserContainer {
+  /* .browserContainer only contains the devtools when docked horizontally */
+  min-height: 0;
 }
 
 /* We set large flex on both containers to allow the devtools toolbox to
@@ -130,6 +141,8 @@ body {
 
 panelmultiview {
   -moz-box-align: start;
+  min-width: 0;
+  min-height: 0;
 }
 
 panelmultiview[transitioning] {
@@ -144,13 +157,10 @@ panelview:not([visible]) {
   visibility: collapse;
 }
 
-/* Hide the header when a subview is reused as a main view. */
-panelview[mainview] > .panel-header {
-  display: none;
-}
-
 .panel-viewcontainer {
   overflow: hidden;
+  min-width: 0;
+  min-height: 0;
 }
 
 .panel-viewcontainer[panelopen] {
@@ -252,6 +262,13 @@ panelview[mainview] > .panel-header {
 
 #navigator-toolbox[movingtab] > #nav-bar {
   pointer-events: none;
+}
+
+#nav-bar-customization-target {
+  /* Don't grow if potentially-user-sized elements (like the searchbar or the
+   * bookmarks toolbar item list) are too wide. This forces them to flex to the
+   * available space as much as possible, see bug 1795260. */
+  min-width: 0;
 }
 
 /* Allow dropping a tab on buttons with associated drop actions. */
@@ -417,15 +434,15 @@ toolbarpaletteitem {
     list-style-image: var(--webextension-toolbar-image-dark, inherit);
   }
 
-  .webextension-browser-action[cui-areatype="menu-panel"] {
+  toolbaritem[cui-areatype="panel"] > .webextension-browser-action {
     list-style-image: var(--webextension-menupanel-image, inherit);
   }
 
-  :root[lwt-popup-brighttext] .webextension-browser-action[cui-areatype="menu-panel"] {
+  :root[lwt-popup-brighttext] toolbaritem[cui-areatype="panel"] > .webextension-browser-action {
     list-style-image: var(--webextension-menupanel-image-light, inherit);
   }
 
-  :root:not([lwt-popup-brighttext]) .webextension-browser-action[cui-areatype="menu-panel"]:-moz-lwtheme {
+  :root:not([lwt-popup-brighttext]) toolbaritem[cui-areatype="panel"] > .webextension-browser-action:-moz-lwtheme  {
     list-style-image: var(--webextension-menupanel-image-dark, inherit);
   }
 
@@ -447,15 +464,15 @@ toolbarpaletteitem {
     list-style-image: var(--webextension-toolbar-image-2x-dark, inherit);
   }
 
-  .webextension-browser-action[cui-areatype="menu-panel"] {
+  toolbaritem[cui-areatype="panel"] > .webextension-browser-action {
     list-style-image: var(--webextension-menupanel-image-2x, inherit);
   }
 
-  :root[lwt-popup-brighttext] .webextension-browser-action[cui-areatype="menu-panel"] {
+  :root[lwt-popup-brighttext] toolbaritem[cui-areatype="panel"] > .webextension-browser-action {
     list-style-image: var(--webextension-menupanel-image-2x-light, inherit);
   }
 
-  :root:not([lwt-popup-brighttext]) .webextension-browser-action[cui-areatype="menu-panel"]:-moz-lwtheme {
+  :root:not([lwt-popup-brighttext]) toolbaritem[cui-areatype="panel"] > .webextension-browser-action:-moz-lwtheme {
     list-style-image: var(--webextension-menupanel-image-2x-dark, inherit);
   }
 
@@ -475,7 +492,7 @@ toolbarpaletteitem[removable="false"] {
 
 @media not (-moz-platform: macos) {
   toolbarpaletteitem[place="palette"],
-  toolbarpaletteitem[place="menu-panel"],
+  toolbarpaletteitem[place="panel"],
   toolbarpaletteitem[place="toolbar"] {
     -moz-user-focus: normal;
   }
@@ -484,13 +501,13 @@ toolbarpaletteitem[removable="false"] {
 #bookmarks-toolbar-placeholder,
 #bookmarks-toolbar-button,
 toolbarpaletteitem > #personal-bookmarks > #PlacesToolbar,
-#personal-bookmarks:is([overflowedItem=true], [cui-areatype="menu-panel"]) > #PlacesToolbar {
+#personal-bookmarks:is([overflowedItem=true], [cui-areatype="panel"]) > #PlacesToolbar {
   display: none;
 }
 
 toolbarpaletteitem[place="toolbar"] > #personal-bookmarks > #bookmarks-toolbar-placeholder,
 toolbarpaletteitem[place="palette"] > #personal-bookmarks > #bookmarks-toolbar-button,
-#personal-bookmarks:is([overflowedItem=true], [cui-areatype="menu-panel"]) > #bookmarks-toolbar-button {
+#personal-bookmarks:is([overflowedItem=true], [cui-areatype="panel"]) > #bookmarks-toolbar-button {
   display: -moz-box;
 }
 
@@ -872,6 +889,8 @@ toolbarspring {
   /* ensure we use the direction of the bookmarks label instead of the
    * browser locale */
   unicode-bidi: plaintext;
+  /* Preserve whitespace in bookmark names */
+  white-space: pre;
 }
 
 /* Apply crisp rendering for favicons at exactly 2dppx resolution */
@@ -995,10 +1014,6 @@ browser[tabmodalPromptShowing], browser[tabDialogShowing] {
   -moz-user-focus: none !important;
 }
 
-#browser {
-  -moz-box-layout: flex;
-}
-
 /* Status panel */
 
 #statuspanel:not([hidden]) {
@@ -1063,20 +1078,7 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
   display: none;
 }
 
-/* Give these menupopups an arrow panel styling */
-#BMB_bookmarksPopup,
-#PlacesToolbar menupopup {
-  background: transparent;
-  border: none;
-}
-
-#BMB_bookmarksPopup,
-#BMB_bookmarksPopup menupopup {
-  appearance: none;
-}
-
-@supports -moz-bool-pref("xul.panel-animations.enabled") {
-@media (prefers-reduced-motion: no-preference) {
+@media (-moz-panel-animations) and (prefers-reduced-motion: no-preference) {
 @media (-moz-platform: macos) {
   /* On Mac, use the properties "-moz-window-transform" and "-moz-window-opacity"
      instead of "transform" and "opacity" for these animations.
@@ -1129,6 +1131,7 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
     transition-duration: 0.18s, 0.18s;
     transition-timing-function:
       var(--animation-easing-function), ease-out;
+    will-change: transform, opacity;
   }
 
   #BMB_bookmarksPopup[side="bottom"]:not([animate="false"]) {
@@ -1150,7 +1153,6 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
   }
 }
 }
-}
 
 /* Apply crisp rendering for favicons at exactly 2dppx resolution */
 @media (resolution: 2dppx) {
@@ -1165,6 +1167,7 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
 #customization-container {
   -moz-box-orient: horizontal;
   flex-direction: column;
+  min-height: 0;
 }
 
 #customization-container:not([hidden]) {
@@ -1185,7 +1188,7 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
 }
 
 #customization-panelHolder > #widget-overflow-fixed-list {
-  flex: 1 1 auto; /* Grow within the available space, and allow ourselves to shrink */
+  flex: 1; /* Grow within the available space, and allow ourselves to shrink */
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -1201,7 +1204,7 @@ toolbarpaletteitem[place="palette"] > #downloads-button[indicator] > .toolbarbut
 }
 
 #customization-panelWrapper {
-  flex: 1 1 auto;
+  flex: 1;
   height: 0; /* Don't let my contents affect ancestors' content-based sizing */
   align-items: end; /* align to the end on the cross-axis (affects arrow) */
 }
@@ -1505,18 +1508,6 @@ printpreview-pagination:focus-within,
 
 toolbar[keyNav=true]:not([collapsed=true], [customizing=true]) toolbartabstop {
   -moz-user-focus: normal;
-}
-
-/* Frame used for rendering the DevTools inspector highlighters */
-:root > iframe.devtools-highlighter-renderer {
-  border: none;
-  pointer-events: none;
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 2;
 }
 
 /**

@@ -12,33 +12,24 @@ const { ASRouter } = ChromeUtils.import(
   "resource://activity-stream/lib/ASRouter.jsm"
 );
 
-const calloutId = "root";
-const calloutSelector = `#${calloutId}.featureCallout`;
-const waitForCalloutScreen = async (doc, screenPostfix) => {
-  await BrowserTestUtils.waitForCondition(() => {
-    return doc.querySelector(
-      `${calloutSelector}:not(.hidden) .FIREFOX_VIEW_${screenPostfix}`
-    );
-  });
-};
-
 add_task(async function test_firefox_view_colorways_reminder_targeting() {
   const sandbox = sinon.createSandbox();
-
   ASRouter.resetMessageState();
 
+  const PICKUP_REMINDER_ID = "FIREFOX_VIEW_TAB_PICKUP_REMINDER";
   await SpecialPowers.pushPrefEnv({
     set: [
-      [
-        "browser.firefox-view.feature-tour",
-        `{"message":"","screen":"","complete":true}`,
-      ],
+      ["browser.firefox-view.feature-tour", `{"screen":"","complete":true}`],
     ],
   });
 
   await SpecialPowers.pushPrefEnv({
     set: [["browser.firefox-view.view-count", 4]],
   });
+
+  // Block the tab pickup reminder to mimic it already having been viewed,
+  // otherwise it would have priority over the colorways message
+  ASRouter.blockMessageById(PICKUP_REMINDER_ID);
 
   await BrowserTestUtils.withNewTab(
     {
@@ -47,8 +38,7 @@ add_task(async function test_firefox_view_colorways_reminder_targeting() {
     },
     async browser => {
       const { document } = browser.contentWindow;
-
-      await waitForCalloutScreen(document, "COLORWAYS_REMINDER");
+      await waitForCalloutScreen(document, "FIREFOX_VIEW_COLORWAYS_REMINDER");
       ok(
         document.querySelector(".featureCallout"),
         "FirefoxView Colorways Reminder should be displayed."
@@ -57,6 +47,7 @@ add_task(async function test_firefox_view_colorways_reminder_targeting() {
       sandbox.restore();
       SpecialPowers.popPrefEnv();
       SpecialPowers.popPrefEnv();
+      ASRouter.unblockMessageById(PICKUP_REMINDER_ID);
     }
   );
 });
@@ -68,10 +59,7 @@ add_task(
 
     await SpecialPowers.pushPrefEnv({
       set: [
-        [
-          "browser.firefox-view.feature-tour",
-          `{"message":"","screen":"","complete":true}`,
-        ],
+        ["browser.firefox-view.feature-tour", `{"screen":"","complete":true}`],
       ],
     });
 
@@ -91,7 +79,10 @@ add_task(
       async browser => {
         const { document } = browser.contentWindow;
 
-        await waitForCalloutScreen(document, "TAB_PICKUP_REMINDER");
+        await waitForCalloutScreen(
+          document,
+          "FIREFOX_VIEW_TAB_PICKUP_REMINDER"
+        );
         ok(
           document.querySelector(".featureCallout"),
           "Firefox:View Tab Pickup should be displayed."
@@ -113,10 +104,7 @@ add_task(
 
     await SpecialPowers.pushPrefEnv({
       set: [
-        [
-          "browser.firefox-view.feature-tour",
-          `{"message":"","screen":"","complete":true}`,
-        ],
+        ["browser.firefox-view.feature-tour", `{"screen":"","complete":true}`],
       ],
     });
 
@@ -144,7 +132,10 @@ add_task(
       async browser => {
         const { document } = browser.contentWindow;
 
-        await waitForCalloutScreen(document, "TAB_PICKUP_REMINDER");
+        await waitForCalloutScreen(
+          document,
+          "FIREFOX_VIEW_TAB_PICKUP_REMINDER"
+        );
         ok(
           document.querySelector(".featureCallout"),
           "Firefox:View Tab Pickup should be displayed."

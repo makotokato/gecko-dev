@@ -77,11 +77,10 @@ NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 int32_t nsTableRowGroupFrame::GetRowCount() const {
 #ifdef DEBUG
-  for (nsFrameList::Enumerator e(mFrames); !e.AtEnd(); e.Next()) {
-    NS_ASSERTION(
-        e.get()->StyleDisplay()->mDisplay == mozilla::StyleDisplay::TableRow,
-        "Unexpected display");
-    NS_ASSERTION(e.get()->IsTableRowFrame(), "Unexpected frame type");
+  for (nsIFrame* f : mFrames) {
+    NS_ASSERTION(f->StyleDisplay()->mDisplay == mozilla::StyleDisplay::TableRow,
+                 "Unexpected display");
+    NS_ASSERTION(f->IsTableRowFrame(), "Unexpected frame type");
   }
 #endif
 
@@ -1065,7 +1064,7 @@ void nsTableRowGroupFrame::UndoContinuedRow(nsPresContext* aPresContext,
 
   // Put the overflow rows into our child list
   if (!overflows->IsEmpty()) {
-    mFrames.InsertFrames(nullptr, rowBefore, *overflows);
+    mFrames.InsertFrames(nullptr, rowBefore, std::move(*overflows));
   }
 }
 
@@ -1452,8 +1451,8 @@ void nsTableRowGroupFrame::DidSetComputedStyle(
 }
 
 void nsTableRowGroupFrame::AppendFrames(ChildListID aListID,
-                                        nsFrameList& aFrameList) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+                                        nsFrameList&& aFrameList) {
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
 
   DrainSelfOverflowList();  // ensure the last frame is in mFrames
   ClearRowCursor();
@@ -1461,12 +1460,12 @@ void nsTableRowGroupFrame::AppendFrames(ChildListID aListID,
   // collect the new row frames in an array
   // XXXbz why are we doing the QI stuff?  There shouldn't be any non-rows here.
   AutoTArray<nsTableRowFrame*, 8> rows;
-  for (nsFrameList::Enumerator e(aFrameList); !e.AtEnd(); e.Next()) {
-    nsTableRowFrame* rowFrame = do_QueryFrame(e.get());
+  for (nsIFrame* f : aFrameList) {
+    nsTableRowFrame* rowFrame = do_QueryFrame(f);
     NS_ASSERTION(rowFrame, "Unexpected frame; frame constructor screwed up");
     if (rowFrame) {
       NS_ASSERTION(
-          mozilla::StyleDisplay::TableRow == e.get()->StyleDisplay()->mDisplay,
+          mozilla::StyleDisplay::TableRow == f->StyleDisplay()->mDisplay,
           "wrong display type on rowframe");
       rows.AppendElement(rowFrame);
     }
@@ -1474,7 +1473,7 @@ void nsTableRowGroupFrame::AppendFrames(ChildListID aListID,
 
   int32_t rowIndex = GetRowCount();
   // Append the frames to the sibling chain
-  mFrames.AppendFrames(nullptr, aFrameList);
+  mFrames.AppendFrames(nullptr, std::move(aFrameList));
 
   if (rows.Length() > 0) {
     nsTableFrame* tableFrame = GetTableFrame();
@@ -1487,8 +1486,8 @@ void nsTableRowGroupFrame::AppendFrames(ChildListID aListID,
 
 void nsTableRowGroupFrame::InsertFrames(
     ChildListID aListID, nsIFrame* aPrevFrame,
-    const nsLineList::iterator* aPrevFrameLine, nsFrameList& aFrameList) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+    const nsLineList::iterator* aPrevFrameLine, nsFrameList&& aFrameList) {
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
   NS_ASSERTION(!aPrevFrame || aPrevFrame->GetParent() == this,
                "inserting after sibling frame with different parent");
 
@@ -1500,12 +1499,12 @@ void nsTableRowGroupFrame::InsertFrames(
   nsTableFrame* tableFrame = GetTableFrame();
   nsTArray<nsTableRowFrame*> rows;
   bool gotFirstRow = false;
-  for (nsFrameList::Enumerator e(aFrameList); !e.AtEnd(); e.Next()) {
-    nsTableRowFrame* rowFrame = do_QueryFrame(e.get());
+  for (nsIFrame* f : aFrameList) {
+    nsTableRowFrame* rowFrame = do_QueryFrame(f);
     NS_ASSERTION(rowFrame, "Unexpected frame; frame constructor screwed up");
     if (rowFrame) {
       NS_ASSERTION(
-          mozilla::StyleDisplay::TableRow == e.get()->StyleDisplay()->mDisplay,
+          mozilla::StyleDisplay::TableRow == f->StyleDisplay()->mDisplay,
           "wrong display type on rowframe");
       rows.AppendElement(rowFrame);
       if (!gotFirstRow) {
@@ -1518,7 +1517,7 @@ void nsTableRowGroupFrame::InsertFrames(
 
   int32_t startRowIndex = GetStartRowIndex();
   // Insert the frames in the sibling chain
-  mFrames.InsertFrames(nullptr, aPrevFrame, aFrameList);
+  mFrames.InsertFrames(nullptr, aPrevFrame, std::move(aFrameList));
 
   int32_t numRows = rows.Length();
   if (numRows > 0) {
@@ -1536,7 +1535,7 @@ void nsTableRowGroupFrame::InsertFrames(
 
 void nsTableRowGroupFrame::RemoveFrame(ChildListID aListID,
                                        nsIFrame* aOldFrame) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
 
   ClearRowCursor();
 

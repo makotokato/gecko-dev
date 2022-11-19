@@ -53,7 +53,7 @@ void nsMenuGroupOwnerX::ContentAppended(nsIContent* aFirstNewContent) {
   }
 }
 
-void nsMenuGroupOwnerX::NodeWillBeDestroyed(const nsINode* aNode) {}
+void nsMenuGroupOwnerX::NodeWillBeDestroyed(nsINode* aNode) {}
 
 void nsMenuGroupOwnerX::AttributeWillChange(dom::Element* aElement, int32_t aNameSpaceID,
                                             nsAtom* aAttribute, int32_t aModType) {}
@@ -119,6 +119,12 @@ void nsMenuGroupOwnerX::ContentInserted(nsIContent* aChild) {
 }
 
 void nsMenuGroupOwnerX::ParentChainChanged(nsIContent* aContent) {}
+
+void nsMenuGroupOwnerX::ARIAAttributeDefaultWillChange(mozilla::dom::Element* aElement,
+                                                       nsAtom* aAttribute, int32_t aModType) {}
+
+void nsMenuGroupOwnerX::ARIAAttributeDefaultChanged(mozilla::dom::Element* aElement,
+                                                    nsAtom* aAttribute, int32_t aModType) {}
 
 // For change management, we don't use a |nsSupportsHashtable| because
 // we know that the lifetime of all these items is bounded by the

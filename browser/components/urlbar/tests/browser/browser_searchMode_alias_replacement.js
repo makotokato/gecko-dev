@@ -19,26 +19,15 @@ const TEST_SPACES = [" ", "\u3000", " \u3000", "\u3000 "];
 let defaultEngine, aliasEngine;
 
 add_setup(async function() {
-  defaultEngine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + TEST_ENGINE_BASENAME
-  );
+  defaultEngine = await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + TEST_ENGINE_BASENAME,
+    setAsDefault: true,
+  });
   defaultEngine.alias = "@default";
-  let oldDefaultEngine = await Services.search.getDefault();
-  Services.search.setDefault(
-    defaultEngine,
-    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-  );
   await SearchTestUtils.installSearchExtension({
     keyword: ALIAS,
   });
   aliasEngine = Services.search.getEngineByName("Example");
-
-  registerCleanupFunction(async function() {
-    Services.search.setDefault(
-      oldDefaultEngine,
-      Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-    );
-  });
 });
 
 // An incomplete alias should not be replaced.
@@ -277,7 +266,7 @@ add_task(async function() {
  *
  * @param {string} str
  *   The code points of this string will be returned.
- * @returns {array}
+ * @returns {Array}
  *   Array of code points in the string, where each is a hexidecimal string.
  */
 function codePoints(str) {

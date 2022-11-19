@@ -244,7 +244,7 @@ def accept_raptor_android_build(platform):
     if "shippable" not in platform:
         return False
     if "p2" in platform and "aarch64" in platform:
-        return True
+        return False
     if "g5" in platform:
         return False
     if "a51" in platform:
@@ -1389,3 +1389,14 @@ def target_tasks_are_we_esmified_yet(full_task_graph, parameters, graph_config):
     return [
         l for l, t in full_task_graph.tasks.items() if t.kind == "are-we-esmified-yet"
     ]
+
+
+@_target_task("eslint-build")
+def target_tasks_eslint_build(full_task_graph, parameters, graph_config):
+    """Select the task to run additional ESLint rules which require a build."""
+
+    for name, task in full_task_graph.tasks.items():
+        if task.kind != "source-test":
+            continue
+        if name == "eslint-build":
+            yield name

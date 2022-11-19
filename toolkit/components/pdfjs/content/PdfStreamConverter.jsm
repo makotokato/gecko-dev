@@ -28,14 +28,15 @@ const PDF_CONTENT_TYPE = "application/pdf";
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   AsyncPrefs: "resource://gre/modules/AsyncPrefs.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
 });
 ChromeUtils.defineModuleGetter(
   lazy,
@@ -47,12 +48,6 @@ ChromeUtils.defineModuleGetter(
   lazy,
   "NetworkManager",
   "resource://pdf.js/PdfJsNetwork.jsm"
-);
-
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm"
 );
 
 ChromeUtils.defineModuleGetter(
@@ -1157,10 +1152,8 @@ PdfStreamConverter.prototype = {
 
     aRequest.QueryInterface(Ci.nsIWritablePropertyBag);
 
-    var contentDisposition = aRequest.DISPOSITION_INLINE;
     var contentDispositionFilename;
     try {
-      contentDisposition = aRequest.contentDisposition;
       contentDispositionFilename = aRequest.contentDispositionFilename;
     } catch (e) {}
 
@@ -1186,9 +1179,7 @@ PdfStreamConverter.prototype = {
       aRequest.setResponseHeader("Refresh", "", false);
     }
 
-    lazy.PdfJsTelemetry.onViewerIsUsed(
-      contentDisposition == aRequest.DISPOSITION_ATTACHMENT
-    );
+    lazy.PdfJsTelemetry.onViewerIsUsed();
     lazy.PdfJsTelemetry.onDocumentSize(aRequest.contentLength);
 
     // The document will be loaded via the stream converter as html,

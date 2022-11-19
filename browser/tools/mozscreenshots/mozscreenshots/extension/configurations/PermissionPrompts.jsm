@@ -6,8 +6,8 @@
 
 var EXPORTED_SYMBOLS = ["PermissionPrompts"];
 
-const { BrowserTestUtils } = ChromeUtils.import(
-  "resource://testing-common/BrowserTestUtils.jsm"
+const { BrowserTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/BrowserTestUtils.sys.mjs"
 );
 
 const URL =
@@ -76,8 +76,8 @@ var PermissionPrompts = {
         await closeLastTab();
         // we need to emulate user input in the form for the save-password prompt to be shown
         await clickOn("#login-capture", function beforeContentFn() {
-          const { E10SUtils } = ChromeUtils.import(
-            "resource://gre/modules/E10SUtils.jsm"
+          const { E10SUtils } = ChromeUtils.importESModule(
+            "resource://gre/modules/E10SUtils.sys.mjs"
           );
           E10SUtils.wrapHandlingUserInput(content, true, function() {
             let element = content.document.querySelector(
@@ -159,8 +159,8 @@ async function clickOn(selector, beforeContentFn) {
   }
 
   await SpecialPowers.spawn(lastTab.linkedBrowser, [selector], arg => {
-    const { EventUtils } = ChromeUtils.import(
-      "resource://specialpowers/SpecialPowersEventUtils.jsm"
+    const { EventUtils } = ChromeUtils.importESModule(
+      "resource://specialpowers/SpecialPowersEventUtils.sys.mjs"
     );
 
     let element = content.document.querySelector(arg);

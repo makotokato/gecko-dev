@@ -22,9 +22,9 @@ static_prefs = { path = "../../../../modules/libpref/init/static_prefs" }
 profiler_helper = { path = "../../../../tools/profiler/rust-helper", optional = true }
 mozurl = { path = "../../../../netwerk/base/mozurl" }
 webrender_bindings = { path = "../../../../gfx/webrender_bindings" }
-cubeb-coreaudio = { git = "https://github.com/mozilla/cubeb-coreaudio-rs", rev = "ab933e7cbd569f79b37b540412a7990a5352dd66", optional = true }
-cubeb-pulse = { git = "https://github.com/mozilla/cubeb-pulse-rs", rev="f32b3ef708c0bfb2c414c08971d638527353d376", optional = true, features=["pulse-dlopen"] }
-cubeb-sys = { version = "0.10.1", optional = true, features=["gecko-in-tree"] }
+cubeb-coreaudio = { git = "https://github.com/mozilla/cubeb-coreaudio-rs", rev = "93b5c01a131f65c83c11aeb317f4583405c5eb79", optional = true }
+cubeb-pulse = { git = "https://github.com/mozilla/cubeb-pulse-rs", rev="cf48897be5cbe147d051ebbbe1eaf5fd8fb6bbc9", optional = true, features=["pulse-dlopen"] }
+cubeb-sys = { version = "0.10.3", optional = true, features=["gecko-in-tree"] }
 audioipc2-client = { git = "https://github.com/kinetiknz/audioipc-2", rev = "42eb59ab3b86cd43d3dbe37d159ce102a8eaf2a5", optional = true } # macos (v2) branch
 audioipc2-server = { git = "https://github.com/kinetiknz/audioipc-2", rev = "42eb59ab3b86cd43d3dbe37d159ce102a8eaf2a5", optional = true } # macos (v2) branch
 audioipc-client = { git = "https://github.com/mozilla/audioipc", rev = "fb7a2b12ced3b43e6a268621989c6191d1ed7e39", optional = true }
@@ -66,7 +66,7 @@ unic-langid = { version = "0.9", features = ["likelysubtags"] }
 unic-langid-ffi = { path = "../../../../intl/locale/rust/unic-langid-ffi" }
 fluent-langneg = { version = "0.13", features = ["cldr"] }
 fluent-langneg-ffi = { path = "../../../../intl/locale/rust/fluent-langneg-ffi" }
-regex-ffi = { path = "../../../components/regex-ffi" }
+rure = "0.2.2"
 rust_minidump_writer_linux = { path = "../../../crashreporter/rust_minidump_writer_linux", optional = true }
 gecko-profiler = { path = "../../../../tools/profiler/rust-api"}
 midir_impl = { path = "../../../../dom/midi/midir_impl", optional = true }
@@ -81,6 +81,7 @@ uniffi-example-rondpoint = { git = "https://github.com/mozilla/uniffi-rs.git", r
 uniffi-example-sprites = { git = "https://github.com/mozilla/uniffi-rs.git", rev = "bb2039f077a29dba0879372a67e764e6ace8e33f", optional = true }
 uniffi-example-todolist = { git = "https://github.com/mozilla/uniffi-rs.git", rev = "bb2039f077a29dba0879372a67e764e6ace8e33f", optional = true }
 uniffi-example-custom-types = { path = "../../../components/uniffi-example-custom-types/", optional = true }
+uniffi-fixture-external-types = { path = "../../../components/uniffi-fixture-external-types/", optional = true }
 
 # Note: `modern_sqlite` means rusqlite's bindings file be for a sqlite with
 # version less than or equal to what we link to. This isn't a problem because we
@@ -92,11 +93,13 @@ fluent = { version = "0.16.0", features = ["fluent-pseudo"] }
 fluent-ffi = { path = "../../../../intl/l10n/rust/fluent-ffi" }
 l10nregistry-ffi = { path = "../../../../intl/l10n/rust/l10nregistry-ffi" }
 l10nregistry = { path = "../../../../intl/l10n/rust/l10nregistry-rs" }
-fluent-fallback = "0.6.0"
+fluent-fallback = "0.7.0"
 localization-ffi = { path = "../../../../intl/l10n/rust/localization-ffi" }
 
 processtools = { path = "../../../components/processtools" }
 qcms = { path = "../../../../gfx/qcms", features = ["c_bindings", "neon"], default-features = false }
+
+wpf-gpu-raster = { git = "https://github.com/FirefoxGraphics/wpf-gpu-raster", rev = "f0d95ce14af8a8de74f469dbad715c4064fca2e1" }
 
 # Force url to stay at 2.1.0. See bug 1734538.
 url = "=2.1.0"
@@ -104,9 +107,14 @@ url = "=2.1.0"
 # Force mio to stay at 0.8.0 to avoid windows-sys dependencies.
 mio = "=0.8.0"
 
+# Since we're building with at least rustc 1.63, enable rust 1.57 features.
+# This happens to work around issues the older code has with 1.65.
+fallible_collections = { version = "0.4", features = ["rust_1_57"] }
+
 [target.'cfg(not(target_os = "android"))'.dependencies]
 viaduct = "0.1"
 webext_storage_bridge = { path = "../../../components/extensions/storage/webext_storage_bridge" }
+tabs = { version = "0.1" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 detect_win32k_conflicts = { path = "../../../xre/detect_win32k_conflicts" }
@@ -129,13 +137,14 @@ new_xulstore = ["xulstore"]
 libfuzzer = ["neqo_glue/fuzzing"]
 webrtc = ["mdns_service"]
 glean_disable_upload = ["fog_control/disable_upload"]
+glean_million_queue = ["fog_control/million_queue"]
 glean_with_gecko = ["fog_control/with_gecko", "jog/with_gecko"]
 oxidized_breakpad = ["rust_minidump_writer_linux"]
 with_dbus = ["audio_thread_priority/with_dbus"]
 thread_sanitizer = ["xpcom/thread_sanitizer"]
 uniffi_fixtures = [
     "uniffi-example-arithmetic", "uniffi-example-geometry", "uniffi-example-rondpoint", "uniffi-example-sprites",
-    "uniffi-example-todolist", "uniffi-example-custom-types"
+    "uniffi-example-todolist", "uniffi-example-custom-types", "uniffi-fixture-external-types",
 ]
 webmidi_midir_impl = ["midir_impl"]
 

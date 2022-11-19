@@ -13,18 +13,13 @@ ChromeUtils.defineESModuleGetters(this, {
 add_setup(async function() {
   await SpecialPowers.pushPrefEnv({
     set: [
+      ["browser.urlbar.quickactions.enabled", true],
       ["browser.urlbar.suggest.quickactions", true],
       ["browser.urlbar.shortcuts.quickactions", true],
     ],
   });
 
-  await SearchTestUtils.installSearchExtension();
-  const defaultEngine = Services.search.getEngineByName("Example");
-  const oldDefaultEngine = await Services.search.getDefault();
-  Services.search.setDefault(
-    defaultEngine,
-    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-  );
+  await SearchTestUtils.installSearchExtension({}, { setAsDefault: true });
 
   UrlbarProviderQuickActions.addAction("test-addons", {
     commands: ["test-addons"],
@@ -40,10 +35,6 @@ add_setup(async function() {
   });
 
   registerCleanupFunction(function() {
-    Services.search.setDefault(
-      oldDefaultEngine,
-      Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-    );
     UrlbarProviderQuickActions.removeAction("test-addons");
     UrlbarProviderQuickActions.removeAction("test-downloads");
   });

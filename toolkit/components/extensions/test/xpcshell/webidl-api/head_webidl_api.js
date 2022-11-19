@@ -5,8 +5,11 @@
 
 "use strict";
 
+ChromeUtils.defineESModuleGetters(this, {
+  TestUtils: "resource://testing-common/TestUtils.sys.mjs",
+});
+
 XPCOMUtils.defineLazyModuleGetters(this, {
-  TestUtils: "resource://testing-common/TestUtils.jsm",
   ExtensionTestCommon: "resource://testing-common/ExtensionTestCommon.jsm",
 });
 
@@ -256,7 +259,7 @@ async function runExtensionAPITest(
       background: {
         service_worker: "test-sw.js",
       },
-      applications: {
+      browser_specific_settings: {
         gecko: { id: extensionId },
       },
     },

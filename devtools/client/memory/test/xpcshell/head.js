@@ -13,12 +13,14 @@ registerCleanupFunction(() => {
   Services.prefs.clearUserPref("devtools.debugger.log");
 });
 
-var { FileUtils } = ChromeUtils.import("resource://gre/modules/FileUtils.jsm");
+var { FileUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/FileUtils.sys.mjs"
+);
 var { expectState } = require("resource://devtools/server/actors/common.js");
 var HeapSnapshotFileUtils = require("resource://devtools/shared/heapsnapshot/HeapSnapshotFileUtils.js");
 var HeapAnalysesClient = require("resource://devtools/shared/heapsnapshot/HeapAnalysesClient.js");
-var { addDebuggerToGlobal } = ChromeUtils.import(
-  "resource://gre/modules/jsdebugger.jsm"
+var { addDebuggerToGlobal } = ChromeUtils.importESModule(
+  "resource://gre/modules/jsdebugger.sys.mjs"
 );
 var Store = require("resource://devtools/client/memory/store.js");
 var { L10N } = require("resource://devtools/client/memory/utils.js");

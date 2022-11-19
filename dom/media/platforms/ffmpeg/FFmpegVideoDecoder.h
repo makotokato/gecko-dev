@@ -98,6 +98,7 @@ class FFmpegVideoDecoder<LIBAV_VER>
 #endif
   }
   gfx::YUVColorSpace GetFrameColorSpace() const;
+  gfx::ColorSpace2 GetFrameColorPrimaries() const;
   gfx::ColorRange GetFrameColorRange() const;
 
   MediaResult CreateImage(int64_t aOffset, int64_t aPts, int64_t aDuration,
@@ -174,6 +175,7 @@ class FFmpegVideoDecoder<LIBAV_VER>
 
   DurationMap mDurationMap;
   const bool mLowLatency;
+  AVDiscard mFrameDrop = AVDISCARD_DEFAULT;
 
   // True if we're allocating shmem for ffmpeg decode buffer.
   Maybe<Atomic<bool>> mIsUsingShmemBufferForDecode;

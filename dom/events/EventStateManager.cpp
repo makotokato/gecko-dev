@@ -32,9 +32,11 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/dom/DOMIntersectionObserver.h"
 #include "mozilla/dom/DragEvent.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/FrameLoaderBinding.h"
+#include "mozilla/dom/HTMLLabelElement.h"
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/PointerEventHandler.h"
@@ -112,7 +114,6 @@
 #include "nsIController.h"
 #include "mozilla/Services.h"
 #include "mozilla/dom/ContentParent.h"
-#include "mozilla/dom/HTMLLabelElement.h"
 #include "mozilla/dom/Record.h"
 #include "mozilla/dom/Selection.h"
 
@@ -999,6 +1000,24 @@ void EventStateManager::NotifyTargetUserActivation(WidgetEvent* aEvent,
   if (aEvent->mMessage == eTouchEnd && aEvent->AsTouchEvent() &&
       IsEventOutsideDragThreshold(aEvent->AsTouchEvent())) {
     return;
+  }
+
+  // Do not treat the click on scrollbar as a user interaction with the web
+  // content.
+  if (StaticPrefs::dom_user_activation_ignore_scrollbars() &&
+      (aEvent->mMessage == eMouseDown || aEvent->mMessage == ePointerDown) &&
+      aTargetContent->IsInNativeAnonymousSubtree()) {
+    nsIContent* current = aTargetContent;
+    do {
+      nsIContent* root = current->GetClosestNativeAnonymousSubtreeRoot();
+      if (!root) {
+        break;
+      }
+      if (root->IsXULElement(nsGkAtoms::scrollbar)) {
+        return;
+      }
+      current = root->GetParent();
+    } while (current);
   }
 
   MOZ_ASSERT(aEvent->mMessage == eKeyDown || aEvent->mMessage == eMouseDown ||
@@ -2014,15 +2033,19 @@ bool EventStateManager::IsEventOutsideDragThreshold(
         LookAndFeel::GetInt(LookAndFeel::IntID::DragThresholdX, 0);
     sPixelThresholdY =
         LookAndFeel::GetInt(LookAndFeel::IntID::DragThresholdY, 0);
-    if (!sPixelThresholdX) sPixelThresholdX = 5;
-    if (!sPixelThresholdY) sPixelThresholdY = 5;
+    if (sPixelThresholdX <= 0) {
+      sPixelThresholdX = 5;
+    }
+    if (sPixelThresholdY <= 0) {
+      sPixelThresholdY = 5;
+    }
   }
 
   LayoutDeviceIntPoint pt =
       aEvent->mWidget->WidgetToScreenOffset() + GetEventRefPoint(aEvent);
   LayoutDeviceIntPoint distance = pt - mGestureDownPoint;
-  return Abs(distance.x) > AssertedCast<uint32_t>(sPixelThresholdX) ||
-         Abs(distance.y) > AssertedCast<uint32_t>(sPixelThresholdY);
+  return Abs(distance.x) > sPixelThresholdX ||
+         Abs(distance.y) > sPixelThresholdY;
 }
 
 //
@@ -2955,14 +2978,16 @@ void EventStateManager::DoScrollText(nsIScrollableFrame* aScrollableFrame,
   nsIntSize devPixelPageSize(pc->AppUnitsToDevPixels(pageSize.width),
                              pc->AppUnitsToDevPixels(pageSize.height));
   if (!WheelPrefs::GetInstance()->IsOverOnePageScrollAllowedX(aEvent) &&
-      DeprecatedAbs(actualDevPixelScrollAmount.x) > devPixelPageSize.width) {
+      DeprecatedAbs(actualDevPixelScrollAmount.x.value) >
+          devPixelPageSize.width) {
     actualDevPixelScrollAmount.x = (actualDevPixelScrollAmount.x >= 0)
                                        ? devPixelPageSize.width
                                        : -devPixelPageSize.width;
   }
 
   if (!WheelPrefs::GetInstance()->IsOverOnePageScrollAllowedY(aEvent) &&
-      DeprecatedAbs(actualDevPixelScrollAmount.y) > devPixelPageSize.height) {
+      DeprecatedAbs(actualDevPixelScrollAmount.y.value) >
+          devPixelPageSize.height) {
     actualDevPixelScrollAmount.y = (actualDevPixelScrollAmount.y >= 0)
                                        ? devPixelPageSize.height
                                        : -devPixelPageSize.height;
@@ -3461,7 +3486,7 @@ nsresult EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
 
           // If the mousedown happened inside a popup, don't try to set focus on
           // one of its containing elements
-          if (frame->StyleDisplay()->mDisplay == StyleDisplay::MozPopup) {
+          if (frame->IsMenuPopupFrame()) {
             newFocus = nullptr;
             break;
           }
@@ -3473,7 +3498,7 @@ nsresult EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
           if (ShadowRoot* root = newFocus->GetShadowRoot()) {
             if (root->DelegatesFocus()) {
               if (Element* firstFocusable =
-                      root->GetFirstFocusable(/* aWithMouse */ true)) {
+                      root->GetFocusDelegate(/* aWithMouse */ true)) {
                 newFocus = firstFocusable;
                 break;
               }
@@ -3919,6 +3944,15 @@ nsresult EventStateManager::PostHandleEvent(nsPresContext* aPresContext,
       break;
 
     case eKeyUp:
+      // If space key is released, we need to inactivate the element which was
+      // activated by preceding space key down.
+      // XXX Currently, we don't store the reason of activation.  Therefore,
+      //     this may cancel what is activated by a mousedown, but it must not
+      //     cause actual problem in web apps in the wild since it must be
+      //     rare case that users release space key during a mouse click/drag.
+      if (aEvent->AsKeyboardEvent()->ShouldWorkAsSpaceKey()) {
+        ClearGlobalActiveContent(this);
+      }
       break;
 
     case eKeyPress: {
@@ -4042,23 +4076,19 @@ static bool ShouldBlockCustomCursor(nsPresContext* aPresContext,
     return false;
   }
 
-  // We don't want to deal with iframes, just let them do their thing unless
-  // they intersect UI.
-  //
-  // TODO(emilio, bug 1525561): In a fission world, we should have a better way
-  // to find the event coordinates relative to the content area.
-  nsPresContext* topLevel =
-      aPresContext->GetInProcessRootContentDocumentPresContext();
-  if (!topLevel) {
+  auto input = DOMIntersectionObserver::ComputeInput(*aPresContext->Document(),
+                                                     nullptr, nullptr);
+
+  if (!input.mRootFrame) {
     return false;
   }
 
   nsPoint point = nsLayoutUtils::GetEventCoordinatesRelativeTo(
-      aEvent, RelativeTo{topLevel->PresShell()->GetRootFrame()});
+      aEvent, RelativeTo{input.mRootFrame});
 
   // The cursor size won't be affected by our full zoom in the parent process,
   // so undo that before checking the rect.
-  float zoom = topLevel->GetFullZoom();
+  float zoom = aPresContext->GetFullZoom();
 
   // Also adjust for accessibility cursor scaling factor.
   zoom /= LookAndFeel::GetFloat(LookAndFeel::FloatID::CursorScale, 1.0f);
@@ -4068,8 +4098,10 @@ static bool ShouldBlockCustomCursor(nsPresContext* aPresContext,
   nsPoint hotspot(CSSPixel::ToAppUnits(aCursor.mHotspot.x / zoom),
                   CSSPixel::ToAppUnits(aCursor.mHotspot.y / zoom));
 
-  nsRect cursorRect(point - hotspot, size);
-  return !topLevel->GetVisibleArea().Contains(cursorRect);
+  const nsRect cursorRect(point - hotspot, size);
+  auto output = DOMIntersectionObserver::Intersect(input, cursorRect);
+  return !output.mIntersectionRect ||
+         !(*output.mIntersectionRect == cursorRect);
 }
 
 static gfx::IntPoint ComputeHotspot(imgIContainer* aContainer,
@@ -4084,13 +4116,13 @@ static gfx::IntPoint ComputeHotspot(imgIContainer* aContainer,
     aContainer->GetWidth(&imgWidth);
     aContainer->GetHeight(&imgHeight);
     auto hotspot = gfx::IntPoint::Round(*aHotspot);
-    return {std::max(std::min(hotspot.x, imgWidth - 1), 0),
-            std::max(std::min(hotspot.y, imgHeight - 1), 0)};
+    return {std::max(std::min(hotspot.x.value, imgWidth - 1), 0),
+            std::max(std::min(hotspot.y.value, imgHeight - 1), 0)};
   }
 
   gfx::IntPoint hotspot;
-  aContainer->GetHotspotX(&hotspot.x);
-  aContainer->GetHotspotY(&hotspot.y);
+  aContainer->GetHotspotX(&hotspot.x.value);
+  aContainer->GetHotspotY(&hotspot.y.value);
   return hotspot;
 }
 
@@ -4370,8 +4402,8 @@ nsresult EventStateManager::SetCursor(StyleCursorKind aCursor,
       break;
   }
 
-  uint32_t x = aHotspot ? aHotspot->x : 0;
-  uint32_t y = aHotspot ? aHotspot->y : 0;
+  uint32_t x = aHotspot ? aHotspot->x.value : 0;
+  uint32_t y = aHotspot ? aHotspot->y.value : 0;
   aWidget->SetCursor(nsIWidget::Cursor{c, aContainer, x, y, aResolution});
   return NS_OK;
 }

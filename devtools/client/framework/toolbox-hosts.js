@@ -14,11 +14,9 @@ loader.lazyRequireGetter(
 );
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+});
 
 /* A host should always allow this much space for the page to be displayed.
  * There is also a min-height on the browser, but we still don't want to set
@@ -65,8 +63,8 @@ BottomHost.prototype = {
 
     this._splitter = ownerDocument.createXULElement("splitter");
     this._splitter.setAttribute("class", "devtools-horizontal-splitter");
-    // Avoid resizing notification containers
-    this._splitter.setAttribute("resizebefore", "flex");
+    this._splitter.setAttribute("resizebefore", "none");
+    this._splitter.setAttribute("resizeafter", "sibling");
 
     this.frame = createDevToolsFrame(
       ownerDocument,
@@ -163,10 +161,15 @@ class SidebarHost {
     const topDoc = topWindow.document.documentElement;
     const isLTR = topWindow.getComputedStyle(topDoc).direction === "ltr";
 
+    this._splitter.setAttribute("resizebefore", "none");
+    this._splitter.setAttribute("resizeafter", "none");
+
     if ((isLTR && this.type == "right") || (!isLTR && this.type == "left")) {
+      this._splitter.setAttribute("resizeafter", "sibling");
       this._browserPanel.appendChild(this._splitter);
       this._browserPanel.appendChild(this.frame);
     } else {
+      this._splitter.setAttribute("resizebefore", "sibling");
       this._browserPanel.insertBefore(this.frame, this._browserContainer);
       this._browserPanel.insertBefore(this._splitter, this._browserContainer);
     }

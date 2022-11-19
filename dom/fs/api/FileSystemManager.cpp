@@ -12,44 +12,10 @@
 #include "mozilla/dom/FileSystemManagerChild.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/StorageManager.h"
-#include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/quota/QuotaCommon.h"
 #include "mozilla/dom/quota/ResultExtensions.h"
-#include "mozilla/ipc/BackgroundUtils.h"
-#include "mozilla/ipc/PBackgroundSharedTypes.h"
-#include "nsIScriptObjectPrincipal.h"
 
 namespace mozilla::dom {
-
-namespace {
-
-Result<mozilla::ipc::PrincipalInfo, nsresult> GetPrincipalInfo(
-    nsIGlobalObject* aGlobal) {
-  using mozilla::ipc::PrincipalInfo;
-
-  if (NS_IsMainThread()) {
-    nsCOMPtr<nsIScriptObjectPrincipal> sop = do_QueryInterface(aGlobal);
-    QM_TRY(MOZ_TO_RESULT(sop));
-
-    nsCOMPtr<nsIPrincipal> principal = sop->GetEffectiveStoragePrincipal();
-    QM_TRY(MOZ_TO_RESULT(principal));
-
-    PrincipalInfo principalInfo;
-    QM_TRY(MOZ_TO_RESULT(PrincipalToPrincipalInfo(principal, &principalInfo)));
-
-    return std::move(principalInfo);
-  }
-
-  WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
-  QM_TRY(MOZ_TO_RESULT(workerPrivate));
-
-  const PrincipalInfo& principalInfo =
-      workerPrivate->GetEffectiveStoragePrincipalInfo();
-
-  return principalInfo;
-}
-
-}  // namespace
 
 FileSystemManager::FileSystemManager(
     nsIGlobalObject* aGlobal, RefPtr<StorageManager> aStorageManager,
@@ -73,40 +39,65 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(FileSystemManager);
 NS_IMPL_CYCLE_COLLECTING_RELEASE(FileSystemManager);
 NS_IMPL_CYCLE_COLLECTION(FileSystemManager, mGlobal, mStorageManager);
 
-void FileSystemManager::Shutdown() { mBackgroundRequestHandler->Shutdown(); }
+void FileSystemManager::Shutdown() {
+  mShutdown.Flip();
 
-FileSystemManagerChild* FileSystemManager::Actor() const {
-  return mBackgroundRequestHandler->GetFileSystemManagerChild();
+  if (mBackgroundRequestHandler->FileSystemManagerChildStrongRef()) {
+    mBackgroundRequestHandler->FileSystemManagerChildStrongRef()->CloseAll();
+  }
+
+  mBackgroundRequestHandler->Shutdown();
+
+  mCreateFileSystemManagerChildPromiseRequestHolder.DisconnectIfExists();
 }
 
-already_AddRefed<Promise> FileSystemManager::GetDirectory(ErrorResult& aRv) {
+void FileSystemManager::BeginRequest(
+    std::function<void(const RefPtr<FileSystemManagerChild>&)>&& aSuccess,
+    std::function<void(nsresult)>&& aFailure) {
+  MOZ_ASSERT(!mShutdown);
+
+  if (mBackgroundRequestHandler->FileSystemManagerChildStrongRef()) {
+    aSuccess(mBackgroundRequestHandler->FileSystemManagerChildStrongRef());
+    return;
+  }
+
   MOZ_ASSERT(mGlobal);
 
-  QM_TRY_INSPECT(const auto& principalInfo, GetPrincipalInfo(mGlobal), nullptr,
-                 [&aRv](const nsresult rv) { aRv.Throw(rv); });
+  QM_TRY_INSPECT(const auto& principalInfo, mGlobal->GetStorageKey(), QM_VOID,
+                 [&aFailure](nsresult rv) { aFailure(rv); });
 
-  RefPtr<Promise> promise = Promise::Create(mGlobal, aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
+  mBackgroundRequestHandler->CreateFileSystemManagerChild(principalInfo)
+      ->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [self = RefPtr<FileSystemManager>(this),
+           success = std::move(aSuccess), failure = std::move(aFailure)](
+              const BoolPromise::ResolveOrRejectValue& aValue) {
+            self->mCreateFileSystemManagerChildPromiseRequestHolder.Complete();
+
+            if (aValue.IsResolve()) {
+              success(self->mBackgroundRequestHandler
+                          ->FileSystemManagerChildStrongRef());
+            } else {
+              failure(aValue.RejectValue());
+            }
+          })
+      ->Track(mCreateFileSystemManagerChildPromiseRequestHolder);
+}
+
+already_AddRefed<Promise> FileSystemManager::GetDirectory(ErrorResult& aError) {
+  MOZ_ASSERT(mGlobal);
+
+  RefPtr<Promise> promise = Promise::Create(mGlobal, aError);
+  if (NS_WARN_IF(aError.Failed())) {
     return nullptr;
   }
 
   MOZ_ASSERT(promise);
 
-  if (Actor()) {
-    mRequestHandler->GetRootHandle(this, promise);
-    return promise.forget();
+  mRequestHandler->GetRootHandle(this, promise, aError);
+  if (NS_WARN_IF(aError.Failed())) {
+    return nullptr;
   }
-
-  mBackgroundRequestHandler->CreateFileSystemManagerChild(principalInfo)
-      ->Then(
-          GetCurrentSerialEventTarget(), __func__,
-          [self = RefPtr<FileSystemManager>(this), promise](bool) {
-            self->mRequestHandler->GetRootHandle(self, promise);
-          },
-          [promise](nsresult) {
-            promise->MaybeRejectWithUnknownError(
-                "Could not create the file system manager");
-          });
 
   return promise.forget();
 }

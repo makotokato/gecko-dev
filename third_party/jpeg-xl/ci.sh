@@ -576,7 +576,7 @@ cmd_test() {
   (cd "${BUILD_DIR}"
    export UBSAN_OPTIONS=print_stacktrace=1
    [[ "${TEST_STACK_LIMIT}" == "none" ]] || ulimit -s "${TEST_STACK_LIMIT}"
-   ctest -j $(nproc --all || echo 1) --output-on-failure "$@")
+   ctest -j $(nproc --all || echo 1) ${TEST_SELECTOR} --output-on-failure "$@")
 }
 
 cmd_gbench() {
@@ -1394,10 +1394,8 @@ cmd_bump_version() {
     fi
   fi
 
-  newver="${major}.${minor}"
-  if [[ "${patch}" != "0" ]]; then
-    newver="${newver}.${patch}"
-  fi
+  newver="${major}.${minor}.${patch}"
+
   echo "Bumping version to ${newver} (${major}.${minor}.${patch})"
   sed -E \
     -e "s/(set\\(JPEGXL_MAJOR_VERSION) [0-9]+\\)/\\1 ${major})/" \
@@ -1420,8 +1418,8 @@ cmd_authors() {
   merge_request_commits
   local emails
   local names
-  readarray -t emails < <(git log --format='%ae' "${MR_HEAD_SHA}...${MR_ANCESTOR_SHA}")
-  readarray -t names < <(git log --format='%an' "${MR_HEAD_SHA}...${MR_ANCESTOR_SHA}")
+  readarray -t emails < <(git log --format='%ae' "${MR_ANCESTOR_SHA}..${MR_HEAD_SHA}")
+  readarray -t names < <(git log --format='%an' "${MR_ANCESTOR_SHA}..${MR_HEAD_SHA}")
   for i in "${!names[@]}"; do
     echo "Checking name '${names[$i]}' with email '${emails[$i]}' ..."
     "${MYDIR}"/tools/check_author.py "${emails[$i]}" "${names[$i]}"

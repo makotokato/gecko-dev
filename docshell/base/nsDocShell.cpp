@@ -4047,8 +4047,6 @@ nsresult nsDocShell::LoadErrorPage(nsIURI* aURI, const char16_t* aURL,
     errorPageUrl.AppendLiteral("&captive=true");
   }
 
-  // netError.xhtml's getDescription only handles the "d" parameter at the
-  // end of the URL, so append it last.
   errorPageUrl.AppendLiteral("&d=");
   errorPageUrl.AppendASCII(escapedDescription.get());
 
@@ -4124,12 +4122,29 @@ nsDocShell::Reload(uint32_t aReloadFlags) {
       RefPtr<BrowsingContext> browsingContext(mBrowsingContext);
       nsCOMPtr<nsIURI> currentURI(mCurrentURI);
       nsCOMPtr<nsIReferrerInfo> referrerInfo(mReferrerInfo);
+      RefPtr<StopDetector> stopDetector = new StopDetector();
+      nsCOMPtr<nsILoadGroup> loadGroup;
+      GetLoadGroup(getter_AddRefs(loadGroup));
+      if (loadGroup) {
+        // loadGroup may be null in theory. In that case stopDetector just
+        // doesn't do anything.
+        loadGroup->AddRequest(stopDetector, nullptr);
+      }
 
       ContentChild::GetSingleton()->SendNotifyOnHistoryReload(
           mBrowsingContext, forceReload,
-          [docShell, doc, loadType, browsingContext, currentURI, referrerInfo](
+          [docShell, doc, loadType, browsingContext, currentURI, referrerInfo,
+           loadGroup, stopDetector](
               Tuple<bool, Maybe<RefPtr<nsDocShellLoadState>>, Maybe<bool>>&&
                   aResult) {
+            auto scopeExit = MakeScopeExit([loadGroup, stopDetector]() {
+              if (loadGroup) {
+                loadGroup->RemoveRequest(stopDetector, nullptr, NS_OK);
+              }
+            });
+            if (stopDetector->Canceled()) {
+              return;
+            }
             bool canReload;
             Maybe<RefPtr<nsDocShellLoadState>> loadState;
             Maybe<bool> reloadingActiveEntry;
@@ -9225,7 +9240,9 @@ static bool NavigationShouldTakeFocus(nsDocShell* aDocShell,
   if (!aLoadState->AllowFocusMove()) {
     return false;
   }
-
+  if (!aLoadState->HasValidUserGestureActivation()) {
+    return false;
+  }
   const auto& sourceBC = aLoadState->SourceBrowsingContext();
   if (!sourceBC || !sourceBC->IsActive()) {
     // If the navigation didn't come from a foreground tab, then we don't steal
@@ -11711,8 +11728,13 @@ bool nsDocShell::ShouldAddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel) {
     if (buf.EqualsLiteral("blank")) {
       return false;
     }
-    // We only want to add about:newtab if it's not privileged:
+    // We only want to add about:newtab if it's not privileged, and
+    // if it is not configured to show the blank page.
     if (buf.EqualsLiteral("newtab")) {
+      if (!StaticPrefs::browser_newtabpage_enabled()) {
+        return false;
+      }
+
       NS_ENSURE_TRUE(aChannel, false);
       nsCOMPtr<nsIPrincipal> resultPrincipal;
       rv = nsContentUtils::GetSecurityManager()->GetChannelResultPrincipal(

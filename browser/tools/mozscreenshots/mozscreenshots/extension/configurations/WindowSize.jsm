@@ -6,9 +6,11 @@
 
 var EXPORTED_SYMBOLS = ["WindowSize"];
 
-const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
-const { BrowserTestUtils } = ChromeUtils.import(
-  "resource://testing-common/BrowserTestUtils.jsm"
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
+const { BrowserTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/BrowserTestUtils.sys.mjs"
 );
 
 var WindowSize = {

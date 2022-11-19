@@ -712,32 +712,11 @@ const AVAILABLE_UA_OVERRIDES = [
     config: {
       matches: [
         "*://*.commerzbank.de/*", // Bug 1767630
-        "*://*.edf.com/*", // Bug 1764786
-        "*://*.ibmserviceengage.com/*", // #105438
-        "*://*.wordpress.org/*", // Bug 1743431
-        "*://as.eservice.asus.com/*", // #104113
-        "*://cdn-vzn.yottaa.net/*", // Bug 1764795
-        "*://dsae.co.za/*", // Bug 1765925
         "*://fpt.dfp.microsoft.com/*", // #104237
-        "*://moje.pzu.pl/*", // #99772
-        "*://mon.allianzbanque.fr/*", // #101074
-        "*://online.citi.com/*", // #101268
-        "*://simperium.com/*", // #98934
-        "*://survey.sogosurvey.com/*", // Bug 1765925
         "*://ubank.com.au/*", // #104099
         "*://wifi.sncf/*", // #100194
-        "*://www.discoveryplus.in/*", // #100389
-        "*://www.eurosportplayer.com/*", // #91087
-        "*://www.gismeteo.ru/*", // #101326
-        "*://www.hannaandersson.com/*", // #95003
-        "*://www.imb.com.au/*", // Bug 1762209
-        "*://www.learningants.com/*", // #104080
-        "*://www.liveobserverpark.com/*", // #105244
-        "*://www.manchestereveningnews.co.uk/*", // #100923
         "*://www.metrobyt-mobile.com/*", // #105106
         "*://www.screwfix.com/*", // #96959
-        "*://www.services.gov.on.ca/*", // #100926
-        "*://www.smsv.com.ar/*", // #90666
       ],
       uaTransformer: originalUA => {
         return UAHelpers.capVersionTo99(originalUA);
@@ -913,6 +892,24 @@ const AVAILABLE_UA_OVERRIDES = [
       matches: ["*://business.help.royalmail.com/app/webforms/*"],
       uaTransformer: originalUA => {
         return originalUA.replace("Firefox", "FireFox");
+      },
+    },
+  },
+  {
+    /*
+     * Bug 1790698 - UA override for wolf777.com
+     * Webcompat issue #103981 - https://webcompat.com/issues/103981
+     *
+     * Add 'Linux; ' next to the Android version or the site breaks
+     */
+    id: "bug1790698",
+    platform: "android",
+    domain: "wolf777.com",
+    bug: "1790698",
+    config: {
+      matches: ["*://wolf777.com/*"],
+      uaTransformer: originalUA => {
+        return originalUA.replace("Android", "Linux; Android");
       },
     },
   },

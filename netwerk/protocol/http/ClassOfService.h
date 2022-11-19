@@ -5,6 +5,8 @@
 #ifndef __ClassOfService_h__
 #define __ClassOfService_h__
 
+#include "nsIClassOfService.h"
+#include "nsPrintfCString.h"
 #include "ipc/IPCMessageUtils.h"
 
 namespace mozilla::net {
@@ -22,6 +24,14 @@ class ClassOfService {
   // incremental flags
   bool Incremental() const { return mIncremental; }
   void SetIncremental(bool incremental) { mIncremental = incremental; }
+
+  static void ToString(const ClassOfService aCos, nsACString& aOut) {
+    return ToString(aCos.Flags(), aOut);
+  }
+
+  static void ToString(unsigned long aFlags, nsACString& aOut) {
+    aOut = nsPrintfCString("%lX", aFlags);
+  }
 
  private:
   unsigned long mClassFlags;

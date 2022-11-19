@@ -62,6 +62,17 @@ interface nsIMIMEService : nsISupports {
      */
     ACString getTypeFromURI(in nsIURI aURI);
 
+    /**
+     * Retrieves a ACString representation of the MIME type
+     * associated with this file extension.  Only the default
+     * builtin list is examined.  Unless you need a restricted
+     * set use getTypeFromURI.
+     *
+     * @param  The URI the user wants MIME info on.
+     * @return The MIME type, if any.
+     */
+    ACString getDefaultTypeFromURI(in nsIURI aURI);
+
     //
     ACString getTypeFromFile(in nsIFile aFile);
 
@@ -148,6 +159,16 @@ interface nsIMIMEService : nsISupports {
      * filename is empty.
      */
     const long VALIDATE_NO_DEFAULT_FILENAME = 32;
+
+    /**
+     * When the filename has an invalid extension, force the the filename to
+     * have a valid extension appended to the end of the filename when that
+     * extension would normally be ignored for the given content type. This
+     * primarily is used when saving pages to ensure that the html extension
+     * is applied over any extension that might have been generated from a
+     * page title.
+     */
+    const long VALIDATE_FORCE_APPEND_EXTENSION = 64;
 
     /**
      * Generate a valid filename from the channel that can be used to save

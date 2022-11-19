@@ -129,7 +129,7 @@ void HTMLScriptElement::SetInnerHTML(const nsAString& aInnerHTML,
   aError = nsContentUtils::SetNodeTextContent(this, aInnerHTML, true);
 }
 
-void HTMLScriptElement::GetText(nsAString& aValue, ErrorResult& aRv) {
+void HTMLScriptElement::GetText(nsAString& aValue, ErrorResult& aRv) const {
   if (!nsContentUtils::GetNodeTextContent(this, false, aValue, fallible)) {
     aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
   }
@@ -157,7 +157,7 @@ bool HTMLScriptElement::GetScriptType(nsAString& aType) {
   return true;
 }
 
-void HTMLScriptElement::GetScriptText(nsAString& text) {
+void HTMLScriptElement::GetScriptText(nsAString& text) const {
   GetText(text, IgnoreErrors());
 }
 
@@ -183,9 +183,10 @@ void HTMLScriptElement::FreezeExecutionAttrs(Document* aOwnerDoc) {
       mKind = ScriptKind::eModule;
     }
 
-    // https://wicg.github.io/import-maps/#integration-prepare-a-script
-    // If the script block’s type string is an ASCII case-insensitive match
-    // for the string "importmap", the script’s type is "importmap".
+    // https://html.spec.whatwg.org/multipage/scripting.html#prepare-the-script-element
+    // Step 11. Otherwise, if the script block's type string is an ASCII
+    // case-insensitive match for the string "importmap", then set el's type to
+    // "importmap".
     if (aOwnerDoc->ImportMapsEnabled() &&
         type.LowerCaseEqualsASCII("importmap")) {
       mKind = ScriptKind::eImportMap;

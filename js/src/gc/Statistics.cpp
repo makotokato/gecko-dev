@@ -1011,7 +1011,9 @@ void Statistics::sendGCTelemetry() {
   // NOTE: "Compartmental" is term that was deprecated with the
   // introduction of zone-based GC, but the old telemetry probe
   // continues to be used.
-  runtime->metrics().GC_IS_COMPARTMENTAL(!runtime->gc.fullGCRequested);
+  runtime->metrics().GC_IS_COMPARTMENTAL(!gc->fullGCRequested);
+  runtime->metrics().GC_ZONE_COUNT(zoneStats.zoneCount);
+  runtime->metrics().GC_ZONES_COLLECTED(zoneStats.collectedZoneCount);
   TimeDuration prepareTotal = SumPhase(PhaseKind::PREPARE, phaseTimes);
   TimeDuration markTotal = SumPhase(PhaseKind::MARK, phaseTimes);
   TimeDuration markRootsTotal = SumPhase(PhaseKind::MARK_ROOTS, phaseTimes);
@@ -1069,7 +1071,7 @@ void Statistics::sendGCTelemetry() {
     }
   }
 
-  if (!lastSlice.wasReset()) {
+  if (!lastSlice.wasReset() && preCollectedHeapBytes != 0) {
     size_t bytesSurvived = 0;
     for (ZonesIter zone(runtime, WithAtoms); !zone.done(); zone.next()) {
       if (zone->wasCollected()) {
@@ -1078,9 +1080,9 @@ void Statistics::sendGCTelemetry() {
     }
 
     MOZ_ASSERT(preCollectedHeapBytes >= bytesSurvived);
-    double survialRate =
+    double survivalRate =
         100.0 * double(bytesSurvived) / double(preCollectedHeapBytes);
-    runtime->metrics().GC_TENURED_SURVIVAL_RATE(uint32_t(survialRate));
+    runtime->metrics().GC_TENURED_SURVIVAL_RATE(uint32_t(survivalRate));
 
     // Calculate 'effectiveness' in MB / second, on main thread only for now.
     if (!runtime->parentRuntime) {

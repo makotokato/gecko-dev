@@ -155,7 +155,10 @@ class AnonymousContentOverlay {
       this.selectionLayer
     );
 
-    this.stateHandler = new StateHandler(this.screenshotsContainer);
+    this.stateHandler = new StateHandler(
+      this.screenshotsContainer,
+      this.screenshotsChild
+    );
 
     this.screenshotsContainer.updateSize(window);
 
@@ -287,7 +290,7 @@ class AnonymousContentOverlay {
   buildOverlay() {
     let [
       cancel,
-      instrustions,
+      instructions,
       download,
       copy,
     ] = lazy.overlayLocalization.formatMessagesSync([
@@ -307,8 +310,8 @@ class AnonymousContentOverlay {
               <div class="eye right"><div id="right-eye" class="eyeball"></div></div>
               <div class="face"></div>
             </div>
-            <div class="preview-instructions" data-l10n-id="screenshots-instructions">${instrustions.value}</div>
-            <div class="cancel-shot" id="screenshots-cancel-button" data-l10n-id="screenshots-overlay-cancel-button">${cancel.value}</div>
+            <div class="preview-instructions">${instructions.value}</div>
+            <div class="cancel-shot" id="screenshots-cancel-button">${cancel.value}</div>
           </div>
         </div>
         <div id="${this.hoverBoxId}"></div>
@@ -531,12 +534,14 @@ class StateHandler {
   #lastX;
   #lastY;
   #screenshotsContainer;
+  #screenshotsChild;
 
-  constructor(screenshotsContainer) {
+  constructor(screenshotsContainer, screenshotsChild) {
     this.#state = "crosshairs";
     this.#lastBox = {};
 
     this.#screenshotsContainer = screenshotsContainer;
+    this.#screenshotsChild = screenshotsChild;
   }
 
   setState(newState) {
@@ -555,6 +560,10 @@ class StateHandler {
     switch (this.#state) {
       case "crosshairs": {
         this.crosshairsStart();
+        break;
+      }
+      case "draggingReady": {
+        this.draggingReadyStart();
         break;
       }
       case "dragging": {
@@ -636,7 +645,7 @@ class StateHandler {
 
   /**
    * Handles the move event depending on the state
-   * @param event The mouseup/tou
+   * @param event The mouseup event
    * @param targetId The id of the event target
    */
   dragEnd(event, targetId) {
@@ -664,6 +673,14 @@ class StateHandler {
   crosshairsStart() {
     this.#screenshotsContainer.hideSelectionLayer();
     this.#screenshotsContainer.showPreviewLayer();
+    this.#screenshotsChild.showPanel();
+  }
+
+  /**
+   *
+   */
+  draggingReadyStart() {
+    this.#screenshotsChild.hidePanel();
   }
 
   /**

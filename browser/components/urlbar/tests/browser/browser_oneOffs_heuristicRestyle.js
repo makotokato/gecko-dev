@@ -240,16 +240,14 @@ async function assertState(
 }
 
 add_setup(async function() {
-  let oldDefaultEngine = await Services.search.getDefault();
-  await SearchTestUtils.installSearchExtension({
-    name: TEST_DEFAULT_ENGINE_NAME,
-    keyword: "@test",
-  });
-  let engine = Services.search.getEngineByName(TEST_DEFAULT_ENGINE_NAME);
-  await Services.search.setDefault(
-    engine,
-    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: TEST_DEFAULT_ENGINE_NAME,
+      keyword: "@test",
+    },
+    { setAsDefault: true }
   );
+  let engine = Services.search.getEngineByName(TEST_DEFAULT_ENGINE_NAME);
   await Services.search.moveEngine(engine, 0);
 
   for (let i = 0; i < 5; i++) {
@@ -262,10 +260,6 @@ add_setup(async function() {
   });
 
   registerCleanupFunction(async function() {
-    await Services.search.setDefault(
-      oldDefaultEngine,
-      Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-    );
     await PlacesUtils.history.clear();
     await PlacesUtils.keywords.remove(KEYWORD);
   });
@@ -460,7 +454,7 @@ async function doAltArrowTest(searchString, expectedHeuristicType, useLocal) {
  * @param {boolean} useLocal
  *   Whether to test a local one-off or an engine one-off.  If true, test a
  *   local one-off.  If false, test an engine one-off.
- * @param {function} callback
+ * @param {Function} callback
  *   This is called after the search completes.  It should perform whatever
  *   checks are necessary for the test task.  Important: When it returns, it
  *   should make sure that the first one-off is selected.

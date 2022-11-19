@@ -4,11 +4,14 @@
 
 "use strict";
 
-const { Preferences } = ChromeUtils.import(
-  "resource://gre/modules/Preferences.jsm"
+const { Preferences } = ChromeUtils.importESModule(
+  "resource://gre/modules/Preferences.sys.mjs"
 );
-const { ContentTaskUtils } = ChromeUtils.import(
-  "resource://testing-common/ContentTaskUtils.jsm"
+const { ContentTaskUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/ContentTaskUtils.sys.mjs"
+);
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
 );
 
 var EXPORTED_SYMBOLS = ["NarrateTestUtils"];
@@ -27,12 +30,15 @@ var NarrateTestUtils = {
   FORWARD: ".narrate-skip-next",
 
   isVisible(element) {
-    let style = element.ownerGlobal.getComputedStyle(element);
+    let win = element.ownerGlobal;
+    let style = win.getComputedStyle(element);
     if (style.display == "none") {
       return false;
-    } else if (style.visibility != "visible") {
+    }
+    if (style.visibility != "visible") {
       return false;
-    } else if (style.display == "-moz-popup" && element.state != "open") {
+    }
+    if (win.XULPopupElement.isInstance(element) && element.state != "open") {
       return false;
     }
 
@@ -84,6 +90,7 @@ var NarrateTestUtils = {
       _EU_Ci: Ci,
       _EU_Cc: Cc,
       window,
+      setTimeout,
       parent: window,
       navigator: window.navigator,
       KeyboardEvent: window.KeyboardEvent,

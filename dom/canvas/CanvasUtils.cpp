@@ -53,12 +53,20 @@ namespace mozilla::CanvasUtils {
 bool IsImageExtractionAllowed(dom::Document* aDocument, JSContext* aCx,
                               Maybe<nsIPrincipal*> aPrincipal) {
   // Do the rest of the checks only if privacy.resistFingerprinting is on.
-  if (!nsContentUtils::ShouldResistFingerprinting(aDocument)) {
+  if (!nsContentUtils::ShouldResistFingerprinting()) {
+    return true;
+  }
+
+  if (!aDocument) {
+    return false;
+  }
+
+  if (!aDocument->ShouldResistFingerprinting()) {
     return true;
   }
 
   // Don't proceed if we don't have a document or JavaScript context.
-  if (!aDocument || !aCx || !aPrincipal) {
+  if (!aCx || !aPrincipal) {
     return false;
   }
 
@@ -339,40 +347,6 @@ bool CoerceDouble(const JS::Value& v, double* d) {
 bool HasDrawWindowPrivilege(JSContext* aCx, JSObject* /* unused */) {
   return nsContentUtils::CallerHasPermission(aCx,
                                              nsGkAtoms::all_urlsPermission);
-}
-
-bool IsOffscreenCanvasEnabled(JSContext* aCx, JSObject* aObj) {
-  if (StaticPrefs::gfx_offscreencanvas_enabled()) {
-    return true;
-  }
-
-  if (OriginTrials::IsEnabled(aCx, aObj, OriginTrial::OffscreenCanvas)) {
-    return true;
-  }
-
-  if (!StaticPrefs::gfx_offscreencanvas_domain_enabled()) {
-    return false;
-  }
-
-  if (!NS_IsMainThread()) {
-    dom::WorkerPrivate* workerPrivate = dom::GetWorkerPrivateFromContext(aCx);
-    if (workerPrivate->UsesSystemPrincipal() ||
-        workerPrivate->OriginNoSuffix() == u"resource://pdf.js"_ns) {
-      return true;
-    }
-
-    const auto prefLock = StaticPrefs::gfx_offscreencanvas_domain_allowlist();
-    return nsContentUtils::IsURIInList(workerPrivate->GetBaseURI(), *prefLock);
-  }
-
-  nsIPrincipal* principal = nsContentUtils::SubjectPrincipal(aCx);
-  if (principal->IsSystemPrincipal() || nsContentUtils::IsPDFJS(principal)) {
-    return true;
-  }
-
-  nsCOMPtr<nsIURI> uri = principal->GetURI();
-  const auto prefLock = StaticPrefs::gfx_offscreencanvas_domain_allowlist();
-  return nsContentUtils::IsURIInList(uri, *prefLock);
 }
 
 bool CheckWriteOnlySecurity(bool aCORSUsed, nsIPrincipal* aPrincipal,

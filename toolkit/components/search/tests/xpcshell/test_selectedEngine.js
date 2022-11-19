@@ -17,7 +17,9 @@ add_task(async function setup() {
 // Check that the default engine matches the defaultenginename pref
 add_task(async function test_defaultEngine() {
   await Services.search.init();
-  await SearchTestUtils.promiseNewSearchEngine(`${gDataUrl}engine.xml`);
+  await SearchTestUtils.promiseNewSearchEngine({
+    url: `${gDataUrl}engine.xml`,
+  });
 
   Assert.equal(Services.search.defaultEngine.name, kDefaultEngineName);
 });
@@ -34,7 +36,7 @@ add_task(async function test_persistAcrossRestarts() {
 
   // Check that the a hash was saved.
   let metadata = await promiseGlobalMetadata();
-  Assert.equal(metadata.hash.length, 44);
+  Assert.equal(metadata.defaultEngineIdHash.length, 44);
 
   // Re-init and check the engine is still the same.
   Services.search.wrappedJSObject.reset();
@@ -58,7 +60,7 @@ add_task(async function test_ignoreInvalidHash() {
 
   // Then mess with the file (make the hash invalid).
   let metadata = await promiseGlobalMetadata();
-  metadata.hash = "invalid";
+  metadata.defaultEngineIdHash = "invalid";
   await promiseSaveGlobalMetadata(metadata);
 
   // Re-init the search service, and check that the json file is ignored.
@@ -79,7 +81,8 @@ add_task(async function test_settingToDefault() {
 
   // Check that the current engine was saved.
   let metadata = await promiseGlobalMetadata();
-  Assert.equal(metadata.current, kTestEngineName);
+  let currentEngine = Services.search.getEngineByName(kTestEngineName);
+  Assert.equal(metadata.defaultEngineId, currentEngine.id);
 
   // Then set the engine back to the default through the API.
   await Services.search.setDefault(
@@ -90,7 +93,7 @@ add_task(async function test_settingToDefault() {
 
   // Check that the current engine is no longer saved in the JSON file.
   metadata = await promiseGlobalMetadata();
-  Assert.equal(metadata.current, "");
+  Assert.equal(metadata.defaultEngineId, "");
 });
 
 add_task(async function test_resetToOriginalDefaultEngine() {

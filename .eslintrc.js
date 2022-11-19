@@ -92,7 +92,6 @@ module.exports = {
         "import/named": "error",
         "import/namespace": "error",
         "import/newline-after-import": "error",
-        "import/no-anonymous-default-export": "error",
         "import/no-duplicates": "error",
         "import/no-absolute-path": "error",
         "import/no-named-default": "error",
@@ -115,6 +114,7 @@ module.exports = {
         // from node_modules, as the ESLint setup only installs modules at the
         // top-level.
         "devtools/shared/compatibility/**",
+        "browser/components/storybook/**",
       ],
       rules: {
         "import/no-unresolved": "off",
@@ -338,7 +338,6 @@ module.exports = {
         "no-useless-call": "off",
         "no-useless-concat": "off",
         "no-useless-return": "off",
-        "no-with": "off",
       },
     },
     {
@@ -1921,7 +1920,6 @@ module.exports = {
         "security/manager/ssl/tests/mochitest/mixedcontent/test_dynUnsecurePicture.html",
         "security/manager/ssl/tests/mochitest/mixedcontent/test_dynUnsecurePicturePreload.html",
         "security/sandbox/test/browser_bug1393259.js",
-        "testing/mochitest/BrowserTestUtils/BrowserTestUtils.jsm ",
         "testing/mochitest/chrome/test_sanityEventUtils.xhtml",
         "testing/mochitest/server.js",
         "testing/mochitest/tests/Harness_sanity/test_SpecialPowersExtension.html",

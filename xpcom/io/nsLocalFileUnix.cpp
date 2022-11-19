@@ -1492,14 +1492,11 @@ nsresult nsLocalFile::GetDiskInfo(StatInfoFunc&& aStatInfoFunc,
 
   checkedResult = std::forward<StatInfoFunc>(aStatInfoFunc)(fs_buf);
   if (!checkedResult.isValid()) {
-    return NS_ERROR_FAILURE;
+    return NS_ERROR_CANNOT_CONVERT_DATA;
   }
 
-  *aResult = checkedResult.value();
-
-#  ifdef DEBUG_DISK_SPACE
-  printf("DiskInfo: %lu bytes\n", *aResult);
-#  endif
+  // If we return an error, *aValue will not be modified.
+  int64_t tentativeResult = checkedResult.value();
 
 #  if defined(USE_LINUX_QUOTACTL)
 
@@ -1523,14 +1520,20 @@ nsresult nsLocalFile::GetDiskInfo(StatInfoFunc&& aStatInfoFunc,
       && dq.dqb_bhardlimit) {
     checkedResult = std::forward<QuotaInfoFunc>(aQuotaInfoFunc)(dq);
     if (!checkedResult.isValid()) {
-      return NS_ERROR_FAILURE;
+      return NS_ERROR_CANNOT_CONVERT_DATA;
     }
 
-    if (checkedResult.value() < *aResult) {
-      *aResult = checkedResult.value();
+    if (checkedResult.value() < tentativeResult) {
+      tentativeResult = checkedResult.value();
     }
   }
 #  endif
+
+#  ifdef DEBUG_DISK_SPACE
+  printf("DiskInfo: %lu bytes\n", tentativeResult);
+#  endif
+
+  *aResult = tentativeResult;
 
   return NS_OK;
 
@@ -1911,9 +1914,13 @@ nsLocalFile::GetNativeTarget(nsACString& aResult) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  if (readlink(mPath.get(), target.BeginWriting(), (size_t)size) < 0) {
+  ssize_t written = readlink(mPath.get(), target.BeginWriting(), size_t(size));
+  if (written < 0) {
     return NSRESULT_FOR_ERRNO();
   }
+  // Target might have changed since the lstat call, or lstat might lie, see bug
+  // 1791029.
+  target.Truncate(written);
 
   nsresult rv = NS_OK;
   nsCOMPtr<nsIFile> self(this);
@@ -1961,12 +1968,13 @@ nsLocalFile::GetNativeTarget(nsACString& aResult) {
       break;
     }
 
-    int32_t linkLen =
+    ssize_t linkLen =
         readlink(flatRetval.get(), newTarget.BeginWriting(), size);
     if (linkLen == -1) {
       rv = NSRESULT_FOR_ERRNO();
       break;
     }
+    newTarget.Truncate(linkLen);
     target = newTarget;
   }
 

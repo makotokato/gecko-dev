@@ -24,6 +24,7 @@ EXTRA_COMPONENTS += [
 ]
 
 EXTRA_JS_MODULES += [
+    "AppUpdater.jsm",
     "UpdateListener.jsm",
     "UpdateService.jsm",
     "UpdateServiceStub.jsm",
@@ -44,7 +45,7 @@ if (
     ]
 
     EXTRA_JS_MODULES.backgroundtasks += [
-        "BackgroundTask_backgroundupdate.jsm",
+        "BackgroundTask_backgroundupdate.sys.mjs",
     ]
 
 XPCOM_MANIFESTS += [

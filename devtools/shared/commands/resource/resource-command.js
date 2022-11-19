@@ -4,7 +4,7 @@
 
 "use strict";
 
-const { throttle } = require("devtools/shared/throttle");
+const { throttle } = require("resource://devtools/shared/throttle.js");
 
 const BROWSERTOOLBOX_FISSION_ENABLED = "devtools.browsertoolbox.fission";
 
@@ -1356,7 +1356,21 @@ loader.lazyRequireGetter(
 // Each module added here should be a function that will receive the resource, the target, …
 // and perform some transformation on the resource before it will be emitted.
 // This is a good place to handle backward compatibility and manual resource marshalling.
-const ResourceTransformers = {};
+const ResourceTransformers = {
+  // @backward-compat { version 108 } "atRules" is not passed on older servers, so we need
+  //                  to compute it from "mediaRules".
+  //                  The ResourceCommand.TYPES.STYLESHEET transformer can be removed once 108 hits release.
+  //                  ⚠️ Do not remove the ResourceTransformers object, even if empty.
+  [ResourceCommand.TYPES.STYLESHEET]: ({ resource }) => {
+    if (resource.mediaRules) {
+      resource.atRules = resource.mediaRules.map(rule => ({
+        ...rule,
+        type: "media",
+      }));
+    }
+    return resource;
+  },
+};
 loader.lazyRequireGetter(
   ResourceTransformers,
   ResourceCommand.TYPES.CONSOLE_MESSAGE,

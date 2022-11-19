@@ -40,8 +40,8 @@ AccessibleWrap::AccessibleWrap(nsIContent* aContent, DocAccessible* aDoc)
     DocAccessibleWrap* doc = static_cast<DocAccessibleWrap*>(aDoc);
     static const dom::Element::AttrValuesArray sLiveRegionValues[] = {
         nsGkAtoms::OFF, nsGkAtoms::polite, nsGkAtoms::assertive, nullptr};
-    int32_t attrValue = aContent->AsElement()->FindAttrValueIn(
-        kNameSpaceID_None, nsGkAtoms::aria_live, sLiveRegionValues,
+    int32_t attrValue = nsAccUtils::FindARIAAttrValueIn(
+        aContent->AsElement(), nsGkAtoms::aria_live, sLiveRegionValues,
         eIgnoreCase);
     if (attrValue == 0) {
       // aria-live is "off", do nothing.
@@ -316,9 +316,11 @@ Class a11y::GetTypeFromRole(roles::Role aRole) {
     case roles::CHECKBUTTON:
     case roles::TOGGLE_BUTTON:
     case roles::SWITCH:
+    case roles::CHECK_MENU_ITEM:
       return [mozCheckboxAccessible class];
 
     case roles::RADIOBUTTON:
+    case roles::RADIO_MENU_ITEM:
       return [mozRadioButtonAccessible class];
 
     case roles::SPINBUTTON:

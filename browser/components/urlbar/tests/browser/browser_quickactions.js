@@ -10,12 +10,12 @@
 requestLongerTimeout(3);
 
 ChromeUtils.defineESModuleGetters(this, {
+  AppConstants: "resource://gre/modules/AppConstants.sys.mjs",
   UrlbarProviderQuickActions:
     "resource:///modules/UrlbarProviderQuickActions.sys.mjs",
 });
 XPCOMUtils.defineLazyModuleGetters(this, {
-  AppConstants: "resource://gre/modules/AppConstants.jsm",
-  AppUpdater: "resource:///modules/AppUpdater.jsm",
+  UpdateService: "resource://gre/modules/UpdateService.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
 });
 
@@ -105,8 +105,8 @@ add_task(async function enter_search_mode_button() {
     window.document.getElementById("urlbar-engine-one-off-item-actions")
   );
   Assert.ok(oneOffButton, "One off button is available when preffed on");
-  EventUtils.synthesizeMouseAtCenter(oneOffButton, {}, window);
 
+  EventUtils.synthesizeMouseAtCenter(oneOffButton, {}, window);
   await UrlbarTestUtils.assertSearchMode(window, {
     source: UrlbarUtils.RESULT_SOURCE.ACTIONS,
     entry: "oneoff",
@@ -115,6 +115,38 @@ add_task(async function enter_search_mode_button() {
   await UrlbarTestUtils.waitForAutocompleteResultAt(window, 0);
   Assert.ok(true, "Actions are shown when we enter actions search mode.");
 
+  await UrlbarTestUtils.exitSearchMode(window);
+  await UrlbarTestUtils.promisePopupClose(window);
+  EventUtils.synthesizeKey("KEY_Escape");
+});
+
+add_task(async function enter_search_mode_oneoff_by_key() {
+  // Select actions oneoff button by keyboard.
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: "",
+  });
+  await UrlbarTestUtils.enterSearchMode(window);
+  const oneOffButtons = UrlbarTestUtils.getOneOffSearchButtons(window);
+  for (;;) {
+    EventUtils.synthesizeKey("KEY_ArrowDown", { altKey: true });
+    if (
+      oneOffButtons.selectedButton.source === UrlbarUtils.RESULT_SOURCE.ACTIONS
+    ) {
+      break;
+    }
+  }
+
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: " ",
+  });
+  await UrlbarTestUtils.assertSearchMode(window, {
+    source: UrlbarUtils.RESULT_SOURCE.ACTIONS,
+    entry: "oneoff",
+  });
+
+  await UrlbarTestUtils.exitSearchMode(window);
   await UrlbarTestUtils.promisePopupClose(window);
   EventUtils.synthesizeKey("KEY_Escape");
 });
@@ -128,6 +160,8 @@ add_task(async function enter_search_mode_key() {
     source: UrlbarUtils.RESULT_SOURCE.ACTIONS,
     entry: "typed",
   });
+
+  await UrlbarTestUtils.exitSearchMode(window);
   await UrlbarTestUtils.promisePopupClose(window);
   EventUtils.synthesizeKey("KEY_Escape");
 });
@@ -153,10 +187,8 @@ add_task(async function test_disabled() {
 
   EventUtils.synthesizeKey("KEY_ArrowDown");
   Assert.ok(
-    UrlbarTestUtils.getSelectedElement(window).classList.contains(
-      "urlbarView-button-help"
-    ),
-    "The selected element should be the onboarding button."
+    !UrlbarTestUtils.getSelectedElement(window),
+    "There is no selected element."
   );
 
   let disabledButton = window.document.querySelector(
@@ -278,9 +310,9 @@ add_task(async function test_screenshot() {
 });
 
 add_task(async function test_other_search_mode() {
-  let defaultEngine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + "searchSuggestionEngine.xml"
-  );
+  let defaultEngine = await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + "searchSuggestionEngine.xml",
+  });
   defaultEngine.alias = "testalias";
   let oldDefaultEngine = await Services.search.getDefault();
   Services.search.setDefault(
@@ -619,15 +651,19 @@ add_task(async function test_update() {
 
   const sandbox = sinon.createSandbox();
   try {
-    sandbox.stub(AppUpdater.prototype, "isReadyForRestart").get(() => false);
+    sandbox
+      .stub(UpdateService.prototype, "currentState")
+      .get(() => Ci.nsIApplicationUpdateService.STATE_IDLE);
     await doUpdateActionTest(
       false,
-      "Should be disabled since AppUpdater.isReadyForRestart returns false"
+      "Should be disabled since current update state is not pending"
     );
-    sandbox.stub(AppUpdater.prototype, "isReadyForRestart").get(() => true);
+    sandbox
+      .stub(UpdateService.prototype, "currentState")
+      .get(() => Ci.nsIApplicationUpdateService.STATE_PENDING);
     await doUpdateActionTest(
       true,
-      "Should be enabled since AppUpdater.isReadyForRestart returns true"
+      "Should be enabled since current update state is pending"
     );
   } finally {
     sandbox.restore();

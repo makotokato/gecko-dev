@@ -1,7 +1,10 @@
 "use strict";
 
+ChromeUtils.defineESModuleGetters(this, {
+  MockRegistry: "resource://testing-common/MockRegistry.sys.mjs",
+});
+
 XPCOMUtils.defineLazyModuleGetters(this, {
-  MockRegistry: "resource://testing-common/MockRegistry.jsm",
   OS: "resource://gre/modules/osfile.jsm",
 });
 
@@ -69,7 +72,7 @@ add_task(async function setup() {
 add_task(async function test_storage_managed() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
-      applications: { gecko: { id: MANIFEST.name } },
+      browser_specific_settings: { gecko: { id: MANIFEST.name } },
       permissions: ["storage"],
     },
 
@@ -117,7 +120,7 @@ add_task(async function test_storage_managed() {
 add_task(async function test_storage_managed_from_content_script() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
-      applications: { gecko: { id: MANIFEST.name } },
+      browser_specific_settings: { gecko: { id: MANIFEST.name } },
       permissions: ["storage"],
       content_scripts: [
         {

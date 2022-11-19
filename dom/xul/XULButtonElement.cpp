@@ -10,10 +10,21 @@
 #include "mozilla/TextEvents.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/MouseEventBinding.h"
+#include "nsChangeHint.h"
 #include "nsPresContext.h"
 #include "nsIDOMXULButtonElement.h"
 
 namespace mozilla::dom {
+
+nsChangeHint XULButtonElement::GetAttributeChangeHint(const nsAtom* aAttribute,
+                                                      int32_t aModType) const {
+  if (aAttribute == nsGkAtoms::type &&
+      IsAnyOfXULElements(nsGkAtoms::button, nsGkAtoms::toolbarbutton)) {
+    // type=menu switches to a menu frame.
+    return nsChangeHint_ReconstructFrame;
+  }
+  return nsXULElement::GetAttributeChangeHint(aAttribute, aModType);
+}
 
 nsresult XULButtonElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
   if (aVisitor.mEventStatus == nsEventStatus_eConsumeNoDefault) {
@@ -36,7 +47,7 @@ nsresult XULButtonElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
       if (!keyEvent) {
         break;
       }
-      if (NS_VK_SPACE == keyEvent->mKeyCode && aVisitor.mPresContext) {
+      if (keyEvent->ShouldWorkAsSpaceKey() && aVisitor.mPresContext) {
         EventStateManager* esm = aVisitor.mPresContext->EventStateManager();
         // :hover:active state
         esm->SetContentState(this, ElementState::HOVER);
@@ -69,7 +80,7 @@ nsresult XULButtonElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
       if (!keyEvent) {
         break;
       }
-      if (NS_VK_SPACE == keyEvent->mKeyCode) {
+      if (keyEvent->ShouldWorkAsSpaceKey()) {
         mIsHandlingKeyEvent = false;
         ElementState buttonState = State();
         if (buttonState.HasAllStates(ElementState::ACTIVE |

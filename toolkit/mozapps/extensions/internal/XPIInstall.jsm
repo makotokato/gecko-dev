@@ -33,8 +33,8 @@ const {
   "resource://gre/modules/addons/crypto-utils.sys.mjs"
 );
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 const { AddonManager, AddonManagerPrivate } = ChromeUtils.import(
   "resource://gre/modules/AddonManager.jsm"
@@ -468,6 +468,9 @@ async function loadManifestFromWebManifest(aPackage, aLocation) {
     throw error;
   }
 
+  // Internally, we use the `applications` key but it is because we assign the value
+  // of `browser_specific_settings` to `applications` in `ExtensionData.parseManifest()`.
+  // Yet, as of MV3, only `browser_specific_settings` is accepted in manifest.json files.
   let bss = manifest.applications?.gecko || {};
 
   // A * is illegal in strict_min_version
@@ -498,7 +501,8 @@ async function loadManifestFromWebManifest(aPackage, aLocation) {
     addon.previewImage = "preview.png";
   }
 
-  if (addon.type == "sitepermission") {
+  // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+  if (addon.type == "sitepermission-deprecated") {
     addon.sitePermissions = manifest.site_permissions;
     addon.siteOrigin = manifest.install_origins[0];
   }

@@ -7,8 +7,8 @@ const EXPORTED_SYMBOLS = ["AbuseReporter", "AbuseReportError"];
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const PREF_ABUSE_REPORT_URL = "extensions.abuseReport.url";
@@ -24,7 +24,13 @@ const MAX_STRING_LENGTH = 255;
 const MIN_MS_BETWEEN_SUBMITS = 30000;
 
 // The addon types currently supported by the integrated abuse report panel.
-const SUPPORTED_ADDON_TYPES = ["extension", "theme", "sitepermission"];
+const SUPPORTED_ADDON_TYPES = [
+  "extension",
+  "theme",
+  "sitepermission",
+  // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+  "sitepermission-deprecated",
+];
 
 const lazy = {};
 

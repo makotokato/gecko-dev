@@ -24,13 +24,29 @@ impl FnMetadata {
 }
 
 #[derive(Clone, Debug, Hash, Deserialize, Serialize)]
+pub struct MethodMetadata {
+    pub module_path: Vec<String>,
+    pub self_name: String,
+    pub name: String,
+    pub inputs: Vec<FnParamMetadata>,
+    pub return_type: Option<Type>,
+}
+
+impl MethodMetadata {
+    pub fn ffi_symbol_name(&self) -> String {
+        let full_name = format!("impl_{}_{}", self.self_name, self.name);
+        fn_ffi_symbol_name(&self.module_path, &full_name, checksum(self))
+    }
+}
+
+#[derive(Clone, Debug, Hash, Deserialize, Serialize)]
 pub struct FnParamMetadata {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: Type,
 }
 
-#[derive(Clone, Debug, Hash, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub enum Type {
     U8,
     U16,
@@ -54,6 +70,42 @@ pub enum Type {
         key_type: Box<Type>,
         value_type: Box<Type>,
     },
+    ArcObject {
+        object_name: String,
+    },
+    Unresolved {
+        name: String,
+    },
+}
+
+#[derive(Clone, Debug, Hash, Deserialize, Serialize)]
+pub struct RecordMetadata {
+    pub module_path: Vec<String>,
+    pub name: String,
+    pub fields: Vec<FieldMetadata>,
+}
+
+#[derive(Clone, Debug, Hash, Deserialize, Serialize)]
+pub struct FieldMetadata {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: Type,
+}
+
+#[derive(Clone, Debug, Hash, Deserialize, Serialize)]
+pub struct ObjectMetadata {
+    pub module_path: Vec<String>,
+    pub name: String,
+}
+
+impl ObjectMetadata {
+    /// FFI symbol name for the `free` function for this object.
+    ///
+    /// This function is used to free the memory used by this object.
+    pub fn free_ffi_symbol_name(&self) -> String {
+        let free_name = format!("object_free_{}", self.name);
+        fn_ffi_symbol_name(&self.module_path, &free_name, checksum(self))
+    }
 }
 
 /// Returns the last 16 bits of the value's hash as computed with [`DefaultHasher`].
@@ -75,10 +127,31 @@ pub fn fn_ffi_symbol_name(mod_path: &[String], name: &str, checksum: u16) -> Str
 #[derive(Clone, Debug, Hash, Deserialize, Serialize)]
 pub enum Metadata {
     Func(FnMetadata),
+    Method(MethodMetadata),
+    Record(RecordMetadata),
+    Object(ObjectMetadata),
 }
 
 impl From<FnMetadata> for Metadata {
     fn from(value: FnMetadata) -> Metadata {
-        Metadata::Func(value)
+        Self::Func(value)
+    }
+}
+
+impl From<MethodMetadata> for Metadata {
+    fn from(m: MethodMetadata) -> Self {
+        Self::Method(m)
+    }
+}
+
+impl From<RecordMetadata> for Metadata {
+    fn from(r: RecordMetadata) -> Self {
+        Self::Record(r)
+    }
+}
+
+impl From<ObjectMetadata> for Metadata {
+    fn from(v: ObjectMetadata) -> Self {
+        Self::Object(v)
     }
 }

@@ -10,7 +10,6 @@
 #include "ImageContainer.h"
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/TaskQueue.h"
-#include "mozilla/gfx/gfxVars.h"
 #include "nsThreadUtils.h"
 #include "VideoUtils.h"
 
@@ -210,13 +209,6 @@ int DAV1DDecoder::GetPicture(DecodedData& aData, MediaResult& aResult) {
     return 0;
   }
 
-#ifdef ANDROID
-  if (!gfxVars::UseWebRender() && (*picture).p.bpc != 8) {
-    aResult = MediaResult(NS_ERROR_DOM_MEDIA_NOT_SUPPORTED_ERR, __func__);
-    return -1;
-  }
-#endif
-
   RefPtr<VideoData> v = ConstructImage(*picture);
   if (!v) {
     LOG("Image allocation error: %ux%u"
@@ -230,15 +222,28 @@ int DAV1DDecoder::GetPicture(DecodedData& aData, MediaResult& aResult) {
   return 0;
 }
 
-// When returning Nothing(), the caller chooses the appropriate default
-/* static */ Maybe<gfx::YUVColorSpace> DAV1DDecoder::GetColorSpace(
+/* static */
+Maybe<gfx::YUVColorSpace> DAV1DDecoder::GetColorSpace(
     const Dav1dPicture& aPicture, LazyLogModule& aLogger) {
+  // When returning Nothing(), the caller chooses the appropriate default.
   if (!aPicture.seq_hdr || !aPicture.seq_hdr->color_description_present) {
     return Nothing();
   }
 
   return gfxUtils::CicpToColorSpace(
       static_cast<gfx::CICP::MatrixCoefficients>(aPicture.seq_hdr->mtrx),
+      static_cast<gfx::CICP::ColourPrimaries>(aPicture.seq_hdr->pri), aLogger);
+}
+
+/* static */
+Maybe<gfx::ColorSpace2> DAV1DDecoder::GetColorPrimaries(
+    const Dav1dPicture& aPicture, LazyLogModule& aLogger) {
+  // When returning Nothing(), the caller chooses the appropriate default.
+  if (!aPicture.seq_hdr || !aPicture.seq_hdr->color_description_present) {
+    return Nothing();
+  }
+
+  return gfxUtils::CicpToColorPrimaries(
       static_cast<gfx::CICP::ColourPrimaries>(aPicture.seq_hdr->pri), aLogger);
 }
 
@@ -256,6 +261,8 @@ already_AddRefed<VideoData> DAV1DDecoder::ConstructImage(
   b.mYUVColorSpace =
       DAV1DDecoder::GetColorSpace(aPicture, sPDMLog)
           .valueOr(DefaultColorSpace({aPicture.p.w, aPicture.p.h}));
+  b.mColorPrimaries = DAV1DDecoder::GetColorPrimaries(aPicture, sPDMLog)
+                          .valueOr(gfx::ColorSpace2::BT709);
   b.mColorRange = aPicture.seq_hdr->color_range ? gfx::ColorRange::FULL
                                                 : gfx::ColorRange::LIMITED;
 

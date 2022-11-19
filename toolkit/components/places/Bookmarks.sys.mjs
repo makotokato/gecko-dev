@@ -324,10 +324,6 @@ export var Bookmarks = Object.freeze({
 
       // If it's a tag, notify bookmark-tags-changed event to all bookmarks for this URL.
       if (isTagging) {
-        const tags = lazy.PlacesUtils.tagging.getTagsForURI(
-          lazy.NetUtil.newURI(url)
-        );
-
         for (let entry of await fetchBookmarksByURL(item, {
           concurrent: true,
         })) {
@@ -338,7 +334,7 @@ export var Bookmarks = Object.freeze({
               url,
               guid: entry.guid,
               parentGuid: entry.parentGuid,
-              tags,
+              tags: entry._tags,
               lastModified: entry.lastModified,
               source: item.source,
               isTagging: false,
@@ -907,9 +903,6 @@ export var Bookmarks = Object.freeze({
                 { tags: [updatedItem.title] },
                 { concurrent: true }
               )) {
-                const tags = lazy.PlacesUtils.tagging.getTagsForURI(
-                  lazy.NetUtil.newURI(entry.url)
-                );
                 notifications.push(
                   new PlacesBookmarkTags({
                     id: entry._id,
@@ -917,7 +910,7 @@ export var Bookmarks = Object.freeze({
                     url: entry.url,
                     guid: entry.guid,
                     parentGuid: entry.parentGuid,
-                    tags,
+                    tags: entry._tags,
                     lastModified: entry.lastModified,
                     source: updatedItem.source,
                     isTagging: false,
@@ -1328,9 +1321,6 @@ export var Bookmarks = Object.freeze({
         );
 
         if (isUntagging) {
-          const tags = lazy.PlacesUtils.tagging.getTagsForURI(
-            lazy.NetUtil.newURI(url)
-          );
           for (let entry of await fetchBookmarksByURL(item, {
             concurrent: true,
           })) {
@@ -1341,7 +1331,7 @@ export var Bookmarks = Object.freeze({
                 url,
                 guid: entry.guid,
                 parentGuid: entry.parentGuid,
-                tags,
+                tags: entry._tags,
                 lastModified: entry.lastModified,
                 source: options.source,
                 isTagging: false,
@@ -2467,7 +2457,12 @@ async function fetchBookmarksByTags(info, options = {}) {
               b.dateAdded, b.lastModified, b.type, IFNULL(b.title, '') AS title,
               h.url AS url, b.id AS _id, b.parent AS _parentId,
               NULL AS _childCount,
-              p.parent AS _grandParentId, b.syncStatus AS _syncStatus
+              p.parent AS _grandParentId, b.syncStatus AS _syncStatus,
+              (SELECT group_concat(pp.title)
+               FROM moz_bookmarks bb
+               JOIN moz_bookmarks pp ON bb.parent = pp.id
+               JOIN moz_bookmarks gg ON pp.parent = gg.id AND gg.guid = ?
+               WHERE bb.fk = h.id) AS _tags
        FROM moz_bookmarks b
        JOIN moz_bookmarks p ON p.id = b.parent
        JOIN moz_bookmarks g ON g.id = p.parent
@@ -2484,7 +2479,7 @@ async function fetchBookmarksByTags(info, options = {}) {
        )
        ORDER BY b.lastModified DESC
       `,
-      [Bookmarks.tagsGuid, Bookmarks.tagsGuid].concat(
+      [Bookmarks.tagsGuid, Bookmarks.tagsGuid, Bookmarks.tagsGuid].concat(
         info.tags.map(t => t.toLowerCase())
       )
     );
@@ -2541,7 +2536,12 @@ async function fetchBookmarksByURL(info, options = {}) {
               b.dateAdded, b.lastModified, b.type, IFNULL(b.title, '') AS title,
               h.url AS url, b.id AS _id, b.parent AS _parentId,
               NULL AS _childCount, /* Unused for now */
-              p.parent AS _grandParentId, b.syncStatus AS _syncStatus
+              p.parent AS _grandParentId, b.syncStatus AS _syncStatus,
+              (SELECT group_concat(pp.title)
+               FROM moz_bookmarks bb
+               JOIN moz_bookmarks pp ON bb.parent = pp.id
+               JOIN moz_bookmarks gg ON pp.parent = gg.id AND gg.guid = :tagsGuid
+               WHERE bb.fk = h.id) AS _tags
       FROM moz_bookmarks b
       JOIN moz_bookmarks p ON p.id = b.parent
       JOIN moz_places h ON h.id = b.fk
@@ -2549,7 +2549,7 @@ async function fetchBookmarksByURL(info, options = {}) {
       AND _grandParentId <> :tagsFolderId
       ORDER BY b.lastModified DESC
       `,
-      { url: info.url.href, tagsFolderId }
+      { url: info.url.href, tagsFolderId, tagsGuid: Bookmarks.tagsGuid }
     );
 
     return rows.length ? rowsToItemsArray(rows) : null;
@@ -3028,6 +3028,11 @@ function rowsToItemsArray(rows, ignoreInvalidURLs = false) {
       }
     }
 
+    // All the private properties below this point should not be returned to the
+    // API consumer, thus they are non-enumerable and removed through
+    // Object.assign just before the object is returned.
+    // Configurable is set to support mergeIntoNewObject overwrites.
+
     for (let prop of [
       "_id",
       "_parentId",
@@ -3037,16 +3042,27 @@ function rowsToItemsArray(rows, ignoreInvalidURLs = false) {
     ]) {
       let val = row.getResultByName(prop);
       if (val !== null) {
-        // These properties should not be returned to the API consumer, thus
-        // they are non-enumerable and removed through Object.assign just before
-        // the object is returned.
-        // Configurable is set to support mergeIntoNewObject overwrites.
         Object.defineProperty(item, prop, {
           value: val,
           enumerable: false,
           configurable: true,
         });
       }
+    }
+
+    try {
+      let tags = row.getResultByName("_tags");
+      Object.defineProperty(item, "_tags", {
+        value: tags
+          ? tags
+              .split(",")
+              .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
+          : [],
+        enumerable: false,
+        configurable: true,
+      });
+    } catch (ex) {
+      // `tags` not fetched, don't add it.
     }
 
     return item;
@@ -3066,7 +3082,7 @@ function validateBookmarkObject(name, input, behavior) {
  * Updates frecency for a list of URLs.
  *
  * @param db
- *        the Sqlite.jsm connection handle.
+ *        the Sqlite.sys.mjs connection handle.
  * @param urls
  *        the array of URLs to update.
  */
@@ -3097,7 +3113,7 @@ var updateFrecency = async function(db, urls) {
  * Removes any orphan annotation entries.
  *
  * @param db
- *        the Sqlite.jsm connection handle.
+ *        the Sqlite.sys.mjs connection handle.
  */
 var removeOrphanAnnotations = async function(db) {
   await db.executeCached(
@@ -3121,7 +3137,7 @@ var removeOrphanAnnotations = async function(db) {
  * Removes annotations for a given item.
  *
  * @param db
- *        the Sqlite.jsm connection handle.
+ *        the Sqlite.sys.mjs connection handle.
  * @param items
  *        The items for which to remove annotations.
  */
@@ -3147,7 +3163,7 @@ var removeAnnotationsForItems = async function(db, items) {
  * Updates lastModified for all the ancestors of a given folder GUID.
  *
  * @param db
- *        the Sqlite.jsm connection handle.
+ *        the Sqlite.sys.mjs connection handle.
  * @param folderGuid
  *        the GUID of the folder whose ancestors should be updated.
  * @param time
@@ -3196,7 +3212,7 @@ var setAncestorsLastModified = async function(
  * Remove all descendants of one or more bookmark folders.
  *
  * @param {Object} db
- *        the Sqlite.jsm connection handle.
+ *        the Sqlite.sys.mjs connection handle.
  * @param {Array} folderGuids
  *        array of folder guids.
  * @return {Array}
@@ -3298,9 +3314,6 @@ var removeFoldersContents = async function(db, folderGuids, options) {
     );
 
     if (isUntagging) {
-      const tags = lazy.PlacesUtils.tagging.getTagsForURI(
-        lazy.NetUtil.newURI(url)
-      );
       for (let entry of await fetchBookmarksByURL(item, true)) {
         notifications.push(
           new PlacesBookmarkTags({
@@ -3309,7 +3322,7 @@ var removeFoldersContents = async function(db, folderGuids, options) {
             url,
             guid: entry.guid,
             parentGuid: entry.parentGuid,
-            tags,
+            tags: entry._tags,
             lastModified: entry.lastModified,
             source,
             isTagging: false,

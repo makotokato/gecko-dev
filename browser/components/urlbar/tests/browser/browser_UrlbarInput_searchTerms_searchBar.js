@@ -5,8 +5,6 @@
 // These tests check the behavior of the Urlbar when a user enables
 // the search bar and showSearchTerms is true.
 
-let defaultTestEngine, originalEngine;
-
 const { CustomizableUITestUtils } = ChromeUtils.import(
   "resource://testing-common/CustomizableUITestUtils.jsm"
 );
@@ -18,28 +16,20 @@ add_setup(async function() {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.search.widget.inNavBar", true],
-      ["browser.urlbar.showSearchTerms", true],
+      ["browser.urlbar.showSearchTerms.featureGate", true],
     ],
   });
 
-  await SearchTestUtils.installSearchExtension({
-    name: "MozSearch",
-    search_url: "https://www.example.com/",
-    search_url_get_params: "q={searchTerms}&pc=fake_code",
-  });
-  defaultTestEngine = Services.search.getEngineByName("MozSearch");
-
-  originalEngine = await Services.search.getDefault();
-  await Services.search.setDefault(
-    defaultTestEngine,
-    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: "MozSearch",
+      search_url: "https://www.example.com/",
+      search_url_get_params: "q={searchTerms}&pc=fake_code",
+    },
+    { setAsDefault: true }
   );
 
   registerCleanupFunction(async function() {
-    await Services.search.setDefault(
-      originalEngine,
-      Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-    );
     await PlacesUtils.history.clear();
     gCUITestUtils.removeSearchBar();
   });
@@ -55,6 +45,16 @@ function assertSearchStringIsNotInUrlbar(searchString) {
     gURLBar.getAttribute("pageproxystate"),
     "valid",
     "Pageproxystate should be valid"
+  );
+  Assert.equal(
+    gBrowser.selectedBrowser.showingSearchTerms,
+    false,
+    "showingSearchTerms should be false"
+  );
+  Assert.notEqual(
+    gBrowser.userTypedValue,
+    searchString,
+    `${searchString} should not be the user typed value`
   );
 }
 

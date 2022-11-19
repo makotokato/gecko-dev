@@ -39,8 +39,8 @@ do_get_profile(); // must be called before getting nsIX509CertDB
 const { RemoteSecuritySettings } = ChromeUtils.import(
   "resource://gre/modules/psm/RemoteSecuritySettings.jsm"
 );
-const { TestUtils } = ChromeUtils.import(
-  "resource://testing-common/TestUtils.jsm"
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 
 const { CRLiteFiltersClient } = RemoteSecuritySettings.init();
@@ -98,7 +98,7 @@ function getFilenameForFilter(filter) {
  * fake records.
  *
  * @param {*} filters List of filters for which we will create records.
- * @param {Boolean} clear Whether or not to clear the local DB first. Defaults
+ * @param {boolean} clear Whether or not to clear the local DB first. Defaults
  *                        to true.
  */
 async function syncAndDownload(filters, clear = true) {
@@ -269,6 +269,29 @@ add_task(async function test_crlite_filters_basic() {
     "finished;2019-01-01T00:00:00Z-full",
     "CRLite filter download should have run"
   );
+});
+
+add_task(async function test_crlite_filters_not_cached() {
+  Services.prefs.setBoolPref(CRLITE_FILTERS_ENABLED_PREF, true);
+  let filters = [
+    { timestamp: "2019-01-01T00:00:00Z", type: "full", id: "0000" },
+  ];
+  let result = await syncAndDownload(filters);
+  equal(
+    result,
+    "finished;2019-01-01T00:00:00Z-full",
+    "CRLite filter download should have run"
+  );
+
+  let records = await CRLiteFiltersClient.client.db.list();
+
+  // `syncAndDownload` should not cache the attachment, so this download should
+  // get the attachment from the source.
+  let attachment = await CRLiteFiltersClient.client.attachments.download(
+    records[0]
+  );
+  equal(attachment._source, "remote_match");
+  await CRLiteFiltersClient.client.attachments.deleteDownloaded(records[0]);
 });
 
 add_task(async function test_crlite_filters_full_and_incremental() {

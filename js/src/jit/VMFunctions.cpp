@@ -1664,7 +1664,7 @@ static MOZ_ALWAYS_INLINE bool GetNativeDataPropertyPure(JSContext* cx,
 
   Shape* receiverShape = obj->shape();
   MegamorphicCache& cache = cx->caches().megamorphicCache;
-  MegamorphicCache::Entry* entry;
+  MegamorphicCache::Entry* entry = nullptr;
   if (JitOptions.enableWatchtowerMegamorphic &&
       cache.lookup(receiverShape, id, &entry)) {
     NativeObject* nobj = &obj->as<NativeObject>();
@@ -1696,10 +1696,9 @@ bool GetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
 }
 
 bool GetNativeDataPropertyPureFallback(JSContext* cx, JSObject* obj,
-                                       PropertyName* name, Value* vp) {
+                                       PropertyKey id, Value* vp) {
   AutoUnsafeCallWithABI unsafe;
 
-  jsid id = NameToId(name);
   Shape* receiverShape = obj->shape();
   MegamorphicCache& cache = cx->caches().megamorphicCache;
   MegamorphicCache::Entry* entry = nullptr;

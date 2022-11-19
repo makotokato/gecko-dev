@@ -5,9 +5,11 @@
 
 #include "nsCoreUtils.h"
 
+#include "nsAttrValue.h"
 #include "nsIAccessibleTypes.h"
 
 #include "mozilla/dom/Document.h"
+#include "nsAccUtils.h"
 #include "nsRange.h"
 #include "nsXULElement.h"
 #include "nsIDocShell.h"
@@ -43,6 +45,8 @@ using mozilla::dom::DOMRect;
 using mozilla::dom::Element;
 using mozilla::dom::Selection;
 using mozilla::dom::XULTreeElement;
+
+using mozilla::a11y::nsAccUtils;
 
 ////////////////////////////////////////////////////////////////////////////////
 // nsCoreUtils
@@ -275,45 +279,45 @@ void nsCoreUtils::ConvertScrollTypeToPercents(uint32_t aScrollType,
   WhenToScroll whenY, whenX;
   switch (aScrollType) {
     case nsIAccessibleScrollType::SCROLL_TYPE_TOP_LEFT:
-      whereY = kScrollToTop;
+      whereY = WhereToScroll::Start;
       whenY = WhenToScroll::Always;
-      whereX = kScrollToLeft;
+      whereX = WhereToScroll::Start;
       whenX = WhenToScroll::Always;
       break;
     case nsIAccessibleScrollType::SCROLL_TYPE_BOTTOM_RIGHT:
-      whereY = kScrollToBottom;
+      whereY = WhereToScroll::End;
       whenY = WhenToScroll::Always;
-      whereX = kScrollToRight;
+      whereX = WhereToScroll::End;
       whenX = WhenToScroll::Always;
       break;
     case nsIAccessibleScrollType::SCROLL_TYPE_TOP_EDGE:
-      whereY = kScrollToTop;
+      whereY = WhereToScroll::Start;
       whenY = WhenToScroll::Always;
-      whereX = kScrollMinimum;
+      whereX = WhereToScroll::Nearest;
       whenX = WhenToScroll::IfNotFullyVisible;
       break;
     case nsIAccessibleScrollType::SCROLL_TYPE_BOTTOM_EDGE:
-      whereY = kScrollToBottom;
+      whereY = WhereToScroll::End;
       whenY = WhenToScroll::Always;
-      whereX = kScrollMinimum;
+      whereX = WhereToScroll::Nearest;
       whenX = WhenToScroll::IfNotFullyVisible;
       break;
     case nsIAccessibleScrollType::SCROLL_TYPE_LEFT_EDGE:
-      whereY = kScrollMinimum;
+      whereY = WhereToScroll::Nearest;
       whenY = WhenToScroll::IfNotFullyVisible;
-      whereX = kScrollToLeft;
+      whereX = WhereToScroll::Start;
       whenX = WhenToScroll::Always;
       break;
     case nsIAccessibleScrollType::SCROLL_TYPE_RIGHT_EDGE:
-      whereY = kScrollMinimum;
+      whereY = WhereToScroll::Nearest;
       whenY = WhenToScroll::IfNotFullyVisible;
-      whereX = kScrollToRight;
+      whereX = WhereToScroll::End;
       whenX = WhenToScroll::Always;
       break;
     default:
-      whereY = kScrollMinimum;
+      whereY = WhereToScroll::Nearest;
       whenY = WhenToScroll::IfNotFullyVisible;
-      whereX = kScrollMinimum;
+      whereX = WhereToScroll::Nearest;
       whenX = WhenToScroll::IfNotFullyVisible;
   }
   *aVertical = ScrollAxis(whereY, whenY);
@@ -372,11 +376,19 @@ bool nsCoreUtils::GetID(nsIContent* aContent, nsAString& aID) {
 
 bool nsCoreUtils::GetUIntAttr(nsIContent* aContent, nsAtom* aAttr,
                               int32_t* aUInt) {
-  nsAutoString value;
   if (!aContent->IsElement()) {
     return false;
   }
-  aContent->AsElement()->GetAttr(kNameSpaceID_None, aAttr, value);
+  return GetUIntAttrValue(nsAccUtils::GetARIAAttr(aContent->AsElement(), aAttr),
+                          aUInt);
+}
+
+bool nsCoreUtils::GetUIntAttrValue(const nsAttrValue* aVal, int32_t* aUInt) {
+  if (!aVal) {
+    return false;
+  }
+  nsAutoString value;
+  aVal->ToString(value);
   if (!value.IsEmpty()) {
     nsresult error = NS_OK;
     int32_t integer = value.ToInteger(&error);

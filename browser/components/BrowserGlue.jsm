@@ -12,19 +12,25 @@ var EXPORTED_SYMBOLS = [
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  ActorManagerParent: "resource://gre/modules/ActorManagerParent.sys.mjs",
   AppMenuNotifications: "resource://gre/modules/AppMenuNotifications.sys.mjs",
   BookmarkHTMLUtils: "resource://gre/modules/BookmarkHTMLUtils.sys.mjs",
   BookmarkJSONUtils: "resource://gre/modules/BookmarkJSONUtils.sys.mjs",
   BrowserSearchTelemetry: "resource:///modules/BrowserSearchTelemetry.sys.mjs",
-  Integration: "resource://gre/modules/Integration.sys.mjs",
   BuiltInThemes: "resource:///modules/BuiltInThemes.sys.mjs",
+  DAPTelemetrySender: "resource://gre/modules/DAPTelemetrySender.sys.mjs",
+  DeferredTask: "resource://gre/modules/DeferredTask.sys.mjs",
+  DownloadsViewableInternally:
+    "resource:///modules/DownloadsViewableInternally.sys.mjs",
+  E10SUtils: "resource://gre/modules/E10SUtils.sys.mjs",
+  Integration: "resource://gre/modules/Integration.sys.mjs",
   Interactions: "resource:///modules/Interactions.sys.mjs",
   Log: "resource://gre/modules/Log.sys.mjs",
   NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
@@ -34,18 +40,21 @@ ChromeUtils.defineESModuleGetters(lazy, {
   PlacesDBUtils: "resource://gre/modules/PlacesDBUtils.sys.mjs",
   PlacesUIUtils: "resource:///modules/PlacesUIUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  QuickSuggest: "resource:///modules/QuickSuggest.sys.mjs",
   ScreenshotsUtils: "resource:///modules/ScreenshotsUtils.sys.mjs",
   SearchSERPTelemetry: "resource:///modules/SearchSERPTelemetry.sys.mjs",
   ShortcutUtils: "resource://gre/modules/ShortcutUtils.sys.mjs",
   SnapshotMonitor: "resource:///modules/SnapshotMonitor.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
-  UrlbarQuickSuggest: "resource:///modules/UrlbarQuickSuggest.sys.mjs",
+  WebChannel: "resource://gre/modules/WebChannel.sys.mjs",
   WindowsRegistry: "resource://gre/modules/WindowsRegistry.sys.mjs",
+  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   AboutNewTab: "resource:///modules/AboutNewTab.jsm",
-  ActorManagerParent: "resource://gre/modules/ActorManagerParent.jsm",
   AddonManager: "resource://gre/modules/AddonManager.jsm",
   ASRouterDefaultConfig:
     "resource://activity-stream/lib/ASRouterDefaultConfig.jsm",
@@ -59,12 +68,8 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   ContextualIdentityService:
     "resource://gre/modules/ContextualIdentityService.jsm",
   Corroborate: "resource://gre/modules/Corroborate.jsm",
-  DeferredTask: "resource://gre/modules/DeferredTask.jsm",
   Discovery: "resource:///modules/Discovery.jsm",
   DoHController: "resource:///modules/DoHController.jsm",
-  DownloadsViewableInternally:
-    "resource:///modules/DownloadsViewableInternally.jsm",
-  E10SUtils: "resource://gre/modules/E10SUtils.jsm",
   ExtensionsUI: "resource:///modules/ExtensionsUI.jsm",
   FeatureGate: "resource://featuregates/FeatureGate.jsm",
   FxAccounts: "resource://gre/modules/FxAccounts.jsm",
@@ -80,7 +85,6 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   PdfJs: "resource://pdf.js/PdfJs.jsm",
   PermissionUI: "resource:///modules/PermissionUI.jsm",
   PluralForm: "resource://gre/modules/PluralForm.jsm",
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   ProcessHangMonitor: "resource:///modules/ProcessHangMonitor.jsm",
   PublicSuffixList: "resource://gre/modules/netwerk-dns/PublicSuffixList.jsm",
   RemoteSettings: "resource://services-settings/remote-settings.js",
@@ -100,7 +104,6 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   TelemetryUtils: "resource://gre/modules/TelemetryUtils.jsm",
   TRRRacer: "resource:///modules/TRRPerformance.jsm",
   UIState: "resource://services-sync/UIState.jsm",
-  WebChannel: "resource://gre/modules/WebChannel.jsm",
 });
 
 if (AppConstants.MOZ_UPDATER) {
@@ -285,16 +288,17 @@ let JSWINDOWACTORS = {
 
   AboutPocket: {
     parent: {
-      moduleURI: "resource:///actors/AboutPocketParent.jsm",
+      esModuleURI: "resource:///actors/AboutPocketParent.sys.mjs",
     },
     child: {
-      moduleURI: "resource:///actors/AboutPocketChild.jsm",
+      esModuleURI: "resource:///actors/AboutPocketChild.sys.mjs",
 
       events: {
         DOMDocElementInserted: { capture: true },
       },
     },
 
+    remoteTypes: ["privilegedabout"],
     matches: [
       "about:pocket-saved*",
       "about:pocket-signup*",
@@ -315,15 +319,15 @@ let JSWINDOWACTORS = {
       },
     },
 
-    matches: ["about:privatebrowsing"],
+    matches: ["about:privatebrowsing*"],
   },
 
   AboutProtections: {
     parent: {
-      moduleURI: "resource:///actors/AboutProtectionsParent.jsm",
+      esModuleURI: "resource:///actors/AboutProtectionsParent.sys.mjs",
     },
     child: {
-      moduleURI: "resource:///actors/AboutProtectionsChild.jsm",
+      esModuleURI: "resource:///actors/AboutProtectionsChild.sys.mjs",
 
       events: {
         DOMDocElementInserted: { capture: true },
@@ -386,10 +390,10 @@ let JSWINDOWACTORS = {
 
   BlockedSite: {
     parent: {
-      moduleURI: "resource:///actors/BlockedSiteParent.jsm",
+      esModuleURI: "resource:///actors/BlockedSiteParent.sys.mjs",
     },
     child: {
-      moduleURI: "resource:///actors/BlockedSiteChild.jsm",
+      esModuleURI: "resource:///actors/BlockedSiteChild.sys.mjs",
       events: {
         AboutBlockedLoaded: { wantUntrusted: true },
         click: {},
@@ -417,10 +421,10 @@ let JSWINDOWACTORS = {
 
   ClickHandler: {
     parent: {
-      moduleURI: "resource:///actors/ClickHandlerParent.jsm",
+      esModuleURI: "resource:///actors/ClickHandlerParent.sys.mjs",
     },
     child: {
-      moduleURI: "resource:///actors/ClickHandlerChild.jsm",
+      esModuleURI: "resource:///actors/ClickHandlerChild.sys.mjs",
       events: {
         chromelinkclick: { capture: true, mozSystemGroup: true },
       },
@@ -437,10 +441,10 @@ let JSWINDOWACTORS = {
    */
   MiddleMousePasteHandler: {
     parent: {
-      moduleURI: "resource:///actors/ClickHandlerParent.jsm",
+      esModuleURI: "resource:///actors/ClickHandlerParent.sys.mjs",
     },
     child: {
-      moduleURI: "resource:///actors/ClickHandlerChild.jsm",
+      esModuleURI: "resource:///actors/ClickHandlerChild.sys.mjs",
       events: {
         auxclick: { capture: true, mozSystemGroup: true },
       },
@@ -472,11 +476,11 @@ let JSWINDOWACTORS = {
 
   ContextMenu: {
     parent: {
-      moduleURI: "resource:///actors/ContextMenuParent.jsm",
+      esModuleURI: "resource:///actors/ContextMenuParent.sys.mjs",
     },
 
     child: {
-      moduleURI: "resource:///actors/ContextMenuChild.jsm",
+      esModuleURI: "resource:///actors/ContextMenuChild.sys.mjs",
       events: {
         contextmenu: { mozSystemGroup: true },
       },
@@ -487,11 +491,11 @@ let JSWINDOWACTORS = {
 
   DecoderDoctor: {
     parent: {
-      moduleURI: "resource:///actors/DecoderDoctorParent.jsm",
+      esModuleURI: "resource:///actors/DecoderDoctorParent.sys.mjs",
     },
 
     child: {
-      moduleURI: "resource:///actors/DecoderDoctorChild.jsm",
+      esModuleURI: "resource:///actors/DecoderDoctorChild.sys.mjs",
       observers: ["decoder-doctor-notification"],
     },
 
@@ -501,11 +505,11 @@ let JSWINDOWACTORS = {
 
   DOMFullscreen: {
     parent: {
-      moduleURI: "resource:///actors/DOMFullscreenParent.jsm",
+      esModuleURI: "resource:///actors/DOMFullscreenParent.sys.mjs",
     },
 
     child: {
-      moduleURI: "resource:///actors/DOMFullscreenChild.jsm",
+      esModuleURI: "resource:///actors/DOMFullscreenChild.sys.mjs",
       events: {
         "MozDOMFullscreen:Request": {},
         "MozDOMFullscreen:Entered": {},
@@ -521,11 +525,11 @@ let JSWINDOWACTORS = {
 
   EncryptedMedia: {
     parent: {
-      moduleURI: "resource:///actors/EncryptedMediaParent.jsm",
+      esModuleURI: "resource:///actors/EncryptedMediaParent.sys.mjs",
     },
 
     child: {
-      moduleURI: "resource:///actors/EncryptedMediaChild.jsm",
+      esModuleURI: "resource:///actors/EncryptedMediaChild.sys.mjs",
       observers: ["mediakeys-request"],
     },
 
@@ -590,22 +594,6 @@ let JSWINDOWACTORS = {
     },
 
     messageManagerGroups: ["browsers"],
-  },
-
-  NetError: {
-    parent: {
-      moduleURI: "resource:///actors/NetErrorParent.jsm",
-    },
-    child: {
-      moduleURI: "resource:///actors/NetErrorChild.jsm",
-      events: {
-        DOMDocElementInserted: {},
-        click: {},
-      },
-    },
-
-    matches: ["about:certerror?*", "about:neterror?*"],
-    allFrames: true,
   },
 
   PageInfo: {
@@ -753,7 +741,7 @@ let JSWINDOWACTORS = {
       "about:home*",
       "about:newtab*",
       "about:welcome*",
-      "about:privatebrowsing",
+      "about:privatebrowsing*",
     ],
     remoteTypes: ["privilegedabout"],
   },
@@ -2258,23 +2246,6 @@ BrowserGlue.prototype = {
     _checkGPCPref();
   },
 
-  _monitorPrivacySegmentationPref() {
-    const PREF_ENABLED = "browser.dataFeatureRecommendations.enabled";
-    const EVENT_CATEGORY = "privacy_segmentation";
-
-    let checkPrivacySegmentationPref = () => {
-      let isEnabled = Services.prefs.getBoolPref(PREF_ENABLED, false);
-      Services.telemetry.recordEvent(
-        EVENT_CATEGORY,
-        isEnabled ? "enable" : "disable",
-        "pref"
-      );
-    };
-
-    Services.telemetry.setEventRecordingEnabled(EVENT_CATEGORY, true);
-    Services.prefs.addObserver(PREF_ENABLED, checkPrivacySegmentationPref);
-  },
-
   // All initial windows have opened.
   _onWindowsRestored: function BG__onWindowsRestored() {
     if (this._windowsWereRestored) {
@@ -2352,7 +2323,6 @@ BrowserGlue.prototype = {
     this._setupSearchDetection();
 
     this._monitorGPCPref();
-    this._monitorPrivacySegmentationPref();
   },
 
   /**
@@ -2542,6 +2512,8 @@ BrowserGlue.prototype = {
           lazy.NimbusFeatures.majorRelease2022.getVariable(
             "feltPrivacyWindowSeparation"
           ) &&
+          // We don't want a shortcut if it's been disabled, eg: by enterprise policy.
+          lazy.PrivateBrowsingUtils.enabled &&
           // Private Browsing shortcuts for packaged builds come with the package,
           // if they exist at all. We shouldn't try to create our own.
           !Services.sysinfo.getProperty("hasWinPackageId") &&
@@ -2588,12 +2560,16 @@ BrowserGlue.prototype = {
               desc + ".lnk",
               appdir
             );
-            // Once we've successfully created this, set this so we never do it again.
-            Services.prefs.setBoolPref(
-              PREF_PRIVATE_BROWSING_SHORTCUT_CREATED,
-              true
-            );
           }
+          // We always set this as long as no exception has been thrown. This
+          // ensure that it is `true` both if we created one because it didn't
+          // exist, or if it already existed (most likely because it was created
+          // by the installer). This avoids the need to call `hasMatchingShortcut`
+          // again, which necessarily does pointless I/O.
+          Services.prefs.setBoolPref(
+            PREF_PRIVATE_BROWSING_SHORTCUT_CREATED,
+            true
+          );
         },
       },
 
@@ -2670,10 +2646,7 @@ BrowserGlue.prototype = {
 
       {
         task: () => {
-          let { setTimeout } = ChromeUtils.import(
-            "resource://gre/modules/Timer.jsm"
-          );
-          setTimeout(function() {
+          lazy.setTimeout(function() {
             Services.tm.idleDispatchToMainThread(
               Services.startup.trackStartupCrashEnd
             );
@@ -2867,7 +2840,17 @@ BrowserGlue.prototype = {
 
       {
         task: () => {
-          lazy.UrlbarQuickSuggest.init();
+          lazy.QuickSuggest.init();
+        },
+      },
+
+      {
+        condition: Services.prefs.getBoolPref(
+          "toolkit.telemetry.dap_enabled",
+          false
+        ),
+        task: () => {
+          lazy.DAPTelemetrySender.startup();
         },
       },
 
@@ -2975,6 +2958,21 @@ BrowserGlue.prototype = {
       () => Services.search.runBackgroundChecks(),
 
       () => lazy.BrowserUsageTelemetry.reportInstallationTelemetry(),
+
+      async () => {
+        let win = lazy.BrowserWindowTracker.getTopWindow({ private: false });
+        if (!win) {
+          return;
+        }
+
+        if (typeof win.navigator.requestMIDIAccess != "function") {
+          return;
+        }
+
+        const { inputs, outputs } = await win.navigator.requestMIDIAccess();
+        const hasMIDIDevices = inputs.size + outputs.size > 0;
+        Services.telemetry.scalarSet("dom.midi.has_devices", hasMIDIDevices);
+      },
     ];
 
     for (let task of idleTasks) {
@@ -3269,7 +3267,7 @@ BrowserGlue.prototype = {
       false
     ); // Do not export.
     if (autoExportHTML) {
-      // Sqlite.jsm and Places shutdown happen at profile-before-change, thus,
+      // Sqlite.sys.mjs and Places shutdown happen at profile-before-change, thus,
       // to be on the safe side, this should run earlier.
       lazy.AsyncShutdown.profileChangeTeardown.addBlocker(
         "Places: export bookmarks.html",
@@ -3511,7 +3509,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 130;
+    const UI_VERSION = 133;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     const PROFILE_DIR = Services.dirsvc.get("ProfD", Ci.nsIFile).path;
@@ -4312,6 +4310,24 @@ BrowserGlue.prototype = {
       migrateXULAttributeToStyle("sidebar-box", "width");
     }
 
+    // Migration 131 was moved to 133 to allow for an uplift.
+
+    if (currentUIVersion < 132) {
+      // These attributes are no longer persisted, thus remove them from xulstore.
+      for (let url of [
+        "chrome://browser/content/places/bookmarkProperties.xhtml",
+        "chrome://browser/content/places/bookmarkProperties2.xhtml",
+      ]) {
+        for (let attr of ["width", "screenX", "screenY"]) {
+          xulStore.removeValue(url, "bookmarkproperties", attr);
+        }
+      }
+    }
+
+    if (currentUIVersion < 133) {
+      xulStore.removeValue(BROWSER_DOCURL, "urlbar-container", "width");
+    }
+
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
   },
@@ -4424,7 +4440,7 @@ BrowserGlue.prototype = {
     if (willPrompt) {
       let win = lazy.BrowserWindowTracker.getTopWindow();
       DefaultBrowserCheck.prompt(win);
-    } else if (await lazy.UrlbarQuickSuggest.maybeShowOnboardingDialog()) {
+    } else if (await lazy.QuickSuggest.maybeShowOnboardingDialog()) {
       return;
     }
 
@@ -5147,7 +5163,7 @@ var ContentBlockingCategoriesPrefs = {
  * While there are some built-in permission prompts, createPermissionPrompt
  * can also be overridden by system add-ons or tests to provide new ones.
  *
- * This override ability is provided by Integration.jsm. See
+ * This override ability is provided by Integration.sys.mjs. See
  * PermissionUI.jsm for an example of how to provide a new prompt
  * from an add-on.
  */
@@ -5847,15 +5863,11 @@ var AboutHomeStartupCache = {
 
       // To avoid hanging shutdowns, we'll ensure that we wait a maximum of
       // SHUTDOWN_CACHE_WRITE_TIMEOUT_MS millseconds before giving up.
-      let { setTimeout, clearTimeout } = ChromeUtils.import(
-        "resource://gre/modules/Timer.jsm"
-      );
-
       const TIMED_OUT = Symbol();
       let timeoutID = 0;
 
       let timeoutPromise = new Promise(resolve => {
-        timeoutID = setTimeout(
+        timeoutID = lazy.setTimeout(
           () => resolve(TIMED_OUT),
           this.SHUTDOWN_CACHE_WRITE_TIMEOUT_MS
         );
@@ -5871,7 +5883,7 @@ var AboutHomeStartupCache = {
 
       let result = await Promise.race(promises);
       this.log.trace("Done blocking shutdown.");
-      clearTimeout(timeoutID);
+      lazy.clearTimeout(timeoutID);
       if (result === TIMED_OUT) {
         this.log.error("Timed out getting cache streams. Skipping cache task.");
         return false;

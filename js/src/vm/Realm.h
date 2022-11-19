@@ -56,22 +56,22 @@ struct NativeIterator;
  * is erroneously included in the measurement; see bug 562553.
  */
 class DtoaCache {
-  double d;
+  double dbl;
   int base;
-  JSLinearString* s;  // if s==nullptr, d and base are not valid
+  JSLinearString* str;  // if str==nullptr, dbl and base are not valid
 
  public:
-  DtoaCache() : s(nullptr) {}
-  void purge() { s = nullptr; }
+  DtoaCache() : str(nullptr) {}
+  void purge() { str = nullptr; }
 
-  JSLinearString* lookup(int base, double d) {
-    return this->s && base == this->base && d == this->d ? this->s : nullptr;
+  JSLinearString* lookup(int b, double d) {
+    return str && b == base && d == dbl ? str : nullptr;
   }
 
-  void cache(int base, double d, JSLinearString* s) {
-    this->base = base;
-    this->d = d;
-    this->s = s;
+  void cache(int b, double d, JSLinearString* s) {
+    base = b;
+    dbl = d;
+    str = s;
   }
 
 #ifdef JSGC_HASH_TABLE_CHECKS
@@ -406,6 +406,7 @@ class JS::Realm : public JS::shadow::Realm {
   friend class js::AutoRestoreRealmDebugMode;
 
   bool isSystem_ = false;
+  bool allocatedDuringIncrementalGC_;
 
   js::UniquePtr<js::coverage::LCovRealm> lcovRealm_ = nullptr;
 
@@ -615,6 +616,7 @@ class JS::Realm : public JS::shadow::Realm {
   }
 
   inline bool marked() const;
+  void clearAllocatedDuringGC() { allocatedDuringIncrementalGC_ = false; }
 
   /*
    * The principals associated with this realm. Note that the same several

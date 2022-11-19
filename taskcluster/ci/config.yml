@@ -60,6 +60,8 @@ treeherder:
         'M-1proc': 'Mochitests without e10s or fission'
         'M-a11y-checks': 'Mochitests with accessibility checks enabled'
         'M-a11y-checks-nofis': 'Mochitests with accessibility checks enabled and without fission enabled'
+        'M-a11y-no-cache': 'Mochitests with accessibility cache disabled'
+        'M-a11y-no-cache-1proc': 'Mochitests with accessibility cache, e10s, and fission disabled'
         'M-xorig': 'Mochitests with cross-origin and fission enabled'
         'M-gli': 'Mochitests with WebGL over IPC'
         'M-gli-nofis': 'Mochitests with WebGL over IPC without fission enabled'
@@ -77,6 +79,7 @@ treeherder:
         'M-swr-wayland': 'Mochitests with software webrender and Wayland backend enabled'
         'M-wayland': 'Mochitests with Wayland backend enabled'
         'M-wayland-1proc': 'Mochitests with Wayland backend enabled without e10s'
+        'M-wmfme': 'Mochitests with Windows Media Foundation media engine enabled'
         'M-f': 'Mochitest failures'
         'M-dt-no-eft-nofis': 'DevTools Mochitests with EFT without fission enabled'
         'MSI': 'Repack installers into MSIs'
@@ -473,7 +476,17 @@ workers:
             implementation: generic-worker
             os: windows
             worker-type: '{alias}'
+        image:
+            provisioner: '{trust-domain}-{level}'
+            implementation: docker-worker
+            os: linux
+            worker-type: '{alias}'
         images:
+            provisioner: '{trust-domain}-{level}'
+            implementation: docker-worker
+            os: linux
+            worker-type: '{alias}'
+        images-gcp:
             provisioner: '{trust-domain}-{level}'
             implementation: docker-worker
             os: linux

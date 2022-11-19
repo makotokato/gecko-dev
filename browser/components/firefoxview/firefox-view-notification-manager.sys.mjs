@@ -8,11 +8,10 @@
  */
 
 const RECENT_TABS_SYNC = "services.sync.lastTabFetch";
+const SHOULD_NOTIFY_FOR_TABS = "browser.tabs.firefox-view.notify-for-tabs";
 const lazy = {};
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
@@ -31,6 +30,12 @@ export const FirefoxViewNotificationManager = new (class {
         this.handleTabSync();
       }
     );
+    XPCOMUtils.defineLazyPreferenceGetter(
+      this,
+      "shouldNotifyForTabs",
+      SHOULD_NOTIFY_FOR_TABS,
+      false
+    );
     // Need to access the pref variable for the observer to start observing
     // See the defineLazyPreferenceGetter function header
     this.lastTabFetch;
@@ -41,6 +46,9 @@ export const FirefoxViewNotificationManager = new (class {
   }
 
   async handleTabSync() {
+    if (!this.shouldNotifyForTabs) {
+      return;
+    }
     let newSyncedTabs = await lazy.SyncedTabs.getRecentTabs(3);
     this.#currentlyShowing = this.tabsListChanged(newSyncedTabs);
     this.showNotificationDot();

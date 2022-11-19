@@ -9,6 +9,7 @@
 
 #include "EditAction.h"
 #include "EditorBase.h"
+#include "HTMLEditHelpers.h"  // for EditorInlineStyle, EditorInlineStyleAndValue
 #include "HTMLEditor.h"
 #include "HTMLEditUtils.h"
 
@@ -21,7 +22,7 @@
 #include "nsError.h"
 #include "nsGkAtoms.h"
 #include "nsINode.h"
-#include "nsISupportsBase.h"
+#include "nsISupports.h"
 #include "nsISupportsImpl.h"
 #include "nsReadableUtils.h"
 #include "nsString.h"

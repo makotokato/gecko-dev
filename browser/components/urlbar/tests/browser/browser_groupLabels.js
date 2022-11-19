@@ -53,19 +53,10 @@ add_setup(async function() {
   await updateTopSites(sites => sites && sites.length);
 
   // Add a mock engine so we don't hit the network.
-  await SearchTestUtils.installSearchExtension();
-  let oldDefaultEngine = await Services.search.getDefault();
-  await Services.search.setDefault(
-    Services.search.getEngineByName("Example"),
-    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-  );
+  await SearchTestUtils.installSearchExtension({}, { setAsDefault: true });
 
   registerCleanupFunction(async () => {
     await PlacesUtils.history.clear();
-    Services.search.setDefault(
-      oldDefaultEngine,
-      Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-    );
   });
 });
 
@@ -553,7 +544,7 @@ async function checkLabels(resultCount, labelsByIndex) {
 /**
  * Asserts that an element for group aria label.
  *
- * @param {object} expectedRows
+ * @param {Array} expectedRows The expected rows.
  */
 async function checkGroupAriaLabels(expectedRows) {
   Assert.equal(
@@ -593,7 +584,7 @@ function engineSuggestionsLabel(engineName) {
  * Adds a search engine that provides suggestions, calls your callback, and then
  * remove the engine.
  *
- * @param {function} callback
+ * @param {Function} callback
  *   Your callback function.
  * @param {string} [engineBasename]
  *   The basename of the engine file.
@@ -605,9 +596,9 @@ async function withSuggestions(
   await SpecialPowers.pushPrefEnv({
     set: [[SUGGESTIONS_PREF, true]],
   });
-  let engine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + engineBasename
-  );
+  let engine = await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + engineBasename,
+  });
   let oldDefaultEngine = await Services.search.getDefault();
   await Services.search.setDefault(
     engine,

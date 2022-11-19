@@ -2,6 +2,9 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
+// TODO(Bug 1789718): adapt to synthetic addon type implemented by the SitePermAddonProvider
+// or remove if redundant, after the deprecated XPIProvider-based implementation is also removed.
+
 const { AddonTestUtils } = ChromeUtils.import(
   "resource://testing-common/AddonTestUtils.jsm"
 );
@@ -286,13 +289,13 @@ async function waitForNotification(
   return win.PopupNotifications.panel;
 }
 
-function waitForNotificationClose() {
-  if (!PopupNotifications.isPanelOpen) {
+function waitForNotificationClose(win = window) {
+  if (!win.PopupNotifications.isPanelOpen) {
     return Promise.resolve();
   }
   return new Promise(resolve => {
     info("Waiting for notification to close");
-    PopupNotifications.panel.addEventListener(
+    win.PopupNotifications.panel.addEventListener(
       "popuphidden",
       function() {
         resolve();
@@ -341,7 +344,7 @@ function setupRedirect(aSettings) {
 
 var TESTS = [
   async function test_disabledInstall() {
-    SpecialPowers.pushPrefEnv({
+    await SpecialPowers.pushPrefEnv({
       set: [["xpinstall.enabled", false]],
     });
     let notificationPromise = waitForNotification("xpinstall-disabled");
@@ -389,7 +392,7 @@ var TESTS = [
   },
 
   async function test_blockedInstall() {
-    SpecialPowers.pushPrefEnv({
+    await SpecialPowers.pushPrefEnv({
       set: [["extensions.postDownloadThirdPartyPrompt", false]],
     });
 
@@ -410,6 +413,14 @@ var TESTS = [
       notification.button.label,
       "Continue to Installation",
       "Should have seen the right button"
+    );
+    is(
+      notification
+        .querySelector("#addon-install-blocked-info")
+        .getAttribute("href"),
+      Services.urlFormatter.formatURLPref("app.support.baseURL") +
+        "unlisted-extensions-risks",
+      "Got the expected SUMO page as a learn more link in the addon-install-blocked panel"
     );
     let message = panel.ownerDocument.getElementById(
       "addon-install-blocked-message"
@@ -456,7 +467,7 @@ var TESTS = [
   },
 
   async function test_blockedInstallDomain() {
-    SpecialPowers.pushPrefEnv({
+    await SpecialPowers.pushPrefEnv({
       set: [
         ["extensions.postDownloadThirdPartyPrompt", true],
         ["extensions.install_origins.enabled", true],
@@ -489,7 +500,7 @@ var TESTS = [
   },
 
   async function test_allowedInstallDomain() {
-    SpecialPowers.pushPrefEnv({
+    await SpecialPowers.pushPrefEnv({
       set: [
         ["extensions.postDownloadThirdPartyPrompt", true],
         ["extensions.install_origins.enabled", true],
@@ -591,7 +602,7 @@ var TESTS = [
             action: "privateBrowsingAllowed",
             view: "postInstall",
             addonId: addon.id,
-            type: "sitepermission",
+            type: "sitepermission-deprecated",
           },
         },
       ],
@@ -615,7 +626,7 @@ var TESTS = [
   },
 
   async function test_blockedPostDownload() {
-    SpecialPowers.pushPrefEnv({
+    await SpecialPowers.pushPrefEnv({
       set: [["extensions.postDownloadThirdPartyPrompt", true]],
     });
 
@@ -673,7 +684,7 @@ var TESTS = [
   },
 
   async function test_recommendedPostDownload() {
-    SpecialPowers.pushPrefEnv({
+    await SpecialPowers.pushPrefEnv({
       set: [["extensions.postDownloadThirdPartyPrompt", true]],
     });
 
@@ -710,7 +721,7 @@ var TESTS = [
   },
 
   async function test_priviledgedNo3rdPartyPrompt() {
-    SpecialPowers.pushPrefEnv({
+    await SpecialPowers.pushPrefEnv({
       set: [["extensions.postDownloadThirdPartyPrompt", true]],
     });
     AddonManager.checkUpdateSecurity = false;
@@ -1219,7 +1230,7 @@ var TESTS = [
   },
 
   async function test_failedSecurity() {
-    SpecialPowers.pushPrefEnv({
+    await SpecialPowers.pushPrefEnv({
       set: [
         [PREF_INSTALL_REQUIREBUILTINCERTS, false],
         ["extensions.postDownloadThirdPartyPrompt", false],
@@ -1456,8 +1467,11 @@ var TESTS = [
   },
 
   async function test_blockedInstallDomain_with_unified_extensions() {
-    SpecialPowers.pushPrefEnv({
-      set: [["extensions.unifiedExtensions.enabled", true]],
+    await SpecialPowers.pushPrefEnv({
+      set: [
+        ["extensions.unifiedExtensions.enabled", true],
+        ["extensions.install_origins.enabled", true],
+      ],
     });
 
     let win = await BrowserTestUtils.openNewBrowserWindow();
@@ -1491,6 +1505,82 @@ var TESTS = [
     await BrowserTestUtils.closeWindow(win);
     await SpecialPowers.popPrefEnv();
   },
+
+  async function test_mv3_installOrigins_disallowed_with_unified_extensions() {
+    await SpecialPowers.pushPrefEnv({
+      set: [
+        ["extensions.unifiedExtensions.enabled", true],
+        // Disable signature check because we load an unsigned MV3 extension.
+        ["xpinstall.signatures.required", false],
+        ["extensions.install_origins.enabled", true],
+      ],
+    });
+
+    let win = await BrowserTestUtils.openNewBrowserWindow();
+    await SimpleTest.promiseFocus(win);
+
+    let notificationPromise = waitForNotification(
+      "addon-install-failed",
+      1,
+      "unified-extensions-button",
+      win
+    );
+    let triggers = encodeURIComponent(
+      JSON.stringify({
+        // This XPI does not have any `install_origins` in its manifest.
+        XPI: "unsigned_mv3.xpi",
+      })
+    );
+    await BrowserTestUtils.openNewForegroundTab(
+      win.gBrowser,
+      TESTROOT + "installtrigger.html?" + triggers
+    );
+    await notificationPromise;
+
+    await BrowserTestUtils.closeWindow(win);
+    await SpecialPowers.popPrefEnv();
+  },
+
+  async function test_mv3_installOrigins_allowed_with_unified_extensions() {
+    await SpecialPowers.pushPrefEnv({
+      set: [
+        ["extensions.unifiedExtensions.enabled", true],
+        // Disable signature check because we load an unsigned MV3 extension.
+        ["xpinstall.signatures.required", false],
+        // When this pref is disabled, install should be possible.
+        ["extensions.install_origins.enabled", false],
+      ],
+    });
+
+    let win = await BrowserTestUtils.openNewBrowserWindow();
+    await SimpleTest.promiseFocus(win);
+
+    let notificationPromise = waitForNotification(
+      "addon-install-blocked",
+      1,
+      "unified-extensions-button",
+      win
+    );
+    let triggers = encodeURIComponent(
+      JSON.stringify({
+        // This XPI does not have any `install_origins` in its manifest.
+        XPI: "unsigned_mv3.xpi",
+      })
+    );
+    await BrowserTestUtils.openNewForegroundTab(
+      win.gBrowser,
+      TESTROOT + "installtrigger.html?" + triggers
+    );
+    let panel = await notificationPromise;
+
+    let closePromise = waitForNotificationClose(win);
+    // hide the panel (this simulates the user dismissing it)
+    panel.hidePopup();
+    await closePromise;
+
+    await BrowserTestUtils.closeWindow(win);
+    await SpecialPowers.popPrefEnv();
+  },
 ];
 
 var gTestStart = null;
@@ -1515,7 +1605,7 @@ var XPInstallObserver = {
 add_task(async function() {
   requestLongerTimeout(4);
 
-  SpecialPowers.pushPrefEnv({
+  await SpecialPowers.pushPrefEnv({
     set: [
       ["extensions.logging.enabled", true],
       ["extensions.strictCompatibility", true],

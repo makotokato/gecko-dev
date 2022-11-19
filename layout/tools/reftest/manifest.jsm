@@ -31,8 +31,8 @@ const {
     g,
 } = ChromeUtils.import("resource://reftest/globals.jsm");
 const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-const { AppConstants } = ChromeUtils.import(
-    "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+    "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const NS_SCRIPTSECURITYMANAGER_CONTRACTID = "@mozilla.org/scriptsecuritymanager;1";
@@ -587,6 +587,9 @@ function BuildConditionSandbox(aURL) {
                      "oscpu", "language", "misc"];
     sandbox.http = new sandbox.Object();
     httpProps.forEach((x) => sandbox.http[x] = hh[x]);
+
+    // set to specific Android13 version (Pixel 5 in CI)
+    sandbox.Android13 = sandbox.Android && (sandbox.http["platform"] == "Android 13");
 
     // Set OSX to be the Mac OS X version, as an integer, or undefined
     // for other platforms.  The integer is formed by 100 times the

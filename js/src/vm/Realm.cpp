@@ -55,6 +55,8 @@ Realm::Realm(Compartment* comp, const JS::RealmOptions& options)
       objects_(zone_),
       randomKeyGenerator_(runtime_->forkRandomKeyGenerator()),
       debuggers_(zone_),
+      allocatedDuringIncrementalGC_(zone_->isGCMarkingOrSweeping() ||
+                                    zone_->isGCFinished()),
       wasm(runtime_) {
   runtime_->numRealms++;
 }
@@ -153,9 +155,7 @@ bool Realm::ensureJitRealmExists(JSContext* cx) {
     return false;
   }
 
-  if (!jitRealm->initialize(cx, zone()->allocNurseryStrings)) {
-    return false;
-  }
+  jitRealm->initialize(zone()->allocNurseryStrings);
 
   jitRealm_ = std::move(jitRealm);
   return true;
@@ -164,7 +164,7 @@ bool Realm::ensureJitRealmExists(JSContext* cx) {
 #ifdef JSGC_HASH_TABLE_CHECKS
 
 void js::DtoaCache::checkCacheAfterMovingGC() {
-  MOZ_ASSERT(!s || !IsForwarded(s));
+  MOZ_ASSERT(!str || !IsForwarded(str));
 }
 
 #endif  // JSGC_HASH_TABLE_CHECKS

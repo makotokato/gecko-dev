@@ -221,18 +221,20 @@ IAPZHitTester::HitTestResult WRHitTester::GetAPZCAtPoint(
                                            positionedNode);
     }
 
+#if defined(MOZ_WIDGET_ANDROID)
     if (hit.mNode && hit.mNode->GetFixedPositionAnimationId().isSome()) {
       // If the hit element is a fixed position element, the side bits from
       // the hit-result item tag are used. For now just ensure that these
       // match what is found in the hit-testing tree node.
       MOZ_ASSERT(sideBits == hit.mNode->GetFixedPosSides(),
                  "Fixed position side bits do not match");
-    } else if (hit.mTargetApzc->IsRootContent()) {
+    } else if (hit.mTargetApzc && hit.mTargetApzc->IsRootContent()) {
       // If the hit element is not a fixed position element, then the hit test
       // result item's side bits should not be populated.
       MOZ_ASSERT(sideBits == SideBits::eNone,
                  "Hit test results have side bits only for pos:fixed");
     }
+#endif
   }
 
   hit.mHitOverscrollGutter =

@@ -350,7 +350,6 @@ class nsContentUtils {
   static bool ShouldResistFingerprinting(nsIGlobalObject* aGlobalObject);
   static bool ShouldResistFingerprinting(nsIDocShell* aDocShell);
   // These functions are the new, nuanced functions
-  static bool ShouldResistFingerprinting(const Document* aDoc);
   static bool ShouldResistFingerprinting(nsIChannel* aChannel);
   static bool ShouldResistFingerprinting(nsILoadInfo* aPrincipal);
   // These functions are labeled as dangerous because they will do the wrong
@@ -1946,17 +1945,17 @@ class nsContentUtils {
    * @param aResult the result. Out param.
    * @return false on out of memory errors, true otherwise.
    */
-  [[nodiscard]] static bool GetNodeTextContent(nsINode* aNode, bool aDeep,
+  [[nodiscard]] static bool GetNodeTextContent(const nsINode* aNode, bool aDeep,
                                                nsAString& aResult,
                                                const mozilla::fallible_t&);
 
-  static void GetNodeTextContent(nsINode* aNode, bool aDeep,
+  static void GetNodeTextContent(const nsINode* aNode, bool aDeep,
                                  nsAString& aResult);
 
   /**
    * Same as GetNodeTextContents but appends the result rather than sets it.
    */
-  static bool AppendNodeTextContent(nsINode* aNode, bool aDeep,
+  static bool AppendNodeTextContent(const nsINode* aNode, bool aDeep,
                                     nsAString& aResult,
                                     const mozilla::fallible_t&);
 
@@ -2554,15 +2553,17 @@ class nsContentUtils {
    *
    * WARNING: This method mutates aPattern and aValue!
    *
-   * @param aValue    the string to check.
-   * @param aPattern  the string defining the pattern.
-   * @param aDocument the owner document of the element.
-   * @result          whether the given string is matches the pattern, or
-   *                  Nothing() if the pattern couldn't be evaluated.
+   * @param aValue       the string to check.
+   * @param aPattern     the string defining the pattern.
+   * @param aDocument    the owner document of the element.
+   * @param aHasMultiple whether or not there are multiple values.
+   * @result             whether the given string is matches the pattern, or
+   *                     Nothing() if the pattern couldn't be evaluated.
    */
   static mozilla::Maybe<bool> IsPatternMatching(nsAString& aValue,
                                                 nsAString& aPattern,
-                                                const Document* aDocument);
+                                                const Document* aDocument,
+                                                bool aHasMultiple = false);
 
   /**
    * Calling this adds support for
@@ -2762,7 +2763,8 @@ class nsContentUtils {
    * Returns whether a given header is forbidden for an XHR or fetch
    * request.
    */
-  static bool IsForbiddenRequestHeader(const nsACString& aHeader);
+  static bool IsForbiddenRequestHeader(const nsACString& aHeader,
+                                       const nsACString& aValue);
 
   /**
    * Returns whether a given header is forbidden for a system XHR
@@ -2770,6 +2772,14 @@ class nsContentUtils {
    */
   static bool IsForbiddenSystemRequestHeader(const nsACString& aHeader);
 
+  /**
+   * Checks whether the header overrides any http methods
+   */
+  static bool IsOverrideMethodHeader(const nsACString& headerName);
+  /**
+   * Checks whether the  header value contains any forbidden method
+   */
+  static bool ContainsForbiddenMethod(const nsACString& headerValue);
   /**
    * Returns whether a given header has characters that aren't permitted
    */
@@ -2847,21 +2857,6 @@ class nsContentUtils {
    */
   static void SetKeyboardIndicatorsOnRemoteChildren(
       nsPIDOMWindowOuter* aWindow, UIStateChangeType aShowFocusRings);
-
-  /**
-   * Given an nsIFile, attempts to read it into aString.
-   *
-   * Note: Use sparingly! This causes main-thread I/O, which causes jank and all
-   * other bad things.
-   */
-  static nsresult SlurpFileToString(nsIFile* aFile, nsACString& aString);
-
-  /**
-   * Returns true if the mime service thinks this file contains an image.
-   *
-   * The content type is returned in aType.
-   */
-  static bool IsFileImage(nsIFile* aFile, nsACString& aType);
 
   /**
    * Given an IPCDataTransferImageContainer construct an imgIContainer for the
@@ -3272,6 +3267,9 @@ class nsContentUtils {
   static int32_t GetCurrentInnerOrOuterWindowCount() {
     return sInnerOrOuterWindowCount;
   }
+
+  // Return an anonymized URI so that it can be safely exposed publicly.
+  static nsresult AnonymizeURI(nsIURI* aURI, nsCString& aAnonymizedURI);
 
   /**
    * Serializes a JSON-like JS::Value into a string.

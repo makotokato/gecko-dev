@@ -118,6 +118,8 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleFont {
   static mozilla::Length ZoomText(const mozilla::dom::Document&,
                                   mozilla::Length);
 
+  nsAtom* GetFontPaletteAtom() const { return mFontPalette._0.AsAtom(); }
+
   nsFont mFont;
 
   // Our "computed size". Can be different from mFont.size which is our "actual
@@ -131,13 +133,14 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleFont {
   float mFontSizeFactor;
   mozilla::Length mFontSizeOffset;
   mozilla::StyleFontSizeKeyword mFontSizeKeyword;
+  mozilla::StyleFontPalette mFontPalette;
 
   // math-depth support (used for MathML scriptlevel)
   int8_t mMathDepth;
   // MathML  mathvariant support
   mozilla::StyleMathVariant mMathVariant;
   // math-style support (used for MathML displaystyle)
-  uint8_t mMathStyle;
+  mozilla::StyleMathStyle mMathStyle;
 
   // allow different min font-size for certain cases
   uint8_t mMinFontSizeRatio;  // percent * 100
@@ -947,7 +950,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleText {
   mozilla::StyleRubyAlign mRubyAlign;
   mozilla::StyleRubyPosition mRubyPosition;
   mozilla::StyleTextSizeAdjust mTextSizeAdjust;
-  uint8_t mTextCombineUpright;  // NS_STYLE_TEXT_COMBINE_UPRIGHT_*
+  mozilla::StyleTextCombineUpright mTextCombineUpright;
   mozilla::StyleMozControlCharacterVisibility mMozControlCharacterVisibility;
   mozilla::StyleTextEmphasisPosition mTextEmphasisPosition;
   mozilla::StyleTextRendering mTextRendering;
@@ -1104,6 +1107,10 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleVisibility {
 
   bool IsVisible() const {
     return mVisible == mozilla::StyleVisibility::Visible;
+  }
+
+  bool IsCollapse() const {
+    return mVisible == mozilla::StyleVisibility::Collapse;
   }
 
   bool IsVisibleOrCollapsed() const {
@@ -1698,7 +1705,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
     auto contain = mContain;
     // content-visibility and container-type implicitly enable some containment
     // flags.
-    if (MOZ_LIKELY(!mContainerType) &&
+    if (MOZ_LIKELY(mContainerType == mozilla::StyleContainerType::Normal) &&
         MOZ_LIKELY(mContentVisibility == StyleContentVisibility::Visible)) {
       return contain;
     }
@@ -1719,18 +1726,24 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleDisplay {
         break;
     }
 
-    if (mContainerType & mozilla::StyleContainerType::SIZE) {
-      // https://drafts.csswg.org/css-contain-3/#valdef-container-type-size:
-      //     Applies layout containment, style containment, and size containment
-      //     to the principal box.
-      contain |= mozilla::StyleContain::LAYOUT | mozilla::StyleContain::STYLE |
-                 mozilla::StyleContain::SIZE;
-    } else if (mContainerType & mozilla::StyleContainerType::INLINE_SIZE) {
-      // https://drafts.csswg.org/css-contain-3/#valdef-container-type-inline-size:
-      //     Applies layout containment, style containment, and inline-size
-      //     containment to the principal box.
-      contain |= mozilla::StyleContain::LAYOUT | mozilla::StyleContain::STYLE |
-                 mozilla::StyleContain::INLINE_SIZE;
+    switch (mContainerType) {
+      case mozilla::StyleContainerType::Normal:
+        break;
+      case mozilla::StyleContainerType::InlineSize:
+        // https://drafts.csswg.org/css-contain-3/#valdef-container-type-inline-size:
+        //     Applies layout containment, style containment, and inline-size
+        //     containment to the principal box.
+        contain |= mozilla::StyleContain::LAYOUT |
+                   mozilla::StyleContain::STYLE |
+                   mozilla::StyleContain::INLINE_SIZE;
+        break;
+      case mozilla::StyleContainerType::Size:
+        // https://drafts.csswg.org/css-contain-3/#valdef-container-type-size:
+        //     Applies layout containment, style containment, and size
+        //     containment to the principal box.
+        contain |= mozilla::StyleContain::LAYOUT |
+                   mozilla::StyleContain::STYLE | mozilla::StyleContain::SIZE;
+        break;
     }
 
     return contain;

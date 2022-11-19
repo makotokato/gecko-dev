@@ -8,8 +8,8 @@
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const lazy = {};
@@ -443,6 +443,11 @@ var OriginControls = {
     let couldRequest = policy.extension.optionalOrigins.matches(uri);
     let hasAccess = policy.canAccessURI(uri);
 
+    if (policy.manifestVersion < 3 && !hasAccess) {
+      // MV2 access through content scripts is implicit.
+      hasAccess = policy.contentScripts.some(cs => cs.matchesURI(uri));
+    }
+
     if (
       !allDomains.matches(uri) ||
       WebExtensionPolicy.isRestrictedURI(uri) ||
@@ -450,17 +455,28 @@ var OriginControls = {
     ) {
       return { noAccess: true };
     }
+
     if (!couldRequest && !hasAccess && activeTab) {
       return { whenClicked: true };
     }
     if (policy.allowedOrigins.subsumes(allDomains)) {
       return { allDomains: true, hasAccess };
     }
+
     return {
       whenClicked: true,
       alwaysOn: true,
       hasAccess,
     };
+  },
+
+  // Whether to show the attention indicator for extension on current tab.
+  getAttention(policy, window) {
+    if (policy?.manifestVersion >= 3) {
+      let state = this.getState(policy, window.gBrowser.currentURI);
+      return !!state.whenClicked && !state.hasAccess;
+    }
+    return false;
   },
 
   // Grant extension host permission to always run on this host.
@@ -479,5 +495,61 @@ var OriginControls = {
     }
     let perms = { permissions: [], origins: ["*://" + uri.host] };
     ExtensionPermissions.remove(policy.id, perms, policy.extension);
+  },
+
+  /**
+   * Get origin controls messages (fluent IDs) to be shown to users for a given
+   * extension on a given host. The messages might be different for extensions
+   * with a browser action (that might or might not open a popup).
+   *
+   * @param {object} params
+   * @param {WebExtensionPolicy} params.policy an extension's policy
+   * @param {nsIURI} params.uri                an URI
+   * @param {boolean} params.isAction          this should be true for
+   *                                           extensions with a browser
+   *                                           action, false otherwise.
+   * @param {boolean} params.hasPopup          this should be true when the
+   *                                           browser action opens a popup,
+   *                                           false otherwise.
+   *
+   * @returns {object|null} An object with origin controls message IDs or
+   *                        `null` when there is no message for the state.
+   *  @param {string} default      the message ID corresponding to the state
+   *                               that should be displayed by default.
+   *  @param {string|null} onHover an optional message ID to be shown when
+   *                               users hover interactive elements (e.g. a
+   *                               button).
+   */
+  getStateMessageIDs({ policy, uri, isAction = false, hasPopup = false }) {
+    const state = this.getState(policy, uri);
+
+    // TODO: add support for temporary access.
+
+    const onHoverForAction = hasPopup
+      ? "origin-controls-state-runnable-hover-open"
+      : "origin-controls-state-runnable-hover-run";
+
+    if (state.noAccess) {
+      return {
+        default: "origin-controls-state-no-access",
+        onHover: isAction ? onHoverForAction : null,
+      };
+    }
+
+    if (state.allDomains || (state.alwaysOn && state.hasAccess)) {
+      return {
+        default: "origin-controls-state-always-on",
+        onHover: isAction ? onHoverForAction : null,
+      };
+    }
+
+    if (state.whenClicked) {
+      return {
+        default: "origin-controls-state-when-clicked",
+        onHover: "origin-controls-state-hover-run-visit-only",
+      };
+    }
+
+    return null;
   },
 };

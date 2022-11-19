@@ -6,8 +6,8 @@
 
 const EXPORTED_SYMBOLS = ["WebNavigation", "WebNavigationManager"];
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const lazy = {};
@@ -19,16 +19,12 @@ ChromeUtils.defineModuleGetter(
 );
 ChromeUtils.defineESModuleGetters(lazy, {
   UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
+  ClickHandlerParent: "resource:///actors/ClickHandlerParent.sys.mjs",
 });
 ChromeUtils.defineModuleGetter(
   lazy,
   "WebNavigationFrames",
   "resource://gre/modules/WebNavigationFrames.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "ClickHandlerParent",
-  "resource:///actors/ClickHandlerParent.jsm"
 );
 
 // Maximum amount of time that can be passed and still consider

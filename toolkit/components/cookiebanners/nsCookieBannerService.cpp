@@ -4,22 +4,27 @@
 
 #include "nsCookieBannerService.h"
 
+#include "CookieBannerDomainPrefService.h"
+#include "ErrorList.h"
+#include "mozilla/ClearOnShutdown.h"
+#include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "mozilla/EventQueue.h"
+#include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/Logging.h"
+#include "mozilla/StaticPrefs_cookiebanners.h"
+#include "nsCOMPtr.h"
 #include "nsCookieBannerRule.h"
 #include "nsCookieInjector.h"
+#include "nsCRT.h"
+#include "nsDebug.h"
 #include "nsIClickRule.h"
 #include "nsICookieBannerListService.h"
 #include "nsICookieBannerRule.h"
 #include "nsICookie.h"
 #include "nsIEffectiveTLDService.h"
-#include "mozilla/StaticPrefs_cookiebanners.h"
-#include "ErrorList.h"
-#include "mozilla/Logging.h"
-#include "nsDebug.h"
-#include "nsCOMPtr.h"
 #include "nsNetCID.h"
 #include "nsServiceManagerUtils.h"
-#include "nsCRT.h"
-#include "mozilla/ClearOnShutdown.h"
+#include "nsThreadUtils.h"
 
 namespace mozilla {
 
@@ -32,6 +37,26 @@ static const char kCookieBannerServiceModePBMPref[] =
     "cookiebanners.service.mode.privateBrowsing";
 
 static StaticRefPtr<nsCookieBannerService> sCookieBannerServiceSingleton;
+
+namespace {
+
+// A helper function that converts service modes to strings.
+nsCString ConvertModeToStringForTelemetry(uint32_t aModes) {
+  switch (aModes) {
+    case nsICookieBannerService::MODE_DISABLED:
+      return "disabled"_ns;
+    case nsICookieBannerService::MODE_REJECT:
+      return "reject"_ns;
+    case nsICookieBannerService::MODE_REJECT_OR_ACCEPT:
+      return "reject_or_accept"_ns;
+    default:
+      // Fall back to return "invalid" if we got any unsupported service
+      // mode. Note this this also includes MODE_UNSET.
+      return "invalid"_ns;
+  }
+}
+
+}  // anonymous namespace
 
 // static
 already_AddRefed<nsCookieBannerService> nsCookieBannerService::GetSingleton() {
@@ -93,21 +118,27 @@ void nsCookieBannerService::OnPrefChange(const char* aPref, void* aData) {
                        "nsCookieBannerService::Shutdown failed");
 }
 
-// This method initializes the cookie banner service on startup on
-// "profile-after-change".
 NS_IMETHODIMP
 nsCookieBannerService::Observe(nsISupports* aSubject, const char* aTopic,
                                const char16_t* aData) {
-  if (nsCRT::strcmp(aTopic, "profile-after-change") != 0) {
+  // Report the daily telemetry for the cookie banner service on "idle-daily".
+  if (nsCRT::strcmp(aTopic, "idle-daily") == 0) {
+    DailyReportTelemetry();
     return NS_OK;
   }
 
-  nsresult rv = Preferences::RegisterCallback(
-      &nsCookieBannerService::OnPrefChange, kCookieBannerServiceModePBMPref);
-  NS_ENSURE_SUCCESS(rv, rv);
+  // Initializing the cookie banner service on startup on
+  // "profile-after-change".
+  if (nsCRT::strcmp(aTopic, "profile-after-change") == 0) {
+    nsresult rv = Preferences::RegisterCallback(
+        &nsCookieBannerService::OnPrefChange, kCookieBannerServiceModePBMPref);
+    NS_ENSURE_SUCCESS(rv, rv);
 
-  return Preferences::RegisterCallbackAndCall(
-      &nsCookieBannerService::OnPrefChange, kCookieBannerServiceModePref);
+    return Preferences::RegisterCallbackAndCall(
+        &nsCookieBannerService::OnPrefChange, kCookieBannerServiceModePref);
+  }
+
+  return NS_OK;
 }
 
 nsresult nsCookieBannerService::Init() {
@@ -125,13 +156,25 @@ nsresult nsCookieBannerService::Init() {
   mListService = do_GetService(NS_COOKIEBANNERLISTSERVICE_CONTRACTID);
   NS_ENSURE_TRUE(mListService, NS_ERROR_FAILURE);
 
+  mDomainPrefService = CookieBannerDomainPrefService::GetOrCreate();
+  NS_ENSURE_TRUE(mDomainPrefService, NS_ERROR_FAILURE);
+
   // Setting mIsInitialized before importing rules, because the list service
-  // needs to call nsCookieBannerService methods that would throw if not marked
-  // initialized.
+  // needs to call nsCookieBannerService methods that would throw if not
+  // marked initialized.
   mIsInitialized = true;
 
-  // Import initial rule-set and enable rule syncing.
-  mListService->Init();
+  // Import initial rule-set, domain preference and enable rule syncing. Uses
+  // NS_DispatchToCurrentThreadQueue with idle priority to avoid early
+  // main-thread IO caused by the list service accessing RemoteSettings.
+  nsresult rv = NS_DispatchToCurrentThreadQueue(
+      NS_NewRunnableFunction("CookieBannerListService init startup",
+                             [&] {
+                               mListService->Init();
+                               mDomainPrefService->Init();
+                             }),
+      EventQueuePriority::Idle);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // Initialize the cookie injector.
   RefPtr<nsCookieInjector> injector = nsCookieInjector::GetSingleton();
@@ -272,9 +315,27 @@ nsCookieBannerService::GetCookiesForURI(
       gCookieBannerLog, LogLevel::Debug,
       ("%s. Found nsICookieBannerRule. Computed mode: %d", __FUNCTION__, mode));
 
-  // Service is disabled for current context (normal or private browsing),
-  // return empty array.
-  if (mode == nsICookieBannerService::MODE_DISABLED) {
+  // We don't need to check the domain preference if the cookie banner handling
+  // service is disabled by pref.
+  if (mode != nsICookieBannerService::MODE_DISABLED &&
+      mode != nsICookieBannerService::MODE_DETECT_ONLY) {
+    // Get the domain preference for the uri, the domain preference takes
+    // precedence over the pref setting. Note that the domain preference is
+    // supposed to stored only for top level URIs.
+    nsICookieBannerService::Modes domainPref;
+    nsresult rv = GetDomainPref(aURI, aIsPrivateBrowsing, &domainPref);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (domainPref != nsICookieBannerService::MODE_UNSET) {
+      mode = domainPref;
+    }
+  }
+
+  // Service is disabled for current context (normal, private browsing or domain
+  // preference), return empty array. Same for detect-only mode where no cookies
+  // should be injected.
+  if (mode == nsICookieBannerService::MODE_DISABLED ||
+      mode == nsICookieBannerService::MODE_DETECT_ONLY) {
     MOZ_LOG(gCookieBannerLog, LogLevel::Debug,
             ("%s. Returning empty array. Got MODE_DISABLED for "
              "aIsPrivateBrowsing: %d.",
@@ -444,6 +505,123 @@ nsCookieBannerService::RemoveRule(nsICookieBannerRule* aRule) {
   // Remove site specific rule by domain.
   mRules.Remove(domain);
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsCookieBannerService::GetDomainPref(nsIURI* aTopLevelURI,
+                                     const bool aIsPrivate,
+                                     nsICookieBannerService::Modes* aModes) {
+  NS_ENSURE_ARG_POINTER(aTopLevelURI);
+
+  if (!mIsInitialized) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  nsresult rv;
+  nsCOMPtr<nsIEffectiveTLDService> eTLDService(
+      do_GetService(NS_EFFECTIVETLDSERVICE_CONTRACTID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCString baseDomain;
+  rv = eTLDService->GetBaseDomain(aTopLevelURI, 0, baseDomain);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  auto pref = mDomainPrefService->GetPref(baseDomain, aIsPrivate);
+
+  *aModes = nsICookieBannerService::MODE_UNSET;
+
+  if (pref.isSome()) {
+    *aModes = pref.value();
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsCookieBannerService::SetDomainPref(nsIURI* aTopLevelURI,
+                                     nsICookieBannerService::Modes aModes,
+                                     const bool aIsPrivate) {
+  NS_ENSURE_ARG_POINTER(aTopLevelURI);
+
+  if (!mIsInitialized) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  nsresult rv;
+  nsCOMPtr<nsIEffectiveTLDService> eTLDService(
+      do_GetService(NS_EFFECTIVETLDSERVICE_CONTRACTID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCString baseDomain;
+  rv = eTLDService->GetBaseDomain(aTopLevelURI, 0, baseDomain);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = mDomainPrefService->SetPref(baseDomain, aModes, aIsPrivate);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsCookieBannerService::RemoveDomainPref(nsIURI* aTopLevelURI,
+                                        const bool aIsPrivate) {
+  NS_ENSURE_ARG_POINTER(aTopLevelURI);
+
+  if (!mIsInitialized) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  nsresult rv;
+  nsCOMPtr<nsIEffectiveTLDService> eTLDService(
+      do_GetService(NS_EFFECTIVETLDSERVICE_CONTRACTID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCString baseDomain;
+  rv = eTLDService->GetBaseDomain(aTopLevelURI, 0, baseDomain);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = mDomainPrefService->RemovePref(baseDomain, aIsPrivate);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsCookieBannerService::RemoveAllDomainPrefs(const bool aIsPrivate) {
+  if (!mIsInitialized) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  nsresult rv = mDomainPrefService->RemoveAll(aIsPrivate);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
+}
+
+void nsCookieBannerService::DailyReportTelemetry() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  // Convert modes to strings
+  uint32_t mode = StaticPrefs::cookiebanners_service_mode();
+  uint32_t modePBM = StaticPrefs::cookiebanners_service_mode_privateBrowsing();
+
+  nsCString modeStr = ConvertModeToStringForTelemetry(mode);
+  nsCString modePBMStr = ConvertModeToStringForTelemetry(modePBM);
+
+  nsTArray<nsCString> serviceModeLabels = {
+      "disabled"_ns,
+      "reject"_ns,
+      "reject_or_accept"_ns,
+      "invalid"_ns,
+  };
+
+  // Record the service mode glean.
+  for (const auto& label : serviceModeLabels) {
+    glean::cookie_banners::normal_window_service_mode.Get(label).Set(
+        modeStr.Equals(label));
+    glean::cookie_banners::private_window_service_mode.Get(label).Set(
+        modePBMStr.Equals(label));
+  }
 }
 
 }  // namespace mozilla

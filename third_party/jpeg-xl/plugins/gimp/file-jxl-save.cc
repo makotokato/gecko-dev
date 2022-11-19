@@ -6,6 +6,7 @@
 #include "plugins/gimp/file-jxl-save.h"
 
 #include <cmath>
+#include <utility>
 
 #include "gobject/gsignal.h"
 
@@ -519,8 +520,8 @@ bool JpegXlSaveOpts::UpdateQuality() {
 
   if (distance < 0.1) {
     qual = 100;
-  } else if (distance > 6.56) {
-    qual = 30 - 5 * log(abs(6.25 * distance - 40)) / log(2.5);
+  } else if (distance > 6.4) {
+    qual = -5.0 / 53.0 * sqrt(6360.0 * distance - 39975.0) + 1725.0 / 53.0;
     lossless = false;
   } else {
     qual = 100 - (distance - 0.1) / 0.09;
@@ -543,11 +544,11 @@ bool JpegXlSaveOpts::UpdateDistance() {
   if (quality >= 30) {
     dist = 0.1 + (100 - quality) * 0.09;
   } else {
-    dist = 6.4 + pow(2.5, (30 - quality) / 5.0) / 6.25;
+    dist = 53.0 / 3000.0 * quality * quality - 23.0 / 20.0 * quality + 25.0;
   }
 
-  if (dist > 15) {
-    distance = 15;
+  if (dist > 25) {
+    distance = 25;
   } else {
     distance = dist;
   }
@@ -602,12 +603,12 @@ bool JpegXlSaveOpts::UpdateBablFormat() {
 }
 
 bool JpegXlSaveOpts::SetBablModel(std::string model) {
-  babl_model_str = model;
+  babl_model_str = std::move(model);
   return UpdateBablFormat();
 }
 
 bool JpegXlSaveOpts::SetBablType(std::string type) {
-  babl_type_str = type;
+  babl_type_str = std::move(type);
   return UpdateBablFormat();
 }
 

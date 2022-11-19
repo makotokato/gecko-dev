@@ -29,6 +29,13 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "gUnifiedExtensionsEnabled",
+  "extensions.unifiedExtensions.enabled",
+  false
+);
+
 function parseColor(color, kind) {
   if (typeof color == "string") {
     let rgba = InspectorUtils.colorToRGBA(color);
@@ -61,6 +68,11 @@ class PanelActionBase {
     this.tabContext.on("tab-select", (evt, tab) => {
       this.updateOnChange(tab);
     });
+
+    // eslint-disable-next-line mozilla/balanced-listeners
+    extension.on("add-permissions", () => this.updateOnChange());
+    // eslint-disable-next-line mozilla/balanced-listeners
+    extension.on("remove-permissions", () => this.updateOnChange());
 
     // When preloading a popup we temporarily grant active tab permissions to
     // the preloaded popup. If we don't end up opening we need to clear this
@@ -180,14 +192,25 @@ class PanelActionBase {
    *
    * @param {XULElement} tab
    *        The tab the popup refers to.
+   * @param {boolean} strict
+   *        If errors should be thrown if a URL is not available.
    * @returns {string}
    *        The popup URL if a popup is present, undefined otherwise.
    */
-  getPopupUrl(tab) {
+  getPopupUrl(tab, strict = false) {
     if (!this.isShownForTab(tab)) {
+      if (strict) {
+        throw new ExtensionError("Popup is disabled");
+      }
+
       return undefined;
     }
     let popupUrl = this.getProperty(tab, "popup");
+
+    if (strict && !popupUrl) {
+      throw new ExtensionError("No popup URL is set");
+    }
+
     return popupUrl;
   }
 
@@ -494,13 +517,16 @@ class BrowserActionBase extends PanelActionBase {
       extension.manifest.browser_action || extension.manifest.action;
     super(options, tabContext, extension);
 
+    let fallbackArea = lazy.gUnifiedExtensionsEnabled ? "menupanel" : "navbar";
+    let default_area = options.default_area || fallbackArea;
+
     this.defaults = {
       ...this.defaults,
       badgeText: "",
       badgeBackgroundColor: [0xd9, 0, 0, 255],
       badgeDefaultColor: [255, 255, 255, 255],
       badgeTextColor: null,
-      default_area: options.default_area || "navbar",
+      default_area,
     };
     this.globals = Object.create(this.defaults);
   }

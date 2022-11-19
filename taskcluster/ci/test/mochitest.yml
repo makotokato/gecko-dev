@@ -154,6 +154,7 @@ mochitest-a11y:
         - socketprocess_networking+1proc
         - wayland+1proc
         - webrender-sw+1proc
+        - a11y-no-cache+1proc
     run-on-projects:
         by-variant:
             socketprocess_networking+1proc:
@@ -169,6 +170,7 @@ mochitest-a11y:
                     android-em-7.0-x86_64-qr/debug: built-projects
                     linux.*64-qr/debug: built-projects
                     default: []
+            a11y-no-cache+1proc: ['trunk']
             1proc:
                 by-test-platform:
                     .*-tsan-qr/opt: ['trunk']
@@ -256,10 +258,18 @@ mochitest-browser-a11y:
     treeherder-symbol: M(ba)
     schedules-component: mochitest-browser-a11y
     loopback-video: true
+    variants:
+        - a11y-no-cache
     run-on-projects:
-        by-test-platform:
-            android.*: []
-            default: built-projects
+        by-variant:
+            a11y-no-cache:
+                by-test-platform:
+                    android.*: []
+                    default: ["trunk"]
+            default:
+                by-test-platform:
+                    android.*: []
+                    default: built-projects
     tier: default
     max-run-time: 1800
     mozharness:
@@ -523,6 +533,7 @@ mochitest-media:
         - webgl-ipc
         - webrender-sw+no-fission
         - webrender-sw
+        - wmf-media-engine
     run-on-projects:
         by-variant:
             webgl-ipc:
@@ -573,6 +584,10 @@ mochitest-media:
                     linux1804-64-qr/debug: ['trunk']
                     linux1804-64(-shippable|-asan)?-qr/opt: ['trunk']
                     default: []
+            wmf-media-engine:
+                by-test-platform:
+                    windows10-64-2004.*: ['autoland', 'mozilla-central']
+                    default: []
             default:
                 by-test-platform:
                     android.*: []
@@ -584,15 +599,18 @@ mochitest-media:
                     default: built-projects
     loopback-video: true
     chunks:
-        by-test-platform:
-            android-em-7.*: 1
-            windows10-64-2004.*: 1
-            macosx.*64.*/.*: 2
-            windows10-aarch64-qr/.*: 1
-            windows.*32-shippable/.*: 2
-            linux1804-64(-shippable|-devedition|-.*qr)/opt: 2
-            linux.*64-tsan-qr/opt: 4
-            default: 3
+        by-variant:
+            wmf-media-engine: 1
+            default:
+                by-test-platform:
+                    android-em-7.*: 1
+                    windows10-64-2004.*: 1
+                    macosx.*64.*/.*: 2
+                    windows10-aarch64-qr/.*: 1
+                    windows.*32-shippable/.*: 2
+                    linux1804-64(-shippable|-devedition|-.*qr)/opt: 2
+                    linux.*64-tsan-qr/opt: 4
+                    default: 3
     mozharness:
         mochitest-flavor: plain
         chunked:

@@ -72,7 +72,7 @@ this.VideoControlsWidget = class {
       return;
     }
     if (this.impl) {
-      this.impl.destructor();
+      this.impl.teardown();
       this.shadowRoot.firstChild.remove();
     }
     if (newImpl) {
@@ -90,11 +90,11 @@ this.VideoControlsWidget = class {
     }
   }
 
-  destructor() {
+  teardown() {
     if (!this.impl) {
       return;
     }
-    this.impl.destructor();
+    this.impl.teardown();
     this.shadowRoot.firstChild.remove();
     delete this.impl;
   }
@@ -298,6 +298,10 @@ this.VideoControlsImplWidget = class {
       maxCurrentTimeSeen: 0,
       isPausedByDragging: false,
       _isAudioOnly: false,
+
+      get isAudioTag() {
+        return this.video.localName == "audio";
+      },
 
       get isAudioOnly() {
         return this._isAudioOnly;
@@ -788,7 +792,7 @@ this.VideoControlsImplWidget = class {
             this.controlsSpacer.removeAttribute("aria-label");
             this.statusOverlay.removeAttribute("status");
             this.statusIcon.setAttribute("type", "throbber");
-            this.isAudioOnly = this.video.localName == "audio";
+            this.isAudioOnly = this.isAudioTag;
             this.setPlayButtonState(true);
             this.setupNewLoadState();
             this.setupStatusFader();
@@ -1706,7 +1710,7 @@ this.VideoControlsImplWidget = class {
 
       toggleFullscreen() {
         // audio tags cannot toggle fullscreen
-        if (!this.isAudioOnly) {
+        if (!this.isAudioTag) {
           this.isVideoInFullScreen
             ? this.document.exitFullscreen()
             : this.video.requestFullscreen();
@@ -2436,7 +2440,7 @@ this.VideoControlsImplWidget = class {
 
         // Since the size of videocontrols is expanded with controlBar in <audio>, we
         // should fix the dimensions in order not to recursively trigger reflow afterwards.
-        if (this.video.localName == "audio") {
+        if (this.isAudioTag) {
           if (givenHeight) {
             // The height of controlBar should be capped with the bounds between controlBarMinHeight
             // and controlBarMinVisibleHeight.
@@ -2596,7 +2600,7 @@ this.VideoControlsImplWidget = class {
           this.volumeStack,
         ];
 
-        this.isAudioOnly = this.video.localName == "audio";
+        this.isAudioOnly = this.isAudioTag;
         this.setupInitialState();
         this.setupNewLoadState();
         this.initTextTracks();
@@ -2868,7 +2872,7 @@ this.VideoControlsImplWidget = class {
                   <span class="pip-icon"></span>
                   <span class="pip-label" data-l10n-id="videocontrols-picture-in-picture-toggle-label2"></span>
                 </span>
-                <div class="pip-explainer clickable" data-l10n-id="videocontrols-picture-in-picture-explainer2"></div>
+                <div class="pip-explainer clickable" data-l10n-id="videocontrols-picture-in-picture-explainer3"></div>
               </div>
               <div class="pip-icon clickable"></div>
             </button>
@@ -2945,7 +2949,7 @@ this.VideoControlsImplWidget = class {
     return this.isShowingPictureInPictureMessage == elementInPiP;
   }
 
-  destructor() {
+  teardown() {
     this.Utils.terminate();
     this.TouchUtils.terminate();
     this.Utils.updateOrientationState(false);
@@ -3112,7 +3116,7 @@ this.NoControlsMobileImplWidget = class {
     return true;
   }
 
-  destructor() {
+  teardown() {
     this.Utils.terminate();
   }
 
@@ -3166,7 +3170,7 @@ this.NoControlsPictureInPictureImplWidget = class {
     return true;
   }
 
-  destructor() {}
+  teardown() {}
 
   onPrefChange(prefName, prefValue) {
     this.prefs[prefName] = prefValue;
@@ -3346,7 +3350,7 @@ this.NoControlsDesktopImplWidget = class {
     return true;
   }
 
-  destructor() {
+  teardown() {
     this.Utils.terminate();
   }
 
@@ -3374,7 +3378,7 @@ this.NoControlsDesktopImplWidget = class {
                   <span class="pip-icon"></span>
                   <span class="pip-label" data-l10n-id="videocontrols-picture-in-picture-toggle-label2"></span>
                 </span>
-                <div class="pip-explainer clickable" data-l10n-id="videocontrols-picture-in-picture-explainer2"></div>
+                <div class="pip-explainer clickable" data-l10n-id="videocontrols-picture-in-picture-explainer3"></div>
               </div>
               <div class="pip-icon"></div>
             </button>

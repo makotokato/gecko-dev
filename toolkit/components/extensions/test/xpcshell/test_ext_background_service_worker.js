@@ -2,8 +2,8 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-const { TestUtils } = ChromeUtils.import(
-  "resource://testing-common/TestUtils.jsm"
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 
 ChromeUtils.defineModuleGetter(
@@ -50,7 +50,7 @@ add_task(
         background: {
           service_worker: "sw.js",
         },
-        applications: { gecko: { id: "test-bg-sw@mochi.test" } },
+        browser_specific_settings: { gecko: { id: "test-bg-sw@mochi.test" } },
       },
       files: {
         "page.html": "<!DOCTYPE html><body></body>",
@@ -180,7 +180,7 @@ add_task(async function test_serviceworker_lifecycle_events() {
       background: {
         service_worker: "sw.js",
       },
-      applications: { gecko: { id: "test-bg-sw@mochi.test" } },
+      browser_specific_settings: { gecko: { id: "test-bg-sw@mochi.test" } },
     },
     files: {
       "page.html": "<!DOCTYPE html><body></body>",

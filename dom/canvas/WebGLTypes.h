@@ -878,68 +878,9 @@ class RawBuffer final {
   RawBuffer& operator=(RawBuffer&&) = default;
 };
 
-// -
-
-struct CopyableRange final : public Range<const uint8_t> {};
-
-// -
-
-// clang-format off
-
-#define FOREACH_ID(X) \
-  X(FuncScopeIdError) \
-  X(compressedTexImage2D) \
-  X(compressedTexImage3D) \
-  X(compressedTexSubImage2D) \
-  X(compressedTexSubImage3D) \
-  X(copyTexSubImage2D) \
-  X(copyTexSubImage3D) \
-  X(drawArrays) \
-  X(drawArraysInstanced) \
-  X(drawElements) \
-  X(drawElementsInstanced) \
-  X(drawRangeElements) \
-  X(renderbufferStorage) \
-  X(renderbufferStorageMultisample) \
-  X(texImage2D) \
-  X(texImage3D) \
-  X(TexStorage2D) \
-  X(TexStorage3D) \
-  X(texSubImage2D) \
-  X(texSubImage3D) \
-  X(vertexAttrib1f) \
-  X(vertexAttrib1fv) \
-  X(vertexAttrib2f) \
-  X(vertexAttrib2fv) \
-  X(vertexAttrib3f) \
-  X(vertexAttrib3fv) \
-  X(vertexAttrib4f) \
-  X(vertexAttrib4fv) \
-  X(vertexAttribI4i) \
-  X(vertexAttribI4iv) \
-  X(vertexAttribI4ui) \
-  X(vertexAttribI4uiv) \
-  X(vertexAttribIPointer) \
-  X(vertexAttribPointer)
-
-// clang-format on
-
-enum class FuncScopeId {
-#define _(X) X,
-  FOREACH_ID(_)
-#undef _
-};
-
-static constexpr const char* const FUNCSCOPE_NAME_BY_ID[] = {
-#define _(X) #X,
-    FOREACH_ID(_)
-#undef _
-};
-
-#undef FOREACH_ID
-
-inline auto GetFuncScopeName(const FuncScopeId id) {
-  return FUNCSCOPE_NAME_BY_ID[static_cast<size_t>(id)];
+template <class T>
+inline Range<T> ShmemRange(const mozilla::ipc::Shmem& shmem) {
+  return {shmem.get<T>(), shmem.Size<T>()};
 }
 
 // -
@@ -1230,6 +1171,17 @@ inline void Memcpy(const RangedPtr<uint8_t>& destBytes,
   memcpy(destBytes.get(), srcBytes.get(), byteSize);
 }
 
+template <class T, class U>
+inline void Memcpy(const Range<T>* const destRange,
+                   const RangedPtr<U>& srcBegin) {
+  Memcpy(destRange->begin(), srcBegin, destRange->length());
+}
+template <class T, class U>
+inline void Memcpy(const RangedPtr<T>* const destBegin,
+                   const Range<U>& srcRange) {
+  Memcpy(destBegin, srcRange->begin(), srcRange->length());
+}
+
 // -
 
 namespace webgl {
@@ -1239,6 +1191,13 @@ namespace webgl {
 // now.
 // (http://opengl.gpuinfo.org/gl_stats_caps_single.php?listreportsbycap=GL_MAX_COLOR_ATTACHMENTS)
 inline constexpr size_t kMaxDrawBuffers = 8;
+
+union UniformDataVal {
+  float f32;
+  int32_t i32;
+  uint32_t u32;
+};
+
 }  // namespace webgl
 
 }  // namespace mozilla

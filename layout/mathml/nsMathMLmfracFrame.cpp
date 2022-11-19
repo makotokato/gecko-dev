@@ -43,7 +43,7 @@ eMathMLFrameType nsMathMLmfracFrame::GetMathMLFrameType() {
 }
 
 uint8_t nsMathMLmfracFrame::ScriptIncrement(nsIFrame* aFrame) {
-  if (StyleFont()->mMathStyle == NS_STYLE_MATH_STYLE_COMPACT && aFrame &&
+  if (StyleFont()->mMathStyle == StyleMathStyle::Compact && aFrame &&
       (mFrames.FirstChild() == aFrame || mFrames.LastChild() == aFrame)) {
     return 1;
   }
@@ -59,7 +59,7 @@ nsMathMLmfracFrame::TransmitAutomaticData() {
 
   // If displaystyle is false, then scriptlevel is incremented, so notify the
   // children of this.
-  if (StyleFont()->mMathStyle == NS_STYLE_MATH_STYLE_COMPACT) {
+  if (StyleFont()->mMathStyle == StyleMathStyle::Compact) {
     PropagateFrameFlagFor(mFrames.FirstChild(),
                           NS_FRAME_MATHML_SCRIPT_DESCENDANT);
     PropagateFrameFlagFor(mFrames.LastChild(),
@@ -91,8 +91,7 @@ nscoord nsMathMLmfracFrame::CalcLineThickness(nsPresContext* aPresContext,
   // https://w3c.github.io/mathml-core/#dfn-linethickness
   if (!aThicknessAttribute.IsEmpty()) {
     lineThickness = defaultThickness;
-    ParseNumericValue(aThicknessAttribute, &lineThickness,
-                      dom::MathMLElement::PARSE_ALLOW_UNITLESS, aPresContext,
+    ParseNumericValue(aThicknessAttribute, &lineThickness, 0, aPresContext,
                       aComputedStyle, aFontSizeInflation);
   }
   // use minimum if the lineThickness is a non-zero value less than minimun
@@ -198,7 +197,7 @@ nsresult nsMathMLmfracFrame::PlaceInternal(DrawTarget* aDrawTarget,
       CalcLineThickness(presContext, mComputedStyle, value, onePixel,
                         defaultRuleThickness, fontSizeInflation);
 
-  bool displayStyle = StyleFont()->mMathStyle == NS_STYLE_MATH_STYLE_NORMAL;
+  bool displayStyle = StyleFont()->mMathStyle == StyleMathStyle::Normal;
 
   mLineRect.height = mLineThickness;
 

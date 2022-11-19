@@ -71,9 +71,8 @@ class LogModule extends Module {
       .filter(frame => !lazy.isChromeFrame(frame))
       .map(frame => {
         return {
-          columnNumber: frame.columnNumber,
+          columnNumber: frame.columnNumber - 1,
           functionName: frame.functionName,
-          // Match WebDriver BiDi and convert Firefox's one-based line number.
           lineNumber: frame.lineNumber - 1,
           url: frame.filename,
         };
@@ -91,8 +90,7 @@ class LogModule extends Module {
       case "trace":
         return "debug";
       case "warn":
-      case "warning":
-        return "warning";
+        return "warn";
       default:
         return "info";
     }

@@ -72,6 +72,7 @@
 #include "mozilla/dom/HTMLTableElement.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_accessibility.h"
 #include "mozilla/SVGGeometryFrame.h"
@@ -141,6 +142,45 @@ static bool MustBeAccessible(nsIContent* aContent, DocAccessible* aDocument) {
     }
   }
 
+  return false;
+}
+
+bool nsAccessibilityService::ShouldCreateImgAccessible(
+    mozilla::dom::Element* aElement, DocAccessible* aDocument) {
+  // The element must have a layout frame for us to proceed. If there is no
+  // frame, the image is likely hidden.
+  nsIFrame* frame = aElement->GetPrimaryFrame();
+  if (!frame) {
+    return false;
+  }
+
+  // If the element is not an img, and also not an embedded image via embed or
+  // object, then we should not create an accessible.
+  if (!aElement->IsHTMLElement(nsGkAtoms::img) &&
+      ((!aElement->IsHTMLElement(nsGkAtoms::embed) &&
+        !aElement->IsHTMLElement(nsGkAtoms::object)) ||
+       frame->AccessibleType() != AccType::eImageType)) {
+    return false;
+  }
+
+  nsAutoString newAltText;
+  const bool hasAlt = aElement->GetAttr(nsGkAtoms::alt, newAltText);
+  if (!hasAlt || !newAltText.IsEmpty()) {
+    // If there is no alt attribute, we should create an accessible. The
+    // author may have missed the attribute, and the AT may want to provide a
+    // name. If there is alt text, we should create an accessible.
+    return true;
+  }
+
+  if (newAltText.IsEmpty() && (nsCoreUtils::HasClickListener(aElement) ||
+                               MustBeAccessible(aElement, aDocument))) {
+    // If there is empty alt text, but there is a click listener for this img,
+    // or if it otherwise must be an accessible (e.g., if it has an aria-label
+    // attribute), we should create an accessible.
+    return true;
+  }
+
+  // Otherwise, no alt text means we should not create an accessible.
   return false;
 }
 
@@ -368,7 +408,11 @@ void nsAccessibilityService::NotifyOfPossibleBoundsChange(
       StaticPrefs::accessibility_cache_enabled_AtStartup()) {
     DocAccessible* document = GetDocAccessible(aPresShell);
     if (document) {
-      LocalAccessible* accessible = document->GetAccessible(aContent);
+      // DocAccessible::GetAccessible() won't return the document if a root
+      // element like body is passed.
+      LocalAccessible* accessible = aContent == document->GetContent()
+                                        ? document
+                                        : document->GetAccessible(aContent);
       if (accessible) {
         document->QueueCacheUpdate(accessible, CacheDomain::Bounds);
       }
@@ -385,7 +429,11 @@ void nsAccessibilityService::NotifyOfComputedStyleChange(
 
   DocAccessible* document = GetDocAccessible(aPresShell);
   if (document) {
-    LocalAccessible* accessible = document->GetAccessible(aContent);
+    // DocAccessible::GetAccessible() won't return the document if a root
+    // element like body is passed.
+    LocalAccessible* accessible = aContent == document->GetContent()
+                                      ? document
+                                      : document->GetAccessible(aContent);
     if (accessible) {
       accessible->MaybeQueueCacheUpdateForStyleChanges();
     }
@@ -937,6 +985,21 @@ LocalAccessible* nsAccessibilityService::CreateAccessible(
     return nullptr;
   }
 
+  if (nsMenuPopupFrame* popupFrame = do_QueryFrame(frame)) {
+    // Hidden tooltips and panels don't create accessibles in the whole subtree.
+    // Showing them gets handled by RootAccessible::ProcessDOMEvent.
+    if (content->IsAnyOfXULElements(nsGkAtoms::tooltip, nsGkAtoms::panel)) {
+      nsPopupState popupState = popupFrame->PopupState();
+      if (popupState == ePopupHiding || popupState == ePopupInvisible ||
+          popupState == ePopupClosed) {
+        if (aIsSubtreeHidden) {
+          *aIsSubtreeHidden = true;
+        }
+        return nullptr;
+      }
+    }
+  }
+
   if (frame->GetContent() != content) {
     // Not the main content for this frame. This happens because <area>
     // elements return the image frame as their primary frame. The main content
@@ -978,6 +1041,7 @@ LocalAccessible* nsAccessibilityService::CreateAccessible(
     }
 
     newAcc = CreateAccessibleByFrameType(frame, content, aContext);
+    MOZ_ASSERT(newAcc, "Accessible not created for text node!");
     document->BindToDocument(newAcc, nullptr);
     newAcc->AsTextLeaf()->SetText(text.mString);
     return newAcc;
@@ -1049,7 +1113,13 @@ LocalAccessible* nsAccessibilityService::CreateAccessible(
 
       } else if (roleMapEntry->IsOfType(eTableRow)) {
         if (aContext->IsTable() ||
-            (aContext->LocalParent() && aContext->LocalParent()->IsTable())) {
+            // There can be an Accessible between a row and its table, but it
+            // can only be a row group or a generic container. This is
+            // consistent with Filters::GetRow and CachedTableAccessible's
+            // TablePartRule.
+            ((aContext->Role() == roles::GROUPING ||
+              (aContext->IsGenericHyperText() && !aContext->ARIARoleMap())) &&
+             aContext->LocalParent() && aContext->LocalParent()->IsTable())) {
           newAcc = new ARIARowAccessible(content, document);
         }
 
@@ -1212,6 +1282,9 @@ mozilla::Monitor& nsAccessibilityService::GetAndroidMonitor() {
 // nsAccessibilityService private
 
 bool nsAccessibilityService::Init() {
+  AUTO_PROFILER_MARKER_TEXT("nsAccessibilityService::Init", A11Y, {}, ""_ns);
+  // DO NOT ADD CODE ABOVE HERE: THIS CODE IS MEASURING TIMINGS.
+
   // Initialize accessible document manager.
   if (!DocManager::Init()) return false;
 
@@ -1476,7 +1549,10 @@ nsAccessibilityService::CreateAccessibleByFrameType(nsIFrame* aFrame,
       break;
     }
     case eImageType:
-      newAcc = new ImageAccessibleWrap(aContent, document);
+      if (aContent->IsElement() &&
+          ShouldCreateImgAccessible(aContent->AsElement(), document)) {
+        newAcc = new ImageAccessibleWrap(aContent, document);
+      }
       break;
     case eOuterDocType:
       newAcc = new OuterDocAccessible(aContent, document);
@@ -1516,7 +1592,7 @@ void nsAccessibilityService::MarkupAttributes(
       }
 
       nsString value;
-      el->GetAttr(kNameSpaceID_None, info->DOMAttrName, value);
+      el->GetAttr(info->DOMAttrName, value);
 
       if (!value.IsEmpty()) {
         aAttributes->SetAttribute(info->name, std::move(value));

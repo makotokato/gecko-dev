@@ -1,12 +1,56 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
+async function expectFocusAfterKey(
+  aKey,
+  aFocus,
+  aAncestorOk = false,
+  aWindow = window
+) {
+  let res = aKey.match(/^(Shift\+)?(?:(.)|(.+))$/);
+  let shift = Boolean(res[1]);
+  let key;
+  if (res[2]) {
+    key = res[2]; // Character.
+  } else {
+    key = "KEY_" + res[3]; // Tab, ArrowRight, etc.
+  }
+  let expected;
+  let friendlyExpected;
+  if (typeof aFocus == "string") {
+    expected = aWindow.document.getElementById(aFocus);
+    friendlyExpected = aFocus;
+  } else {
+    expected = aFocus;
+    if (aFocus == aWindow.gURLBar.inputField) {
+      friendlyExpected = "URL bar input";
+    } else if (aFocus == aWindow.gBrowser.selectedBrowser) {
+      friendlyExpected = "Web document";
+    }
+  }
+  info("Listening on item " + (expected.id || expected.className));
+  let focused = BrowserTestUtils.waitForEvent(expected, "focus", aAncestorOk);
+  EventUtils.synthesizeKey(key, { shiftKey: shift }, aWindow);
+  let receivedEvent = await focused;
+  info(
+    "Got focus on item: " +
+      (receivedEvent.target.id || receivedEvent.target.className)
+  );
+  ok(true, friendlyExpected + " focused after " + aKey + " pressed");
+}
+
+function forceFocus(aElem) {
+  aElem.setAttribute("tabindex", "-1");
+  aElem.focus();
+  aElem.removeAttribute("tabindex");
+}
+
 add_task(async function aria_attributes() {
   let win = await BrowserTestUtils.openNewBrowserWindow();
   is(
     win.FirefoxViewHandler.button.getAttribute("role"),
-    "tab",
-    "Firefox View button should have the 'tab' ARIA role"
+    "button",
+    "Firefox View button should have the 'button' ARIA role"
   );
   await openFirefoxViewTab(win);
   isnot(
@@ -20,15 +64,15 @@ add_task(async function aria_attributes() {
     "Firefox View button should refence the hidden tab's linked panel via `aria-controls`"
   );
   is(
-    win.FirefoxViewHandler.button.getAttribute("aria-selected"),
+    win.FirefoxViewHandler.button.getAttribute("aria-pressed"),
     "true",
-    'Firefox View button should have `aria-selected="true"` upon selecting it'
+    'Firefox View button should have `aria-pressed="true"` upon selecting it'
   );
   win.BrowserOpenTab();
   is(
-    win.FirefoxViewHandler.button.getAttribute("aria-selected"),
+    win.FirefoxViewHandler.button.getAttribute("aria-pressed"),
     "false",
-    'Firefox View button should have `aria-selected="false"` upon selecting a different tab'
+    'Firefox View button should have `aria-pressed="false"` upon selecting a different tab'
   );
   await BrowserTestUtils.closeWindow(win);
 });
@@ -180,4 +224,26 @@ add_task(async function test_add_ons_cant_unhide_fx_view() {
   ok(viewTab.hidden, "Add-on did not show Firefox View tab");
 
   await BrowserTestUtils.closeWindow(win);
+});
+
+// Test navigation to first visible tab when the
+// Firefox View button is present and active.
+add_task(async function testFirstTabFocusableWhenFxViewOpen() {
+  await SpecialPowers.pushPrefEnv({ set: [["accessibility.tabfocus", 7]] });
+  await withFirefoxView({}, async browser => {
+    let win = browser.ownerGlobal;
+    ok(win.FirefoxViewHandler.tab.selected, "Firefox View tab is selected");
+    let fxViewBtn = win.document.getElementById("firefox-view-button");
+    forceFocus(fxViewBtn);
+    is(
+      win.document.activeElement,
+      fxViewBtn,
+      "Firefox View button focused for start of test"
+    );
+    let firstVisibleTab = win.gBrowser.visibleTabs[0];
+    await expectFocusAfterKey("Tab", firstVisibleTab, false, win);
+    let activeElement = win.document.activeElement;
+    let expectedElement = firstVisibleTab;
+    is(activeElement, expectedElement, "First visible tab should be focused");
+  });
 });

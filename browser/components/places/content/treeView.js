@@ -97,12 +97,13 @@ PlacesTreeView.prototype = {
    * build these children lazily as the tree asks us for information about each
    * row.  Luckily, the tree doesn't ask about rows outside the visible area.
    *
-   * @see _getNodeForRow and _getRowForNode for the actual magic.
-   *
-   * @note It's guaranteed that all containers are listed in the rows
+   * It's guaranteed that all containers are listed in the rows
    * elements array.  It's also guaranteed that separators (if they're not
    * filtered, see below) are listed in the visible elements array, because
    * bookmark folders are never built lazily, as described above.
+   *
+   * @see {@link PlacesTreeView._getNodeForRow} and
+   * {@link PlacesTreeView._getRowForNode} for the actual magic.
    *
    * @param {object} aContainer
    *        A container result node.
@@ -137,12 +138,16 @@ PlacesTreeView.prototype = {
    * Gets the row number for a given node.  Assumes that the given node is
    * visible (i.e. it's not an obsolete node).
    *
+   * If aParentRow and aNodeIndex are passed and parent is a plain
+   * container, this method will just return a calculated row value, without
+   * making assumptions on existence of the node at that position.
+   *
    * @param {object} aNode
    *        A result node.  Do not pass an obsolete node, or any
    *        node which isn't supposed to be in the tree (e.g. separators in
    *        sorted trees).
    * @param {boolean} [aForceBuild]
-   *        @see _isPlainContainer.
+   *        See {@link _isPlainContainer}.
    *        If true, the row will be computed even if the node still isn't set
    *        in our rows array.
    * @param {object} [aParentRow]
@@ -152,9 +157,6 @@ PlacesTreeView.prototype = {
    *        set too.
    *
    * @throws if aNode is invisible.
-   * @note If aParentRow and aNodeIndex are passed and parent is a plain
-   * container, this method will just return a calculated row value, without
-   * making assumptions on existence of the node at that position.
    * @returns {object} aNode's row if it's in the rows list or if aForceBuild is set, -1
    *         otherwise.
    */
@@ -233,7 +235,7 @@ PlacesTreeView.prototype = {
    *
    * @param {number} aChildRow
    *        Row number.
-   * @returns {array} [parentNode, parentRow]
+   * @returns {Array} [parentNode, parentRow]
    */
   _getParentByChildRow: function PTV__getParentByChildRow(aChildRow) {
     let node = this._getNodeForRow(aChildRow);
@@ -252,6 +254,7 @@ PlacesTreeView.prototype = {
    * Gets the node at a given row.
    *
    * @param {number} aRow
+   *   The index of the row to set
    * @returns {object}
    */
   _getNodeForRow: function PTV__getNodeForRow(aRow) {
@@ -306,7 +309,7 @@ PlacesTreeView.prototype = {
    * @param {object} aFirstChildRow
    *        The first row at which nodes may be inserted to the row array.
    *        In other words, that's aContainer's row + 1.
-   * @param {array} aToOpen
+   * @param {Array} aToOpen
    *        An array of containers to open once the build is done (out param)
    *
    * @returns {number} the number of rows which were inserted.
@@ -397,6 +400,7 @@ PlacesTreeView.prototype = {
    * will count the node itself plus any child node following it.
    *
    * @param {number} aNodeRow
+   *   The row of the node to count
    * @returns {number}
    */
   _countVisibleRowsForNodeAtRow: function PTV__countVisibleRowsForNodeAtRow(
@@ -516,7 +520,7 @@ PlacesTreeView.prototype = {
    * Restores a given selection state as near as possible to the original
    * selection state.
    *
-   * @param {array} aNodesInfo
+   * @param {Array} aNodesInfo
    *        The persisted selection state as returned by
    *        _getSelectedNodesInRange.
    * @param {object} aUpdatedContainer
@@ -764,8 +768,11 @@ PlacesTreeView.prototype = {
    * change for visits, and date sorting is the only time things are collapsed.
    *
    * @param {object} aParentNode
+   *   The parent node of the node being removed.
    * @param {object} aNode
+   *   The node to remove from the tree.
    * @param {number} aOldIndex
+   *   The old index of the node in the parent.
    */
   nodeRemoved: function PTV_nodeRemoved(aParentNode, aNode, aOldIndex) {
     console.assert(this._result, "Got a notification but have no result!");

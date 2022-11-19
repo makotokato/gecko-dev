@@ -24,13 +24,14 @@
 #include "nsITimer.h"
 
 class nsISocketTransport;
-class nsISSLSocketControl;
+class nsITLSSocketControl;
 
 namespace mozilla {
 namespace net {
 
 class nsHttpHandler;
 class ASpdySession;
+class Http3WebTransportSession;
 
 // 1dcc863e-db90-4652-a1fe-13fea0b54e46
 #define HTTPCONNECTIONBASE_IID                       \
@@ -82,6 +83,11 @@ class HttpConnectionBase : public nsSupportsWeakReference {
                                                nsIAsyncInputStream**,
                                                nsIAsyncOutputStream**) = 0;
 
+  Http3WebTransportSession* GetWebTransportSession(
+      nsAHttpTransaction* aTransaction) {
+    return nullptr;
+  }
+
   virtual bool UsingSpdy() { return false; }
   virtual bool UsingHttp3() { return false; }
 
@@ -107,7 +113,7 @@ class HttpConnectionBase : public nsSupportsWeakReference {
   void GetConnectionInfo(nsHttpConnectionInfo** ci) {
     *ci = do_AddRef(mConnInfo).take();
   }
-  virtual void GetTLSSocketControl(nsISSLSocketControl** result) = 0;
+  virtual void GetTLSSocketControl(nsITLSSocketControl** result) = 0;
 
   [[nodiscard]] virtual nsresult ResumeSend() = 0;
   [[nodiscard]] virtual nsresult ResumeRecv() = 0;
@@ -177,7 +183,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(HttpConnectionBase, HTTPCONNECTIONBASE_IID)
   void PrintDiagnostics(nsCString&) override;                                  \
   bool TestJoinConnection(const nsACString&, int32_t) override;                \
   bool JoinConnection(const nsACString&, int32_t) override;                    \
-  void GetTLSSocketControl(nsISSLSocketControl** result) override;             \
+  void GetTLSSocketControl(nsITLSSocketControl** result) override;             \
   [[nodiscard]] nsresult ResumeSend() override;                                \
   [[nodiscard]] nsresult ResumeRecv() override;                                \
   [[nodiscard]] nsresult ForceSend() override;                                 \

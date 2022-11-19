@@ -87,20 +87,15 @@ add_setup(async function() {
   Services.telemetry.canRecordExtended = true;
   Services.prefs.setBoolPref("browser.search.log", true);
 
-  let currentEngineName = (await Services.search.getDefault()).name;
-
-  await SearchTestUtils.installSearchExtension({
-    search_url: getPageUrl(true),
-    search_url_get_params: "s={searchTerms}&abc=ff",
-    suggest_url:
-      "https://example.com/browser/browser/components/search/test/browser/searchSuggestionEngine.sjs",
-    suggest_url_get_params: "query={searchTerms}",
-  });
-  let engine1 = Services.search.getEngineByName("Example");
-
-  await Services.search.setDefault(
-    engine1,
-    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+  await SearchTestUtils.installSearchExtension(
+    {
+      search_url: getPageUrl(true),
+      search_url_get_params: "s={searchTerms}&abc=ff",
+      suggest_url:
+        "https://example.com/browser/browser/components/search/test/browser/searchSuggestionEngine.sjs",
+      suggest_url_get_params: "query={searchTerms}",
+    },
+    { setAsDefault: true }
   );
 
   await gCUITestUtils.addSearchBar();
@@ -111,10 +106,6 @@ add_setup(async function() {
     SearchSERPTelemetry.overrideSearchTelemetryForTests();
     Services.telemetry.canRecordExtended = oldCanRecord;
     Services.telemetry.clearScalars();
-    await Services.search.setDefault(
-      Services.search.getEngineByName(currentEngineName),
-      Ci.nsISearchService.CHANGE_REASON_UNKNOWN
-    );
   });
 });
 
@@ -128,9 +119,7 @@ async function track_ad_click(
   Services.telemetry.clearScalars();
 
   let expectedContentScalarKey = "example:tagged:ff";
-  let expectedScalarKeyOld = "example:sap";
   let expectedScalarKey = "example:tagged";
-  let expectedHistogramKey = "example.in-content:sap:ff";
   let expectedHistogramSAPSourceKey = `other-Example.${expectedHistogramSource}`;
   let expectedContentScalar = `browser.search.content.${expectedScalarSource}`;
   let expectedWithAdsScalar = `browser.search.withads.${expectedScalarSource}`;
@@ -140,12 +129,10 @@ async function track_ad_click(
 
   await assertSearchSourcesTelemetry(
     {
-      [expectedHistogramKey]: 1,
       [expectedHistogramSAPSourceKey]: 1,
     },
     {
       [expectedContentScalar]: { [expectedContentScalarKey]: 1 },
-      "browser.search.with_ads": { [expectedScalarKeyOld]: 1 },
       [expectedWithAdsScalar]: { [expectedScalarKey]: 1 },
     }
   );
@@ -159,14 +146,11 @@ async function track_ad_click(
 
   await assertSearchSourcesTelemetry(
     {
-      [expectedHistogramKey]: 1,
       [expectedHistogramSAPSourceKey]: 1,
     },
     {
       [expectedContentScalar]: { [expectedContentScalarKey]: 1 },
-      "browser.search.with_ads": { [expectedScalarKeyOld]: 1 },
       [expectedWithAdsScalar]: { [expectedScalarKey]: 1 },
-      "browser.search.ad_clicks": { [expectedScalarKeyOld]: 1 },
       [expectedAdClicksScalar]: { [expectedScalarKey]: 1 },
     }
   );

@@ -6,7 +6,6 @@
 
 #include "FetchStreamReader.h"
 #include "InternalResponse.h"
-#include "js/Stream.h"
 #include "mozilla/ConsoleReportCollector.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/AutoEntryScript.h"
@@ -65,12 +64,8 @@ nsresult FetchStreamReader::Create(JSContext* aCx, nsIGlobalObject* aGlobal,
 
   nsCOMPtr<nsIAsyncInputStream> pipeIn;
 
-  nsresult rv =
-      NS_NewPipe2(getter_AddRefs(pipeIn),
-                  getter_AddRefs(streamReader->mPipeOut), true, true, 0, 0);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  NS_NewPipe2(getter_AddRefs(pipeIn), getter_AddRefs(streamReader->mPipeOut),
+              true, true, 0, 0);
 
   if (!NS_IsMainThread()) {
     WorkerPrivate* workerPrivate = GetWorkerPrivateFromContext(aCx);
@@ -147,10 +142,16 @@ void FetchStreamReader::CloseAndRelease(JSContext* aCx, nsresult aStatus) {
       // comments in ReadableStream::cancel() conveying the spec, step 2 of
       // 3.4.3 that specified ReadableStreamCancel is: If stream.[[state]] is
       // "closed", return a new promise resolved with undefined.
-      RefPtr<Promise> ignoredResultPromise =
+      RefPtr<Promise> cancelResultPromise =
           MOZ_KnownLive(mReader)->Cancel(aCx, errorValue, ignoredError);
       NS_WARNING_ASSERTION(!ignoredError.Failed(),
                            "Failed to cancel stream during close and release");
+      if (cancelResultPromise) {
+        bool setHandled = cancelResultPromise->SetAnyPromiseIsHandled();
+        NS_WARNING_ASSERTION(setHandled,
+                             "Failed to mark cancel promise as handled.");
+        (void)setHandled;
+      }
     }
 
     // We don't want to propagate exceptions during the cleanup.
