@@ -73,6 +73,9 @@ pref("xpinstall.signatures.devInfoURL", "https://wiki.mozilla.org/Addons/Extensi
 // Enable extensionStorage storage actor by default
 pref("devtools.storage.extensionStorage.enabled", true);
 
+// Enable the unified extensions UI by default.
+pref("extensions.unifiedExtensions.enabled", true);
+
 // Dictionary download preference
 pref("browser.dictionaries.download.url", "https://addons.mozilla.org/%LOCALE%/firefox/language-tools/");
 
@@ -973,16 +976,7 @@ pref("browser.history_swipe_animation.disabled", false);
   // scrolling to shift+wheel.
   pref("mousewheel.with_shift.action", 1);
   pref("mousewheel.with_alt.action", 2);
-  // On MacOS X, control+wheel is typically handled by system and we don't
-  // receive the event.  So, command key which is the main modifier key for
-  // acceleration is the best modifier for zoom-in/out.  However, we should keep
-  // the control key setting for backward compatibility.
-  pref("mousewheel.with_meta.action", 3); // command key on Mac
-  // Disable control-/meta-modified horizontal wheel events, since those are
-  // used on Mac as part of modified swipe gestures (e.g. Left swipe+Cmd is
-  // "go back" in a new tab).
-  pref("mousewheel.with_control.action.override_x", 0);
-  pref("mousewheel.with_meta.action.override_x", 0);
+  pref("mousewheel.with_control.action", 1);
 #else
   // On the other platforms (non-macOS), user may use legacy mouse which
   // supports only vertical wheel but want to scroll horizontally.  For such
@@ -992,9 +986,8 @@ pref("browser.history_swipe_animation.disabled", false);
   // is better for consistency with macOS users.
   pref("mousewheel.with_shift.action", 4);
   pref("mousewheel.with_alt.action", 2);
-  pref("mousewheel.with_meta.action", 1); // win key on Win, Super/Hyper on Linux
 #endif
-pref("mousewheel.with_control.action",3);
+
 pref("mousewheel.with_win.action", 1);
 
 pref("browser.xul.error_pages.expert_bad_cert", false);
@@ -2146,8 +2139,6 @@ pref("browser.migrate.ie.enabled", true);
 pref("browser.migrate.safari.enabled", true);
 pref("browser.migrate.opera.enabled", false);
 pref("browser.migrate.vivaldi.enabled", false);
-
-pref("browser.migrate.showBookmarksToolbarAfterMigration", true);
 
 pref("extensions.pocket.api", "api.getpocket.com");
 pref("extensions.pocket.enabled", true);

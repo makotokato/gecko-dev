@@ -29,6 +29,7 @@
  *          navigateTab historyPushState promiseWindowRestored
  *          getIncognitoWindow startIncognitoMonitorExtension
  *          loadTestSubscript awaitBrowserLoaded backgroundColorSetOnRoot
+ *          getScreenAt roundCssPixcel getCssAvailRect isRectContained
  */
 
 // There are shutdown issues for which multiple rejections are left uncaught.
@@ -87,6 +88,11 @@ function loadTestSubscript(filePath) {
   Services.scriptloader.loadSubScript(new URL(filePath, gTestPath).href, this);
 }
 
+// Ensure when we turn off topsites in the next few lines,
+// we don't hit any remote endpoints.
+Services.prefs
+  .getDefaultBranch("browser.newtabpage.activity-stream.")
+  .setStringPref("discoverystream.endpointSpocsClear", "");
 // Leaving Top Sites enabled during these tests would create site screenshots
 // and update pinned Top Sites unnecessarily.
 Services.prefs
@@ -1003,11 +1009,61 @@ async function getIncognitoWindow(url = "about:privatebrowsing") {
  *
  * @returns {boolean} True if the window's background-color is set on :root
  *   rather than #navigator-toolbox.
- **/
+ */
 function backgroundColorSetOnRoot() {
   const os = ClientEnvironmentBase.os;
   if (!os.isWindows) {
     return false;
   }
   return os.windowsVersion < 10;
+}
+
+function getScreenAt(left, top, width, height) {
+  const screenManager = Cc["@mozilla.org/gfx/screenmanager;1"].getService(
+    Ci.nsIScreenManager
+  );
+  return screenManager.screenForRect(left, top, width, height);
+}
+
+function roundCssPixcel(pixel, screen) {
+  return Math.floor(
+    Math.floor(pixel * screen.defaultCSSScaleFactor) /
+      screen.defaultCSSScaleFactor
+  );
+}
+
+function getCssAvailRect(screen) {
+  const availDeviceLeft = {};
+  const availDeviceTop = {};
+  const availDeviceWidth = {};
+  const availDeviceHeight = {};
+  screen.GetAvailRect(
+    availDeviceLeft,
+    availDeviceTop,
+    availDeviceWidth,
+    availDeviceHeight
+  );
+  const factor = screen.defaultCSSScaleFactor;
+  const left = Math.floor(availDeviceLeft.value / factor);
+  const top = Math.floor(availDeviceTop.value / factor);
+  const width = Math.floor(availDeviceWidth.value / factor);
+  const height = Math.floor(availDeviceHeight.value / factor);
+  return {
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+  };
+}
+
+function isRectContained(actualRect, maxRect) {
+  is(
+    `top=${actualRect.top >= maxRect.top},bottom=${actualRect.bottom <=
+      maxRect.bottom},left=${actualRect.left >=
+      maxRect.left},right=${actualRect.right <= maxRect.right}`,
+    "top=true,bottom=true,left=true,right=true",
+    `Dimension must be inside, top:${actualRect.top}>=${maxRect.top}, bottom:${actualRect.bottom}<=${maxRect.bottom}, left:${actualRect.left}>=${maxRect.left}, right:${actualRect.right}<=${maxRect.right}`
+  );
 }

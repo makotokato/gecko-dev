@@ -3,46 +3,81 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 :root {
-  --icon-size: 32px;
-  --dot-position: calc(var(--icon-size) / 2 + var(--arrowpanel-menuitem-margin-inline) + var(--arrowpanel-menuitem-padding-inline) - 4px);
   /* uei = unified extensions item */
+  --uei-icon-size: 32px;
+  --uei-attention-dot-size: 8px;
   --uei-button-hover-bgcolor: var(--panel-item-hover-bgcolor);
   --uei-button-hover-color: inherit;
   --uei-button-active-bgcolor: var(--panel-item-active-bgcolor);
   --uei-button-active-color: inherit;
+  --uei-button-attention-dot-color: var(--tab-attention-icon-color);
 }
 
 :root[uidensity="compact"] {
-  --icon-size: 24px;
+  --uei-icon-size: 24px;
 }
 
+#unified-extensions-panel {
+  --uei-dot-horizontal-position-in-panel: calc(var(--uei-icon-size) / 2 + var(--arrowpanel-menuitem-padding-inline) - var(--uei-attention-dot-size) / 2);
+  --uei-dot-vertical-position-in-panel: max(0px, calc(var(--arrowpanel-menuitem-padding-block) / 2 - var(--uei-attention-dot-size) / 2));
+}
+
+/* Align extensions rendered with custom elements. */
 unified-extensions-item {
-  align-items: center;
   display: flex;
+  align-items: center;
 }
 
-unified-extensions-item,
-.unified-extensions-item {
+#unified-extensions-panel .unified-extensions-item {
+  /* Have some spacing between items in the panel; mainly useful for when HCM is enabled. */
   padding-block: 2px;
 }
 
-/* This is based on the attention UI defined in:
+/* The "attention UI" for the unified extensions is based on:
  * https://searchfox.org/mozilla-central/rev/560b7b1b17/browser/themes/shared/tabs.css#624 */
-#unified-extensions-button[attention],
-.unified-extensions-item[attention],
-unified-extensions-item[attention] {
-  background-image: radial-gradient(circle, var(--tab-attention-icon-color), var(--tab-attention-icon-color) 2px, transparent 2px);
-  background-position: center bottom max(0px, calc(var(--arrowpanel-menuitem-padding-block) - 4px));
-  background-size: 8px 8px;
+
+/* On the main unified extensions button, we draw the attention on the icon element. */
+#unified-extensions-button[attention] > .toolbarbutton-icon,
+/* For extension widgets placed in a toolbar, we use the stack element (containing the icon)
+ * of the action button to draw the attention dot.
+ * Otherwise (in the extensions panel), we use the action button itself. */
+toolbar .unified-extensions-item[attention] > .unified-extensions-item-action > .toolbarbutton-badge-stack,
+#unified-extensions-panel .unified-extensions-item[attention] > .unified-extensions-item-action,
+.widget-overflow-list .unified-extensions-item[attention][unified-extensions="false"] > .unified-extensions-item-action {
+  background-image: radial-gradient(circle, var(--uei-button-attention-dot-color), var(--uei-button-attention-dot-color) 2px, transparent 2px);
+  background-size: var(--uei-attention-dot-size) var(--uei-attention-dot-size);
   background-repeat: no-repeat;
 }
 
-unified-extensions-item[attention] {
-  background-position: left var(--dot-position) bottom 0px;
+/* Adjust attention dots position in the toolbar. */
+#unified-extensions-button[attention] > .toolbarbutton-icon,
+toolbar .unified-extensions-item[attention] > .unified-extensions-item-action > .toolbarbutton-badge-stack {
+  background-position: center bottom calc(var(--toolbarbutton-inner-padding) / 2 - var(--uei-attention-dot-size) / 2);
 }
 
-unified-extensions-item[attention]:-moz-locale-dir(rtl) {
-  background-position-x: right var(--dot-position);
+/* Adjust attention dots position in the unified extensions panel. */
+#unified-extensions-panel .unified-extensions-item[attention] > .unified-extensions-item-action {
+  background-position: left var(--uei-dot-horizontal-position-in-panel) bottom var(--uei-dot-vertical-position-in-panel);
+}
+
+/* Adjust attention dots position in the unified extensions panel for RTL. */
+#unified-extensions-panel .unified-extensions-item[attention] > .unified-extensions-item-action:-moz-locale-dir(rtl) {
+  background-position-x: right var(--uei-dot-horizontal-position-in-panel);
+}
+
+/* Adjust attention dots position in the overflow panel. */
+.widget-overflow-list .unified-extensions-item[attention][unified-extensions="false"] > .unified-extensions-item-action {
+  background-position-x: left calc(16px / 2 + var(--arrowpanel-menuitem-padding-inline) - var(--uei-attention-dot-size) / 2);
+  background-position-y: bottom calc(var(--arrowpanel-menuitem-padding-block) / 2 - var(--uei-attention-dot-size) / 2);
+}
+
+:root[uidensity="compact"] .widget-overflow-list .unified-extensions-item[attention][unified-extensions="false"] > .unified-extensions-item-action {
+  background-position-y: bottom -2px;
+}
+
+/* Adjust attention dots position in the overflow panel for RTL. */
+.widget-overflow-list toolbaritem.unified-extensions-item[attention][unified-extensions="false"] > .unified-extensions-item-action:-moz-locale-dir(rtl) {
+  background-position-x: right calc(16px / 2 + var(--arrowpanel-menuitem-padding-inline) - var(--uei-attention-dot-size) / 2);
 }
 
 .unified-extensions-item-action {
@@ -65,10 +100,7 @@ unified-extensions-item[attention]:-moz-locale-dir(rtl) {
   opacity: 0.5;
 }
 
-:is(
-  unified-extensions-item[secondary-button-hovered="true"],
-  .unified-extensions-item[secondary-button-hovered="true"]
-) .unified-extensions-item-action.subviewbutton {
+.unified-extensions-item[secondary-button-hovered="true"] .unified-extensions-item-action.subviewbutton {
   color: inherit;
 }
 
@@ -76,8 +108,8 @@ unified-extensions-item[attention]:-moz-locale-dir(rtl) {
 /* When the unified extensions pref is enabled, we also want to increase the
  * size of the icons in the extension CUI widgets. */
 panel .unified-extensions-item[unified-extensions="true"] .webextension-browser-action > .toolbarbutton-badge-stack > .toolbarbutton-icon {
-  height: var(--icon-size);
-  width: var(--icon-size);
+  height: var(--uei-icon-size);
+  width: var(--uei-icon-size);
   margin-inline-end: 6px;
 }
 
@@ -98,9 +130,6 @@ panel .unified-extensions-item[unified-extensions="true"] .webextension-browser-
   color: var(--panel-description-color);
 }
 
-unified-extensions-item[secondary-button-hovered="true"] .unified-extensions-item-message:not(.unified-extensions-item-message-hover),
-unified-extensions-item:not([secondary-button-hovered="true"]) .unified-extensions-item-message-hover,
-/* The two selectors below are for CUI widgets. */
 .unified-extensions-item[secondary-button-hovered="true"] .unified-extensions-item-message:not(.unified-extensions-item-message-hover),
 .unified-extensions-item:not([secondary-button-hovered="true"]) .unified-extensions-item-message-hover {
   display: none;
@@ -170,28 +199,9 @@ toolbaritem.unified-extensions-item[unified-extensions="true"] .unified-extensio
   display: block;
 }
 
-.widget-overflow-list .unified-extensions-item[attention],
-#unified-extensions-panel .unified-extensions-item[attention] {
-  background-position: left calc(12px + var(--arrowpanel-menuitem-margin-inline)) bottom;
-}
-
-.widget-overflow-list .unified-extensions-item[attention]:-moz-locale-dir(rtl),
-#unified-extensions-panel .unified-extensions-item[attention]:-moz-locale-dir(rtl) {
-  background-position-x: right calc(12px + var(--arrowpanel-menuitem-margin-inline));
-}
-
-.widget-overflow-list .unified-extensions-item[attention][unified-extensions="false"] {
-  background-position-x: left 12px;
-}
-
-.widget-overflow-list .unified-extensions-item[attention][unified-extensions="false"]:-moz-locale-dir(rtl) {
-  background-position-x: right 12px;
-}
-
 @media (prefers-contrast) {
-  .unified-extensions-item[attention],
-  unified-extensions-item[attention] {
-    background-image: radial-gradient(circle, ButtonText, ButtonText 2px, transparent 2px);
+  :root {
+    --uei-button-attention-dot-color: ButtonText;
   }
 
   .unified-extensions-item-action:not([disabled]).subviewbutton,
@@ -213,7 +223,6 @@ toolbaritem.unified-extensions-item[unified-extensions="true"] .unified-extensio
   }
 
   .unified-extensions-item-action[disabled] .unified-extensions-item-message,
-  unified-extensions-item[secondary-button-hovered="true"] .unified-extensions-item-action[disabled].subviewbutton,
   .unified-extensions-item[secondary-button-hovered="true"] .unified-extensions-item-action[disabled].subviewbutton {
     color: GrayText;
   }

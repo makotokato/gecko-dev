@@ -2794,7 +2794,8 @@ bool ScrollFrameHelper::IsAlwaysActive() const {
   // Unless this is the root scrollframe for a non-chrome document
   // which is the direct child of a chrome document, we default to not
   // being "active".
-  if (!(mIsRoot && mOuter->PresContext()->IsRootContentDocument())) {
+  if (!(mIsRoot &&
+        mOuter->PresContext()->IsRootContentDocumentCrossProcess())) {
     return false;
   }
 
@@ -7349,8 +7350,8 @@ nsRect ScrollFrameHelper::GetScrolledRect() const {
 StyleDirection ScrollFrameHelper::GetScrolledFrameDir() const {
   // If the scrolled frame has unicode-bidi: plaintext, the paragraph
   // direction set by the text content overrides the direction of the frame
-  if (mScrolledFrame->StyleTextReset()->mUnicodeBidi &
-      NS_STYLE_UNICODE_BIDI_PLAINTEXT) {
+  if (mScrolledFrame->StyleTextReset()->mUnicodeBidi ==
+      StyleUnicodeBidi::Plaintext) {
     if (nsIFrame* child = mScrolledFrame->PrincipalChildList().FirstChild()) {
       return nsBidiPresUtils::ParagraphDirection(child) ==
                      mozilla::intl::BidiDirection::LTR

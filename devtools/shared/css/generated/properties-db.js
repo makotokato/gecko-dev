@@ -215,7 +215,6 @@ exports.CSS_PROPERTIES = {
       "-moz-win-browsertabbar-toolbox",
       "-moz-win-communications-toolbox",
       "-moz-win-exclude-glass",
-      "-moz-win-glass",
       "-moz-win-media-toolbox",
       "-moz-window-button-box",
       "-moz-window-button-box-maximized",
@@ -223,9 +222,6 @@ exports.CSS_PROPERTIES = {
       "-moz-window-button-maximize",
       "-moz-window-button-minimize",
       "-moz-window-button-restore",
-      "-moz-window-frame-bottom",
-      "-moz-window-frame-left",
-      "-moz-window-frame-right",
       "-moz-window-titlebar",
       "-moz-window-titlebar-maximized",
       "auto",
@@ -1490,7 +1486,6 @@ exports.CSS_PROPERTIES = {
       "-moz-win-browsertabbar-toolbox",
       "-moz-win-communications-toolbox",
       "-moz-win-exclude-glass",
-      "-moz-win-glass",
       "-moz-win-media-toolbox",
       "-moz-window-button-box",
       "-moz-window-button-box-maximized",
@@ -1498,9 +1493,6 @@ exports.CSS_PROPERTIES = {
       "-moz-window-button-maximize",
       "-moz-window-button-minimize",
       "-moz-window-button-restore",
-      "-moz-window-frame-bottom",
-      "-moz-window-frame-left",
-      "-moz-window-frame-right",
       "-moz-window-titlebar",
       "-moz-window-titlebar-maximized",
       "auto",
@@ -1922,6 +1914,34 @@ exports.CSS_PROPERTIES = {
       "revert",
       "revert-layer",
       "unset"
+    ]
+  },
+  "-webkit-clip-path": {
+    "isInherited": false,
+    "subproperties": [
+      "clip-path"
+    ],
+    "supports": [],
+    "values": [
+      "border-box",
+      "circle",
+      "content-box",
+      "ellipse",
+      "fill-box",
+      "inherit",
+      "initial",
+      "inset",
+      "margin-box",
+      "none",
+      "padding-box",
+      "path",
+      "polygon",
+      "revert",
+      "revert-layer",
+      "stroke-box",
+      "unset",
+      "url",
+      "view-box"
     ]
   },
   "-webkit-filter": {
@@ -3133,7 +3153,6 @@ exports.CSS_PROPERTIES = {
       "outline-style",
       "outline-width",
       "outline-offset",
-      "size",
       "page",
       "padding-top",
       "padding-right",
@@ -3472,7 +3491,6 @@ exports.CSS_PROPERTIES = {
       "-moz-win-browsertabbar-toolbox",
       "-moz-win-communications-toolbox",
       "-moz-win-exclude-glass",
-      "-moz-win-glass",
       "-moz-win-media-toolbox",
       "-moz-window-button-box",
       "-moz-window-button-box-maximized",
@@ -3480,9 +3498,6 @@ exports.CSS_PROPERTIES = {
       "-moz-window-button-maximize",
       "-moz-window-button-minimize",
       "-moz-window-button-restore",
-      "-moz-window-frame-bottom",
-      "-moz-window-frame-left",
-      "-moz-window-frame-right",
       "-moz-window-titlebar",
       "-moz-window-titlebar-maximized",
       "auto",
@@ -6116,6 +6131,57 @@ exports.CSS_PROPERTIES = {
       "none",
       "revert",
       "revert-layer",
+      "unset"
+    ]
+  },
+  "container": {
+    "isInherited": false,
+    "subproperties": [
+      "container-name",
+      "container-type"
+    ],
+    "supports": [],
+    "values": [
+      "inherit",
+      "initial",
+      "inline-size",
+      "none",
+      "normal",
+      "revert",
+      "revert-layer",
+      "size",
+      "unset"
+    ]
+  },
+  "container-name": {
+    "isInherited": false,
+    "subproperties": [
+      "container-name"
+    ],
+    "supports": [],
+    "values": [
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
+  "container-type": {
+    "isInherited": false,
+    "subproperties": [
+      "container-type"
+    ],
+    "supports": [],
+    "values": [
+      "inherit",
+      "initial",
+      "inline-size",
+      "normal",
+      "revert",
+      "revert-layer",
+      "size",
       "unset"
     ]
   },

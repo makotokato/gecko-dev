@@ -6,6 +6,7 @@
 /* exported clickUnifiedExtensionsItem,
             closeExtensionsPanel,
             createExtensions,
+            ensureMaximizedWindow,
             getUnifiedExtensionsItem,
             openExtensionsPanel,
             openUnifiedExtensionsContextMenu,
@@ -13,12 +14,12 @@
             promiseEnableUnifiedExtensions
 */
 
-const promiseEnableUnifiedExtensions = async () => {
+const promiseEnableUnifiedExtensions = async (options = {}) => {
   await SpecialPowers.pushPrefEnv({
     set: [["extensions.unifiedExtensions.enabled", true]],
   });
 
-  return BrowserTestUtils.openNewBrowserWindow();
+  return BrowserTestUtils.openNewBrowserWindow(options);
 };
 
 const promiseDisableUnifiedExtensions = async () => {
@@ -124,21 +125,39 @@ const clickUnifiedExtensionsItem = async (
   await popupHidden;
 };
 
-let extensionsCreated = 0;
 const createExtensions = (
   arrayOfManifestData,
-  { useAddonManager = true } = {}
+  { useAddonManager = true, incognitoOverride } = {}
 ) => {
   return arrayOfManifestData.map(manifestData =>
     ExtensionTestUtils.loadExtension({
       manifest: {
         name: "default-extension-name",
-        browser_specific_settings: {
-          gecko: { id: `@ext-${extensionsCreated++}` },
-        },
         ...manifestData,
       },
       useAddonManager: useAddonManager ? "temporary" : undefined,
+      incognitoOverride,
     })
   );
+};
+
+/**
+ * Given a window, this test helper resizes it so that the window takes most of
+ * the available screen size (unless the window is already maximized).
+ */
+const ensureMaximizedWindow = async win => {
+  let resizeDone = Promise.resolve();
+
+  win.moveTo(0, 0);
+
+  const widthDiff = win.screen.availWidth - win.outerWidth;
+  const heightDiff = win.screen.availHeight - win.outerHeight;
+
+  if (widthDiff || heightDiff) {
+    resizeDone = BrowserTestUtils.waitForEvent(win, "resize", false);
+    win.windowUtils.ensureDirtyRootFrame();
+    win.resizeBy(widthDiff, heightDiff);
+  }
+
+  return resizeDone;
 };

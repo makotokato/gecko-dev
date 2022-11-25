@@ -20,21 +20,6 @@ The system is overseen by the owner and peers of the Module Ownership module. Fo
 Modules
 -------
 
-Mots config
-~~~~~~~~~~~
-
-
-.. list-table::
-    :stub-columns: 1
-    :widths: 30 70
-
-    * - Owner(s)
-      -
-        | `Zeid Zabaneh (zeid) <https://people.mozilla.org/s?query=zeid>`__
-    * - Includes
-      -
-        | `mots.yaml <https://searchfox.org/mozilla-central/search?q=&path=mots.yaml>`__
-
 mozilla-toplevel
 ~~~~~~~~~~~~~~~~
 The top level directory for the mozilla tree.
@@ -565,6 +550,7 @@ Core: Document Object Model
         | `Emilio Cobos Álvarez (emilio) <https://people.mozilla.org/s?query=emilio>`__
         | `Andrew Sutherland (asuth) <https://people.mozilla.org/s?query=asuth>`__
         | `Edgar Chen (edgar) <https://people.mozilla.org/s?query=edgar>`__
+        | `Kagami (saschanaz) <https://people.mozilla.org/s?query=saschanaz>`__
     * - Owner(s) Emeritus
       - Johnny Stenback
     * - Peer(s) Emeritus
@@ -3276,6 +3262,21 @@ Marionette is a remote protocol that lets out-of-process programs communicate wi
     * - Bugzilla Components
       - Testing :: Marionette
 
+mots config
+~~~~~~~~~~~
+
+
+.. list-table::
+    :stub-columns: 1
+    :widths: 30 70
+
+    * - Owner(s)
+      -
+        | `Zeid Zabaneh (zeid) <https://people.mozilla.org/s?query=zeid>`__
+    * - Includes
+      -
+        | `mots.yaml <https://searchfox.org/mozilla-central/search?q=&path=mots.yaml>`__
+
 mozharness
 ~~~~~~~~~~
 Configuration-driven script harness.
@@ -3587,7 +3588,7 @@ The profile system and startup process before the front-end launches.
 
 Telemetry
 =========
-The core infrastructure in the Firefox client to send back Telemetry and FHR data. Includes the common mechanism to record, view and submit data like histograms, the Telemetry environment and custom pings. This module does ''not'' include responsibility for every piece of submitted Telemetry data. Each team/module is responsible for their own measurements (histograms, scalars, other ping submissions, etc.).
+The core infrastructure in the Firefox client to send back telemetry data. Includes the common mechanisms to record, view and submit data: Legacy Telemetry and Glean (via Firefox on Glean (FOG)). This module does ''not'' include responsibility for every piece of submitted Telemetry data. Each team/module is responsible for their own measurements (histograms, scalars, other ping submissions, etc.).
 
 
 .. list-table::
@@ -3601,10 +3602,13 @@ The core infrastructure in the Firefox client to send back Telemetry and FHR dat
       -
         | `aplacitelli <https://people.mozilla.org/s?query=aplacitelli>`__
         | `Jan-Erik Rediger (janerik) <https://people.mozilla.org/s?query=janerik>`__
+        | `Perry McManis (perrym) <https://people.mozilla.org/s?query=perrym>`__
+        | `Travis Long (travis_) <https://people.mozilla.org/s?query=travis_>`__
     * - Owner(s) Emeritus
       - Georg Fritzsche
     * - Includes
       -
+        | `toolkit/components/glean/\*\*/\* <https://searchfox.org/mozilla-central/search?q=&path=toolkit/components/glean/\*\*/\*>`__
         | `toolkit/components/telemetry/\*\*/\* <https://searchfox.org/mozilla-central/search?q=&path=toolkit/components/telemetry/\*\*/\*>`__
         | `toolkit/content/aboutTelemetry.\* <https://searchfox.org/mozilla-central/search?q=&path=toolkit/content/aboutTelemetry.\*>`__
     * - Group

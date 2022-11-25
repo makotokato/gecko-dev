@@ -2,7 +2,7 @@
 ---
 repo: mozilla-central
 created_at: '2021-10-14T12:50:40.073465'
-updated_at: '2022-11-18T17:04:04.115932'
+updated_at: '2022-11-24T10:10:43.504958'
 export:
   path: ./docs/mots/index.rst
   format: rst
@@ -693,6 +693,10 @@ people:
     bmo_id: 489889
     name: Andreas Pehrson
     nick: pehrsons
+  - &perrym
+    bmo_id: 697076
+    name: Perry McManis
+    nick: perrym
   - &peterv
     bmo_id: 24295
     name: Peter Van der Beken
@@ -828,6 +832,10 @@ people:
     bmo_id: 644141
     name: Toshihito Kikuchi
     nick: toshi
+  - &travis
+    bmo_id: 628857
+    name: Travis Long
+    nick: travis_
   - &TYLin
     bmo_id: 503090
     name: Ting-Yu Lin
@@ -888,13 +896,6 @@ people:
     name: Tomislav Jovanovic
     nick: zombie
 modules:
-  - name: Mots config
-    includes:
-      - mots.yaml
-    owners:
-      - *zeid
-    machine_name: _mots
-
   - name: mozilla-toplevel
     description: The top level directory for the mozilla tree.
     includes:
@@ -1335,6 +1336,7 @@ modules:
       - *emilio
       - *asuth
       - *edgar
+      - *saschanaz
     machine_name: core_document_object_model
 
   - name: 'Core: DOM File'
@@ -3377,6 +3379,13 @@ modules:
     meta:
       components:
         - 'Testing :: Marionette'
+  - name: mots config
+    includes:
+      - mots.yaml
+    owners:
+      - *zeid
+    machine_name: mots
+
   - machine_name: mozharness
     name: mozharness
     description: Configuration-driven script harness.
@@ -3584,13 +3593,15 @@ modules:
         machine_name: application_startup
 
       - name: Telemetry
-        description: The core infrastructure in the Firefox client to send back Telemetry
-          and FHR data. Includes the common mechanism to record, view and submit data
-          like histograms, the Telemetry environment and custom pings. This module
+        description: >
+          The core infrastructure in the Firefox client to send back telemetry
+          data. Includes the common mechanisms to record, view and submit data: Legacy
+          Telemetry and Glean (via Firefox on Glean (FOG)). This module
           does ''not'' include responsibility for every piece of submitted Telemetry
           data. Each team/module is responsible for their own measurements (histograms,
           scalars, other ping submissions, etc.).
         includes:
+          - toolkit/components/glean/**/*
           - toolkit/components/telemetry/**/*
           - toolkit/content/aboutTelemetry.*
         meta:
@@ -3603,6 +3614,8 @@ modules:
         peers:
           - *aplacitelli
           - *janerik
+          - *perrym
+          - *travis
         machine_name: telemetry
 
       - name: UI Widgets
@@ -3636,5 +3649,5 @@ modules:
         machine_name: webextensions
     machine_name: toolkit
 hashes:
-  config: 0670d0be07bf5f7edc407507949cfec72d31b886
-  export: 58ed67259b377f89de90f03aa354a773a8768e9e
+  config: f44776f9d947cb103f6575c97782e98e6044816b
+  export: 42cc831813bee50c369828c927f25d3be816f5f8

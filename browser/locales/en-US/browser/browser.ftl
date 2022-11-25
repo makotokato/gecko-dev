@@ -932,3 +932,21 @@ private-browsing-indicator-label = Private browsing
 unified-extensions-button =
     .label = Extensions
     .tooltiptext = Extensions
+
+## Unified extensions button when permission(s) are needed.
+## Note that the new line is intentionally part of the tooltip.
+
+unified-extensions-button-permissions-needed =
+    .label = Extensions
+    .tooltiptext =
+        Extensions
+        Permissions needed
+
+## Autorefresh blocker
+
+refresh-blocked-refresh-label = { -brand-short-name } prevented this page from automatically reloading.
+refresh-blocked-redirect-label = { -brand-short-name } prevented this page from automatically redirecting to another page.
+
+refresh-blocked-allow =
+    .label = Allow
+    .accesskey = A

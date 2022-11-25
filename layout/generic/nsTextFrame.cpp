@@ -2019,9 +2019,9 @@ bool BuildTextRunsScanner::ContinueTextRunAcrossFrames(nsTextFrame* aFrame1,
         }
 
         // 3. The boundary is a bidi isolation boundary.
-        const uint8_t unicodeBidi = ctx->StyleTextReset()->mUnicodeBidi;
-        if (unicodeBidi == NS_STYLE_UNICODE_BIDI_ISOLATE ||
-            unicodeBidi == NS_STYLE_UNICODE_BIDI_ISOLATE_OVERRIDE) {
+        const auto unicodeBidi = ctx->StyleTextReset()->mUnicodeBidi;
+        if (unicodeBidi == StyleUnicodeBidi::Isolate ||
+            unicodeBidi == StyleUnicodeBidi::IsolateOverride) {
           return true;
         }
 
@@ -9448,8 +9448,7 @@ class MOZ_STACK_CLASS ReflowTextA11yNotifier {
   ReflowTextA11yNotifier(nsPresContext* aPresContext, nsIContent* aContent)
       : mContent(aContent), mPresContext(aPresContext) {}
   ~ReflowTextA11yNotifier() {
-    if (nsAccessibilityService* accService =
-            PresShell::GetAccessibilityService()) {
+    if (nsAccessibilityService* accService = GetAccService()) {
       accService->UpdateText(mPresContext->PresShell(), mContent);
     }
   }

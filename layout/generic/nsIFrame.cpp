@@ -1718,7 +1718,7 @@ WritingMode nsIFrame::WritingModeForLine(WritingMode aSelfWM,
   MOZ_ASSERT(aSelfWM == GetWritingMode());
   WritingMode writingMode = aSelfWM;
 
-  if (StyleTextReset()->mUnicodeBidi & NS_STYLE_UNICODE_BIDI_PLAINTEXT) {
+  if (StyleTextReset()->mUnicodeBidi == StyleUnicodeBidi::Plaintext) {
     mozilla::intl::BidiEmbeddingLevel frameLevel =
         nsBidiPresUtils::GetFrameBaseLevel(aSubFrame);
     writingMode.SetDirectionFromBidiLevel(frameLevel);
@@ -6764,8 +6764,7 @@ void nsIFrame::DidReflow(nsPresContext* aPresContext,
   aPresContext->ReflowedFrame();
 
 #ifdef ACCESSIBILITY
-  if (nsAccessibilityService* accService =
-          PresShell::GetAccessibilityService()) {
+  if (nsAccessibilityService* accService = GetAccService()) {
     accService->NotifyOfPossibleBoundsChange(PresShell(), mContent);
   }
 #endif

@@ -407,7 +407,7 @@ bool gfxTextRun::GetAdjustedSpacingArray(
   memset(aSpacing->Elements(), 0, sizeof(gfxFont::Spacing) * spacingOffset);
   GetAdjustedSpacing(this, aSpacingRange, aProvider,
                      aSpacing->Elements() + spacingOffset);
-  memset(aSpacing->Elements() + aSpacingRange.end - aRange.start, 0,
+  memset(aSpacing->Elements() + spacingOffset + aSpacingRange.Length(), 0,
          sizeof(gfxFont::Spacing) * (aRange.end - aSpacingRange.end));
   return true;
 }
@@ -3125,7 +3125,8 @@ already_AddRefed<gfxFont> gfxFontGroup::FindFontForChar(
     // entries, so that a color font can be explicitly applied via font-
     // family even to characters that are not inherently emoji-style.
     if (aNextCh == kVariationSelector16 ||
-        (aNextCh >= kEmojiSkinToneFirst && aNextCh <= kEmojiSkinToneLast)) {
+        (aNextCh >= kEmojiSkinToneFirst && aNextCh <= kEmojiSkinToneLast) ||
+        gfxFontUtils::IsEmojiFlagAndTag(aCh, aNextCh)) {
       // Emoji presentation is explicitly requested by a variation selector
       // or the presence of a skin-tone codepoint.
       presentation = eFontPresentation::EmojiExplicit;
@@ -3774,6 +3775,10 @@ already_AddRefed<gfxFont> gfxFontGroup::WhichPrefFontSupportsChar(
       if (fe->HasCharacter(aCh)) {
         prefFont = fe->FindOrMakeFont(&mStyle);
         if (!prefFont) {
+          continue;
+        }
+        if (aPresentation == eFontPresentation::EmojiExplicit &&
+            !prefFont->HasColorGlyphFor(aCh, aNextCh)) {
           continue;
         }
       }

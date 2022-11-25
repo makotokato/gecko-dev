@@ -252,35 +252,6 @@ export const SecondaryCTA = props => {
   );
 };
 
-export const OnboardingVideo = props => {
-  const vidUrl = props.content.video_url;
-  const autoplay = props.content.autoPlay;
-
-  const handleVideoAction = event => {
-    props.handleAction({
-      currentTarget: {
-        value: event,
-      },
-    });
-  };
-
-  return (
-    <div>
-      <video // eslint-disable-line jsx-a11y/media-has-caption
-        controls={true}
-        autoPlay={autoplay}
-        src={vidUrl}
-        width="604px"
-        height="340px"
-        onPlay={() => handleVideoAction("video_start")}
-        onEnded={() => handleVideoAction("video_end")}
-      >
-        <source src={vidUrl}></source>
-      </video>
-    </div>
-  );
-};
-
 export const StepsIndicator = props => {
   let steps = [];
   for (let i = 0; i < props.totalNumberOfScreens; i++) {
@@ -355,6 +326,13 @@ export class WelcomeScreen extends React.PureComponent {
           id => props.content?.tiles?.data.find(ckbx => ckbx.id === id)?.action
         ),
       };
+
+      // Send telemetry with selected checkbox ids
+      AboutWelcomeUtils.sendActionTelemetry(
+        props.messageId,
+        props.activeMultiSelect,
+        "SELECT_CHECKBOX"
+      );
     }
 
     if (["OPEN_URL", "SHOW_FIREFOX_ACCOUNTS"].includes(action.type)) {

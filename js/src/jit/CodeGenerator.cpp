@@ -6706,6 +6706,7 @@ void CodeGenerator::visitNewArrayCallVM(LNewArray* lir) {
 
   masm.storeCallPointerResult(objReg);
 
+  MOZ_ASSERT(!lir->safepoint()->liveRegs().has(objReg));
   restoreLive(lir);
 }
 
@@ -6870,7 +6871,7 @@ void CodeGenerator::visitNewTypedArray(LNewTypedArray* lir) {
   Register objReg = ToRegister(lir->output());
   Register tempReg = ToRegister(lir->temp0());
   Register lengthReg = ToRegister(lir->temp1());
-  LiveRegisterSet liveRegs = lir->safepoint()->liveRegs();
+  LiveRegisterSet liveRegs = liveVolatileRegs(lir);
 
   JSObject* templateObject = lir->mir()->templateObject();
   gc::InitialHeap initialHeap = lir->mir()->initialHeap();
@@ -6900,7 +6901,7 @@ void CodeGenerator::visitNewTypedArrayDynamicLength(
   Register lengthReg = ToRegister(lir->length());
   Register objReg = ToRegister(lir->output());
   Register tempReg = ToRegister(lir->temp0());
-  LiveRegisterSet liveRegs = lir->safepoint()->liveRegs();
+  LiveRegisterSet liveRegs = liveVolatileRegs(lir);
 
   JSObject* templateObject = lir->mir()->templateObject();
   gc::InitialHeap initialHeap = lir->mir()->initialHeap();
@@ -6911,6 +6912,9 @@ void CodeGenerator::visitNewTypedArrayDynamicLength(
   OutOfLineCode* ool = oolCallVM<Fn, NewTypedArrayWithTemplateAndLength>(
       lir, ArgList(ImmGCPtr(templateObject), lengthReg),
       StoreRegisterTo(objReg));
+
+  // Volatile |lengthReg| is saved across the ABI call in |initTypedArraySlots|.
+  MOZ_ASSERT_IF(lengthReg.volatile_(), liveRegs.has(lengthReg));
 
   TemplateObject templateObj(templateObject);
   masm.createGCObject(objReg, tempReg, templateObj, initialHeap, ool->entry());
@@ -6989,6 +6993,7 @@ void CodeGenerator::visitNewObjectVMCall(LNewObject* lir) {
 
   masm.storeCallPointerResult(objReg);
 
+  MOZ_ASSERT(!lir->safepoint()->liveRegs().has(objReg));
   restoreLive(lir);
 }
 
@@ -8212,43 +8217,82 @@ void CodeGenerator::visitWasmCallIndirectAdjunctSafepoint(
 
 void CodeGenerator::visitWasmLoadSlot(LWasmLoadSlot* ins) {
   MIRType type = ins->type();
+  MWideningOp wideningOp = ins->wideningOp();
   Register container = ToRegister(ins->containerRef());
   Address addr(container, ins->offset());
   AnyRegister dst = ToAnyRegister(ins->output());
 
   switch (type) {
     case MIRType::Int32:
-      masm.load32(addr, dst.gpr());
+      switch (wideningOp) {
+        case MWideningOp::None:
+          masm.load32(addr, dst.gpr());
+          break;
+        case MWideningOp::FromU16:
+          masm.load16ZeroExtend(addr, dst.gpr());
+          break;
+        case MWideningOp::FromS16:
+          masm.load16SignExtend(addr, dst.gpr());
+          break;
+        case MWideningOp::FromU8:
+          masm.load8ZeroExtend(addr, dst.gpr());
+          break;
+        case MWideningOp::FromS8:
+          masm.load8SignExtend(addr, dst.gpr());
+          break;
+        default:
+          MOZ_CRASH("unexpected widening op in ::visitWasmLoadSlot");
+      }
       break;
     case MIRType::Float32:
+      MOZ_ASSERT(wideningOp == MWideningOp::None);
       masm.loadFloat32(addr, dst.fpu());
       break;
     case MIRType::Double:
+      MOZ_ASSERT(wideningOp == MWideningOp::None);
       masm.loadDouble(addr, dst.fpu());
       break;
     case MIRType::Pointer:
     case MIRType::RefOrNull:
+      MOZ_ASSERT(wideningOp == MWideningOp::None);
       masm.loadPtr(addr, dst.gpr());
       break;
 #ifdef ENABLE_WASM_SIMD
     case MIRType::Simd128:
+      MOZ_ASSERT(wideningOp == MWideningOp::None);
       masm.loadUnalignedSimd128(addr, dst.fpu());
       break;
 #endif
     default:
-      MOZ_CRASH("unexpected type in LoadPrimitiveValue");
+      MOZ_CRASH("unexpected type in ::visitWasmLoadSlot");
   }
 }
 
 void CodeGenerator::visitWasmStoreSlot(LWasmStoreSlot* ins) {
   MIRType type = ins->type();
+  MNarrowingOp narrowingOp = ins->narrowingOp();
   Register container = ToRegister(ins->containerRef());
   Address addr(container, ins->offset());
   AnyRegister src = ToAnyRegister(ins->value());
+  if (type != MIRType::Int32) {
+    MOZ_RELEASE_ASSERT(narrowingOp == MNarrowingOp::None);
+  }
 
   switch (type) {
     case MIRType::Int32:
-      masm.store32(src.gpr(), addr);
+      switch (narrowingOp) {
+        case MNarrowingOp::None:
+          masm.store32(src.gpr(), addr);
+          break;
+        case MNarrowingOp::To16:
+          masm.store16(src.gpr(), addr);
+          break;
+        case MNarrowingOp::To8:
+          masm.store8(src.gpr(), addr);
+          break;
+        default:
+          MOZ_CRASH();
+      }
       break;
     case MIRType::Float32:
       masm.storeFloat32(src.fpu(), addr);
@@ -13132,9 +13176,14 @@ bool CodeGenerator::link(JSContext* cx, const WarpSnapshot* snapshot) {
     JitcodeIonTable* ionTable = (JitcodeIonTable*)ionTableAddr;
 
     // Construct the IonEntry that will go into the global table.
-    JitcodeGlobalEntry::IonEntry entry;
-    if (!ionTable->makeIonEntry(cx, code, nativeToBytecodeScriptListLength_,
-                                nativeToBytecodeScriptList_, entry)) {
+    auto entry =
+        MakeJitcodeGlobalEntry<IonEntry>(cx, code, code->raw(), code->rawEnd());
+    if (!entry) {
+      return false;
+    }
+    if (!ionTable->finishIonEntry(cx, nativeToBytecodeScriptListLength_,
+                                  nativeToBytecodeScriptList_,
+                                  entry->asIon())) {
       js_free(nativeToBytecodeScriptList_);
       js_free(nativeToBytecodeMap_);
       return false;
@@ -13146,9 +13195,7 @@ bool CodeGenerator::link(JSContext* cx, const WarpSnapshot* snapshot) {
     // Add entry to the global table.
     JitcodeGlobalTable* globalTable =
         cx->runtime()->jitRuntime()->getJitcodeGlobalTable();
-    if (!globalTable->addEntry(entry)) {
-      // Memory may have been allocated for the entry.
-      entry.destroy();
+    if (!globalTable->addEntry(std::move(entry))) {
       return false;
     }
 
@@ -13156,15 +13203,16 @@ bool CodeGenerator::link(JSContext* cx, const WarpSnapshot* snapshot) {
     code->setHasBytecodeMap();
   } else {
     // Add a dumy jitcodeGlobalTable entry.
-    JitcodeGlobalEntry::DummyEntry entry;
-    entry.init(code, code->raw(), code->rawEnd());
+    auto entry = MakeJitcodeGlobalEntry<DummyEntry>(cx, code, code->raw(),
+                                                    code->rawEnd());
+    if (!entry) {
+      return false;
+    }
 
     // Add entry to the global table.
     JitcodeGlobalTable* globalTable =
         cx->runtime()->jitRuntime()->getJitcodeGlobalTable();
-    if (!globalTable->addEntry(entry)) {
-      // Memory may have been allocated for the entry.
-      entry.destroy();
+    if (!globalTable->addEntry(std::move(entry))) {
       return false;
     }
 

@@ -20,9 +20,7 @@ if sys.version_info[0] < 3:
 else:
     from importlib.abc import MetaPathFinder
 
-
 from types import ModuleType
-
 
 STATE_DIR_FIRST_RUN = """
 Mach and the build system store shared state in a common directory
@@ -30,11 +28,9 @@ on the filesystem. The following directory will be created:
 
   {}
 
-If you would like to use a different directory, hit CTRL+c, set the
-MOZBUILD_STATE_PATH environment variable to the directory you'd like to
-use, and run Mach again.
-
-Press ENTER/RETURN to continue or CTRL+c to abort.
+If you would like to use a different directory, rename or move it to your
+desired location, and set the MOZBUILD_STATE_PATH environment variable
+accordingly.
 """.strip()
 
 
@@ -120,9 +116,11 @@ def _maybe_activate_mozillabuild_environment():
 
     paths_to_add = [mozillabuild_msys_tools_path, mozillabuild / "bin"]
     existing_paths = [Path(p) for p in os.environ.get("PATH", "").split(os.pathsep)]
+    # It's important that we prepend to the path rather than append,
+    # in case mach is getting called from another msys2 environment.
     for new_path in paths_to_add:
         if new_path not in existing_paths:
-            os.environ["PATH"] += f"{os.pathsep}{new_path}"
+            os.environ["PATH"] = f"{new_path}{os.pathsep}" + os.environ["PATH"]
 
 
 def initialize(topsrcdir):
@@ -145,7 +143,7 @@ def initialize(topsrcdir):
         )
     ]
 
-    from mach.util import setenv, get_state_dir
+    from mach.util import get_state_dir, setenv
 
     state_dir = _create_state_dir()
 
@@ -157,7 +155,6 @@ def initialize(topsrcdir):
 
     import mach.base
     import mach.main
-
     from mach.main import MachCommandReference
 
     # Centralized registry of available mach commands
@@ -586,11 +583,6 @@ def _create_state_dir():
         if not os.path.exists(state_dir):
             if not os.environ.get("MOZ_AUTOMATION"):
                 print(STATE_DIR_FIRST_RUN.format(state_dir))
-                try:
-                    sys.stdin.readline()
-                    print("\n")
-                except KeyboardInterrupt:
-                    sys.exit(1)
 
             print("Creating default state directory: {}".format(state_dir))
 
