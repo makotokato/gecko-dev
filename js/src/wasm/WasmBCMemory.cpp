@@ -1214,22 +1214,6 @@ static void Deallocate(BaseCompiler* bc, RegI32 rv, const Temps& temps) {
   bc->maybeFree(temps.t2);
 }
 
-#elif defined(JS_CODEGEN_RISCV64)
-
-struct Temps {
-  RegI32 t0;
-};
-
-static void PopAndAllocate(BaseCompiler* bc, ValType type,
-                           Scalar::Type viewType, AtomicOp op, RegI32* rd,
-                           RegI32* rv, Temps* temps) {}
-
-static void Perform(BaseCompiler* bc, const MemoryAccessDesc& access,
-                    BaseIndex srcAddr, AtomicOp op, RegI32 rv, RegI32 rd,
-                    const Temps& temps) {}
-
-static void Deallocate(BaseCompiler*, RegI32, const Temps&) {}
-
 #elif defined(JS_CODEGEN_NONE) || defined(JS_CODEGEN_WASM32)
 
 using Temps = Nothing;
@@ -1390,17 +1374,6 @@ static void Deallocate(BaseCompiler* bc, AtomicOp op, RegI64 rv, RegI64 temp) {
   bc->freeI64(rv);
   bc->freeI64(temp);
 }
-
-#elif defined(JS_CODEGEN_RISCV64)
-
-static void PopAndAllocate(BaseCompiler* bc, AtomicOp op, RegI64* rd,
-                           RegI64* rv, RegI64* temp) {}
-
-static void Perform(BaseCompiler* bc, const MemoryAccessDesc& access,
-                    BaseIndex srcAddr, AtomicOp op, RegI64 rv, RegI64 temp,
-                    RegI64 rd) {}
-
-static void Deallocate(BaseCompiler* bc, AtomicOp op, RegI64 rv, RegI64 temp) {}
 
 #elif defined(JS_CODEGEN_NONE) || defined(JS_CODEGEN_WASM32)
 

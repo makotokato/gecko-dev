@@ -213,14 +213,6 @@ elif CONFIG["JS_CODEGEN_MIPS32"] or CONFIG["JS_CODEGEN_MIPS64"]:
         ]
         if CONFIG["JS_SIMULATOR_MIPS64"]:
             UNIFIED_SOURCES += ["mips64/Simulator-mips64.cpp"]
-elif CONFIG["JS_CODEGEN_RISCV64"]:
-    UNIFIED_SOURCES += [
-        "riscv64/Architecture-riscv64.cpp",
-        "riscv64/Assembler-riscv64.cpp",
-        "riscv64/Trampoline-riscv64.cpp",
-    ]
-    if CONFIG["JS_SIMULATOR_RISC64"]:
-        UNIFIED_SOURCES += ["riscv64/Simulator-riscv64.cpp"]
 elif CONFIG["JS_CODEGEN_LOONG64"]:
     UNIFIED_SOURCES += [
         "loong64/Architecture-loong64.cpp",

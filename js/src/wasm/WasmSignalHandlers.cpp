@@ -157,11 +157,6 @@ using mozilla::DebugOnly;
 #      define R01_sig(p) ((p)->uc_mcontext.gp_regs[1])
 #      define R32_sig(p) ((p)->uc_mcontext.gp_regs[32])
 #    endif
-#    if defined(__linux__) && defined(__riscv) && __riscv_xlen == 64
-#      define EPC_sig(p) ((p)->uc_mcontext.__gregs[0])
-#      define X02_sig(p) ((p)->uc_mcontext.__gregs[2])
-#      define X08_sig(p) ((p)->uc_mcontext.__gregs[8])
-#    endif
 #    if defined(__linux__) && defined(__loongarch__)
 #      define EPC_sig(p) ((p)->uc_mcontext.__pc)
 #      define RRA_sig(p) ((p)->uc_mcontext.__gregs[1])
@@ -415,10 +410,6 @@ struct macos_aarch64_context {
 #    define FP_sig(p) RFP_sig(p)
 #    define SP_sig(p) R03_sig(p)
 #    define LR_sig(p) RRA_sig(p)
-#  elif defined(__riscv) && __riscv_xlen == 64
-#    define PC_sig(p) EPC_sig(p)
-#    define SP_sig(p) X02_sig(p)
-#    define FP_sig(p) X08_sig(p)
 #  endif
 
 static void SetContextPC(CONTEXT* context, uint8_t* pc) {

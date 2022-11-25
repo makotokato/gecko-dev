@@ -23,8 +23,6 @@
 #  include "jit/mips32/Lowering-mips32.h"
 #elif defined(JS_CODEGEN_MIPS64)
 #  include "jit/mips64/Lowering-mips64.h"
-#elif defined(JS_CODEGEN_RISCV64)
-#  include "jit/riscv64/Lowering-riscv64.h"
 #elif defined(JS_CODEGEN_LOONG64)
 #  include "jit/loong64/Lowering-loong64.h"
 #elif defined(JS_CODEGEN_WASM32)

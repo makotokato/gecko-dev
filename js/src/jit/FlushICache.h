@@ -24,7 +24,7 @@ inline void FlushICache(void* code, size_t size) {
 
 #elif (defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)) ||   \
     (defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)) || \
-    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
+    defined(JS_CODEGEN_LOONG64)
 
 // Invalidate the given code range from the icache. This will also flush the
 // execution context for this core. If this code is to be executed on another
