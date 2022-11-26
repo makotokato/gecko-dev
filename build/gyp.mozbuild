@@ -19,6 +19,7 @@ gyp_vars.update({
     # 10.9 once we move to TC cross-compiles - bug 1270217
     'mac_sdk_min': '10.9',
     'mac_deployment_target': '10.9',
+    'ios_deployment_target': '16.1',
     'use_official_google_api_keys': 0,
     'have_clock_monotonic': 1 if CONFIG['HAVE_CLOCK_MONOTONIC'] else 0,
     'have_ethtool_cmd_speed_hi': 1 if CONFIG['MOZ_WEBRTC_HAVE_ETHTOOL_SPEED_HI'] else 0,
@@ -88,9 +89,6 @@ if os == 'Android':
         gtest_target_type='executable',
         android_toolchain=CONFIG.get('ANDROID_TOOLCHAIN', ''),
     )
-
-if os == 'ios':
-    gyp_vars['ios_deployment_target'] = "15.0"
 
 if CONFIG['ARM_ARCH']:
     if int(CONFIG['ARM_ARCH']) < 7:

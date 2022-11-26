@@ -979,7 +979,7 @@
         # The Mac SDK is set for iOS builds and passed through to Mac
         # sub-builds. This allows the Mac sub-build SDK in an iOS build to be
         # overridden from the command line the same way it is for a Mac build.
-        'mac_sdk%': '<!(<(PYTHON) <(DEPTH)/build/mac/find_sdk.py 10.6)',
+        'mac_sdk%': '', #'<!(<(PYTHON) <(DEPTH)/build/mac/find_sdk.py 10.6)',
 
         # iOS SDK and deployment target support.  The iOS 5.0 SDK is actually
         # what is required, but the value is left blank so when it is set in
@@ -988,7 +988,7 @@
         # every single project file for not using the "current" SDK.
         'ios_sdk%': '',
         'ios_sdk_path%': '',
-        'ios_deployment_target%': '4.3',
+        'ios_deployment_target%': '',
 
         'conditions': [
           # ios_product_name is set to the name of the .app bundle as it should
