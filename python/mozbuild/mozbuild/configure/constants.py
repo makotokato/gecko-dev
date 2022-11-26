@@ -20,6 +20,7 @@ OS = EnumString.subclass(
     "DragonFly",
     "FreeBSD",
     "GNU",
+    "iOS",
     "NetBSD",
     "OpenBSD",
     "OSX",
@@ -121,6 +122,7 @@ assert sorted(kernel_preprocessor_checks.keys()) == sorted(Kernel.POSSIBLE_VALUE
 
 OS_preprocessor_checks = {
     "Android": "__ANDROID__",
+    "iOS": "__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__",
 }
 
 # We intentionally don't include all possible OSes in our checks, because we

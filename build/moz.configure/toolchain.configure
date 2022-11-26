@@ -43,6 +43,19 @@ def compiling_android(compile_env, target):
 
 include("android-ndk.configure", when=compiling_android)
 
+
+# iOS
+# ==============================================================
+
+
+@depends("--disable-compile-environment", target)
+def compiling_ios(compile_env, target):
+    return compile_env and target.os == "iOS"
+
+
+include("ios.configure", when=compiling_ios)
+
+
 with only_when(target_is_osx):
     # MacOS deployment target version
     # ==============================================================
@@ -449,6 +462,10 @@ def check_compiler(compiler, language, target):
         if info.xcode and target.os == "OSX" and target.cpu == "aarch64":
             if "--target=arm64-apple-darwin" not in compiler:
                 flags.append("--target=arm64-apple-darwin")
+            has_target = True
+
+        elif target.os == "iOS" and target.cpu == "aarch64":
+            flags.append("--target=arm64-apple-ios")
             has_target = True
 
         elif (
@@ -995,17 +1012,21 @@ def sysroot(host_or_target, target_sysroot=None):
     @depends(
         sysroot_input,
         host_or_target,
+        target,
         macos_sdk,
+        ios_sdk,
         bootstrap_path(
             depends(host_or_target)(lambda t: "sysroot-{}".format(t.toolchain)),
             when=bootstrap_sysroot,
         ),
     )
     @imports("os")
-    def sysroot(sysroot_input, host_or_target, macos_sdk, path):
+    def sysroot(sysroot_input, host_or_target, target, macos_sdk, ios_sdk, path):
         version = None
         if sysroot_input:
             path = sysroot_input[0]
+        if host_or_target is target and host_or_target.os == "iOS" and ios_sdk:
+            path = ios_sdk
         elif host_or_target.kernel == "Darwin" and macos_sdk:
             path = macos_sdk
         if path:
@@ -1159,6 +1180,7 @@ def compiler(
         host_or_target,
         sysroot,
         macos_target,
+        ios_target,
         multiarch_dir,
     )
     @checking("whether %s can be used" % what, lambda x: bool(x))
@@ -1171,6 +1193,7 @@ def compiler(
         host_or_target,
         sysroot,
         macos_target,
+        ios_target,
         multiarch_dir,
     ):
         wrapper = list(compiler_wrapper or ())
@@ -1308,8 +1331,8 @@ def compiler(
                     % (host_or_target.alias, info.version)
                 )
 
-        if info.flags:
-            raise FatalCheckError("Unknown compiler or compiler not supported.")
+        #if info.flags:
+        #    raise FatalCheckError("Unknown compiler or compiler not supported.")
 
         # Recent clang defaults to compiler-rt, but we want libgcc for compat
         # with the older NDKs we use.

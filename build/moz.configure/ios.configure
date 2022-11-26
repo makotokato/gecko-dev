@@ -1,0 +1,58 @@
+# vim: set filetype=python:
+
+option(
+    "--with-ios-sdk",
+    env="IOS_SDK_DIR",
+    nargs=1,
+    help="Location of Platform SDK to use",
+)
+
+
+@imports("plistlib")
+def get_ios_sdk_version(sdk):
+    with open(os.path.join(sdk, "SDKSettings.plist"), "rb") as plist:
+        obj = plistlib.load(plist)
+
+
+@depends("--with-ios-sdk", host)
+@imports(_from="os.path", _import="isdir")
+@imports(_from="os", _import="listdir")
+def ios_sdk(sdk, host):
+    if host.os == "OSX":
+        sdk = check_cmd_output(
+            "xcrun", "--sdk", "iphoneos", "--show-sdk-path", onerror=lambda: ""
+        ).rstrip()
+        if not sdk:
+            die("")
+
+        sdk_dir = os.path.dirname(sdk)
+        version = []
+        for d in listdir(sdk_dir):
+            if d.lower().startswith("iphoneos"):
+                try:
+                    sdk = os.path.join(sdk_dir, d)
+                except Exception:
+                    pass
+    else:
+        die("")
+
+    if not isdir(sdk):
+        die("")
+
+    return sdk;
+
+
+set_config("IOS_SDK_DIR", ios_sdk)
+
+
+option(
+    "--enable-ios-target",
+    nargs=1,
+    default="15.0",
+    help="Set the minimum iOS version",
+)
+
+
+@depends_if("--enable-ios-target")
+def ios_target(value):
+    return value[0]

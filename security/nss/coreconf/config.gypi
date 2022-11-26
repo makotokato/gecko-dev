@@ -517,7 +517,8 @@
           }],
           [ 'OS=="ios"', {
             'xcode_settings': {
-              'IPHONEOS_DEPLOYMENT_TARGET': '<(iphone_deployment_target)',
+              #'IPHONEOS_DEPLOYMENT_TARGET': '<(iphone_deployment_target)',
+              'IPHONEOS_DEPLOYMENT_TARGET': '15.0',
             },
           }],
           [ 'OS=="win"', {

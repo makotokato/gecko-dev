@@ -198,7 +198,7 @@ def audio_backends_default(target):
         return ("oss",)
     elif target.os == "OpenBSD":
         return ("sndio",)
-    elif target.os == "OSX":
+    elif target.os in ("OSX", "iOS"):
         return ("audiounit",)
     elif target.os == "WINNT":
         return ("wasapi",)
@@ -410,6 +410,8 @@ def toolkit_choices(target):
         return ("cairo-windows",)
     elif target.os == "OSX":
         return ("cairo-cocoa",)
+    elif target.os == "iOS":
+        return ("cairo-uikit",)
     elif target.os == "Android":
         return ("cairo-android",)
     else:

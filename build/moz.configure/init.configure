@@ -483,6 +483,9 @@ def split_triplet(triplet, allow_msvc=False, allow_wasi=False):
     elif os.startswith("darwin"):
         canonical_kernel = "Darwin"
         canonical_os = "OSX"
+    elif os.startswith("ios"):
+        canonical_kernel = "Darwin"
+        canonical_os = "iOS"
     elif os.startswith("dragonfly"):
         canonical_os = canonical_kernel = "DragonFly"
     elif os.startswith("freebsd"):
@@ -824,6 +827,15 @@ def target_is_osx(target):
 
 
 set_define("XP_MACOSX", target_is_osx)
+
+
+@depends(target)
+def target_is_ios(target):
+    if target.kernel == "Darwin" and target.os == "iOS":
+        return True
+
+
+set_define("XP_IOS", target_is_ios)
 
 
 @depends(target)
