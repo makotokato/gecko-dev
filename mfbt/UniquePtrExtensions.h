@@ -19,7 +19,7 @@
 #ifdef XP_WIN
 #  include <cstdint>
 #endif
-#if defined(XP_MACOSX) && !defined(RUST_BINDGEN)
+#if (defined(XP_MACOSX) || defined(XP_IOS)) && !defined(RUST_BINDGEN)
 #  include <mach/mach.h>
 #endif
 
