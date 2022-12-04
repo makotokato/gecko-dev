@@ -6,14 +6,16 @@
 #ifndef NSWINDOW_H_
 #define NSWINDOW_H_
 
-#include "nsBaseWidget.h"
+#include "InputData.h"
 #include "gfxPoint.h"
+#include "nsBaseWidget.h"
 
 #include "nsTArray.h"
 
 @class UIWindow;
 @class UIView;
-@class ChildView;
+@class GeckoWebView;
+class gfxASurface;
 
 class nsWindow final : public nsBaseWidget {
   typedef nsBaseWidget Inherited;
@@ -33,6 +35,7 @@ class nsWindow final : public nsBaseWidget {
   virtual void Destroy() override;
   virtual void Show(bool aState) override;
   virtual void Enable(bool aState) override {}
+  virtual nsIWidget* GetParent() override { return mParent; }
   virtual bool IsEnabled() const override { return true; }
   virtual bool IsVisible() const override { return mVisible; }
   virtual void SetFocus(Raise, mozilla::dom::CallerType aCallerType) override;
@@ -40,17 +43,20 @@ class nsWindow final : public nsBaseWidget {
 
   virtual void SetBackgroundColor(const nscolor& aColor) override;
   virtual void* GetNativeData(uint32_t aDataType) override;
+  virtual void SetNativeData(uint32_t aDataType, uintptr_t aVal) override;
 
+  virtual void ConstrainPosition(bool aAllowSlop, int32_t* aX, int32_t* aY) override {}
   virtual void Move(double aX, double aY) override;
   virtual nsSizeMode SizeMode() override { return mSizeMode; }
   virtual void SetSizeMode(nsSizeMode aMode) override;
   void EnteredFullScreen(bool aFullScreen);
   virtual void Resize(double aWidth, double aHeight, bool aRepaint) override;
   virtual void Resize(double aX, double aY, double aWidth, double aHeight, bool aRepaint) override;
-  virtual LayoutDeviceIntRect GetScreenBounds() override;
+  virtual LayoutDeviceIntRect GetScreenBounds() override { return mBounds; }
   void ReportMoveEvent();
   void ReportSizeEvent();
   void ReportSizeModeEvent(nsSizeMode aMode);
+  virtual nsresult MakeFullScreen(bool aFullScreen) override;
 
   CGFloat BackingScaleFactor();
   void BackingScaleFactorChanged();
@@ -63,25 +69,23 @@ class nsWindow final : public nsBaseWidget {
 
   virtual nsresult SetTitle(const nsAString& aTitle) override { return NS_OK; }
 
-  virtual void Invalidate(const LayoutDeviceIntRect& aRect) override;
+  virtual void Invalidate(const LayoutDeviceIntRect& aRect) override {}
   virtual nsresult DispatchEvent(mozilla::WidgetGUIEvent* aEvent, nsEventStatus& aStatus) override;
-
-  void WillPaintWindow();
-  bool PaintWindow(LayoutDeviceIntRegion aRegion);
 
   bool HasModalDescendents() { return false; }
 
-  // virtual nsresult
-  // NotifyIME(const IMENotification& aIMENotification) override;
-  virtual void SetInputContext(const InputContext& aContext, const InputContextAction& aAction);
-  virtual InputContext GetInputContext();
-  /*
-  virtual bool ExecuteNativeKeyBinding(
-                      NativeKeyBindingsType aType,
-                      const mozilla::WidgetKeyboardEvent& aEvent,
-                      DoCommandCallback aCallback,
-                      void* aCallbackData) override;
-  */
+  virtual void SetInputContext(const InputContext& aContext,
+                               const InputContextAction& aAction) override;
+  virtual InputContext GetInputContext() override;
+
+  void ConfigureAPZControllerThread() override;
+
+  void DispatchTouchInput(mozilla::MultiTouchInput& aInput);
+
+  void NativeViewDestroyed();
+
+  void InsertText(const char* aText);
+  void DeleteCharacter();
 
  protected:
   virtual ~nsWindow();
@@ -91,16 +95,14 @@ class nsWindow final : public nsBaseWidget {
   nsresult GetCurrentOffset(uint32_t& aOffset, uint32_t& aLength);
   nsresult DeleteRange(int aOffset, int aLen);
 
-  void TearDownView();
-
-  ChildView* mNativeView;
+  GeckoWebView* mNativeView;
+  bool mIsFullScreen;
   bool mVisible;
   nsSizeMode mSizeMode;
   nsTArray<nsWindow*> mChildren;
   nsWindow* mParent;
   InputContext mInputContext;
-
-  void OnSizeChanged(const mozilla::gfx::IntSize& aSize);
+  mozilla::widget::PlatformCompositorWidgetDelegate* mCompositorWidgetDelegate = nullptr;
 
   static void DumpWindows();
   static void DumpWindows(const nsTArray<nsWindow*>& wins, int indent = 0);
