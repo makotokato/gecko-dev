@@ -102,7 +102,7 @@ class nsWindow final : public nsBaseWidget {
   nsTArray<nsWindow*> mChildren;
   nsWindow* mParent;
   InputContext mInputContext;
-  mozilla::widget::PlatformCompositorWidgetDelegate* mCompositorWidgetDelegate = nullptr;
+  mozilla::widget::PlatformCompositorWidgetDelegate* mCompositorWidgetDelegate;
 
   static void DumpWindows();
   static void DumpWindows(const nsTArray<nsWindow*>& wins, int indent = 0);

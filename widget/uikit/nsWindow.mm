@@ -66,7 +66,11 @@ static nsWindow* gActiveWindow = nullptr;
 NS_IMPL_ISUPPORTS_INHERITED0(nsWindow, Inherited)
 
 nsWindow::nsWindow()
-    : mNativeView(nullptr), mIsFullScreen(false), mVisible(false), mParent(nullptr) {}
+    : mNativeView(nullptr),
+      mIsFullScreen(false),
+      mVisible(false),
+      mParent(nullptr),
+      mCompositorWidgetDelegate(nullptr) {}
 
 nsWindow::~nsWindow() {}
 
@@ -117,6 +121,9 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
 
 void nsWindow::Destroy() {
   MOZ_ASSERT(!mNativeView, "Native view should've been unset!");
+
+  nsBaseWidget::mOnDestroyCalled = true;
+
   for (uint32_t i = 0; i < mChildren.Length(); ++i) {
     // why do we still have children?
     mChildren[i]->SetParent(nullptr);
@@ -125,6 +132,10 @@ void nsWindow::Destroy() {
   if (mParent) {
     mParent->mChildren.RemoveElement(this);
   }
+
+  nsBaseWidget::Destroy();
+
+  SetParent(nullptr);
 
   nsBaseWidget::OnDestroy();
 }
@@ -456,4 +467,14 @@ void nsWindow::DispatchTouchInput(MultiTouchInput& aInput) {
     WidgetTouchEvent event = input.ToWidgetTouchEvent(this);
     ProcessUntransformedAPZEvent(&event, guid, inputBlockId, result);
   });
+}
+
+already_AddRefed<nsIWidget> nsIWidget::CreateTopLevelWindow() {
+  nsCOMPtr<nsIWidget> window = new nsWindow();
+  return window.forget();
+}
+
+already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
+  nsCOMPtr<nsIWidget> window = new nsWindow();
+  return window.forget();
 }
