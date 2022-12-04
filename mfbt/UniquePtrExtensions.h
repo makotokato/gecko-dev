@@ -158,7 +158,7 @@ struct FileHandleDeleter {
   MFBT_API void operator()(FileHandleHelper aHelper);
 };
 
-#if defined(XP_MACOSX) && !defined(RUST_BINDGEN)
+#if (defined(XP_MACOSX) || defined(XP_IOS)) && !defined(RUST_BINDGEN)
 struct MachPortHelper {
   MOZ_IMPLICIT MachPortHelper(mach_port_t aPort) : mPort(aPort) {}
 
@@ -215,7 +215,7 @@ using UniqueFreePtr = UniquePtr<T, detail::FreePolicy<T>>;
 using UniqueFileHandle =
     UniquePtr<detail::FileHandleType, detail::FileHandleDeleter>;
 
-#if defined(XP_MACOSX) && !defined(RUST_BINDGEN)
+#if (defined(XP_MACOSX) || defined(XP_IOS)) && !defined(RUST_BINDGEN)
 // A RAII class for a Mach port that names a send right.
 using UniqueMachSendRight =
     UniquePtr<mach_port_t, detail::MachSendRightDeleter>;

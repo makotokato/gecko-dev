@@ -9,7 +9,7 @@ with Files("**"):
 
 SOURCES += [
     'GeckoThread.mm',
-    'GeckoWebView.mm'
+    'GeckoWebView.mm',
     "GfxInfo.cpp",
     "nsAppShell.mm",
     "nsLookAndFeel.mm",
