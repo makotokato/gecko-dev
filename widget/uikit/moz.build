@@ -11,9 +11,9 @@ SOURCES += [
     "GfxInfo.cpp",
     "nsAppShell.mm",
     "nsLookAndFeel.mm",
-    "nsScreenManager.mm",
     "nsWidgetFactory.mm",
     "nsWindow.mm",
+    "ScreenHelperUIKit.mm",
 ]
 
 FINAL_LIBRARY = "xul"
