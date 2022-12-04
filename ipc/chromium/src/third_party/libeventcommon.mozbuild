@@ -10,6 +10,7 @@ os_macosx = 0
 os_bsd = 0
 os_linux = 0
 os_solaris = 0
+os_ios = 0
 
 if CONFIG['OS_ARCH'] == 'WINNT':
     os_win = 1
@@ -18,6 +19,8 @@ else:
     if CONFIG['OS_ARCH'] == 'Darwin':
         os_macosx = 1
         libevent_include_suffix = 'mac'
+        if CONFIG['MOZ_IOS']:
+            os_ios = 1
     elif CONFIG['OS_ARCH'] in ['DragonFly', 'FreeBSD', 'GNU_kFreeBSD',
                                'NetBSD', 'OpenBSD']:
         os_bsd = 1
