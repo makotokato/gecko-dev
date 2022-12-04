@@ -78,7 +78,6 @@ if os_posix:
 
 if os_macosx:
     UNIFIED_SOURCES += [
-        "src/base/chrome_application_mac.mm",
         "src/base/mac_util.mm",
         "src/base/message_pump_mac.mm",
         "src/base/process_util_mac.mm",
@@ -93,6 +92,10 @@ if os_macosx:
         # of NoOp.
         "src/base/platform_thread_mac.mm",
     ]
+    if not os_ios:
+        UNIFIED_SOURCES += [
+            'src/base/chrome_application_mac.mm',
+        ]
 
 if os_bsd:
     SOURCES += [
