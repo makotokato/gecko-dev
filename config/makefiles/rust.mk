@@ -244,6 +244,9 @@ ifeq ($(OS_ARCH), Darwin)
 ifdef MACOS_SDK_DIR
 export COREAUDIO_SDK_PATH=$(MACOS_SDK_DIR)
 endif
+ifdef IOS_SDK_DIR
+export COREAUDIO_SDK_PATH=$(IOS_SDK_DIR)
+endif
 endif
 
 ifndef RUSTC_BOOTSTRAP
