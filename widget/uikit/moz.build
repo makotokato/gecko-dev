@@ -8,12 +8,19 @@ with Files("**"):
     BUG_COMPONENT = ("Core", "Widget")
 
 SOURCES += [
+    'GeckoThread.mm',
+    'GeckoWebView.mm'
     "GfxInfo.cpp",
     "nsAppShell.mm",
     "nsLookAndFeel.mm",
     "nsWidgetFactory.mm",
     "nsWindow.mm",
     "ScreenHelperUIKit.mm",
+]
+
+EXPORTS += [
+    'GeckoThread.h',
+    'GeckoWebView.h'
 ]
 
 FINAL_LIBRARY = "xul"
