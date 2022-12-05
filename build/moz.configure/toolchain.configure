@@ -1208,6 +1208,8 @@ def compiler(
                 flags.extend(("--sysroot", sysroot.path))
         if host_or_target.os == "OSX" and macos_target:
             flags.append("-mmacosx-version-min=%s" % macos_target)
+        if host_or_target.os == "iOS" and ios_target:
+            flags.append("-miphoneos-version-min=%s" % ios_target)
         if provided_compiler:
             wrapper.extend(provided_compiler.wrapper)
             flags.extend(provided_compiler.flags)
