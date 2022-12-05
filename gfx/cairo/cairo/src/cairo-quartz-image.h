@@ -40,7 +40,11 @@
 
 #if CAIRO_HAS_QUARTZ_IMAGE_SURFACE
 
+#if defined(MOZ_WIDGET_UIKIT)
+#include <CoreGraphics/CoreGraphics.h>
+#else
 #include <Carbon/Carbon.h>
+#endif
 
 CAIRO_BEGIN_DECLS
 

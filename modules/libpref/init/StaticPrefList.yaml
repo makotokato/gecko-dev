@@ -5536,7 +5536,7 @@
   value: 0
   mirror: once
 
-#if defined(XP_MACOSX)
+#if defined(XP_MACOSX) || defined(XP_IOS)
 - name: gfx.cairo_quartz_cg_layer.enabled
   type: bool
   value: true

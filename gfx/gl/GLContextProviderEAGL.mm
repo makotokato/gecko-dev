@@ -182,7 +182,7 @@ already_AddRefed<GLContext> GLContextProviderEAGL::CreateForCompositorWidget(
 already_AddRefed<GLContext> GLContextProviderEAGL::CreateHeadless(
     const GLContextCreateDesc& createDesc, nsACString* const out_failureId) {
   auto desc = GLContextDesc{createDesc};
-  desc.isOffcreen = true;
+  desc.isOffscreen = true;
   return CreateEAGLContext(desc, GetGlobalContextEAGL()).forget();
 }
 
@@ -194,7 +194,8 @@ GLContext* GLContextProviderEAGL::GetGlobalContext() {
     triedToCreateContext = true;
 
     MOZ_RELEASE_ASSERT(!gGlobalContext, "GFX: Global GL context already initialized.");
-    RefPtr<GLContext> temp = CreateHeadless(CreateContextFlags::NONE);
+    nsCString failureId;
+    RefPtr<GLContext> temp = CreateHeadless(CreateContextFlags::NONE, &failureId);
     gGlobalContext = temp;
 
     if (!gGlobalContext) {

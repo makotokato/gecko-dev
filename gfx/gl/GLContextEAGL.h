@@ -23,7 +23,7 @@ class GLContextEAGL : public GLContext {
  public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GLContextEAGL, override)
   GLContextEAGL(const GLContextDesc&, EAGLContext* context,
-                GLContext* sharedContext, ContextProfile profile);
+                GLContext* sharedContext);
 
   ~GLContextEAGL();
 
@@ -54,7 +54,7 @@ class GLContextEAGL : public GLContext {
 
   virtual GLuint GetDefaultFramebuffer() override { return mBackbufferFB; }
 
-  virtual bool RenewSurface(nsIWidget* aWidget) override {
+  virtual bool RenewSurface(widget::CompositorWidget* aWidget) override {
     // FIXME: should use the passed widget instead of the existing one.
     return RecreateRB();
   }

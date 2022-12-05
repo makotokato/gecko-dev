@@ -40,7 +40,12 @@
 
 #if CAIRO_HAS_QUARTZ_SURFACE
 
+#if defined(MOZ_WIDGET_UIKIT)
+#include <CoreGraphics/CoreGraphics.h>
+#include <CoreText/CoreText.h>
+#else
 #include <ApplicationServices/ApplicationServices.h>
+#endif
 
 CAIRO_BEGIN_DECLS
 
@@ -75,8 +80,10 @@ cairo_quartz_surface_get_image (cairo_surface_t *surface);
 cairo_public cairo_font_face_t *
 cairo_quartz_font_face_create_for_cgfont (CGFontRef font);
 
+#if !defined(MOZ_WIDGET_UIKIT)
 cairo_public cairo_font_face_t *
 cairo_quartz_font_face_create_for_atsu_font_id (ATSUFontID font_id);
+#endif
 
 #endif /* CAIRO_HAS_QUARTZ_FONT */
 
