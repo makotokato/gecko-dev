@@ -9,6 +9,7 @@
 #include "nsIWidget.h"
 #include "gfxFailure.h"
 #include "prenv.h"
+#include "prlink.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/layers/CompositorOptions.h"
@@ -195,7 +196,7 @@ GLContext* GLContextProviderEAGL::GetGlobalContext() {
 
     MOZ_RELEASE_ASSERT(!gGlobalContext, "GFX: Global GL context already initialized.");
     nsCString failureId;
-    RefPtr<GLContext> temp = CreateHeadless(CreateContextFlags::NONE, &failureId);
+    RefPtr<GLContext> temp = CreateHeadless({gl::CreateContextFlags::NONE}, &failureId);
     gGlobalContext = temp;
 
     if (!gGlobalContext) {

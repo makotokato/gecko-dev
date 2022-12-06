@@ -97,6 +97,7 @@ static const char* const sExtensionNames[] = {
     "GL_APPLE_fence",
     "GL_APPLE_framebuffer_multisample",
     "GL_APPLE_sync",
+    "GL_APPLE_texture_format_BGRA8888",
     "GL_APPLE_texture_range",
     "GL_APPLE_vertex_array_object",
     "GL_ARB_ES2_compatibility",

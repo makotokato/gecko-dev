@@ -81,6 +81,9 @@
 #  include "gfxPlatformMac.h"
 #  include "gfxQuartzSurface.h"
 #  include "nsCocoaFeatures.h"
+#elif defined(XP_IOS)
+#  include "gfxPlatformMac.h"
+#  include "gfxQuartzSurface.h"
 #elif defined(MOZ_WIDGET_GTK)
 #  include "gfxPlatformGtk.h"
 #elif defined(ANDROID)

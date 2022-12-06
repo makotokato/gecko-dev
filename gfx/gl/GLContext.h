@@ -369,6 +369,7 @@ class GLContext : public GenericAtomicRefCounted, public SupportsWeakPtr {
     APPLE_fence,
     APPLE_framebuffer_multisample,
     APPLE_sync,
+    APPLE_texture_format_BGRA8888,
     APPLE_texture_range,
     APPLE_vertex_array_object,
     ARB_ES2_compatibility,
