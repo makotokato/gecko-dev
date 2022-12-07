@@ -1234,7 +1234,7 @@ HttpObserverManager = {
   },
 
   examine(channel, topic, data) {
-    if (this.listeners.onHeadersReceived.size) {
+    if (this.listeners.onHeadersReceived.size || this.dnrActive) {
       this.runChannelListener(channel, "onHeadersReceived");
     }
 
@@ -1308,6 +1308,14 @@ var onErrorOccurred = new HttpEvent("onErrorOccurred");
 var WebRequest = {
   setDNRHandlingEnabled: dnrActive => {
     HttpObserverManager.setDNRHandlingEnabled(dnrActive);
+  },
+  getTabIdForChannelWrapper: channel => {
+    // Warning: This method should only be called after the initialization of
+    // ExtensionParent.apiManager.global. Generally, this means that this method
+    // should only be used by implementations of extension API methods (which
+    // themselves are loaded in ExtensionParent.apiManager.global and therefore
+    // imply the initialization of ExtensionParent.apiManager.global).
+    return HttpObserverManager.getBrowserData(channel).tabId;
   },
 
   onBeforeRequest,

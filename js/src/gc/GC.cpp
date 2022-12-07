@@ -2933,7 +2933,7 @@ GCRuntime::MarkQueueProgress GCRuntime::processTestMarkQueue() {
 
       // Mark the object and push it onto the stack.
       size_t oldPosition = marker.stack.position();
-      marker.markAndTraverse(obj);
+      marker.markAndTraverse<MarkingOptions::None>(obj);
 
       // If we overflow the stack here and delay marking, then we won't be
       // testing what we think we're testing.
@@ -2944,7 +2944,7 @@ GCRuntime::MarkQueueProgress GCRuntime::processTestMarkQueue() {
       }
 
       SliceBudget unlimited = SliceBudget::unlimited();
-      marker.processMarkStackTop(unlimited);
+      marker.processMarkStackTop<MarkingOptions::None>(unlimited);
     } else if (val.isString()) {
       JSLinearString* str = &val.toString()->asLinear();
       if (js::StringEqualsLiteral(str, "yield") && isIncrementalGc()) {
@@ -4549,9 +4549,10 @@ Realm* js::NewRealm(JSContext* cx, JSPrincipals* principals,
   }
 
   UniquePtr<Realm> realm(cx->new_<Realm>(comp, options));
-  if (!realm || !realm->init(cx, principals)) {
+  if (!realm) {
     return nullptr;
   }
+  realm->init(cx, principals);
 
   // Make sure we don't put system and non-system realms in the same
   // compartment.

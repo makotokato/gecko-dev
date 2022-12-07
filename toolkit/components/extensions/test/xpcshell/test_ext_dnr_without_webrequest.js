@@ -108,6 +108,7 @@ add_task(async function block_request_with_dnr() {
     browser.test.sendMessage("tested_dnr_block");
   }
   let extension = ExtensionTestUtils.loadExtension({
+    allowInsecureRequests: true,
     background,
     manifest: {
       manifest_version: 3,
@@ -156,6 +157,7 @@ add_task(async function block_with_declarativeNetRequestWithHostAccess() {
       browser.test.sendMessage("dnr_registered");
     },
     temporarilyInstalled: true, // Needed for granted_host_permissions
+    allowInsecureRequests: true,
     manifest: {
       manifest_version: 3,
       granted_host_permissions: true,
@@ -233,6 +235,7 @@ add_task(async function upgradeScheme_declarativeNetRequestWithHostAccess() {
       browser.test.sendMessage("tested_dnr_upgradeScheme");
     },
     temporarilyInstalled: true, // Needed for granted_host_permissions.
+    allowInsecureRequests: true,
     manifest: {
       manifest_version: 3,
       granted_host_permissions: true,
@@ -257,10 +260,8 @@ add_task(async function upgradeScheme_declarativeNetRequestWithHostAccess() {
   // https://github.com/w3c/webappsec-upgrade-insecure-requests/issues/32
   Assert.equal(
     (await contentFetch("http://dummy/", "http://redir/never_reached")).url,
-    // TODO bug 1800990: despite the mirrored Origin in ACAO, the CORS check
-    // fails after a request is upgraded. Once fixed, update this expectation:
-    undefined, // Should be: "http://dummy/cors_202?from_https",
-    "TODO 1800990: upgradeScheme + host access should upgrade (cross-origin request)"
+    "http://dummy/cors_202?from_https",
+    "upgradeScheme + host access should upgrade (cross-origin request)"
   );
 
   // The DNR extension does not have example.net in host_permissions.
@@ -336,6 +337,7 @@ add_task(async function redirect_request_with_dnr() {
   let extension = ExtensionTestUtils.loadExtension({
     background,
     temporarilyInstalled: true, // Needed for granted_host_permissions
+    allowInsecureRequests: true,
     manifest: {
       manifest_version: 3,
       granted_host_permissions: true,
@@ -420,6 +422,7 @@ add_task(async function redirect_request_with_dnr_cors_preflight() {
   let extension = ExtensionTestUtils.loadExtension({
     background,
     temporarilyInstalled: true, // Needed for granted_host_permissions
+    allowInsecureRequests: true,
     manifest: {
       manifest_version: 3,
       granted_host_permissions: true,
@@ -525,6 +528,7 @@ add_task(async function redirect_request_with_dnr_multiple_hops() {
   let extension = ExtensionTestUtils.loadExtension({
     background,
     temporarilyInstalled: true, // Needed for granted_host_permissions
+    allowInsecureRequests: true,
     manifest: {
       manifest_version: 3,
       granted_host_permissions: true,
@@ -582,6 +586,7 @@ add_task(async function redirect_request_with_dnr_with_redirect_loop() {
   let extension = ExtensionTestUtils.loadExtension({
     background,
     temporarilyInstalled: true, // Needed for granted_host_permissions
+    allowInsecureRequests: true,
     manifest: {
       manifest_version: 3,
       granted_host_permissions: true,
@@ -663,6 +668,7 @@ add_task(async function redirect_request_with_dnr_to_extensionPath() {
   let extension = ExtensionTestUtils.loadExtension({
     background,
     temporarilyInstalled: true, // Needed for granted_host_permissions
+    allowInsecureRequests: true,
     manifest: {
       manifest_version: 3,
       granted_host_permissions: true,

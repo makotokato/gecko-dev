@@ -170,6 +170,27 @@ const nsTArray<RefPtr<nsINode>>* Gecko_GetAssignedNodes(
   return &static_cast<const HTMLSlotElement*>(aElement)->AssignedNodes();
 }
 
+void Gecko_GetQueryContainerSize(const Element* aElement, nscoord* aOutWidth,
+                                 nscoord* aOutHeight) {
+  MOZ_ASSERT(aElement);
+  const nsIFrame* frame = aElement->GetPrimaryFrame();
+  if (!frame) {
+    return;
+  }
+  const auto containAxes = frame->GetContainSizeAxes();
+  if (!containAxes.IsAny()) {
+    return;
+  }
+  nsSize size = frame->GetContentRectRelativeToSelf().Size();
+  bool isVertical = frame->GetWritingMode().IsVertical();
+  if (isVertical ? containAxes.mBContained : containAxes.mIContained) {
+    *aOutWidth = size.width;
+  }
+  if (isVertical ? containAxes.mIContained : containAxes.mBContained) {
+    *aOutHeight = size.height;
+  }
+}
+
 void Gecko_ComputedStyle_Init(ComputedStyle* aStyle,
                               const ServoComputedData* aValues,
                               PseudoStyleType aPseudoType) {

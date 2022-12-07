@@ -1629,7 +1629,9 @@ bool nsGlobalWindowInner::ShouldResistFingerprinting() const {
   if (mDoc) {
     return mDoc->ShouldResistFingerprinting();
   }
-  return nsIScriptGlobalObject::ShouldResistFingerprinting();
+  return nsContentUtils::ShouldResistFingerprinting(
+      "If we do not have a document then we do not have any context"
+      "to make an informed RFP choice, so we fall back to the global pref");
 }
 
 OriginTrials nsGlobalWindowInner::Trials() const {
@@ -1674,6 +1676,10 @@ nsGlobalWindowInner::GetStorageKey() {
   }
 
   return std::move(principalInfo);
+}
+
+mozilla::dom::StorageManager* nsGlobalWindowInner::GetStorageManager() {
+  return Navigator()->Storage();
 }
 
 nsresult nsGlobalWindowInner::EnsureScriptEnvironment() {

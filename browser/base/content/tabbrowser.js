@@ -249,6 +249,8 @@
 
     _hoverTabTimer: null,
 
+    _featureCallout: null,
+
     get tabContainer() {
       delete this.tabContainer;
       return (this.tabContainer = document.getElementById("tabbrowser-tabs"));
@@ -322,6 +324,31 @@
       return this._selectedBrowser;
     },
 
+    get featureCallout() {
+      return this._featureCallout;
+    },
+
+    set featureCallout(val) {
+      this._featureCallout = val;
+    },
+
+    get instantiateFeatureCalloutTour() {
+      return this._instantiateFeatureCalloutTour;
+    },
+
+    _instantiateFeatureCalloutTour(location) {
+      // Show Feature Callout in browser chrome when applicable
+      const { FeatureCallout } = ChromeUtils.importESModule(
+        "chrome://browser/content/featureCallout.mjs"
+      );
+      // Note - once we have additional browser chrome messages,
+      // only use PDF.js pref value when navigating to PDF viewer
+      this._featureCallout = new FeatureCallout({
+        win: window,
+        prefName: "browser.pdfjs.feature-tour",
+        source: location.spec,
+      });
+    },
     _setupInitialBrowserAndTab() {
       // See browser.js for the meaning of window.arguments.
       // Bug 1485961 covers making this more sane.
@@ -1060,6 +1087,16 @@
 
       let newTab = this.getTabForBrowser(newBrowser);
 
+      if (this._featureCallout) {
+        this._featureCallout._endTour(true);
+        this._featureCallout = null;
+      }
+
+      if (newBrowser.currentURI.spec.endsWith(".pdf")) {
+        this._instantiateFeatureCalloutTour(newBrowser.currentURI.spec);
+        window.gBrowser.featureCallout.showFeatureCallout();
+      }
+
       if (!aForceUpdate) {
         TelemetryStopwatch.start("FX_TAB_SWITCH_UPDATE_MS");
 
@@ -1691,6 +1728,7 @@
       var aCsp;
       var aSkipLoad;
       var aGlobalHistoryOptions;
+      var aTriggeringRemoteType;
       if (
         arguments.length == 2 &&
         typeof arguments[1] == "object" &&
@@ -1721,6 +1759,7 @@
         aCsp = params.csp;
         aSkipLoad = params.skipLoad;
         aGlobalHistoryOptions = params.globalHistoryOptions;
+        aTriggeringRemoteType = params.triggeringRemoteType;
       }
 
       // all callers of loadOneTab need to pass a valid triggeringPrincipal.
@@ -1761,6 +1800,7 @@
         csp: aCsp,
         skipLoad: aSkipLoad,
         globalHistoryOptions: aGlobalHistoryOptions,
+        triggeringRemoteType: aTriggeringRemoteType,
       });
       if (!bgLoad) {
         this.selectedTab = tab;
@@ -2611,6 +2651,7 @@
         skipLoad,
         batchInsertingTabs,
         globalHistoryOptions,
+        triggeringRemoteType,
       } = {}
     ) {
       // all callers of addTab that pass a params object need to pass
@@ -2943,6 +2984,7 @@
               postData,
               csp,
               globalHistoryOptions,
+              triggeringRemoteType,
             });
           } catch (ex) {
             Cu.reportError(ex);
@@ -6794,6 +6836,17 @@
             gBrowser._tabLayerCache.splice(tabCacheIndex, 1);
             gBrowser._getSwitcher().cleanUpTabAfterEviction(this.mTab);
           }
+        } else if (aLocation.spec.endsWith(".pdf")) {
+          // For now, only check for Feature Callout messages
+          // when viewing PDFs. Later, we can expand this to check
+          // for callout messages on every change of tab location.
+          if (window.gBrowser.featureCallout) {
+            window.gBrowser.featureCallout._endTour(true);
+            window.gBrowser.featureCallout = null;
+          }
+
+          window.gBrowser.instantiateFeatureCalloutTour(aLocation);
+          window.gBrowser.featureCallout.showFeatureCallout();
         }
       }
 

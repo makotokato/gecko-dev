@@ -488,10 +488,6 @@ class nsWindow final : public nsBaseWidget {
   void SetHasMappedToplevel(bool aState);
   LayoutDeviceIntSize GetSafeWindowSize(LayoutDeviceIntSize aSize);
 
-  void EnsureGrabs(void);
-  void GrabPointer(guint32 aTime);
-  void ReleaseGrabs(void);
-
   void DispatchContextMenuEventFromMouseEvent(uint16_t domButton,
                                               GdkEventButton* aEvent);
 
@@ -626,7 +622,7 @@ class nsWindow final : public nsBaseWidget {
   mozilla::Atomic<bool, mozilla::Relaxed> mDrawInTitlebar{false};
 
   // Has this widget been destroyed yet?
-  bool mIsDestroyed : 1;
+  bool mIsDestroyed;
   // mIsShown tracks requested visible status from browser perspective, i.e.
   // if the window should be visible or now.
   bool mIsShown : 1;

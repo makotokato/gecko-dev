@@ -13,7 +13,6 @@
 #include "HttpLog.h"
 #include "HTTPSRecordResolver.h"
 #include "NSSErrorsService.h"
-#include "Http2ConnectTransaction.h"
 #include "base/basictypes.h"
 #include "mozilla/Components.h"
 #include "mozilla/net/SSLTokensCache.h"
@@ -190,9 +189,6 @@ nsHttpTransaction::~nsHttpTransaction() {
   nsTArray<nsCOMPtr<nsISupports>> arrayToRelease;
   if (mConnection) {
     arrayToRelease.AppendElement(mConnection.forget());
-  }
-  if (mH2WSTransaction) {
-    arrayToRelease.AppendElement(mH2WSTransaction.forget());
   }
 
   if (!arrayToRelease.IsEmpty()) {
@@ -457,14 +453,6 @@ void nsHttpTransaction::SetH2WSConnRefTaken() {
                           &nsHttpTransaction::SetH2WSConnRefTaken);
     gSocketTransportService->Dispatch(event, NS_DISPATCH_NORMAL);
     return;
-  }
-
-  if (mH2WSTransaction) {
-    // Need to let the websocket transaction/connection know we've reached
-    // this point so it can stop forwarding information through us and
-    // instead communicate directly with the websocket channel.
-    mH2WSTransaction->SetConnRefTaken();
-    mH2WSTransaction = nullptr;
   }
 }
 
@@ -1977,6 +1965,11 @@ nsresult nsHttpTransaction::ParseLineSegment(char* segment, uint32_t len) {
     if (status == 103) {
       nsCString linkHeader;
       nsresult rv = mResponseHead->GetHeader(nsHttp::Link, linkHeader);
+
+      nsCString referrerPolicy;
+      Unused << mResponseHead->GetHeader(nsHttp::Referrer_Policy,
+                                         referrerPolicy);
+
       if (NS_SUCCEEDED(rv) && !linkHeader.IsEmpty()) {
         nsCOMPtr<nsIEarlyHintObserver> earlyHint;
         {
@@ -1987,8 +1980,9 @@ nsresult nsHttpTransaction::ParseLineSegment(char* segment, uint32_t len) {
           DebugOnly<nsresult> rv = NS_DispatchToMainThread(
               NS_NewRunnableFunction(
                   "nsIEarlyHintObserver->EarlyHint",
-                  [obs{std::move(earlyHint)}, header{std::move(linkHeader)}]() {
-                    obs->EarlyHint(header);
+                  [obs{std::move(earlyHint)}, header{std::move(linkHeader)},
+                   referrerPolicy{std::move(referrerPolicy)}]() {
+                    obs->EarlyHint(header, referrerPolicy);
                   }),
               NS_DISPATCH_NORMAL);
           MOZ_ASSERT(NS_SUCCEEDED(rv));
@@ -2297,8 +2291,9 @@ nsresult nsHttpTransaction::HandleContentStart() {
       mNoContent = true;
     }
 
-    if (mResponseHead->Status() == 200 && mH2WSTransaction) {
-      // http/2 websockets do not have response bodies
+    // preserve connection for tunnel setup - h2 websocket upgrade only
+    if (mIsHttp2Websocket && mResponseHead->Status() == 200) {
+      LOG(("nsHttpTransaction::HandleContentStart websocket upgrade resp 200"));
       mNoContent = true;
     }
 
@@ -3065,13 +3060,6 @@ bool nsHttpTransaction::IsWebsocketUpgrade() {
     }
   }
   return false;
-}
-
-void nsHttpTransaction::SetH2WSTransaction(
-    Http2ConnectTransaction* aH2WSTransaction) {
-  MOZ_ASSERT(OnSocketThread());
-
-  mH2WSTransaction = aH2WSTransaction;
 }
 
 void nsHttpTransaction::OnProxyConnectComplete(int32_t aResponseCode) {

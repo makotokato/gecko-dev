@@ -1930,15 +1930,19 @@ void js::ReportInNotObjectError(JSContext* cx, HandleValue lref,
     if (str->length() > MaxStringLength) {
       JSStringBuilder buf(cx);
       if (!buf.appendSubstring(str, 0, MaxStringLength)) {
+        buf.failure();
         return nullptr;
       }
       if (!buf.append("...")) {
+        buf.failure();
         return nullptr;
       }
       str = buf.finishString();
       if (!str) {
+        buf.failure();
         return nullptr;
       }
+      buf.ok();
     }
     return QuoteString(cx, str, '"');
   };
@@ -3572,10 +3576,9 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     END_CASE(Object)
 
     CASE(CallSiteObj) {
-      JSObject* cso = ProcessCallSiteObjOperation(cx, script, REGS.pc);
-      if (!cso) {
-        goto error;
-      }
+      JSObject* cso = script->getObject(REGS.pc);
+      MOZ_ASSERT(!cso->as<ArrayObject>().isExtensible());
+      MOZ_ASSERT(cso->as<ArrayObject>().containsPure(cx->names().raw));
       PUSH_OBJECT(*cso);
     }
     END_CASE(CallSiteObj)

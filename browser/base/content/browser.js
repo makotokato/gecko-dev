@@ -39,6 +39,8 @@ ChromeUtils.defineESModuleGetters(this, {
   PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
   Sanitizer: "resource:///modules/Sanitizer.sys.mjs",
   ScreenshotsUtils: "resource:///modules/ScreenshotsUtils.sys.mjs",
+  SessionStartup: "resource:///modules/sessionstore/SessionStartup.sys.mjs",
+  SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
   ShortcutUtils: "resource://gre/modules/ShortcutUtils.sys.mjs",
   SubDialog: "resource://gre/modules/SubDialog.sys.mjs",
   SubDialogManager: "resource://gre/modules/SubDialog.sys.mjs",
@@ -89,8 +91,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   RFPHelper: "resource://gre/modules/RFPHelper.jsm",
   SafeBrowsing: "resource://gre/modules/SafeBrowsing.jsm",
   SaveToPocket: "chrome://pocket/content/SaveToPocket.jsm",
-  SessionStartup: "resource:///modules/sessionstore/SessionStartup.jsm",
-  SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
   SiteDataManager: "resource:///modules/SiteDataManager.jsm",
   SitePermissions: "resource:///modules/SitePermissions.jsm",
   TabModalPrompt: "chrome://global/content/tabprompts.jsm",
@@ -411,13 +411,26 @@ XPCOMUtils.defineLazyGetter(this, "PopupNotifications", () => {
     "resource://gre/modules/PopupNotifications.sys.mjs"
   );
   try {
-    // Hide all PopupNotifications while the URL is being edited and the address
-    // bar has focus or while async tab switching, including the virtual focus in
-    // the results popup.
-    let shouldSuppress = () =>
-      (gURLBar.getAttribute("pageproxystate") != "valid" &&
-        (gURLBar.focused || gBrowser.selectedBrowser._awaitingSetURI)) ||
-      shouldSuppressPopupNotifications();
+    // Hide all PopupNotifications while the the address bar has focus,
+    // including the virtual focus in the results popup, and the URL is being
+    // edited or the page proxy state is invalid while async tab switching.
+    let shouldSuppress = () => {
+      // "Blank" pages, like about:welcome, have a pageproxystate of "invalid", but
+      // popups like CFRs should not automatically be suppressed when the address
+      // bar has focus on these pages as it disrupts user navigation using FN+F6.
+      // See `UrlbarInput.setURI()` where pageproxystate is set to "invalid" for
+      // all pages that the "isBlankPageURL" method returns true for.
+      const urlBarEdited = isBlankPageURL(gBrowser.currentURI.spec)
+        ? gURLBar.hasAttribute("usertyping")
+        : gURLBar.getAttribute("pageproxystate") != "valid";
+      return (
+        (urlBarEdited && gURLBar.focused) ||
+        (gURLBar.getAttribute("pageproxystate") != "valid" &&
+          gBrowser.selectedBrowser._awaitingSetURI) ||
+        shouldSuppressPopupNotifications()
+      );
+    };
+
     return new PopupNotifications(
       gBrowser,
       document.getElementById("notification-popup"),
@@ -2277,6 +2290,7 @@ var gBrowserInit = {
         let hasValidUserGestureActivation = undefined;
         let fromExternal = undefined;
         let globalHistoryOptions = undefined;
+        let triggeringRemoteType = undefined;
         if (window.arguments[1]) {
           if (!(window.arguments[1] instanceof Ci.nsIPropertyBag2)) {
             throw new Error(
@@ -2305,6 +2319,11 @@ var gBrowserInit = {
               );
             }
           }
+          if (extraOptions.hasKey("triggeringRemoteType")) {
+            triggeringRemoteType = extraOptions.getPropertyAsACString(
+              "triggeringRemoteType"
+            );
+          }
         }
 
         try {
@@ -2326,6 +2345,7 @@ var gBrowserInit = {
             hasValidUserGestureActivation,
             fromExternal,
             globalHistoryOptions,
+            triggeringRemoteType,
           });
         } catch (e) {
           Cu.reportError(e);
@@ -7868,7 +7888,11 @@ var WebAuthnPromptHelper = {
   // cancellation of an ongoing WebAuthhn request.
   _tid: 0,
 
+  // Translation object
+  _l10n: null,
+
   init() {
+    this._l10n = new Localization(["browser/webauthnDialog.ftl"], true);
     Services.obs.addObserver(this, this._topic);
   },
 
@@ -7900,6 +7924,93 @@ var WebAuthnPromptHelper = {
       this.registerDirect(mgr, data);
     } else if (data.action == "sign") {
       this.sign(mgr, data);
+    } else if (data.action == "pin-required") {
+      this.pin_required(mgr, data);
+    } else if (data.action == "select-sign-result") {
+      this.select_sign_result(mgr, data);
+    } else if (data.action == "select-device") {
+      this.show_info(
+        mgr,
+        data.origin,
+        data.tid,
+        "selectDevice",
+        "webauthn.selectDevicePrompt"
+      );
+    } else if (data.action == "pin-auth-blocked") {
+      this.show_info(
+        mgr,
+        data.origin,
+        data.tid,
+        "pinAuthBlocked",
+        "webauthn.pinAuthBlockedPrompt"
+      );
+    } else if (data.action == "device-blocked") {
+      this.show_info(
+        mgr,
+        data.origin,
+        data.tid,
+        "deviceBlocked",
+        "webauthn.deviceBlockedPrompt"
+      );
+    }
+  },
+
+  prompt_for_password(origin, wasInvalid, retriesLeft, aPassword) {
+    let dialogText;
+    if (wasInvalid) {
+      dialogText = this._l10n.formatValueSync("webauthn-pin-invalid-prompt", {
+        retriesLeft,
+      });
+    } else {
+      dialogText = this._l10n.formatValueSync("webauthn-pin-required-prompt");
+    }
+
+    let res = Services.prompt.promptPasswordBC(
+      gBrowser.selectedBrowser.browsingContext,
+      Services.prompt.MODAL_TYPE_TAB,
+      origin,
+      dialogText,
+      aPassword
+    );
+    return res;
+  },
+
+  select_sign_result(mgr, { origin, tid, usernames }) {
+    let secondaryActions = [];
+    for (let i = 0; i < usernames.length; i++) {
+      secondaryActions.push({
+        label: unescape(decodeURIComponent(usernames[i])),
+        accessKey: i.toString(),
+        callback(aState) {
+          mgr.resumeWithSelectedSignResult(tid, i);
+        },
+      });
+    }
+    let mainAction = this.buildCancelAction(mgr, tid);
+    let options = {};
+    this.show(
+      tid,
+      "select-sign-result",
+      "webauthn.selectSignResultPrompt",
+      origin,
+      mainAction,
+      secondaryActions,
+      options
+    );
+  },
+
+  pin_required(mgr, { origin, tid, wasInvalid, retriesLeft }) {
+    let aPassword = Object.create(null); // create a "null" object
+    let res = this.prompt_for_password(
+      origin,
+      wasInvalid,
+      retriesLeft,
+      aPassword
+    );
+    if (res) {
+      mgr.pinCallback(aPassword.value);
+    } else {
+      mgr.cancel(tid);
     }
   },
 
@@ -7937,6 +8048,11 @@ var WebAuthnPromptHelper = {
   sign(mgr, { origin, tid }) {
     let mainAction = this.buildCancelAction(mgr, tid);
     this.show(tid, "sign", "webauthn.signPrompt2", origin, mainAction);
+  },
+
+  show_info(mgr, origin, tid, id, stringId) {
+    let mainAction = this.buildCancelAction(mgr, tid);
+    this.show(tid, id, stringId, origin, mainAction);
   },
 
   show(
