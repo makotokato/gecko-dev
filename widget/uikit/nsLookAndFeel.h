@@ -15,7 +15,7 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
 
   void NativeInit() final;
   virtual void RefreshImpl();
-  nsresult NativeGetImpl(IntID aID, int32_t& aResult) override;
+  nsresult NativeGetInt(IntID aID, int32_t& aResult) override;
   nsresult NativeGetFloat(FloatID aID, float& aResult) override;
   nsresult NativeGetColor(ColorID, ColorScheme, nscolor& aResult) override;
   bool NativeGetFont(FontID aID, nsString& aFontName,

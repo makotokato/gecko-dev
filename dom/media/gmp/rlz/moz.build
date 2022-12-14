@@ -9,19 +9,19 @@
 
 FINAL_LIBRARY = 'xul'
 
-if CONFIG['OS_TARGET'] in ['WINNT', 'Darwin']:
+if CONFIG["MOZ_WIDGET_TOOLKIT"] in ['windows', 'cocoa']:
     UNIFIED_SOURCES += [
         'lib/crc8.cc',
         'lib/machine_id.cc',
         'lib/string_utils.cc',
     ]
 
-if CONFIG['OS_TARGET'] == 'WINNT':
+if CONFIG["MOZ_WIDGET_TOOLKIT"] == 'windows':
     UNIFIED_SOURCES += [
         'win/lib/machine_id_win.cc',
     ]
 
-if CONFIG['OS_TARGET'] == 'Darwin':
+if CONFIG["MOZ_WIDGET_TOOLKIT"] == 'cocoa':
     UNIFIED_SOURCES += [
         'mac/lib/machine_id_mac.cc',
     ]

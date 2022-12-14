@@ -1543,6 +1543,8 @@ UniquePtr<ScrollbarDrawing> Theme::ScrollbarStyle() {
   return MakeUnique<ScrollbarDrawingGTK>();
 #elif ANDROID
   return MakeUnique<ScrollbarDrawingAndroid>();
+#elif MOZ_WIDGET_UIKIT
+  return MakeUnique<ScrollbarDrawingAndroid>();
 #else
 #  error "Unknown platform, need scrollbar implementation."
 #endif
