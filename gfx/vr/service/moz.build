@@ -27,7 +27,7 @@ if CONFIG["OS_TARGET"] != "Android":
     include("/ipc/chromium/chromium-config.mozbuild")
 
 # Build OpenVR on Windows, Linux, and macOS desktop targets
-if CONFIG["OS_TARGET"] in ("WINNT", "Linux", "Darwin"):
+if CONFIG["OS_TARGET"] in ("WINNT", "Linux", "Darwin") and CONFIG["MOZ_WIDGET_TOOLKIT"] != "uikit":
     DIRS += [
         "openvr",
     ]

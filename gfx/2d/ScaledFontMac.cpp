@@ -15,8 +15,9 @@
 #include <dlfcn.h>
 #ifdef MOZ_WIDGET_UIKIT
 #  include <CoreFoundation/CoreFoundation.h>
+#else
+#  include "nsCocoaFeatures.h"
 #endif
-#include "nsCocoaFeatures.h"
 #include "mozilla/gfx/Logging.h"
 
 #ifdef MOZ_WIDGET_COCOA
@@ -95,8 +96,12 @@ static CTFontRef CreateCTFontFromCGFontWithVariations(CGFontRef aCGFont,
   //    CreateCTFontFromCGFontWithVariations in cairo-quartz-font.c
   //    ctfont_create_exact_copy in SkFontHost_mac.cpp
   CTFontRef ctFont;
+#ifdef MOZ_WIDGET_UIKIT
+  if (true) {
+#else
   if (nsCocoaFeatures::OnSierraExactly() ||
       (aInstalledFont && nsCocoaFeatures::OnHighSierraOrLater())) {
+#endif
     CFDictionaryRef vars = CGFontCopyVariations(aCGFont);
     if (vars) {
       CFDictionaryRef varAttr = CFDictionaryCreate(
