@@ -5,6 +5,7 @@
 
 #include "GLContextProvider.h"
 #include "GLContextEAGL.h"
+#include "GLLibraryLoader.h"
 #include "nsDebug.h"
 #include "nsIWidget.h"
 #include "gfxFailure.h"
@@ -21,6 +22,30 @@ namespace mozilla {
 namespace gl {
 
 using namespace mozilla::widget;
+
+class EAGLLibrary {
+  public:
+   bool EnsureInitialized() {
+     if (mInitialized) {
+       return true;
+     }
+     mOGLLibrary = PR_LoadLibrary("/System/Library/OpenGL");
+     if (!mOGLLibrary) {
+       return false;
+     }
+
+     mInitialized = true;
+     return true;
+   }
+
+   const auto& Library() const { return mOGLLibrary; }
+
+ private:
+   bool mInitialized = false;
+   PRLibrary* mOGLLibrary = nullptr;
+};
+
+static EAGLLibrary sEAGLLibrary;
 
 GLContextEAGL::GLContextEAGL(const GLContextDesc& desc, EAGLContext* context,
                              GLContext* sharedContext)
@@ -100,17 +125,9 @@ bool GLContextEAGL::MakeCurrentImpl() const {
 
 bool GLContextEAGL::IsCurrentImpl() const { return [EAGLContext currentContext] == mContext; }
 
-static PRFuncPtr GLAPIENTRY GetLoadedProcAddress(const char* const name) {
-  PRLibrary* lib = nullptr;
-  const auto& ret = PR_FindFunctionSymbolAndLibrary(name, &leakedLibRef);
-  if (lib) {
-    PR_UnloadLibrary(lib);
-  }
-  return ret;
-}
-
 Maybe<SymbolLoader> GLContextEAGL::GetSymbolLoader() const {
-  return Some(SymbolLoader(&GetLoadedProcAddress));
+  const auto& lib = sEAGLLibrary.Library();
+  return Some(SymbolLoader(*lib));
 }
 
 bool GLContextEAGL::IsDoubleBuffered() const { return true; }

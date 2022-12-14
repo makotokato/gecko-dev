@@ -11,10 +11,12 @@
 #include <mach/message.h>
 #include <sys/types.h>
 
+#include "build/build_config.h"
+
 #if !defined(OS_IOS)
 #include <servers/bootstrap.h>
 #else
-#include <Foundation/Foundation.h>
+#include <CoreFoundation/CoreFoundation.h>
 #endif
 
 #include "mozilla/Maybe.h"

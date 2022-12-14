@@ -16,12 +16,19 @@
 #ifndef BUILD_BUILD_CONFIG_H_
 #define BUILD_BUILD_CONFIG_H_
 
+#if defined(__APPLE__)
+#endif
+
 // A set of macros to use for platform detection.
 #if defined(ANDROID)
 #  define OS_ANDROID 1
 #  define OS_LINUX 1
 #elif defined(__APPLE__)
+#  include <TargetConditionals.h>
 #  define OS_MACOSX 1
+#  if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+#    define OS_IOS 1
+#  endif
 #elif defined(__linux__)
 #  define OS_LINUX 1
 #elif defined(__DragonFly__)
