@@ -36,6 +36,8 @@ else:
 
     if CONFIG['OS_ARCH'] == 'Darwin':
         DEFINES['OS_MACOSX'] = 1
+        if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'uikit'
+            DEFINES['OS_IOS'] = 1
 
     elif CONFIG['OS_ARCH'] == 'SunOS':
         DEFINES['OS_SOLARIS'] = 1

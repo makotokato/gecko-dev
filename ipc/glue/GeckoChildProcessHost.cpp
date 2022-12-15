@@ -21,6 +21,9 @@
 #  include "chrome/common/mach_ipc_mac.h"
 #  include "nsILocalFileMac.h"
 #endif
+#ifdef MOZ_WIDGET_UIKIT
+#  include <mach/mach_traps.h>
+#endif
 
 #include "GeckoProfiler.h"
 #include "MainThreadUtils.h"
@@ -313,7 +316,7 @@ class PosixProcessLauncher : public BaseProcessLauncher {
   int mChannelDstFd;
 };
 
-#  if defined(XP_MACOSX)
+#  if defined(XP_MACOSX) || defined(XP_IOS)
 class MacProcessLauncher : public PosixProcessLauncher {
  public:
   MacProcessLauncher(GeckoChildProcessHost* aHost,
