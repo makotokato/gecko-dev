@@ -7,7 +7,9 @@
 #ifndef CHROME_COMMON_MACH_MESSAGE_SOURCE_MAC_H_
 #define CHROME_COMMON_MACH_MESSAGE_SOURCE_MAC_H_
 
-#include <CoreServices/CoreServices.h>
+#if !defined(OS_IOS)
+#  include <CoreServices/CoreServices.h>
+#endif
 
 #include "base/scoped_cftyperef.h"
 

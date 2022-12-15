@@ -37,7 +37,9 @@
 #include "base/basictypes.h"
 
 #include <CoreFoundation/CoreFoundation.h>
-#include <IOKit/IOKitLib.h>
+#if !defined(OS_IOS)
+#  include <IOKit/IOKitLib.h>
+#endif
 
 #if defined(__OBJC__)
 @class NSAutoreleasePool;
@@ -144,11 +146,13 @@ class MessagePumpCFRunLoopBase : public MessagePump {
   // the basis of run loops starting and stopping.
   virtual void EnterExitRunLoop(CFRunLoopActivity activity);
 
+#if !defined(OS_IOS)
   // IOKit power state change notification callback, called when the system
   // enters and leaves the sleep state.
   static void PowerStateNotification(void* info, io_service_t service,
                                      uint32_t message_type,
                                      void* message_argument);
+#endif
 
   // The thread's run loop.
   CFRunLoopRef run_loop_;
@@ -164,10 +168,12 @@ class MessagePumpCFRunLoopBase : public MessagePump {
   CFRunLoopObserverRef pre_source_observer_;
   CFRunLoopObserverRef enter_exit_observer_;
 
+#if !defined(OS_IOS)
   // Objects used for power state notification.  See PowerStateNotification.
   io_connect_t root_power_domain_;
   IONotificationPortRef power_notification_port_;
   io_object_t power_notification_object_;
+#endif
 
   // (weak) Delegate passed as an argument to the innermost Run call.
   Delegate* delegate_;
@@ -241,6 +247,29 @@ class MessagePumpNSRunLoop : public MessagePumpCFRunLoopBase {
   DISALLOW_COPY_AND_ASSIGN(MessagePumpNSRunLoop);
 };
 
+#if defined(OS_IOS)
+// This is a fake message pump.  It attaches sources to the main thread's
+// CFRunLoop, so PostTask() will work, but it is unable to drive the loop
+// directly, so calling Run() or Quit() are errors.
+class MessagePumpUIApplication : public MessagePumpCFRunLoopBase {
+ public:
+  MessagePumpUIApplication();
+  ~MessagePumpUIApplication() override;
+  void DoRun(Delegate* delegate) override;
+  void Quit() override;
+
+  // This message pump can not spin the main message loop directly.  Instead,
+  // call |Attach()| to set up a delegate.  It is an error to call |Run()|.
+  virtual void Attach(Delegate* delegate) override;
+
+ private:
+  // RunLoop* run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(MessagePumpUIApplication);
+};
+
+#else
+
 class MessagePumpNSApplication : public MessagePumpCFRunLoopBase {
  public:
   MessagePumpNSApplication();
@@ -264,6 +293,8 @@ class MessagePumpNSApplication : public MessagePumpCFRunLoopBase {
 
   DISALLOW_COPY_AND_ASSIGN(MessagePumpNSApplication);
 };
+
+#endif
 
 class MessagePumpMac {
  public:
