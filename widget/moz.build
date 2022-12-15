@@ -304,6 +304,11 @@ EXPORTS.ipc = [
     "nsGUIEventIPC.h",
 ]
 
+if CONFIG["OS_ARCH"] == "Darwin":
+    EXPORTS.mozilla += [
+        "DarwinUtils.h"
+    ]
+
 if CONFIG["MOZ_X11"] or CONFIG["MOZ_WAYLAND"]:
     DIRS += ["x11"]
 

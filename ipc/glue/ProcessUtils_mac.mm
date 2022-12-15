@@ -5,10 +5,8 @@
 #include "ProcessUtils.h"
 
 #include "nsObjCExceptions.h"
-#ifdef MOZ_WIDGET_COCOA
-#include "nsCocoaUtils.h"
-#endif
 #include "nsString.h"
+#include "mozilla/DarwinUtils.h"
 #include "mozilla/Sprintf.h"
 
 #define UNDOCUMENTED_SESSION_CONSTANT ((int)-2)

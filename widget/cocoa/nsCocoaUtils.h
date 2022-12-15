@@ -17,6 +17,7 @@
 // This must be the last include:
 #include "nsObjCExceptions.h"
 
+#include "mozilla/DarwinUtils.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/StaticPtr.h"
@@ -59,16 +60,6 @@ class nsAutoRetainCocoaObject {
 
  private:
   id mObject;  // [STRONG]
-};
-
-// Provide a local autorelease pool for the remainder of a method's execution.
-class nsAutoreleasePool {
- public:
-  nsAutoreleasePool() { mLocalPool = [[NSAutoreleasePool alloc] init]; }
-  ~nsAutoreleasePool() { [mLocalPool release]; }
-
- private:
-  NSAutoreleasePool* mLocalPool;
 };
 
 @interface NSApplication (Undocumented)
