@@ -83,12 +83,16 @@ bool LaunchApp(const std::vector<std::string>& argv, const LaunchOptions& option
   // disturbing other threads, and then restore it afterwards.
   int old_cwd_fd = -1;
   if (!options.workdir.empty()) {
+#ifdef OS_IOS
+    if (true) {
+#else
     if (@available(macOS 10.15, *)) {
       if (posix_spawn_file_actions_addchdir_np(&file_actions, options.workdir.c_str()) != 0) {
         DLOG(WARNING) << "posix_spawn_file_actions_addchdir_np failed";
         return false;
       }
     } else {
+#endif
       old_cwd_fd = open(".", O_RDONLY | O_CLOEXEC | O_DIRECTORY);
       if (old_cwd_fd < 0) {
         DLOG(WARNING) << "open(\".\") failed";

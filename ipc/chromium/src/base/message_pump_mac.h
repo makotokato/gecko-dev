@@ -258,10 +258,6 @@ class MessagePumpUIApplication : public MessagePumpCFRunLoopBase {
   void DoRun(Delegate* delegate) override;
   void Quit() override;
 
-  // This message pump can not spin the main message loop directly.  Instead,
-  // call |Attach()| to set up a delegate.  It is an error to call |Run()|.
-  virtual void Attach(Delegate* delegate) override;
-
  private:
   // RunLoop* run_loop_;
 

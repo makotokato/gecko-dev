@@ -23,7 +23,9 @@
 #endif
 #ifdef MOZ_WIDGET_UIKIT
 #  include <mach/mach_traps.h>
+#  include "base/rand_util.h"
 #endif
+
 
 #include "GeckoProfiler.h"
 #include "MainThreadUtils.h"
@@ -328,7 +330,9 @@ class MacProcessLauncher : public PosixProcessLauncher {
         mMachConnectionName(
             StringPrintf("org.mozilla.machname.%d",
                          base::RandInt(0, std::numeric_limits<int>::max()))) {
+#ifdef XP_MACOSX
     MOZ_ASSERT(mMachConnectionName.size() < BOOTSTRAP_MAX_NAME_LEN);
+#endif
   }
 
  protected:
@@ -1157,7 +1161,7 @@ bool PosixProcessLauncher::DoSetup() {
     // Prevent connection attempts to diagnosticd(8) to save cycles. Log
     // messages can trigger these connection attempts, but access to
     // diagnosticd is blocked in sandboxed child processes.
-#    ifdef MOZ_SANDBOX
+#    if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
     if (mDisableOSActivityMode) {
       mLaunchOptions->env_map["OS_ACTIVITY_MODE"] = "disable";
     }

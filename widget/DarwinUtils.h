@@ -6,7 +6,7 @@
 #ifndef DarwinUtils_h_
 #define DarwinUtils_h_
 
-#include <CoreFoundation/CoreFoundation.h>
+#include <Foundation/Foundation.h>
 
 namespace mozilla {
 

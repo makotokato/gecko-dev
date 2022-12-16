@@ -72,12 +72,14 @@ void SetThisProcessName(const char* aProcessName) {
     displayNameKey = reinterpret_cast<CFStringRef>(*(CFStringRef*)displayNameKeyAddr);
   }
 
+#ifndef OS_IOS
   // We need this to ensure we have a connection to the Process Manager, not
   // doing so will silently fail and process name wont be updated.
   ProcessSerialNumber psn;
   if (::GetCurrentProcess(&psn) != noErr) {
     return;
   }
+#endif
 
   CFTypeRef currentAsn = getASNFunc ? getASNFunc() : nullptr;
 

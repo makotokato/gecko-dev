@@ -628,8 +628,6 @@ void MessagePumpUIApplication::DoRun(Delegate* delegate) { NOTREACHED(); }
 
 void MessagePumpUIApplication::Quit() { NOTREACHED(); }
 
-void MessagePumpUIApplication::Attach(Delegate* delegate) { set_delegate(delegate); }
-
 #else
 
 MessagePumpNSApplication::MessagePumpNSApplication()
