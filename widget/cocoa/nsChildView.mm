@@ -1563,16 +1563,7 @@ void nsChildView::SetInputContext(const InputContext& aContext,
   // IMEInputHandler::IsEditableContent() too.
   mInputContext = aContext;
 
-  // Actually we turn on text substitution by preferences.
-  // If we support autocorrect attribute, we have to consider it.
-  bool enableTextSubstitution =
-      (StaticPrefs::ui_autocorrectDefault() == 1 &&
-       (aContext.mHTMLInputType.IsEmpty() ||
-        aContext.mHTMLInputType.EqualsLiteral("textarea"))) ||
-      (StaticPrefs::ui_autocorrectDefault() == 2 &&
-       (aContext.mHTMLInputType.IsEmpty() ||
-        aContext.mHTMLInputType.EqualsLiteral("textarea") ||
-        aContext.mHTMLInputType.EqualsLiteral("text")));
+  bool enableTextSubstitution = aContext.mAutocorrect;
 
   switch (aContext.mIMEState.mEnabled) {
     case IMEEnabled::Enabled:
@@ -1592,9 +1583,7 @@ void nsChildView::SetInputContext(const InputContext& aContext,
     case IMEEnabled::Password:
       mTextInputHandler->SetASCIICapableOnly(true);
       mTextInputHandler->EnableIME(false);
-      // Disable autocorrect since dash, comma or etc is replaced with other
-      // character
-      mTextInputHandler->EnableTextSubstitution(false);
+      mTextInputHandler->EnableTextSubstitution(enableTextSubstitution);
       break;
     default:
       NS_ERROR("not implemented!");
