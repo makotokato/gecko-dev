@@ -247,6 +247,12 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
     SetHTMLAttr(nsGkAtoms::enterkeyhint, aValue, aRv);
   }
 
+  virtual bool Autocorrect() const;
+  void SetAutocorrect(bool aAutocorrect, mozilla::ErrorResult& aError) {
+    SetHTMLAttr(nsGkAtoms::autocorrect, aAutocorrect ? u"on"_ns : u"off"_ns,
+                aError);
+  }
+
   /**
    * Determine whether an attribute is an event (onclick, etc.)
    * @param aName the attribute
@@ -1179,6 +1185,8 @@ class nsGenericHTMLFormControlElement : public nsGenericHTMLFormElement,
   // nsGenericHTMLElement
   // autocapitalize attribute support
   void GetAutocapitalize(nsAString& aValue) const override;
+  // autocorrect attribute support
+  bool Autocorrect() const override;
   bool IsHTMLFocusable(mozilla::IsFocusableFlags, bool* aIsFocusable,
                        int32_t* aTabIndex) override;
 
@@ -1210,7 +1218,7 @@ class nsGenericHTMLFormControlElement : public nsGenericHTMLFormElement,
    */
   void UpdateRequiredState(bool aIsRequired, bool aNotify);
 
-  bool IsAutocapitalizeInheriting() const;
+  bool IsAutocapitalizeOrAutocorrectInheriting() const;
 
   nsresult SubmitDirnameDir(mozilla::dom::FormData* aFormData);
 
