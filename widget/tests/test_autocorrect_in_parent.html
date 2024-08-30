@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Tests for default of autocorrect in parent</title>
+  <script src="chrome://mochikit/content/tests/SimpleTest/SimpleTest.js"></script>
+  <link rel="stylesheet" href="chrome://mochikit/content/tests/SimpleTest/test.css">
+</head>
+<body>
+<p id="display"></p>
+<div id="content" style="display: none"></div>
+
+<div>
+<input type="text" id="a1"><br>
+<textarea id="b1"></textarea><br>
+<div contenteditable id="c1"></div><br>
+</div>
+
+<pre id="test">
+<script class="testbody" type="application/javascript">
+SimpleTest.waitForExplicitFinish();
+
+SimpleTest.waitForFocus(async () => {
+  const tests = [
+    { id: "a1", autocorrect: false, desc: "input without autocorrect" },
+    { id: "b1", autocorrect: false, desc: "textarea without autocorrect" },
+    { id: "c1", autocorrect: false, desc: "contenteditable without autocorrect" },
+  ];
+
+  for (let test of tests) {
+    document.getElementById(test.id).focus();
+    is(window.windowUtils.focusedAutocorrect, test.autocorrect, test.desc);
+  }
+
+  SimpleTest.finish();
+});
+</script>
+</pre>
+</body>
+</html>
