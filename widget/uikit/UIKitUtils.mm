@@ -86,4 +86,14 @@ UITextAutocapitalizationType UIKitUtils::GetUITextAutocapitalizationType(
   return UITextAutocapitalizationTypeNone;
 }
 
+// static
+UITextAutocorrectionType UIKitUtils::GetUITextAutocorrectionType(
+    const InputContext& aContext) {
+  if (aContext.mAutocorrect) {
+    return UITextAutocorrectionTypeYes;
+  }
+
+  return UITextAutocorrectionTypeNo;
+}
+
 }  // namespace mozilla::widget

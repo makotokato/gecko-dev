@@ -551,6 +551,15 @@ class nsAutoRetainUIKitObject {
       mGeckoChild->GetInputContext());
 }
 
+- (UITextAutocorrectionType)autocorrectionType {
+  if (!mGeckoChild || mGeckoChild->Destroyed()) {
+    return UITextAutocorrectionTypeDefault;
+  }
+
+  return UIKitUtils::GetUITextAutocorrectionType(
+      mGeckoChild->GetInputContext());
+}
+
 - (BOOL)isSecureTextEntry {
   if (!mGeckoChild || mGeckoChild->Destroyed()) {
     return NO;
